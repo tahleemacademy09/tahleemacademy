@@ -25,7 +25,7 @@ import {
   Mic, MicOff, Video, VideoOff, Phone, Hand,
   PenTool, MessageCircle, MoreVertical, BookOpen,
   Circle, Loader2, X, Smile, Play, Pause,
-  Volume2, ChevronDown, Users, Eye,
+  Volume2, ChevronDown, ChevronLeft, ChevronRight, Users, Eye,
   LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
   SwitchCamera, Settings, Check, Wifi,
 } from "lucide-react";
@@ -1521,71 +1521,134 @@ const SubjectMaterialsPanel=({subjectId,subject,onClose}:any)=>{
   const[busy,setBusy]=useState(true);
   const[viewing,setViewing]=useState<any>(null);
   const[quranOpen,setQuranOpen]=useState(false);
+  const[minimized,setMinimized]=useState(false);
 
   useEffect(()=>{
     supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
       .then(({data})=>{setMats(data||[]);setBusy(false);});
   },[subjectId]);
 
-  if(quranOpen) return <InClassQuranReader onClose={()=>setQuranOpen(false)}/>;
+  /* ── Minimized state: just a slim bar at top of video area ── */
+  if(minimized){
+    return(
+      <div style={{
+        position:"absolute",top:0,left:0,right:0,zIndex:55,
+        background:"rgba(32,33,36,.97)",backdropFilter:"blur(12px)",
+        display:"flex",alignItems:"center",gap:10,
+        padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",
+      }}>
+        <Eye style={{width:15,height:15,color:TEAL,flexShrink:0}}/>
+        <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Materials</span>
+        <button onClick={()=>setMinimized(false)} style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+          Expand
+        </button>
+        <button onClick={onClose} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:4}}>
+          <X style={{width:14,height:14}}/>
+        </button>
+      </div>
+    );
+  }
 
-  return(
-    // Outer backdrop — covers content area but NOT top bar or footer
-    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.55)"}} onClick={onClose}>
-      {/* Panel slides in from right */}
-      <div onClick={e=>e.stopPropagation()}
-        style={{position:"absolute",top:0,right:0,bottom:0,width:"min(360px,100%)",background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-up .2s ease",boxShadow:"-8px 0 32px rgba(0,0,0,.5)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
-          <Eye style={{width:16,height:16,color:TEAL}}/>
-          <span style={{flex:1,fontSize:14,fontWeight:700,color:"#fff"}}>Subject Materials</span>
-          <button onClick={onClose} style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+  /* ── Viewing a material — full screen overlay, back goes to list ── */
+  if(quranOpen){
+    return(
+      <div style={{position:"absolute",inset:0,zIndex:55,background:"#0d1117",display:"flex",flexDirection:"column"}}>
+        {/* Header with minimize + back */}
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"rgba(32,33,36,.97)",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
+          <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:32,height:32,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <ChevronDown style={{width:14,height:14}}/>
+          </button>
+          <button onClick={()=>setQuranOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"5px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+            <ChevronLeft style={{width:14,height:14}}/> Back
+          </button>
+          <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Full Quran</span>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:4}}>
             <X style={{width:14,height:14}}/>
           </button>
         </div>
-        {/* Quran reader button — always shown for all subjects */}
+        <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
+      </div>
+    );
+  }
+
+  if(viewing){
+    return(
+      <div style={{position:"absolute",inset:0,zIndex:55,background:"#0d1117",display:"flex",flexDirection:"column"}}>
+        {/* Header with minimize + back */}
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"rgba(32,33,36,.97)",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
+          <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:32,height:32,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <ChevronDown style={{width:14,height:14}}/>
+          </button>
+          <button onClick={()=>setViewing(null)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"5px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+            <ChevronLeft style={{width:14,height:14}}/> Back
+          </button>
+          <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{viewing.title||viewing.name||"Material"}</span>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:4}}>
+            <X style={{width:14,height:14}}/>
+          </button>
+        </div>
+        <div style={{flex:1,overflow:"hidden"}}><InClassMaterialViewer material={viewing} onClose={()=>setViewing(null)}/></div>
+      </div>
+    );
+  }
+
+  /* ── Material list ── */
+  return(
+    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.5)"}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()}
+        style={{position:"absolute",top:0,right:0,bottom:0,width:"min(360px,100%)",background:"#1c1f26",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-right .22s cubic-bezier(.34,1.2,.64,1) both",boxShadow:"-8px 0 32px rgba(0,0,0,.6)"}}>
+        {/* Header */}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"rgba(32,33,36,.97)"}}>
+          <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            <ChevronDown style={{width:14,height:14}}/>
+          </button>
+          <Eye style={{width:15,height:15,color:TEAL,flexShrink:0}}/>
+          <span style={{flex:1,fontSize:14,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Materials</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <X style={{width:14,height:14}}/>
+          </button>
+        </div>
+        {/* Quran button */}
         <button onClick={()=>setQuranOpen(true)}
-          style={{margin:"10px 10px 0",padding:"14px 16px",borderRadius:12,border:"1px solid rgba(183,121,31,.4)",background:"linear-gradient(135deg,rgba(26,61,36,.9),rgba(39,103,73,.9))",cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-          <div style={{fontSize:28}}>📖</div>
-          <div>
-            <div style={{fontFamily:"'Amiri',serif",fontSize:16,fontWeight:800,color:"#fef9ee"}}>Open Full Quran</div>
-            <div style={{fontFamily:"'Amiri',serif",fontSize:11,color:"rgba(255,255,255,.55)",direction:"rtl"}}>Arabic · Translation · Tafseer Ibn Katheer</div>
+          style={{margin:"10px 10px 0",padding:"14px 16px",borderRadius:12,border:"1px solid rgba(183,121,31,.4)",background:"linear-gradient(135deg,rgba(26,61,36,.9),rgba(39,103,73,.9))",cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+          <div style={{fontSize:26}}>📖</div>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontFamily:"'Amiri',serif",fontSize:15,fontWeight:700,color:"#fef9ee"}}>Open Full Quran</div>
+            <div style={{fontFamily:"'Amiri',serif",fontSize:11,color:"rgba(255,255,255,.55)",direction:"rtl" as const}}>Arabic · Translation · Tafseer</div>
           </div>
-          <div style={{marginLeft:"auto",fontSize:11,color:"#34d399",fontWeight:700,flexShrink:0}}>604 Pages →</div>
+          <ChevronRight style={{width:14,height:14,color:"#34d399",flexShrink:0}}/>
         </button>
+        {/* List */}
         <div style={{flex:1,overflowY:"auto",padding:10}}>
-          {mats.length>0&&(
-            <div style={{fontSize:11,color:"rgba(255,255,255,.35)",fontWeight:700,letterSpacing:.5,padding:"8px 4px 4px"}}>UPLOADED MATERIALS</div>
-          )}
+          {mats.length>0&&<div style={{fontSize:11,color:"rgba(255,255,255,.35)",fontWeight:600,letterSpacing:.5,padding:"8px 4px 4px",fontFamily:"'Google Sans',sans-serif"}}>UPLOADED MATERIALS</div>}
           {busy&&<div style={{display:"flex",justifyContent:"center",padding:40}}><div style={{width:24,height:24,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
-          {!busy&&mats.length===0&&<div style={{textAlign:"center",padding:"30px 20px",color:"rgba(255,255,255,.35)"}}>
+          {!busy&&mats.length===0&&<div style={{textAlign:"center" as const,padding:"30px 20px",color:"rgba(255,255,255,.35)"}}>
             <div style={{fontSize:36,marginBottom:8}}>📭</div>
-            <p style={{fontSize:13,margin:0}}>No uploaded materials for this subject</p>
+            <p style={{fontSize:13,margin:0,fontFamily:"'Google Sans',sans-serif"}}>No materials for this subject</p>
           </div>}
           {mats.map(m=>{
             const icon=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
             const resume=loadResume(m.id||"");
             return(
               <button key={m.id} onClick={()=>setViewing(m)}
-                style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:12,cursor:"pointer",textAlign:"left",marginBottom:8,transition:"background .12s"}}
+                style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:12,cursor:"pointer",textAlign:"left" as const,marginBottom:8,transition:"background .12s"}}
                 onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,.09)")}
                 onMouseLeave={e=>(e.currentTarget.style.background="rgba(255,255,255,.04)")}>
                 <div style={{width:40,height:40,borderRadius:10,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{icon}</div>
                 <div style={{flex:1,minWidth:0}}>
-                  <p style={{margin:0,fontSize:13,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.title||m.name||"Untitled"}</p>
-                  <p style={{margin:"3px 0 0",fontSize:11,color:"rgba(255,255,255,.35)",textTransform:"capitalize"}}>
+                  <p style={{margin:0,fontSize:13,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Untitled"}</p>
+                  <p style={{margin:"3px 0 0",fontSize:11,color:"rgba(255,255,255,.35)",textTransform:"capitalize" as const,fontFamily:"'Google Sans',sans-serif"}}>
                     {m.material_type||"file"}
                     {resume?.time&&<span style={{marginLeft:6,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
                     {resume?.page&&!resume?.time&&<span style={{marginLeft:6,color:TEAL}}>p.{resume.page}</span>}
                   </p>
                 </div>
-                <span style={{fontSize:11,color:TEAL,fontWeight:700,flexShrink:0}}>👁 View</span>
+                <ChevronRight style={{width:14,height:14,color:"rgba(255,255,255,.3)",flexShrink:0}}/>
               </button>
             );
           })}
         </div>
       </div>
-      {/* Viewer renders on top of panel, still inside content area */}
-      {viewing&&<InClassMaterialViewer material={viewing} onClose={()=>setViewing(null)}/>}
     </div>
   );
 };
@@ -2277,30 +2340,13 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       </div>,portal
     )}
 
-    {/* More menu */}
+    {/* More menu — clean */}
     {moreOpen&&portal&&createPortal(
-      <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right}}>
-        {/* Mobile-only: layout, hand/board, emoji at top */}
+      <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right,minWidth:240}}>
         {isMobile&&<>
-          {/* Layout picker (mobile only — hidden from top bar) */}
-          <div style={{padding:"10px 16px 8px",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
-            <div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,.35)",letterSpacing:.8,textTransform:"uppercase" as const,marginBottom:8,fontFamily:"'Google Sans',sans-serif"}}>View</div>
-            <div style={{display:"flex",gap:5,flexWrap:"wrap" as const}}>
-              {(["horizontal","grid","spotlight","focus"] as const).map(m=>(
-                <button key={m} onClick={()=>{onLayoutChange(m);setMoreOpen(false);}} style={{
-                  padding:"5px 11px",borderRadius:20,border:"1px solid",fontSize:12,fontWeight:500,cursor:"pointer",
-                  fontFamily:"'Google Sans',sans-serif",textTransform:"capitalize" as const,
-                  borderColor:layout===m?"#8ab4f8":"rgba(255,255,255,.12)",
-                  background:layout===m?"rgba(138,180,248,.15)":"rgba(255,255,255,.04)",
-                  color:layout===m?"#8ab4f8":"rgba(255,255,255,.5)",
-                }}>{m}</button>
-              ))}
-            </div>
-          </div>
-          {/* Hand raise / Board */}
           {isPrivileged
             ?<button className="gm-more-item" onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} style={{color:whiteboardOpen?"#34d399":"#e8eaed"}}>
-              <PenTool style={{width:16,height:16}}/> {whiteboardOpen?"Close Board":"Whiteboard"}
+              <PenTool style={{width:16,height:16}}/> {whiteboardOpen?"Close Whiteboard":"Whiteboard"}
             </button>
             :<button className="gm-more-item" onClick={()=>{toggleHand();setMoreOpen(false);}} style={{color:handUp?"#fbbf24":"#e8eaed"}}>
               <Hand style={{width:16,height:16}}/> {handUp?"Lower Hand":"Raise Hand"}
@@ -2308,33 +2354,12 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           }
           {!isPrivileged&&canStudentWriteProp&&(
             <button className="gm-more-item" onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} style={{color:whiteboardOpen?"#34d399":"#e8eaed"}}>
-              <PenTool style={{width:16,height:16}}/> {whiteboardOpen?"Close Board":"Whiteboard"}
+              <PenTool style={{width:16,height:16}}/> {whiteboardOpen?"Close Whiteboard":"Whiteboard"}
             </button>
           )}
-          {/* Reactions */}
-          <button className="gm-more-item" onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}}>
-            <Smile style={{width:16,height:16,opacity:.7}}/> Send a Reaction
-          </button>
         </>}
-        {/* Desktop: layout */}
-        {!isMobile&&<div style={{padding:"10px 16px 8px",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
-          <div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,.35)",letterSpacing:.8,textTransform:"uppercase" as const,marginBottom:8,fontFamily:"'Google Sans',sans-serif"}}>View</div>
-          <div style={{display:"flex",gap:5,flexWrap:"wrap" as const}}>
-            {(["horizontal","grid","spotlight","focus"] as const).map(m=>(
-              <button key={m} onClick={()=>{onLayoutChange(m);setMoreOpen(false);}} style={{
-                padding:"5px 11px",borderRadius:20,border:"1px solid",fontSize:12,fontWeight:500,cursor:"pointer",
-                fontFamily:"'Google Sans',sans-serif",textTransform:"capitalize" as const,
-                borderColor:layout===m?"#8ab4f8":"rgba(255,255,255,.12)",
-                background:layout===m?"rgba(138,180,248,.15)":"rgba(255,255,255,.04)",
-                color:layout===m?"#8ab4f8":"rgba(255,255,255,.5)",
-              }}>{m}</button>
-            ))}
-          </div>
-        </div>}
-        {/* Participants */}
-        <button className="gm-more-item" onClick={()=>{onToggleParticipants();setMoreOpen(false);}}>
-          <Users style={{width:16,height:16,opacity:.7}}/> Participants
-          {liveCount>0&&<span style={{marginLeft:"auto",background:"rgba(138,180,248,.2)",color:"#8ab4f8",borderRadius:12,padding:"1px 8px",fontSize:11,fontWeight:600}}>{liveCount}</span>}
+        <button className="gm-more-item" onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}}>
+          <Smile style={{width:16,height:16,opacity:.7}}/> Send a Reaction
         </button>
         <button className="gm-more-item" onClick={()=>{onToggleMaterials();setMoreOpen(false);}}>
           <Eye style={{width:16,height:16,opacity:.7}}/> Materials
@@ -2343,16 +2368,13 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           <button className="gm-more-item" onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} style={{color:groupReciteMode?"#34d399":"#e8eaed"}}>
             <Volume2 style={{width:16,height:16}}/> {groupReciteMode?"End Group Recitation":"Group Recitation"}
           </button>
-          {onLaunchQuiz&&<button className="gm-more-item" onClick={()=>{onLaunchQuiz();setMoreOpen(false);}} style={{color:"#fbbf24"}}>
-            <span style={{fontSize:16}}>📝</span> Live Quiz
-          </button>}
           <button className="gm-more-item" onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{color:canStudentWriteProp?"#34d399":"#e8eaed"}}>
             <PenTool style={{width:16,height:16}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
           </button>
           <button className="gm-more-item" onClick={async()=>{
             await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
             try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
-            toast({title:"🔇 All students muted"});setMoreOpen(false);
+            toast({title:"\uD83D\uDD07 All students muted"});setMoreOpen(false);
           }} style={{color:"#fb923c"}}>
             <MicOff style={{width:16,height:16}}/> Mute All Students
           </button>
@@ -2365,94 +2387,111 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         {onMinimize&&<button className="gm-more-item" onClick={()=>{onMinimize();setMoreOpen(false);}}>
           <ChevronDown style={{width:16,height:16,opacity:.7}}/> Minimize
         </button>}
-        <button className="gm-more-item" onClick={isPrivileged?onEndClass:onLeaveClass} style={{color:"#f87171"}}>
-          <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/> {isPrivileged?"End Class for All":"Leave Class"}
-        </button>
       </div>,portal
     )}
 
     {/* ══ CONTROL BAR ══ */}
     <div className="cv-bar gm-bar" style={{
-      height:isMobile?64:80,
-      background:"rgba(32,33,36,.97)",
-      backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
-      borderTop:"1px solid rgba(255,255,255,.06)",
+      height:isMobile?72:80,
+      background:isMobile?"#f1f3f4":"rgba(32,33,36,.97)",
+      backdropFilter:isMobile?"none":"blur(20px)",
+      WebkitBackdropFilter:isMobile?"none":"blur(20px)",
+      borderTop:isMobile?"none":"1px solid rgba(255,255,255,.06)",
       display:"flex",alignItems:"center",
-      justifyContent:isMobile?"space-between":"space-between",
-      padding:`0 ${isMobile?12:24}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?12:24}px`,
-      flexShrink:0,gap:isMobile?8:12,
+      justifyContent:"center",
+      padding:`0 ${isMobile?16:24}px calc(${isMobile?8:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?16:24}px`,
+      flexShrink:0,gap:isMobile?10:12,
     }}>
 
       {isMobile ? (
-        /* ── MOBILE: exactly 5 items — mic▼  cam▼  chat  ⋮  leave ── */
+        /* ── MOBILE: Image 2 exact — light bar, rectangle pill buttons ── */
         <>
-          {/* Mic group */}
-          <div ref={micBtnRef} style={{display:"flex",alignItems:"center",flexShrink:0}}>
+          {/* Mic pill + chevron */}
+          <div ref={micBtnRef} style={{
+            display:"flex",alignItems:"center",
+            background:"#e2e5e9",borderRadius:14,overflow:"hidden",
+            height:52,flexShrink:0,
+          }}>
             <button onClick={toggleMic} style={{
-              width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
+              width:52,height:52,border:"none",cursor:"pointer",
               display:"flex",alignItems:"center",justifyContent:"center",
-              background:micOn?"rgba(255,255,255,.12)":"rgba(255,255,255,.12)",
-              color:"#fff",
+              background:"transparent",color:micOn?"#202124":"#202124",
             }}>
-              {micOn?<Mic style={{width:20,height:20}}/>:<MicOff style={{width:20,height:20,color:"rgba(255,255,255,.5)"}}/>}
+              {micOn
+                ?<Mic style={{width:22,height:22,color:"#202124"}}/>
+                :<MicOff style={{width:22,height:22,color:"#202124"}}/>
+              }
             </button>
             <button onClick={openAudioPicker} style={{
-              width:20,height:46,border:"none",cursor:"pointer",
+              width:26,height:52,border:"none",cursor:"pointer",
               display:"flex",alignItems:"center",justifyContent:"center",
-              background:"transparent",color:"rgba(255,255,255,.5)",
+              background:"transparent",color:"#5f6368",
+              borderLeft:"1px solid rgba(0,0,0,.08)",
             }}>
-              <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
+              <svg width="9" height="6" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
             </button>
           </div>
 
-          {/* Cam group */}
-          <div ref={camBtnRef} style={{display:"flex",alignItems:"center",flexShrink:0}}>
+          {/* Cam pill + chevron */}
+          <div ref={camBtnRef} style={{
+            display:"flex",alignItems:"center",
+            background:"#e2e5e9",borderRadius:14,overflow:"hidden",
+            height:52,flexShrink:0,
+          }}>
             <button onClick={toggleCam} style={{
-              width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
+              width:52,height:52,border:"none",cursor:"pointer",
               display:"flex",alignItems:"center",justifyContent:"center",
-              background:"rgba(255,255,255,.12)",
-              color:"#fff",
+              background:"transparent",
             }}>
-              {camOn?<Video style={{width:20,height:20}}/>:<VideoOff style={{width:20,height:20,color:"rgba(255,255,255,.5)"}}/>}
+              {camOn
+                ?<Video style={{width:22,height:22,color:"#202124"}}/>
+                :<VideoOff style={{width:22,height:22,color:"#202124"}}/>
+              }
             </button>
             <button onClick={openVideoPicker} style={{
-              width:20,height:46,border:"none",cursor:"pointer",
+              width:26,height:52,border:"none",cursor:"pointer",
               display:"flex",alignItems:"center",justifyContent:"center",
-              background:"transparent",color:"rgba(255,255,255,.5)",
+              background:"transparent",color:"#5f6368",
+              borderLeft:"1px solid rgba(0,0,0,.08)",
             }}>
-              <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
+              <svg width="9" height="6" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
             </button>
           </div>
 
-          {/* Chat */}
+          {/* Chat — rounded square */}
           <button onClick={onToggleChat} style={{
-            width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
+            width:52,height:52,borderRadius:14,border:"none",cursor:"pointer",
             display:"flex",alignItems:"center",justifyContent:"center",
-            background:"rgba(255,255,255,.12)",color:"#fff",position:"relative",flexShrink:0,
+            background:"#e2e5e9",color:"#202124",position:"relative",flexShrink:0,
           }}>
-            <MessageCircle style={{width:20,height:20}}/>
-            {chatUnread>0&&<span style={{position:"absolute",top:2,right:2,background:"#ea4335",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #202124"}}>{chatUnread>9?"9+":chatUnread}</span>}
+            <MessageCircle style={{width:22,height:22}}/>
+            {chatUnread>0&&<span style={{position:"absolute",top:6,right:6,background:"#ea4335",color:"#fff",borderRadius:"50%",width:15,height:15,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>{chatUnread>9?"9+":chatUnread}</span>}
           </button>
 
-          {/* More (⋮) — contains hand/board/emoji/participants/materials/end */}
+          {/* More ⋮ — rounded square */}
           <div ref={moreBtnRef} style={{flexShrink:0}}>
             <button onClick={openMore} style={{
-              width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
+              width:52,height:52,borderRadius:14,border:"none",cursor:"pointer",
               display:"flex",alignItems:"center",justifyContent:"center",
-              background:moreOpen?"rgba(138,180,248,.2)":"rgba(255,255,255,.12)",color:"#fff",
+              background:moreOpen?"#d2e3fc":"#e2e5e9",color:"#202124",
             }}>
-              <MoreVertical style={{width:20,height:20}}/>
+              <MoreVertical style={{width:22,height:22}}/>
             </button>
           </div>
 
-          {/* Leave — red pill */}
+          {/* Leave — red rounded rectangle with arrow-out icon, exactly Image 2 */}
           <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{
-            width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
-            display:"flex",alignItems:"center",justifyContent:"center",
+            height:52,padding:"0 18px",borderRadius:14,border:"none",cursor:"pointer",
+            display:"flex",alignItems:"center",justifyContent:"center",gap:6,
             background:"#ea4335",color:"#fff",flexShrink:0,
-            boxShadow:"0 2px 10px rgba(234,67,53,.4)",
+            boxShadow:"0 2px 8px rgba(234,67,53,.35)",
           }}>
-            <Phone style={{width:20,height:20,transform:"rotate(135deg)"}}/>
+            {/* Arrow-out icon like Image 2 */}
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
           </button>
         </>
       ) : (
