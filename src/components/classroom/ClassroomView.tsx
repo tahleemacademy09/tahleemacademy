@@ -54,26 +54,252 @@ const RED   = "#ef4444";
 const BAR_H = 76;
 
 const CSS = `
-  @keyframes cv-spin    { to { transform:rotate(360deg); } }
-  @keyframes wb-spin    { to { transform:rotate(360deg); } }
-  @keyframes speaking   { 0%,100%{opacity:1}50%{opacity:.35} }
-  @keyframes pip-pulse  { 0%,100%{opacity:1}50%{opacity:.3} }
-  @keyframes slide-up   { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
-  @keyframes fade-in    { from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)} }
-  @keyframes emoji-float{ 0%{transform:translateY(0) scale(1);opacity:1}70%{opacity:.9}100%{transform:translateY(-300px) scale(1.35);opacity:0} }
-  @keyframes rec-pulse  { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.5)}70%{box-shadow:0 0 0 8px rgba(239,68,68,0)} }
-  @keyframes hand-bounce{ 0%,100%{transform:translateY(0)}45%{transform:translateY(-7px)} }
+  @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Google+Sans+Display:wght@400;500;700&display=swap');
+
+  @keyframes cv-spin      { to { transform:rotate(360deg); } }
+  @keyframes wb-spin      { to { transform:rotate(360deg); } }
+  @keyframes speak-bar    { 0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)} }
+  @keyframes pip-pulse    { 0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.85)} }
+  @keyframes slide-up     { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
+  @keyframes slide-right  { from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1} }
+  @keyframes fade-in      { from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)} }
+  @keyframes fade-up      { from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)} }
+  @keyframes emoji-float  { 0%{transform:translateY(0) scale(1);opacity:1}70%{opacity:.9}100%{transform:translateY(-300px) scale(1.4);opacity:0} }
+  @keyframes rec-pulse    { 0%,100%{opacity:1}50%{opacity:.3} }
+  @keyframes hand-bounce  { 0%,100%{transform:translateY(0)}45%{transform:translateY(-6px)} }
+  @keyframes speak-glow   { 0%,100%{box-shadow:0 0 0 2px #1a73e8,0 0 0 4px rgba(26,115,232,.3)}50%{box-shadow:0 0 0 2px #1a73e8,0 0 0 8px rgba(26,115,232,.15)} }
+  @keyframes tile-in      { from{opacity:0;transform:scale(.9)}to{opacity:1;transform:scale(1)} }
+  @keyframes bar-reveal   { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
+  @keyframes ctrl-hover   { from{transform:scale(1)}to{transform:scale(1.08)} }
+  @keyframes tooltip-in   { from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%) translateY(0)} }
+
+  * { box-sizing: border-box; }
+
   [data-lk-theme]{ height:100%!important;display:flex!important;flex-direction:column!important; }
+
   [data-classroom-root]{
-    overscroll-behavior:none;-webkit-overflow-scrolling:touch;
-    touch-action:pan-y;padding-bottom:env(safe-area-inset-bottom,0px);
+    overscroll-behavior:none;
+    -webkit-overflow-scrolling:touch;
+    touch-action:pan-y;
+    padding-bottom:env(safe-area-inset-bottom,0px);
+    font-family:'Google Sans','Roboto',sans-serif;
+    background:#202124;
   }
-  [data-classroom-root] button{-webkit-tap-highlight-color:transparent;touch-action:manipulation;}
+  [data-classroom-root] button{
+    -webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+    font-family:'Google Sans','Roboto',sans-serif;
+  }
   [data-classroom-root] canvas{-webkit-user-select:none;user-select:none;}
+
   @supports not (height:100dvh){[data-classroom-root]{height:-webkit-fill-available!important;}}
+
+  /* Scrollbar */
   .cv-bar{scrollbar-width:none;-ms-overflow-style:none;}
   .cv-bar::-webkit-scrollbar{display:none;}
   .cv-bar{will-change:transform;transform:translateZ(0);contain:layout style;}
+
+  /* Tile grid */
+  .gm-grid { display:grid; gap:6px; width:100%; height:100%; padding:6px; box-sizing:border-box; }
+
+  /* Participant tile */
+  .gm-tile {
+    position:relative; border-radius:12px; overflow:hidden;
+    background:#2D2E30;
+    animation: tile-in .22s cubic-bezier(.34,1.56,.64,1) both;
+    transition: box-shadow .2s ease;
+  }
+  .gm-tile.speaking {
+    animation: speak-glow 1.8s ease-in-out infinite;
+  }
+
+  /* Control bar button base */
+  .gm-ctrl {
+    position:relative; display:flex; flex-direction:column;
+    align-items:center; gap:4px; background:none; border:none;
+    cursor:pointer; padding:0; outline:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .gm-ctrl-icon {
+    width:48px; height:48px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    transition:background .15s ease, transform .12s ease;
+    background:rgba(255,255,255,.1);
+  }
+  .gm-ctrl:hover .gm-ctrl-icon { background:rgba(255,255,255,.18); transform:scale(1.06); }
+  .gm-ctrl.danger .gm-ctrl-icon { background:#ea4335; }
+  .gm-ctrl.danger:hover .gm-ctrl-icon { background:#c5352a; }
+  .gm-ctrl.active .gm-ctrl-icon { background:rgba(138,180,248,.2); }
+  .gm-ctrl-label {
+    font-size:10px; font-weight:500; color:rgba(255,255,255,.7);
+    white-space:nowrap; letter-spacing:.3px;
+    font-family:'Google Sans',sans-serif;
+  }
+
+  /* Tooltip */
+  .gm-tooltip {
+    position:absolute; bottom:calc(100% + 10px); left:50%;
+    transform:translateX(-50%);
+    background:rgba(32,33,36,.96); color:#fff;
+    font-size:11px; font-weight:500; white-space:nowrap;
+    padding:5px 10px; border-radius:6px;
+    pointer-events:none; opacity:0;
+    font-family:'Google Sans',sans-serif;
+    box-shadow:0 2px 12px rgba(0,0,0,.4);
+    border:1px solid rgba(255,255,255,.06);
+    animation:tooltip-in .14s ease forwards;
+    z-index:9999;
+  }
+  .gm-ctrl:hover .gm-tooltip { opacity:1; }
+
+  /* Meet-style name badge */
+  .gm-name {
+    position:absolute; bottom:0; left:0; right:0;
+    padding:24px 12px 8px;
+    background:linear-gradient(transparent,rgba(0,0,0,.7));
+    display:flex; align-items:center; gap:6px;
+  }
+  .gm-name-text {
+    font-size:13px; font-weight:500; color:#fff;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;
+    font-family:'Google Sans',sans-serif;
+    text-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+
+  /* Speaking waveform */
+  .gm-wave { display:flex; align-items:center; gap:2px; height:14px; }
+  .gm-wave-bar {
+    width:3px; border-radius:2px; background:#1a73e8;
+    animation: speak-bar .7s ease-in-out infinite;
+  }
+
+  /* Bar animation */
+  .gm-bar { animation: bar-reveal .3s cubic-bezier(.34,1.2,.64,1) both; }
+
+  /* Separator */
+  .gm-sep { width:1px; height:36px; background:rgba(255,255,255,.1); flex-shrink:0; }
+
+  /* Layout button pill */
+  .gm-layout-btn {
+    display:flex; align-items:center; gap:5px;
+    padding:0 12px; height:30px; border-radius:15px;
+    background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12);
+    color:rgba(255,255,255,.9); font-size:12px; font-weight:500;
+    cursor:pointer; transition:background .15s;
+    font-family:'Google Sans',sans-serif;
+  }
+  .gm-layout-btn:hover { background:rgba(255,255,255,.15); }
+
+  /* Top badge pill */
+  .gm-badge {
+    display:inline-flex; align-items:center; gap:5px;
+    padding:4px 10px; border-radius:20px; font-size:12px; font-weight:500;
+    font-family:'Google Sans',sans-serif;
+  }
+
+  /* Mic/Cam merged button */
+  .gm-av-group {
+    display:flex; align-items:center;
+    border-radius:28px; overflow:hidden;
+    box-shadow:0 2px 8px rgba(0,0,0,.4);
+  }
+  .gm-av-main {
+    width:48px; height:48px; display:flex; align-items:center; justify-content:center;
+    background:rgba(255,255,255,.1); border:none; cursor:pointer; color:#fff;
+    transition:background .15s;
+  }
+  .gm-av-main.off { background:#ea4335; }
+  .gm-av-main:hover { background:rgba(255,255,255,.18); }
+  .gm-av-main.off:hover { background:#c5352a; }
+  .gm-av-chevron {
+    width:18px; height:48px; display:flex; align-items:center; justify-content:center;
+    border:none; cursor:pointer; color:rgba(255,255,255,.7);
+    transition:background .15s; padding-right:2px;
+  }
+  .gm-av-chevron.off { background:rgba(234,67,53,.7); }
+  .gm-av-chevron:not(.off) { background:rgba(255,255,255,.06); }
+  .gm-av-chevron:hover { background:rgba(255,255,255,.15); }
+
+  /* Leave pill */
+  .gm-leave {
+    display:flex; align-items:center; gap:7px;
+    padding:0 20px; height:48px; border-radius:24px;
+    background:#ea4335; border:none; color:#fff;
+    font-size:14px; font-weight:600; cursor:pointer;
+    font-family:'Google Sans',sans-serif;
+    box-shadow:0 2px 12px rgba(234,67,53,.35);
+    transition:background .15s, box-shadow .15s;
+    flex-shrink:0;
+  }
+  .gm-leave:hover { background:#c5352a; box-shadow:0 4px 18px rgba(234,67,53,.5); }
+
+  /* Chat sidebar */
+  .gm-sidebar {
+    width:360px; background:#2D2E30; border-left:1px solid rgba(255,255,255,.07);
+    display:flex; flex-direction:column; flex-shrink:0;
+    animation: slide-right .22s cubic-bezier(.34,1.2,.64,1) both;
+  }
+
+  /* Avatar circle */
+  .gm-avatar {
+    border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-weight:700; color:#fff; flex-shrink:0;
+    background:linear-gradient(135deg,#1a73e8,#0d47a1);
+    font-family:'Google Sans Display',sans-serif;
+    letter-spacing:-.5px;
+  }
+
+  /* More menu */
+  .gm-more-menu {
+    position:fixed; background:#2D2E30;
+    border:1px solid rgba(255,255,255,.08);
+    border-radius:16px; overflow:hidden;
+    box-shadow:0 8px 40px rgba(0,0,0,.7);
+    min-width:220px; z-index:9200;
+    animation:fade-up .14s ease both;
+  }
+  .gm-more-item {
+    width:100%; display:flex; align-items:center; gap:12px;
+    padding:13px 18px; background:none; border:none;
+    cursor:pointer; color:#e8eaed; font-size:14px;
+    font-weight:400; text-align:left; transition:background .1s;
+    font-family:'Google Sans',sans-serif;
+    border-bottom:1px solid rgba(255,255,255,.04);
+  }
+  .gm-more-item:last-child { border-bottom:none; }
+  .gm-more-item:hover { background:rgba(255,255,255,.08); }
+
+  /* Device picker sheet */
+  .gm-sheet {
+    position:fixed; background:#2D2E30;
+    border:1px solid rgba(255,255,255,.08); border-radius:16px;
+    box-shadow:0 16px 48px rgba(0,0,0,.75); overflow:hidden;
+    z-index:9200; width:280px;
+    animation:fade-up .14s ease both;
+  }
+  .gm-sheet-item {
+    width:100%; display:flex; align-items:center; gap:10px;
+    padding:11px 16px; background:none; border:none; cursor:pointer;
+    text-align:left; border-bottom:1px solid rgba(255,255,255,.04);
+    transition:background .1s; font-family:'Google Sans',sans-serif;
+  }
+  .gm-sheet-item:hover { background:rgba(255,255,255,.08); }
+
+  /* Emoji tray */
+  .gm-emoji-tray {
+    position:fixed; left:50%; transform:translateX(-50%);
+    background:#2D2E30; border:1px solid rgba(255,255,255,.1);
+    border-radius:40px; padding:8px 14px;
+    display:flex; gap:4px; z-index:9200;
+    box-shadow:0 8px 32px rgba(0,0,0,.6);
+    animation:fade-up .14s ease both;
+  }
+  .gm-emoji-btn {
+    font-size:26px; background:none; border:none; cursor:pointer;
+    padding:4px 5px; border-radius:12px; line-height:1;
+    transition:transform .12s ease, background .1s;
+  }
+  .gm-emoji-btn:hover { transform:scale(1.3); background:rgba(255,255,255,.08); }
 `;
 
 /* ══ RECONNECT MONITOR ══
@@ -322,12 +548,12 @@ const GroupRecitePermDialog=({onAccept,onDecline}:{onAccept:()=>void;onDecline:(
   </div>,document.body
 );
 
-/* ══ LAYOUT SWITCHER ══ */
+/* ══ LAYOUT SWITCHER — Google Meet pill style ══ */
 const LAYOUT_OPTIONS:{mode:LayoutMode;icon:any;label:string}[]=[
   {mode:"grid",      icon:LayoutGrid,    label:"Grid"},
   {mode:"spotlight", icon:Maximize2,     label:"Spotlight"},
-  {mode:"horizontal",icon:AlignJustify,  label:"Horizontal"},
-  {mode:"vertical",  icon:Columns,       label:"Vertical"},
+  {mode:"horizontal",icon:AlignJustify,  label:"Side by side"},
+  {mode:"vertical",  icon:Columns,       label:"Stacked"},
   {mode:"focus",     icon:Rows,          label:"Focus"},
 ];
 const LayoutSwitcher=({layout,onChange}:{layout:LayoutMode;onChange:(m:LayoutMode)=>void})=>{
@@ -335,18 +561,33 @@ const LayoutSwitcher=({layout,onChange}:{layout:LayoutMode;onChange:(m:LayoutMod
   const cur=LAYOUT_OPTIONS.find(o=>o.mode===layout)||LAYOUT_OPTIONS[0];
   return(
     <div style={{position:"relative"}}>
-      <button onClick={()=>setOpen(v=>!v)} title="Change Layout"
-        style={{height:30,padding:"0 10px",borderRadius:20,background:open?"rgba(10,124,104,.6)":"rgba(255,255,255,.1)",border:"1px solid rgba(255,255,255,.15)",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5,backdropFilter:"blur(4px)"}}>
-        <cur.icon style={{width:12,height:12}}/>{cur.label}
+      <button className="gm-layout-btn" onClick={()=>setOpen(v=>!v)} title="Change layout">
+        <cur.icon style={{width:13,height:13,opacity:.8}}/>{cur.label}
+        <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor" style={{opacity:.5,marginLeft:2}}><path d="M4 5L0 0h8z"/></svg>
       </button>
       {open&&createPortal(
         <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:9200}}>
-          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",top:58,right:14,background:"#17202a",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,overflow:"hidden",minWidth:170,boxShadow:"0 8px 36px rgba(0,0,0,.65)",animation:"fade-in .15s ease"}}>
+          <div onClick={e=>e.stopPropagation()} style={{
+            position:"fixed",top:60,right:14,
+            background:"#2D2E30",border:"1px solid rgba(255,255,255,.08)",
+            borderRadius:12,overflow:"hidden",minWidth:180,
+            boxShadow:"0 8px 36px rgba(0,0,0,.65)",animation:"fade-in .15s ease",
+          }}>
             {LAYOUT_OPTIONS.map(o=>(
               <button key={o.mode} onClick={()=>{onChange(o.mode);setOpen(false);}}
-                style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 16px",background:layout===o.mode?`rgba(10,124,104,.35)`:"none",border:"none",cursor:"pointer",color:layout===o.mode?"#4ade80":"#fff",fontSize:13,fontWeight:layout===o.mode?700:400,borderBottom:"1px solid rgba(255,255,255,.05)"}}>
-                <o.icon style={{width:14,height:14}}/>{o.label}
-                {layout===o.mode&&<span style={{marginLeft:"auto",fontSize:10}}>✓</span>}
+                style={{
+                  width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 16px",
+                  background:layout===o.mode?"rgba(138,180,248,.12)":"none",
+                  border:"none",cursor:"pointer",
+                  color:layout===o.mode?"#8ab4f8":"rgba(255,255,255,.75)",
+                  fontSize:13,fontWeight:layout===o.mode?600:400,
+                  borderBottom:"1px solid rgba(255,255,255,.04)",
+                  fontFamily:"'Google Sans',sans-serif",
+                  transition:"background .1s",
+                }}>
+                <o.icon style={{width:15,height:15,opacity:.7}}/>
+                {o.label}
+                {layout===o.mode&&<span style={{marginLeft:"auto",fontSize:11,color:"#8ab4f8"}}>✓</span>}
               </button>
             ))}
           </div>
@@ -1633,31 +1874,22 @@ const RoomSettingsModal = ({ onClose, room }: { onClose: () => void; room: any }
   );
 };
 
-/* ══ PARTICIPANT TILE ══ */
+/* ══ PARTICIPANT TILE — Google Meet premium style ══ */
 const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small"})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
   const[hasVideo,setHasVideo]=useState(false);const[isSpeaking,setIsSpeaking]=useState(false);const[micEnabled,setMicEnabled]=useState(true);
   const room=useRoomContext();
   const attachVideo=useCallback(()=>{
-    // Try multiple publication lookup strategies for reliability
     let pub=participant.getTrackPublication?.(Track.Source.Camera);
-    if(!pub){
-      participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Camera||p.kind==="video")pub=pub||p;});
-    }
-    const track=pub?.videoTrack||pub?.track;
-    const mst=track?.mediaStreamTrack;
+    if(!pub){participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Camera||p.kind==="video")pub=pub||p;});}
+    const track=pub?.videoTrack||pub?.track;const mst=track?.mediaStreamTrack;
     if(mst&&mst.readyState==="live"&&!pub?.isMuted&&videoRef.current){
-      if(!(videoRef.current.srcObject instanceof MediaStream)||
-         !(videoRef.current.srcObject as MediaStream).getTracks().includes(mst)){
+      if(!(videoRef.current.srcObject instanceof MediaStream)||(videoRef.current.srcObject as MediaStream).getTracks()[0]?.id!==mst.id){
         videoRef.current.srcObject=new MediaStream([mst]);
       }
       if(isLocal)videoRef.current.muted=true;
-      videoRef.current.play().catch(()=>{});
-      setHasVideo(true);
-    }else{
-      if(videoRef.current&&videoRef.current.srcObject){videoRef.current.srcObject=null;}
-      setHasVideo(false);
-    }
+      videoRef.current.play().catch(()=>{});setHasVideo(true);
+    }else{if(videoRef.current&&videoRef.current.srcObject)videoRef.current.srcObject=null;setHasVideo(false);}
     let micPub=participant.getTrackPublication?.(Track.Source.Microphone);
     if(!micPub)participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Microphone)micPub=micPub||p;});
     setMicEnabled(!(micPub?.isMuted??false));
@@ -1665,19 +1897,11 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
   useEffect(()=>{
     attachVideo();
     const onSpeak=(v:boolean)=>setIsSpeaking(v);
-    // Participant-level events
     participant.on?.("trackSubscribed",attachVideo);participant.on?.("trackUnsubscribed",attachVideo);
     participant.on?.("trackMuted",attachVideo);participant.on?.("trackUnmuted",attachVideo);
     participant.on?.("trackPublished",attachVideo);participant.on?.("trackUnpublished",attachVideo);
     participant.on?.("isSpeakingChanged",onSpeak);
-    // Room-level events (needed for local participant camera enable/disable)
-    if(isLocal){
-      room.on(RoomEvent.LocalTrackPublished,attachVideo);
-      room.on(RoomEvent.LocalTrackUnpublished,attachVideo);
-      room.on(RoomEvent.TrackMuted,attachVideo);
-      room.on(RoomEvent.TrackUnmuted,attachVideo);
-    }
-    // Polling fallback — catches edge cases where events fire before DOM is ready
+    if(isLocal){room.on(RoomEvent.LocalTrackPublished,attachVideo);room.on(RoomEvent.LocalTrackUnpublished,attachVideo);room.on(RoomEvent.TrackMuted,attachVideo);room.on(RoomEvent.TrackUnmuted,attachVideo);}
     const poll=setInterval(attachVideo,1500);
     return()=>{
       clearInterval(poll);
@@ -1685,79 +1909,119 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
       participant.off?.("trackMuted",attachVideo);participant.off?.("trackUnmuted",attachVideo);
       participant.off?.("trackPublished",attachVideo);participant.off?.("trackUnpublished",attachVideo);
       participant.off?.("isSpeakingChanged",onSpeak);
-      if(isLocal){
-        room.off(RoomEvent.LocalTrackPublished,attachVideo);
-        room.off(RoomEvent.LocalTrackUnpublished,attachVideo);
-        room.off(RoomEvent.TrackMuted,attachVideo);
-        room.off(RoomEvent.TrackUnmuted,attachVideo);
-      }
+      if(isLocal){room.off(RoomEvent.LocalTrackPublished,attachVideo);room.off(RoomEvent.LocalTrackUnpublished,attachVideo);room.off(RoomEvent.TrackMuted,attachVideo);room.off(RoomEvent.TrackUnmuted,attachVideo);}
     };
   },[participant,attachVideo,room,isLocal]);
-  const toggleMyMic=async()=>{if(!isLocal)return;const next=!micEnabled;await room.localParticipant.setMicrophoneEnabled(next);setMicEnabled(next);};
+
   const name=participant.name||participant.identity||"User";
   const initials=name.split(" ").map((w:string)=>w[0]||"").join("").slice(0,2).toUpperCase()||"?";
-  const avatarSz=size==="large"?72:size==="small"?36:52;
-  const fontSize=size==="large"?28:size==="small"?14:20;
+
+  // Avatar size tiers
+  const avatarSz = size==="large" ? 80 : size==="small" ? 40 : 56;
+  const avatarFs = size==="large" ? 30 : size==="small" ? 16 : 20;
+
+  // Speaking ring color — Google Meet blue
+  const speakBorder = isSpeaking ? "2px solid #1a73e8" : "2px solid transparent";
+
   return(
-    <div style={{position:"relative",width:"100%",height:"100%",background:"linear-gradient(145deg,#1a2035,#0e1420)",borderRadius:size==="small"?10:14,overflow:"hidden",border:isSpeaking?`2px solid ${GREEN}`:"2px solid rgba(255,255,255,.06)",transition:"border-color .2s,box-shadow .2s",boxShadow:isSpeaking?`0 0 0 2px ${GREEN}44,0 4px 24px rgba(34,197,94,.25)`:"0 2px 12px rgba(0,0,0,.4)"}}>
-      <video ref={videoRef} autoPlay playsInline muted={isLocal} style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}/>
-      {!hasVideo&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(145deg,#0e1a14,#1a2e22)"}}>
-        <div style={{width:avatarSz,height:avatarSz,borderRadius:"50%",background:`linear-gradient(135deg,${TEAL},#064E3B)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize,fontWeight:800,color:"#fff",border:isSpeaking?`3px solid ${GREEN}`:"3px solid rgba(255,255,255,.1)",boxShadow:isSpeaking?`0 0 16px ${GREEN}55`:"none",transition:"border-color .2s,box-shadow .2s"}}>{initials}</div>
-      </div>}
-      {isSpeaking&&hasVideo&&<div style={{position:"absolute",inset:0,border:`3px solid ${GREEN}`,borderRadius:"inherit",pointerEvents:"none"}}/>}
-      <div style={{position:"absolute",bottom:0,left:0,right:0,padding:"22px 10px 8px",background:"linear-gradient(transparent,rgba(0,0,0,.72))",display:"flex",alignItems:"center",gap:6}}>
-        <span style={{flex:1,fontSize:size==="small"?10:12,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}{isLocal?" (You)":""}</span>
-        {isSpeaking&&<div style={{display:"flex",alignItems:"flex-end",gap:1.5,height:14}}>{[.4,.7,1,.6].map((h,i)=>(<div key={i} style={{width:3,borderRadius:2,background:GREEN,height:`${h*14}px`,animation:`speaking .6s ease-in-out infinite`,animationDelay:`${i*.12}s`}}/>))}</div>}
-        <button onClick={isLocal?toggleMyMic:undefined} style={{width:24,height:24,borderRadius:"50%",background:micEnabled?"rgba(34,197,94,.2)":"rgba(239,68,68,.3)",border:"none",cursor:isLocal?"pointer":"default",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,backdropFilter:"blur(4px)"}}>
-          {micEnabled?<Mic style={{width:11,height:11,color:GREEN}}/>:<MicOff style={{width:11,height:11,color:RED}}/>}
-        </button>
+    <div
+      className={`gm-tile${isSpeaking?" speaking":""}`}
+      style={{width:"100%",height:"100%",border:speakBorder,transition:"border-color .2s"}}
+    >
+      {/* Live video */}
+      <video ref={videoRef} autoPlay playsInline muted={isLocal}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none",background:"#202124"}}
+      />
+
+      {/* Camera-off avatar — Google Meet dark card */}
+      {!hasVideo&&(
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#2D2E30",flexDirection:"column",gap:12}}>
+          {/* Subtle grid bg like Google Meet */}
+          <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at center,rgba(255,255,255,.03) 1px,transparent 1px)",backgroundSize:"28px 28px",pointerEvents:"none"}}/>
+          <div
+            className="gm-avatar"
+            style={{
+              width:avatarSz,height:avatarSz,fontSize:avatarFs,
+              boxShadow:isSpeaking?"0 0 0 3px #1a73e8,0 0 24px rgba(26,115,232,.3)":"0 4px 20px rgba(0,0,0,.4)",
+              transition:"box-shadow .2s",
+            }}
+          >{initials}</div>
+          {isSpeaking&&(
+            <div className="gm-wave">
+              {[0,1,2,3].map(i=>(
+                <div key={i} className="gm-wave-bar" style={{height:14,animationDelay:`${i*.1}s`,animationDuration:".6s`"}}/>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Speaking border ring over video */}
+      {isSpeaking&&hasVideo&&(
+        <div style={{position:"absolute",inset:0,border:"3px solid #1a73e8",borderRadius:"inherit",pointerEvents:"none",transition:"opacity .2s"}}/>
+      )}
+
+      {/* Name bar */}
+      <div className="gm-name">
+        {isSpeaking&&hasVideo&&(
+          <div className="gm-wave" style={{marginRight:4}}>
+            {[0,1,2].map(i=>(
+              <div key={i} className="gm-wave-bar" style={{height:11,animationDelay:`${i*.12}s`}}/>
+            ))}
+          </div>
+        )}
+        <span className="gm-name-text">{name}{isLocal?" (You)":""}</span>
+        {/* Mic indicator */}
+        <div style={{
+          width:24,height:24,borderRadius:"50%",flexShrink:0,
+          background:micEnabled?"rgba(0,0,0,.4)":"rgba(234,67,53,.85)",
+          display:"flex",alignItems:"center",justifyContent:"center",
+          backdropFilter:"blur(4px)",
+        }}>
+          {micEnabled
+            ?<Mic style={{width:12,height:12,color:"#fff"}}/>
+            :<MicOff style={{width:12,height:12,color:"#fff"}}/>
+          }
+        </div>
       </div>
     </div>
   );
 };
 
-/* ══ VIDEO GRID — Google Meet style ══ */
+/* ══ VIDEO GRID — Google Meet adaptive tiling ══ */
 const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
   const{localParticipant}=useLocalParticipant();
   const allParticipants=useParticipants();
   const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity);
   const all=localParticipant?[localParticipant,...remotes]:remotes;
   const n=all.length;
-  const GAP=8;
-  const P=8;
 
+  // Check for active screen share
   const screensharer=all.find(p=>{
     const pub=p.getTrackPublication?.(Track.Source.ScreenShare)||p.trackPublications?.get(Track.Source.ScreenShare);
     return pub?.track&&!pub.isMuted;
   });
+
   if(screensharer)return(
-    <div style={{width:"100%",height:"100%",display:"flex",gap:GAP,padding:P,boxSizing:"border-box"}}>
-      <div style={{flex:1,borderRadius:14,overflow:"hidden",minWidth:0}}>
-        <ParticipantTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity} size="large"/>
-      </div>
-      <div style={{width:110,display:"flex",flexDirection:"column",gap:GAP,overflowY:"auto"}}>
-        {all.map(p=>(<div key={p.identity} style={{height:82,flexShrink:0}}>
-          <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/>
-        </div>))}
+    <div style={{width:"100%",height:"100%",display:"flex",gap:6,padding:6,boxSizing:"border-box"}}>
+      <div style={{flex:1,minWidth:0}}><ParticipantTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity} size="large"/></div>
+      <div style={{width:140,display:"flex",flexDirection:"column",gap:6,overflowY:"auto"}}>
+        {all.map(p=>(<div key={p.identity} style={{height:90,flexShrink:0}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}
       </div>
     </div>
   );
 
   if(layout==="spotlight")return(
-    <div style={{width:"100%",height:"100%",display:"flex",gap:GAP,padding:P,boxSizing:"border-box"}}>
-      <div style={{flex:1,borderRadius:14,overflow:"hidden",minWidth:0}}>
-        <ParticipantTile participant={all[0]} isLocal={all[0]?.identity===localParticipant?.identity} size="large"/>
-      </div>
-      {n>1&&<div style={{width:100,display:"flex",flexDirection:"column",gap:GAP,overflowY:"auto"}}>
-        {all.slice(1).map(p=>(<div key={p.identity} style={{height:76,flexShrink:0}}>
-          <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/>
-        </div>))}
+    <div style={{width:"100%",height:"100%",display:"flex",gap:6,padding:6,boxSizing:"border-box"}}>
+      <div style={{flex:1,minWidth:0}}><ParticipantTile participant={all[0]} isLocal={all[0]?.identity===localParticipant?.identity} size="large"/></div>
+      {n>1&&<div style={{width:130,display:"flex",flexDirection:"column",gap:6,overflowY:"auto"}}>
+        {all.slice(1).map(p=>(<div key={p.identity} style={{height:88,flexShrink:0}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}
       </div>}
     </div>
   );
 
   if(layout==="horizontal")return(
-    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"row",gap:GAP,padding:P,boxSizing:"border-box"}}>
+    <div style={{width:"100%",height:"100%",display:"flex",gap:6,padding:6,boxSizing:"border-box"}}>
       {all.map(p=>(<div key={p.identity} style={{flex:1,minWidth:0,height:"100%"}}>
         <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/>
       </div>))}
@@ -1765,7 +2029,7 @@ const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
   );
 
   if(layout==="vertical")return(
-    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:GAP,padding:P,boxSizing:"border-box"}}>
+    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:6,padding:6,boxSizing:"border-box"}}>
       {all.map(p=>(<div key={p.identity} style={{flex:1,minHeight:0,width:"100%"}}>
         <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/>
       </div>))}
@@ -1776,36 +2040,33 @@ const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
     const local=all.find(p=>p.identity===localParticipant?.identity)||all[0];
     const others=all.filter(p=>p.identity!==local?.identity);
     return(
-      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:GAP,padding:P,boxSizing:"border-box"}}>
-        <div style={{flex:1,borderRadius:14,overflow:"hidden",minHeight:0}}>
-          {local&&<ParticipantTile participant={local} isLocal size="large"/>}
-        </div>
-        {others.length>0&&<div style={{height:90,display:"flex",flexDirection:"row",gap:GAP,flexShrink:0,overflowX:"auto"}}>
-          {others.map(p=>(<div key={p.identity} style={{width:120,flexShrink:0}}>
-            <ParticipantTile participant={p} isLocal={false} size="small"/>
-          </div>))}
+      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:6,padding:6,boxSizing:"border-box"}}>
+        <div style={{flex:1,minHeight:0}}>{local&&<ParticipantTile participant={local} isLocal size="large"/>}</div>
+        {others.length>0&&<div style={{height:96,display:"flex",gap:6,flexShrink:0,overflowX:"auto"}}>
+          {others.map(p=>(<div key={p.identity} style={{width:128,flexShrink:0}}><ParticipantTile participant={p} isLocal={false} size="small"/></div>))}
         </div>}
       </div>
     );
   }
 
   if(n===1)return(
-    <div style={{width:"100%",height:"100%",padding:P,boxSizing:"border-box"}}>
+    <div style={{width:"100%",height:"100%",padding:6,boxSizing:"border-box"}}>
       <ParticipantTile participant={all[0]} isLocal={all[0]?.identity===localParticipant?.identity} size="large"/>
     </div>
   );
 
-  const COLS=2;
-  const ROWS=Math.ceil(n/COLS);
-  const isOdd=n%COLS!==0;
+  // Google Meet adaptive grid — up to 4: 2×2, 5-6: 3×2, 7-9: 3×3, etc.
+  const COLS = n<=2?2:n<=4?2:n<=6?3:n<=9?3:4;
+  const ROWS = Math.ceil(n/COLS);
+  const isOdd = n%COLS!==0;
   return(
-    <div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${COLS},1fr)`,gridTemplateRows:`repeat(${ROWS},1fr)`,gap:GAP,padding:P,boxSizing:"border-box"}}>
+    <div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${COLS},1fr)`,gridTemplateRows:`repeat(${ROWS},1fr)`,gap:6,padding:6,boxSizing:"border-box"}}>
       {all.map((p,i)=>{
         const isLastLone=isOdd&&i===n-1;
         return(
           <div key={p.identity} style={isLastLone?{gridColumn:"1 / -1",display:"flex",justifyContent:"center"}:{}}>
-            <div style={isLastLone?{width:"50%",height:"100%"}:{width:"100%",height:"100%"}}>
-              <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n<=2?"large":n<=4?"normal":"small"}/>
+            <div style={isLastLone?{width:`${100/COLS}%`,height:"100%"}:{width:"100%",height:"100%"}}>
+              <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n<=4?"normal":"small"}/>
             </div>
           </div>
         );
@@ -1814,8 +2075,337 @@ const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
   );
 };
 
-/* ══ BOTTOM BAR ══ */
+/* ══ BOTTOM BAR — Google Meet premium ══ */
 const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji,layout,onLayoutChange,onLaunchQuiz}:any)=>{
+  const{user}=useAuth();
+  const[micOn,setMicOn]=useState(false);
+  const[camOn,setCamOn]=useState(false);
+  const[handUp,setHandUp]=useState(false);
+  const[moreOpen,setMoreOpen]=useState(false);
+  const[emojisOpen,setEmojisOpen]=useState(false);
+  const[audioPicker,setAudioPicker]=useState(false);
+  const[videoPicker,setVideoPicker]=useState(false);
+  const[stuRec,setStuRec]=useState(false);
+  const stuMrRef=useRef<MediaRecorder|null>(null);
+  const stuChunks=useRef<Blob[]>([]);
+  const[camFacing,setCamFacing]=useState<"user"|"environment">("user");
+  const[audioDevices,setAudioDevices]=useState<MediaDeviceInfo[]>([]);
+  const[videoDevices,setVideoDevices]=useState<MediaDeviceInfo[]>([]);
+  const[selAudio,setSelAudio]=useState("");
+  const[selVideo,setSelVideo]=useState("");
+  const[liveCount,setLiveCount]=useState(0);
+  const micBusy=useRef(false);
+  const camBusy=useRef(false);
+  const micBtnRef=useRef<HTMLDivElement>(null);
+  const camBtnRef=useRef<HTMLDivElement>(null);
+  const moreBtnRef=useRef<HTMLDivElement>(null);
+  const[audioPickerPos,setAudioPickerPos]=useState({bottom:0,left:0});
+  const[videoPickerPos,setVideoPickerPos]=useState({bottom:0,left:0});
+  const[morePos,setMorePos]=useState({bottom:0,right:0});
+
+  useEffect(()=>{
+    if(!room)return;
+    const sync=()=>{setMicOn(!!room.localParticipant?.isMicrophoneEnabled);setCamOn(!!room.localParticipant?.isCameraEnabled);};
+    sync();
+    room.on(RoomEvent.LocalTrackPublished,sync);room.on(RoomEvent.LocalTrackUnpublished,sync);
+    room.on(RoomEvent.TrackMuted,sync);room.on(RoomEvent.TrackUnmuted,sync);
+    return()=>{room.off(RoomEvent.LocalTrackPublished,sync);room.off(RoomEvent.LocalTrackUnpublished,sync);room.off(RoomEvent.TrackMuted,sync);room.off(RoomEvent.TrackUnmuted,sync);};
+  },[room]);
+
+  useEffect(()=>{
+    if(!room)return;
+    const update=()=>setLiveCount(room.numParticipants||0);
+    update();
+    room.on(RoomEvent.ParticipantConnected,update);room.on(RoomEvent.ParticipantDisconnected,update);
+    return()=>{room.off(RoomEvent.ParticipantConnected,update);room.off(RoomEvent.ParticipantDisconnected,update);};
+  },[room]);
+
+  const computePos=(ref:React.RefObject<HTMLDivElement>,align:"left"|"right")=>{
+    if(!ref.current)return;
+    const r=ref.current.getBoundingClientRect();
+    const bottom=window.innerHeight-r.top+10;
+    if(align==="left")return{bottom,left:Math.max(8,r.left)};
+    return{bottom,right:Math.max(8,window.innerWidth-r.right)};
+  };
+
+  const openAudioPicker=async()=>{
+    try{await navigator.mediaDevices.getUserMedia({audio:true}).catch(()=>{});}catch{}
+    const all=await navigator.mediaDevices.enumerateDevices();
+    setAudioDevices(all.filter(d=>d.kind==="audioinput"));
+    try{const cur=await room.getActiveDevice("audioinput");if(cur)setSelAudio(cur);}catch{}
+    const pos=computePos(micBtnRef,"left");if(pos)setAudioPickerPos(pos as any);
+    setAudioPicker(true);setVideoPicker(false);setMoreOpen(false);setEmojisOpen(false);
+  };
+  const openVideoPicker=async()=>{
+    try{await navigator.mediaDevices.getUserMedia({video:true}).catch(()=>{});}catch{}
+    const all=await navigator.mediaDevices.enumerateDevices();
+    setVideoDevices(all.filter(d=>d.kind==="videoinput"));
+    try{const cur=await room.getActiveDevice("videoinput");if(cur)setSelVideo(cur);}catch{}
+    const pos=computePos(camBtnRef,"left");if(pos)setVideoPickerPos(pos as any);
+    setVideoPicker(true);setAudioPicker(false);setMoreOpen(false);setEmojisOpen(false);
+  };
+  const openMore=()=>{
+    const pos=computePos(moreBtnRef,"right");if(pos)setMorePos(pos as any);
+    setMoreOpen(v=>!v);setAudioPicker(false);setVideoPicker(false);setEmojisOpen(false);
+  };
+  const closeAll=()=>{setAudioPicker(false);setVideoPicker(false);setMoreOpen(false);setEmojisOpen(false);};
+
+  const switchAudio=async(id:string)=>{
+    try{await room.switchActiveDevice("audioinput",id);setSelAudio(id);toast({title:"Microphone switched ✓"});}
+    catch(e:any){toast({title:"Could not switch",description:e?.message,variant:"destructive"});}
+    setAudioPicker(false);
+  };
+  const switchVideo=async(id:string)=>{
+    try{await room.switchActiveDevice("videoinput",id);setSelVideo(id);toast({title:"Camera switched ✓"});}
+    catch(e:any){toast({title:"Could not switch",description:e?.message,variant:"destructive"});}
+    setVideoPicker(false);
+  };
+  const flipCamera=async()=>{
+    if(!room?.localParticipant||!camOn)return;
+    try{
+      const next=camFacing==="user"?"environment":"user";
+      await room.localParticipant.setCameraEnabled(false);
+      await new Promise(r=>setTimeout(r,200));
+      await room.localParticipant.setCameraEnabled(true,{facingMode:next}as any);
+      setCamFacing(next);toast({title:next==="environment"?"🔄 Back camera":"🔄 Front camera"});
+    }catch{toast({title:"Could not flip camera",variant:"destructive"});}
+    setVideoPicker(false);
+  };
+  const toggleMic=async()=>{
+    if(!room?.localParticipant||micBusy.current)return;
+    micBusy.current=true;
+    try{await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled);}
+    catch(e){console.error("toggleMic:",e);}finally{micBusy.current=false;}
+  };
+  const toggleCam=async()=>{
+    if(!room?.localParticipant||camBusy.current)return;
+    camBusy.current=true;
+    try{await room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled);}
+    catch(e){console.error("toggleCam:",e);}finally{camBusy.current=false;}
+  };
+  const toggleHand=async()=>{
+    if(!user||!sessionId)return;
+    const n=!handUp;setHandUp(n);
+    await supabase.from("class_participants").update({hand_raised:n,hand_raised_at:n?new Date().toISOString():null}).eq("session_id",sessionId).eq("student_id",user.id);
+    try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"hand_raise",identity:room.localParticipant.identity,name:room.localParticipant.name||user?.user_metadata?.full_name||"Student",raised:n})),{reliable:true});}catch{}
+  };
+  const toggleStuRecord=async()=>{
+    if(stuRec){
+      stuMrRef.current?.stop();
+      stuMrRef.current!.onstop=()=>{
+        const mt=stuMrRef.current?.mimeType||"audio/webm";
+        const blob=new Blob(stuChunks.current,{type:mt});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement("a");a.href=url;a.download=`class-${Date.now()}.webm`;a.click();URL.revokeObjectURL(url);stuChunks.current=[];
+      };setStuRec(false);
+    }else{
+      try{
+        const s=await navigator.mediaDevices.getUserMedia({audio:true});
+        const mime=["audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";
+        const mr=new MediaRecorder(s,mime?{mimeType:mime}:undefined);
+        stuChunks.current=[];mr.ondataavailable=e=>{if(e.data.size>0)stuChunks.current.push(e.data);};
+        mr.start(1000);stuMrRef.current=mr;setStuRec(true);
+      }catch{toast({title:"Microphone access denied"});}
+    }
+  };
+  const sendEmoji=(e:string)=>{
+    setEmojisOpen(false);
+    try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"emoji_react",emoji:e,sender:user?.user_metadata?.full_name||""})),{reliable:false});}catch{}
+    onSendEmoji?.(e);
+    if(user&&sessionId)supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:e,type:"reaction"});
+  };
+
+  const portal=typeof document!=="undefined"?document.body:null;
+  const SZ=isMobile?18:20;const IS={width:SZ,height:SZ};
+
+  /* ── Google Meet style ctrl button ── */
+  const Ctrl=({icon,label,onClick,active=false,danger=false,badge=0,bRef,tooltip}:{icon:React.ReactNode;label:string;onClick:()=>void;active?:boolean;danger?:boolean;badge?:number;bRef?:any;tooltip?:string})=>(
+    <div ref={bRef} style={{position:"relative",flexShrink:0}}>
+      <button
+        className={`gm-ctrl${danger?" danger":active?" active":""}`}
+        onClick={onClick} title={tooltip||label}
+        style={{background:"none",border:"none",cursor:"pointer",padding:0,outline:"none"}}
+      >
+        <div className="gm-ctrl-icon">
+          {icon}
+          {badge>0&&<span style={{position:"absolute",top:2,right:2,background:"#ea4335",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #202124"}}>{badge>9?"9+":badge}</span>}
+        </div>
+        {!isMobile&&<span className="gm-ctrl-label">{label}</span>}
+        <div className="gm-tooltip">{tooltip||label}</div>
+      </button>
+    </div>
+  );
+
+  /* ── Device list item ── */
+  const DeviceRow=({label,selected,onClick}:{label:string;selected:boolean;onClick:()=>void})=>(
+    <button onClick={onClick} className="gm-sheet-item" style={{color:selected?"#8ab4f8":"rgba(255,255,255,.75)"}}>
+      <div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${selected?"#8ab4f8":"rgba(255,255,255,.3)"}`,background:selected?"#8ab4f8":"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        {selected&&<div style={{width:5,height:5,borderRadius:"50%",background:"#202124"}}/>}
+      </div>
+      <span style={{fontSize:13,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{label}</span>
+    </button>
+  );
+
+  return(<>
+    {/* Click-away */}
+    {(audioPicker||videoPicker||moreOpen||emojisOpen)&&portal&&createPortal(
+      <div onClick={closeAll} style={{position:"fixed",inset:0,zIndex:9100}}/>,portal
+    )}
+
+    {/* Audio picker */}
+    {audioPicker&&portal&&createPortal(
+      <div className="gm-sheet" style={{bottom:audioPickerPos.bottom,left:(audioPickerPos as any).left}}>
+        <div style={{padding:"13px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",fontSize:12,fontWeight:600,color:"rgba(255,255,255,.6)",fontFamily:"'Google Sans',sans-serif",letterSpacing:.3}}>🎤 Microphone</div>
+        {audioDevices.map(d=>(<DeviceRow key={d.deviceId} label={d.label||"Microphone "+d.deviceId.slice(0,6)} selected={selAudio===d.deviceId} onClick={()=>switchAudio(d.deviceId)}/>))}
+        {audioDevices.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:14,textAlign:"center"}}>No microphones found</p>}
+      </div>,portal
+    )}
+
+    {/* Video picker */}
+    {videoPicker&&portal&&createPortal(
+      <div className="gm-sheet" style={{bottom:videoPickerPos.bottom,left:(videoPickerPos as any).left}}>
+        <div style={{padding:"13px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",fontSize:12,fontWeight:600,color:"rgba(255,255,255,.6)",fontFamily:"'Google Sans',sans-serif",letterSpacing:.3}}>📷 Camera</div>
+        {videoDevices.map(d=>(<DeviceRow key={d.deviceId} label={d.label||"Camera "+d.deviceId.slice(0,6)} selected={selVideo===d.deviceId} onClick={()=>switchVideo(d.deviceId)}/>))}
+        {videoDevices.length>1&&(
+          <button onClick={flipCamera} className="gm-sheet-item" style={{color:"rgba(255,255,255,.7)",borderTop:"1px solid rgba(255,255,255,.07)",marginTop:0}}>
+            <SwitchCamera style={{width:14,height:14,opacity:.6,flexShrink:0}}/><span style={{fontSize:13,fontFamily:"'Google Sans',sans-serif"}}>Flip (Front / Back)</span>
+          </button>
+        )}
+        {videoDevices.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:14,textAlign:"center"}}>No cameras found</p>}
+      </div>,portal
+    )}
+
+    {/* Emoji tray */}
+    {emojisOpen&&portal&&createPortal(
+      <div className="gm-emoji-tray" style={{bottom:84+(isMobile?4:12)}}>
+        {["👏","🤲","❤️","😂","🌟","👍","🙏","🔥"].map(e=>(
+          <button key={e} className="gm-emoji-btn" onClick={()=>sendEmoji(e)}>{e}</button>
+        ))}
+      </div>,portal
+    )}
+
+    {/* More menu */}
+    {moreOpen&&portal&&createPortal(
+      <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right}}>
+        {/* Layout */}
+        <div style={{padding:"10px 16px 8px",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
+          <div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,.35)",letterSpacing:.8,textTransform:"uppercase",marginBottom:8,fontFamily:"'Google Sans',sans-serif"}}>View</div>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+            {(["horizontal","grid","spotlight","focus"] as const).map(m=>(
+              <button key={m} onClick={()=>{onLayoutChange(m);setMoreOpen(false);}} style={{
+                padding:"5px 11px",borderRadius:20,border:"1px solid",fontSize:12,fontWeight:500,cursor:"pointer",
+                fontFamily:"'Google Sans',sans-serif",textTransform:"capitalize",
+                borderColor:layout===m?"#8ab4f8":"rgba(255,255,255,.12)",
+                background:layout===m?"rgba(138,180,248,.15)":"rgba(255,255,255,.04)",
+                color:layout===m?"#8ab4f8":"rgba(255,255,255,.5)",
+              }}>{m}</button>
+            ))}
+          </div>
+        </div>
+        {/* Participants */}
+        <button className="gm-more-item" onClick={()=>{onToggleParticipants();setMoreOpen(false);}}>
+          <Users style={{width:16,height:16,opacity:.7}}/> Participants
+          {liveCount>0&&<span style={{marginLeft:"auto",background:"rgba(138,180,248,.2)",color:"#8ab4f8",borderRadius:12,padding:"1px 8px",fontSize:11,fontWeight:600}}>{liveCount}</span>}
+        </button>
+        <button className="gm-more-item" onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}}>
+          <Smile style={{width:16,height:16,opacity:.7}}/> Reactions
+        </button>
+        <button className="gm-more-item" onClick={()=>{onToggleMaterials();setMoreOpen(false);}}>
+          <Eye style={{width:16,height:16,opacity:.7}}/> Materials
+        </button>
+        {isPrivileged&&<>
+          <button className="gm-more-item" onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} style={{color:groupReciteMode?"#34d399":"#e8eaed"}}>
+            <Volume2 style={{width:16,height:16}}/> {groupReciteMode?"End Group Recitation":"Group Recitation"}
+          </button>
+          {onLaunchQuiz&&<button className="gm-more-item" onClick={()=>{onLaunchQuiz();setMoreOpen(false);}} style={{color:"#fbbf24"}}>
+            <span style={{fontSize:16}}>📝</span> Live Quiz
+          </button>}
+          <button className="gm-more-item" onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{color:canStudentWriteProp?"#34d399":"#e8eaed"}}>
+            <PenTool style={{width:16,height:16}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
+          </button>
+          <button className="gm-more-item" onClick={async()=>{
+            await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
+            try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
+            toast({title:"🔇 All students muted"});setMoreOpen(false);
+          }} style={{color:"#fb923c"}}>
+            <MicOff style={{width:16,height:16}}/> Mute All Students
+          </button>
+        </>}
+        {!isPrivileged&&canStudentRecProp&&(
+          <button className="gm-more-item" onClick={()=>{toggleStuRecord();setMoreOpen(false);}} style={{color:stuRec?"#ef4444":"#e8eaed"}}>
+            <Circle style={{width:13,height:13,fill:stuRec?"#ef4444":"none"}}/> {stuRec?"Stop Recording":"Record Audio"}
+          </button>
+        )}
+        {onMinimize&&<button className="gm-more-item" onClick={()=>{onMinimize();setMoreOpen(false);}}>
+          <ChevronDown style={{width:16,height:16,opacity:.7}}/> Minimize
+        </button>}
+        <button className="gm-more-item" onClick={isPrivileged?onEndClass:onLeaveClass} style={{color:"#f87171"}}>
+          <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/> {isPrivileged?"End Class for All":"Leave Class"}
+        </button>
+      </div>,portal
+    )}
+
+    {/* ══ CONTROL BAR ══ */}
+    <div className="cv-bar gm-bar" style={{
+      height:isMobile?68:80,
+      background:"rgba(32,33,36,.97)",
+      backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
+      borderTop:"1px solid rgba(255,255,255,.06)",
+      display:"flex",alignItems:"center",
+      justifyContent:"space-between",
+      padding:`0 ${isMobile?12:24}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?12:24}px`,
+      flexShrink:0,gap:isMobile?8:12,
+    }}>
+
+      {/* LEFT — Mic + Cam with chevrons */}
+      <div style={{display:"flex",alignItems:"center",gap:isMobile?6:8,flexShrink:0}}>
+        {/* Mic group */}
+        <div ref={micBtnRef} className="gm-av-group">
+          <button className={`gm-av-main${micOn?"":" off"}`} onClick={toggleMic} title={micOn?"Mute microphone":"Unmute microphone"}>
+            {micOn?<Mic style={IS}/>:<MicOff style={IS}/>}
+          </button>
+          <button className={`gm-av-chevron${micOn?"":" off"}`} onClick={openAudioPicker} title="Microphone options">
+            <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
+          </button>
+        </div>
+        {/* Cam group */}
+        <div ref={camBtnRef} className="gm-av-group">
+          <button className={`gm-av-main${camOn?"":" off"}`} onClick={toggleCam} title={camOn?"Turn off camera":"Turn on camera"}>
+            {camOn?<Video style={IS}/>:<VideoOff style={IS}/>}
+          </button>
+          <button className={`gm-av-chevron${camOn?"":" off"}`} onClick={openVideoPicker} title="Camera options">
+            <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      {/* CENTER — action buttons */}
+      <div style={{display:"flex",alignItems:"center",gap:isMobile?4:8,flex:1,justifyContent:"center"}}>
+        {/* Whiteboard / Raise hand */}
+        {isPrivileged
+          ?<Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
+          :<Ctrl icon={<Hand style={{...IS,color:handUp?"#fbbf24":"#e8eaed"}}/>} label={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand} active={handUp} tooltip={handUp?"Lower hand":"Raise hand"}/>
+        }
+        {!isPrivileged&&canStudentWriteProp&&(
+          <Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
+        )}
+        {/* Chat */}
+        <Ctrl icon={<MessageCircle style={{...IS,color:"#e8eaed"}}/>} label="Chat" onClick={onToggleChat} badge={chatUnread} tooltip="Open chat"/>
+        {/* Emoji reactions */}
+        <Ctrl icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
+        {/* More */}
+        <Ctrl icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
+      </div>
+
+      {/* RIGHT — Leave */}
+      <button className="gm-leave" onClick={isPrivileged?onEndClass:onLeaveClass} style={{fontSize:isMobile?13:14,padding:isMobile?"0 14px":"0 22px",height:isMobile?44:48}}>
+        <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/>
+        {isPrivileged?"End":"Leave"}
+      </button>
+    </div>
+  </>);
+};
+const BottomBarBridge=(props:any)=>{const room=useRoomContext();const isMobile=useIsMobile();return<BottomBar {...props} room={room} isMobile={isMobile}/>;};
   const{user}=useAuth();
   const[micOn,setMicOn]=useState(false);
   const[camOn,setCamOn]=useState(false);
@@ -2159,102 +2749,6 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       </div>,portal
     )}
 
-    {/* ══ BAR ══ */}
-    <div className="cv-bar" style={{
-      height:isMobile?62:72,minHeight:isMobile?62:72,
-      background:"rgba(10,15,12,0.97)",
-      backdropFilter:"blur(24px)",WebkitBackdropFilter:"blur(24px)",
-      borderTop:"1px solid rgba(255,255,255,.07)",
-      display:"flex",alignItems:"center",
-      justifyContent:"space-between",
-      padding:`0 ${isMobile?10:18}px calc(${isMobile?2:6}px + env(safe-area-inset-bottom,0px)) ${isMobile?10:18}px`,
-      flexShrink:0,
-      boxShadow:"0 -2px 20px rgba(0,0,0,.6)",
-      gap:isMobile?6:10,
-    }}>
-      {/* LEFT — Mic + Cam with chevrons */}
-      <div style={{display:"flex",alignItems:"center",gap:isMobile?4:6,flexShrink:0}}>
-        {/* Mic group */}
-        <div ref={micBtnRef} style={{display:"flex",alignItems:"center",borderRadius:isMobile?24:26,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,.4)"}}>
-          <button onClick={toggleMic} title={micOn?"Mute mic":"Unmute mic"} style={{
-            width:BTN_W,height:BTN_H,border:"none",cursor:"pointer",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            background:micOn?"rgba(255,255,255,.12)":"#ea4335",
-            color:"#fff",transition:"background .15s",
-          }}
-            onMouseEnter={e=>(e.currentTarget.style.background=micOn?"rgba(255,255,255,.2)":"#c5352a")}
-            onMouseLeave={e=>(e.currentTarget.style.background=micOn?"rgba(255,255,255,.12)":"#ea4335")}
-          >
-            {micOn?<Mic style={IS}/>:<MicOff style={IS}/>}
-          </button>
-          <button onClick={openAudioPicker} title="Mic options" style={{
-            width:16,height:BTN_H,border:"none",cursor:"pointer",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            background:audioPicker?"rgba(255,255,255,.2)":micOn?"rgba(255,255,255,.06)":"rgba(234,67,53,.7)",
-            color:"rgba(255,255,255,.6)",transition:"background .15s",paddingRight:2,
-          }}>
-            <svg width="7" height="5" viewBox="0 0 7 5" fill="currentColor"><path d="M3.5 5L0 0h7z"/></svg>
-          </button>
-        </div>
-        {/* Cam group */}
-        <div ref={camBtnRef} style={{display:"flex",alignItems:"center",borderRadius:isMobile?24:26,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,.4)"}}>
-          <button onClick={toggleCam} title={camOn?"Stop camera":"Start camera"} style={{
-            width:BTN_W,height:BTN_H,border:"none",cursor:"pointer",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            background:camOn?"rgba(255,255,255,.12)":"#ea4335",
-            color:"#fff",transition:"background .15s",
-          }}
-            onMouseEnter={e=>(e.currentTarget.style.background=camOn?"rgba(255,255,255,.2)":"#c5352a")}
-            onMouseLeave={e=>(e.currentTarget.style.background=camOn?"rgba(255,255,255,.12)":"#ea4335")}
-          >
-            {camOn?<Video style={IS}/>:<VideoOff style={IS}/>}
-          </button>
-          <button onClick={openVideoPicker} title="Camera options" style={{
-            width:16,height:BTN_H,border:"none",cursor:"pointer",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            background:videoPicker?"rgba(255,255,255,.2)":camOn?"rgba(255,255,255,.06)":"rgba(234,67,53,.7)",
-            color:"rgba(255,255,255,.6)",transition:"background .15s",paddingRight:2,
-          }}>
-            <svg width="7" height="5" viewBox="0 0 7 5" fill="currentColor"><path d="M3.5 5L0 0h7z"/></svg>
-          </button>
-        </div>
-      </div>
-
-      {/* CENTER — action buttons */}
-      <div style={{display:"flex",alignItems:"center",gap:isMobile?6:8,flex:1,justifyContent:"center"}}>
-        {/* Hand / Whiteboard */}
-        {isPrivileged
-          ?<Btn active={whiteboardOpen} title="Whiteboard" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:whiteboardOpen?"#4ade80":"rgba(255,255,255,.9)"}}/></Btn>
-          :<Btn active={handUp} red={false} title={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand}><Hand style={{...IS,color:handUp?"#fbbf24":"rgba(255,255,255,.9)"}}/></Btn>
-        }
-        {!isPrivileged&&canStudentWriteProp&&(
-          <Btn active={whiteboardOpen} title="Whiteboard" onClick={onToggleWhiteboard}><PenTool style={{...IS,color:whiteboardOpen?"#4ade80":"rgba(255,255,255,.9)"}}/></Btn>
-        )}
-        {/* Chat */}
-        <Btn onClick={onToggleChat} badge={chatUnread} title="Chat"><MessageCircle style={{...IS,color:"rgba(255,255,255,.9)"}}/></Btn>
-        {/* More */}
-        <Btn bRef={moreBtnRef} active={moreOpen} title="More options" onClick={openMore}><MoreVertical style={{...IS,color:"rgba(255,255,255,.9)"}}/></Btn>
-      </div>
-
-      {/* RIGHT — End/Leave */}
-      <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{
-        height:BTN_H,padding:isMobile?"0 14px":"0 20px",
-        borderRadius:26,border:"none",cursor:"pointer",
-        background:"#ea4335",color:"#fff",
-        display:"flex",alignItems:"center",gap:6,
-        fontWeight:700,fontSize:isMobile?12:13,
-        boxShadow:"0 3px 14px rgba(234,67,53,.4)",
-        flexShrink:0,transition:"background .15s",
-      }}
-        onMouseEnter={e=>(e.currentTarget.style.background="#c5352a")}
-        onMouseLeave={e=>(e.currentTarget.style.background="#ea4335")}
-      >
-        <Phone style={{width:15,height:15,transform:"rotate(135deg)"}}/> {isPrivileged?"End":"Leave"}
-      </button>
-    </div>
-  </>);
-};
-const BottomBarBridge=(props:any)=>{const room=useRoomContext();const isMobile=useIsMobile();return<BottomBar {...props} room={room} isMobile={isMobile}/>;};
 
 
 /* ══ MAIN ══ */
@@ -2577,45 +3071,57 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   };
   const ParticipantCountBadge=()=>{
     const all=useParticipants();
-    useEffect(()=>{
-      if(all.length>participantCountRef.current)participantCountRef.current=all.length;
-    },[all.length]);
+    useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length]);
     if(all.length===0)return null;
     return(
-      <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(255,255,255,.07)",borderRadius:16,padding:"3px 10px",border:"1px solid rgba(255,255,255,.1)"}}>
-        <Users style={{width:10,height:10,color:"rgba(255,255,255,.45)"}}/>
-        <span style={{fontSize:11,color:"#fff",fontWeight:600}}>{all.length}</span>
+      <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0,cursor:"pointer"}} onClick={()=>setPartOpen(v=>!v)}>
+        <Users style={{width:12,height:12,opacity:.7}}/>
+        <span style={{fontSize:12,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{all.length}</span>
       </div>
     );
   };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   if(phase==="ended")return<ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={participantCountRef.current} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />;
   if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
-  if(loading)return(<div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:DARK}}><style>{CSS}</style><div style={{textAlign:"center"}}><div style={{width:52,height:52,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite",margin:"0 auto 16px"}}/><p style={{color:"rgba(255,255,255,.5)",fontSize:14}}>{t("Connecting…","جاري الاتصال…")}</p></div></div>);
-  if(error)return(
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:DARK}}>
+  if(loading)return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:"#202124"}}>
       <style>{CSS}</style>
-      <div style={{textAlign:"center",maxWidth:320,padding:28}}>
-        <div style={{width:64,height:64,borderRadius:"50%",background:"rgba(239,68,68,.12)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}><X style={{width:28,height:28,color:RED}}/></div>
-        <h2 style={{fontSize:20,fontWeight:700,color:"#fff",marginBottom:8}}>Connection Failed</h2>
-        <p style={{color:"rgba(255,255,255,.45)",fontSize:14,marginBottom:22}}>{error}</p>
-        <div style={{display:"flex",gap:10,justifyContent:"center"}}>
-          {/* Try Again: reset guard + counter, clear stale tokens, reconnect directly */}
+      <div style={{textAlign:"center"}}>
+        <div style={{width:56,height:56,border:"3px solid rgba(138,180,248,.2)",borderTopColor:"#8ab4f8",borderRadius:"50%",animation:"cv-spin .8s linear infinite",margin:"0 auto 20px"}}/>
+        <p style={{color:"rgba(255,255,255,.55)",fontSize:15,fontFamily:"'Google Sans',sans-serif",fontWeight:500}}>{t("Connecting…","جاري الاتصال…")}</p>
+      </div>
+    </div>
+  );
+  if(error)return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:"#202124"}}>
+      <style>{CSS}</style>
+      <div style={{textAlign:"center",maxWidth:340,padding:32}}>
+        <div style={{width:68,height:68,borderRadius:"50%",background:"rgba(234,67,53,.1)",border:"1px solid rgba(234,67,53,.2)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px"}}>
+          <X style={{width:28,height:28,color:"#ea4335"}}/>
+        </div>
+        <h2 style={{fontSize:22,fontWeight:500,color:"#e8eaed",marginBottom:10,fontFamily:"'Google Sans Display',sans-serif"}}>Connection failed</h2>
+        <p style={{color:"rgba(255,255,255,.45)",fontSize:14,marginBottom:28,lineHeight:1.6,fontFamily:"'Google Sans',sans-serif"}}>{error}</p>
+        <div style={{display:"flex",gap:12,justifyContent:"center"}}>
           <button onClick={()=>{
-            intentionalLeaveRef.current=false;
-            setAutoReconnectCount(0);
-            setError(null);
-            setToken(null);
-            setWsUrl(null);
+            intentionalLeaveRef.current=false;setAutoReconnectCount(0);
+            setError(null);setToken(null);setWsUrl(null);
             connect(isPrivileged?"start_session":"join");
-          }} style={{padding:"10px 22px",borderRadius:10,background:TEAL,border:"none",color:"#fff",fontSize:14,cursor:"pointer",fontWeight:600}}>Try Again</button>
-          <button onClick={onLeave} style={{padding:"10px 22px",borderRadius:10,background:GLASSB,border:"1px solid rgba(255,255,255,.12)",color:"#fff",fontSize:14,cursor:"pointer"}}>Go Back</button>
+          }} style={{
+            padding:"10px 24px",borderRadius:24,background:"#8ab4f8",border:"none",
+            color:"#202124",fontSize:14,cursor:"pointer",fontWeight:600,
+            fontFamily:"'Google Sans',sans-serif",
+          }}>Try again</button>
+          <button onClick={onLeave} style={{
+            padding:"10px 24px",borderRadius:24,background:"rgba(255,255,255,.08)",
+            border:"1px solid rgba(255,255,255,.15)",color:"#e8eaed",fontSize:14,
+            cursor:"pointer",fontFamily:"'Google Sans',sans-serif",
+          }}>Go back</button>
         </div>
       </div>
     </div>
   );
   return(
-    <div data-classroom-root style={{height:"100dvh",display:"flex",flexDirection:"column",background:DARK,overflow:"hidden"}}>
+    <div data-classroom-root style={{height:"100dvh",display:"flex",flexDirection:"column",background:"#202124",overflow:"hidden"}}>
       <style>{CSS}</style>
       {token&&wsUrl&&(
         // key={roomKey} forces a full remount whenever autoReconnect bumps the key,
@@ -2635,37 +3141,54 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           />
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
-          {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(0,0,0,.82)",backdropFilter:"blur(8px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}><div style={{width:48,height:48,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/><p style={{color:"#fff",fontSize:15,fontWeight:700}}>Reconnecting…</p><p style={{color:"rgba(255,255,255,.4)",fontSize:13}}>Please stay on the page</p></div>}
-          {/* Top bar */}
-          <div style={{height:52,background:GLASS,backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 10px 0 12px",flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.05)",gap:6}}>
+          {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(32,33,36,.92)",backdropFilter:"blur(12px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
+            <div style={{width:52,height:52,border:"3px solid rgba(138,180,248,.2)",borderTopColor:"#8ab4f8",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/>
+            <p style={{color:"#e8eaed",fontSize:16,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>Reconnecting…</p>
+            <p style={{color:"rgba(255,255,255,.4)",fontSize:13,fontFamily:"'Google Sans',sans-serif"}}>Please stay on the page</p>
+          </div>}
+          {/* ══ GOOGLE MEET STYLE TOP BAR ══ */}
+          <div style={{
+            height:56,
+            background:"rgba(32,33,36,.97)",
+            backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
+            display:"flex",alignItems:"center",justifyContent:"space-between",
+            padding:"0 14px 0 16px",flexShrink:0,
+            borderBottom:"1px solid rgba(255,255,255,.05)",gap:8,
+          }}>
+            {/* LEFT — meeting info */}
             <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,background:"rgba(34,197,94,.12)",borderRadius:20,padding:"4px 10px",border:"1px solid rgba(34,197,94,.25)",flexShrink:0}}>
-                <span style={{width:7,height:7,borderRadius:"50%",background:GREEN,display:"inline-block",animation:"pip-pulse 1.8s ease-in-out infinite"}}/>
-                <span style={{fontSize:12,color:"#fff",fontWeight:600,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{subject.title}</span>
+              {/* Live dot + subject */}
+              <div className="gm-badge" style={{background:"rgba(234,67,53,.12)",border:"1px solid rgba(234,67,53,.25)",color:"#fff",flexShrink:0}}>
+                <span style={{width:7,height:7,borderRadius:"50%",background:"#ea4335",display:"inline-block",animation:"pip-pulse 1.8s ease-in-out infinite"}}/>
+                <span style={{fontSize:13,fontWeight:500,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{subject.title}</span>
               </div>
-              <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(239,68,68,.12)",borderRadius:16,padding:"3px 8px",border:"1px solid rgba(239,68,68,.25)",flexShrink:0}}>
-                <Circle style={{width:5,height:5,fill:RED,color:RED}}/><span style={{fontSize:11,color:"#fca5a5",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmtT(duration)}</span>
+              {/* Timer */}
+              <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0}}>
+                <Circle style={{width:6,height:6,fill:"#ea4335",color:"#ea4335",animation:"rec-pulse 1.4s ease-in-out infinite"}}/>
+                <span style={{fontSize:12,fontWeight:500,fontVariantNumeric:"tabular-nums",fontFamily:"'Google Sans',sans-serif"}}>{fmtT(duration)}</span>
               </div>
-              <ParticipantCountBadge />
+              {/* Participant count */}
+              <ParticipantCountBadge/>
+              {/* Permission badges */}
               {!isPrivileged&&canStudentWrite&&(
-                <div title="You can write on the board" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(52,211,153,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(52,211,153,.3)",flexShrink:0,cursor:"pointer"}} onClick={()=>setWbOpen(v=>!v)}>
-                  <PenTool style={{width:11,height:11,color:"#34d399"}}/>
-                  <span style={{fontSize:10,color:"#34d399",fontWeight:700}}>{isMobile?"Board":"Write"}</span>
+                <div className="gm-badge" title="You can write on the board" style={{background:"rgba(52,211,153,.1)",border:"1px solid rgba(52,211,153,.25)",color:"#34d399",cursor:"pointer",flexShrink:0}} onClick={()=>setWbOpen(v=>!v)}>
+                  <PenTool style={{width:11,height:11}}/><span style={{fontSize:11,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{isMobile?"Board":"Write"}</span>
                 </div>
               )}
               {!isPrivileged&&canStudentRec&&(
-                <div title="You can record" style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,.15)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(239,68,68,.3)",flexShrink:0}}>
-                  <Circle style={{width:9,height:9,fill:RED,color:RED,animation:"rec-pulse 1.4s ease-in-out infinite"}}/>
-                  <span style={{fontSize:10,color:"#fca5a5",fontWeight:700}}>Record</span>
+                <div className="gm-badge" style={{background:"rgba(234,67,53,.1)",border:"1px solid rgba(234,67,53,.25)",color:"#fca5a5",flexShrink:0}}>
+                  <Circle style={{width:8,height:8,fill:"#ea4335",color:"#ea4335",animation:"rec-pulse 1.4s ease-in-out infinite"}}/>
+                  <span style={{fontSize:11,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>Record</span>
                 </div>
               )}
               {isPrivileged&&raisedHands.length>0&&(
-                <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.18)",borderRadius:14,padding:"3px 8px",border:"1px solid rgba(251,191,36,.4)",flexShrink:0}}>
+                <div className="gm-badge" style={{background:"rgba(251,191,36,.12)",border:"1px solid rgba(251,191,36,.3)",color:"#fbbf24",flexShrink:0}}>
                   <span style={{fontSize:13,animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>
-                  <span style={{fontSize:11,color:"#fbbf24",fontWeight:700}}>{raisedHands.length}</span>
+                  <span style={{fontSize:12,fontWeight:600,fontFamily:"'Google Sans',sans-serif"}}>{raisedHands.length}</span>
                 </div>
               )}
             </div>
+            {/* RIGHT — layout switcher + record */}
             <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
               <LayoutSwitcher layout={layout} onChange={setLayout}/>
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
@@ -2683,10 +3206,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
             {chatOpen&&!isMobile&&(
-              <div style={{width:320,background:"#13181f",borderLeft:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",flexShrink:0,animation:"slide-up .2s ease"}}>
-                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
-                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{flex:1,padding:"12px 4px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}
-                  <button onClick={()=>setChatOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.3)",cursor:"pointer",padding:"0 12px"}}><X style={{width:16,height:16}}/></button>
+              <div className="gm-sidebar">
+                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0,background:"rgba(32,33,36,.97)"}}>
+                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(
+                    <button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{
+                      flex:1,padding:"14px 4px",background:"none",border:"none",
+                      color:sideTab===k?"#8ab4f8":"rgba(255,255,255,.45)",
+                      fontSize:13,fontWeight:sideTab===k?600:400,
+                      borderBottom:sideTab===k?"2px solid #8ab4f8":"2px solid transparent",
+                      cursor:"pointer",fontFamily:"'Google Sans',sans-serif",transition:"color .15s",
+                    }}>{ic} {lb}</button>
+                  ))}
+                  <button onClick={()=>setChatOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.3)",cursor:"pointer",padding:"0 14px",flexShrink:0}}>
+                    <X style={{width:16,height:16}}/>
+                  </button>
                 </div>
                 <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
               </div>
@@ -2708,17 +3241,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       )}
       {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
       {showEnd&&createPortal(
-        <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.72)",backdropFilter:"blur(6px)"}} onClick={()=>setShowEnd(false)}>
-          <div style={{background:"#17202a",borderRadius:20,padding:"28px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
-            <div style={{width:52,height:52,borderRadius:16,background:"rgba(239,68,68,.15)",border:"1.5px solid rgba(239,68,68,.35)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
-              <Phone style={{width:22,height:22,color:"#ef4444",transform:"rotate(135deg)"}}/>
+        <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}} onClick={()=>setShowEnd(false)}>
+          <div style={{background:"#2D2E30",borderRadius:20,padding:"32px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.08)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{width:56,height:56,borderRadius:"50%",background:"rgba(234,67,53,.12)",border:"1px solid rgba(234,67,53,.2)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 18px"}}>
+              <Phone style={{width:22,height:22,color:"#ea4335",transform:"rotate(135deg)"}}/>
             </div>
-            <h2 style={{textAlign:"center",fontSize:17,fontWeight:800,color:"#fff",marginBottom:8}}>{t("End class for everyone?","إنهاء الحصة للجميع؟")}</h2>
-            <p style={{textAlign:"center",fontSize:13,color:"rgba(255,255,255,.45)",marginBottom:24}}>{t("This will disconnect all participants.","سيتم قطع الاتصال عن جميع المشاركين.")}</p>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              <button onClick={endSession} style={{width:"100%",padding:"13px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#dc2626,#ef4444)",color:"#fff",fontSize:14,fontWeight:800,cursor:"pointer",boxShadow:"0 4px 16px rgba(239,68,68,.45)"}}>{t("End for All","إنهاء للجميع")}</button>
-              <button onClick={()=>{setShowEnd(false);leaveSession();}} style={{width:"100%",padding:"12px",borderRadius:12,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.07)",color:"rgba(255,255,255,.7)",fontSize:13,fontWeight:600,cursor:"pointer"}}>{t("Leave but Keep Open","غادر لكن أبقِ الحصة")}</button>
-              <button onClick={()=>setShowEnd(false)} style={{width:"100%",padding:"12px",borderRadius:12,border:"1px solid rgba(255,255,255,.08)",background:"transparent",color:"rgba(255,255,255,.4)",fontSize:13,cursor:"pointer"}}>{t("Cancel","إلغاء")}</button>
+            <h2 style={{textAlign:"center",fontSize:18,fontWeight:500,color:"#e8eaed",marginBottom:8,fontFamily:"'Google Sans Display',sans-serif"}}>{t("End class for everyone?","إنهاء الحصة للجميع؟")}</h2>
+            <p style={{textAlign:"center",fontSize:14,color:"rgba(255,255,255,.45)",marginBottom:28,lineHeight:1.6,fontFamily:"'Google Sans',sans-serif"}}>{t("This will disconnect all participants.","سيتم قطع الاتصال عن جميع المشاركين.")}</p>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button onClick={endSession} style={{width:"100%",padding:"13px",borderRadius:24,border:"none",background:"#ea4335",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Google Sans',sans-serif",boxShadow:"0 2px 12px rgba(234,67,53,.4)"}}>{t("End for all","إنهاء للجميع")}</button>
+              <button onClick={()=>{setShowEnd(false);leaveSession();}} style={{width:"100%",padding:"12px",borderRadius:24,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.8)",fontSize:14,fontWeight:400,cursor:"pointer",fontFamily:"'Google Sans',sans-serif"}}>{t("Leave but keep open","غادر لكن أبقِ الحصة")}</button>
+              <button onClick={()=>setShowEnd(false)} style={{width:"100%",padding:"12px",borderRadius:24,border:"none",background:"transparent",color:"rgba(255,255,255,.4)",fontSize:14,cursor:"pointer",fontFamily:"'Google Sans',sans-serif"}}>{t("Cancel","إلغاء")}</button>
             </div>
           </div>
         </div>,
