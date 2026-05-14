@@ -126,6 +126,11 @@ const CSS = `
     transition:background .15s ease, transform .12s ease;
     background:rgba(255,255,255,.1);
   }
+  @media (max-width:767px) {
+    .gm-ctrl-icon { width:42px; height:42px; }
+    .gm-av-main  { width:42px; height:42px; }
+    .gm-av-chevron { height:42px; }
+  }
   .gm-ctrl:hover .gm-ctrl-icon { background:rgba(255,255,255,.18); transform:scale(1.06); }
   .gm-ctrl.danger .gm-ctrl-icon { background:#ea4335; }
   .gm-ctrl.danger:hover .gm-ctrl-icon { background:#c5352a; }
@@ -134,9 +139,13 @@ const CSS = `
     font-size:10px; font-weight:500; color:rgba(255,255,255,.7);
     white-space:nowrap; letter-spacing:.3px;
     font-family:'Google Sans',sans-serif;
+    display:none;
+  }
+  @media (min-width:768px) {
+    .gm-ctrl-label { display:block; }
   }
 
-  /* Tooltip */
+  /* Tooltip — desktop hover only, never on touch */
   .gm-tooltip {
     position:absolute; bottom:calc(100% + 10px); left:50%;
     transform:translateX(-50%);
@@ -147,10 +156,12 @@ const CSS = `
     font-family:'Google Sans',sans-serif;
     box-shadow:0 2px 12px rgba(0,0,0,.4);
     border:1px solid rgba(255,255,255,.06);
-    animation:tooltip-in .14s ease forwards;
     z-index:9999;
+    transition:opacity .12s ease;
   }
-  .gm-ctrl:hover .gm-tooltip { opacity:1; }
+  @media (hover:hover) and (pointer:fine) {
+    .gm-ctrl:hover .gm-tooltip { opacity:1; }
+  }
 
   /* Meet-style name badge */
   .gm-name {
@@ -2347,14 +2358,14 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
 
     {/* ══ CONTROL BAR ══ */}
     <div className="cv-bar gm-bar" style={{
-      height:isMobile?68:80,
+      height:isMobile?64:80,
       background:"rgba(32,33,36,.97)",
       backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
       borderTop:"1px solid rgba(255,255,255,.06)",
       display:"flex",alignItems:"center",
       justifyContent:"space-between",
-      padding:`0 ${isMobile?12:24}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?12:24}px`,
-      flexShrink:0,gap:isMobile?8:12,
+      padding:`0 ${isMobile?10:24}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?10:24}px`,
+      flexShrink:0,gap:isMobile?6:12,
     }}>
 
       {/* LEFT — Mic + Cam with chevrons */}
