@@ -1927,18 +1927,27 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
         style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none",background:"#202124"}}
       />
 
-      {/* Camera-off avatar — grey silhouette like GuestClassroom */}
+      {/* Camera-off avatar — exact silhouette match to GuestClassroom/Image 2 */}
       {!hasVideo&&(
-        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#1a1a1a"}}>
-          {/* Subtle dot grid */}
-          <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at center,rgba(255,255,255,.025) 1px,transparent 1px)",backgroundSize:"28px 28px",pointerEvents:"none"}}/>
-          {/* Grey silhouette SVG — exactly like Image 2 */}
-          <svg viewBox="0 0 120 140" style={{width:size==="large"?"45%":size==="small"?"60%":"50%",maxWidth:160,opacity:.55}} fill="none" xmlns="http://www.w3.org/2000/svg">
-            <ellipse cx="60" cy="42" rx="32" ry="32" fill="#6b7280"/>
-            <path d="M4 130 C4 95 20 80 60 80 C100 80 116 95 116 130" fill="#6b7280" stroke="none"/>
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#111111"}}>
+          {/* Exact silhouette from Image 2 — light grey, large, fills tile */}
+          <svg
+            viewBox="0 0 200 220"
+            style={{
+              width:size==="small"?"65%":"72%",
+              height:size==="small"?"65%":"72%",
+              maxWidth:220,maxHeight:220,
+            }}
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            {/* Head — large circle, same proportions as Image 2 */}
+            <circle cx="100" cy="72" r="52" fill="#6e7681"/>
+            {/* Shoulders/body — wide rounded trapezoid matching Image 2 */}
+            <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#6e7681"/>
           </svg>
           {isSpeaking&&(
-            <div className="gm-wave" style={{position:"absolute",bottom:48}}>
+            <div className="gm-wave" style={{position:"absolute",bottom:52}}>
               {[0,1,2,3].map(i=>(
                 <div key={i} className="gm-wave-bar" style={{height:14,animationDelay:`${i*.1}s`}}/>
               ))}
@@ -1952,43 +1961,21 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
         <div style={{position:"absolute",inset:0,border:"3px solid #1a73e8",borderRadius:"inherit",pointerEvents:"none",transition:"opacity .2s"}}/>
       )}
 
-      {/* Name bar — bottom-left pill, never overlaps content */}
+      {/* Name bar — single pill bottom-left, exactly like Image 2 */}
       <div style={{
-        position:"absolute",bottom:8,left:8,right:8,
-        display:"flex",alignItems:"center",justifyContent:"space-between",
-        pointerEvents:"none",
+        position:"absolute",bottom:8,left:8,
+        display:"inline-flex",alignItems:"center",gap:5,
+        background:"rgba(0,0,0,.6)",backdropFilter:"blur(6px)",
+        borderRadius:20,padding:"5px 12px",
+        maxWidth:"calc(100% - 16px)",pointerEvents:"none",
       }}>
-        <div style={{
-          display:"inline-flex",alignItems:"center",gap:6,
-          background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)",
-          borderRadius:20,padding:"5px 10px",maxWidth:"75%",
-        }}>
-          {!micEnabled&&<MicOff style={{width:12,height:12,color:"rgba(255,255,255,.7)",flexShrink:0}}/>}
-          {isSpeaking&&hasVideo&&(
-            <div className="gm-wave" style={{flexShrink:0}}>
-              {[0,1,2].map(i=>(
-                <div key={i} className="gm-wave-bar" style={{height:10,animationDelay:`${i*.12}s`}}/>
-              ))}
-            </div>
-          )}
-          <span style={{
-            fontSize:12,fontWeight:500,color:"#fff",
-            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
-            fontFamily:"'Google Sans',sans-serif",
-          }}>{name}{isLocal?" (You)":""}</span>
-        </div>
-        {/* Mic status dot — right side */}
-        <div style={{
-          width:28,height:28,borderRadius:"50%",flexShrink:0,
-          background:micEnabled?"rgba(0,0,0,.45)":"rgba(234,67,53,.8)",
-          display:"flex",alignItems:"center",justifyContent:"center",
-          backdropFilter:"blur(4px)",
-        }}>
-          {micEnabled
-            ?<Mic style={{width:13,height:13,color:"#fff"}}/>
-            :<MicOff style={{width:13,height:13,color:"#fff"}}/>
-          }
-        </div>
+        <MicOff style={{width:13,height:13,color:"rgba(255,255,255,.75)",flexShrink:0,display:micEnabled?"none":"block"}}/>
+        {micEnabled&&<Mic style={{width:13,height:13,color:"rgba(255,255,255,.75)",flexShrink:0}}/>}
+        <span style={{
+          fontSize:13,fontWeight:400,color:"#fff",
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
+          fontFamily:"'Google Sans',sans-serif",
+        }}>{name}{isLocal?" (You)":""}</span>
       </div>
     </div>
   );
