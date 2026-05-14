@@ -2752,7 +2752,7 @@ const BottomBarBridge=(props:any)=>{const room=useRoomContext();const isMobile=u
 
 
 /* ══ MAIN ══ */
-/* ══ ROOM → CONTEXT BRIDGE ══
+/* ══ ROOM - CONTEXT BRIDGE ══
    Lives INSIDE LiveKitRoom. Always mounted regardless of phase.
    Registers reliable mic/cam toggle functions into LiveClassContext
    so the GlobalClassroomOverlay pill can call them even when minimized.
