@@ -163,20 +163,6 @@ const CSS = `
     .gm-ctrl:hover .gm-tooltip { opacity:1; }
   }
 
-  /* Meet-style name badge */
-  .gm-name {
-    position:absolute; bottom:0; left:0; right:0;
-    padding:24px 12px 8px;
-    background:linear-gradient(transparent,rgba(0,0,0,.7));
-    display:flex; align-items:center; gap:6px;
-  }
-  .gm-name-text {
-    font-size:13px; font-weight:500; color:#fff;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1;
-    font-family:'Google Sans',sans-serif;
-    text-shadow:0 1px 3px rgba(0,0,0,.5);
-  }
-
   /* Speaking waveform */
   .gm-wave { display:flex; align-items:center; gap:2px; height:14px; }
   .gm-wave-bar {
@@ -1925,11 +1911,8 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
   },[participant,attachVideo,room,isLocal]);
 
   const name=participant.name||participant.identity||"User";
-  const initials=name.split(" ").map((w:string)=>w[0]||"").join("").slice(0,2).toUpperCase()||"?";
-
-  // Avatar size tiers
+  // avatarSz/avatarFs kept for speaking wave sizing only
   const avatarSz = size==="large" ? 80 : size==="small" ? 40 : 56;
-  const avatarFs = size==="large" ? 30 : size==="small" ? 16 : 20;
 
   // Speaking ring color — Google Meet blue
   const speakBorder = isSpeaking ? "2px solid #1a73e8" : "2px solid transparent";
@@ -1944,23 +1927,20 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
         style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none",background:"#202124"}}
       />
 
-      {/* Camera-off avatar — Google Meet dark card */}
+      {/* Camera-off avatar — grey silhouette like GuestClassroom */}
       {!hasVideo&&(
-        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#2D2E30",flexDirection:"column",gap:12}}>
-          {/* Subtle grid bg like Google Meet */}
-          <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at center,rgba(255,255,255,.03) 1px,transparent 1px)",backgroundSize:"28px 28px",pointerEvents:"none"}}/>
-          <div
-            className="gm-avatar"
-            style={{
-              width:avatarSz,height:avatarSz,fontSize:avatarFs,
-              boxShadow:isSpeaking?"0 0 0 3px #1a73e8,0 0 24px rgba(26,115,232,.3)":"0 4px 20px rgba(0,0,0,.4)",
-              transition:"box-shadow .2s",
-            }}
-          >{initials}</div>
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#1a1a1a"}}>
+          {/* Subtle dot grid */}
+          <div style={{position:"absolute",inset:0,backgroundImage:"radial-gradient(circle at center,rgba(255,255,255,.025) 1px,transparent 1px)",backgroundSize:"28px 28px",pointerEvents:"none"}}/>
+          {/* Grey silhouette SVG — exactly like Image 2 */}
+          <svg viewBox="0 0 120 140" style={{width:size==="large"?"45%":size==="small"?"60%":"50%",maxWidth:160,opacity:.55}} fill="none" xmlns="http://www.w3.org/2000/svg">
+            <ellipse cx="60" cy="42" rx="32" ry="32" fill="#6b7280"/>
+            <path d="M4 130 C4 95 20 80 60 80 C100 80 116 95 116 130" fill="#6b7280" stroke="none"/>
+          </svg>
           {isSpeaking&&(
-            <div className="gm-wave">
+            <div className="gm-wave" style={{position:"absolute",bottom:48}}>
               {[0,1,2,3].map(i=>(
-                <div key={i} className="gm-wave-bar" style={{height:14,animationDelay:`${i*.1}s`,animationDuration:".6s`"}}/>
+                <div key={i} className="gm-wave-bar" style={{height:14,animationDelay:`${i*.1}s`}}/>
               ))}
             </div>
           )}
@@ -1972,26 +1952,41 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
         <div style={{position:"absolute",inset:0,border:"3px solid #1a73e8",borderRadius:"inherit",pointerEvents:"none",transition:"opacity .2s"}}/>
       )}
 
-      {/* Name bar */}
-      <div className="gm-name">
-        {isSpeaking&&hasVideo&&(
-          <div className="gm-wave" style={{marginRight:4}}>
-            {[0,1,2].map(i=>(
-              <div key={i} className="gm-wave-bar" style={{height:11,animationDelay:`${i*.12}s`}}/>
-            ))}
-          </div>
-        )}
-        <span className="gm-name-text">{name}{isLocal?" (You)":""}</span>
-        {/* Mic indicator */}
+      {/* Name bar — bottom-left pill, never overlaps content */}
+      <div style={{
+        position:"absolute",bottom:8,left:8,right:8,
+        display:"flex",alignItems:"center",justifyContent:"space-between",
+        pointerEvents:"none",
+      }}>
         <div style={{
-          width:24,height:24,borderRadius:"50%",flexShrink:0,
-          background:micEnabled?"rgba(0,0,0,.4)":"rgba(234,67,53,.85)",
+          display:"inline-flex",alignItems:"center",gap:6,
+          background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)",
+          borderRadius:20,padding:"5px 10px",maxWidth:"75%",
+        }}>
+          {!micEnabled&&<MicOff style={{width:12,height:12,color:"rgba(255,255,255,.7)",flexShrink:0}}/>}
+          {isSpeaking&&hasVideo&&(
+            <div className="gm-wave" style={{flexShrink:0}}>
+              {[0,1,2].map(i=>(
+                <div key={i} className="gm-wave-bar" style={{height:10,animationDelay:`${i*.12}s`}}/>
+              ))}
+            </div>
+          )}
+          <span style={{
+            fontSize:12,fontWeight:500,color:"#fff",
+            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
+            fontFamily:"'Google Sans',sans-serif",
+          }}>{name}{isLocal?" (You)":""}</span>
+        </div>
+        {/* Mic status dot — right side */}
+        <div style={{
+          width:28,height:28,borderRadius:"50%",flexShrink:0,
+          background:micEnabled?"rgba(0,0,0,.45)":"rgba(234,67,53,.8)",
           display:"flex",alignItems:"center",justifyContent:"center",
           backdropFilter:"blur(4px)",
         }}>
           {micEnabled
-            ?<Mic style={{width:12,height:12,color:"#fff"}}/>
-            :<MicOff style={{width:12,height:12,color:"#fff"}}/>
+            ?<Mic style={{width:13,height:13,color:"#fff"}}/>
+            :<MicOff style={{width:13,height:13,color:"#fff"}}/>
           }
         </div>
       </div>
@@ -2298,28 +2293,61 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     {/* More menu */}
     {moreOpen&&portal&&createPortal(
       <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right}}>
-        {/* Layout */}
-        <div style={{padding:"10px 16px 8px",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
-          <div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,.35)",letterSpacing:.8,textTransform:"uppercase",marginBottom:8,fontFamily:"'Google Sans',sans-serif"}}>View</div>
-          <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+        {/* Mobile-only: layout, hand/board, emoji at top */}
+        {isMobile&&<>
+          {/* Layout picker (mobile only — hidden from top bar) */}
+          <div style={{padding:"10px 16px 8px",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
+            <div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,.35)",letterSpacing:.8,textTransform:"uppercase" as const,marginBottom:8,fontFamily:"'Google Sans',sans-serif"}}>View</div>
+            <div style={{display:"flex",gap:5,flexWrap:"wrap" as const}}>
+              {(["horizontal","grid","spotlight","focus"] as const).map(m=>(
+                <button key={m} onClick={()=>{onLayoutChange(m);setMoreOpen(false);}} style={{
+                  padding:"5px 11px",borderRadius:20,border:"1px solid",fontSize:12,fontWeight:500,cursor:"pointer",
+                  fontFamily:"'Google Sans',sans-serif",textTransform:"capitalize" as const,
+                  borderColor:layout===m?"#8ab4f8":"rgba(255,255,255,.12)",
+                  background:layout===m?"rgba(138,180,248,.15)":"rgba(255,255,255,.04)",
+                  color:layout===m?"#8ab4f8":"rgba(255,255,255,.5)",
+                }}>{m}</button>
+              ))}
+            </div>
+          </div>
+          {/* Hand raise / Board */}
+          {isPrivileged
+            ?<button className="gm-more-item" onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} style={{color:whiteboardOpen?"#34d399":"#e8eaed"}}>
+              <PenTool style={{width:16,height:16}}/> {whiteboardOpen?"Close Board":"Whiteboard"}
+            </button>
+            :<button className="gm-more-item" onClick={()=>{toggleHand();setMoreOpen(false);}} style={{color:handUp?"#fbbf24":"#e8eaed"}}>
+              <Hand style={{width:16,height:16}}/> {handUp?"Lower Hand":"Raise Hand"}
+            </button>
+          }
+          {!isPrivileged&&canStudentWriteProp&&(
+            <button className="gm-more-item" onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} style={{color:whiteboardOpen?"#34d399":"#e8eaed"}}>
+              <PenTool style={{width:16,height:16}}/> {whiteboardOpen?"Close Board":"Whiteboard"}
+            </button>
+          )}
+          {/* Reactions */}
+          <button className="gm-more-item" onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}}>
+            <Smile style={{width:16,height:16,opacity:.7}}/> Send a Reaction
+          </button>
+        </>}
+        {/* Desktop: layout */}
+        {!isMobile&&<div style={{padding:"10px 16px 8px",borderBottom:"1px solid rgba(255,255,255,.05)"}}>
+          <div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,.35)",letterSpacing:.8,textTransform:"uppercase" as const,marginBottom:8,fontFamily:"'Google Sans',sans-serif"}}>View</div>
+          <div style={{display:"flex",gap:5,flexWrap:"wrap" as const}}>
             {(["horizontal","grid","spotlight","focus"] as const).map(m=>(
               <button key={m} onClick={()=>{onLayoutChange(m);setMoreOpen(false);}} style={{
                 padding:"5px 11px",borderRadius:20,border:"1px solid",fontSize:12,fontWeight:500,cursor:"pointer",
-                fontFamily:"'Google Sans',sans-serif",textTransform:"capitalize",
+                fontFamily:"'Google Sans',sans-serif",textTransform:"capitalize" as const,
                 borderColor:layout===m?"#8ab4f8":"rgba(255,255,255,.12)",
                 background:layout===m?"rgba(138,180,248,.15)":"rgba(255,255,255,.04)",
                 color:layout===m?"#8ab4f8":"rgba(255,255,255,.5)",
               }}>{m}</button>
             ))}
           </div>
-        </div>
+        </div>}
         {/* Participants */}
         <button className="gm-more-item" onClick={()=>{onToggleParticipants();setMoreOpen(false);}}>
           <Users style={{width:16,height:16,opacity:.7}}/> Participants
           {liveCount>0&&<span style={{marginLeft:"auto",background:"rgba(138,180,248,.2)",color:"#8ab4f8",borderRadius:12,padding:"1px 8px",fontSize:11,fontWeight:600}}>{liveCount}</span>}
-        </button>
-        <button className="gm-more-item" onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}}>
-          <Smile style={{width:16,height:16,opacity:.7}}/> Reactions
         </button>
         <button className="gm-more-item" onClick={()=>{onToggleMaterials();setMoreOpen(false);}}>
           <Eye style={{width:16,height:16,opacity:.7}}/> Materials
@@ -2363,56 +2391,125 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
       borderTop:"1px solid rgba(255,255,255,.06)",
       display:"flex",alignItems:"center",
-      justifyContent:"space-between",
-      padding:`0 ${isMobile?10:24}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?10:24}px`,
-      flexShrink:0,gap:isMobile?6:12,
+      justifyContent:isMobile?"space-between":"space-between",
+      padding:`0 ${isMobile?12:24}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?12:24}px`,
+      flexShrink:0,gap:isMobile?8:12,
     }}>
 
-      {/* LEFT — Mic + Cam with chevrons */}
-      <div style={{display:"flex",alignItems:"center",gap:isMobile?6:8,flexShrink:0}}>
-        {/* Mic group */}
-        <div ref={micBtnRef} className="gm-av-group">
-          <button className={`gm-av-main${micOn?"":" off"}`} onClick={toggleMic} title={micOn?"Mute microphone":"Unmute microphone"}>
-            {micOn?<Mic style={IS}/>:<MicOff style={IS}/>}
-          </button>
-          <button className={`gm-av-chevron${micOn?"":" off"}`} onClick={openAudioPicker} title="Microphone options">
-            <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
-          </button>
-        </div>
-        {/* Cam group */}
-        <div ref={camBtnRef} className="gm-av-group">
-          <button className={`gm-av-main${camOn?"":" off"}`} onClick={toggleCam} title={camOn?"Turn off camera":"Turn on camera"}>
-            {camOn?<Video style={IS}/>:<VideoOff style={IS}/>}
-          </button>
-          <button className={`gm-av-chevron${camOn?"":" off"}`} onClick={openVideoPicker} title="Camera options">
-            <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
-          </button>
-        </div>
-      </div>
+      {isMobile ? (
+        /* ── MOBILE: exactly 5 items — mic▼  cam▼  chat  ⋮  leave ── */
+        <>
+          {/* Mic group */}
+          <div ref={micBtnRef} style={{display:"flex",alignItems:"center",flexShrink:0}}>
+            <button onClick={toggleMic} style={{
+              width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              background:micOn?"rgba(255,255,255,.12)":"rgba(255,255,255,.12)",
+              color:"#fff",
+            }}>
+              {micOn?<Mic style={{width:20,height:20}}/>:<MicOff style={{width:20,height:20,color:"rgba(255,255,255,.5)"}}/>}
+            </button>
+            <button onClick={openAudioPicker} style={{
+              width:20,height:46,border:"none",cursor:"pointer",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              background:"transparent",color:"rgba(255,255,255,.5)",
+            }}>
+              <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
+            </button>
+          </div>
 
-      {/* CENTER — action buttons */}
-      <div style={{display:"flex",alignItems:"center",gap:isMobile?4:8,flex:1,justifyContent:"center"}}>
-        {/* Whiteboard / Raise hand */}
-        {isPrivileged
-          ?<Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
-          :<Ctrl icon={<Hand style={{...IS,color:handUp?"#fbbf24":"#e8eaed"}}/>} label={handUp?"Lower Hand":"Raise Hand"} onClick={toggleHand} active={handUp} tooltip={handUp?"Lower hand":"Raise hand"}/>
-        }
-        {!isPrivileged&&canStudentWriteProp&&(
-          <Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
-        )}
-        {/* Chat */}
-        <Ctrl icon={<MessageCircle style={{...IS,color:"#e8eaed"}}/>} label="Chat" onClick={onToggleChat} badge={chatUnread} tooltip="Open chat"/>
-        {/* Emoji reactions */}
-        <Ctrl icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
-        {/* More */}
-        <Ctrl icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
-      </div>
+          {/* Cam group */}
+          <div ref={camBtnRef} style={{display:"flex",alignItems:"center",flexShrink:0}}>
+            <button onClick={toggleCam} style={{
+              width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              background:"rgba(255,255,255,.12)",
+              color:"#fff",
+            }}>
+              {camOn?<Video style={{width:20,height:20}}/>:<VideoOff style={{width:20,height:20,color:"rgba(255,255,255,.5)"}}/>}
+            </button>
+            <button onClick={openVideoPicker} style={{
+              width:20,height:46,border:"none",cursor:"pointer",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              background:"transparent",color:"rgba(255,255,255,.5)",
+            }}>
+              <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
+            </button>
+          </div>
 
-      {/* RIGHT — Leave */}
-      <button className="gm-leave" onClick={isPrivileged?onEndClass:onLeaveClass} style={{fontSize:isMobile?13:14,padding:isMobile?"0 14px":"0 22px",height:isMobile?44:48}}>
-        <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/>
-        {isPrivileged?"End":"Leave"}
-      </button>
+          {/* Chat */}
+          <button onClick={onToggleChat} style={{
+            width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            background:"rgba(255,255,255,.12)",color:"#fff",position:"relative",flexShrink:0,
+          }}>
+            <MessageCircle style={{width:20,height:20}}/>
+            {chatUnread>0&&<span style={{position:"absolute",top:2,right:2,background:"#ea4335",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #202124"}}>{chatUnread>9?"9+":chatUnread}</span>}
+          </button>
+
+          {/* More (⋮) — contains hand/board/emoji/participants/materials/end */}
+          <div ref={moreBtnRef} style={{flexShrink:0}}>
+            <button onClick={openMore} style={{
+              width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
+              display:"flex",alignItems:"center",justifyContent:"center",
+              background:moreOpen?"rgba(138,180,248,.2)":"rgba(255,255,255,.12)",color:"#fff",
+            }}>
+              <MoreVertical style={{width:20,height:20}}/>
+            </button>
+          </div>
+
+          {/* Leave — red pill */}
+          <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{
+            width:46,height:46,borderRadius:"50%",border:"none",cursor:"pointer",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            background:"#ea4335",color:"#fff",flexShrink:0,
+            boxShadow:"0 2px 10px rgba(234,67,53,.4)",
+          }}>
+            <Phone style={{width:20,height:20,transform:"rotate(135deg)"}}/>
+          </button>
+        </>
+      ) : (
+        /* ── DESKTOP: full Google Meet layout ── */
+        <>
+          {/* LEFT — Mic + Cam with chevrons */}
+          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+            <div ref={micBtnRef} className="gm-av-group">
+              <button className={`gm-av-main${micOn?"":" off"}`} onClick={toggleMic} title={micOn?"Mute microphone":"Unmute microphone"}>
+                {micOn?<Mic style={IS}/>:<MicOff style={IS}/>}
+              </button>
+              <button className={`gm-av-chevron${micOn?"":" off"}`} onClick={openAudioPicker} title="Microphone options">
+                <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
+              </button>
+            </div>
+            <div ref={camBtnRef} className="gm-av-group">
+              <button className={`gm-av-main${camOn?"":" off"}`} onClick={toggleCam} title={camOn?"Turn off camera":"Turn on camera"}>
+                {camOn?<Video style={IS}/>:<VideoOff style={IS}/>}
+              </button>
+              <button className={`gm-av-chevron${camOn?"":" off"}`} onClick={openVideoPicker} title="Camera options">
+                <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
+              </button>
+            </div>
+          </div>
+          {/* CENTER */}
+          <div style={{display:"flex",alignItems:"center",gap:8,flex:1,justifyContent:"center"}}>
+            {isPrivileged
+              ?<Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
+              :<Ctrl icon={<Hand style={{...IS,color:handUp?"#fbbf24":"#e8eaed"}}/>} label={handUp?"Lower":"Raise Hand"} onClick={toggleHand} active={handUp} tooltip={handUp?"Lower hand":"Raise hand"}/>
+            }
+            {!isPrivileged&&canStudentWriteProp&&(
+              <Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
+            )}
+            <Ctrl icon={<MessageCircle style={{...IS,color:"#e8eaed"}}/>} label="Chat" onClick={onToggleChat} badge={chatUnread} tooltip="Open chat"/>
+            <Ctrl icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
+            <Ctrl icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
+          </div>
+          {/* RIGHT */}
+          <button className="gm-leave" onClick={isPrivileged?onEndClass:onLeaveClass}>
+            <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/>
+            {isPrivileged?"End":"Leave"}
+          </button>
+        </>
+      )}
     </div>
   </>);
 };
@@ -2854,9 +2951,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 </div>
               )}
             </div>
-            {/* RIGHT — layout switcher + record */}
+            {/* RIGHT — layout switcher (desktop only) + record */}
             <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-              <LayoutSwitcher layout={layout} onChange={setLayout}/>
+              {!isMobile&&<LayoutSwitcher layout={layout} onChange={setLayout}/>}
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
           </div>
