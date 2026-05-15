@@ -827,7 +827,6 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   },[matId,kind]);
 
   // ── fullscreen toggle (expands to cover full viewport including footer) ──
-  const[fullscreen,setFullscreen]=useState(false);
   const[loaded,setLoaded]=useState(false);
 
   // ── PDF page tracking via postMessage / hash listener ────────────────────
@@ -845,10 +844,34 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
     }
   };
 
-  // Always use fixed positioning so the viewer covers the entire screen
-  // (including ClassroomView's top bar). zIndex 10000 > all ClassroomView layers.
+  // ── minimize pip state ──────────────────────────────────────────────────
+  const[minimized,setMinimized]=useState(false);
+  const[pipPos,setPipPos]=useState({x:20,y:80});
+  const dragging=useRef(false);
+  const dragStart=useRef({px:0,py:0,ox:0,oy:0});
+  const onPipDown=(e:React.PointerEvent)=>{dragging.current=true;dragStart.current={px:e.clientX,py:e.clientY,ox:pipPos.x,oy:pipPos.y};(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);};
+  const onPipMove=(e:React.PointerEvent)=>{if(!dragging.current)return;setPipPos({x:dragStart.current.ox+(e.clientX-dragStart.current.px),y:dragStart.current.oy+(e.clientY-dragStart.current.py)});};
+  const onPipUp=()=>{dragging.current=false;};
+
+  // ── pip (minimized) ──────────────────────────────────────────────────────
+  if(minimized){
+    return(
+      <div onPointerDown={onPipDown} onPointerMove={onPipMove} onPointerUp={onPipUp}
+        onClick={()=>setMinimized(false)}
+        style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,
+          width:54,height:54,borderRadius:"50%",cursor:"grab",userSelect:"none",touchAction:"none",
+          background:"linear-gradient(135deg,#064e3b,#1a73e8)",
+          boxShadow:"0 4px 20px rgba(0,0,0,.55)",border:"2px solid rgba(255,255,255,.2)",
+          display:"flex",alignItems:"center",justifyContent:"center",
+        }} title="Open material">
+        <span style={{fontSize:20}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
+      </div>
+    );
+  }
+
+  // Use absolute positioning scoped to the video content area so footer is always visible
   const overlayStyle: React.CSSProperties = {
-    position: "fixed", inset: 0, zIndex: 10000,
+    position: "absolute", inset: 0, zIndex: 55,
   };
 
   const renderContent=()=>{
@@ -905,9 +928,14 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   return(
     <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column",animation:"fade-in .18s ease"}}>
       {/* Viewer header */}
-      <div style={{height:46,background:"rgba(6,78,59,.97)",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
-        <span style={{fontSize:15}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
-        <span style={{flex:1,fontSize:13,fontWeight:700,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
+      <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
+        {/* Minimize to pip */}
+        <button onClick={()=>setMinimized(true)} title="Minimize"
+          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <ChevronDown style={{width:13,height:13}}/>
+        </button>
+        <span style={{fontSize:15,flexShrink:0}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
+        <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
         {resumeBadge&&(
           <span style={{fontSize:10,color:"rgba(255,255,255,.5)",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"2px 7px",flexShrink:0}}>
             {resume?.time?`▶ ${Math.floor((resume.time||0)/60)}m${Math.floor((resume.time||0)%60)}s`:`p.${resume?.page}`} resumed
@@ -916,7 +944,6 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
         {!isTeacher&&<span style={{fontSize:10,color:"rgba(255,255,255,.4)",flexShrink:0}}>Shared by teacher</span>}
         <a href={url} target="_blank" rel="noopener noreferrer"
           style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>
-        {/* Fullscreen toggle */}
         <button onClick={onClose} title="Close material"
           style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <X style={{width:13,height:13}}/>
