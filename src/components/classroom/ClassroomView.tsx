@@ -1516,54 +1516,75 @@ const InClassQuranReader=({onClose}:any)=>{
   );
 };
 
-const SubjectMaterialsPanel=({subjectId,subject,onClose}:any)=>{
+const SubjectMaterialsPanel=({subjectId,subject,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
   const[viewing,setViewing]=useState<any>(null);
   const[quranOpen,setQuranOpen]=useState(false);
   const[minimized,setMinimized]=useState(false);
+  // Draggable pip position
+  const[pipPos,setPipPos]=useState({x:20,y:120});
+  const dragging=useRef(false);
+  const dragStart=useRef({px:0,py:0,ox:0,oy:0});
 
   useEffect(()=>{
     supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
       .then(({data})=>{setMats(data||[]);setBusy(false);});
   },[subjectId]);
 
-  /* ── Minimized state: just a slim bar at top of video area ── */
+  const onPipPointerDown=(e:React.PointerEvent)=>{
+    dragging.current=true;
+    dragStart.current={px:e.clientX,py:e.clientY,ox:pipPos.x,oy:pipPos.y};
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+  const onPipPointerMove=(e:React.PointerEvent)=>{
+    if(!dragging.current)return;
+    const dx=e.clientX-dragStart.current.px;
+    const dy=e.clientY-dragStart.current.py;
+    setPipPos({x:dragStart.current.ox+dx,y:dragStart.current.oy+dy});
+  };
+  const onPipPointerUp=()=>{dragging.current=false;};
+
+  /* ── MINIMIZED: draggable floating circle pip ── */
   if(minimized){
     return(
-      <div style={{
-        position:"absolute",top:0,left:0,right:0,zIndex:55,
-        background:"rgba(32,33,36,.97)",backdropFilter:"blur(12px)",
-        display:"flex",alignItems:"center",gap:10,
-        padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",
-      }}>
-        <Eye style={{width:15,height:15,color:TEAL,flexShrink:0}}/>
-        <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Materials</span>
-        <button onClick={()=>setMinimized(false)} style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-          Expand
-        </button>
-        <button onClick={onClose} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:4}}>
-          <X style={{width:14,height:14}}/>
-        </button>
+      <div
+        onPointerDown={onPipPointerDown}
+        onPointerMove={onPipPointerMove}
+        onPointerUp={onPipPointerUp}
+        onClick={()=>setMinimized(false)}
+        style={{
+          position:"absolute",
+          left:pipPos.x,top:pipPos.y,
+          zIndex:60,width:54,height:54,
+          borderRadius:"50%",
+          background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",
+          boxShadow:"0 4px 20px rgba(0,0,0,.5)",
+          display:"flex",alignItems:"center",justifyContent:"center",
+          cursor:"grab",userSelect:"none",touchAction:"none",
+          border:"2px solid rgba(255,255,255,.2)",
+        }}
+        title="Open Materials"
+      >
+        <Eye style={{width:22,height:22,color:"#fff"}}/>
       </div>
     );
   }
 
-  /* ── Viewing a material — full screen overlay, back goes to list ── */
+  /* ── VIEWING A MATERIAL ── */
   if(quranOpen){
     return(
-      <div style={{position:"absolute",inset:0,zIndex:55,background:"#0d1117",display:"flex",flexDirection:"column"}}>
-        {/* Header with minimize + back */}
-        <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"rgba(32,33,36,.97)",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
-          <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:32,height:32,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+          <button onClick={()=>setMinimized(true)} title="Minimize to pip" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
             <ChevronDown style={{width:14,height:14}}/>
           </button>
-          <button onClick={()=>setQuranOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"5px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-            <ChevronLeft style={{width:14,height:14}}/> Back
+          <button onClick={()=>setQuranOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+            <ChevronLeft style={{width:13,height:13}}/> Back
           </button>
-          <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Full Quran</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:4}}>
-            <X style={{width:14,height:14}}/>
+          <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>Full Quran</span>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <X style={{width:13,height:13}}/>
           </button>
         </div>
         <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
@@ -1573,18 +1594,17 @@ const SubjectMaterialsPanel=({subjectId,subject,onClose}:any)=>{
 
   if(viewing){
     return(
-      <div style={{position:"absolute",inset:0,zIndex:55,background:"#0d1117",display:"flex",flexDirection:"column"}}>
-        {/* Header with minimize + back */}
-        <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"rgba(32,33,36,.97)",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
-          <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:32,height:32,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+          <button onClick={()=>setMinimized(true)} title="Minimize to pip" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
             <ChevronDown style={{width:14,height:14}}/>
           </button>
-          <button onClick={()=>setViewing(null)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"5px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-            <ChevronLeft style={{width:14,height:14}}/> Back
+          <button onClick={()=>setViewing(null)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+            <ChevronLeft style={{width:13,height:13}}/> Back
           </button>
           <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{viewing.title||viewing.name||"Material"}</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",padding:4}}>
-            <X style={{width:14,height:14}}/>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <X style={{width:13,height:13}}/>
           </button>
         </div>
         <div style={{flex:1,overflow:"hidden"}}><InClassMaterialViewer material={viewing} onClose={()=>setViewing(null)}/></div>
@@ -1592,58 +1612,87 @@ const SubjectMaterialsPanel=({subjectId,subject,onClose}:any)=>{
     );
   }
 
-  /* ── Material list ── */
+  /* ── MATERIAL LIST — slides from right, does NOT cover full height ── */
   return(
-    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.5)"}} onClick={onClose}>
-      <div onClick={e=>e.stopPropagation()}
-        style={{position:"absolute",top:0,right:0,bottom:0,width:"min(360px,100%)",background:"#1c1f26",borderLeft:"1px solid rgba(255,255,255,.08)",display:"flex",flexDirection:"column",animation:"slide-right .22s cubic-bezier(.34,1.2,.64,1) both",boxShadow:"-8px 0 32px rgba(0,0,0,.6)"}}>
-        {/* Header */}
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"rgba(32,33,36,.97)"}}>
-          <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-            <ChevronDown style={{width:14,height:14}}/>
-          </button>
+    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{
+        position:"absolute",top:0,right:0,
+        /* Important: bottom:0 so footer stays below this panel */
+        bottom:0,
+        width:"min(340px,100%)",
+        background:"#202124",
+        borderLeft:"1px solid rgba(255,255,255,.08)",
+        display:"flex",flexDirection:"column",
+        animation:"slide-right .2s cubic-bezier(.34,1.2,.64,1) both",
+        boxShadow:"-6px 0 28px rgba(0,0,0,.5)",
+      }}>
+        {/* Header — no minimize button here, only close */}
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"#2d2e30",height:50}}>
           <Eye style={{width:15,height:15,color:TEAL,flexShrink:0}}/>
           <span style={{flex:1,fontSize:14,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Materials</span>
           <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <X style={{width:14,height:14}}/>
           </button>
         </div>
+
+        {/* Student record toggle (if allowed) */}
+        {!isPrivileged&&canStudentRec&&(
+          <button onClick={onToggleStuRecord} style={{
+            margin:"10px 10px 0",padding:"11px 14px",borderRadius:10,
+            border:`1px solid ${stuRec?"rgba(239,68,68,.4)":"rgba(255,255,255,.1)"}`,
+            background:stuRec?"rgba(239,68,68,.12)":"rgba(255,255,255,.04)",
+            cursor:"pointer",display:"flex",alignItems:"center",gap:10,flexShrink:0,
+          }}>
+            <Circle style={{width:11,height:11,fill:stuRec?"#ef4444":"none",color:stuRec?"#ef4444":"rgba(255,255,255,.5)"}}/>
+            <span style={{fontSize:13,color:stuRec?"#ef4444":"rgba(255,255,255,.7)",fontFamily:"'Google Sans',sans-serif"}}>{stuRec?"Stop Recording":"Record Audio"}</span>
+          </button>
+        )}
+
         {/* Quran button */}
-        <button onClick={()=>setQuranOpen(true)}
-          style={{margin:"10px 10px 0",padding:"14px 16px",borderRadius:12,border:"1px solid rgba(183,121,31,.4)",background:"linear-gradient(135deg,rgba(26,61,36,.9),rgba(39,103,73,.9))",cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
-          <div style={{fontSize:26}}>📖</div>
+        <button onClick={()=>setQuranOpen(true)} style={{
+          margin:"10px 10px 0",padding:"12px 14px",borderRadius:10,
+          border:"1px solid rgba(183,121,31,.4)",
+          background:"linear-gradient(135deg,rgba(26,61,36,.9),rgba(39,103,73,.9))",
+          cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:10,flexShrink:0,
+        }}>
+          <div style={{fontSize:22,flexShrink:0}}>📖</div>
           <div style={{flex:1,minWidth:0}}>
-            <div style={{fontFamily:"'Amiri',serif",fontSize:15,fontWeight:700,color:"#fef9ee"}}>Open Full Quran</div>
-            <div style={{fontFamily:"'Amiri',serif",fontSize:11,color:"rgba(255,255,255,.55)",direction:"rtl" as const}}>Arabic · Translation · Tafseer</div>
+            <div style={{fontFamily:"'Amiri',serif",fontSize:14,fontWeight:700,color:"#fef9ee"}}>Open Full Quran</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.5)"}}>Arabic · Translation · Tafseer</div>
           </div>
-          <ChevronRight style={{width:14,height:14,color:"#34d399",flexShrink:0}}/>
+          <ChevronRight style={{width:13,height:13,color:"#34d399",flexShrink:0}}/>
         </button>
+
         {/* List */}
-        <div style={{flex:1,overflowY:"auto",padding:10}}>
-          {mats.length>0&&<div style={{fontSize:11,color:"rgba(255,255,255,.35)",fontWeight:600,letterSpacing:.5,padding:"8px 4px 4px",fontFamily:"'Google Sans',sans-serif"}}>UPLOADED MATERIALS</div>}
-          {busy&&<div style={{display:"flex",justifyContent:"center",padding:40}}><div style={{width:24,height:24,border:`3px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
-          {!busy&&mats.length===0&&<div style={{textAlign:"center" as const,padding:"30px 20px",color:"rgba(255,255,255,.35)"}}>
-            <div style={{fontSize:36,marginBottom:8}}>📭</div>
-            <p style={{fontSize:13,margin:0,fontFamily:"'Google Sans',sans-serif"}}>No materials for this subject</p>
+        <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
+          {mats.length>0&&<div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>UPLOADED MATERIALS</div>}
+          {busy&&<div style={{display:"flex",justifyContent:"center",padding:32}}><div style={{width:22,height:22,border:`2px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
+          {!busy&&mats.length===0&&<div style={{textAlign:"center" as const,padding:"24px 16px",color:"rgba(255,255,255,.3)"}}>
+            <div style={{fontSize:30,marginBottom:6}}>📭</div>
+            <p style={{fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>No materials yet</p>
           </div>}
           {mats.map(m=>{
             const icon=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
             const resume=loadResume(m.id||"");
             return(
-              <button key={m.id} onClick={()=>setViewing(m)}
-                style={{width:"100%",display:"flex",alignItems:"center",gap:12,padding:"12px 14px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.07)",borderRadius:12,cursor:"pointer",textAlign:"left" as const,marginBottom:8,transition:"background .12s"}}
-                onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,.09)")}
+              <button key={m.id} onClick={()=>setViewing(m)} style={{
+                width:"100%",display:"flex",alignItems:"center",gap:10,
+                padding:"10px 12px",background:"rgba(255,255,255,.04)",
+                border:"1px solid rgba(255,255,255,.07)",borderRadius:10,
+                cursor:"pointer",textAlign:"left" as const,marginBottom:6,
+              }}
+                onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,.08)")}
                 onMouseLeave={e=>(e.currentTarget.style.background="rgba(255,255,255,.04)")}>
-                <div style={{width:40,height:40,borderRadius:10,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>{icon}</div>
+                <div style={{width:36,height:36,borderRadius:8,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{icon}</div>
                 <div style={{flex:1,minWidth:0}}>
-                  <p style={{margin:0,fontSize:13,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Untitled"}</p>
-                  <p style={{margin:"3px 0 0",fontSize:11,color:"rgba(255,255,255,.35)",textTransform:"capitalize" as const,fontFamily:"'Google Sans',sans-serif"}}>
+                  <p style={{margin:0,fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Untitled"}</p>
+                  <p style={{margin:"2px 0 0",fontSize:10,color:"rgba(255,255,255,.35)",textTransform:"capitalize" as const}}>
                     {m.material_type||"file"}
-                    {resume?.time&&<span style={{marginLeft:6,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
-                    {resume?.page&&!resume?.time&&<span style={{marginLeft:6,color:TEAL}}>p.{resume.page}</span>}
+                    {resume?.time&&<span style={{marginLeft:5,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
+                    {resume?.page&&!resume?.time&&<span style={{marginLeft:5,color:TEAL}}>p.{resume.page}</span>}
                   </p>
                 </div>
-                <ChevronRight style={{width:14,height:14,color:"rgba(255,255,255,.3)",flexShrink:0}}/>
+                <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.25)",flexShrink:0}}/>
               </button>
             );
           })}
@@ -2641,6 +2690,29 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[quizOpen,setQuizOpen]=useState(false);
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
+  // Student recording — lifted here so SubjectMaterialsPanel can also trigger it
+  const[stuRec,setStuRec]=useState(false);
+  const stuMrRefTop=useRef<MediaRecorder|null>(null);
+  const stuChunksTop=useRef<Blob[]>([]);
+  const toggleStuRecordTop=async()=>{
+    if(stuRec){
+      stuMrRefTop.current?.stop();
+      stuMrRefTop.current!.onstop=()=>{
+        const mt=stuMrRefTop.current?.mimeType||"audio/webm";
+        const blob=new Blob(stuChunksTop.current,{type:mt});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement("a");a.href=url;a.download=`class-${Date.now()}.webm`;a.click();URL.revokeObjectURL(url);stuChunksTop.current=[];
+      };setStuRec(false);
+    }else{
+      try{
+        const s=await navigator.mediaDevices.getUserMedia({audio:true});
+        const mime=["audio/webm","audio/mp4","audio/ogg"].find(t2=>{try{return MediaRecorder.isTypeSupported(t2);}catch{return false;}})||"";
+        const mr=new MediaRecorder(s,mime?{mimeType:mime}:undefined);
+        stuChunksTop.current=[];mr.ondataavailable=e=>{if(e.data.size>0)stuChunksTop.current.push(e.data);};
+        mr.start(1000);stuMrRefTop.current=mr;setStuRec(true);
+      }catch{toast({title:"Microphone access denied"});}
+    }
+  };
   const[floatingEmojis,setFloatingEmojis]=useState<FloatingEmoji[]>([]);
   const[raisedHands,setRaisedHands]=useState<RaisedHand[]>([]);
   const[layout,setLayout]=useState<LayoutMode>("horizontal");
@@ -2990,7 +3062,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — absolute inside content, footer always visible */}
-              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={()=>setMatPanelOpen(false)}/>}
+              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
