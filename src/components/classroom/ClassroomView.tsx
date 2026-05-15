@@ -2262,7 +2262,7 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
 };
 
 /* ══ VIDEO GRID — Google Meet adaptive tiling ══ */
-const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
+const VideoGrid=({layout="grid",isMobile=false}:{layout?:LayoutMode;isMobile?:boolean})=>{
   const{localParticipant}=useLocalParticipant();
   const allParticipants=useParticipants();
   const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity);
@@ -2328,8 +2328,9 @@ const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
     </div>
   );
 
-  // Google Meet adaptive grid — up to 4: 2×2, 5-6: 3×2, 7-9: 3×3, etc.
-  const COLS = n<=2?2:n<=4?2:n<=6?3:n<=9?3:4;
+  // Mobile: always 2 columns so tiles stack in rows (2×3 portrait grid).
+  // Desktop: adaptive — ≤4: 2×2, ≤6: 3×2, ≤9: 3×3, else 4-col.
+  const COLS = isMobile ? 2 : (n<=2?2:n<=4?2:n<=6?3:n<=9?3:4);
   const ROWS = Math.ceil(n/COLS);
   const isOdd = n%COLS!==0;
   return(
@@ -2339,7 +2340,7 @@ const VideoGrid=({layout="grid"}:{layout?:LayoutMode})=>{
         return(
           <div key={p.identity} style={isLastLone?{gridColumn:"1 / -1",display:"flex",justifyContent:"center"}:{}}>
             <div style={isLastLone?{width:`${100/COLS}%`,height:"100%"}:{width:"100%",height:"100%"}}>
-              <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n<=4?"normal":"small"}/>
+              <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={isMobile||n<=4?"normal":"small"}/>
             </div>
           </div>
         );
@@ -2837,7 +2838,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   };
   const[floatingEmojis,setFloatingEmojis]=useState<FloatingEmoji[]>([]);
   const[raisedHands,setRaisedHands]=useState<RaisedHand[]>([]);
-  const[layout,setLayout]=useState<LayoutMode>("horizontal");
+  const[layout,setLayout]=useState<LayoutMode>("grid");
   const[groupReciteDialog,setGroupReciteDialog]=useState(false);
   const emojiIdRef=useRef(0);
   const wbBuffer=useRef<any[]|null>(null);
@@ -3181,7 +3182,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* Content — material panels render here so footer always stays visible */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
             <div style={{flex:1,position:"relative",minWidth:0}}>
-              <VideoGrid layout={layout}/>
+              <VideoGrid layout={layout} isMobile={isMobile}/>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — absolute inside content, footer always visible */}
