@@ -72,11 +72,20 @@ interface PageResult {
   ayahCorrectness?: boolean[]; transcript?: string;
 }
 interface Question {
-  id: number; type: "next_verse" | "missing_word" | "continuation";
+  id: number;
+  // mcq = multiple choice  |  record = student records answer  |  listen_record = play audio then record
+  type: "mcq_next" | "mcq_blank" | "mcq_continuation" | "record_continue" | "record_complete" | "listen_choose";
   section: "A" | "B";
   isErrorFocused?: boolean;
+  // For MCQ
   prompt: string; promptLabel: string;
   options: string[]; correct: number; correctText: string;
+  // For LISTEN questions: a fragment of an ayah to play (TTS via Web Speech or stored text)
+  listenText?: string;
+  // For RECORD questions: what the student should recite
+  recordPrompt?: string;
+  // Snippet of just a few words, not full verse
+  snippet?: boolean;
 }
 type Phase = "intro"|"pre_test_review"|"reading"|"page_result"|"proctor_intro"|"testing"|"test_result"|"complete";
 type MainTab = "today"|"schedule"|"history";
@@ -295,30 +304,77 @@ function compareWords(refText: string, gotText: string): WordResult[] {
   return results;
 }
 
-// scoreText: pure word-match ratio — no time bonus (same as مراجعة)
+/**
+ * scoreText — sliding-window approach so Whisper's occasional verse-skip
+ * doesn't penalise the whole recitation. We align the transcript against
+ * the reference in 10-word windows and pick the best alignment per window,
+ * which absorbs gaps caused by Whisper skipping a verse mid-transcription.
+ */
 function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number {
-  const ref = ayahs.map(a => a.text).join(" ");
-  const words = compareWords(ref, transcript);
-  if (!words.length) return 0;
-  const correct = words.filter(w => w.status === "correct").length;
-  return Math.round((correct / words.length) * 100);
+  const refWords  = ayahs.map(a => normalizeArabic(a.text)).join(" ").split(/\s+/).filter(Boolean);
+  const gotWords  = normalizeArabic(transcript).split(/\s+/).filter(Boolean);
+  if (!refWords.length) return 0;
+  if (!gotWords.length)  return 0;
+
+  const WINDOW = 10;
+  let totalMatched = 0;
+  let gotPtr = 0; // track consumed position in transcript
+
+  for (let ri = 0; ri < refWords.length; ri += WINDOW) {
+    const refChunk = refWords.slice(ri, ri + WINDOW);
+    // Search a generous window in the transcript for this reference chunk
+    const searchFrom = Math.max(0, gotPtr - 3);
+    const searchTo   = Math.min(gotWords.length, gotPtr + refChunk.length * 2 + 10);
+    const gotChunk   = gotWords.slice(searchFrom, searchTo);
+
+    // LCS-style greedy match within the chunk
+    let matched = 0; let gj = 0;
+    for (const rw of refChunk) {
+      for (let k = gj; k < gotChunk.length; k++) {
+        const gw = gotChunk[k];
+        const hit = rw === gw ||
+          (rw.length > 3 && gw.length > 3 &&
+            (rw.startsWith(gw.slice(0,3)) || gw.startsWith(rw.slice(0,3))));
+        if (hit) { matched++; gj = k + 1; break; }
+      }
+    }
+    totalMatched += matched;
+    // Advance gotPtr proportionally
+    gotPtr = searchFrom + Math.min(gotChunk.length, Math.round(gj * 1.1));
+  }
+
+  return Math.round((totalMatched / refWords.length) * 100);
 }
 
-// getErrorWords: words from reference that were missing in transcript
+// getErrorWords — uses per-ayah comparison so a skipped verse in the
+// transcript doesn't flag every word in it as an error
 function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
-  const ref = ayahs.map(a => a.text).join(" ");
-  return compareWords(ref, transcript)
-    .filter(w => w.status === "missing")
-    .map(w => w.word);
+  const errors: string[] = [];
+  for (const ayah of ayahs) {
+    const words = compareWords(ayah.text, transcript);
+    // Only flag words that genuinely weren't found anywhere in the transcript
+    const missing = words.filter(w => w.status === "missing").map(w => w.word);
+    // If >90% of the ayah is missing, Whisper likely just skipped the verse —
+    // treat it as partially heard (soft error) rather than total miss
+    const missFrac = words.length > 0 ? missing.length / words.length : 0;
+    if (missFrac < 0.9) {
+      errors.push(...missing);
+    } else {
+      // Verse fully skipped by Whisper — only flag the first few words as errors
+      errors.push(...missing.slice(0, 2));
+    }
+  }
+  return errors;
 }
 
-/* Per-ayah correctness: true (green) / false (red) — exact مراجعة threshold */
+/* Per-ayah correctness: true (green) / false (red) */
 function getAyahCorrectness(transcript: string, ayahs: Ayah[], _recSecs?: number): boolean[] {
   return ayahs.map(a => {
     const words = compareWords(a.text, transcript);
     if (!words.length) return true;
     const correct = words.filter(w => w.status === "correct").length;
-    return (correct / words.length) >= 0.5;
+    // Softer threshold — 40% match counts as "attempted" (absorbs Whisper skips)
+    return (correct / words.length) >= 0.4;
   });
 }
 function shuffle<T>(arr:T[]): T[] {
@@ -329,84 +385,208 @@ function shuffle<T>(arr:T[]): T[] {
 function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[] {
   const allAyahs = results.flatMap(r => r.ayahs);
   const errorWords = results.flatMap(r => r.errorWords);
+  const used = new Set<string>(); // dedup: key = type+promptSlice
   const qs: Question[] = [];
   let id = 0;
 
-  // ── SECTION A: today's pages, error-focused ───────────────────
+  const key = (type: string, text: string) => `${type}::${normalizeArabic(text).slice(0,12)}`;
+
+  // ── helpers ────────────────────────────────────────────────────
+  // Extract a SNIPPET (middle 3-5 words) from an ayah — never full verse
+  const snippet = (ayah: Ayah, fromError = false): string => {
+    const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
+    if (words.length <= 3) return stripWaqf(ayah.text);
+    // For error-focused: pick window around error word
+    if (fromError) {
+      const eIdx = words.findIndex(w =>
+        errorWords.some(ew => normalizeArabic(w).includes(normalizeArabic(stripWaqf(ew)).slice(0,3)))
+      );
+      const start = Math.max(0, (eIdx >= 0 ? eIdx : 1) - 1);
+      return words.slice(start, start + Math.min(4, words.length - start)).join(" ");
+    }
+    // Random 3-4 word window from middle
+    const maxStart = Math.max(1, words.length - 4);
+    const start = 1 + Math.floor(Math.random() * (maxStart - 1));
+    return words.slice(start, start + Math.min(4, words.length - start)).join(" ");
+  };
+
+  // MCQ blank: blank ONE word from a snippet (not full verse)
+  const makeMcqBlank = (ayah: Ayah, isErr: boolean, pool: Ayah[], sec: "A"|"B"): Question | null => {
+    const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
+    if (words.length < 4) return null;
+    // Pick blank position inside middle of ayah
+    const bi = isErr
+      ? (() => {
+          const idx = words.findIndex(w =>
+            errorWords.some(ew => normalizeArabic(w).includes(normalizeArabic(stripWaqf(ew)).slice(0,3)))
+          );
+          return idx >= 0 ? idx : 1 + Math.floor(Math.random() * (words.length - 2));
+        })()
+      : 1 + Math.floor(Math.random() * (words.length - 2));
+    const cw = words[bi];
+    // Show only ±2 words context, not full verse
+    const ctxStart = Math.max(0, bi - 2);
+    const ctxEnd   = Math.min(words.length, bi + 3);
+    const ctxWords = words.slice(ctxStart, ctxEnd).map((w, i) => (ctxStart + i === bi ? "____" : w));
+    const ctxText = (ctxStart > 0 ? "…" : "") + ctxWords.join(" ") + (ctxEnd < words.length ? "…" : "");
+    if (used.has(key("blank", ctxText))) return null;
+    used.add(key("blank", ctxText));
+    const wPool = pool.flatMap(a => stripWaqf(a.text).split(" ")).filter(w =>
+      w !== cw && normalizeArabic(w).length > 2 && normalizeArabic(w) !== normalizeArabic(cw)
+    );
+    const wrongs = shuffle([...new Set(wPool)]).slice(0, 3);
+    if (wrongs.length < 2) return null;
+    const opts = shuffle([cw, ...wrongs]);
+    return { id:id++, type:"mcq_blank", section:sec, isErrorFocused:isErr, snippet:true,
+      prompt: ctxText,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${ayah.surah.englishName} ${ayah.numberInSurah}`,
+      options: opts, correct: opts.indexOf(cw), correctText: cw };
+  };
+
+  // MCQ next: show SNIPPET of verse[i], choose which snippet comes next
+  const makeMcqNext = (i: number, pool: Ayah[], sec: "A"|"B"): Question | null => {
+    if (i >= pool.length - 1) return null;
+    const cur  = pool[i];
+    const next = pool[i + 1];
+    const promptSnip  = snippet(cur);
+    const correctSnip = snippet(next);
+    if (used.has(key("next", promptSnip))) return null;
+    used.add(key("next", promptSnip));
+    const distract = shuffle(pool.filter((_,j)=>j!==i+1)).slice(0,3);
+    if (distract.length < 2) return null;
+    const opts = shuffle([correctSnip, ...distract.map(a=>snippet(a))]);
+    return { id:id++, type:"mcq_next", section:sec, snippet:true,
+      prompt: promptSnip,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${cur.surah.englishName} ${cur.numberInSurah} — What continues?`,
+      options: opts, correct: opts.indexOf(correctSnip), correctText: correctSnip };
+  };
+
+  // MCQ continuation from error — snippet of verse before error, choose what follows
+  const makeMcqContinuation = (i: number, pool: Ayah[], sec: "A"|"B"): Question | null => {
+    if (i >= pool.length - 1) return null;
+    const cur  = pool[i];
+    const next = pool[i + 1];
+    const promptSnip  = snippet(cur, true);
+    const correctSnip = snippet(next);
+    if (used.has(key("cont", promptSnip))) return null;
+    used.add(key("cont", promptSnip));
+    const distract = shuffle(pool.filter((_,j)=>j!==i+1)).slice(0,3);
+    if (distract.length < 2) return null;
+    const opts = shuffle([correctSnip, ...distract.map(a=>snippet(a))]);
+    return { id:id++, type:"mcq_continuation", section:sec, isErrorFocused:true, snippet:true,
+      prompt: promptSnip,
+      promptLabel: `§A Error Area · ${cur.surah.englishName} ${cur.numberInSurah} — Continue from here`,
+      options: opts, correct: opts.indexOf(correctSnip), correctText: correctSnip };
+  };
+
+  // RECORD question — student records the next 2 verses after a prompt snippet
+  const makeRecordContinue = (i: number, pool: Ayah[], sec: "A"|"B", isErr=false): Question | null => {
+    if (i >= pool.length - 1) return null;
+    const cur  = pool[i];
+    const next = pool[i + 1];
+    const snip = snippet(cur, isErr);
+    if (used.has(key("rec", snip))) return null;
+    used.add(key("rec", snip));
+    // correctText = the verse(s) the student should recite
+    const expected = [next, pool[i+2]].filter(Boolean).map(a=>stripWaqf(a.text)).join(" ");
+    return { id:id++, type:"record_continue", section:sec, isErrorFocused:isErr, snippet:true,
+      prompt: snip,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · Record what comes after`,
+      options: [], correct: -1, correctText: expected,
+      recordPrompt: `After: "${snip}" — recite what comes next` };
+  };
+
+  // LISTEN+CHOOSE — play a verse snippet, student picks which full ayah it belongs to
+  const makeListenChoose = (i: number, pool: Ayah[], sec: "A"|"B"): Question | null => {
+    const ayah = pool[i];
+    const snip = snippet(ayah);
+    if (used.has(key("listen", snip))) return null;
+    used.add(key("listen", snip));
+    const distract = shuffle(pool.filter((_,j)=>j!==i)).slice(0,3);
+    if (distract.length < 2) return null;
+    const opts = shuffle([stripWaqf(ayah.text), ...distract.map(a=>stripWaqf(a.text))]);
+    return { id:id++, type:"listen_choose", section:sec, snippet:true,
+      listenText: snip,
+      prompt: snip,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · 👂 Listen — which ayah is this from?`,
+      options: opts.map(o=>o.slice(0,50)+"…"), correct: opts.indexOf(stripWaqf(ayah.text)), correctText: stripWaqf(ayah.text),
+      recordPrompt: undefined };
+  };
+
+  // ── SECTION A: TODAY'S PAGES ─────────────────────────────────────
+  // 1. Error-focused blanks (most important — errors from recitation)
   const errorAyahs = allAyahs.filter(a =>
     errorWords.some(ew => normalizeArabic(a.text).includes(normalizeArabic(stripWaqf(ew)).slice(0,3)))
   );
-  for (const ayah of errorAyahs.slice(0, 4)) {
-    const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
-    if (words.length < 3) continue;
-    const bi = 1 + Math.floor(Math.random() * (words.length - 2));
-    const cw = words[bi];
-    const blanked = words.map((w, j) => j === bi ? "____" : w).join(" ");
-    const pool = allAyahs.flatMap(a => stripWaqf(a.text).split(" ")).filter(w => w !== cw && normalizeArabic(w).length > 2);
-    const wrongs = shuffle([...new Set(pool)]).slice(0, 3);
-    if (wrongs.length < 2) continue;
-    const opts = shuffle([cw, ...wrongs]);
-    qs.push({ id:id++, type:"missing_word", section:"A", isErrorFocused:true,
-      prompt:blanked, promptLabel:`§A · Verse ${ayah.numberInSurah} — ${ayah.surah.englishName}`,
-      options:opts, correct:opts.indexOf(cw), correctText:cw });
+  for (const a of errorAyahs.slice(0, 4)) {
+    const q = makeMcqBlank(a, true, allAyahs, "A");
+    if (q) qs.push(q);
   }
-  const step1 = Math.max(1, Math.floor(allAyahs.length / 4));
-  for (let i = 0; i < allAyahs.length - 1 && qs.filter(q=>q.section==="A"&&q.type==="next_verse").length < 4; i += step1) {
-    const correct = allAyahs[i+1];
-    const wrongs = shuffle(allAyahs.filter((_,j)=>j!==i+1)).slice(0,3);
-    if (wrongs.length < 2) continue;
-    const opts = shuffle([correct,...wrongs]);
-    qs.push({ id:id++, type:"next_verse", section:"A",
-      prompt:stripWaqf(allAyahs[i].text),
-      promptLabel:`§A · ${allAyahs[i].surah.englishName} · Verse ${allAyahs[i].numberInSurah}`,
-      options:opts.map(o=>stripWaqf(o.text)), correct:opts.indexOf(correct), correctText:stripWaqf(correct.text) });
-  }
-  // Continuation from error areas
-  allAyahs.forEach((a, idx) => {
-    if (idx >= allAyahs.length-1 || qs.filter(q=>q.section==="A"&&q.type==="continuation").length >= 2) return;
-    if (!errorWords.some(ew=>normalizeArabic(a.text).includes(normalizeArabic(stripWaqf(ew)).slice(0,3)))) return;
-    const correct = allAyahs[idx+1];
-    const wrongs = shuffle(allAyahs.filter((_,j)=>j!==idx+1)).slice(0,3);
-    if (wrongs.length < 2) return;
-    const opts = shuffle([correct,...wrongs]);
-    qs.push({ id:id++, type:"continuation", section:"A", isErrorFocused:true,
-      prompt:stripWaqf(a.text),
-      promptLabel:`§A · Error Focus · ${a.surah.englishName} Verse ${a.numberInSurah}`,
-      options:opts.map(o=>stripWaqf(o.text)), correct:opts.indexOf(correct), correctText:stripWaqf(correct.text) });
+
+  // 2. Error continuation — what comes after error verses
+  errorAyahs.forEach(a => {
+    const idx = allAyahs.indexOf(a);
+    if (idx < 0 || idx >= allAyahs.length-1) return;
+    if (qs.filter(q=>q.section==="A"&&q.type==="mcq_continuation").length >= 2) return;
+    const q = makeMcqContinuation(idx, allAyahs, "A");
+    if (q) qs.push(q);
   });
 
-  // ── SECTION B: from juz start to today ────────────────────────
+  // 3. Record-continue from error areas
+  errorAyahs.slice(0,2).forEach(a => {
+    const idx = allAyahs.indexOf(a);
+    if (idx < 0 || idx >= allAyahs.length-2) return;
+    const q = makeRecordContinue(idx, allAyahs, "A", true);
+    if (q) qs.push(q);
+  });
+
+  // 4. MCQ next — across today's pages (spread evenly)
+  const stepA = Math.max(1, Math.floor(allAyahs.length / 3));
+  for (let i = 0; i < allAyahs.length-1 && qs.filter(q=>q.section==="A"&&q.type==="mcq_next").length < 3; i += stepA) {
+    const q = makeMcqNext(i, allAyahs, "A");
+    if (q) qs.push(q);
+  }
+
+  // 5. Listen+choose from today (1-2 questions)
+  const listenIndices = shuffle(allAyahs.map((_,i)=>i)).slice(0,2);
+  for (const li of listenIndices) {
+    if (qs.filter(q=>q.section==="A"&&q.type==="listen_choose").length >= 1) break;
+    const q = makeListenChoose(li, allAyahs, "A");
+    if (q) qs.push(q);
+  }
+
+  // ── SECTION B: JUZ REVIEW ──────────────────────────────────────
   if (juzAyahs.length >= 3) {
-    const stepB = Math.max(1, Math.floor(juzAyahs.length / 4));
-    for (let i = 0; i < juzAyahs.length-1 && qs.filter(q=>q.section==="B").length < 4; i += stepB) {
-      const correct = juzAyahs[i+1];
-      const wrongs = shuffle([...juzAyahs,...allAyahs].filter((_,j)=>j!==i+1)).slice(0,3);
-      if (wrongs.length < 2) continue;
-      const opts = shuffle([correct,...wrongs]);
-      qs.push({ id:id++, type:"next_verse", section:"B",
-        prompt:stripWaqf(juzAyahs[i].text),
-        promptLabel:`§B (Juz Review) · ${juzAyahs[i].surah.englishName} · Verse ${juzAyahs[i].numberInSurah}`,
-        options:opts.map(o=>stripWaqf(o.text)), correct:opts.indexOf(correct), correctText:stripWaqf(correct.text) });
+    const stepB = Math.max(1, Math.floor(juzAyahs.length / 3));
+    // MCQ next
+    for (let i = 0; i < juzAyahs.length-1 && qs.filter(q=>q.section==="B"&&q.type==="mcq_next").length < 3; i += stepB) {
+      const q = makeMcqNext(i, juzAyahs, "B");
+      if (q) qs.push(q);
     }
+    // MCQ blanks
     const stepB2 = Math.max(1, Math.floor(juzAyahs.length / 3));
-    for (let i = 0; i < juzAyahs.length && qs.filter(q=>q.section==="B"&&q.type==="missing_word").length < 3; i += stepB2) {
-      const ayah = juzAyahs[i];
-      const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
-      if (words.length < 3) continue;
-      const bi = 1 + Math.floor(Math.random() * (words.length-2));
-      const cw = words[bi];
-      const blanked = words.map((w,j)=>j===bi?"____":w).join(" ");
-      const pool = juzAyahs.flatMap(a=>stripWaqf(a.text).split(" ")).filter(w=>w!==cw&&normalizeArabic(w).length>2);
-      const wrongs = shuffle([...new Set(pool)]).slice(0,3);
-      if (wrongs.length < 2) continue;
-      const opts = shuffle([cw,...wrongs]);
-      qs.push({ id:id++, type:"missing_word", section:"B",
-        prompt:blanked, promptLabel:`§B (Juz Review) · Verse ${ayah.numberInSurah} — ${ayah.surah.englishName}`,
-        options:opts, correct:opts.indexOf(cw), correctText:cw });
+    for (let i = 0; i < juzAyahs.length && qs.filter(q=>q.section==="B"&&q.type==="mcq_blank").length < 2; i += stepB2) {
+      const q = makeMcqBlank(juzAyahs[i], false, juzAyahs, "B");
+      if (q) qs.push(q);
+    }
+    // Record continue from juz
+    const recIdx = Math.floor(juzAyahs.length / 2);
+    const qRec = makeRecordContinue(recIdx, juzAyahs, "B");
+    if (qRec) qs.push(qRec);
+    // Listen+choose from juz
+    const juzListenIdx = shuffle(juzAyahs.map((_,i)=>i)).slice(0,2);
+    for (const li of juzListenIdx) {
+      if (qs.filter(q=>q.section==="B"&&q.type==="listen_choose").length >= 1) break;
+      const q = makeListenChoose(li, juzAyahs, "B");
+      if (q) qs.push(q);
     }
   }
-  return [...shuffle(qs.filter(q=>q.section==="A")), ...shuffle(qs.filter(q=>q.section==="B"))];
+
+  const sA = shuffle(qs.filter(q=>q.section==="A"));
+  const sB = shuffle(qs.filter(q=>q.section==="B"));
+  return [...sA, ...sB];
 }
+
 
 /* ── Encouragement messages ─────────────────────────────────────── */
 const RETRY_MSGS = [
@@ -449,17 +629,35 @@ function FullAudioPlayer({url,label="Your Recitation"}:{url:string;label?:string
   const [loaded,   setLoaded]   = useState(false);
   useEffect(()=>{
     const el=audioRef.current; if(!el) return;
-    const onMeta=()=>{setDuration(el.duration);setLoaded(true);};
-    const onTime=()=>setProgress(el.currentTime/(el.duration||1));
+    const onMeta=()=>{
+      // WebM from MediaRecorder often has Infinity duration until seeked to end
+      if (!isFinite(el.duration) || isNaN(el.duration)) {
+        el.currentTime = 1e101; // seek to end trick
+      } else {
+        setDuration(el.duration); setLoaded(true);
+      }
+    };
+    const onSeeked=()=>{
+      if (!isFinite(el.duration) || isNaN(el.duration)) return;
+      setDuration(el.duration); setLoaded(true);
+      el.currentTime = 0;
+    };
+    const onTime=()=>{ if(isFinite(el.duration)&&el.duration>0) setProgress(el.currentTime/el.duration); };
     const onEnded=()=>{setPlaying(false);setProgress(0);if(el)el.currentTime=0;};
     el.addEventListener("loadedmetadata",onMeta);
+    el.addEventListener("seeked",onSeeked);
     el.addEventListener("timeupdate",onTime);
     el.addEventListener("ended",onEnded);
-    return()=>{el.removeEventListener("loadedmetadata",onMeta);el.removeEventListener("timeupdate",onTime);el.removeEventListener("ended",onEnded);};
+    return()=>{
+      el.removeEventListener("loadedmetadata",onMeta);
+      el.removeEventListener("seeked",onSeeked);
+      el.removeEventListener("timeupdate",onTime);
+      el.removeEventListener("ended",onEnded);
+    };
   },[url]);
   const toggle=()=>{const el=audioRef.current;if(!el)return;if(playing){el.pause();setPlaying(false);}else{el.play().catch(()=>{});setPlaying(true);}};
   const seek=(e:React.MouseEvent<HTMLDivElement>)=>{const el=audioRef.current;if(!el||!loaded)return;const rect=e.currentTarget.getBoundingClientRect();el.currentTime=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width))*el.duration;};
-  const fmt=(s:number)=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+  const fmt=(s:number)=>(!isFinite(s)||isNaN(s))?"--:--":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
   return(
     <div style={{background:`linear-gradient(135deg,${G1}08,${G2}14)`,border:`1.5px solid ${GOLD}55`,borderRadius:16,padding:"14px 16px"}}>
       <audio ref={audioRef} src={url} preload="metadata"/>
@@ -610,6 +808,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const [tabSwitchCount,setTabSwitchCount] = useState(0);
   const [focusWarning, setFocusWarning] = useState(false);
   const [savedAudioUrl,setSavedAudioUrl] = useState<string|null>(null);
+  // Record-type question state
+  const [qRecording,   setQRecording]   = useState(false);
+  const [qRecSecs,     setQRecSecs]     = useState(0);
+  const [qRecChunks,   setQRecChunks]   = useState<Blob[]>([]);
+  const [qRecResult,   setQRecResult]   = useState<{transcript:string;score:number}|null>(null);
+  const [qRecDone,     setQRecDone]     = useState(false);
+  const qRecTimerRef  = useRef<any>(null);
+  const qMediaRecRef  = useRef<MediaRecorder|null>(null);
+  // TTS / listen state
+  const [isSpeaking,   setIsSpeaking]   = useState(false);
+  const [listenDone,   setListenDone]   = useState(false);
   const [isRecording,  setIsRecording] = useState(false);
   const [recSecs,      setRecSecs]     = useState(0);
   const [submitting,   setSubmitting]  = useState(false);
@@ -927,6 +1136,83 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     // mr.onstop handles setPhase("page_result") + setScore(null) + fill
   };
 
+  // Reset per-question record state when question changes
+  useEffect(() => {
+    setQRecording(false); setQRecSecs(0); setQRecChunks([]); setQRecResult(null); setQRecDone(false);
+    setIsSpeaking(false); setListenDone(false);
+    clearInterval(qRecTimerRef.current);
+    if (qMediaRecRef.current && qMediaRecRef.current.state !== "inactive") {
+      try { qMediaRecRef.current.stop(); } catch {}
+    }
+    qMediaRecRef.current = null;
+  }, [qIdx]);
+
+  const startQRecording = async () => {
+    try {
+      setQRecChunks([]); setQRecResult(null); setQRecDone(false); setQRecSecs(0);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4"].find(t => {
+        try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
+      }) || "";
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks: Blob[] = [];
+      mr.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(qRecTimerRef.current);
+        setQRecording(false);
+        const blob = new Blob(chunks, { type: mime || "audio/webm" });
+        const tx = await transcribeAudio(blob);
+        const q = questions[qIdx];
+        // Score against the expected answer
+        const expected = q.correctText || "";
+        const expWords = normalizeArabic(expected).split(/\s+/).filter(Boolean);
+        const gotWords = normalizeArabic(tx).split(/\s+/).filter(Boolean);
+        let matched = 0;
+        const used2 = new Set<number>();
+        for (const ew of expWords) {
+          for (let i = 0; i < gotWords.length; i++) {
+            if (used2.has(i)) continue;
+            const gw = gotWords[i];
+            if (ew === gw || (ew.length > 3 && gw.length > 3 && (ew.startsWith(gw.slice(0,3)) || gw.startsWith(ew.slice(0,3))))) {
+              matched++; used2.add(i); break;
+            }
+          }
+        }
+        const sc = expWords.length > 0 ? Math.round((matched / expWords.length) * 100) : (tx.trim().length > 5 ? 70 : 10);
+        setQRecResult({ transcript: tx, score: sc });
+        setQRecDone(true);
+        // Auto-mark answer: score >= 60 = correct (index 0 = pass sentinel)
+        const a = [...answers]; a[qIdx] = sc >= 60 ? 0 : 1; setAnswers(a);
+      };
+      mr.start(200);
+      qMediaRecRef.current = mr;
+      setQRecording(true);
+      qRecTimerRef.current = setInterval(() => setQRecSecs(s => s+1), 1000);
+    } catch { alert("Mic access denied"); }
+  };
+
+  const stopQRecording = () => {
+    clearInterval(qRecTimerRef.current);
+    if (qMediaRecRef.current && qMediaRecRef.current.state !== "inactive") qMediaRecRef.current.stop();
+    qMediaRecRef.current = null;
+  };
+
+  const speakText = (text: string) => {
+    if (!("speechSynthesis" in window)) { setListenDone(true); return; }
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.lang = "ar-SA"; utt.rate = 0.8;
+    // Pick Arabic voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const arVoice = voices.find(v => v.lang.startsWith("ar"));
+    if (arVoice) utt.voice = arVoice;
+    utt.onstart  = () => setIsSpeaking(true);
+    utt.onend    = () => { setIsSpeaking(false); setListenDone(true); };
+    utt.onerror  = () => { setIsSpeaking(false); setListenDone(true); };
+    window.speechSynthesis.speak(utt);
+  };
+
   const acceptPage = () => {
     const last = lastResultRef.current || { tx: "", ayahCorrectness: [] };
     const r: PageResult={
@@ -952,19 +1238,44 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   };
 
   const pickAnswer=(i:number)=>{ const a=[...answers]; a[qIdx]=i; setAnswers(a); };
-  const nextQ=()=>{ if(qIdx<questions.length-1) setQIdx(i=>i+1); else gradeTest(); };
+  const nextQ=()=>{
+    // For record questions, ensure at least attempted
+    const q = questions[qIdx];
+    if ((q?.type==="record_continue"||q?.type==="record_complete") && answers[qIdx]===null) {
+      // Auto-mark as attempted with 0 score if not recorded
+      const a=[...answers]; a[qIdx]=1; setAnswers(a);
+    }
+    if(qIdx<questions.length-1) setQIdx(i=>i+1); else gradeTest();
+  };
   const gradeTest=()=>{
     const sA = questions.filter(q=>q.section==="A");
     const sB = questions.filter(q=>q.section==="B");
     const calcSc=(qs:Question[])=>{
       if(!qs.length) return null;
-      const correct=qs.filter(q=>answers[questions.indexOf(q)]===q.correct).length;
-      return Math.round((correct/qs.length)*100);
+      let pts=0; let total=0;
+      qs.forEach(q=>{
+        const ai=questions.indexOf(q);
+        const a=answers[ai];
+        const isRec=q.type==="record_continue"||q.type==="record_complete";
+        if(isRec){
+          // record answer: 0=pass(correct), 1=fail
+          pts+=(a===0?1:0); total+=1;
+        } else {
+          pts+=(a===q.correct?1:0); total+=1;
+        }
+      });
+      return total>0?Math.round((pts/total)*100):null;
     };
     const sa=calcSc(sA); const sb=calcSc(sB);
     setSectionAScore(sa); setSectionBScore(sb);
-    const allCorrect=answers.filter((a,i)=>a===questions[i]?.correct).length;
-    const pct=questions.length>0?Math.round((allCorrect/questions.length)*100):100;
+    // Overall
+    let totalPts=0; let totalQ=0;
+    questions.forEach((q,i)=>{
+      const a=answers[i];
+      const isRec=q.type==="record_continue"||q.type==="record_complete";
+      totalPts+=(isRec?(a===0?1:0):(a===q.correct?1:0)); totalQ+=1;
+    });
+    const pct=totalQ>0?Math.round((totalPts/totalQ)*100):100;
     setTestScore(pct); setPhase("test_result");
     if(pct>=TEST_PASS_THRESHOLD) submitSession(pct, sa, sb);
   };
@@ -1004,6 +1315,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
             })),
           })),
           errors:pageResults.flatMap(r=>r.errorWords.map(w=>({word:w,page:r.pageNum}))).slice(0,20),
+          proctoring: {
+            tab_switches: tabSwitchCount,
+            flagged: tabSwitchCount > 0,
+            test_started_at: new Date().toISOString(),
+          },
+          question_log: questions.map((q,i)=>({
+            id: q.id,
+            type: q.type,
+            section: q.section,
+            isErrorFocused: q.isErrorFocused || false,
+            answer_given: answers[i] ?? null,
+            correct: answers[i] === q.correct,
+          })),
         },
       },{onConflict:"student_id,log_date"});
 
@@ -1680,42 +2004,147 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
 
               {(()=>{
                 const q=questions[qIdx]; const ans=answers[qIdx];
+                const isRecQ = q.type==="record_continue"||q.type==="record_complete";
+                const isListenQ = q.type==="listen_choose";
+
+                // ── Type label ───────────────────────────────────
+                const typeLabel =
+                  q.type==="mcq_next"       ?"🔤 What comes after this?"
+                  :q.type==="mcq_blank"     ?"✏️ Fill in the missing word"
+                  :q.type==="mcq_continuation"?"⚠️ Continue from error area"
+                  :q.type==="record_continue"?"🎙️ Record what comes next"
+                  :q.type==="record_complete"?"🎙️ Record the missing verses"
+                  :q.type==="listen_choose" ?"👂 Listen and choose the correct ayah"
+                  :"What comes next?";
+
                 return(
                   <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,
                     boxShadow:"0 2px 12px rgba(0,0,0,.07)"}}>
+                    {/* Header */}
                     <div style={{padding:"14px 16px",background:`${G1}0a`,borderBottom:`1px solid ${BRD}`}}>
-                      <p style={{margin:"0 0 6px",fontSize:9,fontWeight:800,color:"#9CA3AF",
-                        textTransform:"uppercase",letterSpacing:.5}}>
-                        {q.type==="next_verse"?"What comes next?":"Fill in the blank"} · {q.promptLabel}
-                      </p>
-                      <p style={{margin:0,fontSize:19,direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
-                        color:INK,lineHeight:2.6}}>{q.prompt}</p>
+                      <p style={{margin:"0 0 4px",fontSize:9,fontWeight:800,color:"#9CA3AF",
+                        textTransform:"uppercase",letterSpacing:.5}}>{q.promptLabel}</p>
+                      <p style={{margin:"0 0 8px",fontSize:11,fontWeight:700,
+                        color:isRecQ?GOLD:isListenQ?PURPLE:G2}}>{typeLabel}</p>
+                      {/* Prompt snippet — middle of verse, not full */}
+                      {isListenQ?(
+                        <div style={{display:"flex",alignItems:"center",gap:10}}>
+                          <button onClick={()=>speakText(q.listenText||q.prompt)}
+                            disabled={isSpeaking}
+                            style={{flexShrink:0,width:48,height:48,borderRadius:"50%",border:"none",cursor:"pointer",
+                              background:isSpeaking?`${PURPLE}22`:`linear-gradient(135deg,${PURPLE},#6d28d9)`,
+                              display:"flex",alignItems:"center",justifyContent:"center",
+                              boxShadow:isSpeaking?"none":`0 3px 12px ${PURPLE}55`}}>
+                            {isSpeaking
+                              ?<span style={{display:"flex",gap:2}}>
+                                  {[8,13,10].map((h,i)=><span key={i} style={{width:3,height:h,background:PURPLE,borderRadius:2}}/>)}
+                               </span>
+                              :<Play size={16} color={W} style={{marginLeft:2}}/>}
+                          </button>
+                          <div>
+                            <p style={{margin:0,fontSize:12,fontWeight:700,color:PURPLE}}>
+                              {isSpeaking?"Playing…":listenDone?"✓ Heard — now choose below":"Tap to hear the verse snippet"}
+                            </p>
+                            {listenDone&&<p style={{margin:"2px 0 0",fontSize:10,color:"#9CA3AF"}}>You can replay it</p>}
+                          </div>
+                        </div>
+                      ):(
+                        <p style={{margin:0,fontSize:q.snippet?20:17,direction:"rtl",
+                          fontFamily:"'Amiri Quran','Amiri',serif",color:INK,lineHeight:2.8}}>
+                          {q.prompt}
+                        </p>
+                      )}
                     </div>
-                    <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
-                      {q.options.map((opt,oi)=>(
-                        <button key={oi} onClick={()=>pickAnswer(oi)}
-                          style={{
-                            width:"100%",padding:"13px 14px",borderRadius:12,cursor:"pointer",
-                            textAlign:"right",direction:"rtl",fontFamily:"'Amiri',serif",
-                            fontSize:16,lineHeight:1.9,color:INK,
-                            border:`2px solid ${ans===oi?G2:BRD}`,
-                            background:ans===oi?`${G1}0e`:WARM,
-                            fontWeight:ans===oi?700:400,transition:"all .15s",
-                          }}>
-                          {opt}
-                        </button>
-                      ))}
-                    </div>
+
+                    {/* ── MCQ options ── */}
+                    {!isRecQ&&(
+                      <div style={{padding:"12px 14px",display:"flex",flexDirection:"column",gap:8}}>
+                        {q.options.map((opt,oi)=>(
+                          <button key={oi} onClick={()=>pickAnswer(oi)}
+                            style={{
+                              width:"100%",padding:"12px 14px",borderRadius:12,cursor:"pointer",
+                              textAlign:"right",direction:"rtl",fontFamily:"'Amiri',serif",
+                              fontSize:15,lineHeight:2.0,color:INK,
+                              border:`2px solid ${ans===oi?G2:BRD}`,
+                              background:ans===oi?`${G1}0e`:WARM,
+                              fontWeight:ans===oi?700:400,transition:"all .15s",
+                            }}>
+                            {opt}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* ── Record answer ── */}
+                    {isRecQ&&(
+                      <div style={{padding:"14px",display:"flex",flexDirection:"column",gap:12}}>
+                        <div style={{padding:"10px 12px",borderRadius:10,
+                          background:`${GOLD}0d`,border:`1px solid ${GOLD}33`}}>
+                          <p style={{margin:0,fontSize:12,color:"#78350F",fontWeight:600,lineHeight:1.6}}>
+                            🎙️ {q.recordPrompt||"Record what comes after the shown text"}
+                          </p>
+                        </div>
+                        {!qRecDone&&(
+                          <button
+                            onClick={qRecording?stopQRecording:startQRecording}
+                            style={{padding:"14px",borderRadius:12,border:"none",cursor:"pointer",
+                              background:qRecording
+                                ?`linear-gradient(135deg,${FAIL},#b91c1c)`
+                                :`linear-gradient(135deg,${G2},${G3})`,
+                              color:W,fontWeight:900,fontSize:14,fontFamily:"inherit",
+                              display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                            {qRecording
+                              ?<><MicOff size={16}/> Stop — {Math.floor(qRecSecs/60).toString().padStart(2,"0")}:{(qRecSecs%60).toString().padStart(2,"0")}</>
+                              :<><Mic size={16}/> Start Recording Answer</>}
+                          </button>
+                        )}
+                        {qRecDone&&qRecResult&&(
+                          <div style={{padding:"12px",borderRadius:12,
+                            background:qRecResult.score>=60?"#F0FDF4":"#FEF2F2",
+                            border:`1px solid ${qRecResult.score>=60?"#BBF7D0":"#FECACA"}`}}>
+                            <p style={{margin:"0 0 5px",fontWeight:800,fontSize:13,
+                              color:qRecResult.score>=60?PASS:FAIL}}>
+                              {qRecResult.score>=60?"✓ Good recitation!":"✗ Needs more practice"}
+                              {" "}— {qRecResult.score}% match
+                            </p>
+                            {qRecResult.transcript&&(
+                              <p style={{margin:0,fontSize:12,direction:"rtl",
+                                fontFamily:"'Amiri',serif",color:"#374151",lineHeight:2}}>
+                                {qRecResult.transcript.slice(0,120)}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
 
-              <button onClick={nextQ} disabled={answers[qIdx]===null}
-                style={{padding:"14px",borderRadius:14,border:"none",cursor:answers[qIdx]===null?"not-allowed":"pointer",
-                  background:answers[qIdx]!==null?`linear-gradient(135deg,${G2},${G3})`:"#D1D5DB",
-                  color:W,fontWeight:900,fontSize:14,fontFamily:"inherit",transition:"background .2s"}}>
-                {qIdx<questions.length-1?"Next Question →":"Finish Test"}
-              </button>
+              {(()=>{
+                const q=questions[qIdx];
+                const isRecQ=q?.type==="record_continue"||q?.type==="record_complete";
+                const isListenQ=q?.type==="listen_choose";
+                const canNext = isRecQ ? qRecDone : isListenQ ? (answers[qIdx]!==null) : answers[qIdx]!==null;
+                const skipAllowed = isRecQ && !qRecDone; // allow skip for record q
+                return(
+                  <div style={{display:"flex",gap:8}}>
+                    {skipAllowed&&(
+                      <button onClick={()=>{const a=[...answers];a[qIdx]=1;setAnswers(a);setTimeout(nextQ,50);}}
+                        style={{flex:"0 0 auto",padding:"12px 14px",borderRadius:14,border:`1.5px solid ${BRD}`,
+                          cursor:"pointer",background:W,color:"#9CA3AF",fontWeight:700,fontSize:12,fontFamily:"inherit"}}>
+                        Skip
+                      </button>
+                    )}
+                    <button onClick={nextQ} disabled={!canNext}
+                      style={{flex:1,padding:"14px",borderRadius:14,border:"none",cursor:canNext?"pointer":"not-allowed",
+                        background:canNext?`linear-gradient(135deg,${G2},${G3})`:"#D1D5DB",
+                        color:W,fontWeight:900,fontSize:14,fontFamily:"inherit",transition:"background .2s"}}>
+                      {qIdx<questions.length-1?"Next Question →":"Finish Test"}
+                    </button>
+                  </div>
+                );
+              })()}
             </div>
           </>
         ):(
@@ -1962,7 +2391,7 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
     const ratio=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
     el.currentTime=ratio*el.duration; setProgress(ratio);
   };
-  const fmt=(s:number)=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+  const fmt=(s:number)=>(!isFinite(s)||isNaN(s))?"--:--":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
 
   return(
     <div style={{background:`linear-gradient(135deg,${G1}08,${G2}14)`,
