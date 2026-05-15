@@ -17,6 +17,10 @@ interface ProctoringConfig {
   tab_switch_limit?: number; screenshot_interval_seconds?: number;
   max_warnings?: number; auto_submit_on_violation?: boolean;
   webcam_required?: boolean; record_audio?: boolean;
+  /** 'exam' (default) or 'hifdh' — stored in proctoring_sessions for dashboard filtering */
+  sessionType?: "exam" | "hifdh";
+  /** Human-readable label, e.g. "Hifdh Test: Al-Baqarah" */
+  contextLabel?: string;
 }
 
 interface ProctoringState {
@@ -417,6 +421,9 @@ export const useProctoring = (
           attempt_id: config.attemptId, webcam_enabled: true,
           microphone_enabled: config.record_audio || false,
           fullscreen_active: false, max_warnings: config.max_warnings || 3,
+          session_type: config.sessionType || "exam",
+          context_label: config.contextLabel || null,
+          student_id: config.userId || null,
         }).select("id").single();
         if (data) sessionId.current = data.id;
       } catch (_) {}
