@@ -569,7 +569,11 @@ const SubjectsTabView = React.memo(({ fSubjects, search, sLoad, unlinked, selCou
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
           {ab.items.map((s: any) => {
-            const lv = safeLvl(s.level);
+            // Resolve the actual level slugs for this subject
+            const subjectLevels: string[] = getLevels(s);
+            // Use the first matching level for card border/bg colour (primary)
+            const primarySlug = subjectLevels[0] || null;
+            const lv = safeLvl(primarySlug);
             return (
               <div key={s.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden", display: "flex", height: 116, boxShadow: "0 1px 6px rgba(0,0,0,0.06)", transition: "box-shadow .2s, border-color .2s" }}
                 onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 4px 18px rgba(6,78,59,0.13)"; (e.currentTarget as HTMLDivElement).style.borderColor = `${G}55`; }}
@@ -601,7 +605,14 @@ const SubjectsTabView = React.memo(({ fSubjects, search, sLoad, unlinked, selCou
                   <div>
                     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, marginBottom: 2 }}>
                       <p style={{ fontWeight: 800, fontSize: 13, color: "#111", margin: 0, lineHeight: 1.25, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</p>
-                      <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: lv.bg, color: lv.text, border: `1px solid ${lv.border}`, whiteSpace: "nowrap" }}>{lv.label}</span>
+                      <span style={{ flexShrink: 0, display: "flex", gap: 3, flexWrap: "nowrap" as const, alignItems: "center" }}>
+                        {subjectLevels.length === 0 ? (
+                          <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: lv.bg, color: lv.text, border: `1px solid ${lv.border}`, whiteSpace: "nowrap" }}>All Levels</span>
+                        ) : subjectLevels.map((slug: string) => {
+                          const slv = safeLvl(slug);
+                          return <span key={slug} style={{ padding: "2px 7px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: slv.bg, color: slv.text, border: `1px solid ${slv.border}`, whiteSpace: "nowrap" }}>{slv.label}</span>;
+                        })}
+                      </span>
                     </div>
                     {s.title_ar && (
                       <p style={{ fontWeight: 600, fontSize: 11, color: GOLD, margin: "0 0 4px", direction: "rtl", fontFamily: "'Amiri',serif", lineHeight: 1.3 }}>{s.title_ar}</p>
