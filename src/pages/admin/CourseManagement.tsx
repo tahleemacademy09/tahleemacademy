@@ -317,11 +317,16 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateS
       return [l.slug, {label: l.name_en, bg: cfg.bg, text: cfg.color, border: cfg.border}];
     })),
   };
-  const parseStoredLevel = (stored?: string): Set<string> => {
+  const parseStoredLevel = (ed?: any): Set<string> => {
+    // Prefer the TEXT[] column (set by SubjectManagement or a previous correct save)
+    if (Array.isArray(ed?.levels) && ed.levels.length > 0) {
+      return new Set(ed.levels as string[]);
+    }
+    const stored = ed?.level;
     if (!stored || stored === "all") return new Set(LEVELS_LIST);
-    return new Set(stored.split(",").map(s => s.trim()).filter(Boolean));
+    return new Set(stored.split(",").map((s: string) => s.trim()).filter(Boolean));
   };
-  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed?.level), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "", visibility: ((ed?.visibility || "all") as "all" | "general" | "private") });
+  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "", visibility: ((ed?.visibility || "all") as "all" | "general" | "private") });
   const [up, setUp] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
 
@@ -1103,7 +1108,13 @@ export default function CourseManagement() {
   const saveSubject = useCallback(async (p: any, assigned?: Set<string>) => {
     setBusy(true);
     try {
-      const d: any = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, is_active: p.is_active, image_url: p.image_url || null, teacher_id: p.teacher_id || null, course_id: selCourse?.id || null, visibility: p.visibility || "all", updated_at: new Date().toISOString() };
+      const levelStr = p.level as string; // comma-sep string or "all"
+      const levelsArray: string[] =
+        !levelStr || levelStr === "all"
+          ? []
+          : levelStr.split(",").map((x: string) => x.trim()).filter(Boolean);
+
+      const d: any = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, levels: levelsArray, is_active: p.is_active, image_url: p.image_url || null, teacher_id: p.teacher_id || null, course_id: selCourse?.id || null, visibility: p.visibility || "all", updated_at: new Date().toISOString() };
       if (edSubject) {
         const { error: subjErr } = await supabase.from("subjects").update(d).eq("id", edSubject.id);
         if (subjErr) throw subjErr;
