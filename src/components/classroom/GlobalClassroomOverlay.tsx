@@ -113,7 +113,8 @@ function useMediaSession(
    Auto-enters PiP when tab hides. Tapping it returns to the live class. */
 const GOLD = "#c9a84c";
 const DARK = "#0c1f12";
-const W = 160, H = 160;
+// Compact horizontal rectangle — drives native PiP aspect ratio
+const W = 280, H = 72;
 
 interface PipHandle {
   video:       HTMLVideoElement;
@@ -132,64 +133,84 @@ function buildCanvasPip(initial: string, onTap: () => void): PipHandle | null {
 
   let micMuted = true;
   let raf = 0;
-
-  const rr = (x: number, y: number, w: number, h: number, r: number) => {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
-  };
+  const CY = H / 2; // vertical centre
 
   const draw = () => {
     ctx.clearRect(0, 0, W, H);
-    // Black rounded card
-    ctx.fillStyle = "#0c1f12"; rr(0, 0, W, H, 28); ctx.fill();
-    ctx.strokeStyle = "rgba(201,168,76,0.65)"; ctx.lineWidth = 2;
-    rr(1, 1, W - 2, H - 2, 27); ctx.stroke();
 
-    // Avatar circle
-    ctx.fillStyle = GOLD;
-    ctx.beginPath(); ctx.arc(W / 2, 62, 42, 0, Math.PI * 2); ctx.fill();
+    // ── Background pill ──────────────────────────────────────────────
+    const R = H / 2;
     ctx.fillStyle = DARK;
-    ctx.font = "bold 32px system-ui,-apple-system,sans-serif";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(initial.toUpperCase().slice(0, 2), W / 2, 62);
+    ctx.beginPath();
+    ctx.arc(R,     CY, R, Math.PI / 2, -Math.PI / 2, true);
+    ctx.arc(W - R, CY, R, -Math.PI / 2, Math.PI / 2, true);
+    ctx.closePath();
+    ctx.fill();
+    // Gold border
+    ctx.strokeStyle = "rgba(201,168,76,0.7)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(R,     CY, R - 1, Math.PI / 2, -Math.PI / 2, true);
+    ctx.arc(W - R, CY, R - 1, -Math.PI / 2, Math.PI / 2, true);
+    ctx.closePath();
+    ctx.stroke();
 
-    // Pulsing LIVE dot
-    const p = 0.4 + 0.6 * Math.abs(Math.sin(Date.now() / 700));
+    // ── Pulsing LIVE dot (left) ──────────────────────────────────────
+    const p = 0.45 + 0.55 * Math.abs(Math.sin(Date.now() / 700));
+    const dotX = 22;
     ctx.fillStyle = `rgba(239,68,68,${p})`;
-    ctx.beginPath(); ctx.arc(W / 2 - 16, 118, 4, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = `rgba(239,68,68,${Math.min(p + 0.2, 1)})`;
-    ctx.font = "bold 9px system-ui,sans-serif"; ctx.textBaseline = "middle";
-    ctx.fillText("LIVE", W / 2 + 4, 118);
+    ctx.beginPath(); ctx.arc(dotX, CY - 6, 4.5, 0, Math.PI * 2); ctx.fill();
+    // "LIVE" label
+    ctx.fillStyle = `rgba(239,68,68,${Math.min(p + 0.3, 1)})`;
+    ctx.font = "bold 8px system-ui,sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("LIVE", dotX, CY + 7);
 
-    // Mic badge
-    const bx = W / 2 + 28, by = 92;
-    ctx.fillStyle = micMuted ? "rgba(239,68,68,.95)" : "rgba(34,120,60,.95)";
-    ctx.beginPath(); ctx.arc(bx, by, 11, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(bx, by, 11, 0, Math.PI * 2); ctx.stroke();
-    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.fillStyle = "#fff";
+    // ── Vertical divider ─────────────────────────────────────────────
+    ctx.strokeStyle = "rgba(201,168,76,0.25)";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(48, 14); ctx.lineTo(48, H - 14); ctx.stroke();
+
+    // ── Avatar circle ────────────────────────────────────────────────
+    const avX = 72, avR = 22;
+    ctx.fillStyle = GOLD;
+    ctx.beginPath(); ctx.arc(avX, CY, avR, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = DARK;
+    ctx.font = "bold 14px system-ui,-apple-system,sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(initial.toUpperCase().slice(0, 2), avX, CY);
+
+    // ── Mic icon (right side) ─────────────────────────────────────────
+    const micX = W - 28;
+    ctx.fillStyle = micMuted ? "rgba(239,68,68,0.9)" : "rgba(34,120,60,0.9)";
+    ctx.beginPath(); ctx.arc(micX, CY, 16, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(micX, CY, 16, 0, Math.PI * 2); ctx.stroke();
+
+    // mic body
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.3;
     if (micMuted) {
-      ctx.globalAlpha = 0.45;
-      ctx.beginPath(); ctx.arc(bx, by - 2, 3.2, 0, Math.PI * 2); ctx.fill();
+      // mic capsule (faint)
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath(); ctx.arc(micX, CY - 3, 3.5, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
-      ctx.beginPath(); ctx.moveTo(bx - 6, by + 5); ctx.lineTo(bx + 6, by - 5);
-      ctx.lineWidth = 2.2; ctx.stroke();
+      // slash
+      ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(micX - 7, CY + 6); ctx.lineTo(micX + 7, CY - 6); ctx.stroke();
     } else {
-      ctx.beginPath(); ctx.arc(bx, by - 2, 3, 0, Math.PI * 2); ctx.fill();
+      // capsule top
+      ctx.beginPath(); ctx.arc(micX, CY - 3, 3.5, 0, Math.PI * 2); ctx.fill();
+      // curved base
       ctx.beginPath();
-      ctx.moveTo(bx - 3.5, by - 1);
-      ctx.quadraticCurveTo(bx - 3.5, by + 3, bx, by + 4);
-      ctx.quadraticCurveTo(bx + 3.5, by + 3, bx + 3.5, by - 1);
+      ctx.moveTo(micX - 4, CY - 1);
+      ctx.quadraticCurveTo(micX - 4, CY + 4, micX, CY + 5);
+      ctx.quadraticCurveTo(micX + 4, CY + 4, micX + 4, CY - 1);
       ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(bx, by + 4); ctx.lineTo(bx, by + 7); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(bx - 2.5, by + 7); ctx.lineTo(bx + 2.5, by + 7); ctx.stroke();
+      // stand
+      ctx.beginPath(); ctx.moveTo(micX, CY + 5); ctx.lineTo(micX, CY + 9); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(micX - 3, CY + 9); ctx.lineTo(micX + 3, CY + 9); ctx.stroke();
     }
+
     raf = requestAnimationFrame(draw);
   };
 
