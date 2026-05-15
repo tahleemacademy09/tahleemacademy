@@ -88,10 +88,16 @@ const ProctoringDashboard = () => {
     ]);
     setExamsList(eRes.data||[]);
     const merged = (sRes.data||[]).map((s:any)=>{
-      const attempt = (aRes.data||[]).find((a:any)=>a.id===s.attempt_id)||{};
-      const profile = (pRes.data||[]).find((p:any)=>p.user_id===(attempt as any).user_id)||{};
-      const exam    = (eRes.data||[]).find((e:any)=>e.id===(attempt as any).exam_id)||{};
-      return {...s,attempt,profile,exam};
+      const attempt  = (aRes.data||[]).find((a:any)=>a.id===s.attempt_id)||{};
+      // Hifdh sessions: no exam_attempt row — use student_id stored on session itself
+      const uid      = (attempt as any).user_id || s.student_id;
+      const profile  = (pRes.data||[]).find((p:any)=>p.user_id===uid)||{};
+      const exam     = (eRes.data||[]).find((e:any)=>e.id===(attempt as any).exam_id)||{};
+      // For hifdh sessions build a display label from context_label column
+      const isHifdh  = s.session_type === "hifdh";
+      return {...s, attempt, profile,
+        exam: { ...(exam as any), title: (exam as any).title || (isHifdh ? s.context_label : "—") },
+        _isHifdh: isHifdh };
     });
     setSessions(merged); setLoading(false);
   };
@@ -214,9 +220,12 @@ const ProctoringDashboard = () => {
                 {name.charAt(0).toUpperCase()}
               </div>
               <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:15, fontWeight:800, color:G, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" as const }}>{name}</div>
+                <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" as const }}>
+                  <span style={{ fontSize:15, fontWeight:800, color:G }}>{name}</span>
+                  {s._isHifdh && <span style={{ fontSize:9, padding:"2px 8px", borderRadius:8, fontWeight:800, background:"#fef3c7", color:"#92400e", border:"1px solid #fde68a" }}>📖 HIFDH</span>}
+                </div>
                 <div style={{ fontSize:11, color:TL }}>{email}</div>
-                <div style={{ fontSize:11, color:TL }}>{exam}</div>
+                <div style={{ fontSize:11, color:TL }}>{exam || s.context_label || "—"}</div>
               </div>
               <div style={{ textAlign:"right", flexShrink:0 }}>
                 <div style={{ padding:"4px 10px", borderRadius:10, fontSize:11, fontWeight:700, background:!s.ended_at?"#f0fff4":"#f8fafb", color:!s.ended_at?"#065f46":TL, border:`1px solid ${!s.ended_at?"#86efac":BORDER}`, marginBottom:4 }}>
@@ -508,8 +517,13 @@ const ProctoringDashboard = () => {
                           <span style={{ fontSize:10, padding:"2px 8px", borderRadius:8, fontWeight:700, background:!s.ended_at?"#f0fff4":"#f8fafb", color:!s.ended_at?"#065f46":TL, border:`1px solid ${!s.ended_at?"#86efac":BORDER}` }}>
                             {!s.ended_at ? "●"+t("Live","نشط") : t("Ended","منتهي")}
                           </span>
+                          {s._isHifdh && (
+                            <span style={{ fontSize:9, padding:"2px 8px", borderRadius:8, fontWeight:800, background:"#fef3c7", color:"#92400e", border:"1px solid #fde68a", letterSpacing:.5 }}>
+                              📖 HIFDH
+                            </span>
+                          )}
                         </div>
-                        <div style={{ fontSize:11, color:TL, marginBottom:8 }}>{exam} · {new Date(s.started_at).toLocaleDateString()}</div>
+                        <div style={{ fontSize:11, color:TL, marginBottom:8 }}>{exam || (s._isHifdh ? s.context_label : "—")} · {new Date(s.started_at).toLocaleDateString()}</div>
                         {/* Metrics row */}
                         <div style={{ display:"flex", gap:10, flexWrap:"wrap" as const }}>
                           <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:11 }}>
