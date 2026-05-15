@@ -25,37 +25,38 @@ const RevisionHub = () => {
   const studentLevel = (profile?.level || "beginner").toLowerCase();
   const isLevelAssigned = !!profile?.level;
 
-  // ✅ Robust subject query with case-insensitive matching & guaranteed fallback
+  // ✅ Filter subjects directly by student level using the levels TEXT[] column
   const { data: subjects = [], isLoading } = useQuery({
     queryKey: ["revision-subjects", studentLevel],
-    enabled: !!user,
+    enabled: !!user && !!profile?.level,
     queryFn: async () => {
-      // 1. Try level_courses mapping (case-insensitive)
-      const { data: levelCourses, error: lcErr } = await supabase
-        .from("level_courses")
-        .select("subject_id, level")
-        .ilike("level", studentLevel);
-
-      if (lcErr) console.warn("level_courses fetch warning:", lcErr);
-
-      if (levelCourses && levelCourses.length > 0) {
-        const subjectIds = levelCourses.map(lc => lc.subject_id).filter(Boolean);
-        if (subjectIds.length > 0) {
-          const { data, error } = await supabase
-            .from("subjects")
-            .select("*")
-            .in("id", subjectIds)
-            .eq("is_active", true);
-          if (data && data.length > 0) return data;
-        }
-      }
-      // 2. Fallback: Show ALL active subjects if mapping is empty/fails
-      console.warn(`⚠️ No subjects found for level "${studentLevel}". Showing all active subjects.`);
       const { data, error } = await supabase
         .from("subjects")
         .select("*")
         .eq("is_active", true);
-      return (data || []) as any[];
+
+      if (error) throw error;
+      const allSubjects = (data || []) as any[];
+
+      // A subject is visible to the student if:
+      //   • levels array is empty/null → no restriction (all students see it)
+      //   • studentLevel is in the levels array
+      //   • legacy level string matches (may be comma-separated)
+      return allSubjects.filter((s: any) => {
+        if (Array.isArray(s.levels) && s.levels.length > 0) {
+          return s.levels.some(
+            (lv: string) => lv.toLowerCase() === studentLevel.toLowerCase()
+          );
+        }
+        if (s.level && s.level !== "all") {
+          return s.level
+            .split(",")
+            .map((x: string) => x.trim().toLowerCase())
+            .includes(studentLevel.toLowerCase());
+        }
+        // No level restriction → visible to all
+        return true;
+      });
     },
   });
 
