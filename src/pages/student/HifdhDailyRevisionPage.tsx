@@ -21,7 +21,7 @@ import {
   ArrowLeft, Mic, MicOff, BookOpen, CalendarDays, Clock, Trophy,
   Star, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Flame, Target, TrendingUp, Play, RefreshCcw, Heart, Loader2,
-  BookMarked, BarChart2, Lock,
+  BookMarked, BarChart2, Lock, ShieldCheck, Bell, Eye,
 } from "lucide-react";
 
 /* ── Design tokens ──────────────────────────────────────────────── */
@@ -38,7 +38,9 @@ const INK  = "#1a1209";
 const PASS = "#16a34a";
 const FAIL = "#dc2626";
 const AMBER = "#d97706";
-const PASS_THRESHOLD = 50;
+const PURPLE = "#7c3aed";
+const PASS_THRESHOLD = 65;
+const TEST_PASS_THRESHOLD = 65;
 
 /* ── Interfaces ─────────────────────────────────────────────────── */
 interface Assignment {
@@ -70,11 +72,13 @@ interface PageResult {
   ayahCorrectness?: boolean[]; transcript?: string;
 }
 interface Question {
-  id: number; type: "next_verse" | "missing_word";
+  id: number; type: "next_verse" | "missing_word" | "continuation";
+  section: "A" | "B";
+  isErrorFocused?: boolean;
   prompt: string; promptLabel: string;
   options: string[]; correct: number; correctText: string;
 }
-type Phase = "intro"|"reading"|"page_result"|"testing"|"test_result"|"complete";
+type Phase = "intro"|"pre_test_review"|"reading"|"page_result"|"proctor_intro"|"testing"|"test_result"|"complete";
 type MainTab = "today"|"schedule"|"history";
 
 /* ── Day descriptor ─────────────────────────────────────────────── */
@@ -211,6 +215,13 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
 
 /* ── Arabic scoring ─────────────────────────────────────────────── */
 
+/* ── Strip Waqf stop/pause signs from Arabic ─────────────────── */
+const WAQF_REGEX = /[\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u06DD\u06DE\u0615]/g;
+function stripWaqf(text: string): string {
+  return text.replace(WAQF_REGEX, "").replace(/\s+/g, " ").trim();
+}
+
+
 /**
  * normalizeArabic — strips tashkeel and unifies character variants so that
  * the ar.uthmani API text and Groq/Whisper transcripts can be compared reliably.
@@ -228,7 +239,7 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
  *  • Quranic stop/pause/ayah-end markers stripped
  */
 function normalizeArabic(t: string): string {
-  return t
+  return stripWaqf(t)
     // 1. Convert dagger alef to regular alef FIRST (before the bulk strip)
     .replace(/\u0670/g, "\u0627")
     // 2. Strip remaining tashkeel + Quranic annotation characters
@@ -315,39 +326,88 @@ function shuffle<T>(arr:T[]): T[] {
   for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
   return a;
 }
-function buildQuestions(results: PageResult[]): Question[] {
-  const allAyahs = results.flatMap(r=>r.ayahs);
+function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[] {
+  const allAyahs = results.flatMap(r => r.ayahs);
+  const errorWords = results.flatMap(r => r.errorWords);
   const qs: Question[] = [];
   let id = 0;
-  // Next-verse questions (up to 5)
-  const step1 = Math.max(1,Math.floor(allAyahs.length/5));
-  for(let i=0;i<allAyahs.length-1&&qs.filter(q=>q.type==="next_verse").length<5;i+=step1){
-    const correct=allAyahs[i+1];
-    const wrongs =shuffle(allAyahs.filter((_,j)=>j!==i+1)).slice(0,3);
-    if(wrongs.length<2) continue;
-    const opts=shuffle([correct,...wrongs]);
-    qs.push({id:id++,type:"next_verse",
-      prompt:allAyahs[i].text,
-      promptLabel:`${allAyahs[i].surah.englishName} · Verse ${allAyahs[i].numberInSurah}`,
-      options:opts.map(o=>o.text), correct:opts.indexOf(correct), correctText:correct.text});
+
+  // ── SECTION A: today's pages, error-focused ───────────────────
+  const errorAyahs = allAyahs.filter(a =>
+    errorWords.some(ew => normalizeArabic(a.text).includes(normalizeArabic(stripWaqf(ew)).slice(0,3)))
+  );
+  for (const ayah of errorAyahs.slice(0, 4)) {
+    const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
+    if (words.length < 3) continue;
+    const bi = 1 + Math.floor(Math.random() * (words.length - 2));
+    const cw = words[bi];
+    const blanked = words.map((w, j) => j === bi ? "____" : w).join(" ");
+    const pool = allAyahs.flatMap(a => stripWaqf(a.text).split(" ")).filter(w => w !== cw && normalizeArabic(w).length > 2);
+    const wrongs = shuffle([...new Set(pool)]).slice(0, 3);
+    if (wrongs.length < 2) continue;
+    const opts = shuffle([cw, ...wrongs]);
+    qs.push({ id:id++, type:"missing_word", section:"A", isErrorFocused:true,
+      prompt:blanked, promptLabel:`§A · Verse ${ayah.numberInSurah} — ${ayah.surah.englishName}`,
+      options:opts, correct:opts.indexOf(cw), correctText:cw });
   }
-  // Missing-word questions (up to 4)
-  const step2 = Math.max(1,Math.floor(allAyahs.length/4));
-  for(let i=0;i<allAyahs.length&&qs.filter(q=>q.type==="missing_word").length<4;i+=step2){
-    const ayah=allAyahs[i]; const words=ayah.text.split(" ");
-    if(words.length<4) continue;
-    const bi=1+Math.floor(Math.random()*(words.length-2));
-    const cw=words[bi];
-    const blanked=words.map((w,j)=>j===bi?"____":w).join(" ");
-    const pool=allAyahs.flatMap(a=>a.text.split(" ")).filter(w=>w!==cw&&w.length>2);
-    const wrongs=shuffle([...new Set(pool)]).slice(0,3);
-    if(wrongs.length<2) continue;
-    const opts=shuffle([cw,...wrongs]);
-    qs.push({id:id++,type:"missing_word",
-      prompt:blanked,
-      promptLabel:`Complete Verse ${ayah.numberInSurah} — ${ayah.surah.englishName}`,
-      options:opts, correct:opts.indexOf(cw), correctText:cw});
+  const step1 = Math.max(1, Math.floor(allAyahs.length / 4));
+  for (let i = 0; i < allAyahs.length - 1 && qs.filter(q=>q.section==="A"&&q.type==="next_verse").length < 4; i += step1) {
+    const correct = allAyahs[i+1];
+    const wrongs = shuffle(allAyahs.filter((_,j)=>j!==i+1)).slice(0,3);
+    if (wrongs.length < 2) continue;
+    const opts = shuffle([correct,...wrongs]);
+    qs.push({ id:id++, type:"next_verse", section:"A",
+      prompt:stripWaqf(allAyahs[i].text),
+      promptLabel:`§A · ${allAyahs[i].surah.englishName} · Verse ${allAyahs[i].numberInSurah}`,
+      options:opts.map(o=>stripWaqf(o.text)), correct:opts.indexOf(correct), correctText:stripWaqf(correct.text) });
   }
+  // Continuation from error areas
+  allAyahs.forEach((a, idx) => {
+    if (idx >= allAyahs.length-1 || qs.filter(q=>q.section==="A"&&q.type==="continuation").length >= 2) return;
+    if (!errorWords.some(ew=>normalizeArabic(a.text).includes(normalizeArabic(stripWaqf(ew)).slice(0,3)))) return;
+    const correct = allAyahs[idx+1];
+    const wrongs = shuffle(allAyahs.filter((_,j)=>j!==idx+1)).slice(0,3);
+    if (wrongs.length < 2) return;
+    const opts = shuffle([correct,...wrongs]);
+    qs.push({ id:id++, type:"continuation", section:"A", isErrorFocused:true,
+      prompt:stripWaqf(a.text),
+      promptLabel:`§A · Error Focus · ${a.surah.englishName} Verse ${a.numberInSurah}`,
+      options:opts.map(o=>stripWaqf(o.text)), correct:opts.indexOf(correct), correctText:stripWaqf(correct.text) });
+  });
+
+  // ── SECTION B: from juz start to today ────────────────────────
+  if (juzAyahs.length >= 3) {
+    const stepB = Math.max(1, Math.floor(juzAyahs.length / 4));
+    for (let i = 0; i < juzAyahs.length-1 && qs.filter(q=>q.section==="B").length < 4; i += stepB) {
+      const correct = juzAyahs[i+1];
+      const wrongs = shuffle([...juzAyahs,...allAyahs].filter((_,j)=>j!==i+1)).slice(0,3);
+      if (wrongs.length < 2) continue;
+      const opts = shuffle([correct,...wrongs]);
+      qs.push({ id:id++, type:"next_verse", section:"B",
+        prompt:stripWaqf(juzAyahs[i].text),
+        promptLabel:`§B (Juz Review) · ${juzAyahs[i].surah.englishName} · Verse ${juzAyahs[i].numberInSurah}`,
+        options:opts.map(o=>stripWaqf(o.text)), correct:opts.indexOf(correct), correctText:stripWaqf(correct.text) });
+    }
+    const stepB2 = Math.max(1, Math.floor(juzAyahs.length / 3));
+    for (let i = 0; i < juzAyahs.length && qs.filter(q=>q.section==="B"&&q.type==="missing_word").length < 3; i += stepB2) {
+      const ayah = juzAyahs[i];
+      const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
+      if (words.length < 3) continue;
+      const bi = 1 + Math.floor(Math.random() * (words.length-2));
+      const cw = words[bi];
+      const blanked = words.map((w,j)=>j===bi?"____":w).join(" ");
+      const pool = juzAyahs.flatMap(a=>stripWaqf(a.text).split(" ")).filter(w=>w!==cw&&normalizeArabic(w).length>2);
+      const wrongs = shuffle([...new Set(pool)]).slice(0,3);
+      if (wrongs.length < 2) continue;
+      const opts = shuffle([cw,...wrongs]);
+      qs.push({ id:id++, type:"missing_word", section:"B",
+        prompt:blanked, promptLabel:`§B (Juz Review) · Verse ${ayah.numberInSurah} — ${ayah.surah.englishName}`,
+        options:opts, correct:opts.indexOf(cw), correctText:cw });
+    }
+  }
+  return [...shuffle(qs.filter(q=>q.section==="A")), ...shuffle(qs.filter(q=>q.section==="B"))];
+}
+
   return shuffle(qs);
 }
 
@@ -380,6 +440,150 @@ function scoreColor(s:number): string {
 /* ══════════════════════════════════════════════════════════════════
    SESSION OVERLAY — full-screen recitation session
 ═══════════════════════════════════════════════════════════════════*/
+
+/* ═══════════════════════════════════════════════════════════════
+   FULL AUDIO PLAYER — seekable, shows duration
+═══════════════════════════════════════════════════════════════ */
+function FullAudioPlayer({url,label="Your Recitation"}:{url:string;label?:string}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing,  setPlaying]  = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [loaded,   setLoaded]   = useState(false);
+  useEffect(()=>{
+    const el=audioRef.current; if(!el) return;
+    const onMeta=()=>{setDuration(el.duration);setLoaded(true);};
+    const onTime=()=>setProgress(el.currentTime/(el.duration||1));
+    const onEnded=()=>{setPlaying(false);setProgress(0);if(el)el.currentTime=0;};
+    el.addEventListener("loadedmetadata",onMeta);
+    el.addEventListener("timeupdate",onTime);
+    el.addEventListener("ended",onEnded);
+    return()=>{el.removeEventListener("loadedmetadata",onMeta);el.removeEventListener("timeupdate",onTime);el.removeEventListener("ended",onEnded);};
+  },[url]);
+  const toggle=()=>{const el=audioRef.current;if(!el)return;if(playing){el.pause();setPlaying(false);}else{el.play().catch(()=>{});setPlaying(true);}};
+  const seek=(e:React.MouseEvent<HTMLDivElement>)=>{const el=audioRef.current;if(!el||!loaded)return;const rect=e.currentTarget.getBoundingClientRect();el.currentTime=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width))*el.duration;};
+  const fmt=(s:number)=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+  return(
+    <div style={{background:`linear-gradient(135deg,${G1}08,${G2}14)`,border:`1.5px solid ${GOLD}55`,borderRadius:16,padding:"14px 16px"}}>
+      <audio ref={audioRef} src={url} preload="metadata"/>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+        <div style={{width:40,height:40,borderRadius:"50%",background:`linear-gradient(135deg,${G2},${G3})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <Mic size={17} color={GOLD}/>
+        </div>
+        <div style={{flex:1}}>
+          <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>{label}</p>
+          <p style={{margin:0,fontSize:10,color:"#9CA3AF"}}>{loaded?`Duration: ${fmt(duration)}`:"Loading…"}</p>
+        </div>
+        <button onClick={toggle} style={{width:48,height:48,borderRadius:"50%",border:"none",cursor:"pointer",background:`linear-gradient(135deg,${GOLD},${GOLD_L})`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 3px 12px ${GOLD}55`,flexShrink:0}}>
+          {playing?<span style={{display:"flex",gap:3}}><span style={{width:4,height:14,background:G0,borderRadius:2}}/><span style={{width:4,height:14,background:G0,borderRadius:2}}/></span>:<Play size={16} color={G0} style={{marginLeft:2}}/>}
+        </button>
+      </div>
+      <div onClick={seek} style={{height:8,borderRadius:4,background:"#E5E7EB",cursor:"pointer",overflow:"hidden",position:"relative"}}>
+        <div style={{height:"100%",borderRadius:4,background:`linear-gradient(to right,${GOLD},${GOLD_L})`,width:`${progress*100}%`,transition:"width .1s"}}/>
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:9,color:"#9CA3AF",fontWeight:600}}>
+        <span>{fmt(audioRef.current?.currentTime||0)}</span>
+        <span>{loaded?fmt(duration):"--:--"}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PROCTORING INTRO — countdown + instructions before test
+═══════════════════════════════════════════════════════════════ */
+function ProctoringIntro({onReady,countA,countB}:{onReady:()=>void;countA:number;countB:number}) {
+  const [cd,setCd]=useState(10);
+  const [ready,setReady]=useState(false);
+  useEffect(()=>{if(cd<=0){setReady(true);return;}const t=setTimeout(()=>setCd(x=>x-1),1000);return()=>clearTimeout(t);},[cd]);
+  return(
+    <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 20px",gap:16,overflowY:"auto",background:`linear-gradient(160deg,${G0},${G1})`}}>
+      <div style={{width:68,height:68,borderRadius:"50%",background:"#7c3aed22",border:"3px solid #7c3aed",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 0 32px #7c3aed44"}}><ShieldCheck size={30} color="#7c3aed"/></div>
+      <div style={{textAlign:"center"}}>
+        <p style={{margin:"0 0 4px",fontWeight:900,fontSize:20,color:W}}>Proctored Test</p>
+        <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,.5)"}}>اختبار الحفظ تحت المراقبة</p>
+      </div>
+      <div style={{width:"100%",maxWidth:340,background:"rgba(255,255,255,.06)",borderRadius:16,padding:"16px",border:"1px solid rgba(255,255,255,.1)"}}>
+        <p style={{margin:"0 0 12px",fontSize:10,fontWeight:800,color:`${GOLD}cc`,textTransform:"uppercase",letterSpacing:.8}}>Before You Begin</p>
+        {["🎯 Quiet, focused environment","📵 Do Not Disturb mode on","🚫 Do NOT switch tabs — it will be flagged","📖 Do NOT look at the Qur'an","🤍 Answer honestly — this tests your hifdh"].map((t,i)=>(
+          <div key={i} style={{display:"flex",gap:8,padding:"7px 0",borderBottom:i<4?"1px solid rgba(255,255,255,.06)":"none",alignItems:"flex-start"}}>
+            <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,.7)",lineHeight:1.5}}>{t}</p>
+          </div>
+        ))}
+      </div>
+      <div style={{width:"100%",maxWidth:340,display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        <div style={{padding:"12px",borderRadius:12,background:`${GOLD}18`,border:`1px solid ${GOLD}44`,textAlign:"center"}}>
+          <p style={{margin:0,fontWeight:900,fontSize:22,color:GOLD}}>{countA}</p>
+          <p style={{margin:0,fontSize:9,fontWeight:700,color:`${GOLD}88`,textTransform:"uppercase"}}>Section A</p>
+          <p style={{margin:0,fontSize:9,color:`${GOLD}66`}}>Today's Pages</p>
+        </div>
+        <div style={{padding:"12px",borderRadius:12,background:"#7c3aed18",border:"1px solid #7c3aed44",textAlign:"center"}}>
+          <p style={{margin:0,fontWeight:900,fontSize:22,color:"#7c3aed"}}>{countB}</p>
+          <p style={{margin:0,fontSize:9,fontWeight:700,color:"#7c3aed88",textTransform:"uppercase"}}>Section B</p>
+          <p style={{margin:0,fontSize:9,color:"#7c3aed66"}}>Juz Review</p>
+        </div>
+      </div>
+      {!ready?(
+        <div style={{padding:"16px 24px",borderRadius:14,background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.1)",textAlign:"center",width:"100%",maxWidth:340}}>
+          <p style={{margin:"0 0 6px",fontSize:11,color:"rgba(255,255,255,.5)",fontWeight:600}}>Concentrate — test begins in</p>
+          <p style={{margin:0,fontWeight:900,fontSize:48,color:GOLD,lineHeight:1}}>{cd}</p>
+        </div>
+      ):(
+        <button onClick={onReady} style={{width:"100%",maxWidth:340,padding:"15px",borderRadius:14,border:"none",cursor:"pointer",fontFamily:"inherit",background:`linear-gradient(135deg,${GOLD},${GOLD_L})`,color:G0,fontWeight:900,fontSize:15,boxShadow:`0 4px 20px ${GOLD}55`}}>
+          ✅ I am Focused — Begin Test
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PRE-TEST REVIEW — listen to recording + see errors before test
+═══════════════════════════════════════════════════════════════ */
+function PreTestReview({audioUrl,pageResults,onContinue}:{audioUrl:string|null;pageResults:PageResult[];onContinue:()=>void}) {
+  const errorWords=pageResults.flatMap(r=>r.errorWords);
+  const avgScore=pageResults.length?Math.round(pageResults.reduce((s,r)=>s+r.score,0)/pageResults.length):0;
+  const sc=avgScore>=80?"#16a34a":avgScore>=65?"#d97706":"#dc2626";
+  return(
+    <div style={{flex:1,overflowY:"auto",padding:"16px 16px 32px",display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{borderRadius:18,background:`linear-gradient(135deg,${G1},${G2})`,padding:"16px",border:`1px solid ${GOLD}33`}}>
+        <p style={{margin:"0 0 2px",fontSize:10,fontWeight:700,color:`${GOLD}aa`,textTransform:"uppercase",letterSpacing:.6}}>Pre-Test Review</p>
+        <p style={{margin:"0 0 4px",fontWeight:900,fontSize:18,color:W}}>Listen Before the Test</p>
+        <p style={{margin:0,fontSize:11,color:"rgba(255,255,255,.55)"}}>Review your recitation — note where you need to focus</p>
+      </div>
+      {audioUrl
+        ?<FullAudioPlayer url={audioUrl} label="Your Complete Recitation — Full Playback"/>
+        :<div style={{padding:"16px",borderRadius:12,background:`${AMBER}10`,border:`1px solid ${AMBER}33`,textAlign:"center"}}><p style={{margin:0,fontSize:13,color:AMBER,fontWeight:700}}>Audio not available — check connection</p></div>
+      }
+      <div style={{background:W,borderRadius:14,border:`1px solid ${BRD}`,padding:"14px"}}>
+        <p style={{margin:"0 0 10px",fontSize:10,fontWeight:800,color:G3,textTransform:"uppercase",letterSpacing:.5}}>Recitation Summary</p>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+          <div style={{padding:"12px",borderRadius:12,textAlign:"center",background:`${sc}10`,border:`1.5px solid ${sc}33`}}>
+            <p style={{margin:0,fontWeight:900,fontSize:28,color:sc}}>{avgScore}%</p>
+            <p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>Avg Recitation</p>
+          </div>
+          <div style={{padding:"12px",borderRadius:12,textAlign:"center",background:"#FEF2F244",border:"1.5px solid #FECACA"}}>
+            <p style={{margin:0,fontWeight:900,fontSize:28,color:FAIL}}>{errorWords.length}</p>
+            <p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>Error Words</p>
+          </div>
+        </div>
+      </div>
+      {errorWords.length>0&&(
+        <div style={{background:W,borderRadius:14,border:`1px solid ${BRD}`,padding:"14px"}}>
+          <p style={{margin:"0 0 10px",fontSize:10,fontWeight:800,color:FAIL,textTransform:"uppercase",letterSpacing:.5}}>⚠️ Focus on These Words During Test</p>
+          <div style={{display:"flex",flexWrap:"wrap",gap:6,direction:"rtl"}}>
+            {errorWords.slice(0,20).map((w,i)=><span key={i} style={{padding:"4px 10px",borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA",fontFamily:"'Amiri',serif",fontSize:15,color:FAIL,fontWeight:600}}>{stripWaqf(w)}</span>)}
+          </div>
+          <p style={{margin:"8px 0 0",fontSize:11,color:AMBER,fontWeight:600}}>📋 Test questions will specifically target these areas</p>
+        </div>
+      )}
+      <button onClick={onContinue} style={{padding:"15px",borderRadius:14,border:"none",cursor:"pointer",background:`linear-gradient(135deg,${GOLD},${GOLD_L})`,color:G0,fontWeight:900,fontSize:15,fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:`0 4px 16px ${GOLD}55`}}>
+        <ShieldCheck size={18}/> Proceed to Proctored Test
+      </button>
+    </div>
+  );
+}
+
 interface SessionProps {
   assignment: Assignment;
   userId: string;
@@ -398,10 +602,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const [retryCount,   setRetryCount]  = useState(0);
   const [retryMsg,     setRetryMsg]    = useState("");
   const [questions,    setQuestions]   = useState<Question[]>([]);
+  const [juzAyahs,     setJuzAyahs]    = useState<Ayah[]>([]);
   const [qIdx,         setQIdx]        = useState(0);
   const [answers,      setAnswers]     = useState<(number|null)[]>([]);
+  const [recitationScore, setRecitationScore] = useState<number|null>(null);
   const [testScore,    setTestScore]   = useState<number|null>(null);
+  const [sectionAScore,setSectionAScore] = useState<number|null>(null);
+  const [sectionBScore,setSectionBScore] = useState<number|null>(null);
   const [finalScore,   setFinalScore]  = useState(0);
+  const [tabSwitchCount,setTabSwitchCount] = useState(0);
+  const [focusWarning, setFocusWarning] = useState(false);
+  const [savedAudioUrl,setSavedAudioUrl] = useState<string|null>(null);
   const [isRecording,  setIsRecording] = useState(false);
   const [recSecs,      setRecSecs]     = useState(0);
   const [submitting,   setSubmitting]  = useState(false);
@@ -477,6 +688,44 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, score]);
 
+
+  /* ── Proctoring: detect tab switches during test ─────────────── */
+  useEffect(()=>{
+    if(phase!=="testing") return;
+    const handler=()=>{
+      if(document.hidden){
+        setTabSwitchCount(c=>c+1);
+        setFocusWarning(true);
+        setTimeout(()=>setFocusWarning(false), 4000);
+      }
+    };
+    document.addEventListener("visibilitychange",handler);
+    return()=>document.removeEventListener("visibilitychange",handler);
+  },[phase]);
+
+  /* ── Fetch juz ayahs for Section B (lazy, up to 3 prior pages) ── */
+  const fetchJuzAyahs = useCallback(async () => {
+    if (juzAyahs.length > 0) return juzAyahs;
+    const base = (() => {
+      const a = assignment;
+      const first = a.selected_items?.[0];
+      if (!first) return 1;
+      if (a.mode === "juz") return ({1:1,2:22,3:42,4:62,5:82,6:102,7:122,8:142,9:162,10:182,11:202,12:222,13:242,14:262,15:282,16:302,17:322,18:342,19:362,20:382,21:402,22:422,23:442,24:462,25:482,26:502,27:522,28:542,29:562,30:582} as any)[first] ?? 1;
+      return 1;
+    })();
+    const todayFirst = todayPages[0] ?? 1;
+    const pagesToFetch: number[] = [];
+    for (let p = Math.max(base, todayFirst - 3); p < todayFirst; p++) {
+      if (p >= 1 && p <= 604) pagesToFetch.push(p);
+    }
+    if (!pagesToFetch.length) return [];
+    const results = await Promise.all(pagesToFetch.map(fetchPageAyahs));
+    const flat = results.flat();
+    setJuzAyahs(flat);
+    return flat;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignment, todayPages, juzAyahs]);
+
   const startRecording = useCallback(async () => {
     try {
       setAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null;
@@ -491,7 +740,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         clearInterval(timerRef.current);
         const blob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
         audioBlobRef.current = blob;
-        setAudioUrl(URL.createObjectURL(blob));
+        const localUrl = URL.createObjectURL(blob);
+        setAudioUrl(localUrl);
+        setSavedAudioUrl(localUrl);
         const capturedSecs = recSecsRef.current;
         const ayahs = pageAyahsRef.current;
         setPhase("page_result");
@@ -520,7 +771,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         // setScore must only fire AFTER both resolve — otherwise the interim-save
         // useEffect fires while audioStorageUrlRef is still null (the race condition).
         Promise.all([transcribeAudio(blob), uploadAudioToStorage()]).then(([tx, storageUrl]) => {
-          audioStorageUrlRef.current = storageUrl; // set BEFORE setScore triggers the useEffect
+          audioStorageUrlRef.current = storageUrl;
+          if (storageUrl) setSavedAudioUrl(storageUrl);
           const sc   = scoreText(tx, ayahs, capturedSecs);
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
@@ -613,7 +865,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     setPageResults(newResults); setRetryCount(0); setScore(null);
     const next=pageIdx+1;
     if(next<todayPages.length){ setPageIdx(next); setPhase("reading"); }
-    else { const qs=buildQuestions(newResults); setQuestions(qs); setAnswers(new Array(qs.length).fill(null)); setQIdx(0); setTestScore(null); setPhase("testing"); }
+    else {
+      const avgRec = Math.round(newResults.reduce((s,pr)=>s+pr.score,0)/newResults.length);
+      setRecitationScore(avgRec);
+      // Go to pre-test review so student can listen to their recording
+      fetchJuzAyahs().then(()=>{ setPhase("pre_test_review"); });
+    }
   };
 
   const retryPage = () => {
@@ -624,18 +881,28 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const pickAnswer=(i:number)=>{ const a=[...answers]; a[qIdx]=i; setAnswers(a); };
   const nextQ=()=>{ if(qIdx<questions.length-1) setQIdx(i=>i+1); else gradeTest(); };
   const gradeTest=()=>{
-    const correct=answers.filter((a,i)=>a===questions[i]?.correct).length;
-    const pct=questions.length>0?Math.round((correct/questions.length)*100):100;
+    const sA = questions.filter(q=>q.section==="A");
+    const sB = questions.filter(q=>q.section==="B");
+    const calcSc=(qs:Question[])=>{
+      if(!qs.length) return null;
+      const correct=qs.filter(q=>answers[questions.indexOf(q)]===q.correct).length;
+      return Math.round((correct/qs.length)*100);
+    };
+    const sa=calcSc(sA); const sb=calcSc(sB);
+    setSectionAScore(sa); setSectionBScore(sb);
+    const allCorrect=answers.filter((a,i)=>a===questions[i]?.correct).length;
+    const pct=questions.length>0?Math.round((allCorrect/questions.length)*100):100;
     setTestScore(pct); setPhase("test_result");
-    if(pct>=PASS_THRESHOLD) submitSession(pct);
+    if(pct>=TEST_PASS_THRESHOLD) submitSession(pct, sa, sb);
   };
   const retryTest=()=>{
-    setAnswers(new Array(questions.length).fill(null)); setQIdx(0); setTestScore(null); setPhase("testing");
+    setAnswers(new Array(questions.length).fill(null)); setQIdx(0); setTestScore(null);
+    setPhase("proctor_intro");
   };
 
-  const submitSession=async(tScore:number)=>{
+  const submitSession=async(tScore:number, sA:number|null=null, sB:number|null=null)=>{
     setSubmitting(true);
-    const recAvg=pageResults.length?Math.round(pageResults.reduce((s,r)=>s+r.score,0)/pageResults.length):tScore;
+    const recAvg = recitationScore ?? (pageResults.length?Math.round(pageResults.reduce((s,r)=>s+r.score,0)/pageResults.length):tScore);
     const overall=Math.round((recAvg+tScore)/2);
     setFinalScore(overall);
     const today=todayISO();
@@ -651,6 +918,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         avg_score:overall, duration_secs:dur, completed:true,
         session_data:{
           recitation_score:recAvg, test_score:tScore,
+          section_a_score: sA, section_b_score: sB,
           pages_done:todayPages,
           audio_url: audioStorageUrl,
           page_results:pageResults.map(r=>({
@@ -672,7 +940,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       const assignedTeacher=(pf as any)?.assigned_teacher_id;
       const modeLabel=assignment.mode==="juz"?"Juz":assignment.mode==="hizb"?"Hizb":"Surah";
       const items=assignment.selected_items.slice(0,3).join(", ");
-      const msg=`${modeLabel} ${items} — Score: ${overall}% · ${todayPages.length} page${todayPages.length>1?"s":""} done`;
+      const msg=`${modeLabel} ${items} — Recitation: ${recAvg}% · Test: ${tScore}% · Overall: ${overall}% · ${todayPages.length} page${todayPages.length>1?"s":""} done`;
       const notifBase={title:`📖 ${name} completed Daily Hifdh Revision`,message:msg,type:"hifdh_complete",read:false,created_at:new Date().toISOString()};
       const {data:admins}=await supabase.from("profiles").select("user_id").eq("role","admin" as any);
       const recipients=[...(admins||[]).map((a:any)=>a.user_id)];
@@ -791,6 +1059,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap');
         .ar-word { unicode-bidi: isolate; display: inline; }
       `}</style>
+
+      {/* ── Focus Warning ── */}
+      {focusWarning&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,background:FAIL,padding:"10px 16px",textAlign:"center"}}>
+          <p style={{margin:0,fontWeight:900,fontSize:13,color:W}}>⚠️ Tab switch detected! ({tabSwitchCount}×) — Stay focused on the test</p>
+        </div>
+      )}
 
       {/* ══ INTRO ══ */}
       {phase==="intro"&&(
@@ -1054,13 +1329,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
                 </div>
               </div>
 
-              {/* 2 ── Audio playback */}
-              {audioUrl&&(
-                <div style={{borderRadius:14,padding:"12px 14px",
-                  background:`${GOLD}12`,border:`1px solid ${GOLD}33`,
-                  display:"flex",alignItems:"center",gap:10}}>
-                  <span style={{fontSize:11,fontWeight:800,color:GOLD,flexShrink:0}}>🎙️ Your Recitation</span>
-                  <audio controls src={audioUrl} style={{flex:1,height:32,borderRadius:8}}/>
+              {/* 2 ── Full audio playback — student can review before test */}
+              {(savedAudioUrl||audioUrl)&&(
+                <div style={{marginBottom:4}}>
+                  <p style={{margin:"0 0 6px",fontSize:10,fontWeight:800,color:G3,textTransform:"uppercase",letterSpacing:.5}}>🎙️ Your Recitation — Listen & Review</p>
+                  <FullAudioPlayer url={savedAudioUrl||audioUrl||""} label={`Page ${todayPages[pageIdx]} Recitation`}/>
                 </div>
               )}
 
@@ -1156,6 +1429,59 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         );
       })()}
 
+
+      {/* ══ PRE-TEST REVIEW ══ */}
+      {phase==="pre_test_review"&&(
+        <>
+          <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
+            display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+            <div style={{width:36,height:36,borderRadius:10,background:`${GOLD}22`,
+              display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <Eye size={18} color={GOLD}/>
+            </div>
+            <div style={{flex:1}}>
+              <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>Pre-Test Review</p>
+              <p style={{margin:0,fontSize:10,color:`${GOLD}cc`}}>Listen to your recitation first</p>
+            </div>
+          </div>
+          <PreTestReview
+            audioUrl={savedAudioUrl}
+            pageResults={pageResults}
+            onContinue={()=>setPhase("proctor_intro")}
+          />
+        </>
+      )}
+
+      {/* ══ PROCTOR INTRO ══ */}
+      {phase==="proctor_intro"&&(
+        <>
+          <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
+            display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+            <div style={{width:36,height:36,borderRadius:10,background:"#7c3aed22",
+              display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <ShieldCheck size={18} color="#7c3aed"/>
+            </div>
+            <div style={{flex:1}}>
+              <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>Test Proctoring</p>
+              <p style={{margin:0,fontSize:10,color:`${GOLD}cc`}}>Read carefully before beginning</p>
+            </div>
+          </div>
+          <ProctoringIntro
+            countA={questions.length>0?questions.filter(q=>q.section==="A").length:buildQuestions(pageResults,juzAyahs).filter(q=>q.section==="A").length}
+            countB={questions.length>0?questions.filter(q=>q.section==="B").length:buildQuestions(pageResults,juzAyahs).filter(q=>q.section==="B").length}
+            onReady={()=>{
+              if(questions.length===0){
+                const qs=buildQuestions(pageResults,juzAyahs);
+                setQuestions(qs);
+                setAnswers(new Array(qs.length).fill(null));
+                setQIdx(0); setTestScore(null);
+              }
+              setPhase("testing");
+            }}
+          />
+        </>
+      )}
+
       {/* ══ TESTING ══ */}
       {phase==="testing"&&testScore===null&&(
         questions.length>0?(
@@ -1168,14 +1494,36 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               </div>
               <div style={{flex:1}}>
                 <p style={{margin:0,fontWeight:800,fontSize:14,color:W}}>
-                  Verse Test — {qIdx+1}/{questions.length}
+                  {questions[qIdx]?.section==="A"?"Section A":"Section B"} — Q{qIdx+1}/{questions.length}
                 </p>
-                <p style={{margin:0,fontSize:10,color:`${GOLD}cc`}}>Choose the correct answer</p>
+                <p style={{margin:0,fontSize:10,color:`${GOLD}cc`}}>
+                  {questions[qIdx]?.section==="A"?"Today's pages (error-focused)":"Juz review from start"}
+                </p>
+              </div>
+              <div style={{padding:"3px 10px",borderRadius:8,fontSize:10,fontWeight:900,
+                background:questions[qIdx]?.section==="A"?`${GOLD}22`:"#7c3aed22",
+                color:questions[qIdx]?.section==="A"?GOLD:"#7c3aed",
+                border:`1px solid ${questions[qIdx]?.section==="A"?GOLD:"#7c3aed"}44`}}>
+                §{questions[qIdx]?.section}
               </div>
             </div>
 
             <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"16px 16px 28px",
               display:"flex",flexDirection:"column",gap:14,overscrollBehavior:"contain"}}>
+              {/* Error-focus badge */}
+              {questions[qIdx]?.isErrorFocused&&(
+                <div style={{padding:"8px 12px",borderRadius:10,background:"#FEF2F210",border:"1px solid #FECACA",display:"flex",alignItems:"center",gap:6}}>
+                  <AlertCircle size={13} color={FAIL}/>
+                  <p style={{margin:0,fontSize:11,fontWeight:700,color:FAIL}}>This question targets an area where you made errors during recitation</p>
+                </div>
+              )}
+              {/* Section divider */}
+              {qIdx>0&&questions[qIdx]?.section!==questions[qIdx-1]?.section&&(
+                <div style={{padding:"10px 12px",borderRadius:10,background:"#7c3aed18",border:"1px solid #7c3aed33",display:"flex",alignItems:"center",gap:8}}>
+                  <BookMarked size={14} color="#7c3aed"/>
+                  <p style={{margin:0,fontSize:12,fontWeight:800,color:"#7c3aed"}}>Section B: Juz Review — Questions from the beginning of your programme</p>
+                </div>
+              )}
               {/* Progress bar */}
               <div style={{height:4,borderRadius:4,background:"#E5E7EB",overflow:"hidden"}}>
                 <div style={{height:"100%",borderRadius:4,
@@ -1239,7 +1587,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
             <p style={{fontSize:12,color:"#9CA3AF",margin:0,textAlign:"center"}}>
               Pages too short to generate questions — submitting your session now.
             </p>
-            <button onClick={()=>submitSession(100)}
+            <button onClick={()=>submitSession(100, null, null)}
               style={{padding:"14px 32px",borderRadius:14,border:"none",cursor:"pointer",
                 background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,fontFamily:"inherit"}}>
               Submit Session ✓
@@ -1259,15 +1607,45 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
             display:"flex",flexDirection:"column",gap:14,animation:"fadeIn .3s ease"}}>
             <ScoreRing pct={testScore}/>
             <div style={{textAlign:"center",marginBottom:4}}>
-              <p style={{margin:0,fontWeight:900,fontSize:18,color:testScore>=PASS_THRESHOLD?PASS:FAIL}}>
-                {testScore>=PASS_THRESHOLD?"ممتاز! Test Passed!":"يحتاج مراجعة — Below Pass Mark"}
+              <p style={{margin:0,fontWeight:900,fontSize:18,color:testScore>=TEST_PASS_THRESHOLD?PASS:FAIL}}>
+                {testScore>=TEST_PASS_THRESHOLD?"ممتاز! Test Passed!":"يحتاج مراجعة — Below Pass Mark"}
               </p>
               <p style={{margin:"5px 0 0",fontSize:12,color:"#6B7280"}}>
-                {testScore>=PASS_THRESHOLD
+                {testScore>=TEST_PASS_THRESHOLD
                   ?"MashaAllah! Submitting your session…"
-                  :`Score below ${PASS_THRESHOLD}% — review the answers and try again`}
+                  :`Score below ${TEST_PASS_THRESHOLD}% — review answers and retry`}
               </p>
             </div>
+
+            {/* ── Separate Recitation + Test score breakdown ── */}
+            <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,padding:"14px 16px"}}>
+              <p style={{margin:"0 0 12px",fontSize:10,fontWeight:800,color:G3,textTransform:"uppercase",letterSpacing:.5}}>Score Breakdown</p>
+              {[
+                {label:"Recitation Score", sublabel:"How well you recited", value:recitationScore??0, icon:"🎙️"},
+                ...(sectionAScore!=null?[{label:"Test — Section A", sublabel:"Today's pages", value:sectionAScore, icon:"🎯"}]:[]),
+                ...(sectionBScore!=null?[{label:"Test — Section B", sublabel:"Juz review", value:sectionBScore, icon:"📚"}]:[]),
+                {label:"Test Overall", sublabel:"Combined sections", value:testScore, icon:"📊"},
+              ].map((s,i)=>{
+                const col=s.value>=80?"#16a34a":s.value>=65?"#d97706":"#dc2626";
+                return(
+                  <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 12px",borderRadius:12,marginBottom:8,background:`${col}08`,border:`1.5px solid ${col}22`}}>
+                    <div>
+                      <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>{s.icon} {s.label}</p>
+                      <p style={{margin:0,fontSize:10,color:"#9CA3AF"}}>{s.sublabel}</p>
+                    </div>
+                    <span style={{fontWeight:900,fontSize:22,color:col}}>{s.value}%</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Proctoring report */}
+            {tabSwitchCount>0&&(
+              <div style={{padding:"10px 12px",borderRadius:12,background:"#FEF2F2",border:"1.5px solid #FECACA",display:"flex",gap:8,alignItems:"center"}}>
+                <AlertCircle size={14} color={FAIL}/>
+                <p style={{margin:0,fontSize:12,color:FAIL,fontWeight:600}}>{tabSwitchCount} tab switch{tabSwitchCount!==1?"es":""} detected — flagged for teacher review</p>
+              </div>
+            )}
 
             {/* Question breakdown */}
             <div style={{background:W,borderRadius:14,border:`1px solid ${BRD}`,padding:"12px 14px"}}>
@@ -1297,7 +1675,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               })}
             </div>
 
-            {testScore>=PASS_THRESHOLD
+            {testScore>=TEST_PASS_THRESHOLD
               ?(
                 submitting
                   ?<div style={{display:"flex",justifyContent:"center",padding:20}}>
@@ -1353,21 +1731,34 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
             </p>
           </div>
 
-          {/* Score grid */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,width:"100%",maxWidth:360}}>
-            {[
-              {label:"Final Score",value:`${finalScore}%`,
-                color:finalScore>=80?"#86EFAC":finalScore>=60?GOLD:"#FCA5A5"},
-              {label:"Pages Done",value:String(todayPages.length),color:GOLD},
-              {label:"Duration",value:fmtSecs(Math.round((Date.now()-sessionStart.current)/1000)),color:"#93C5FD"},
-            ].map(s=>(
-              <div key={s.label} style={{background:"rgba(255,255,255,.08)",borderRadius:16,
-                padding:"14px 8px",textAlign:"center",border:"1px solid rgba(255,255,255,.1)"}}>
-                <p style={{margin:0,fontWeight:900,fontSize:22,color:s.color}}>{s.value}</p>
-                <p style={{margin:"3px 0 0",fontSize:9,fontWeight:700,color:"rgba(255,255,255,.4)",
-                  textTransform:"uppercase",letterSpacing:.5}}>{s.label}</p>
-              </div>
-            ))}
+          {/* ── Separate Recitation + Test scores ── */}
+          <div style={{width:"100%",maxWidth:360,display:"flex",flexDirection:"column",gap:10}}>
+            <p style={{margin:0,fontSize:10,fontWeight:800,color:`${GOLD}99`,textTransform:"uppercase",letterSpacing:.6,textAlign:"center"}}>Your Results</p>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              {[
+                {label:"Recitation",value:`${recitationScore??0}%`},
+                {label:"Test",value:`${testScore??0}%`},
+              ].map(s=>{
+                const v=parseInt(s.value);
+                const col=v>=80?"#86EFAC":v>=65?GOLD:"#FCA5A5";
+                return(
+                  <div key={s.label} style={{background:"rgba(255,255,255,.08)",borderRadius:14,padding:"14px 8px",textAlign:"center",border:"1px solid rgba(255,255,255,.1)"}}>
+                    <p style={{margin:0,fontWeight:900,fontSize:24,color:col}}>{s.value}</p>
+                    <p style={{margin:"3px 0 0",fontSize:9,fontWeight:700,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{s.label}</p>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{background:"rgba(255,255,255,.08)",borderRadius:16,padding:"14px",textAlign:"center",border:`1px solid ${GOLD}33`}}>
+              <p style={{margin:0,fontWeight:900,fontSize:28,color:finalScore>=80?"#86EFAC":finalScore>=65?GOLD:"#FCA5A5"}}>{finalScore}%</p>
+              <p style={{margin:"3px 0 0",fontSize:10,fontWeight:700,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>Final Combined Score</p>
+            </div>
+            <div style={{background:"rgba(255,255,255,.06)",borderRadius:12,padding:"10px",textAlign:"center"}}>
+              <p style={{margin:0,fontWeight:800,fontSize:13,color:"rgba(255,255,255,.5)"}}>
+                Pages Done: <span style={{color:GOLD}}>{todayPages.length}</span>
+                {" · "}Duration: <span style={{color:"#93C5FD"}}>{fmtSecs(Math.round((Date.now()-sessionStart.current)/1000))}</span>
+              </p>
+            </div>
           </div>
 
           {/* Hadith */}
@@ -1545,6 +1936,21 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
         </div>
 
         <div style={{padding:"0 16px 32px",display:"flex",flexDirection:"column",gap:12}}>
+          {/* Teacher override */}
+          {(sd as any)?.teacher_override&&(
+            <div style={{padding:"14px",borderRadius:14,background:"#EDE9FE",border:"1.5px solid #7c3aed55"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <Bell size={16} color="#7c3aed"/>
+                <p style={{margin:0,fontWeight:800,fontSize:13,color:"#7c3aed"}}>Teacher Score Override</p>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div style={{padding:"8px",borderRadius:10,background:"#7c3aed18",textAlign:"center"}}><p style={{margin:0,fontWeight:900,fontSize:20,color:"#7c3aed"}}>{(sd as any).teacher_override.score}%</p><p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>Teacher Score</p></div>
+                <div style={{padding:"8px",borderRadius:10,background:"#F3F4F6",textAlign:"center"}}><p style={{margin:0,fontWeight:900,fontSize:20,color:"#6B7280"}}>{log?.avg_score??0}%</p><p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>AI Score</p></div>
+              </div>
+              {(sd as any).teacher_override.teacher_feedback&&<p style={{margin:0,fontSize:12,color:"#374151",lineHeight:1.6,fontStyle:"italic"}}>"{(sd as any).teacher_override.teacher_feedback}"</p>}
+              <p style={{margin:"6px 0 0",fontSize:10,color:"#9CA3AF"}}>by {(sd as any).teacher_override.reviewed_by} · {new Date((sd as any).teacher_override.reviewed_at).toLocaleDateString("en-GB")}</p>
+            </div>
+          )}
 
           {/* Pages read / left */}
           <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,padding:"14px 16px"}}>
@@ -1652,6 +2058,7 @@ export default function HifdhDailyRevisionPage() {
   const [historyOpen,  setHistoryOpen]  = useState<string|null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [selectedDay,  setSelectedDay]  = useState<ProgramDay|null>(null);
+  const [overrideNotif, setOverrideNotif] = useState<{score:number;feedback:string;teacher:string}|null>(null);
   const today = todayISO();
 
   /* ── Load data ── */
@@ -1686,10 +2093,22 @@ export default function HifdhDailyRevisionPage() {
       }
       const allLogs=(lgs??[]) as DailyLog[];
       setLogs(allLogs);
-      setTodayLog(allLogs.find(l=>l.log_date===today)??null);
+      const todLog=allLogs.find(l=>l.log_date===today)??null;
+      setTodayLog(todLog);
+      // Check for unacknowledged teacher override
+      if(todLog?.session_data?.teacher_override && !todLog.acknowledged_at){
+        const ov=todLog.session_data.teacher_override;
+        setOverrideNotif({score:ov.score,feedback:ov.teacher_feedback||"",teacher:ov.reviewed_by||"Teacher"});
+      }
       setLoading(false);
     });
   },[today]);
+
+  const dismissOverride = useCallback(async()=>{
+    setOverrideNotif(null);
+    if(!todayLog) return;
+    try { await (supabase as any).from("hifdh_daily_logs").update({acknowledged_at:new Date().toISOString()}).eq("id",todayLog.id); } catch {}
+  },[todayLog]);
 
   /* ── Derived ── */
   const todayPages   = assignment ? getTodayPages(assignment)        : [];
@@ -1741,7 +2160,12 @@ export default function HifdhDailyRevisionPage() {
         ]);
         const allLogs=(lgs??[]) as DailyLog[];
         setLogs(allLogs);
-        setTodayLog(allLogs.find(l=>l.log_date===today)??null);
+        const todLog2=allLogs.find(l=>l.log_date===today)??null;
+        setTodayLog(todLog2);
+        if(todLog2?.session_data?.teacher_override && !todLog2.acknowledged_at){
+          const ov=todLog2.session_data.teacher_override;
+          setOverrideNotif({score:ov.score,feedback:ov.teacher_feedback||"",teacher:ov.reviewed_by||"Teacher"});
+        }
       });
     }
   }
@@ -1947,9 +2371,9 @@ export default function HifdhDailyRevisionPage() {
                       {todayLog?.avg_score!=null&&(
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
                           {[
-                            {label:"Score",   value:`${todayLog.avg_score}%`, color:scoreColor(todayLog.avg_score)},
-                            {label:"Pages",   value:String(todayLog.pages_revised??todayPages.length)},
-                            {label:"Time",    value:todayLog.duration_secs?fmtSecs(todayLog.duration_secs):"—"},
+                            {label:"Recitation", value:`${todayLog.session_data?.recitation_score??todayLog.avg_score}%`, color:scoreColor(todayLog.session_data?.recitation_score??todayLog.avg_score)},
+                            {label:"Test",       value:`${todayLog.session_data?.test_score??0}%`, color:scoreColor(todayLog.session_data?.test_score??0)},
+                            {label:"Overall",    value:`${todayLog.avg_score}%`, color:scoreColor(todayLog.avg_score)},
                           ].map(s=>(
                             <div key={s.label} style={{background:"rgba(255,255,255,.1)",borderRadius:10,
                               padding:"8px",textAlign:"center"}}>
@@ -2071,8 +2495,8 @@ export default function HifdhDailyRevisionPage() {
                       {label:"Started",  value:fmtDate(startDate)},
                       {label:"Total Days",value:String(totalDays)},
                       {label:"Pages/Day", value:String(assignment.daily_pages)},
-                      {label:"Day Off",   value:getDaysOff(assignment).length>0
-                        ?["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][getDaysOff(assignment)[0]]:"None"},
+                      {label:"Day Off",value:getDaysOff(assignment).length>0?["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][getDaysOff(assignment)[0]]:"None"},
+                      {label:"Pass Mark",value:`${PASS_THRESHOLD}%`},
                     ].map(s=>(
                       <div key={s.label} style={{padding:"10px 12px",borderRadius:12,
                         background:`${G1}06`,border:`1px solid ${BRD}`}}>
@@ -2258,9 +2682,8 @@ export default function HifdhDailyRevisionPage() {
                             {log.duration_secs?` · ${fmtSecs(log.duration_secs)}`:""}
                           </p>
                         </div>
-                        {log.acknowledged_at&&(
-                          <span style={{fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:6,
-                            background:"#F3E8FF",color:"#7c3aed"}}>Acked</span>
+                        {log.session_data?.teacher_override&&(
+                          <span style={{fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:6,background:"#EDE9FE",color:"#7c3aed"}}>📝 Reviewed</span>
                         )}
                         {historyOpen===log.id?<ChevronUp size={14} color="#9CA3AF"/>:<ChevronDown size={14} color="#9CA3AF"/>}
                       </button>
@@ -2270,11 +2693,9 @@ export default function HifdhDailyRevisionPage() {
                           animation:"slideUp .2s ease"}}>
                           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:10}}>
                             {[
-                              {label:"Recitation",value:log.session_data?.page_results
-                                ?`${Math.round(log.session_data.page_results.reduce((s:number,r:any)=>s+r.score,0)/(log.session_data.page_results.length||1))}%`
-                                :log.avg_score!=null?`${log.avg_score}%`:"—"},
-                              {label:"Duration",  value:log.duration_secs?fmtSecs(log.duration_secs):"—"},
-                              {label:"Pages",     value:String(log.pages_revised??"—")},
+                              {label:"Recitation",value:`${log.session_data?.recitation_score??log.avg_score??0}%`},
+                              {label:"Test",value:`${log.session_data?.test_score??0}%`},
+                              {label:"Duration",value:log.duration_secs?fmtSecs(log.duration_secs):"—"},
                             ].map(s=>(
                               <div key={s.label} style={{background:WARM,borderRadius:10,padding:"8px",
                                 textAlign:"center",border:`1px solid ${BRD}`}}>
