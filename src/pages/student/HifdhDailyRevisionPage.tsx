@@ -622,12 +622,88 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const mediaRecRef  = useRef<MediaRecorder|null>(null);
   const audioChunks  = useRef<Blob[]>([]);
   const audioBlobRef       = useRef<Blob|null>(null);
-  // Populated by mr.onstop after the upload completes — read by interim save + submitSession.
-  // Must be set BEFORE setScore() fires so the interim-save useEffect sees it (race condition fix).
   const audioStorageUrlRef = useRef<string|null>(null);
-  // capture pageAyahs in a ref so mr.onstop closure can read latest value
   const pageAyahsRef = useRef<Ayah[]>([]);
   const recSecsRef   = useRef(0);
+  const wakeLockRef  = useRef<any>(null);
+
+  // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
+  useEffect(() => {
+    const acquire = async () => {
+      try {
+        if ("wakeLock" in navigator) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request("screen");
+        }
+      } catch { /* browser doesn't support or user denied */ }
+    };
+    acquire();
+    const onVisible = () => { if (document.visibilityState === "visible") acquire(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      wakeLockRef.current?.release().catch(() => {});
+    };
+  }, []);
+
+  const SESSION_KEY = `hifdh_session_${userId}_${todayISO()}`;
+
+  // ── PERSIST progress to sessionStorage ───────────────────────────────────
+  useEffect(() => {
+    if (phase === "intro" || phase === "complete") { sessionStorage.removeItem(SESSION_KEY); return; }
+    try {
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+        phase, pageIdx, pageResults, recitationScore,
+        savedAudioUrl: savedAudioUrl ?? null,
+        questions: questions.length > 0 ? questions : undefined,
+        juzAyahs:  juzAyahs.length  > 0 ? juzAyahs  : undefined,
+        savedAt: Date.now(),
+      }));
+    } catch { /* quota exceeded */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, pageIdx, pageResults, recitationScore]);
+
+  // ── RETURN BANNER state ───────────────────────────────────────────────────
+  const [returnBanner, setReturnBanner] = useState<"recitation"|"test"|null>(null);
+
+  // ── RESTORE SESSION on mount ─────────────────────────────────────────────
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(SESSION_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (Date.now() - saved.savedAt > 2 * 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
+      if (["reading","page_result","pre_test_review","proctor_intro"].includes(saved.phase)) {
+        setPageIdx(saved.pageIdx ?? 0);
+        setPageResults(saved.pageResults ?? []);
+        if (saved.recitationScore) setRecitationScore(saved.recitationScore);
+        if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
+        setPhase("reading");
+        setReturnBanner("recitation");
+      } else if (["testing","test_result"].includes(saved.phase)) {
+        setPageIdx(saved.pageIdx ?? 0);
+        setPageResults(saved.pageResults ?? []);
+        if (saved.recitationScore) setRecitationScore(saved.recitationScore);
+        if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
+        if (saved.questions) { setQuestions(saved.questions); setAnswers(new Array(saved.questions.length).fill(null)); }
+        if (saved.juzAyahs) setJuzAyahs(saved.juzAyahs);
+        setPhase("proctor_intro");
+        setReturnBanner("test");
+      }
+    } catch { sessionStorage.removeItem(SESSION_KEY); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── VISIBILITY CHANGE during session: stop recording, show resume banner ─
+  useEffect(() => {
+    const handleReturn = () => {
+      if (document.visibilityState !== "visible") return;
+      if (isRecording) { handleStop(); setReturnBanner("recitation"); return; }
+      if (phase === "testing") setReturnBanner("test");
+    };
+    document.addEventListener("visibilitychange", handleReturn);
+    return () => document.removeEventListener("visibilitychange", handleReturn);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, isRecording]);
 
   /* ── fetch ayahs when phase=reading ── */
   useEffect(() => {
@@ -1061,6 +1137,73 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       {focusWarning&&(
         <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9999,background:FAIL,padding:"10px 16px",textAlign:"center"}}>
           <p style={{margin:0,fontWeight:900,fontSize:13,color:W}}>⚠️ Tab switch detected! ({tabSwitchCount}×) — Stay focused on the test</p>
+        </div>
+      )}
+
+      {/* ── Return Banner: student navigated away and came back ── */}
+      {returnBanner&&(
+        <div style={{position:"fixed",inset:0,zIndex:9998,background:"rgba(0,0,0,.72)",
+          display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+          <div style={{background:W,borderRadius:24,padding:"28px 24px",maxWidth:340,width:"100%",
+            boxShadow:"0 24px 60px rgba(0,0,0,.4)",textAlign:"center"}}>
+            {returnBanner==="recitation"?(
+              <>
+                <div style={{width:64,height:64,borderRadius:"50%",background:`${GOLD}18`,
+                  border:`3px solid ${GOLD}`,display:"flex",alignItems:"center",justifyContent:"center",
+                  margin:"0 auto 16px"}}>
+                  <Mic size={28} color={GOLD}/>
+                </div>
+                <p style={{margin:"0 0 6px",fontWeight:900,fontSize:18,color:G1}}>Welcome Back!</p>
+                <p style={{margin:"0 0 18px",fontSize:13,color:"#6B7280",lineHeight:1.6}}>
+                  Your recitation session is still active.<br/>
+                  You can <strong>continue recording</strong> from where you were, or <strong>start fresh</strong> for this page.
+                </p>
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  <button onClick={()=>{setReturnBanner(null); startRecording();}}
+                    style={{padding:"14px",borderRadius:12,border:"none",cursor:"pointer",
+                      background:`linear-gradient(135deg,${G2},${G3})`,color:W,
+                      fontWeight:900,fontSize:14,fontFamily:"inherit",
+                      display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                    <Mic size={16}/> Continue Recording
+                  </button>
+                  <button onClick={()=>{
+                    audioChunks.current=[]; audioBlobRef.current=null;
+                    setScore(null); setRetryCount(0); setRecSecs(0);
+                    setReturnBanner(null); startRecording();
+                  }} style={{padding:"13px",borderRadius:12,border:`1.5px solid ${GOLD}`,
+                    cursor:"pointer",background:"transparent",color:GOLD,
+                    fontWeight:800,fontSize:14,fontFamily:"inherit",
+                    display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                    <RefreshCcw size={15}/> Start This Page Again
+                  </button>
+                </div>
+              </>
+            ):(
+              <>
+                <div style={{width:64,height:64,borderRadius:"50%",background:`${FAIL}12`,
+                  border:`3px solid ${FAIL}`,display:"flex",alignItems:"center",justifyContent:"center",
+                  margin:"0 auto 16px"}}>
+                  <ShieldCheck size={28} color={FAIL}/>
+                </div>
+                <p style={{margin:"0 0 6px",fontWeight:900,fontSize:18,color:G1}}>Test Interrupted</p>
+                <p style={{margin:"0 0 18px",fontSize:13,color:"#6B7280",lineHeight:1.6}}>
+                  You left the test screen. For fairness, the test must <strong>start from scratch</strong>.
+                  Your recitation progress is saved.
+                </p>
+                <button onClick={()=>{
+                  setReturnBanner(null);
+                  setAnswers(new Array(questions.length).fill(null));
+                  setQIdx(0); setTestScore(null);
+                  setPhase("proctor_intro");
+                }} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",cursor:"pointer",
+                  background:`linear-gradient(135deg,${FAIL},#b91c1c)`,color:W,
+                  fontWeight:900,fontSize:14,fontFamily:"inherit",
+                  display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                  <RefreshCcw size={15}/> Restart Test
+                </button>
+              </>
+            )}
+          </div>
         </div>
       )}
 
