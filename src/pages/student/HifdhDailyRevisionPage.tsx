@@ -408,9 +408,6 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
   return [...shuffle(qs.filter(q=>q.section==="A")), ...shuffle(qs.filter(q=>q.section==="B"))];
 }
 
-  return shuffle(qs);
-}
-
 /* ── Encouragement messages ─────────────────────────────────────── */
 const RETRY_MSGS = [
   "لا تستسلم! Take a breath, read the page again carefully, then recite once more. You can do it! 💪",
