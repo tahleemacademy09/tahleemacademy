@@ -4,12 +4,12 @@
 */
 
 import {
-  LiveKitRoom, RoomAudioRenderer, useRoomContext,
-  useParticipants, useLocalParticipant,
+  LiveKitRoom, useRoomContext,
+  useParticipants, useLocalParticipant, useTracks,
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
-import { Track, RoomEvent, ConnectionState } from "livekit-client";
+import { Track, RoomEvent, ConnectionState, RemoteTrackPublication, RemoteParticipant } from "livekit-client";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
@@ -433,6 +433,128 @@ const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) => {
     return () => { room.off(RoomEvent.DataReceived, h); };
   }, [room, isPrivileged]);
   return null;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VolumeBooster — routes every remote audio track through a Web Audio pipeline:
+//   MediaStreamSource → GainNode (2.5×) → DynamicsCompressor → speakers
+//
+// Why this exists:
+//   1. LiveKit publishes at 64 kbps, but browser default output can still be
+//      quiet. A GainNode amplifies every remote voice without clipping.
+//   2. DynamicsCompressor auto-levels loud and soft voices so everyone is
+//      consistently audible.
+//   3. We deliberately SKIP the local participant so you never hear yourself.
+//   4. Each track gets its own source node so 2+ people can speak at once
+//      with zero interference — Web Audio mixes them natively.
+// ═══════════════════════════════════════════════════════════════════════════════
+const VolumeBooster = () => {
+  const room = useRoomContext();
+  const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio], { onlySubscribed: true });
+
+  const acRef        = useRef<AudioContext | null>(null);
+  const gainRef      = useRef<GainNode | null>(null);
+  const compRef      = useRef<DynamicsCompressorNode | null>(null);
+  // Map trackSid → { source, audioEl } so we can clean up properly
+  const nodesRef     = useRef<Map<string, { source: MediaStreamAudioSourceNode; el: HTMLAudioElement }>>(new Map());
+
+  // ── 1. Build the Web Audio pipeline once ────────────────────────────────────
+  useEffect(() => {
+    const ac = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 48000 });
+    acRef.current = ac;
+
+    // Amplify: 2.5× makes a quiet speaker clearly audible
+    const gain = ac.createGain();
+    gain.gain.value = 2.5;
+    gainRef.current = gain;
+
+    // Compressor: evens out volume differences between participants
+    const comp = ac.createDynamicsCompressor();
+    comp.threshold.value = -24;   // start compressing at −24 dBFS
+    comp.knee.value      = 30;    // smooth knee for natural sound
+    comp.ratio.value     = 8;     // 8:1 compression ratio
+    comp.attack.value    = 0.003; // 3 ms attack – reacts quickly
+    comp.release.value   = 0.2;   // 200 ms release – no pumping artefacts
+    compRef.current = comp;
+
+    // Pipeline: source(s) → gain → compressor → speakers
+    gain.connect(comp);
+    comp.connect(ac.destination);
+
+    // AudioContext needs a user gesture to start; resume on first interaction
+    const resume = () => { if (ac.state === "suspended") ac.resume().catch(() => {}); };
+    document.addEventListener("click",      resume, { passive: true });
+    document.addEventListener("touchstart", resume, { passive: true });
+    document.addEventListener("keydown",    resume, { passive: true });
+
+    return () => {
+      document.removeEventListener("click",      resume);
+      document.removeEventListener("touchstart", resume);
+      document.removeEventListener("keydown",    resume);
+      ac.close().catch(() => {});
+    };
+  }, []);
+
+  // ── 2. Connect / disconnect tracks as participants join or leave ─────────────
+  useEffect(() => {
+    const ac   = acRef.current;
+    const gain = gainRef.current;
+    if (!ac || !gain) return;
+
+    // Resume if suspended (e.g. after tab switch on mobile)
+    if (ac.state === "suspended") ac.resume().catch(() => {});
+
+    const activeIds = new Set<string>();
+
+    for (const ref of tracks) {
+      // Never play back your own microphone
+      if (ref.participant.isLocal) continue;
+
+      const pub = ref.publication as RemoteTrackPublication | undefined;
+      if (!pub?.track?.mediaStreamTrack) continue;
+
+      const sid = pub.trackSid;
+      activeIds.add(sid);
+
+      if (!nodesRef.current.has(sid)) {
+        // Create a silent <audio> element so the browser doesn't also render
+        // this track through RoomAudioRenderer (we're replacing it for remotes).
+        // We DON'T use createMediaElementSource here because that would require
+        // the element to be playing. Instead we pull straight from the track.
+        const ms     = new MediaStream([pub.track.mediaStreamTrack]);
+        const source = ac.createMediaStreamSource(ms);
+        source.connect(gain);
+
+        // Dummy audio element — muted so there's no double-playback
+        const el = document.createElement("audio");
+        el.muted  = true;
+        el.srcObject = ms;
+        el.autoplay  = false;
+
+        nodesRef.current.set(sid, { source, el });
+      }
+    }
+
+    // Disconnect tracks that are no longer subscribed
+    for (const [sid, { source }] of nodesRef.current) {
+      if (!activeIds.has(sid)) {
+        source.disconnect();
+        nodesRef.current.delete(sid);
+      }
+    }
+  }, [tracks]);
+
+  // ── 3. Full cleanup on unmount ───────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      for (const { source } of nodesRef.current.values()) {
+        try { source.disconnect(); } catch {}
+      }
+      nodesRef.current.clear();
+    };
+  }, []);
+
+  return null; // pure audio processing — no visible UI
 };
 
 const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
@@ -2987,8 +3109,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       {token&&wsUrl&&(
         // key={roomKey} forces a full remount whenever autoReconnect bumps the key,
         // ensuring LiveKit starts with a fresh connection and token.
-        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:false,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
-          <RoomAudioRenderer/>
+        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:64000},dtx:false,red:true,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
+          {/* VolumeBooster replaces bare RoomAudioRenderer — Web Audio pipeline: GainNode(2.5×) + DynamicsCompressor ensures every remote voice is amplified and normalised without echo or self-playback */}
+          <VolumeBooster/>
           <RoomToContextBridge />
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam}/>
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
