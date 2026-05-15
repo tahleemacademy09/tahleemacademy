@@ -36,6 +36,7 @@ const RevisionRoom = () => {
   const { toast }        = useToast();
   const qc               = useQueryClient();
   const isPrivileged     = hasRole("admin") || hasRole("teacher");
+  const { data: academicLevels = [] } = useAcademicLevels();
 
   const [tab, setTab] = useState(searchParams.get("tab") || "flashcards");
 
@@ -100,13 +101,25 @@ const RevisionRoom = () => {
     },
   });
   const subjectsByLevel = useMemo(() => {
-    const grouped: Record<string, any[]> = { beginner: [], intermediate: [], advanced: [] };
+    // Build groups from dynamic academicLevels slugs
+    const grouped: Record<string, any[]> = {};
+    academicLevels.forEach(l => { grouped[l.slug] = []; });
     allSubjects.forEach(s => {
-      const lvl = (s.level || "beginner").toLowerCase();
-      if (grouped[lvl]) grouped[lvl].push(s);
+      // A subject belongs to a level if that level is in its `levels` array,
+      // or if it matches the legacy `level` string
+      const subjectLevels: string[] =
+        Array.isArray(s.levels) && s.levels.length > 0
+          ? s.levels
+          : s.level && s.level !== "all"
+            ? s.level.split(",").map((x: string) => x.trim())
+            : academicLevels.map(l => l.slug); // no restriction = all levels
+      subjectLevels.forEach(lvl => {
+        const key = lvl.toLowerCase();
+        if (grouped[key]) grouped[key].push(s);
+      });
     });
     return grouped;
-  }, [allSubjects]);
+  }, [allSubjects, academicLevels]);
 
   const { data: flashcards = [] } = useQuery({
     queryKey: ["revision-flashcards", subjectId],
@@ -644,11 +657,8 @@ Make questions educational and progressively challenging.`
             {academicLevels.map(lvl_obj => { const lvl = lvl_obj.slug;
               const subs = subjectsByLevel[lvl] || [];
               const isExpanded = expandedLevels[lvl];
-              const cfg = {
-                beginner:     { label: "Beginner",     color: "#86EFAC", bg: "rgba(34,197,94,0.15)" },
-                intermediate: { label: "Intermediate", color: "#93C5FD", bg: "rgba(59,130,246,0.15)" },
-                advanced:     { label: "Advanced",     color: "#C4B5FD", bg: "rgba(139,92,246,0.15)" },
-              }[lvl];
+              const palCfg = getLevelConfig(lvl, academicLevels);
+              const cfg = { label: lvl_obj.name_en, color: palCfg.color, bg: palCfg.bg };
               return (
                 <div key={lvl} style={{ background: cfg.bg, borderRadius:8, overflow:"hidden" }}>
                   <button
