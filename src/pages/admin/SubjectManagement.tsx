@@ -327,7 +327,11 @@ const SubjectManagement = () => {
         ) : (
           <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:14 }}>
             {filtered.map((s:any) => {
-              const sLevels:string[] = Array.isArray(s.levels)&&s.levels.length>0 ? s.levels : s.level?[s.level]:[];
+              const sLevels:string[] = Array.isArray(s.levels)&&s.levels.length>0
+                ? s.levels
+                : s.level && s.level !== "all"
+                  ? s.level.split(",").map((x: string) => x.trim()).filter(Boolean)
+                  : [];
               const teacherName = (teachers||[]).find((tc:any)=>tc.user_id===s.teacher_id)?.full_name;
               const slotCount = timetableSlots?.[s.id] || 0;
               return (
