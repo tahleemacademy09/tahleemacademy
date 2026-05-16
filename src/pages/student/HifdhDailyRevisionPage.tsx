@@ -22,6 +22,7 @@ import {
   Star, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Flame, Target, TrendingUp, Play, RefreshCcw, Heart, Loader2,
   BookMarked, BarChart2, Lock, ShieldCheck, Bell, Eye,
+  SkipBack, SkipForward,
 } from "lucide-react";
 
 /* ── Design tokens ──────────────────────────────────────────────── */
@@ -39,6 +40,56 @@ const PASS = "#16a34a";
 const FAIL = "#dc2626";
 const AMBER = "#d97706";
 const PURPLE = "#7c3aed";
+// ─────────────────────────────────────────────────────────────────────────────
+// IndexedDB helpers — persist partial recording blobs across page refreshes.
+// sessionStorage cannot hold binary data of this size; IDB has no practical limit.
+// ─────────────────────────────────────────────────────────────────────────────
+const IDB_NAME  = "tahleem_hifdh_audio";
+const IDB_STORE = "partial_blobs";
+
+function _openAudioIDB(): Promise<IDBDatabase> {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = e =>
+      (e.target as IDBOpenDBRequest).result.createObjectStore(IDB_STORE);
+    req.onsuccess = e => res((e.target as IDBOpenDBRequest).result);
+    req.onerror   = () => rej(req.error);
+  });
+}
+async function idbSaveBlob(key: string, blob: Blob): Promise<void> {
+  try {
+    const db = await _openAudioIDB();
+    await new Promise<void>((res, rej) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(blob, key);
+      tx.oncomplete = () => { db.close(); res(); };
+      tx.onerror    = () => { db.close(); rej(tx.error); };
+    });
+  } catch { /* non-critical */ }
+}
+async function idbLoadBlob(key: string): Promise<Blob | null> {
+  try {
+    const db = await _openAudioIDB();
+    return await new Promise<Blob | null>((res, rej) => {
+      const tx  = db.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => { db.close(); res(req.result ?? null); };
+      req.onerror   = () => { db.close(); rej(req.error); };
+    });
+  } catch { return null; }
+}
+async function idbDeleteBlob(key: string): Promise<void> {
+  try {
+    const db = await _openAudioIDB();
+    await new Promise<void>(res => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = () => { db.close(); res(); };
+      tx.onerror    = () => { db.close(); res(); };
+    });
+  } catch { /* non-critical */ }
+}
+
 const PASS_THRESHOLD = 55;
 const TEST_PASS_THRESHOLD = 55;
 
@@ -680,93 +731,205 @@ function scoreColor(s:number): string {
 /* ═══════════════════════════════════════════════════════════════
    FULL AUDIO PLAYER — seekable, shows duration
 ═══════════════════════════════════════════════════════════════ */
-function FullAudioPlayer({url,label="Your Recitation"}:{url:string;label?:string}) {
-  const audioRef = useRef<HTMLAudioElement>(null);
+// ─────────────────────────────────────────────────────────────────────────────
+// FullAudioPlayer — feature-rich player for student recitation playback.
+//
+// Uses `new Audio()` (HTMLAudioElement outside React DOM) to avoid the
+// ref-timing race that caused silent playback on Android after mic recording
+// flipped the audio session to earpiece mode.  RAF-based progress gives smooth
+// seek bar updates.  Speed control + ±15 s skip match standard player UX.
+// ─────────────────────────────────────────────────────────────────────────────
+function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; label?: string }) {
+  const audioRef  = useRef<HTMLAudioElement | null>(null);
+  const rafRef    = useRef<number | null>(null);
   const [playing,  setPlaying]  = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [curTime,  setCurTime]  = useState(0);
   const [loaded,   setLoaded]   = useState(false);
   const [error,    setError]    = useState(false);
+  const [speed,    setSpeed]    = useState(1);
 
-  useEffect(()=>{
-    const el=audioRef.current; if(!el) return;
-    // Reset all state whenever the URL changes (e.g. local blob → storage URL swap)
-    setPlaying(false); setProgress(0); setDuration(0); setLoaded(false); setError(false);
-    el.pause();
-    el.load(); // force the element to reload with the new src
+  // Create the audio element once — never touched by React reconciler
+  useEffect(() => {
+    const audio          = new Audio();
+    audio.preload        = "auto";
+    audio.playsInline    = true;
+    audioRef.current     = audio;
+    return () => {
+      audio.pause(); audio.src = ""; audioRef.current = null;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
 
-    const onMeta=()=>{
-      if (!isFinite(el.duration) || isNaN(el.duration)) {
-        // WebM from MediaRecorder has Infinity duration — seek-to-end trick reveals it
-        el.currentTime = 1e101;
-      } else {
-        setDuration(el.duration); setLoaded(true);
-      }
+  // RAF loop — updates curTime & progress while playing
+  const startRAF = useCallback(() => {
+    const tick = () => {
+      const a = audioRef.current;
+      if (!a) return;
+      setCurTime(a.currentTime);
+      if (a.duration > 0) setProgress(a.currentTime / a.duration);
+      rafRef.current = requestAnimationFrame(tick);
     };
-    const onSeeked=()=>{
-      if (!isFinite(el.duration) || isNaN(el.duration)) return;
-      setDuration(el.duration); setLoaded(true);
-      el.currentTime = 0;
-    };
-    const onTime=()=>{ if(isFinite(el.duration)&&el.duration>0) setProgress(el.currentTime/el.duration); };
-    const onEnded=()=>{setPlaying(false);setProgress(0);if(el)el.currentTime=0;};
-    const onErr=()=>{setLoaded(false);setError(true);};
-    el.addEventListener("loadedmetadata",onMeta);
-    el.addEventListener("seeked",onSeeked);
-    el.addEventListener("timeupdate",onTime);
-    el.addEventListener("ended",onEnded);
-    el.addEventListener("error",onErr);
-    return()=>{
-      el.removeEventListener("loadedmetadata",onMeta);
-      el.removeEventListener("seeked",onSeeked);
-      el.removeEventListener("timeupdate",onTime);
-      el.removeEventListener("ended",onEnded);
-      el.removeEventListener("error",onErr);
-    };
-  },[url]);
+    rafRef.current = requestAnimationFrame(tick);
+  }, []);
 
-  const toggle=()=>{
-    const el=audioRef.current; if(!el) return;
-    if(playing){
-      el.pause(); setPlaying(false);
+  const stopRAF = useCallback(() => {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+  }, []);
+
+  // Load new URL whenever it changes
+  useEffect(() => {
+    const audio = audioRef.current; if (!audio) return;
+    // Reset UI state
+    setPlaying(false); setProgress(0); setCurTime(0); setDuration(0);
+    setLoaded(false); setError(false);
+    stopRAF();
+    audio.pause();
+
+    const onMeta = () => {
+      if (!isFinite(audio.duration) || isNaN(audio.duration)) {
+        // WebM from MediaRecorder reports Infinity — seek-to-end reveals true duration
+        audio.currentTime = 1e101;
+      } else { setDuration(audio.duration); setLoaded(true); }
+    };
+    const onSeeked = () => {
+      if (!isFinite(audio.duration) || isNaN(audio.duration)) return;
+      setDuration(audio.duration); setLoaded(true);
+      audio.currentTime = 0;
+    };
+    const onEnded = () => { setPlaying(false); setProgress(0); setCurTime(0); stopRAF(); };
+    const onErr   = () => { setLoaded(false); setError(true); };
+
+    audio.addEventListener("loadedmetadata", onMeta);
+    audio.addEventListener("seeked",         onSeeked);
+    audio.addEventListener("ended",          onEnded);
+    audio.addEventListener("error",          onErr);
+
+    audio.src = url;
+    audio.playbackRate = speed;
+    audio.load();
+
+    return () => {
+      audio.removeEventListener("loadedmetadata", onMeta);
+      audio.removeEventListener("seeked",         onSeeked);
+      audio.removeEventListener("ended",          onEnded);
+      audio.removeEventListener("error",          onErr);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+
+  const toggle = () => {
+    const audio = audioRef.current; if (!audio) return;
+    if (playing) {
+      audio.pause(); setPlaying(false); stopRAF();
     } else {
-      // Ensure loaded before playing (needed on mobile browsers)
-      if(el.readyState < 2) el.load();
-      el.play()
-        .then(()=>setPlaying(true))
-        .catch(()=>{
-          // Second attempt — some mobile browsers need a re-load before first play
-          el.load();
-          el.play().then(()=>setPlaying(true)).catch(()=>setError(true));
-        });
+      const tryPlay = () =>
+        audio.play()
+          .then(() => { setPlaying(true); startRAF(); })
+          .catch(err => {
+            console.warn("Audio play failed:", err);
+            setError(true);
+          });
+      if (audio.readyState < 2) { audio.load(); audio.addEventListener("canplay", tryPlay, { once: true }); }
+      else tryPlay();
     }
   };
-  const seek=(e:React.MouseEvent<HTMLDivElement>)=>{const el=audioRef.current;if(!el||!loaded)return;const rect=e.currentTarget.getBoundingClientRect();el.currentTime=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width))*el.duration;};
-  const fmt=(s:number)=>(!isFinite(s)||isNaN(s))?"--:--":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
-  return(
-    <div style={{background:`linear-gradient(135deg,${G1}08,${G2}14)`,border:`1.5px solid ${GOLD}55`,borderRadius:16,padding:"14px 16px"}}>
-      {/* key={url} forces the <audio> element to remount when src changes */}
-      <audio key={url} ref={audioRef} src={url} preload="auto"/>
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-        <div style={{width:40,height:40,borderRadius:"50%",background:`linear-gradient(135deg,${G2},${G3})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+
+  const skip = (secs: number) => {
+    const audio = audioRef.current; if (!audio || !loaded) return;
+    audio.currentTime = Math.max(0, Math.min(audio.duration, audio.currentTime + secs));
+  };
+
+  const seek = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    const audio = audioRef.current; if (!audio || !loaded) return;
+    const rect   = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+    audio.currentTime = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * audio.duration;
+  };
+
+  const cycleSpeed = () => {
+    const speeds = [0.75, 1, 1.25, 1.5];
+    const next   = speeds[(speeds.indexOf(speed) + 1) % speeds.length];
+    setSpeed(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  };
+
+  const fmt = (s: number) =>
+    (!isFinite(s) || isNaN(s)) ? "0:00"
+      : `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+
+  return (
+    <div style={{ background: `linear-gradient(135deg,${G1}08,${G2}14)`,
+      border: `1.5px solid ${GOLD}55`, borderRadius: 16, padding: "14px 16px" }}>
+
+      {/* Header row */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <div style={{ width: 40, height: 40, borderRadius: "50%",
+          background: `linear-gradient(135deg,${G2},${G3})`,
+          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <Mic size={17} color={GOLD}/>
         </div>
-        <div style={{flex:1}}>
-          <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>{label}</p>
-          <p style={{margin:0,fontSize:10,color:"#9CA3AF"}}>
-            {error?"Playback error — tap ▶ to retry":loaded?`Duration: ${fmt(duration)}`:"Loading…"}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontWeight: 800, fontSize: 13, color: G1,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</p>
+          <p style={{ margin: 0, fontSize: 10, color: "#9CA3AF" }}>
+            {error ? "⚠ Tap ▶ to retry" : loaded ? `${fmt(duration)} · ${speed}×` : "Loading…"}
           </p>
         </div>
-        <button onClick={toggle} style={{width:48,height:48,borderRadius:"50%",border:"none",cursor:"pointer",background:`linear-gradient(135deg,${GOLD},${GOLD_L})`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 3px 12px ${GOLD}55`,flexShrink:0}}>
-          {playing?<span style={{display:"flex",gap:3}}><span style={{width:4,height:14,background:G0,borderRadius:2}}/><span style={{width:4,height:14,background:G0,borderRadius:2}}/></span>:<Play size={16} color={G0} style={{marginLeft:2}}/>}
+        {/* Speed button */}
+        <button onClick={cycleSpeed}
+          style={{ padding: "4px 10px", borderRadius: 20, border: `1.5px solid ${GOLD}88`,
+            background: "transparent", color: GOLD, fontSize: 11, fontWeight: 800,
+            cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>
+          {speed}×
         </button>
       </div>
-      <div onClick={seek} style={{height:8,borderRadius:4,background:"#E5E7EB",cursor:"pointer",overflow:"hidden",position:"relative"}}>
-        <div style={{height:"100%",borderRadius:4,background:`linear-gradient(to right,${GOLD},${GOLD_L})`,width:`${progress*100}%`,transition:"width .1s"}}/>
+
+      {/* Controls row: skip-back | play-pause | skip-forward */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 18, marginBottom: 12 }}>
+        <button onClick={() => skip(-15)}
+          style={{ background: "none", border: "none", cursor: "pointer", padding: 6,
+            color: G2, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+          <SkipBack size={20} color={G2}/>
+          <span style={{ fontSize: 8, color: "#9CA3AF", fontWeight: 700 }}>15s</span>
+        </button>
+
+        <button onClick={toggle}
+          style={{ width: 54, height: 54, borderRadius: "50%", border: "none", cursor: "pointer",
+            background: `linear-gradient(135deg,${GOLD},${GOLD_L})`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            boxShadow: `0 4px 16px ${GOLD}66`, flexShrink: 0 }}>
+          {playing
+            ? <span style={{ display: "flex", gap: 4 }}>
+                <span style={{ width: 4, height: 16, background: "#1C3A2F", borderRadius: 2 }}/>
+                <span style={{ width: 4, height: 16, background: "#1C3A2F", borderRadius: 2 }}/>
+              </span>
+            : <Play size={20} color="#1C3A2F" style={{ marginLeft: 3 }}/>}
+        </button>
+
+        <button onClick={() => skip(15)}
+          style={{ background: "none", border: "none", cursor: "pointer", padding: 6,
+            color: G2, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+          <SkipForward size={20} color={G2}/>
+          <span style={{ fontSize: 8, color: "#9CA3AF", fontWeight: 700 }}>15s</span>
+        </button>
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:9,color:"#9CA3AF",fontWeight:600}}>
-        <span>{fmt(audioRef.current?.currentTime||0)}</span>
-        <span>{loaded?fmt(duration):"--:--"}</span>
+
+      {/* Seek bar */}
+      <div onClick={seek} onTouchStart={seek}
+        style={{ height: 8, borderRadius: 4, background: "#E5E7EB",
+          cursor: "pointer", overflow: "hidden", position: "relative", marginBottom: 4 }}>
+        <div style={{ height: "100%", borderRadius: 4,
+          background: `linear-gradient(to right,${GOLD},${GOLD_L})`,
+          width: `${progress * 100}%`, transition: "width 0.05s linear" }}/>
+      </div>
+
+      {/* Time stamps */}
+      <div style={{ display: "flex", justifyContent: "space-between",
+        fontSize: 9, color: "#9CA3AF", fontWeight: 600 }}>
+        <span>{fmt(curTime)}</span>
+        <span>{loaded ? fmt(duration) : "--:--"}</span>
       </div>
     </div>
   );
@@ -911,6 +1074,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const listenAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isRecording,  setIsRecording] = useState(false);
   const [recSecs,      setRecSecs]     = useState(0);
+  // Seconds from a previous partial recording — timer starts here on "Continue Recording"
+  const [carryOverSecs, setCarryOverSecs] = useState(0);
   const [submitting,   setSubmitting]  = useState(false);
   const [audioUrl,     setAudioUrl]    = useState<string|null>(null);
   const [lastTranscript, setLastTranscript] = useState("");
@@ -957,6 +1122,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     try {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify({
         phase, pageIdx, pageResults, recitationScore,
+        recSecs: recSecsRef.current,          // ← timer continuity
         savedAudioUrl: savedAudioUrl ?? null,
         questions: questions.length > 0 ? questions : undefined,
         juzAyahs:  juzAyahs.length  > 0 ? juzAyahs  : undefined,
@@ -976,13 +1142,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       if (!raw) return;
       const saved = JSON.parse(raw);
       if (Date.now() - saved.savedAt > 2 * 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
-      if (["reading","page_result","pre_test_review","proctor_intro"].includes(saved.phase)) {
+      if ([\"reading\",\"page_result\",\"pre_test_review\",\"proctor_intro\"].includes(saved.phase)) {
         setPageIdx(saved.pageIdx ?? 0);
         setPageResults(saved.pageResults ?? []);
         if (saved.recitationScore) setRecitationScore(saved.recitationScore);
         if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
+        if (saved.recSecs)   setCarryOverSecs(saved.recSecs);   // ← resume timer
         setPhase("reading");
         setReturnBanner("recitation");
+        // Attempt to restore the partial audio blob saved to IndexedDB mid-recording
+        const blobKey = `${userId}_${todayISO()}_partial`;
+        idbLoadBlob(blobKey).then(blob => {
+          if (blob) { audioChunks.current = [blob]; }
+        });
       } else if (["testing","test_result"].includes(saved.phase)) {
         setPageIdx(saved.pageIdx ?? 0);
         setPageResults(saved.pageResults ?? []);
@@ -1111,7 +1283,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
       }) || "";
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-      mr.ondataavailable = (e) => { if (e.data?.size > 0) audioChunks.current.push(e.data); };
+      const blobKey = `${userId}_${todayISO()}_partial`;
+      mr.ondataavailable = (e) => {
+        if (e.data?.size > 0) {
+          audioChunks.current.push(e.data);
+          // Persist the accumulated blob to IndexedDB after each chunk so that
+          // a page refresh doesn't lose partial audio (IDB survives navigation).
+          const partial = new Blob(audioChunks.current, { type: mime || "audio/webm" });
+          idbSaveBlob(blobKey, partial);
+        }
+      };
       mr.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
         clearInterval(timerRef.current);
@@ -1169,11 +1350,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
           setLastTranscript(tx);
           lastResultRef.current = { tx, ayahCorrectness: corr };
           setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
+          // Partial blob no longer needed — clean up IDB and reset carry-over
+          idbDeleteBlob(`${userId}_${todayISO()}_partial`);
+          setCarryOverSecs(0);
         });
       };
       mr.start(200);
       mediaRecRef.current = mr;
-      setIsRecording(true); setRecSecs(0);
+      setIsRecording(true);
+      setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
+      recSecsRef.current = carryOverSecs;
       timerRef.current = setInterval(() => setRecSecs(s => s + 1), 1000);
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
@@ -1652,7 +1838,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
                   </button>
                   <button onClick={()=>{
                     audioChunks.current=[]; audioBlobRef.current=null;
-                    setScore(null); setRetryCount(0); setRecSecs(0);
+                    setScore(null); setRetryCount(0); setRecSecs(0); setCarryOverSecs(0);
+                    idbDeleteBlob(`${userId}_${todayISO()}_partial`);
                     setReturnBanner(null); startRecording();
                   }} style={{padding:"13px",borderRadius:12,border:`1.5px solid ${GOLD}`,
                     cursor:"pointer",background:"transparent",color:GOLD,
@@ -2521,91 +2708,146 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
 
 /* ── AudioPlayerWidget ──────────────────────────────────────────── */
 function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?:string}) {
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const rafRef   = useRef<number | null>(null);
   const [playing,  setPlaying]  = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [curTime,  setCurTime]  = useState(0);
   const [loaded,   setLoaded]   = useState(false);
   const [error,    setError]    = useState(false);
+  const [speed,    setSpeed]    = useState(1);
 
   useEffect(()=>{
-    const el=audioRef.current; if(!el) return;
-    setPlaying(false); setProgress(0); setDuration(0); setLoaded(false); setError(false);
-    el.pause();
-    el.load();
-    const onMeta =()=>{
-      if(!isFinite(el.duration)||isNaN(el.duration)){el.currentTime=1e101;}
-      else{setDuration(el.duration);setLoaded(true);}
+    const audio = new Audio();
+    audio.preload = "auto"; audio.playsInline = true;
+    audioRef.current = audio;
+    return()=>{ audio.pause(); audio.src=""; audioRef.current=null;
+      if(rafRef.current) cancelAnimationFrame(rafRef.current); };
+  },[]);
+
+  const stopRAF = useCallback(()=>{
+    if(rafRef.current){cancelAnimationFrame(rafRef.current);rafRef.current=null;}
+  },[]);
+  const startRAF = useCallback(()=>{
+    const tick=()=>{
+      const a=audioRef.current; if(!a) return;
+      setCurTime(a.currentTime);
+      if(a.duration>0) setProgress(a.currentTime/a.duration);
+      rafRef.current=requestAnimationFrame(tick);
     };
-    const onSeeked=()=>{if(!isFinite(el.duration)||isNaN(el.duration))return;setDuration(el.duration);setLoaded(true);el.currentTime=0;};
-    const onTime =()=>setProgress(el.currentTime/(el.duration||1));
-    const onEnded=()=>{setPlaying(false);setProgress(0);el.currentTime=0;};
+    rafRef.current=requestAnimationFrame(tick);
+  },[]);
+
+  useEffect(()=>{
+    const audio=audioRef.current; if(!audio) return;
+    setPlaying(false);setProgress(0);setCurTime(0);setDuration(0);setLoaded(false);setError(false);
+    stopRAF(); audio.pause();
+    const onMeta =()=>{
+      if(!isFinite(audio.duration)||isNaN(audio.duration)){audio.currentTime=1e101;}
+      else{setDuration(audio.duration);setLoaded(true);}
+    };
+    const onSeeked=()=>{if(!isFinite(audio.duration)||isNaN(audio.duration))return;
+      setDuration(audio.duration);setLoaded(true);audio.currentTime=0;};
+    const onEnded=()=>{setPlaying(false);setProgress(0);setCurTime(0);stopRAF();};
     const onErr  =()=>{setLoaded(false);setError(true);};
-    el.addEventListener("loadedmetadata",onMeta);
-    el.addEventListener("seeked",onSeeked);
-    el.addEventListener("timeupdate",onTime);
-    el.addEventListener("ended",onEnded);
-    el.addEventListener("error",onErr);
-    return()=>{el.removeEventListener("loadedmetadata",onMeta);
-               el.removeEventListener("seeked",onSeeked);
-               el.removeEventListener("timeupdate",onTime);
-               el.removeEventListener("ended",onEnded);
-               el.removeEventListener("error",onErr);};
+    audio.addEventListener("loadedmetadata",onMeta);
+    audio.addEventListener("seeked",onSeeked);
+    audio.addEventListener("ended",onEnded);
+    audio.addEventListener("error",onErr);
+    audio.src=url; audio.playbackRate=speed; audio.load();
+    return()=>{audio.removeEventListener("loadedmetadata",onMeta);
+               audio.removeEventListener("seeked",onSeeked);
+               audio.removeEventListener("ended",onEnded);
+               audio.removeEventListener("error",onErr);};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[url]);
 
   const toggle=()=>{
-    const el=audioRef.current; if(!el) return;
-    if(playing){el.pause();setPlaying(false);}
+    const audio=audioRef.current; if(!audio) return;
+    if(playing){audio.pause();setPlaying(false);stopRAF();}
     else{
-      if(el.readyState<2) el.load();
-      el.play().then(()=>setPlaying(true)).catch(()=>{el.load();el.play().then(()=>setPlaying(true)).catch(()=>setError(true));});
+      const tryPlay=()=>audio.play().then(()=>{setPlaying(true);startRAF();}).catch(()=>setError(true));
+      if(audio.readyState<2){audio.load();audio.addEventListener("canplay",tryPlay,{once:true});}
+      else tryPlay();
     }
   };
-  const seek=(e:React.MouseEvent<HTMLDivElement>)=>{
-    const el=audioRef.current; if(!el) return;
-    const rect=e.currentTarget.getBoundingClientRect();
-    const ratio=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width));
-    el.currentTime=ratio*el.duration; setProgress(ratio);
+  const skip=(secs:number)=>{
+    const a=audioRef.current; if(!a||!loaded) return;
+    a.currentTime=Math.max(0,Math.min(a.duration,a.currentTime+secs));
   };
-  const fmt=(s:number)=>(!isFinite(s)||isNaN(s))?"--:--":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+  const seek=(e:React.MouseEvent<HTMLDivElement>|React.TouchEvent<HTMLDivElement>)=>{
+    const a=audioRef.current; if(!a||!loaded) return;
+    const rect=(e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    const cx="touches" in e?e.touches[0].clientX:e.clientX;
+    a.currentTime=Math.max(0,Math.min(1,(cx-rect.left)/rect.width))*a.duration;
+  };
+  const cycleSpeed=()=>{
+    const speeds=[0.75,1,1.25,1.5];
+    const next=speeds[(speeds.indexOf(speed)+1)%speeds.length];
+    setSpeed(next); if(audioRef.current) audioRef.current.playbackRate=next;
+  };
+  const fmt=(s:number)=>(!isFinite(s)||isNaN(s))?"0:00":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
 
   return(
     <div style={{background:`linear-gradient(135deg,${G1}08,${G2}14)`,
       border:`1.5px solid ${GOLD}55`,borderRadius:16,padding:"14px 16px"}}>
-      <audio key={url} ref={audioRef} src={url} preload="auto"/>
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-        <div style={{width:38,height:38,borderRadius:"50%",
+        <div style={{width:36,height:36,borderRadius:"50%",
           background:`linear-gradient(135deg,${G2},${G3})`,
           display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <Mic size={16} color={GOLD}/>
+          <Mic size={15} color={GOLD}/>
         </div>
-        <div style={{flex:1}}>
-          <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>{label}</p>
+        <div style={{flex:1,minWidth:0}}>
+          <p style={{margin:0,fontWeight:800,fontSize:12,color:G1,
+            overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</p>
           <p style={{margin:0,fontSize:10,color:"#9CA3AF"}}>
-            {error?"Tap ▶ to retry":loaded?`Duration: ${fmt(duration)}`:"Loading…"}
+            {error?"⚠ Tap ▶ to retry":loaded?`${fmt(duration)} · ${speed}×`:"Loading…"}
           </p>
         </div>
+        <button onClick={cycleSpeed} style={{padding:"3px 8px",borderRadius:20,
+          border:`1.5px solid ${GOLD}88`,background:"transparent",color:GOLD,
+          fontSize:10,fontWeight:800,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+          {speed}×
+        </button>
+      </div>
+
+      {/* Controls */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:16,marginBottom:10}}>
+        <button onClick={()=>skip(-15)} style={{background:"none",border:"none",cursor:"pointer",
+          padding:4,display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+          <SkipBack size={18} color={G2}/>
+          <span style={{fontSize:7,color:"#9CA3AF",fontWeight:700}}>15s</span>
+        </button>
         <button onClick={toggle} style={{width:46,height:46,borderRadius:"50%",border:"none",
           cursor:"pointer",background:`linear-gradient(135deg,${GOLD},${GOLD_L})`,
           display:"flex",alignItems:"center",justifyContent:"center",
           boxShadow:`0 3px 12px ${GOLD}55`,flexShrink:0}}>
           {playing
             ?<span style={{display:"flex",gap:3}}>
-               <span style={{width:4,height:14,background:G0,borderRadius:2}}/>
-               <span style={{width:4,height:14,background:G0,borderRadius:2}}/>
+               <span style={{width:4,height:14,background:"#1C3A2F",borderRadius:2}}/>
+               <span style={{width:4,height:14,background:"#1C3A2F",borderRadius:2}}/>
              </span>
-            :<Play size={16} color={G0} style={{marginLeft:2}}/>}
+            :<Play size={16} color="#1C3A2F" style={{marginLeft:2}}/>}
+        </button>
+        <button onClick={()=>skip(15)} style={{background:"none",border:"none",cursor:"pointer",
+          padding:4,display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
+          <SkipForward size={18} color={G2}/>
+          <span style={{fontSize:7,color:"#9CA3AF",fontWeight:700}}>15s</span>
         </button>
       </div>
-      <div onClick={seek} style={{height:6,borderRadius:4,background:"#E5E7EB",
-        cursor:"pointer",overflow:"hidden"}}>
-        <div style={{height:"100%",borderRadius:4,
+
+      {/* Seek bar */}
+      <div onClick={seek} onTouchStart={seek}
+        style={{height:6,borderRadius:3,background:"#E5E7EB",
+          cursor:"pointer",overflow:"hidden",marginBottom:4}}>
+        <div style={{height:"100%",borderRadius:3,
           background:`linear-gradient(to right,${GOLD},${GOLD_L})`,
-          width:`${progress*100}%`,transition:"width .1s"}}/>
+          width:`${progress*100}%`,transition:"width 0.05s linear"}}/>
       </div>
-      <div style={{display:"flex",justifyContent:"space-between",marginTop:4,
+      <div style={{display:"flex",justifyContent:"space-between",
         fontSize:9,color:"#9CA3AF",fontWeight:600}}>
-        <span>{fmt(audioRef.current?.currentTime||0)}</span>
+        <span>{fmt(curTime)}</span>
         <span>{loaded?fmt(duration):"--:--"}</span>
       </div>
     </div>
