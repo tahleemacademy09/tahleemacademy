@@ -1142,7 +1142,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       if (!raw) return;
       const saved = JSON.parse(raw);
       if (Date.now() - saved.savedAt > 2 * 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
-      if ([\"reading\",\"page_result\",\"pre_test_review\",\"proctor_intro\"].includes(saved.phase)) {
+      if (["reading","page_result","pre_test_review","proctor_intro"].includes(saved.phase)) {
         setPageIdx(saved.pageIdx ?? 0);
         setPageResults(saved.pageResults ?? []);
         if (saved.recitationScore) setRecitationScore(saved.recitationScore);
