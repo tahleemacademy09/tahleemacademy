@@ -742,10 +742,6 @@ function scoreColor(s:number): string {
 function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; label?: string }) {
   const audioRef  = useRef<HTMLAudioElement | null>(null);
   const rafRef    = useRef<number | null>(null);
-  // AudioContext ref — created on first user-gesture play so mobile autoplay
-  // policy is satisfied, and routes audio through STREAM_MUSIC (speaker) rather
-  // than the MODE_IN_COMMUNICATION (earpiece) session that getUserMedia leaves behind.
-  const ctxRef    = useRef<AudioContext | null>(null);
   const [playing,  setPlaying]  = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -762,8 +758,6 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     audioRef.current     = audio;
     return () => {
       audio.pause(); audio.src = ""; audioRef.current = null;
-      // Close AudioContext if it was opened
-      if (ctxRef.current) { ctxRef.current.close().catch(() => {}); ctxRef.current = null; }
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, []);
@@ -829,48 +823,16 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     const audio = audioRef.current; if (!audio) return;
     if (playing) {
       audio.pause(); setPlaying(false); stopRAF();
-      return;
-    }
-
-    const doPlay = () =>
-      audio.play()
-        .then(() => { setPlaying(true); startRAF(); })
-        .catch(err => { console.warn("Audio play failed:", err); setError(true); });
-
-    const startWithCtx = () => {
-      const ctx = ctxRef.current;
-      if (ctx && ctx.state === "suspended") {
-        ctx.resume().then(doPlay).catch(doPlay);
-      } else {
-        doPlay();
-      }
-    };
-
-    // ── AudioContext setup (first play only) ────────────────────────────────
-    // createMediaElementSource routes the <audio> element through the Web Audio
-    // graph.  AudioContext always outputs via STREAM_MUSIC (speaker) on Android,
-    // bypassing the MODE_IN_COMMUNICATION (earpiece) session left by getUserMedia.
-    // We do this inside the user-gesture handler so mobile autoplay is satisfied.
-    if (!ctxRef.current) {
-      try {
-        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const src = ctx.createMediaElementSource(audio);
-        // Optional gain node — unity gain keeps volume unchanged
-        const gain = ctx.createGain();
-        gain.gain.value = 1.0;
-        src.connect(gain);
-        gain.connect(ctx.destination);
-        ctxRef.current = ctx;
-      } catch (e) {
-        console.warn("AudioContext setup failed, falling back to direct play:", e);
-      }
-    }
-
-    if (audio.readyState < 2) {
-      audio.load();
-      audio.addEventListener("canplay", startWithCtx, { once: true });
     } else {
-      startWithCtx();
+      const tryPlay = () =>
+        audio.play()
+          .then(() => { setPlaying(true); startRAF(); })
+          .catch(err => {
+            console.warn("Audio play failed:", err);
+            setError(true);
+          });
+      if (audio.readyState < 2) { audio.load(); audio.addEventListener("canplay", tryPlay, { once: true }); }
+      else tryPlay();
     }
   };
 
@@ -1357,7 +1319,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         setPhase("page_result");
         setScore(null);
 
-        // Upload audio to storage — defined inline so it can close over blob/userId/today
+        // Upload audio to storage — defined inline so it can close over blob/userId/today.
+        // Returns a signed URL (time-limited, auth-independent) so admin playback works
+        // even on private buckets. The local blob URL is kept for immediate student playback
+        // and is NEVER replaced with the storage URL (avoids 403 on private buckets).
         const uploadAudioToStorage = async (): Promise<string|null> => {
           try {
             const today = todayISO();
@@ -1367,10 +1332,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
               .from("hifdh-daily-audio")
               .upload(path, blob, { contentType: blob.type, upsert: true });
             if (!upErr) {
-              const { data: urlData } = (supabase as any).storage
+              // Use createSignedUrl (works on private buckets) instead of getPublicUrl
+              // which silently returns a broken URL when the bucket has no public policy.
+              const { data: signedData } = await (supabase as any).storage
                 .from("hifdh-daily-audio")
-                .getPublicUrl(path);
-              return urlData?.publicUrl ?? null;
+                .createSignedUrl(path, 60 * 60 * 24); // 24-hour signed URL for admin review
+              return signedData?.signedUrl ?? null;
             }
           } catch { /* bucket may not exist yet — silent fail */ }
           return null;
@@ -1381,7 +1348,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         // useEffect fires while audioStorageUrlRef is still null (the race condition).
         Promise.all([transcribeAudio(blob), uploadAudioToStorage()]).then(([tx, storageUrl]) => {
           audioStorageUrlRef.current = storageUrl;
-          if (storageUrl) setSavedAudioUrl(storageUrl);
+          // ── DO NOT call setSavedAudioUrl(storageUrl) here ────────────────────────────────────────
+          // savedAudioUrl is already set to the local blob URL (line above Promise.all).
+          // Replacing it with the remote URL caused silent playback failure:
+          //   • getPublicUrl returns a URL even for private buckets → 403 when fetched
+          //   • FullAudioPlayer fires an error event → player stuck on "⚠ Tap ▶ to retry"
+          // The local blob URL is valid for the lifetime of this page session and always
+          // plays immediately. The signed storage URL is only needed for admin/DB saving.
           const sc   = scoreText(tx, ayahs, capturedSecs);
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
@@ -2748,7 +2721,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
 function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?:string}) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef   = useRef<number | null>(null);
-  const ctxRef   = useRef<AudioContext | null>(null);
   const [playing,  setPlaying]  = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -2761,11 +2733,8 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
     const audio = new Audio();
     audio.preload = "auto"; audio.playsInline = true;
     audioRef.current = audio;
-    return()=>{
-      audio.pause(); audio.src=""; audioRef.current=null;
-      if(rafRef.current) cancelAnimationFrame(rafRef.current);
-      if(ctxRef.current){ ctxRef.current.close().catch(()=>{}); ctxRef.current=null; }
-    };
+    return()=>{ audio.pause(); audio.src=""; audioRef.current=null;
+      if(rafRef.current) cancelAnimationFrame(rafRef.current); };
   },[]);
 
   const stopRAF = useCallback(()=>{
@@ -2807,25 +2776,12 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
 
   const toggle=()=>{
     const audio=audioRef.current; if(!audio) return;
-    if(playing){audio.pause();setPlaying(false);stopRAF();return;}
-
-    const doPlay=()=>audio.play().then(()=>{setPlaying(true);startRAF();}).catch(()=>setError(true));
-    const startWithCtx=()=>{
-      const ctx=ctxRef.current;
-      if(ctx&&ctx.state==="suspended"){ctx.resume().then(doPlay).catch(doPlay);}
-      else doPlay();
-    };
-    // Wire AudioContext on first play — forces STREAM_MUSIC (speaker) output on Android
-    if(!ctxRef.current){
-      try{
-        const ctx=new (window.AudioContext||(window as any).webkitAudioContext)();
-        const src=ctx.createMediaElementSource(audio);
-        src.connect(ctx.destination);
-        ctxRef.current=ctx;
-      }catch(e){console.warn("AudioContext setup failed:",e);}
+    if(playing){audio.pause();setPlaying(false);stopRAF();}
+    else{
+      const tryPlay=()=>audio.play().then(()=>{setPlaying(true);startRAF();}).catch(()=>setError(true));
+      if(audio.readyState<2){audio.load();audio.addEventListener("canplay",tryPlay,{once:true});}
+      else tryPlay();
     }
-    if(audio.readyState<2){audio.load();audio.addEventListener("canplay",startWithCtx,{once:true});}
-    else startWithCtx();
   };
   const skip=(secs:number)=>{
     const a=audioRef.current; if(!a||!loaded) return;
