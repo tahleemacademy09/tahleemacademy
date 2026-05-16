@@ -492,7 +492,7 @@ function shuffle<T>(arr:T[]): T[] {
   return a;
 }
 function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[] {
-  const allAyahs = results.flatMap(r => r.ayahs);
+  const allAyahs = results.flatMap(r => r.ayahs ?? []).filter(a => a && a.text);
   const errorWords = results.flatMap(r => r.errorWords);
   const used = new Set<string>(); // dedup: key = type+promptSlice
   const qs: Question[] = [];
@@ -1109,18 +1109,44 @@ interface SessionProps {
 
 function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: SessionProps) {
   // If recitation is done today but quiz not yet completed, start directly at quiz
+  // Only resume to quiz if recitation is done AND score passed the threshold.
+  // A 2% score means they failed recitation — they should redo it, not skip to quiz.
   const recitationAlreadyDone = !!(
     todayLog &&
     !todayLog.completed &&
-    todayLog.session_data?.recitation_score != null
+    todayLog.session_data?.recitation_score != null &&
+    todayLog.session_data.recitation_score >= PASS_THRESHOLD
   );
 
   const [phase,        setPhase]       = useState<Phase>(recitationAlreadyDone ? "proctor_intro" : "intro");
   const [pageIdx,      setPageIdx]     = useState(0);
   const [pageAyahs,    setPageAyahs]   = useState<Ayah[]>([]);
   const [fetchingPage, setFetchingPage] = useState(false);
+  // PageResults saved to DB have stripped ayah data (text, numberInSurah, surahName, surahNum).
+  // buildQuestions() needs full Ayah objects with surah.number / surah.englishName.
+  // Reconstruct them here so .text and .surah.* don't crash when building quiz questions.
+  const rebuildPageResults = (raw: any[]): PageResult[] =>
+    (raw ?? []).map((r: any) => ({
+      ...r,
+      ayahs: (r.ayahs ?? []).map((a: any) => ({
+        number:        a.number ?? 0,
+        numberInSurah: a.numberInSurah ?? 0,
+        text:          a.text ?? "",
+        surah: {
+          number:      a.surahNum ?? 0,
+          name:        a.surahName ?? "",
+          englishName: a.surahName ?? "",
+        },
+      })),
+      errorWords:      r.errorWords ?? [],
+      ayahCorrectness: r.ayahCorrectness ?? [],
+      transcript:      r.transcript ?? "",
+    }));
+
   const [pageResults,  setPageResults] = useState<PageResult[]>(
-    recitationAlreadyDone ? (todayLog?.session_data?.page_results as PageResult[] ?? []) : []
+    recitationAlreadyDone
+      ? rebuildPageResults(todayLog?.session_data?.page_results ?? [])
+      : []
   );
   const [score,        setScore]       = useState<number|null>(null);
   const [errorWords,   setErrorWords]  = useState<string[]>([]);
@@ -3508,11 +3534,11 @@ export default function HifdhDailyRevisionPage() {
                         </div>
                       </div>
                     {/* Smart CTA: if recitation done but quiz pending, show Resume Quiz */}
-                    {todayLog && !todayLog.completed && todayLog.session_data?.recitation_score != null ? (
+                    {todayLog && !todayLog.completed && (todayLog.session_data?.recitation_score ?? 0) >= PASS_THRESHOLD ? (
                       <>
                         <div style={{padding:"10px 12px",borderRadius:10,background:`${AMBER}12`,border:`1px solid ${AMBER}33`,marginBottom:8}}>
                           <p style={{margin:0,fontSize:12,fontWeight:700,color:AMBER}}>
-                            ✅ Recitation done ({todayLog.session_data.recitation_score}%) — Complete your quiz to finish today's session!
+                            ✅ Recitation passed ({todayLog.session_data?.recitation_score}%) — Complete your quiz to finish today's session!
                           </p>
                         </div>
                         <button onClick={()=>setShowSession(true)}
