@@ -501,7 +501,25 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
   const key = (type: string, text: string) => `${type}::${normalizeArabic(text).slice(0,12)}`;
 
   // ── helpers ────────────────────────────────────────────────────
-  // Extract a SNIPPET (middle 3-5 words) from an ayah — never full verse
+  // Extract the FIRST HALF of an ayah as a "prompt" snippet (semantic start)
+  // Always begins from word 0 so the meaning is complete from the start.
+  const snippetFirstHalf = (ayah: Ayah): string => {
+    const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
+    if (words.length <= 2) return stripWaqf(ayah.text);
+    // Take roughly the first half (min 2 words, max 6 words)
+    const half = Math.max(2, Math.min(6, Math.ceil(words.length / 2)));
+    return words.slice(0, half).join(" ");
+  };
+
+  // Extract the SECOND HALF of an ayah as a "continuation" snippet
+  const snippetSecondHalf = (ayah: Ayah): string => {
+    const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
+    if (words.length <= 2) return stripWaqf(ayah.text);
+    const half = Math.max(2, Math.min(6, Math.ceil(words.length / 2)));
+    return words.slice(half).join(" ") || words.slice(-3).join(" ");
+  };
+
+  // Extract a SNIPPET for error-focused or fill-in-the-blank questions (middle 3-5 words)
   const snippet = (ayah: Ayah, fromError = false): string => {
     const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
     if (words.length <= 3) return stripWaqf(ayah.text);
@@ -513,10 +531,8 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
       const start = Math.max(0, (eIdx >= 0 ? eIdx : 1) - 1);
       return words.slice(start, start + Math.min(4, words.length - start)).join(" ");
     }
-    // Random 3-4 word window from middle
-    const maxStart = Math.max(1, words.length - 4);
-    const start = 1 + Math.floor(Math.random() * (maxStart - 1));
-    return words.slice(start, start + Math.min(4, words.length - start)).join(" ");
+    // Use first half so the semantic meaning is intact
+    return snippetFirstHalf(ayah);
   };
 
   // MCQ blank: blank ONE word from a snippet (not full verse)
@@ -552,74 +568,89 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
       options: opts, correct: opts.indexOf(cw), correctText: cw };
   };
 
-  // MCQ next: show SNIPPET of verse[i], choose which snippet comes next
+  // MCQ next: show SECOND HALF of verse[i] (so meaning is clear from start),
+  // correct answer is the FIRST HALF of verse[i+1] (immediate next words).
+  // Distractors are first-halves of other verses so all options feel like genuine continuations.
   const makeMcqNext = (i: number, pool: Ayah[], sec: "A"|"B"): Question | null => {
     if (i >= pool.length - 1) return null;
     const cur  = pool[i];
     const next = pool[i + 1];
-    const promptSnip  = snippet(cur);
-    const correctSnip = snippet(next);
+    // Prompt: second half of current verse (so it ends at the verse boundary)
+    const promptSnip  = snippetSecondHalf(cur);
+    // Correct: first half of NEXT verse (the immediate next words)
+    const correctSnip = snippetFirstHalf(next);
     if (used.has(key("next", promptSnip))) return null;
     used.add(key("next", promptSnip));
-    const distract = shuffle(pool.filter((_,j)=>j!==i+1)).slice(0,3);
+    // Distractors: first-halves of other verses (plausible continuations)
+    const distract = shuffle(pool.filter((_,j)=>j!==i+1 && j!==i)).slice(0,3);
     if (distract.length < 2) return null;
-    const opts = shuffle([correctSnip, ...distract.map(a=>snippet(a))]);
+    const opts = shuffle([correctSnip, ...distract.map(a=>snippetFirstHalf(a))]);
     return { id:id++, type:"mcq_next", section:sec, snippet:true,
       prompt: promptSnip,
-      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${cur.surah.englishName} ${cur.numberInSurah} — What continues?`,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${cur.surah.englishName} ${cur.numberInSurah} — What comes after this?`,
       options: opts, correct: opts.indexOf(correctSnip), correctText: correctSnip };
   };
 
-  // MCQ continuation from error — snippet of verse before error, choose what follows
+  // MCQ continuation from error — show second-half of error verse, choose first-half of what follows
   const makeMcqContinuation = (i: number, pool: Ayah[], sec: "A"|"B"): Question | null => {
     if (i >= pool.length - 1) return null;
     const cur  = pool[i];
     const next = pool[i + 1];
-    const promptSnip  = snippet(cur, true);
-    const correctSnip = snippet(next);
+    const promptSnip  = snippetSecondHalf(cur);
+    const correctSnip = snippetFirstHalf(next);
     if (used.has(key("cont", promptSnip))) return null;
     used.add(key("cont", promptSnip));
-    const distract = shuffle(pool.filter((_,j)=>j!==i+1)).slice(0,3);
+    const distract = shuffle(pool.filter((_,j)=>j!==i+1 && j!==i)).slice(0,3);
     if (distract.length < 2) return null;
-    const opts = shuffle([correctSnip, ...distract.map(a=>snippet(a))]);
+    const opts = shuffle([correctSnip, ...distract.map(a=>snippetFirstHalf(a))]);
     return { id:id++, type:"mcq_continuation", section:sec, isErrorFocused:true, snippet:true,
       prompt: promptSnip,
       promptLabel: `§A Error Area · ${cur.surah.englishName} ${cur.numberInSurah} — Continue from here`,
       options: opts, correct: opts.indexOf(correctSnip), correctText: correctSnip };
   };
 
-  // RECORD question — student records the next 2 verses after a prompt snippet
+  // RECORD question — play/show first-half of verse[i], student recites the REST of that verse
+  // plus verse[i+1]. This way transcript matches exactly what they're asked to say.
   const makeRecordContinue = (i: number, pool: Ayah[], sec: "A"|"B", isErr=false): Question | null => {
     if (i >= pool.length - 1) return null;
     const cur  = pool[i];
     const next = pool[i + 1];
-    const snip = snippet(cur, isErr);
+    const snip = snippetFirstHalf(cur);
     if (used.has(key("rec", snip))) return null;
     used.add(key("rec", snip));
-    // correctText = the verse(s) the student should recite
-    const expected = [next, pool[i+2]].filter(Boolean).map(a=>stripWaqf(a.text)).join(" ");
+    // correctText = remainder of current verse + next verse (what student should recite)
+    const curWords  = stripWaqf(cur.text).split(" ").filter(Boolean);
+    const halfLen   = Math.max(2, Math.min(6, Math.ceil(curWords.length / 2)));
+    const curRemainder = curWords.slice(halfLen).join(" ");
+    const expected  = [curRemainder, stripWaqf(next.text)].filter(Boolean).join(" ");
     return { id:id++, type:"record_continue", section:sec, isErrorFocused:isErr, snippet:true,
       prompt: snip,
-      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · Record what comes after`,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${cur.surah.englishName} ${cur.numberInSurah} — Continue from where it stops`,
       options: [], correct: -1, correctText: expected,
       recordPrompt: `After: "${snip}" — recite what comes next` };
   };
 
-  // LISTEN+CHOOSE — play a verse snippet, student picks which full ayah it belongs to
+  // LISTEN+CONTINUE — play first-half of a verse (CDN audio for the full ayah),
+  // student chooses the correct CONTINUATION (second-half or next verse start).
+  // This tests actual memorisation — they hear the start and must recall what follows.
   const makeListenChoose = (i: number, pool: Ayah[], sec: "A"|"B"): Question | null => {
+    if (i >= pool.length) return null;
     const ayah = pool[i];
-    const snip = snippet(ayah);
-    if (used.has(key("listen", snip))) return null;
-    used.add(key("listen", snip));
+    const listenSnip = snippetFirstHalf(ayah);
+    if (used.has(key("listen", listenSnip))) return null;
+    used.add(key("listen", listenSnip));
+    // Correct answer: second-half of this verse (immediate continuation)
+    const correctContinuation = snippetSecondHalf(ayah);
+    if (!correctContinuation || correctContinuation === listenSnip) return null;
     const distract = shuffle(pool.filter((_,j)=>j!==i)).slice(0,3);
     if (distract.length < 2) return null;
-    const opts = shuffle([stripWaqf(ayah.text), ...distract.map(a=>stripWaqf(a.text))]);
+    const opts = shuffle([correctContinuation, ...distract.map(a=>snippetSecondHalf(a))]);
     return { id:id++, type:"listen_choose", section:sec, snippet:true,
-      listenText: snip,
+      listenText: listenSnip,
       listenAyahNum: ayah.number,
-      prompt: snip,
-      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · 👂 Listen — which ayah is this from?`,
-      options: opts.map(o=>o.slice(0,50)+"…"), correct: opts.indexOf(stripWaqf(ayah.text)), correctText: stripWaqf(ayah.text),
+      prompt: listenSnip,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · 👂 Listen — what comes after the reciter stops?`,
+      options: opts, correct: opts.indexOf(correctContinuation), correctText: correctContinuation,
       recordPrompt: undefined };
   };
 
@@ -819,21 +850,36 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
-  // resetAndroidRoute — second-line-of-defence for Android earpiece routing.
-  // Called every time the user taps Play so that even if the onstop reset
-  // didn’t complete in time, the route is corrected before audio.play().
-  const resetAndroidRoute = () => {
+  // ── Android speaker routing fix ─────────────────────────────────────────
+  // After getUserMedia(), Android Chrome locks the audio session to
+  // MODE_IN_COMMUNICATION (earpiece / call route). HTMLAudioElement.play()
+  // plays silently through the earpiece even though the UI shows playback.
+  //
+  // The reliable fix: route the HTMLAudioElement through an AudioContext via
+  // createMediaElementSource(). AudioContext ALWAYS outputs to STREAM_MUSIC
+  // (loudspeaker) on Android, regardless of the current audio session mode.
+  //
+  // • Create AudioContext lazily on first Play tap (requires user gesture).
+  // • createMediaElementSource() can only be called ONCE per element — guard with ref.
+  // • Resume suspended context before play().
+  const audioCtxRef  = useRef<AudioContext | null>(null);
+  const mediaNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+
+  const ensureSpeakerRoute = async (audio: HTMLAudioElement): Promise<void> => {
     try {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.1), ctx.sampleRate);
-      const src = ctx.createBufferSource();
-      src.buffer = buf;
-      src.connect(ctx.destination);
-      src.start(0);
-      src.onended = () => { ctx.close().catch(() => {}); };
-    } catch { /* non-critical */ }
+      if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+        audioCtxRef.current = new AudioCtx();
+      }
+      const ctx = audioCtxRef.current;
+      if (!mediaNodeRef.current) {
+        const node = ctx.createMediaElementSource(audio);
+        node.connect(ctx.destination);
+        mediaNodeRef.current = node;
+      }
+      if (ctx.state === "suspended") await ctx.resume();
+    } catch { /* non-critical — some browsers block createMediaElementSource */ }
   };
 
   const toggle = () => {
@@ -841,18 +887,21 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     if (playing) {
       audio.pause(); setPlaying(false); stopRAF();
     } else {
-      // Reset Android audio route BEFORE calling play() so audio comes through
-      // the speaker, not the earpiece left over from mic-recording mode.
-      resetAndroidRoute();
-      const tryPlay = () =>
+      const tryPlay = async () => {
+        if (audio.ended || (isFinite(audio.duration) && audio.currentTime >= audio.duration - 0.05)) {
+          audio.currentTime = 0;
+        }
+        await ensureSpeakerRoute(audio);
         audio.play()
           .then(() => { setPlaying(true); startRAF(); })
-          .catch(err => {
-            console.warn("Audio play failed:", err);
-            setError(true);
-          });
-      if (audio.readyState < 2) { audio.load(); audio.addEventListener("canplay", tryPlay, { once: true }); }
-      else tryPlay();
+          .catch(err => { console.warn("Audio play failed:", err); setError(true); });
+      };
+      if (audio.readyState < 2) {
+        audio.load();
+        audio.addEventListener("canplay", () => tryPlay(), { once: true });
+      } else {
+        tryPlay();
+      }
     }
   };
 
@@ -1055,14 +1104,24 @@ interface SessionProps {
   userId: string;
   todayPages: number[];
   onClose: (completed?: boolean) => void;
+  todayLog?: DailyLog | null;
 }
 
-function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProps) {
-  const [phase,        setPhase]       = useState<Phase>("intro");
+function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: SessionProps) {
+  // If recitation is done today but quiz not yet completed, start directly at quiz
+  const recitationAlreadyDone = !!(
+    todayLog &&
+    !todayLog.completed &&
+    todayLog.session_data?.recitation_score != null
+  );
+
+  const [phase,        setPhase]       = useState<Phase>(recitationAlreadyDone ? "proctor_intro" : "intro");
   const [pageIdx,      setPageIdx]     = useState(0);
   const [pageAyahs,    setPageAyahs]   = useState<Ayah[]>([]);
   const [fetchingPage, setFetchingPage] = useState(false);
-  const [pageResults,  setPageResults] = useState<PageResult[]>([]);
+  const [pageResults,  setPageResults] = useState<PageResult[]>(
+    recitationAlreadyDone ? (todayLog?.session_data?.page_results as PageResult[] ?? []) : []
+  );
   const [score,        setScore]       = useState<number|null>(null);
   const [errorWords,   setErrorWords]  = useState<string[]>([]);
   const [retryCount,   setRetryCount]  = useState(0);
@@ -1071,14 +1130,18 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const [juzAyahs,     setJuzAyahs]    = useState<Ayah[]>([]);
   const [qIdx,         setQIdx]        = useState(0);
   const [answers,      setAnswers]     = useState<(number|null)[]>([]);
-  const [recitationScore, setRecitationScore] = useState<number|null>(null);
+  const [recitationScore, setRecitationScore] = useState<number|null>(
+    recitationAlreadyDone ? (todayLog?.session_data?.recitation_score ?? null) : null
+  );
   const [testScore,    setTestScore]   = useState<number|null>(null);
   const [sectionAScore,setSectionAScore] = useState<number|null>(null);
   const [sectionBScore,setSectionBScore] = useState<number|null>(null);
   const [finalScore,   setFinalScore]  = useState(0);
   const [tabSwitchCount,setTabSwitchCount] = useState(0);
   const [focusWarning, setFocusWarning] = useState(false);
-  const [savedAudioUrl,setSavedAudioUrl] = useState<string|null>(null);
+  const [savedAudioUrl,setSavedAudioUrl] = useState<string|null>(
+    recitationAlreadyDone ? (todayLog?.session_data?.audio_url ?? null) : null
+  );
   // Record-type question state
   const [qRecording,   setQRecording]   = useState(false);
   const [qRecSecs,     setQRecSecs]     = useState(0);
@@ -2402,9 +2465,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
                   q.type==="mcq_next"       ?"🔤 What comes after this?"
                   :q.type==="mcq_blank"     ?"✏️ Fill in the missing word"
                   :q.type==="mcq_continuation"?"⚠️ Continue from error area"
-                  :q.type==="record_continue"?"🎙️ Record what comes next"
+                  :q.type==="record_continue"?"🎙️ Continue from where the reciter stopped"
                   :q.type==="record_complete"?"🎙️ Record the missing verses"
-                  :q.type==="listen_choose" ?"👂 Listen and choose the correct ayah"
+                  :q.type==="listen_choose" ?"👂 Listen — what comes after the reciter stops?"
                   :"What comes next?";
 
                 return(
@@ -2433,7 +2496,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
                           </button>
                           <div>
                             <p style={{margin:0,fontSize:12,fontWeight:700,color:PURPLE}}>
-                              {isSpeaking?"Playing…":listenDone?"✓ Heard — now choose below":"Tap to hear the verse snippet"}
+                              {isSpeaking?"Playing…":listenDone?"✓ Heard — now choose what comes next":"Tap to hear — then choose the continuation"}
                             </p>
                             {listenDone&&<p style={{margin:"2px 0 0",fontSize:10,color:"#9CA3AF"}}>You can replay it</p>}
                           </div>
@@ -3264,6 +3327,7 @@ export default function HifdhDailyRevisionPage() {
           userId={userId}
           todayPages={todayPages}
           onClose={handleSessionClose}
+          todayLog={todayLog}
         />
       )}
 
@@ -3443,6 +3507,24 @@ export default function HifdhDailyRevisionPage() {
                           </p>
                         </div>
                       </div>
+                    {/* Smart CTA: if recitation done but quiz pending, show Resume Quiz */}
+                    {todayLog && !todayLog.completed && todayLog.session_data?.recitation_score != null ? (
+                      <>
+                        <div style={{padding:"10px 12px",borderRadius:10,background:`${AMBER}12`,border:`1px solid ${AMBER}33`,marginBottom:8}}>
+                          <p style={{margin:0,fontSize:12,fontWeight:700,color:AMBER}}>
+                            ✅ Recitation done ({todayLog.session_data.recitation_score}%) — Complete your quiz to finish today's session!
+                          </p>
+                        </div>
+                        <button onClick={()=>setShowSession(true)}
+                          style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
+                            background:`linear-gradient(135deg,${PURPLE},#6d28d9)`,
+                            color:W,fontWeight:900,fontSize:15,fontFamily:"inherit",
+                            display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                            boxShadow:`0 4px 20px ${PURPLE}55`}}>
+                          <Target size={18}/> Resume — Take the Quiz Now
+                        </button>
+                      </>
+                    ) : (
                       <button onClick={()=>setShowSession(true)}
                         style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
                           background:`linear-gradient(135deg,${GOLD},${GOLD_L})`,
@@ -3451,6 +3533,7 @@ export default function HifdhDailyRevisionPage() {
                           boxShadow:`0 4px 20px ${GOLD}55`}}>
                         <Mic size={18}/> Start Today's Session
                       </button>
+                    )}
                     </>
                   )}
                 </div>
