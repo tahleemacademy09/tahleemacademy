@@ -819,11 +819,31 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
+  // resetAndroidRoute — second-line-of-defence for Android earpiece routing.
+  // Called every time the user taps Play so that even if the onstop reset
+  // didn’t complete in time, the route is corrected before audio.play().
+  const resetAndroidRoute = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.1), ctx.sampleRate);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+      src.onended = () => { ctx.close().catch(() => {}); };
+    } catch { /* non-critical */ }
+  };
+
   const toggle = () => {
     const audio = audioRef.current; if (!audio) return;
     if (playing) {
       audio.pause(); setPlaying(false); stopRAF();
     } else {
+      // Reset Android audio route BEFORE calling play() so audio comes through
+      // the speaker, not the earpiece left over from mic-recording mode.
+      resetAndroidRoute();
       const tryPlay = () =>
         audio.play()
           .then(() => { setPlaying(true); startRAF(); })
@@ -1298,16 +1318,28 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
         clearInterval(timerRef.current);
 
         // ── Android audio routing fix ────────────────────────────────────────
-        // After getUserMedia for mic recording, Android Chrome flips the audio
-        // session to MODE_IN_COMMUNICATION (earpiece route). Playing a tiny
-        // silent audio immediately after the tracks stop resets the session
-        // back to STREAM_MUSIC (speaker route) so the playback player is audible.
+        // After getUserMedia, Android Chrome locks audio routing to MODE_IN_COMMUNICATION
+        // (the earpiece/call route). Two previous approaches both failed:
+        //   • new Audio() with empty WAV (0 data bytes) — Android ignores zero-length clips
+        //   • volume = 0.001 — below Android’s threshold to trigger a route switch
+        //
+        // The reliable fix: create an AudioContext and play a short silent buffer
+        // through it. AudioContext ALWAYS routes to STREAM_MUSIC (speaker) on Android,
+        // which resets the system audio session so subsequent HTMLAudioElement playback
+        // is also heard through the speaker.
         try {
-          const silent = new Audio(
-            "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAIARKwAABCxAgAEABAAZGF0YQAAAAA="
-          );
-          silent.volume = 0.001;
-          silent.play().then(() => setTimeout(() => { silent.pause(); silent.src = ""; }, 150)).catch(() => {});
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) {
+            const ctx = new AudioCtx();
+            // 300 ms of silence — long enough that Android registers the route change
+            const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.3), ctx.sampleRate);
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.connect(ctx.destination);
+            src.start(0);
+            // Close context after the buffer finishes to free resources
+            src.onended = () => { ctx.close().catch(() => {}); };
+          }
         } catch { /* non-critical */ }
         const blob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
         audioBlobRef.current = blob;
