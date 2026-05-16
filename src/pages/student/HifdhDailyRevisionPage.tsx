@@ -82,6 +82,8 @@ interface Question {
   options: string[]; correct: number; correctText: string;
   // For LISTEN questions: a fragment of an ayah to play (TTS via Web Speech or stored text)
   listenText?: string;
+  // Global ayah number (1-6236) used to fetch professional Quran audio from CDN
+  listenAyahNum?: number;
   // For RECORD questions: what the student should recite
   recordPrompt?: string;
   // Snippet of just a few words, not full verse
@@ -563,6 +565,7 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
     const opts = shuffle([stripWaqf(ayah.text), ...distract.map(a=>stripWaqf(a.text))]);
     return { id:id++, type:"listen_choose", section:sec, snippet:true,
       listenText: snip,
+      listenAyahNum: ayah.number,
       prompt: snip,
       promptLabel: `${sec==="A"?"§A Today":"§B Review"} · 👂 Listen — which ayah is this from?`,
       options: opts.map(o=>o.slice(0,50)+"…"), correct: opts.indexOf(stripWaqf(ayah.text)), correctText: stripWaqf(ayah.text),
@@ -904,6 +907,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   // TTS / listen state
   const [isSpeaking,   setIsSpeaking]   = useState(false);
   const [listenDone,   setListenDone]   = useState(false);
+  // Ref to the currently-playing CDN audio so we can stop it when question changes
+  const listenAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isRecording,  setIsRecording] = useState(false);
   const [recSecs,      setRecSecs]     = useState(0);
   const [submitting,   setSubmitting]  = useState(false);
@@ -942,7 +947,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
   const SESSION_KEY = `hifdh_session_${userId}_${todayISO()}`;
 
   // ── PERSIST progress to sessionStorage ───────────────────────────────────
+  // IMPORTANT: Skip the very first run so the RESTORE effect below can read
+  // the saved session before this effect clears it (React runs effects in
+  // definition order — persist fires before restore on the initial mount).
+  const isFirstPersistRun = useRef(true);
   useEffect(() => {
+    if (isFirstPersistRun.current) { isFirstPersistRun.current = false; return; }
     if (phase === "intro" || phase === "complete") { sessionStorage.removeItem(SESSION_KEY); return; }
     try {
       sessionStorage.setItem(SESSION_KEY, JSON.stringify({
@@ -1105,6 +1115,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       mr.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
         clearInterval(timerRef.current);
+
+        // ── Android audio routing fix ────────────────────────────────────────
+        // After getUserMedia for mic recording, Android Chrome flips the audio
+        // session to MODE_IN_COMMUNICATION (earpiece route). Playing a tiny
+        // silent audio immediately after the tracks stop resets the session
+        // back to STREAM_MUSIC (speaker route) so the playback player is audible.
+        try {
+          const silent = new Audio(
+            "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAIARKwAABCxAgAEABAAZGF0YQAAAAA="
+          );
+          silent.volume = 0.001;
+          silent.play().then(() => setTimeout(() => { silent.pause(); silent.src = ""; }, 150)).catch(() => {});
+        } catch { /* non-critical */ }
         const blob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
         audioBlobRef.current = blob;
         const localUrl = URL.createObjectURL(blob);
@@ -1225,13 +1248,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
 
   // Reset per-question record state when question changes
   useEffect(() => {
+    // Stop any CDN audio or TTS that was playing for the previous question
+    stopListenAudio();
     setQRecording(false); setQRecSecs(0); setQRecChunks([]); setQRecResult(null); setQRecDone(false);
-    setIsSpeaking(false); setListenDone(false);
+    setListenDone(false);
     clearInterval(qRecTimerRef.current);
     if (qMediaRecRef.current && qMediaRecRef.current.state !== "inactive") {
       try { qMediaRecRef.current.stop(); } catch {}
     }
     qMediaRecRef.current = null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qIdx]);
 
   const startQRecording = async () => {
@@ -1285,19 +1311,66 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
     qMediaRecRef.current = null;
   };
 
-  const speakText = (text: string) => {
+  // ── playListenAudio ────────────────────────────────────────────────────────
+  // 1. If we have a global ayah number → fetch Mishary Alafasy mp3 from CDN
+  //    (reliable, professional Quranic recitation, works on all browsers).
+  // 2. On CDN failure or no ayah number → fall back to Web Speech TTS with
+  //    the voices-not-loaded race condition fixed for Android Chrome.
+  // ──────────────────────────────────────────────────────────────────────────
+  const stopListenAudio = () => {
+    if (listenAudioRef.current) {
+      listenAudioRef.current.pause(); listenAudioRef.current.src = "";
+      listenAudioRef.current = null;
+    }
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    setIsSpeaking(false);
+  };
+
+  const speakTextTTS = (text: string) => {
     if (!("speechSynthesis" in window)) { setListenDone(true); return; }
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
     utt.lang = "ar-SA"; utt.rate = 0.8;
-    // Pick Arabic voice if available
-    const voices = window.speechSynthesis.getVoices();
-    const arVoice = voices.find(v => v.lang.startsWith("ar"));
-    if (arVoice) utt.voice = arVoice;
-    utt.onstart  = () => setIsSpeaking(true);
-    utt.onend    = () => { setIsSpeaking(false); setListenDone(true); };
-    utt.onerror  = () => { setIsSpeaking(false); setListenDone(true); };
-    window.speechSynthesis.speak(utt);
+    const doSpeak = () => {
+      const voices = window.speechSynthesis.getVoices();
+      const arVoice = voices.find(v => v.lang.startsWith("ar"));
+      if (arVoice) utt.voice = arVoice;
+      utt.onstart = () => setIsSpeaking(true);
+      utt.onend   = () => { setIsSpeaking(false); setListenDone(true); };
+      utt.onerror = () => { setIsSpeaking(false); setListenDone(true); };
+      window.speechSynthesis.speak(utt);
+    };
+    // getVoices() returns [] synchronously on first call on Android Chrome
+    if (window.speechSynthesis.getVoices().length > 0) {
+      doSpeak();
+    } else {
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.onvoiceschanged = null; doSpeak();
+      };
+      setTimeout(() => {
+        if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) doSpeak();
+      }, 800);
+    }
+  };
+
+  // Keep the old name as an alias so nothing else breaks
+  const speakText = (text: string) => speakTextTTS(text);
+
+  const playListenAudio = (text: string, ayahNum?: number) => {
+    stopListenAudio();
+    if (ayahNum && ayahNum > 0) {
+      const audio = new Audio(
+        `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${ayahNum}.mp3`
+      );
+      audio.preload = "auto";
+      listenAudioRef.current = audio;
+      setIsSpeaking(true);
+      audio.onended = () => { setIsSpeaking(false); setListenDone(true); listenAudioRef.current = null; };
+      audio.onerror = () => { listenAudioRef.current = null; setIsSpeaking(false); speakTextTTS(text); };
+      audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); speakTextTTS(text); });
+    } else {
+      speakTextTTS(text);
+    }
   };
 
   const acceptPage = () => {
@@ -2116,7 +2189,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
                       {/* Prompt snippet — middle of verse, not full */}
                       {isListenQ?(
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <button onClick={()=>speakText(q.listenText||q.prompt)}
+                          <button onClick={()=>playListenAudio(q.listenText||q.prompt, q.listenAyahNum)}
                             disabled={isSpeaking}
                             style={{flexShrink:0,width:48,height:48,borderRadius:"50%",border:"none",cursor:"pointer",
                               background:isSpeaking?`${PURPLE}22`:`linear-gradient(135deg,${PURPLE},#6d28d9)`,
