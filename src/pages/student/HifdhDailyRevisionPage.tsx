@@ -39,8 +39,8 @@ const PASS = "#16a34a";
 const FAIL = "#dc2626";
 const AMBER = "#d97706";
 const PURPLE = "#7c3aed";
-const PASS_THRESHOLD = 65;
-const TEST_PASS_THRESHOLD = 65;
+const PASS_THRESHOLD = 55;
+const TEST_PASS_THRESHOLD = 55;
 
 /* ── Interfaces ─────────────────────────────────────────────────── */
 interface Assignment {
@@ -236,37 +236,98 @@ function stripWaqf(text: string): string {
  * the ar.uthmani API text and Groq/Whisper transcripts can be compared reliably.
  *
  * Key fixes vs the naïve stripDiacritics approach:
- *  • Dagger Alef \u0670 is CONVERTED to regular Alef \u0627 (not stripped).
- *    In Uthmani script it represents an actual long-vowel 'a' that Groq writes
- *    as a full Alef letter — e.g. عَٰقِبَتَهُمَا → عاقبتهما.
- *    Stripping it produces عقبتهما which never matches the transcript.
- *  • Alef Wasla ٱ \u0671 → \u0627  (appears on virtually every definite article "ال")
- *  • Alef Hamza Above/Below / Alef Madda → \u0627
- *  • Alef Maqsura ى → Ya ي  (Groq always uses Ya)
- *  • Ta Marbuta ة → Ha ه
- *  • Tatweel / Kashida ـ stripped
- *  • Quranic stop/pause/ayah-end markers stripped
+ *  • Dagger Alef \u0670 → Alef \u0627 (represents a long-vowel 'a' in Uthmani script).
+ *  • Alef Wasla ٱ \u0671 → \u0627  (every definite article "ال").
+ *  • Alef Hamza Above/Below / Alef Madda → \u0627.
+ *  • Hamzated Waw ؤ \u0624 → و  (Whisper often drops or swaps the hamza over waw).
+ *  • Hamzated Ya  ئ \u0626 → ي  (same reason).
+ *  • Standalone Hamza ء \u0621 → removed (frequently not captured in recitation).
+ *  • Alef Maqsura ى → Ya ي  (Groq always uses Ya).
+ *  • Ta Marbuta ة → Ha ه.
+ *  • Small Waw ۥ / Small Ya ۦ (Uthmani-only) → their full counterparts.
+ *  • Tatweel / Kashida ـ stripped.
+ *  • Quranic stop/pause/ayah-end markers stripped.
  */
 function normalizeArabic(t: string): string {
   return stripWaqf(t)
-    // 1. Convert dagger alef to regular alef FIRST (before the bulk strip)
+    // 1. Dagger alef → regular alef FIRST (before bulk strip removes it)
     .replace(/\u0670/g, "\u0627")
-    // 2. Strip remaining tashkeel + Quranic annotation characters
+    // 2. Strip tashkeel + Quranic annotation combining characters
     .replace(/[\u064B-\u065F\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
-    // 3. Normalise all Alef variants → plain Alef ا
+    // 3. All Alef variants → plain Alef ا
     .replace(/[\u0671\u0622\u0623\u0625]/g, "\u0627")
-    // 4. Alef Maqsura ى → Ya ي
+    // 4. Hamzated Waw ؤ → و  (Whisper may omit the hamza component)
+    .replace(/\u0624/g, "\u0648")
+    // 5. Hamzated Ya  ئ → ي
+    .replace(/\u0626/g, "\u064A")
+    // 6. Standalone Hamza ء → remove (often dropped in natural recitation / STT)
+    .replace(/\u0621/g, "")
+    // 7. Alef Maqsura ى → Ya ي
     .replace(/\u0649/g, "\u064A")
-    // 5. Ta Marbuta ة → Ha ه
+    // 8. Ta Marbuta ة → Ha ه
     .replace(/\u0629/g, "\u0647")
-    // 6. Strip Tatweel / Kashida ـ
+    // 9. Strip Tatweel / Kashida ـ
     .replace(/\u0640/g, "")
-    // 7. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
+    // 10. Uthmani small Waw ۥ → و  and small Ya ۦ → ي
+    .replace(/\u06E5/g, "\u0648")
+    .replace(/\u06E6/g, "\u064A")
+    // 11. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
     .replace(/[\u06DD\u06DE]/g, "");
 }
 
 // Keep the old name as an alias so nothing else in the file needs to change
 function stripDiacritics(t: string): string { return normalizeArabic(t); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Levenshtein edit distance — used for fuzzy matching of Quranic words.
+// Whisper often produces a 1-2 character difference from the written form due
+// to tajweed rules (idgham, ikhfaa, qalqalah) or emphatic letter substitution.
+// This lets us match those close-but-not-identical pairs as correct.
+// ─────────────────────────────────────────────────────────────────────────────
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  // Rolling two-row DP — O(n) space
+  let prev = Array.from({length: b.length + 1}, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const curr: number[] = [i];
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = a[i-1] === b[j-1]
+        ? prev[j-1]
+        : 1 + Math.min(prev[j], curr[j-1], prev[j-1]);
+    }
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+/**
+ * wordsMatch — single source of truth for whether two normalised Arabic words
+ * are considered the same.  Strategy (in priority order):
+ *
+ *  1. Exact match after normalisation.
+ *  2. 3-char prefix overlap — handles long-vowel insertions, e.g.
+ *     "الرحمان" (ref, after dagger-alef expand) vs "الرحمن" (Whisper).
+ *  3. Edit distance ≤ 1 for words ≥ 4 chars — handles single char drop/swap
+ *     due to tajweed rules (e.g. idgham drops the nun: "منهم" → "مهم").
+ *  4. Edit distance ≤ 2 for words ≥ 7 chars — handles two-char differences
+ *     that commonly arise from emphatic-letter substitution in STT output.
+ */
+function wordsMatch(rw: string, gw: string): boolean {
+  if (rw === gw) return true;
+  const minLen = Math.min(rw.length, gw.length);
+  // 3-char prefix (existing behaviour, kept)
+  if (minLen >= 3 &&
+      (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3)))) return true;
+  // Edit distance
+  if (minLen >= 4) {
+    const d = levenshtein(rw, gw);
+    if (d <= 1) return true;
+    if (minLen >= 7 && d <= 2) return true;
+  }
+  return false;
+}
 
 // ── Word-by-word comparison ───────────────────────────────────────────────────
 // Stores the ORIGINAL diacritic form of each reference word so the result
@@ -287,10 +348,7 @@ function compareWords(refText: string, gotText: string): WordResult[] {
     for (let i = 0; i < normGot.length; i++) {
       if (usedGot.has(i)) continue;
       const gw = normGot[i];
-      const match =
-        rw === gw ||
-        (rw.length > 3 && gw.length > 3 &&
-          (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3))));
+      const match = wordsMatch(rw, gw);
       if (match) {
         // Store the original (with diacritics) so the UI renders full tashkeel
         results.push({ word: origRef[ri], status: "correct" });
@@ -332,9 +390,7 @@ function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number 
     for (const rw of refChunk) {
       for (let k = gj; k < gotChunk.length; k++) {
         const gw = gotChunk[k];
-        const hit = rw === gw ||
-          (rw.length > 3 && gw.length > 3 &&
-            (rw.startsWith(gw.slice(0,3)) || gw.startsWith(rw.slice(0,3))));
+        const hit = wordsMatch(rw, gw);
         if (hit) { matched++; gj = k + 1; break; }
       }
     }
@@ -627,12 +683,19 @@ function FullAudioPlayer({url,label="Your Recitation"}:{url:string;label?:string
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [loaded,   setLoaded]   = useState(false);
+  const [error,    setError]    = useState(false);
+
   useEffect(()=>{
     const el=audioRef.current; if(!el) return;
+    // Reset all state whenever the URL changes (e.g. local blob → storage URL swap)
+    setPlaying(false); setProgress(0); setDuration(0); setLoaded(false); setError(false);
+    el.pause();
+    el.load(); // force the element to reload with the new src
+
     const onMeta=()=>{
-      // WebM from MediaRecorder often has Infinity duration until seeked to end
       if (!isFinite(el.duration) || isNaN(el.duration)) {
-        el.currentTime = 1e101; // seek to end trick
+        // WebM from MediaRecorder has Infinity duration — seek-to-end trick reveals it
+        el.currentTime = 1e101;
       } else {
         setDuration(el.duration); setLoaded(true);
       }
@@ -644,30 +707,52 @@ function FullAudioPlayer({url,label="Your Recitation"}:{url:string;label?:string
     };
     const onTime=()=>{ if(isFinite(el.duration)&&el.duration>0) setProgress(el.currentTime/el.duration); };
     const onEnded=()=>{setPlaying(false);setProgress(0);if(el)el.currentTime=0;};
+    const onErr=()=>{setLoaded(false);setError(true);};
     el.addEventListener("loadedmetadata",onMeta);
     el.addEventListener("seeked",onSeeked);
     el.addEventListener("timeupdate",onTime);
     el.addEventListener("ended",onEnded);
+    el.addEventListener("error",onErr);
     return()=>{
       el.removeEventListener("loadedmetadata",onMeta);
       el.removeEventListener("seeked",onSeeked);
       el.removeEventListener("timeupdate",onTime);
       el.removeEventListener("ended",onEnded);
+      el.removeEventListener("error",onErr);
     };
   },[url]);
-  const toggle=()=>{const el=audioRef.current;if(!el)return;if(playing){el.pause();setPlaying(false);}else{el.play().catch(()=>{});setPlaying(true);}};
+
+  const toggle=()=>{
+    const el=audioRef.current; if(!el) return;
+    if(playing){
+      el.pause(); setPlaying(false);
+    } else {
+      // Ensure loaded before playing (needed on mobile browsers)
+      if(el.readyState < 2) el.load();
+      el.play()
+        .then(()=>setPlaying(true))
+        .catch(()=>{
+          // Second attempt — some mobile browsers need a re-load before first play
+          el.load();
+          el.play().then(()=>setPlaying(true)).catch(()=>setError(true));
+        });
+    }
+  };
   const seek=(e:React.MouseEvent<HTMLDivElement>)=>{const el=audioRef.current;if(!el||!loaded)return;const rect=e.currentTarget.getBoundingClientRect();el.currentTime=Math.max(0,Math.min(1,(e.clientX-rect.left)/rect.width))*el.duration;};
   const fmt=(s:number)=>(!isFinite(s)||isNaN(s))?"--:--":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
   return(
     <div style={{background:`linear-gradient(135deg,${G1}08,${G2}14)`,border:`1.5px solid ${GOLD}55`,borderRadius:16,padding:"14px 16px"}}>
-      <audio ref={audioRef} src={url} preload="metadata"/>
+      {/* key={url} forces the <audio> element to remount when src changes */}
+      <audio key={url} ref={audioRef} src={url} preload="auto"/>
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
         <div style={{width:40,height:40,borderRadius:"50%",background:`linear-gradient(135deg,${G2},${G3})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <Mic size={17} color={GOLD}/>
         </div>
         <div style={{flex:1}}>
           <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>{label}</p>
-          <p style={{margin:0,fontSize:10,color:"#9CA3AF"}}>{loaded?`Duration: ${fmt(duration)}`:"Loading…"}</p>
+          <p style={{margin:0,fontSize:10,color:"#9CA3AF"}}>
+            {error?"Playback error — tap ▶ to retry":loaded?`Duration: ${fmt(duration)}`:"Loading…"}
+          </p>
         </div>
         <button onClick={toggle} style={{width:48,height:48,borderRadius:"50%",border:"none",cursor:"pointer",background:`linear-gradient(135deg,${GOLD},${GOLD_L})`,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 3px 12px ${GOLD}55`,flexShrink:0}}>
           {playing?<span style={{display:"flex",gap:3}}><span style={{width:4,height:14,background:G0,borderRadius:2}}/><span style={{width:4,height:14,background:G0,borderRadius:2}}/></span>:<Play size={16} color={G0} style={{marginLeft:2}}/>}
@@ -738,7 +823,7 @@ function ProctoringIntro({onReady,countA,countB}:{onReady:()=>void;countA:number
 function PreTestReview({audioUrl,pageResults,onContinue}:{audioUrl:string|null;pageResults:PageResult[];onContinue:()=>void}) {
   const errorWords=pageResults.flatMap(r=>r.errorWords);
   const avgScore=pageResults.length?Math.round(pageResults.reduce((s,r)=>s+r.score,0)/pageResults.length):0;
-  const sc=avgScore>=80?"#16a34a":avgScore>=65?"#d97706":"#dc2626";
+  const sc=avgScore>=80?"#16a34a":avgScore>=55?"#d97706":"#dc2626";
   return(
     <div style={{flex:1,overflowY:"auto",padding:"16px 16px 32px",display:"flex",flexDirection:"column",gap:14}}>
       <div style={{borderRadius:18,background:`linear-gradient(135deg,${G1},${G2})`,padding:"16px",border:`1px solid ${GOLD}33`}}>
@@ -1085,7 +1170,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
       : "webm";
 
     const stylePrompt =
-      "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ";
+      // Full Fatiha — gives Whisper emphatic letters (ص ض), hamzas (إ), sun-letter assimilation (الر)
+      // and the diacritised Uthmani style so it transcribes in proper Quranic script.
+      "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَٰنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ";
 
     // 1. Groq Whisper (verbose_json gives no_speech_prob to detect silence)
     if (GROQ_KEY) {
@@ -1174,7 +1261,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
           for (let i = 0; i < gotWords.length; i++) {
             if (used2.has(i)) continue;
             const gw = gotWords[i];
-            if (ew === gw || (ew.length > 3 && gw.length > 3 && (ew.startsWith(gw.slice(0,3)) || gw.startsWith(ew.slice(0,3))))) {
+            if (wordsMatch(ew, gw)) {
               matched++; used2.add(i); break;
             }
           }
@@ -2366,24 +2453,40 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [loaded,   setLoaded]   = useState(false);
+  const [error,    setError]    = useState(false);
 
   useEffect(()=>{
     const el=audioRef.current; if(!el) return;
-    const onMeta =()=>{setDuration(el.duration);setLoaded(true);};
+    setPlaying(false); setProgress(0); setDuration(0); setLoaded(false); setError(false);
+    el.pause();
+    el.load();
+    const onMeta =()=>{
+      if(!isFinite(el.duration)||isNaN(el.duration)){el.currentTime=1e101;}
+      else{setDuration(el.duration);setLoaded(true);}
+    };
+    const onSeeked=()=>{if(!isFinite(el.duration)||isNaN(el.duration))return;setDuration(el.duration);setLoaded(true);el.currentTime=0;};
     const onTime =()=>setProgress(el.currentTime/(el.duration||1));
     const onEnded=()=>{setPlaying(false);setProgress(0);el.currentTime=0;};
+    const onErr  =()=>{setLoaded(false);setError(true);};
     el.addEventListener("loadedmetadata",onMeta);
+    el.addEventListener("seeked",onSeeked);
     el.addEventListener("timeupdate",onTime);
     el.addEventListener("ended",onEnded);
+    el.addEventListener("error",onErr);
     return()=>{el.removeEventListener("loadedmetadata",onMeta);
+               el.removeEventListener("seeked",onSeeked);
                el.removeEventListener("timeupdate",onTime);
-               el.removeEventListener("ended",onEnded);};
+               el.removeEventListener("ended",onEnded);
+               el.removeEventListener("error",onErr);};
   },[url]);
 
   const toggle=()=>{
     const el=audioRef.current; if(!el) return;
     if(playing){el.pause();setPlaying(false);}
-    else{el.play().catch(()=>{});setPlaying(true);}
+    else{
+      if(el.readyState<2) el.load();
+      el.play().then(()=>setPlaying(true)).catch(()=>{el.load();el.play().then(()=>setPlaying(true)).catch(()=>setError(true));});
+    }
   };
   const seek=(e:React.MouseEvent<HTMLDivElement>)=>{
     const el=audioRef.current; if(!el) return;
@@ -2396,7 +2499,7 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
   return(
     <div style={{background:`linear-gradient(135deg,${G1}08,${G2}14)`,
       border:`1.5px solid ${GOLD}55`,borderRadius:16,padding:"14px 16px"}}>
-      <audio ref={audioRef} src={url} preload="metadata"/>
+      <audio key={url} ref={audioRef} src={url} preload="auto"/>
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
         <div style={{width:38,height:38,borderRadius:"50%",
           background:`linear-gradient(135deg,${G2},${G3})`,
@@ -2406,7 +2509,7 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
         <div style={{flex:1}}>
           <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>{label}</p>
           <p style={{margin:0,fontSize:10,color:"#9CA3AF"}}>
-            {loaded?`Duration: ${fmt(duration)}`:"Loading…"}
+            {error?"Tap ▶ to retry":loaded?`Duration: ${fmt(duration)}`:"Loading…"}
           </p>
         </div>
         <button onClick={toggle} style={{width:46,height:46,borderRadius:"50%",border:"none",
