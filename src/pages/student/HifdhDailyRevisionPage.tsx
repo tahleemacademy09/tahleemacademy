@@ -742,6 +742,10 @@ function scoreColor(s:number): string {
 function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; label?: string }) {
   const audioRef  = useRef<HTMLAudioElement | null>(null);
   const rafRef    = useRef<number | null>(null);
+  // AudioContext ref — created on first user-gesture play so mobile autoplay
+  // policy is satisfied, and routes audio through STREAM_MUSIC (speaker) rather
+  // than the MODE_IN_COMMUNICATION (earpiece) session that getUserMedia leaves behind.
+  const ctxRef    = useRef<AudioContext | null>(null);
   const [playing,  setPlaying]  = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -758,6 +762,8 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     audioRef.current     = audio;
     return () => {
       audio.pause(); audio.src = ""; audioRef.current = null;
+      // Close AudioContext if it was opened
+      if (ctxRef.current) { ctxRef.current.close().catch(() => {}); ctxRef.current = null; }
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
   }, []);
@@ -823,16 +829,48 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     const audio = audioRef.current; if (!audio) return;
     if (playing) {
       audio.pause(); setPlaying(false); stopRAF();
+      return;
+    }
+
+    const doPlay = () =>
+      audio.play()
+        .then(() => { setPlaying(true); startRAF(); })
+        .catch(err => { console.warn("Audio play failed:", err); setError(true); });
+
+    const startWithCtx = () => {
+      const ctx = ctxRef.current;
+      if (ctx && ctx.state === "suspended") {
+        ctx.resume().then(doPlay).catch(doPlay);
+      } else {
+        doPlay();
+      }
+    };
+
+    // ── AudioContext setup (first play only) ────────────────────────────────
+    // createMediaElementSource routes the <audio> element through the Web Audio
+    // graph.  AudioContext always outputs via STREAM_MUSIC (speaker) on Android,
+    // bypassing the MODE_IN_COMMUNICATION (earpiece) session left by getUserMedia.
+    // We do this inside the user-gesture handler so mobile autoplay is satisfied.
+    if (!ctxRef.current) {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const src = ctx.createMediaElementSource(audio);
+        // Optional gain node — unity gain keeps volume unchanged
+        const gain = ctx.createGain();
+        gain.gain.value = 1.0;
+        src.connect(gain);
+        gain.connect(ctx.destination);
+        ctxRef.current = ctx;
+      } catch (e) {
+        console.warn("AudioContext setup failed, falling back to direct play:", e);
+      }
+    }
+
+    if (audio.readyState < 2) {
+      audio.load();
+      audio.addEventListener("canplay", startWithCtx, { once: true });
     } else {
-      const tryPlay = () =>
-        audio.play()
-          .then(() => { setPlaying(true); startRAF(); })
-          .catch(err => {
-            console.warn("Audio play failed:", err);
-            setError(true);
-          });
-      if (audio.readyState < 2) { audio.load(); audio.addEventListener("canplay", tryPlay, { once: true }); }
-      else tryPlay();
+      startWithCtx();
     }
   };
 
@@ -2710,6 +2748,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose }: SessionProp
 function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?:string}) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef   = useRef<number | null>(null);
+  const ctxRef   = useRef<AudioContext | null>(null);
   const [playing,  setPlaying]  = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -2722,8 +2761,11 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
     const audio = new Audio();
     audio.preload = "auto"; audio.playsInline = true;
     audioRef.current = audio;
-    return()=>{ audio.pause(); audio.src=""; audioRef.current=null;
-      if(rafRef.current) cancelAnimationFrame(rafRef.current); };
+    return()=>{
+      audio.pause(); audio.src=""; audioRef.current=null;
+      if(rafRef.current) cancelAnimationFrame(rafRef.current);
+      if(ctxRef.current){ ctxRef.current.close().catch(()=>{}); ctxRef.current=null; }
+    };
   },[]);
 
   const stopRAF = useCallback(()=>{
@@ -2765,12 +2807,25 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
 
   const toggle=()=>{
     const audio=audioRef.current; if(!audio) return;
-    if(playing){audio.pause();setPlaying(false);stopRAF();}
-    else{
-      const tryPlay=()=>audio.play().then(()=>{setPlaying(true);startRAF();}).catch(()=>setError(true));
-      if(audio.readyState<2){audio.load();audio.addEventListener("canplay",tryPlay,{once:true});}
-      else tryPlay();
+    if(playing){audio.pause();setPlaying(false);stopRAF();return;}
+
+    const doPlay=()=>audio.play().then(()=>{setPlaying(true);startRAF();}).catch(()=>setError(true));
+    const startWithCtx=()=>{
+      const ctx=ctxRef.current;
+      if(ctx&&ctx.state==="suspended"){ctx.resume().then(doPlay).catch(doPlay);}
+      else doPlay();
+    };
+    // Wire AudioContext on first play — forces STREAM_MUSIC (speaker) output on Android
+    if(!ctxRef.current){
+      try{
+        const ctx=new (window.AudioContext||(window as any).webkitAudioContext)();
+        const src=ctx.createMediaElementSource(audio);
+        src.connect(ctx.destination);
+        ctxRef.current=ctx;
+      }catch(e){console.warn("AudioContext setup failed:",e);}
     }
+    if(audio.readyState<2){audio.load();audio.addEventListener("canplay",startWithCtx,{once:true});}
+    else startWithCtx();
   };
   const skip=(secs:number)=>{
     const a=audioRef.current; if(!a||!loaded) return;
