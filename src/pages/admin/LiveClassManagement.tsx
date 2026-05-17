@@ -244,6 +244,7 @@ const LiveClassManagement = () => {
         .from("live_sessions")
         .insert({
           subject_id: sub.id,
+          host_id: user?.id,
           status: "live",
           scheduled_at: now,
           actual_start_time: now,
