@@ -529,9 +529,16 @@ const StudentDashboard = () => {
           const log          = hifdhTodayLog;
           const completed    = log?.completed ?? false;
           const pagesTarget  = hifdhAssignment.daily_pages ?? 1;
-          const pagesRevised = log?.pages_revised ?? 0;
+          // Only count pages_revised toward progress when the session is fully complete.
+          // The interim save (after recitation, before quiz) writes pages_revised with
+          // completed=false — using it would show 100% on an incomplete session.
+          const pagesRevised = completed ? (log?.pages_revised ?? 0) : 0;
           const progress     = Math.min(1, pagesRevised / Math.max(1, pagesTarget));
           const progressPct  = Math.round(progress * 100);
+          // Quiz pending: recitation passed but quiz not yet done
+          const PASS = 55;
+          const recScore = log?.session_data?.recitation_score ?? 0;
+          const quizPending = !completed && recScore >= PASS;
 
           const mode: string        = hifdhAssignment.mode ?? "juz";
           const items: number[]     = hifdhAssignment.selected_items ?? [];
@@ -563,6 +570,11 @@ const StudentDashboard = () => {
                   <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: "#276749", background: "#dcfce7", border: "1px solid #9ae6b4", borderRadius: 20, padding: "4px 10px" }}>
                     <CheckCircle style={{ width: 12, height: 12 }} />
                     {t("Done!", "مكتمل!")}
+                  </span>
+                ) : quizPending ? (
+                  <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: "#7c3aed", background: "#f5f3ff", border: "1px solid #c4b5fd", borderRadius: 20, padding: "4px 10px" }}>
+                    <ClipboardList style={{ width: 12, height: 12 }} />
+                    {t("Quiz Pending", "الاختبار باقٍ")}
                   </span>
                 ) : (
                   <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: GOLD, background: `${GOLD}18`, border: `1px solid ${GOLD}44`, borderRadius: 20, padding: "4px 10px" }}>
@@ -627,6 +639,8 @@ const StudentDashboard = () => {
                   <BookMarked style={{ width: 15, height: 15 }} />
                   {completed
                     ? t("View Today's Session", "عرض جلسة اليوم")
+                    : quizPending
+                    ? t("Resume — Take the Quiz", "استكمل — أجِب الاختبار")
                     : t("Start Revision Now", "ابدأ المراجعة الآن")}
                   <ArrowRight style={{ width: 13, height: 13 }} />
                 </button>
