@@ -66,15 +66,18 @@ interface LiveClassState {
   autoJoin:      boolean;
   micEnabled:    boolean;
   camEnabled:    boolean;
+  /** True only after LiveKit has confirmed a successful connection */
+  hasConnected:  boolean;
 }
 interface LiveClassContextType extends LiveClassState {
-  joinClass:      (subject: any, opts?: { autoJoin?: boolean }) => void;
-  leaveClass:     () => void;
-  setMinimized:   (v: boolean) => void;
-  setMicEnabled:  (v: boolean) => void;
-  setCamEnabled:  (v: boolean) => void;
-  toggleMicFnRef: React.MutableRefObject<() => void>;
-  toggleCamFnRef: React.MutableRefObject<() => void>;
+  joinClass:       (subject: any, opts?: { autoJoin?: boolean }) => void;
+  leaveClass:      () => void;
+  setMinimized:    (v: boolean) => void;
+  setMicEnabled:   (v: boolean) => void;
+  setCamEnabled:   (v: boolean) => void;
+  setHasConnected: (v: boolean) => void;
+  toggleMicFnRef:  React.MutableRefObject<() => void>;
+  toggleCamFnRef:  React.MutableRefObject<() => void>;
 }
 const LiveClassContext = createContext<LiveClassContextType | null>(null);
 
@@ -82,7 +85,7 @@ const LiveClassContext = createContext<LiveClassContextType | null>(null);
 export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<LiveClassState>(() => {
     const saved = restore();
-    return saved ?? { activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false };
+    return saved ?? { activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false, hasConnected: false };
   });
 
   const toggleMicFnRef = useRef<() => void>(() => {});
@@ -123,7 +126,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
 
   const joinClass = useCallback((subject: any, opts?: { autoJoin?: boolean }) => {
     clearPersist();
-    setState({ activeSubject: subject, inCall: true, minimized: false, autoJoin: opts?.autoJoin ?? false, micEnabled: false, camEnabled: false });
+    setState({ activeSubject: subject, inCall: true, minimized: false, autoJoin: opts?.autoJoin ?? false, micEnabled: false, camEnabled: false, hasConnected: false });
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
@@ -131,7 +134,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
 
   const leaveClass = useCallback(() => {
     clearPersist();
-    setState({ activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false });
+    setState({ activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false, hasConnected: false });
   }, []);
 
   const setMinimized = useCallback((v: boolean) => {
@@ -146,13 +149,14 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     if (!v) history.pushState({ [HISTORY_STATE]: true }, "");
   }, []);
 
-  const setMicEnabled = useCallback((v: boolean) => setState(prev => ({ ...prev, micEnabled: v })), []);
-  const setCamEnabled = useCallback((v: boolean) => setState(prev => ({ ...prev, camEnabled: v })), []);
+  const setMicEnabled     = useCallback((v: boolean) => setState(prev => ({ ...prev, micEnabled: v })), []);
+  const setCamEnabled     = useCallback((v: boolean) => setState(prev => ({ ...prev, camEnabled: v })), []);
+  const setHasConnected   = useCallback((v: boolean) => setState(prev => ({ ...prev, hasConnected: v })), []);
 
   return (
     <LiveClassContext.Provider value={{
       ...state, joinClass, leaveClass, setMinimized,
-      setMicEnabled, setCamEnabled, toggleMicFnRef, toggleCamFnRef,
+      setMicEnabled, setCamEnabled, setHasConnected, toggleMicFnRef, toggleCamFnRef,
     }}>
       {children}
     </LiveClassContext.Provider>
