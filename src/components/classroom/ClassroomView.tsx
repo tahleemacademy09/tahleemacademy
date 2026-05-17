@@ -2720,7 +2720,7 @@ const BottomBarBridge=(props:any)=>{const room=useRoomContext();const isMobile=u
    This replaces the fragile ClassControls-based ref registration.      */
 const RoomToContextBridge = () => {
   const room = useRoomContext();
-  const { setMicEnabled, setCamEnabled, toggleMicFnRef, toggleCamFnRef } = useLiveClass();
+  const { setMicEnabled, setCamEnabled, setHasConnected, toggleMicFnRef, toggleCamFnRef } = useLiveClass();
 
   // Re-register on every render so closures are always fresh
   useEffect(() => {
@@ -2933,6 +2933,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         }
       }
       setPhase("live");
+      setHasConnected(true);   // unlock overlay PiP/minimize — user is now in the class
       try { playJoinSound(); } catch {}
     }catch(e:any){setError(e?.message||"Failed to connect");}finally{setLoading(false);}
   };
@@ -2947,6 +2948,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       setReconnecting(false);
       setError("Connection lost after several attempts. Please try again.");
       setPhase("lobby");
+      setHasConnected(false);  // reset — not in class anymore
       return;
     }
     setReconnecting(true);
