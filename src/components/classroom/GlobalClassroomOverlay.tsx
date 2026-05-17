@@ -244,13 +244,33 @@ function buildCanvasPip(
   document.body.appendChild(vid);
   vid.addEventListener("leavepictureinpicture", onTap);
 
+  // Keep video playing at all times so PiP is always ready (screen-off needs it)
+  const keepPlaying = () => {
+    if (!document.body.contains(vid)) return;
+    vid.play().catch(() => {});
+  };
+  vid.addEventListener("pause", keepPlaying);
+  vid.addEventListener("ended", keepPlaying);
+  keepPlaying();
+
+  const ensurePlaying = async () => {
+    if (vid.paused || vid.readyState < 2) {
+      try { await vid.play(); } catch {}
+      // give the browser a tick to update readyState
+      await new Promise(r => setTimeout(r, 80));
+    }
+  };
+
   const pip = async () => {
     if (document.pictureInPictureElement === vid) return;
+    await ensurePlaying();
     try { await vid.requestPictureInPicture(); } catch {}
   };
 
   const stop = () => {
     cancelAnimationFrame(raf);
+    vid.removeEventListener("pause", keepPlaying);
+    vid.removeEventListener("ended", keepPlaying);
     (vid.srcObject as MediaStream | null)?.getTracks().forEach(t => t.stop());
     if (document.pictureInPictureElement === vid) document.exitPictureInPicture().catch(() => {});
     vid.remove();
@@ -271,6 +291,7 @@ export default function GlobalClassroomOverlay() {
     activeSubject, inCall, minimized, autoJoin,
     leaveClass, setMinimized,
     micEnabled, camEnabled,
+    hasConnected,
     toggleMicFnRef,
   } = useLiveClass();
 
@@ -287,21 +308,21 @@ export default function GlobalClassroomOverlay() {
     toggleMicFnRef.current?.();
   }, [toggleMicFnRef]);
 
-  useSilentAudio(inCall);
-  useWakeLock(inCall);
-  useMediaSession(inCall, title, handleReturn, handleLeave);
+  useSilentAudio(hasConnected);
+  useWakeLock(hasConnected);
+  useMediaSession(hasConnected, title, handleReturn, handleLeave);
 
   const pipHandle       = useRef<PipHandle | null>(null);
   const handleReturnRef = useRef(handleReturn);
   handleReturnRef.current = handleReturn;
 
-  /* ── Build canvas PiP when call starts ── */
+  /* ── Build canvas PiP only once actually connected to the class ── */
   useEffect(() => {
-    if (!inCall) { pipHandle.current?.stop(); pipHandle.current = null; return; }
+    if (!hasConnected) { pipHandle.current?.stop(); pipHandle.current = null; return; }
     const h = buildCanvasPip(initial, title, () => handleReturnRef.current());
     if (h) { h.video.play().catch(() => {}); pipHandle.current = h; }
     return () => { pipHandle.current?.stop(); pipHandle.current = null; };
-  }, [inCall, initial, title]);
+  }, [hasConnected, initial, title]);
 
   /* ── Sync mic state into canvas ── */
   useEffect(() => { pipHandle.current?.setMicMuted(!localMic); }, [localMic]);
@@ -321,27 +342,50 @@ export default function GlobalClassroomOverlay() {
     h.pip().catch(() => {});
   }, [setMinimized, camEnabled]);
 
-  /* ── Back button → minimize ── */
+  /* ── Back button → minimize (only once actually in the class) ── */
   const handleMinimizeRef = useRef(handleMinimize);
   handleMinimizeRef.current = handleMinimize;
   useEffect(() => {
-    if (!inCall) return;
+    if (!hasConnected) return;
     const onPop = () => setTimeout(() => handleMinimizeRef.current(), 50);
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [inCall]);
+  }, [hasConnected]);
 
-  /* ── Screen off → canvas PiP (keep-alive) ── */
+  /* ── Screen off → canvas PiP (keep-alive, only when actually connected) ── */
   useEffect(() => {
-    if (!inCall) return;
+    if (!hasConnected) return;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const tryPip = async (attempt = 0) => {
+      if (document.visibilityState !== "hidden") return; // screen came back on
+      if (document.pictureInPictureElement) return;      // already in PiP
+      const h = pipHandle.current;
+      if (!h) return;
+      try {
+        await h.pip();
+      } catch {
+        // Android Chrome may need a moment — retry up to 3 times with backoff
+        if (attempt < 3) {
+          retryTimer = setTimeout(() => tryPip(attempt + 1), 300 * (attempt + 1));
+        }
+      }
+    };
+
     const onHide = () => {
       if (document.visibilityState !== "hidden") return;
       if (document.pictureInPictureElement) return;
-      pipHandle.current?.pip().catch(() => {});
+      // Small initial delay: Android fires visibilitychange slightly before
+      // it's safe to call requestPictureInPicture
+      retryTimer = setTimeout(() => tryPip(0), 150);
     };
+
     document.addEventListener("visibilitychange", onHide);
-    return () => document.removeEventListener("visibilitychange", onHide);
-  }, [inCall]);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      if (retryTimer) clearTimeout(retryTimer);
+    };
+  }, [hasConnected]);
 
   /* ── Return to full class → exit PiP ── */
   useEffect(() => {
