@@ -149,6 +149,14 @@ const Fld = ({ label, children }: { label: string; children: React.ReactNode }) 
 // COURSE MODAL
 // ══════════════════════════════════════════════════════════════════════════
 const CourseModal = React.memo(({ ed, onClose, onSave, busy, privateStudents }: { ed?: any; onClose: () => void; onSave: (p: any, assigned: Set<string>) => Promise<void>; busy: boolean; privateStudents: any[] }) => {
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const lvlCfg: Record<string,{label:string;bg:string;text:string;border:string}> = {
+    all: { label: "All Levels", bg: "#F3F4F6", text: "#374151", border: "#D1D5DB" },
+    ...Object.fromEntries(academicLevels.map(l => {
+      const cfg = getLevelConfig(l.slug, academicLevels);
+      return [l.slug, { label: l.name_en, bg: cfg.bg, text: cfg.color, border: cfg.border }];
+    })),
+  };
   const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", level: (ed?.level || "all") as Level, is_published: ed?.is_published ?? true, image_url: ed?.image_url || "", sort_order: ed?.sort_order || 0, visibility: ((ed?.visibility || "all") as "all" | "general" | "private") });
   const [up, setUp] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
