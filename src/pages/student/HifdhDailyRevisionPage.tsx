@@ -422,37 +422,41 @@ function compareWords(refText: string, gotText: string): WordResult[] {
  * which absorbs gaps caused by Whisper skipping a verse mid-transcription.
  */
 function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number {
-  const refWords  = ayahs.map(a => normalizeArabic(a.text)).join(" ").split(/\s+/).filter(Boolean);
-  const gotWords  = normalizeArabic(transcript).split(/\s+/).filter(Boolean);
+  const refWords = ayahs.map(a => normalizeArabic(a.text)).join(" ").split(/\s+/).filter(Boolean);
+  const gotWords = normalizeArabic(transcript).split(/\s+/).filter(Boolean);
   if (!refWords.length) return 0;
   if (!gotWords.length)  return 0;
 
-  const WINDOW = 10;
-  let totalMatched = 0;
-  let gotPtr = 0; // track consumed position in transcript
+  // Score per ayah independently, then average weighted by ayah length.
+  // This prevents a skipped ayah from "using up" gotPtr and penalising later ayahs.
+  let totalRef = 0; let totalMatched = 0;
+  let gotSearchStart = 0; // advance forward-only after each ayah
 
-  for (let ri = 0; ri < refWords.length; ri += WINDOW) {
-    const refChunk = refWords.slice(ri, ri + WINDOW);
-    // Search a generous window in the transcript for this reference chunk
-    const searchFrom = Math.max(0, gotPtr - 3);
-    const searchTo   = Math.min(gotWords.length, gotPtr + refChunk.length * 2 + 10);
-    const gotChunk   = gotWords.slice(searchFrom, searchTo);
+  for (const ayah of ayahs) {
+    const refW = normalizeArabic(ayah.text).split(/\s+/).filter(Boolean);
+    if (!refW.length) continue;
+    totalRef += refW.length;
 
-    // LCS-style greedy match within the chunk
-    let matched = 0; let gj = 0;
-    for (const rw of refChunk) {
-      for (let k = gj; k < gotChunk.length; k++) {
-        const gw = gotChunk[k];
-        const hit = wordsMatch(rw, gw);
-        if (hit) { matched++; gj = k + 1; break; }
+    // Search the ENTIRE remaining transcript for this ayah's words.
+    // We use a generous forward window (3× ayah length) but never go backward.
+    const searchEnd = Math.min(gotWords.length, gotSearchStart + refW.length * 4 + 20);
+    const window    = gotWords.slice(gotSearchStart, searchEnd);
+
+    // Greedy LCS within window
+    let matched = 0; let gj = 0; let lastHit = -1;
+    for (const rw of refW) {
+      for (let k = gj; k < window.length; k++) {
+        if (wordsMatch(rw, window[k])) { matched++; lastHit = k; gj = k + 1; break; }
       }
     }
     totalMatched += matched;
-    // Advance gotPtr proportionally
-    gotPtr = searchFrom + Math.min(gotChunk.length, Math.round(gj * 1.1));
+
+    // Advance gotSearchStart to just after the last matched word of this ayah.
+    // If nothing matched (skipped ayah), don't advance — next ayah searches same region.
+    if (lastHit >= 0) gotSearchStart += lastHit + 1;
   }
 
-  return Math.round((totalMatched / refWords.length) * 100);
+  return totalRef > 0 ? Math.round((totalMatched / totalRef) * 100) : 0;
 }
 
 // getErrorWords — uses per-ayah comparison so a skipped verse in the
@@ -476,14 +480,25 @@ function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
   return errors;
 }
 
-/* Per-ayah correctness: true (green) / false (red) */
+/* Per-ayah correctness: true (green) / false (red).
+   Uses the same forward-only window as scoreText so a skipped ayah
+   doesn't steal matches from the ayahs that follow it. */
 function getAyahCorrectness(transcript: string, ayahs: Ayah[], _recSecs?: number): boolean[] {
+  const gotWords = normalizeArabic(transcript).split(/\s+/).filter(Boolean);
+  let gotSearchStart = 0;
   return ayahs.map(a => {
-    const words = compareWords(a.text, transcript);
-    if (!words.length) return true;
-    const correct = words.filter(w => w.status === "correct").length;
-    // Softer threshold — 40% match counts as "attempted" (absorbs Whisper skips)
-    return (correct / words.length) >= 0.4;
+    const refW = normalizeArabic(a.text).split(/\s+/).filter(Boolean);
+    if (!refW.length) return true;
+    const searchEnd = Math.min(gotWords.length, gotSearchStart + refW.length * 4 + 20);
+    const window    = gotWords.slice(gotSearchStart, searchEnd);
+    let matched = 0; let gj = 0; let lastHit = -1;
+    for (const rw of refW) {
+      for (let k = gj; k < window.length; k++) {
+        if (wordsMatch(rw, window[k])) { matched++; lastHit = k; gj = k + 1; break; }
+      }
+    }
+    if (lastHit >= 0) gotSearchStart += lastHit + 1;
+    return refW.length > 0 && (matched / refW.length) >= 0.4;
   });
 }
 function shuffle<T>(arr:T[]): T[] {
@@ -501,39 +516,12 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
   const key = (type: string, text: string) => `${type}::${normalizeArabic(text).slice(0,12)}`;
 
   // ── helpers ────────────────────────────────────────────────────
-  // Extract the FIRST HALF of an ayah as a "prompt" snippet (semantic start)
-  // Always begins from word 0 so the meaning is complete from the start.
-  const snippetFirstHalf = (ayah: Ayah): string => {
-    const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
-    if (words.length <= 2) return stripWaqf(ayah.text);
-    // Take roughly the first half (min 2 words, max 6 words)
-    const half = Math.max(2, Math.min(6, Math.ceil(words.length / 2)));
-    return words.slice(0, half).join(" ");
-  };
+  // Full verse text (no waqf marks) — always show complete verses for meaning
+  const fullVerse = (ayah: Ayah): string => stripWaqf(ayah.text);
 
-  // Extract the SECOND HALF of an ayah as a "continuation" snippet
-  const snippetSecondHalf = (ayah: Ayah): string => {
-    const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
-    if (words.length <= 2) return stripWaqf(ayah.text);
-    const half = Math.max(2, Math.min(6, Math.ceil(words.length / 2)));
-    return words.slice(half).join(" ") || words.slice(-3).join(" ");
-  };
-
-  // Extract a SNIPPET for error-focused or fill-in-the-blank questions (middle 3-5 words)
-  const snippet = (ayah: Ayah, fromError = false): string => {
-    const words = stripWaqf(ayah.text).split(" ").filter(Boolean);
-    if (words.length <= 3) return stripWaqf(ayah.text);
-    // For error-focused: pick window around error word
-    if (fromError) {
-      const eIdx = words.findIndex(w =>
-        errorWords.some(ew => normalizeArabic(w).includes(normalizeArabic(stripWaqf(ew)).slice(0,3)))
-      );
-      const start = Math.max(0, (eIdx >= 0 ? eIdx : 1) - 1);
-      return words.slice(start, start + Math.min(4, words.length - start)).join(" ");
-    }
-    // Use first half so the semantic meaning is intact
-    return snippetFirstHalf(ayah);
-  };
+  // For listen/MCQ: show the COMPLETE current verse as prompt,
+  // ask the student to choose the COMPLETE next verse.
+  // Never split mid-verse — Quranic meaning is only complete at verse boundaries.
 
   // MCQ blank: blank ONE word from a snippet (not full verse)
   const makeMcqBlank = (ayah: Ayah, isErr: boolean, pool: Ayah[], sec: "A"|"B"): Question | null => {
@@ -568,89 +556,90 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
       options: opts, correct: opts.indexOf(cw), correctText: cw };
   };
 
-  // MCQ next: show SECOND HALF of verse[i] (so meaning is clear from start),
-  // correct answer is the FIRST HALF of verse[i+1] (immediate next words).
-  // Distractors are first-halves of other verses so all options feel like genuine continuations.
+  // ── MCQ NEXT ─────────────────────────────────────────────────────────────
+  // Show the COMPLETE verse[i] as prompt (full meaning preserved).
+  // Correct answer = COMPLETE verse[i+1] (the very next verse).
+  // Distractors = other complete verses from the pool.
+  // Rules:
+  //   • Always start from verse beginning — no mid-verse cuts.
+  //   • Long verses (>12 words): show first 10 words + "…" so it fits on screen,
+  //     but options always show the full next verse.
   const makeMcqNext = (i: number, pool: Ayah[], sec: "A"|"B"): Question | null => {
     if (i >= pool.length - 1) return null;
     const cur  = pool[i];
     const next = pool[i + 1];
-    // Prompt: second half of current verse (so it ends at the verse boundary)
-    const promptSnip  = snippetSecondHalf(cur);
-    // Correct: first half of NEXT verse (the immediate next words)
-    const correctSnip = snippetFirstHalf(next);
-    if (used.has(key("next", promptSnip))) return null;
-    used.add(key("next", promptSnip));
-    // Distractors: first-halves of other verses (plausible continuations)
-    const distract = shuffle(pool.filter((_,j)=>j!==i+1 && j!==i)).slice(0,3);
+    const curFull  = fullVerse(cur);
+    const nextFull = fullVerse(next);
+    if (used.has(key("next", curFull))) return null;
+    used.add(key("next", curFull));
+    const distract = shuffle(pool.filter((_,j) => j !== i+1 && j !== i)).slice(0, 3);
     if (distract.length < 2) return null;
-    const opts = shuffle([correctSnip, ...distract.map(a=>snippetFirstHalf(a))]);
-    return { id:id++, type:"mcq_next", section:sec, snippet:true,
-      prompt: promptSnip,
+    const opts = shuffle([nextFull, ...distract.map(a => fullVerse(a))]);
+    return { id:id++, type:"mcq_next", section:sec, snippet:false,
+      prompt: curFull,
       promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${cur.surah.englishName} ${cur.numberInSurah} — What comes after this?`,
-      options: opts, correct: opts.indexOf(correctSnip), correctText: correctSnip };
+      options: opts, correct: opts.indexOf(nextFull), correctText: nextFull };
   };
 
-  // MCQ continuation from error — show second-half of error verse, choose first-half of what follows
+  // ── MCQ CONTINUATION (error-focused) ─────────────────────────────────────
+  // Same as mcq_next but flagged as error-focused for UI colouring.
   const makeMcqContinuation = (i: number, pool: Ayah[], sec: "A"|"B"): Question | null => {
     if (i >= pool.length - 1) return null;
     const cur  = pool[i];
     const next = pool[i + 1];
-    const promptSnip  = snippetSecondHalf(cur);
-    const correctSnip = snippetFirstHalf(next);
-    if (used.has(key("cont", promptSnip))) return null;
-    used.add(key("cont", promptSnip));
-    const distract = shuffle(pool.filter((_,j)=>j!==i+1 && j!==i)).slice(0,3);
+    const curFull  = fullVerse(cur);
+    const nextFull = fullVerse(next);
+    if (used.has(key("cont", curFull))) return null;
+    used.add(key("cont", curFull));
+    const distract = shuffle(pool.filter((_,j) => j !== i+1 && j !== i)).slice(0, 3);
     if (distract.length < 2) return null;
-    const opts = shuffle([correctSnip, ...distract.map(a=>snippetFirstHalf(a))]);
-    return { id:id++, type:"mcq_continuation", section:sec, isErrorFocused:true, snippet:true,
-      prompt: promptSnip,
-      promptLabel: `§A Error Area · ${cur.surah.englishName} ${cur.numberInSurah} — Continue from here`,
-      options: opts, correct: opts.indexOf(correctSnip), correctText: correctSnip };
+    const opts = shuffle([nextFull, ...distract.map(a => fullVerse(a))]);
+    return { id:id++, type:"mcq_continuation", section:sec, isErrorFocused:true, snippet:false,
+      prompt: curFull,
+      promptLabel: `§A Error Area · ${cur.surah.englishName} ${cur.numberInSurah} — What comes after this?`,
+      options: opts, correct: opts.indexOf(nextFull), correctText: nextFull };
   };
 
-  // RECORD question — play/show first-half of verse[i], student recites the REST of that verse
-  // plus verse[i+1]. This way transcript matches exactly what they're asked to say.
+  // ── RECORD CONTINUE ────────────────────────────────────────────────────────
+  // Show complete verse[i] as prompt, student recites verse[i+1] from memory.
   const makeRecordContinue = (i: number, pool: Ayah[], sec: "A"|"B", isErr=false): Question | null => {
     if (i >= pool.length - 1) return null;
     const cur  = pool[i];
     const next = pool[i + 1];
-    const snip = snippetFirstHalf(cur);
-    if (used.has(key("rec", snip))) return null;
-    used.add(key("rec", snip));
-    // correctText = remainder of current verse + next verse (what student should recite)
-    const curWords  = stripWaqf(cur.text).split(" ").filter(Boolean);
-    const halfLen   = Math.max(2, Math.min(6, Math.ceil(curWords.length / 2)));
-    const curRemainder = curWords.slice(halfLen).join(" ");
-    const expected  = [curRemainder, stripWaqf(next.text)].filter(Boolean).join(" ");
-    return { id:id++, type:"record_continue", section:sec, isErrorFocused:isErr, snippet:true,
-      prompt: snip,
-      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${cur.surah.englishName} ${cur.numberInSurah} — Continue from where it stops`,
+    const curFull  = fullVerse(cur);
+    if (used.has(key("rec", curFull))) return null;
+    used.add(key("rec", curFull));
+    // Student must recite the next verse (and optionally the one after)
+    const expected = [fullVerse(next), pool[i+2] ? fullVerse(pool[i+2]) : ""].filter(Boolean).join(" ");
+    return { id:id++, type:"record_continue", section:sec, isErrorFocused:isErr, snippet:false,
+      prompt: curFull,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${cur.surah.englishName} ${cur.numberInSurah} — Recite what comes after`,
       options: [], correct: -1, correctText: expected,
-      recordPrompt: `After: "${snip}" — recite what comes next` };
+      recordPrompt: `After this verse — recite the next verse` };
   };
 
-  // LISTEN+CONTINUE — play first-half of a verse (CDN audio for the full ayah),
-  // student chooses the correct CONTINUATION (second-half or next verse start).
-  // This tests actual memorisation — they hear the start and must recall what follows.
+  // ── LISTEN + CHOOSE ────────────────────────────────────────────────────────
+  // Play the COMPLETE verse[i] via audio (reciter reads the whole verse).
+  // Student chooses the COMPLETE verse[i+1] from 4 options.
+  // This is the correct design: hear a full verse → identify what follows.
   const makeListenChoose = (i: number, pool: Ayah[], sec: "A"|"B"): Question | null => {
-    if (i >= pool.length) return null;
+    if (i >= pool.length - 1) return null;   // need i+1
     const ayah = pool[i];
-    const listenSnip = snippetFirstHalf(ayah);
-    if (used.has(key("listen", listenSnip))) return null;
-    used.add(key("listen", listenSnip));
-    // Correct answer: second-half of this verse (immediate continuation)
-    const correctContinuation = snippetSecondHalf(ayah);
-    if (!correctContinuation || correctContinuation === listenSnip) return null;
-    const distract = shuffle(pool.filter((_,j)=>j!==i)).slice(0,3);
+    const next  = pool[i + 1];
+    const curFull  = fullVerse(ayah);
+    const nextFull = fullVerse(next);
+    if (used.has(key("listen", curFull))) return null;
+    used.add(key("listen", curFull));
+    if (!nextFull) return null;
+    const distract = shuffle(pool.filter((_,j) => j !== i && j !== i+1)).slice(0, 3);
     if (distract.length < 2) return null;
-    const opts = shuffle([correctContinuation, ...distract.map(a=>snippetSecondHalf(a))]);
-    return { id:id++, type:"listen_choose", section:sec, snippet:true,
-      listenText: listenSnip,
-      listenAyahNum: ayah.number,
-      prompt: listenSnip,
-      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · 👂 Listen — what comes after the reciter stops?`,
-      options: opts, correct: opts.indexOf(correctContinuation), correctText: correctContinuation,
+    const opts = shuffle([nextFull, ...distract.map(a => fullVerse(a))]);
+    return { id:id++, type:"listen_choose", section:sec, snippet:false,
+      listenText: curFull,           // full verse text fed to TTS
+      listenAyahNum: ayah.number,    // CDN audio number
+      prompt: curFull,
+      promptLabel: `${sec==="A"?"§A Today":"§B Review"} · 👂 Listen to the verse — what comes next?`,
+      options: opts, correct: opts.indexOf(nextFull), correctText: nextFull,
       recordPrompt: undefined };
   };
 
