@@ -2764,6 +2764,7 @@ const RoomToContextBridge = () => {
 
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");
+  const{setHasConnected}=useLiveClass();
   const[phase,setPhase]=useState<"lobby"|"live"|"ended">("lobby");
   const[token,setToken]=useState<string|null>(null);const[wsUrl,setWsUrl]=useState<string|null>(null);
   const[error,setError]=useState<string|null>(null);const[loading,setLoading]=useState(false);
