@@ -236,6 +236,34 @@ const LiveClassManagement = () => {
     fetchData();
   };
 
+  /* Start an instant (unscheduled) live session for a subject that has no sessions yet */
+  const startInstantClass = async (sub: any) => {
+    try {
+      const now = new Date().toISOString();
+      const { data: sess, error } = await supabase
+        .from("live_sessions")
+        .insert({
+          subject_id: sub.id,
+          status: "live",
+          scheduled_at: now,
+          actual_start_time: now,
+          started_at: now,
+          duration_minutes: 60,
+          recording_enabled: true,
+          chat_enabled: true,
+          hand_raise_enabled: true,
+          waiting_room_enabled: false,
+        } as any)
+        .select()
+        .single();
+      if (error) throw error;
+      joinClass({ id: sub.id, title: sub.title, title_ar: sub.title_ar || "", livekit_room_name: sub.livekit_room_name }, { autoJoin: true });
+      fetchData();
+    } catch (e: any) {
+      toast({ title: "Could not start class", description: e?.message, variant: "destructive" });
+    }
+  };
+
   const openAttendance = async (sess:any) => {
     setAttSession(sess);
     const [{data:logs},{data:manual}] = await Promise.all([
@@ -479,7 +507,7 @@ const LiveClassManagement = () => {
                     <Video style={{width:14,height:14}}/> Join Live
                   </button>
                 ) : (
-                  <button onClick={()=>{const s=subSess.find(x=>x.status==="scheduled");if(s)goLive(s);}} className="lc-btn" style={{background:GOLD,color:G}}>
+                  <button onClick={()=>{ const s=subSess.find(x=>x.status==="scheduled"); s ? goLive(s) : startInstantClass(selectedSub); }} className="lc-btn" style={{background:GOLD,color:G}}>
                     <Video style={{width:14,height:14}}/> Start Class
                   </button>
                 )}
