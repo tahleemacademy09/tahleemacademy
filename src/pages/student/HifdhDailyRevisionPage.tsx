@@ -1515,36 +1515,48 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // Style prompt sets diacritised Quranic script WITHOUT including the verse
   // being recited (Whisper would hallucinate the reference text as the transcript).
   const transcribeAudio = async (blob: Blob): Promise<string> => {
-    // Correct extension so Groq identifies the codec properly (same as مراجعة)
     const ext = blob.type.includes("mp4") ? "mp4"
       : blob.type.includes("ogg") ? "ogg"
       : "webm";
 
+    // ── Whisper prompt design ────────────────────────────────────────────────
+    // CRITICAL: The prompt must NOT contain full Quranic verses or surahs.
+    // Whisper treats the prompt as "what was said before this audio" and will
+    // CONTINUE/hallucinate those verses instead of transcribing what was actually
+    // spoken. The Fatiha prompt caused it to output Fatiha + related verses
+    // regardless of what the student actually recited.
+    //
+    // Correct approach: a short style-only prompt with just enough Arabic to:
+    //   1. Tell Whisper we want diacritised (تشكيل) Quranic Uthmani script
+    //   2. Show emphatic letters (ص ض ط ظ) and hamza forms (إ أ ئ)
+    //   3. NOT suggest any specific content it might hallucinate
     const stylePrompt =
-      // Full Fatiha — gives Whisper emphatic letters (ص ض), hamzas (إ), sun-letter assimilation (الر)
-      // and the diacritised Uthmani style so it transcribes in proper Quranic script.
-      "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَٰنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ";
+      "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
 
-    // 1. Groq Whisper (verbose_json gives no_speech_prob to detect silence)
+    // 1. Groq Whisper large-v3 — verbose_json for segment-level no_speech_prob
     if (GROQ_KEY) {
       try {
         const fd = new FormData();
         fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
         fd.append("model", "whisper-large-v3");
         fd.append("language", "ar");
-        fd.append("response_format", "verbose_json"); // gives word-level confidence
-        fd.append("temperature", "0");               // deterministic, no hallucination
-        fd.append("prompt", stylePrompt);            // sets Quranic script/style only
+        fd.append("response_format", "verbose_json");
+        fd.append("temperature", "0");
+        fd.append("prompt", stylePrompt);
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
         });
         if (r.ok) {
           const json = await r.json();
-          // Reject if Whisper thinks there's no speech (silence or background noise)
-          const noSpeech = json.segments?.[0]?.no_speech_prob ?? 0;
+          // Check ALL segments — reject if the majority are likely silence/noise
+          const segs: any[] = json.segments ?? [];
+          const avgNoSpeech = segs.length > 0
+            ? segs.reduce((s: number, g: any) => s + (g.no_speech_prob ?? 0), 0) / segs.length
+            : (json.segments?.[0]?.no_speech_prob ?? 0);
           const txt = (json.text ?? "").trim();
-          if (noSpeech < 0.6 && txt.length > 0) return txt;
-          if (noSpeech >= 0.6) return ""; // treat as silence
+          // Only reject if most segments are silence (< 0.4 threshold is stricter)
+          if (avgNoSpeech < 0.4 && txt.length > 5) return txt;
+          if (avgNoSpeech >= 0.4) return "";
         }
       } catch { /* fall through to edge function */ }
     }
