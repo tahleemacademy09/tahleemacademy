@@ -342,44 +342,39 @@ export default function GlobalClassroomOverlay() {
     h.pip().catch(() => {});
   }, [setMinimized, camEnabled]);
 
-  /* ── Back button: push a sentinel history entry when connected so the
-       hardware/browser back button hits popstate instead of navigating away.
-       On pop → minimize to pill rather than leaving the class.              ── */
+  /* ── Back button → PiP.
+     LiveClassContext already owns the popstate sentinel push and the
+     setMinimized(true) call. We only need to layer on the canvas PiP
+     request so the browser overlay appears. No extra pushState here —
+     adding one caused a double-sentinel that navigated the admin away
+     from their page on leaveClass().                                    ── */
   const handleMinimizeRef = useRef(handleMinimize);
   handleMinimizeRef.current = handleMinimize;
   useEffect(() => {
     if (!hasConnected) return;
-    // Push a sentinel so the back gesture has something to pop
-    window.history.pushState({ tahleemClassRoom: true }, "");
-    const onPop = (e: PopStateEvent) => {
-      // Only intercept our own sentinel — let other navigation through
-      // (In practice popstate always means our entry on mobile back)
-      setTimeout(() => handleMinimizeRef.current(), 30);
+    const onPop = () => {
+      // setMinimized is already done by LiveClassContext's popstate handler.
+      // We just fire PiP so the browser overlay appears.
+      setTimeout(() => pipHandle.current?.pip().catch(() => {}), 60);
     };
     window.addEventListener("popstate", onPop);
-    return () => {
-      window.removeEventListener("popstate", onPop);
-      // Clean up the sentinel entry if we unmount before the user presses back
-      if (window.history.state?.tahleemClassRoom) {
-        window.history.back();
-      }
-    };
+    return () => window.removeEventListener("popstate", onPop);
   }, [hasConnected]);
 
-  /* ── Browser minimize (switch app / go home):
-       When the page becomes hidden, call handleMinimize so the classroom is
-       hidden AND the canvas PiP is requested — giving the native browser
-       PiP overlay when the user returns.                                     ── */
+  /* ── Browser minimize (switch app / go home) → setMinimized only.
+     PiP on visibilitychange is NOT allowed by browsers (requires a user
+     gesture). The screen-off effect below already handles PiP when the
+     display goes dark. We just need to hide the classroom so when the
+     user returns to the browser they see the page, not a frozen
+     full-screen classroom behind everything.                            ── */
   useEffect(() => {
     if (!hasConnected) return;
     const onVis = () => {
-      if (document.visibilityState === "hidden" && !document.pictureInPictureElement) {
-        handleMinimizeRef.current();
-      }
+      if (document.visibilityState === "hidden") setMinimized(true);
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-  }, [hasConnected]);
+  }, [hasConnected, setMinimized]);
 
   /* ── Screen off → canvas PiP (keep-alive, only when actually connected) ── */
   useEffect(() => {
