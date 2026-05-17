@@ -771,8 +771,26 @@ function scoreColor(s:number): string {
 // seek bar updates.  Speed control + ±15 s skip match standard player UX.
 // ─────────────────────────────────────────────────────────────────────────────
 function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; label?: string }) {
-  const audioRef  = useRef<HTMLAudioElement | null>(null);
-  const rafRef    = useRef<number | null>(null);
+  // ── AudioContext-based player ─────────────────────────────────────────────
+  // We deliberately avoid HTMLAudioElement for post-recording playback on Android.
+  // After getUserMedia(), Android Chrome locks the audio session to
+  // MODE_IN_COMMUNICATION (earpiece). HTMLAudioElement.play() is silent even though
+  // the UI shows playback — this persists even after createMediaElementSource tricks.
+  //
+  // The ONLY 100% reliable fix: decode the blob into PCM and play via
+  // AudioBufferSourceNode. AudioContext.destination ALWAYS maps to STREAM_MUSIC
+  // (loudspeaker) on Android, completely bypassing the communication audio route.
+  //
+  // For remote URLs (signed storage URLs) we fetch the bytes first, then decode.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const ctxRef    = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const bufferRef = useRef<AudioBuffer | null>(null);
+  const startedAtRef  = useRef<number>(0);   // ctx.currentTime when playback started
+  const offsetRef     = useRef<number>(0);   // seconds into buffer at last pause
+  const rafRef        = useRef<number | null>(null);
+
   const [playing,  setPlaying]  = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -781,147 +799,162 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   const [error,    setError]    = useState(false);
   const [speed,    setSpeed]    = useState(1);
 
-  // Create the audio element once — never touched by React reconciler
-  useEffect(() => {
-    const audio          = new Audio();
-    audio.preload        = "auto";
-    audio.playsInline    = true;
-    audioRef.current     = audio;
-    return () => {
-      audio.pause(); audio.src = ""; audioRef.current = null;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
-  }, []);
-
-  // RAF loop — updates curTime & progress while playing
-  const startRAF = useCallback(() => {
-    const tick = () => {
-      const a = audioRef.current;
-      if (!a) return;
-      setCurTime(a.currentTime);
-      if (a.duration > 0) setProgress(a.currentTime / a.duration);
-      rafRef.current = requestAnimationFrame(tick);
-    };
-    rafRef.current = requestAnimationFrame(tick);
-  }, []);
+  const getCtx = () => {
+    if (!ctxRef.current || ctxRef.current.state === "closed") {
+      const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+      ctxRef.current = new AudioCtx();
+    }
+    return ctxRef.current;
+  };
 
   const stopRAF = useCallback(() => {
     if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
   }, []);
 
-  // Load new URL whenever it changes
+  const startRAF = useCallback((ctx: AudioContext, buffer: AudioBuffer) => {
+    const tick = () => {
+      const elapsed = (ctx.currentTime - startedAtRef.current) * speed;
+      const current = Math.min(offsetRef.current + elapsed, buffer.duration);
+      setCurTime(current);
+      setProgress(buffer.duration > 0 ? current / buffer.duration : 0);
+      if (current < buffer.duration) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        // Reached end
+        setPlaying(false);
+        setCurTime(0); setProgress(0);
+        offsetRef.current = 0;
+        stopRAF();
+      }
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, [speed, stopRAF]);
+
+  const stopSource = useCallback(() => {
+    if (sourceRef.current) {
+      try { sourceRef.current.stop(); } catch {}
+      sourceRef.current.disconnect();
+      sourceRef.current = null;
+    }
+  }, []);
+
+  // Load + decode audio whenever URL changes
   useEffect(() => {
-    const audio = audioRef.current; if (!audio) return;
-    // Reset UI state
-    setPlaying(false); setProgress(0); setCurTime(0); setDuration(0);
-    setLoaded(false); setError(false);
-    stopRAF();
-    audio.pause();
+    setLoaded(false); setError(false); setPlaying(false);
+    setProgress(0); setCurTime(0); setDuration(0);
+    stopRAF(); stopSource();
+    offsetRef.current = 0;
+    bufferRef.current = null;
+    if (!url) return;
 
-    const onMeta = () => {
-      if (!isFinite(audio.duration) || isNaN(audio.duration)) {
-        // WebM from MediaRecorder reports Infinity — seek-to-end reveals true duration
-        audio.currentTime = 1e101;
-      } else { setDuration(audio.duration); setLoaded(true); }
-    };
-    const onSeeked = () => {
-      if (!isFinite(audio.duration) || isNaN(audio.duration)) return;
-      setDuration(audio.duration); setLoaded(true);
-      audio.currentTime = 0;
-    };
-    const onEnded = () => { setPlaying(false); setProgress(0); setCurTime(0); stopRAF(); };
-    const onErr   = () => { setLoaded(false); setError(true); };
+    let cancelled = false;
+    (async () => {
+      try {
+        // Fetch bytes — works for both blob: URLs and https: signed URLs
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const arrayBuf = await resp.arrayBuffer();
+        if (cancelled) return;
+        const ctx = getCtx();
+        // Resume context so decodeAudioData works (required on some mobile browsers)
+        if (ctx.state === "suspended") await ctx.resume();
+        const decoded = await ctx.decodeAudioData(arrayBuf);
+        if (cancelled) return;
+        bufferRef.current = decoded;
+        setDuration(decoded.duration);
+        setLoaded(true);
+      } catch (e) {
+        if (!cancelled) { console.warn("FullAudioPlayer decode error:", e); setError(true); }
+      }
+    })();
 
-    audio.addEventListener("loadedmetadata", onMeta);
-    audio.addEventListener("seeked",         onSeeked);
-    audio.addEventListener("ended",          onEnded);
-    audio.addEventListener("error",          onErr);
-
-    audio.src = url;
-    audio.playbackRate = speed;
-    audio.load();
-
-    return () => {
-      audio.removeEventListener("loadedmetadata", onMeta);
-      audio.removeEventListener("seeked",         onSeeked);
-      audio.removeEventListener("ended",          onEnded);
-      audio.removeEventListener("error",          onErr);
-    };
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url]);
 
-  // ── Android speaker routing fix ─────────────────────────────────────────
-  // After getUserMedia(), Android Chrome locks the audio session to
-  // MODE_IN_COMMUNICATION (earpiece / call route). HTMLAudioElement.play()
-  // plays silently through the earpiece even though the UI shows playback.
-  //
-  // The reliable fix: route the HTMLAudioElement through an AudioContext via
-  // createMediaElementSource(). AudioContext ALWAYS outputs to STREAM_MUSIC
-  // (loudspeaker) on Android, regardless of the current audio session mode.
-  //
-  // • Create AudioContext lazily on first Play tap (requires user gesture).
-  // • createMediaElementSource() can only be called ONCE per element — guard with ref.
-  // • Resume suspended context before play().
-  const audioCtxRef  = useRef<AudioContext | null>(null);
-  const mediaNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopRAF(); stopSource();
+      ctxRef.current?.close().catch(() => {});
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const ensureSpeakerRoute = async (audio: HTMLAudioElement): Promise<void> => {
-    try {
-      const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtx) return;
-      if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
-        audioCtxRef.current = new AudioCtx();
-      }
-      const ctx = audioCtxRef.current;
-      if (!mediaNodeRef.current) {
-        const node = ctx.createMediaElementSource(audio);
-        node.connect(ctx.destination);
-        mediaNodeRef.current = node;
-      }
-      if (ctx.state === "suspended") await ctx.resume();
-    } catch { /* non-critical — some browsers block createMediaElementSource */ }
-  };
+  const toggle = async () => {
+    const buffer = bufferRef.current;
+    if (!buffer) return;
 
-  const toggle = () => {
-    const audio = audioRef.current; if (!audio) return;
     if (playing) {
-      audio.pause(); setPlaying(false); stopRAF();
+      // Pause: record current offset so resume starts from here
+      const ctx = getCtx();
+      const elapsed = (ctx.currentTime - startedAtRef.current) * speed;
+      offsetRef.current = Math.min(offsetRef.current + elapsed, buffer.duration);
+      stopSource(); stopRAF();
+      setPlaying(false);
     } else {
-      const tryPlay = async () => {
-        if (audio.ended || (isFinite(audio.duration) && audio.currentTime >= audio.duration - 0.05)) {
-          audio.currentTime = 0;
+      // Play (or resume)
+      const ctx = getCtx();
+      if (ctx.state === "suspended") await ctx.resume();
+      stopSource(); // clean up any lingering source
+
+      // If at end, restart from beginning
+      if (offsetRef.current >= buffer.duration - 0.05) offsetRef.current = 0;
+
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      src.playbackRate.value = speed;
+      src.connect(ctx.destination);
+      src.onended = () => {
+        // Only reset if this source wasn't manually stopped
+        if (sourceRef.current === src) {
+          stopRAF();
+          setPlaying(false);
+          setCurTime(0); setProgress(0);
+          offsetRef.current = 0;
+          sourceRef.current = null;
         }
-        await ensureSpeakerRoute(audio);
-        audio.play()
-          .then(() => { setPlaying(true); startRAF(); })
-          .catch(err => { console.warn("Audio play failed:", err); setError(true); });
       };
-      if (audio.readyState < 2) {
-        audio.load();
-        audio.addEventListener("canplay", () => tryPlay(), { once: true });
-      } else {
-        tryPlay();
-      }
+      src.start(0, offsetRef.current);
+      sourceRef.current = src;
+      startedAtRef.current = ctx.currentTime;
+      setPlaying(true);
+      startRAF(ctx, buffer);
     }
   };
 
   const skip = (secs: number) => {
-    const audio = audioRef.current; if (!audio || !loaded) return;
-    audio.currentTime = Math.max(0, Math.min(audio.duration, audio.currentTime + secs));
+    const buffer = bufferRef.current; if (!buffer) return;
+    const ctx = getCtx();
+    if (playing) {
+      const elapsed = (ctx.currentTime - startedAtRef.current) * speed;
+      offsetRef.current = Math.max(0, Math.min(buffer.duration, offsetRef.current + elapsed + secs));
+      stopSource(); stopRAF(); setPlaying(false);
+      // Restart from new position
+      setTimeout(() => toggle(), 0);
+    } else {
+      offsetRef.current = Math.max(0, Math.min(buffer.duration, offsetRef.current + secs));
+      setCurTime(offsetRef.current);
+      setProgress(buffer.duration > 0 ? offsetRef.current / buffer.duration : 0);
+    }
   };
 
   const seek = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
-    const audio = audioRef.current; if (!audio || !loaded) return;
-    const rect   = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
-    audio.currentTime = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) * audio.duration;
+    const buffer = bufferRef.current; if (!buffer) return;
+    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    const clientX = "touches" in e ? (e as React.TouchEvent).touches[0].clientX : (e as React.MouseEvent).clientX;
+    const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    offsetRef.current = fraction * buffer.duration;
+    setCurTime(offsetRef.current);
+    setProgress(fraction);
+    if (playing) { stopSource(); stopRAF(); setPlaying(false); setTimeout(() => toggle(), 0); }
   };
 
   const cycleSpeed = () => {
     const speeds = [0.75, 1, 1.25, 1.5];
-    const next   = speeds[(speeds.indexOf(speed) + 1) % speeds.length];
+    const next = speeds[(speeds.indexOf(speed) + 1) % speeds.length];
     setSpeed(next);
-    if (audioRef.current) audioRef.current.playbackRate = next;
+    if (sourceRef.current) sourceRef.current.playbackRate.value = next;
   };
 
   const fmt = (s: number) =>
@@ -943,10 +976,9 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
           <p style={{ margin: 0, fontWeight: 800, fontSize: 13, color: G1,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</p>
           <p style={{ margin: 0, fontSize: 10, color: "#9CA3AF" }}>
-            {error ? "⚠ Tap ▶ to retry" : loaded ? `${fmt(duration)} · ${speed}×` : "Loading…"}
+            {error ? "⚠ Failed to load audio" : loaded ? `${fmt(duration)} · ${speed}×` : "Loading…"}
           </p>
         </div>
-        {/* Speed button */}
         <button onClick={cycleSpeed}
           style={{ padding: "4px 10px", borderRadius: 20, border: `1.5px solid ${GOLD}88`,
             background: "transparent", color: GOLD, fontSize: 11, fontWeight: 800,
@@ -964,17 +996,18 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
           <span style={{ fontSize: 8, color: "#9CA3AF", fontWeight: 700 }}>15s</span>
         </button>
 
-        <button onClick={toggle}
-          style={{ width: 54, height: 54, borderRadius: "50%", border: "none", cursor: "pointer",
-            background: `linear-gradient(135deg,${GOLD},${GOLD_L})`,
+        <button onClick={toggle} disabled={!loaded && !error}
+          style={{ width: 54, height: 54, borderRadius: "50%", border: "none",
+            cursor: loaded ? "pointer" : "not-allowed",
+            background: loaded ? `linear-gradient(135deg,${GOLD},${GOLD_L})` : "#E5E7EB",
             display: "flex", alignItems: "center", justifyContent: "center",
-            boxShadow: `0 4px 16px ${GOLD}66`, flexShrink: 0 }}>
+            boxShadow: loaded ? `0 4px 16px ${GOLD}66` : "none", flexShrink: 0 }}>
           {playing
             ? <span style={{ display: "flex", gap: 4 }}>
                 <span style={{ width: 4, height: 16, background: "#1C3A2F", borderRadius: 2 }}/>
                 <span style={{ width: 4, height: 16, background: "#1C3A2F", borderRadius: 2 }}/>
               </span>
-            : <Play size={20} color="#1C3A2F" style={{ marginLeft: 3 }}/>}
+            : <Play size={20} color={loaded ? "#1C3A2F" : "#9CA3AF"} style={{ marginLeft: 3 }}/>}
         </button>
 
         <button onClick={() => skip(15)}
@@ -988,7 +1021,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
       {/* Seek bar */}
       <div onClick={seek} onTouchStart={seek}
         style={{ height: 8, borderRadius: 4, background: "#E5E7EB",
-          cursor: "pointer", overflow: "hidden", position: "relative", marginBottom: 4 }}>
+          cursor: loaded ? "pointer" : "default", overflow: "hidden", position: "relative", marginBottom: 4 }}>
         <div style={{ height: "100%", borderRadius: 4,
           background: `linear-gradient(to right,${GOLD},${GOLD_L})`,
           width: `${progress * 100}%`, transition: "width 0.05s linear" }}/>
@@ -1406,30 +1439,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         stream.getTracks().forEach(t => t.stop());
         clearInterval(timerRef.current);
 
-        // ── Android audio routing fix ────────────────────────────────────────
-        // After getUserMedia, Android Chrome locks audio routing to MODE_IN_COMMUNICATION
-        // (the earpiece/call route). Two previous approaches both failed:
-        //   • new Audio() with empty WAV (0 data bytes) — Android ignores zero-length clips
-        //   • volume = 0.001 — below Android’s threshold to trigger a route switch
-        //
-        // The reliable fix: create an AudioContext and play a short silent buffer
-        // through it. AudioContext ALWAYS routes to STREAM_MUSIC (speaker) on Android,
-        // which resets the system audio session so subsequent HTMLAudioElement playback
-        // is also heard through the speaker.
-        try {
-          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioCtx) {
-            const ctx = new AudioCtx();
-            // 300 ms of silence — long enough that Android registers the route change
-            const buf = ctx.createBuffer(1, Math.ceil(ctx.sampleRate * 0.3), ctx.sampleRate);
-            const src = ctx.createBufferSource();
-            src.buffer = buf;
-            src.connect(ctx.destination);
-            src.start(0);
-            // Close context after the buffer finishes to free resources
-            src.onended = () => { ctx.close().catch(() => {}); };
-          }
-        } catch { /* non-critical */ }
+        // Audio routing is handled inside FullAudioPlayer/AudioPlayerWidget via AudioContext.decodeAudioData().
         const blob = new Blob(audioChunks.current, { type: mime || "audio/webm" });
         audioBlobRef.current = blob;
         const localUrl = URL.createObjectURL(blob);
@@ -2839,9 +2849,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 }
 
 /* ── AudioPlayerWidget ──────────────────────────────────────────── */
+// Shares the same AudioContext-decode approach as FullAudioPlayer.
+// HTMLAudioElement is never used — AudioContext always routes to speaker on Android.
 function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?:string}) {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const rafRef   = useRef<number | null>(null);
+  const ctxRef       = useRef<AudioContext|null>(null);
+  const sourceRef    = useRef<AudioBufferSourceNode|null>(null);
+  const bufferRef    = useRef<AudioBuffer|null>(null);
+  const startedAtRef = useRef<number>(0);
+  const offsetRef    = useRef<number>(0);
+  const rafRef       = useRef<number|null>(null);
+
   const [playing,  setPlaying]  = useState(false);
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -2850,74 +2867,103 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
   const [error,    setError]    = useState(false);
   const [speed,    setSpeed]    = useState(1);
 
-  useEffect(()=>{
-    const audio = new Audio();
-    audio.preload = "auto"; audio.playsInline = true;
-    audioRef.current = audio;
-    return()=>{ audio.pause(); audio.src=""; audioRef.current=null;
-      if(rafRef.current) cancelAnimationFrame(rafRef.current); };
-  },[]);
-
-  const stopRAF = useCallback(()=>{
+  const getCtx=()=>{
+    if(!ctxRef.current||ctxRef.current.state==="closed"){
+      const AC=(window as any).AudioContext||(window as any).webkitAudioContext;
+      ctxRef.current=new AC();
+    }
+    return ctxRef.current;
+  };
+  const stopRAF=useCallback(()=>{
     if(rafRef.current){cancelAnimationFrame(rafRef.current);rafRef.current=null;}
   },[]);
-  const startRAF = useCallback(()=>{
+  const stopSource=useCallback(()=>{
+    if(sourceRef.current){try{sourceRef.current.stop();}catch{}sourceRef.current.disconnect();sourceRef.current=null;}
+  },[]);
+  const startRAF=useCallback((ctx:AudioContext,buf:AudioBuffer,spd:number)=>{
     const tick=()=>{
-      const a=audioRef.current; if(!a) return;
-      setCurTime(a.currentTime);
-      if(a.duration>0) setProgress(a.currentTime/a.duration);
-      rafRef.current=requestAnimationFrame(tick);
+      const elapsed=(ctx.currentTime-startedAtRef.current)*spd;
+      const cur=Math.min(offsetRef.current+elapsed,buf.duration);
+      setCurTime(cur); setProgress(buf.duration>0?cur/buf.duration:0);
+      if(cur<buf.duration){rafRef.current=requestAnimationFrame(tick);}
+      else{setPlaying(false);setCurTime(0);setProgress(0);offsetRef.current=0;stopRAF();}
     };
     rafRef.current=requestAnimationFrame(tick);
-  },[]);
+  },[stopRAF]);
 
   useEffect(()=>{
-    const audio=audioRef.current; if(!audio) return;
-    setPlaying(false);setProgress(0);setCurTime(0);setDuration(0);setLoaded(false);setError(false);
-    stopRAF(); audio.pause();
-    const onMeta =()=>{
-      if(!isFinite(audio.duration)||isNaN(audio.duration)){audio.currentTime=1e101;}
-      else{setDuration(audio.duration);setLoaded(true);}
-    };
-    const onSeeked=()=>{if(!isFinite(audio.duration)||isNaN(audio.duration))return;
-      setDuration(audio.duration);setLoaded(true);audio.currentTime=0;};
-    const onEnded=()=>{setPlaying(false);setProgress(0);setCurTime(0);stopRAF();};
-    const onErr  =()=>{setLoaded(false);setError(true);};
-    audio.addEventListener("loadedmetadata",onMeta);
-    audio.addEventListener("seeked",onSeeked);
-    audio.addEventListener("ended",onEnded);
-    audio.addEventListener("error",onErr);
-    audio.src=url; audio.playbackRate=speed; audio.load();
-    return()=>{audio.removeEventListener("loadedmetadata",onMeta);
-               audio.removeEventListener("seeked",onSeeked);
-               audio.removeEventListener("ended",onEnded);
-               audio.removeEventListener("error",onErr);};
+    setLoaded(false);setError(false);setPlaying(false);
+    setProgress(0);setCurTime(0);setDuration(0);
+    stopRAF();stopSource();offsetRef.current=0;bufferRef.current=null;
+    if(!url) return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        const resp=await fetch(url);
+        if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const ab=await resp.arrayBuffer();
+        if(cancelled) return;
+        const ctx=getCtx();
+        if(ctx.state==="suspended") await ctx.resume();
+        const decoded=await ctx.decodeAudioData(ab);
+        if(cancelled) return;
+        bufferRef.current=decoded;
+        setDuration(decoded.duration);setLoaded(true);
+      }catch(e){if(!cancelled){console.warn("AudioPlayerWidget decode error:",e);setError(true);}}
+    })();
+    return()=>{cancelled=true;};
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[url]);
 
-  const toggle=()=>{
-    const audio=audioRef.current; if(!audio) return;
-    if(playing){audio.pause();setPlaying(false);stopRAF();}
-    else{
-      const tryPlay=()=>audio.play().then(()=>{setPlaying(true);startRAF();}).catch(()=>setError(true));
-      if(audio.readyState<2){audio.load();audio.addEventListener("canplay",tryPlay,{once:true});}
-      else tryPlay();
+  useEffect(()=>()=>{stopRAF();stopSource();ctxRef.current?.close().catch(()=>{});},[]);// eslint-disable-line
+
+  const toggle=async()=>{
+    const buffer=bufferRef.current; if(!buffer) return;
+    if(playing){
+      const ctx=getCtx();
+      const elapsed=(ctx.currentTime-startedAtRef.current)*speed;
+      offsetRef.current=Math.min(offsetRef.current+elapsed,buffer.duration);
+      stopSource();stopRAF();setPlaying(false);
+    }else{
+      const ctx=getCtx();
+      if(ctx.state==="suspended") await ctx.resume();
+      stopSource();
+      if(offsetRef.current>=buffer.duration-0.05) offsetRef.current=0;
+      const src=ctx.createBufferSource();
+      src.buffer=buffer; src.playbackRate.value=speed; src.connect(ctx.destination);
+      src.onended=()=>{if(sourceRef.current===src){stopRAF();setPlaying(false);setCurTime(0);setProgress(0);offsetRef.current=0;sourceRef.current=null;}};
+      src.start(0,offsetRef.current);
+      sourceRef.current=src; startedAtRef.current=ctx.currentTime;
+      setPlaying(true); startRAF(ctx,buffer,speed);
     }
   };
   const skip=(secs:number)=>{
-    const a=audioRef.current; if(!a||!loaded) return;
-    a.currentTime=Math.max(0,Math.min(a.duration,a.currentTime+secs));
+    const buffer=bufferRef.current; if(!buffer) return;
+    const ctx=getCtx();
+    if(playing){
+      const elapsed=(ctx.currentTime-startedAtRef.current)*speed;
+      offsetRef.current=Math.max(0,Math.min(buffer.duration,offsetRef.current+elapsed+secs));
+      stopSource();stopRAF();setPlaying(false);
+      setTimeout(()=>toggle(),0);
+    }else{
+      offsetRef.current=Math.max(0,Math.min(buffer.duration,offsetRef.current+secs));
+      setCurTime(offsetRef.current);
+      setProgress(buffer.duration>0?offsetRef.current/buffer.duration:0);
+    }
   };
   const seek=(e:React.MouseEvent<HTMLDivElement>|React.TouchEvent<HTMLDivElement>)=>{
-    const a=audioRef.current; if(!a||!loaded) return;
+    const buffer=bufferRef.current; if(!buffer) return;
     const rect=(e.currentTarget as HTMLDivElement).getBoundingClientRect();
     const cx="touches" in e?e.touches[0].clientX:e.clientX;
-    a.currentTime=Math.max(0,Math.min(1,(cx-rect.left)/rect.width))*a.duration;
+    const frac=Math.max(0,Math.min(1,(cx-rect.left)/rect.width));
+    offsetRef.current=frac*buffer.duration;
+    setCurTime(offsetRef.current);setProgress(frac);
+    if(playing){stopSource();stopRAF();setPlaying(false);setTimeout(()=>toggle(),0);}
   };
   const cycleSpeed=()=>{
     const speeds=[0.75,1,1.25,1.5];
     const next=speeds[(speeds.indexOf(speed)+1)%speeds.length];
-    setSpeed(next); if(audioRef.current) audioRef.current.playbackRate=next;
+    setSpeed(next); if(sourceRef.current) sourceRef.current.playbackRate.value=next;
   };
   const fmt=(s:number)=>(!isFinite(s)||isNaN(s))?"0:00":`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
 
