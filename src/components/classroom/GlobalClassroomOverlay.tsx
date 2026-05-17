@@ -13,7 +13,6 @@
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import ClassroomView from "@/components/classroom/ClassroomView";
 import { useEffect, useRef, useCallback, useState } from "react";
-import { Mic, MicOff, Phone, Maximize2 } from "lucide-react";
 
 /* ─── Silent audio keep-alive ─────────────────────────────────────────── */
 function useSilentAudio(active: boolean) {
@@ -368,19 +367,19 @@ export default function GlobalClassroomOverlay() {
   }, [hasConnected]);
 
   /* ── Browser minimize (switch app / go home):
-       When the page becomes hidden, auto-minimize to the pill so that
-       when the user returns to the browser they see the pill, not a frozen
-       full-screen classroom.                                                 ── */
+       When the page becomes hidden, call handleMinimize so the classroom is
+       hidden AND the canvas PiP is requested — giving the native browser
+       PiP overlay when the user returns.                                     ── */
   useEffect(() => {
     if (!hasConnected) return;
     const onVis = () => {
-      if (document.visibilityState === "hidden") {
-        setMinimized(true);
+      if (document.visibilityState === "hidden" && !document.pictureInPictureElement) {
+        handleMinimizeRef.current();
       }
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-  }, [hasConnected, setMinimized]);
+  }, [hasConnected]);
 
   /* ── Screen off → canvas PiP (keep-alive, only when actually connected) ── */
   useEffect(() => {
@@ -423,140 +422,19 @@ export default function GlobalClassroomOverlay() {
 
   if (!inCall || !activeSubject) return null;
 
-  /* ════════════════════════════════════════════════════════════════════
-     FLOATING PILL — shown when the classroom is minimized.
-     Rendered as a separate fixed element so it stays visible on ANY page
-     while the full ClassroomView is hidden underneath.
-     ════════════════════════════════════════════════════════════════════ */
-  const FloatingPill = () => (
-    <div
-      role="region"
-      aria-label="Live class mini-player"
-      style={{
-        position:     "fixed",
-        bottom:       "env(safe-area-inset-bottom, 20px)",
-        left:         "50%",
-        transform:    "translateX(-50%)",
-        zIndex:       9000,
-        display:      "flex",
-        alignItems:   "center",
-        gap:          10,
-        background:   "linear-gradient(135deg,#0c1f12 0%,#163320 100%)",
-        border:       "1.5px solid rgba(201,168,76,0.45)",
-        borderRadius: 999,
-        padding:      "10px 16px 10px 14px",
-        boxShadow:    "0 8px 32px rgba(0,0,0,0.55), 0 0 0 1px rgba(201,168,76,0.1)",
-        minWidth:     220,
-        maxWidth:     "calc(100vw - 32px)",
-        cursor:       "pointer",
-        userSelect:   "none",
-        WebkitUserSelect: "none",
-        animation:    "pill-slide-up 0.28s cubic-bezier(0.34,1.56,0.64,1) both",
-      }}
-      onClick={handleReturn}
-    >
-      <style>{`
-        @keyframes pill-slide-up {
-          from { opacity: 0; transform: translateX(-50%) translateY(18px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0);    }
-        }
-        .tahleem-pill-btn {
-          background: rgba(255,255,255,0.08);
-          border: 1px solid rgba(255,255,255,0.12);
-          border-radius: 50%;
-          width: 34px; height: 34px;
-          display: flex; align-items: center; justify-content: center;
-          cursor: pointer; flex-shrink: 0;
-          transition: background 0.15s;
-        }
-        .tahleem-pill-btn:active { background: rgba(255,255,255,0.18); }
-        .tahleem-pill-leave {
-          background: rgba(234,67,53,0.15);
-          border: 1px solid rgba(234,67,53,0.35);
-        }
-        .tahleem-pill-leave:active { background: rgba(234,67,53,0.3); }
-      `}</style>
-
-      {/* LIVE dot */}
-      <span style={{
-        width: 8, height: 8, borderRadius: "50%",
-        background: "#ea4335", flexShrink: 0,
-        boxShadow: "0 0 0 3px rgba(234,67,53,0.3)",
-        animation: "pulse 1.6s ease-in-out infinite",
-      }} />
-
-      {/* Subject info */}
-      <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }} onClick={handleReturn}>
-        <div style={{
-          fontSize: 13, fontWeight: 600,
-          color: "#e8f5e9",
-          fontFamily: "'Google Sans',system-ui,sans-serif",
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          lineHeight: 1.3,
-        }}>
-          {title}
-        </div>
-        <div style={{
-          fontSize: 10, color: "rgba(201,168,76,0.85)",
-          fontFamily: "'Google Sans',system-ui,sans-serif",
-          letterSpacing: "0.04em", marginTop: 1,
-        }}>
-          LIVE · Tap to return
-        </div>
-      </div>
-
-      {/* Mic toggle */}
-      <button
-        className="tahleem-pill-btn"
-        onClick={e => { e.stopPropagation(); handleToggleMic(); }}
-        title={localMic ? "Mute" : "Unmute"}
-      >
-        {localMic
-          ? <Mic    style={{ width: 15, height: 15, color: "#4ade80" }} />
-          : <MicOff style={{ width: 15, height: 15, color: "#f87171" }} />
-        }
-      </button>
-
-      {/* Return to full view */}
-      <button
-        className="tahleem-pill-btn"
-        onClick={e => { e.stopPropagation(); handleReturn(); }}
-        title="Return to classroom"
-        style={{ background: "rgba(201,168,76,0.18)", border: "1px solid rgba(201,168,76,0.4)" }}
-      >
-        <Maximize2 style={{ width: 14, height: 14, color: "#c9a84c" }} />
-      </button>
-
-      {/* Leave */}
-      <button
-        className="tahleem-pill-btn tahleem-pill-leave"
-        onClick={e => { e.stopPropagation(); handleLeave(); }}
-        title="Leave class"
-      >
-        <Phone style={{ width: 14, height: 14, color: "#f87171", transform: "rotate(135deg)" }} />
-      </button>
-    </div>
-  );
-
   return (
-    <>
-      {/* Full classroom — hidden (not unmounted) when minimized so LiveKit stays connected */}
-      <div style={{
-        position:      "fixed", inset: 0, zIndex: 8000,
-        display:       "flex", flexDirection: "column",
-        visibility:    minimized ? "hidden" : "visible",
-        pointerEvents: minimized ? "none"   : "all",
-      }}>
-        <ClassroomView
-          subject={activeSubject}
-          onLeave={leaveClass}
-          onMinimize={handleMinimize}
-          autoJoin={autoJoin}
-        />
-      </div>
-
-      {/* Floating pill — visible on ANY page when minimized and connected */}
-      {minimized && hasConnected && <FloatingPill />}
-    </>
+    <div style={{
+      position:      "fixed", inset: 0, zIndex: 8000,
+      display:       "flex", flexDirection: "column",
+      visibility:    minimized ? "hidden" : "visible",
+      pointerEvents: minimized ? "none"   : "all",
+    }}>
+      <ClassroomView
+        subject={activeSubject}
+        onLeave={leaveClass}
+        onMinimize={handleMinimize}
+        autoJoin={autoJoin}
+      />
+    </div>
   );
 }
