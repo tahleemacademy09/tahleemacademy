@@ -1175,9 +1175,94 @@ const InClassQuranReader=({onClose}:any)=>{
 
   const toAr=(n:number)=>String(n).replace(/[0-9]/g,d=>"٠١٢٣٤٥٦٧٨٩"[+d]);
 
-  /* fetch mushaf Arabic text for a page — try multiple edition names */
+  /* ── Mushaf word-line data from quran.com ─────────────────────────────────
+     quran.com /api/v4/verses/by_page returns each verse with its words,
+     and each word includes line_number (1-15) matching the physical Madani Mushaf.
+     We group words by line to render each line as it appears in print.
+     Fallback: if quran.com is unavailable, falls back to alquran.cloud flowing text.
+  ────────────────────────────────────────────────────────────────────────── */
+  const [mushafLines, setMushafLines] = useState<MushafLine[]>([]);
+  const [mushafLineMode, setMushafLineMode] = useState(true); // true = line mode, false = flow fallback
+
+  interface MushafWord {
+    text: string;          // Uthmani text of the word
+    lineNumber: number;    // 1-15 (physical Mushaf line on this page)
+    ayahKey: string;       // "surah:ayah" for playback
+    isEnd: boolean;        // is this the ayah-end marker (۝)?
+    ayahNum: number;       // numberInSurah for marker display
+    surahNum: number;
+    surahName: string;
+    surahEnglish: string;
+  }
+  interface MushafLine {
+    lineNum: number;       // 1-15
+    words: MushafWord[];
+    isCentered: boolean;   // basmala / surah name lines are centered
+  }
+
   const fetchMushafPage=async(p:number)=>{
-    setMushafLoading(true);setMushafAyahs([]);
+    setMushafLoading(true); setMushafAyahs([]); setMushafLines([]);
+
+    // ── Attempt 1: quran.com word-level API with line numbers ────────────
+    try {
+      const url = `https://api.quran.com/api/v4/verses/by_page/${p}?words=true&word_fields=line_number%2Ctext_uthmani%2Cchar_type_name&per_page=50&page=1`;
+      const resp = await fetch(url, { headers: { Accept: "application/json" } });
+      if (resp.ok) {
+        const json = await resp.json();
+        const verses: any[] = json.verses || [];
+        if (verses.length > 0) {
+          // Build a flat word list with line assignments
+          const allWords: MushafWord[] = [];
+          verses.forEach((v: any) => {
+            const surahNum  = parseInt(v.verse_key?.split(":")?.[0] || "0", 10);
+            const ayahNum   = parseInt(v.verse_key?.split(":")?.[1] || "0", 10);
+            const surahName = v.translations?.[0]?.resource_name || "";
+            const surahEn   = "";
+            (v.words || []).forEach((w: any) => {
+              if (!w.text_uthmani && !w.text) return;
+              allWords.push({
+                text:        w.text_uthmani || w.text || "",
+                lineNumber:  w.line_number  || 1,
+                ayahKey:     v.verse_key    || "",
+                isEnd:       w.char_type_name === "end" || w.char_type_name === "ayah",
+                ayahNum,
+                surahNum,
+                surahName,
+                surahEnglish: surahName,
+              });
+            });
+          });
+
+          if (allWords.length > 0) {
+            // Group into lines 1-15
+            const lineMap = new Map<number, MushafWord[]>();
+            for (let i = 1; i <= 15; i++) lineMap.set(i, []);
+            allWords.forEach(w => {
+              const ln = Math.max(1, Math.min(15, w.lineNumber));
+              lineMap.get(ln)!.push(w);
+            });
+
+            // Detect centered lines (basmala / surah nameplate):
+            // A line is centered if it contains only basmala or start-of-surah markers
+            // Heuristic: line has very few words (≤5) and all from verse 1 of a new surah
+            const lines: MushafLine[] = [];
+            lineMap.forEach((words, ln) => {
+              if (!words.length) return;
+              const isCent = words.length <= 6 && words.every(w => w.ayahNum === 1 || w.isEnd);
+              lines.push({ lineNum: ln, words, isCentered: isCent });
+            });
+            lines.sort((a, b) => a.lineNum - b.lineNum);
+            setMushafLines(lines);
+            setMushafLineMode(true);
+            setMushafLoading(false);
+            return;
+          }
+        }
+      }
+    } catch { /* fall through to alquran.cloud */ }
+
+    // ── Attempt 2: alquran.cloud (flowing text, no line data) ─────────────
+    setMushafLineMode(false);
     try{
       for(const ed of["ar.uthmani","quran-uthmani","quran-simple"]){
         const j=await fetch(`https://api.alquran.cloud/v1/page/${p}/${ed}`).then(r=>r.json());
@@ -1442,7 +1527,7 @@ const InClassQuranReader=({onClose}:any)=>{
           </button>
         </div>
 
-        {/* ══ MODE: MUSHAF — flowing Arabic text, parchment style ══ */}
+        {/* ══ MODE: MUSHAF — authentic line-by-line Quran layout ══ */}
         {mode==="quran"&&(
           <>
             <PageNav/>
@@ -1454,16 +1539,155 @@ const InClassQuranReader=({onClose}:any)=>{
                   <span style={{fontSize:11,color:"#7a9e88",fontFamily:"'Amiri',serif"}}>جارٍ تحميل الصفحة…</span>
                 </div>
               )}
-              {!mushafLoading&&mushafAyahs.length>0&&(
+
+              {/* ── Line-by-line mode (quran.com word data) ── */}
+              {!mushafLoading&&mushafLineMode&&mushafLines.length>0&&(
+                <div style={{padding:"8px 6px 16px",maxWidth:460,margin:"0 auto"}}>
+                  <div style={{
+                    background:"#fdf6e3",
+                    border:"2px solid rgba(201,168,76,.5)",
+                    borderRadius:4,
+                    boxShadow:"0 4px 20px rgba(26,61,36,0.15)",
+                    position:"relative",
+                    overflow:"hidden",
+                  }}>
+                    {/* Inner decorative border (Mushaf style) */}
+                    <div style={{position:"absolute",inset:6,border:"1px solid rgba(201,168,76,.3)",borderRadius:1,pointerEvents:"none",zIndex:1}}/>
+
+                    {/* Page number header */}
+                    <div style={{padding:"6px 16px",borderBottom:"1px solid rgba(201,168,76,.4)",display:"flex",justifyContent:"space-between",alignItems:"center",background:"linear-gradient(to bottom,rgba(201,168,76,.12),transparent)"}}>
+                      <span style={{fontSize:10,fontWeight:700,color:"#b7791f",fontFamily:"'Amiri',serif"}}>
+                        {/* Surah info for first ayah on this page */}
+                        {mushafLines[0]?.words[0]?.surahEnglish||""}
+                      </span>
+                      <span style={{fontSize:11,fontWeight:700,color:"#b7791f",fontFamily:"'Amiri',serif"}}>
+                        صفحة {toAr(page)}
+                      </span>
+                      <span style={{fontSize:10,fontWeight:700,color:"#b7791f",fontFamily:"'Amiri',serif"}}>
+                        {mushafLines[mushafLines.length-1]?.words[0]?.surahEnglish||""}
+                      </span>
+                    </div>
+
+                    {/* ── The 15 Mushaf lines ── */}
+                    <div style={{padding:"10px 14px 6px",display:"flex",flexDirection:"column",gap:0}}>
+                      {mushafLines.map((line, li) => {
+                        const isBismillah = line.words.some((w: any) =>
+                          w.text.includes("بِسۡمِ") || w.text.includes("بسم")
+                        ) && line.words.length <= 8;
+                        const isLastLine = li === mushafLines.length - 1;
+                        const justify = (line.isCentered || isBismillah)
+                          ? "center"
+                          : isLastLine ? "flex-end" : "space-between";
+
+                        return (
+                          <div
+                            key={line.lineNum}
+                            style={{
+                              minHeight: "3.2em",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: justify,
+                              direction: "rtl",
+                              padding: "0 2px",
+                              borderBottom: !isLastLine ? "1px solid rgba(201,168,76,.1)" : "none",
+                            }}
+                          >
+                            {/* ── Centered lines (Basmala / Surah nameplate) ── */}
+                            {(line.isCentered || isBismillah) ? (
+                              <div style={{
+                                fontFamily: "'Amiri Quran','Scheherazade New','Amiri',serif",
+                                fontSize: 20,
+                                color: "#1c1208",
+                                direction: "rtl",
+                                textAlign: "center",
+                                lineHeight: 1,
+                              }}>
+                                {line.words.map((w: any, wi: number) => (
+                                  <span key={wi}>{w.text}{" "}</span>
+                                ))}
+                              </div>
+                            ) : (
+                              <>
+                                {line.words.map((w: any, wi: number) => {
+                                  const isPlaying = playingVerse === w.ayahKey;
+                                  if (w.isEnd) {
+                                    return (
+                                      <span
+                                        key={wi}
+                                        onClick={() => playVerse(w.surahNum, w.ayahNum)}
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          width: 22, height: 22,
+                                          borderRadius: "50%",
+                                          background: isPlaying ? "#1a3d24" : "rgba(183,121,31,.85)",
+                                          fontSize: 9,
+                                          fontWeight: 700,
+                                          color: "#fff",
+                                          cursor: "pointer",
+                                          flexShrink: 0,
+                                          boxShadow: isPlaying ? "0 0 0 2px #c9a84c" : "none",
+                                          transition: "all .2s",
+                                          fontFamily: "'Amiri',serif",
+                                        }}
+                                      >
+                                        {isPlaying ? "▶" : toAr(w.ayahNum)}
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span
+                                      key={wi}
+                                      onClick={() => playVerse(w.surahNum, w.ayahNum)}
+                                      style={{
+                                        fontFamily: "'Amiri Quran','Scheherazade New','Amiri',serif",
+                                        fontSize: 20,
+                                        color: "#1c1208",
+                                        cursor: "pointer",
+                                        background: isPlaying ? "rgba(201,168,76,.18)" : "transparent",
+                                        borderRadius: 2,
+                                        padding: "0 1px",
+                                        transition: "background .2s",
+                                        lineHeight: 1,
+                                        flexShrink: 0,
+                                      }}
+                                    >
+                                      {w.text}
+                                    </span>
+                                  );
+                                })}
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Page footer */}
+                    <div style={{padding:"5px 16px",borderTop:"1px solid rgba(201,168,76,.4)",display:"flex",justifyContent:"center"}}>
+                      <span style={{fontSize:10,color:"#b7791f",fontFamily:"'Amiri',serif"}}>— {toAr(page)} —</span>
+                    </div>
+                  </div>
+
+                  {/* Bottom nav */}
+                  <div style={{display:"flex",gap:8,marginTop:10}}>
+                    <button onClick={()=>changePage(-1)} disabled={page<=1}
+                      style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid rgba(201,168,76,.5)",background:"#fdf6e3",color:"#1a3d24",fontSize:18,fontWeight:700,cursor:page<=1?"not-allowed":"pointer",opacity:page<=1?0.3:1}}>◀</button>
+                    <button onClick={()=>changePage(1)} disabled={page>=604}
+                      style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid rgba(201,168,76,.5)",background:"#fdf6e3",color:"#1a3d24",fontSize:18,fontWeight:700,cursor:page>=604?"not-allowed":"pointer",opacity:page>=604?0.3:1}}>▶</button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Fallback: flowing text mode (alquran.cloud, no line data) ── */}
+              {!mushafLoading&&!mushafLineMode&&mushafAyahs.length>0&&(
                 <div style={{padding:"10px 8px 20px",maxWidth:460,margin:"0 auto"}}>
-                  {/* Parchment page card */}
                   <div style={{background:"#fdf6e3",border:"2px solid rgba(201,168,76,.5)",borderRadius:4,boxShadow:"0 4px 20px rgba(26,61,36,0.15)",position:"relative"}}>
                     <div style={{position:"absolute",inset:7,border:"1px solid rgba(201,168,76,.25)",borderRadius:1,pointerEvents:"none",zIndex:1}}/>
-                    {/* Page number header */}
                     <div style={{padding:"7px 16px",borderBottom:"1px solid rgba(201,168,76,.4)",display:"flex",justifyContent:"center",background:"linear-gradient(to bottom,rgba(201,168,76,.1),transparent)"}}>
                       <span style={{fontSize:11,fontWeight:700,color:"#b7791f",fontFamily:"'Amiri',serif"}}>صفحة {toAr(page)}</span>
                     </div>
-                    {/* Ayahs grouped by surah */}
                     {(()=>{
                       const groups:any[]=[];
                       mushafAyahs.forEach((a:any)=>{
@@ -1474,18 +1698,15 @@ const InClassQuranReader=({onClose}:any)=>{
                       });
                       return groups.map((g:any,gi:number)=>(
                         <div key={g.surah}>
-                          {/* Surah name banner */}
                           <div style={{margin:`${gi===0?8:14}px 12px 6px`,padding:"5px 12px",background:"linear-gradient(135deg,#1a3d24,#276749)",borderRadius:4,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                             <span style={{fontFamily:"'Amiri',serif",fontSize:10,color:"rgba(255,255,255,.65)"}}>{g.surahData?.englishName}</span>
                             <span style={{fontFamily:"'Amiri',serif",fontSize:15,color:"#c9a84c",fontWeight:700}}>{g.surahData?.name}</span>
                           </div>
-                          {/* Basmala — all surahs that start on this page except Fatiha (verse 1 is Basmala) and Tawba */}
                           {g.surah!==1&&g.surah!==9&&g.ayahs[0]?.numberInSurah===1&&(
                             <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:19,color:"#1c1208",textAlign:"center",direction:"rtl",padding:"6px 16px 2px",lineHeight:2}}>
                               بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ
                             </div>
                           )}
-                          {/* Continuous flowing text */}
                           <p style={{fontFamily:"'Amiri Quran','Scheherazade New','Amiri',serif",direction:"rtl",textAlign:"justify",lineHeight:2.8,color:"#1c1208",fontSize:23,margin:0,padding:"6px 18px 12px",wordBreak:"break-word"}}>
                             {g.ayahs.map((a:any)=>{
                               const vk=`${g.surah}:${a.numberInSurah}`;
@@ -1512,12 +1733,10 @@ const InClassQuranReader=({onClose}:any)=>{
                         </div>
                       ));
                     })()}
-                    {/* Page footer */}
                     <div style={{padding:"5px 16px",borderTop:"1px solid rgba(201,168,76,.4)",display:"flex",justifyContent:"center"}}>
                       <span style={{fontSize:10,color:"#b7791f",fontFamily:"'Amiri',serif"}}>— {toAr(page)} —</span>
                     </div>
                   </div>
-                  {/* Bottom nav */}
                   <div style={{display:"flex",gap:8,marginTop:10}}>
                     <button onClick={()=>changePage(-1)} disabled={page<=1}
                       style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid rgba(201,168,76,.5)",background:"#fdf6e3",color:"#1a3d24",fontSize:18,fontWeight:700,cursor:page<=1?"not-allowed":"pointer",opacity:page<=1?0.3:1}}>◀</button>
@@ -1526,7 +1745,8 @@ const InClassQuranReader=({onClose}:any)=>{
                   </div>
                 </div>
               )}
-              {!mushafLoading&&mushafAyahs.length===0&&(
+
+              {!mushafLoading&&mushafLines.length===0&&mushafAyahs.length===0&&(
                 <div style={{padding:"40px 20px",textAlign:"center",fontFamily:"'Amiri',serif"}}>
                   <div style={{fontSize:36,marginBottom:12}}>📖</div>
                   <p style={{fontSize:13,color:"#7a9e88",margin:"0 0 16px"}}>تعذّر تحميل الصفحة</p>
