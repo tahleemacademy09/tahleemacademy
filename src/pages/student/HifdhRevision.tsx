@@ -442,10 +442,62 @@ export default function HifdhRevision() {
     });
   }, []);
 
-  /* ── fetch page ── */
-  const fetchPage = useCallback((page: number) => {
+  /* ── fetch page — try quran.com word-level API first for physical line layout ── */
+  const [mushafLines,    setMushafLines]    = useState<any[]>([]);
+  const [mushafLineMode, setMushafLineMode] = useState(false);
+
+  const fetchPage = useCallback(async (page: number) => {
     setLoading(true);
     setPageData(null);
+    setMushafLines([]);
+
+    // Attempt 1: quran.com word-level API with line_number per word
+    try {
+      const url = `https://api.quran.com/api/v4/verses/by_page/${page}?words=true&word_fields=line_number%2Ctext_uthmani%2Cchar_type_name&per_page=50&page=1`;
+      const resp = await fetch(url, { headers: { Accept: "application/json" } });
+      if (resp.ok) {
+        const json = await resp.json();
+        const verses: any[] = json.verses || [];
+        if (verses.length > 0) {
+          const lineMap = new Map<number, any[]>();
+          for (let i = 1; i <= 15; i++) lineMap.set(i, []);
+          verses.forEach((v: any) => {
+            const [sNum, aNum] = (v.verse_key || "1:1").split(":").map(Number);
+            (v.words || []).forEach((w: any) => {
+              if (!w.text_uthmani && !w.text) return;
+              const ln = Math.max(1, Math.min(15, w.line_number || 1));
+              lineMap.get(ln)!.push({
+                text:       w.text_uthmani || w.text,
+                isEnd:      w.char_type_name === "end" || w.char_type_name === "ayah",
+                ayahNum:    aNum,
+                surahNum:   sNum,
+                ayahAbsNum: v.id,
+              });
+            });
+          });
+          const lines: any[] = [];
+          lineMap.forEach((words, ln) => {
+            if (!words.length) return;
+            lines.push({ lineNum: ln, words, isCentered: words.length <= 6 && words.every((w: any) => w.ayahNum <= 1 || w.isEnd) });
+          });
+          lines.sort((a, b) => a.lineNum - b.lineNum);
+          if (lines.length > 0) {
+            setMushafLines(lines);
+            setMushafLineMode(true);
+            setLoading(false);
+            // Also fetch alquran.cloud for audio/metadata
+            fetch(`https://api.alquran.cloud/v1/page/${page}/ar.uthmani`)
+              .then(r => r.json())
+              .then(json => { if (json?.code === 200) setPageData(json.data); })
+              .catch(() => {});
+            return;
+          }
+        }
+      }
+    } catch { /* fall through */ }
+
+    // Attempt 2: alquran.cloud flowing text
+    setMushafLineMode(false);
     fetch(`https://api.alquran.cloud/v1/page/${page}/ar.uthmani`)
       .then(r => r.json())
       .then(json => { if (json?.code === 200) setPageData(json.data); setLoading(false); })
@@ -606,6 +658,21 @@ export default function HifdhRevision() {
           z-index: 1;
         }
 
+        /* ── Physical Mushaf line layout ── */
+        /* Each line is a flex row with space-between — words spread edge-to-edge
+           exactly as they appear on the printed Mushaf page. The last line of a
+           surah / page is flex-start so orphan words don't stretch oddly.       */
+        .mushaf-line {
+          display: flex;
+          align-items: center;
+          direction: rtl;
+          border-bottom: 1px solid ${GOLD}14;
+          padding: 0 2px;
+        }
+        .mushaf-line-justify  { justify-content: space-between; }
+        .mushaf-line-center   { justify-content: center; }
+        .mushaf-line-start    { justify-content: flex-end; } /* last line, RTL → right-align */
+
         /* ── Page flip animation ── */
         @keyframes flipNext {
           0%   { transform: perspective(900px) rotateY(0deg)   scaleX(1);    opacity: 1; }
@@ -722,42 +789,132 @@ export default function HifdhRevision() {
 
                   <div className="mx-5 h-px" style={{ background:`linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
 
-                  {/* Quran text */}
-                  <div className="px-6 py-5">
-                    {surahGroups.map((group, gi) => {
-                      const isNewSurah    = group.ayahs[0].numberInSurah === 1;
-                      const showBismillah = isNewSurah && group.surah.number !== 9 && group.surah.number !== 1;
-                      return (
-                        <div key={gi}>
-                          {isNewSurah && (
-                            <div className="surah-nameplate">
-                              سورة {group.surah.name}
-                              <small>{group.surah.englishName} · {group.surah.numberOfAyahs} verses</small>
+                  {/* ── Quran text: physical line-by-line layout ── */}
+                  <div className="px-4 py-3">
+                    {mushafLineMode && mushafLines.length > 0 ? (
+                      /* ── Physical Mushaf lines (quran.com word data) ── */
+                      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                        {mushafLines.map((line: any, li: number) => {
+                          const isBismillah = line.words.some((w: any) =>
+                            w.text.includes("بِسۡمِ") || w.text.includes("بسم")
+                          ) && line.words.length <= 8;
+                          const isLastLine = li === mushafLines.length - 1;
+                          // Last line: right-align (don't stretch). Centered: basmala/surah lines. Others: justify.
+                          const justifyClass = (line.isCentered || isBismillah)
+                            ? "mushaf-line-center"
+                            : isLastLine ? "mushaf-line-start" : "mushaf-line-justify";
+
+                          return (
+                            <div
+                              key={line.lineNum}
+                              className={`mushaf-line ${justifyClass}`}
+                              style={{ minHeight: `${fontSize * 2.55}px` }}
+                            >
+                              {(line.isCentered || isBismillah) ? (
+                                <span style={{
+                                  fontFamily: "'Amiri Quran','Scheherazade New','Amiri',serif",
+                                  fontSize,
+                                  color: INK,
+                                  direction: "rtl",
+                                  textAlign: "center",
+                                }}>
+                                  {line.words.map((w: any, wi: number) => (
+                                    <span key={wi}>{w.text}{" "}</span>
+                                  ))}
+                                </span>
+                              ) : (
+                                line.words.map((w: any, wi: number) => {
+                                  const isActive = playingAyah === w.ayahAbsNum;
+                                  if (w.isEnd) {
+                                    return (
+                                      <span
+                                        key={wi}
+                                        onClick={() => playAyah(w.ayahAbsNum)}
+                                        style={{
+                                          display: "inline-flex",
+                                          alignItems: "center",
+                                          justifyContent: "center",
+                                          width: fontSize * 0.85,
+                                          height: fontSize * 0.85,
+                                          borderRadius: "50%",
+                                          background: isActive ? DARK_GREEN : `${GOLD}cc`,
+                                          fontSize: fontSize * 0.38,
+                                          fontWeight: 700,
+                                          color: "#fff",
+                                          cursor: "pointer",
+                                          flexShrink: 0,
+                                          boxShadow: isActive ? `0 0 0 2px ${GOLD}` : "none",
+                                          transition: "all .2s",
+                                          fontFamily: "'Amiri',serif",
+                                        }}
+                                      >
+                                        {toAr(w.ayahNum)}
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span
+                                      key={wi}
+                                      onClick={() => playAyah(w.ayahAbsNum)}
+                                      style={{
+                                        fontFamily: "'Amiri Quran','Scheherazade New','Amiri',serif",
+                                        fontSize,
+                                        color: INK,
+                                        cursor: "pointer",
+                                        background: isActive ? `${GOLD}30` : "transparent",
+                                        borderRadius: 2,
+                                        padding: "0 1px",
+                                        transition: "background .2s",
+                                        lineHeight: 1,
+                                        flexShrink: 0,
+                                      }}
+                                    >
+                                      {w.text}
+                                    </span>
+                                  );
+                                })
+                              )}
                             </div>
-                          )}
-                          {showBismillah && (
-                            <div className="bismillah" style={{ fontSize: fontSize * 0.88 }}>
-                              بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ
-                            </div>
-                          )}
-                          <p className="mushaf-text" style={{ fontSize }}>
-                            {group.ayahs.map((ayah) => (
-                              <span
-                                key={ayah.number}
-                                onClick={() => playAyah(ayah.number)}
-                                className={cn(
-                                  "cursor-pointer transition-all",
-                                  playingAyah === ayah.number && "ayah-active"
-                                )}
-                              >
-                                {ayah.text}{" "}
-                                <span className="ayah-marker">۝{toAr(ayah.numberInSurah)}</span>{" "}
-                              </span>
-                            ))}
-                          </p>
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      /* ── Fallback: flowing text (alquran.cloud) ── */
+                      surahGroups.map((group, gi) => {
+                        const isNewSurah    = group.ayahs[0].numberInSurah === 1;
+                        const showBismillah = isNewSurah && group.surah.number !== 9 && group.surah.number !== 1;
+                        return (
+                          <div key={gi}>
+                            {isNewSurah && (
+                              <div className="surah-nameplate">
+                                سورة {group.surah.name}
+                                <small>{group.surah.englishName} · {group.surah.numberOfAyahs} verses</small>
+                              </div>
+                            )}
+                            {showBismillah && (
+                              <div className="bismillah" style={{ fontSize: fontSize * 0.88 }}>
+                                بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ
+                              </div>
+                            )}
+                            <p className="mushaf-text" style={{ fontSize }}>
+                              {group.ayahs.map((ayah) => (
+                                <span
+                                  key={ayah.number}
+                                  onClick={() => playAyah(ayah.number)}
+                                  className={cn(
+                                    "cursor-pointer transition-all",
+                                    playingAyah === ayah.number && "ayah-active"
+                                  )}
+                                >
+                                  {ayah.text}{" "}
+                                  <span className="ayah-marker">۝{toAr(ayah.numberInSurah)}</span>{" "}
+                                </span>
+                              ))}
+                            </p>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
 
                   <div className="mx-5 h-px" style={{ background:`linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
