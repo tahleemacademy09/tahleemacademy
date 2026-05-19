@@ -25,8 +25,15 @@ serve(async (req) => {
     const bytes  = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
 
+    // ── Deepgram params for Quranic Arabic ──────────────────────────────────
+    // smart_format=false  — prevents Deepgram adding non-Arabic punctuation /
+    //                       reformatting numerals, both of which corrupt Arabic text
+    // punctuate=false     — no injected punctuation marks
+    // filler_words=false  — strip ums / uhs (not present in Quran but safe)
+    // numerals=false      — keep Arabic-script numbers (not Western digits)
+    // detect_language=false — we know it's Arabic; skipping detection is faster
     const response = await fetch(
-      'https://api.deepgram.com/v1/listen?model=nova-2&language=ar&smart_format=true',
+      'https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&smart_format=false&filler_words=false&numerals=false&detect_language=false',
       {
         method: 'POST',
         headers: {
