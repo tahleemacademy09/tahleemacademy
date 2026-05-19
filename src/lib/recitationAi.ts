@@ -6,6 +6,18 @@
 const DASHSCOPE_KEY = import.meta.env.VITE_DASHSCOPE_API_KEY || "";
 const GROQ_KEY      = import.meta.env.VITE_GROQ_API_KEY      || "";
 
+// ── Quran style prompt ───────────────────────────────────────────────────────
+// CRITICAL: must NOT contain full Quranic verses.
+// Whisper treats the prompt as "what was said immediately before this audio"
+// and will CONTINUE / hallucinate those exact verses instead of transcribing
+// what the student actually recited.
+// This short style hint is enough to:
+//   1. Activate Whisper's Arabic diacritics (تشكيل) output mode
+//   2. Bias towards Uthmani script spelling conventions
+//   3. Show emphatic / hamza letter forms so they are recognised correctly
+export const QURAN_STYLE_PROMPT =
+  "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني. صَ ضَ طَ ظَ إِ أَ ئَ ؤَ";
+
 /* ── Qwen / DashScope paraformer-v2 ────────────────────────────── */
 async function transcribeWithQwen(blob: Blob): Promise<string> {
   if (!DASHSCOPE_KEY) throw new Error("no-key");
@@ -38,6 +50,8 @@ async function transcribeWithQwen(blob: Blob): Promise<string> {
 }
 
 /* ── Groq Whisper-large-v3 (fallback) ──────────────────────────── */
+// Uses verbose_json so we get per-segment no_speech_prob and can reject
+// silence / background-noise recordings before they produce garbage output.
 async function transcribeWithGroq(blob: Blob): Promise<string> {
   if (!GROQ_KEY) throw new Error("no-key");
 
@@ -49,11 +63,9 @@ async function transcribeWithGroq(blob: Blob): Promise<string> {
   fd.append("file",            new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
   fd.append("model",           "whisper-large-v3");
   fd.append("language",        "ar");
-  fd.append("response_format", "json");
+  fd.append("response_format", "verbose_json"); // ← segments + no_speech_prob
   fd.append("temperature",     "0");
-  fd.append("prompt",
-    "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم مالك يوم الدين إياك نعبد وإياك نستعين"
-  );
+  fd.append("prompt",          QURAN_STYLE_PROMPT); // ← style hint only, no verses
 
   const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
     method:  "POST",
@@ -66,8 +78,23 @@ async function transcribeWithGroq(blob: Blob): Promise<string> {
     throw new Error(`Groq ${res.status}: ${err}`);
   }
 
-  const data = await res.json();
-  return typeof data.text === "string" ? data.text.trim() : "";
+  const json = await res.json();
+
+  // ── Silence / noise gate ─────────────────────────────────────────────────
+  // If the majority of segments are flagged as non-speech, return empty so
+  // the caller can show a "speak clearly" prompt instead of garbage Arabic.
+  // Threshold 0.55 is intentionally lenient — Quranic tajweed with long
+  // pauses (madd) can slightly elevate no_speech_prob on short segments.
+  const segs: { no_speech_prob?: number }[] = json.segments ?? [];
+  const avgNoSpeech = segs.length > 0
+    ? segs.reduce((sum, g) => sum + (g.no_speech_prob ?? 0), 0) / segs.length
+    : 0;
+  const txt = (json.text ?? "").trim();
+
+  if (avgNoSpeech >= 0.55) return ""; // mostly noise/silence — reject
+  if (txt.length < 2)      return ""; // nothing meaningful captured
+
+  return txt;
 }
 
 /* ── Public API ─────────────────────────────────────────────────── */
