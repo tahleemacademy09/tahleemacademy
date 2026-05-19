@@ -19,6 +19,14 @@ import {
 const DEEPGRAM_KEY  = import.meta.env.VITE_DEEPGRAM_API_KEY || "";
 const GROQ_KEY      = import.meta.env.VITE_GROQ_API_KEY || "";
 const MIN_REPS      = 7;
+
+// ── Quran transcription style prompt ────────────────────────────────────────
+// Must NOT contain full Quranic verses — Whisper treats the prompt as "what
+// was said just before this audio" and will hallucinate those exact verses
+// instead of transcribing what the student actually recited.
+// This hint activates diacritised Uthmani script output without seeding content.
+const QURAN_STYLE_PROMPT =
+  "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني. صَ ضَ طَ ظَ إِ أَ ئَ ؤَ";
 const DEFAULT_SHOWN = 10;
 const DEFAULT_HIDDEN= 10;
 const DEFAULT_CUMUL = 5;
@@ -180,28 +188,68 @@ export default function RecitationMic({ userId }: Props) {
     (async () => {
       try {
         let tx = "";
-        if (DEEPGRAM_KEY) {
-          const r = await fetch(
-            "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
-            { method:"POST", headers:{ Authorization:`Token ${DEEPGRAM_KEY}`, "Content-Type": blob.type||"audio/webm" }, body: blob }
-          );
-          if (r.ok) tx = (await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+        const ext = blob.type.includes("mp4") ? "mp4"
+                  : blob.type.includes("ogg") ? "ogg"
+                  : "webm";
+
+        // ── 1. Groq Whisper-large-v3 (primary, verbose_json + silence gate) ──
+        // Groq is tried first because whisper-large-v3 has the best Quranic
+        // Arabic accuracy of any freely available ASR model.
+        if (GROQ_KEY) {
+          try {
+            const fd = new FormData();
+            fd.append("file",            new File([blob], `r.${ext}`, { type: blob.type || "audio/webm" }));
+            fd.append("model",           "whisper-large-v3");
+            fd.append("language",        "ar");
+            fd.append("response_format", "verbose_json"); // gives us per-segment no_speech_prob
+            fd.append("temperature",     "0");
+            fd.append("prompt",          QURAN_STYLE_PROMPT); // style hint ONLY — no verses
+            const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
+              { method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd });
+            if (r.ok) {
+              const json = await r.json();
+              // Per-segment silence gate — lenient (0.55) to allow tajweed madd pauses
+              const segs: { no_speech_prob?: number }[] = json.segments ?? [];
+              const avgNoSpeech = segs.length > 0
+                ? segs.reduce((s, g) => s + (g.no_speech_prob ?? 0), 0) / segs.length
+                : 0;
+              const candidate = (json.text ?? "").trim();
+              if (candidate.length >= 2 && avgNoSpeech < 0.55) tx = candidate;
+            }
+          } catch { /* fall through to Deepgram */ }
         }
-        if (!tx && GROQ_KEY) {
-          const ext = blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
-          const fd = new FormData();
-          fd.append("file", new File([blob], `r.${ext}`, {type:blob.type}));
-          fd.append("model","whisper-large-v3"); fd.append("language","ar");
-          fd.append("response_format","json"); fd.append("temperature","0");
-          fd.append("prompt","\u0628\u0633\u0645 \u0627\u0644\u0644\u0647 \u0627\u0644\u0631\u062d\u0645\u0646 \u0627\u0644\u0631\u062d\u064a\u0645 \u0627\u0644\u062d\u0645\u062f \u0644\u0644\u0647 \u0631\u0628 \u0627\u0644\u0639\u0627\u0644\u0645\u064a\u0646");
-          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
-            { method:"POST", headers:{ Authorization:`Bearer ${GROQ_KEY}` }, body: fd });
-          if (r.ok) tx = (await r.json())?.text || "";
+
+        // ── 2. Deepgram nova-2 (fallback) ────────────────────────────────────
+        // Disable smart_format so Deepgram doesn't add non-Arabic punctuation
+        // or reformat Arabic numerals — both corrupt the Arabic text comparison.
+        if (!tx && DEEPGRAM_KEY) {
+          try {
+            const r = await fetch(
+              "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false&smart_format=false&numerals=false",
+              {
+                method:  "POST",
+                headers: { Authorization: `Token ${DEEPGRAM_KEY}`, "Content-Type": blob.type || "audio/webm" },
+                body:    blob,
+              }
+            );
+            if (r.ok) {
+              const candidate = ((await r.json())
+                ?.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? "").trim();
+              if (candidate.length >= 2) tx = candidate;
+            }
+          } catch { /* fall through */ }
         }
+
         if (dead) return;
-        if (tx) { liveRef.current = tx; setLiveTranscript(tx); setRevErr(""); }
-        else setRevErr("Could not transcribe — speak clearly and try again.");
-      } catch(e:any) {
+        if (tx) {
+          liveRef.current = tx;
+          setLiveTranscript(tx);
+          setRevErr("");
+        } else {
+          // Distinguish silence from a real API failure so the student knows what to fix
+          setRevErr("لم يُسجَّل صوت واضح — تأكّد من قُرب الميكروفون وأعِد التلاوة / No clear recitation detected — move closer to the mic and try again.");
+        }
+      } catch (e: any) {
         if (!dead) setRevErr(e?.message || "Transcription error");
       } finally {
         if (!dead) setRevRecState("done");
@@ -262,24 +310,53 @@ export default function RecitationMic({ userId }: Props) {
   // Mem: send one chunk to ASR
   const memSendChunk = useCallback(async (blob: Blob) => {
     try {
-      if (DEEPGRAM_KEY) {
-        const r = await fetch(
-          "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false",
-          { method:"POST", headers:{ Authorization:`Token ${DEEPGRAM_KEY}`, "Content-Type": blob.type||"audio/webm" }, body: blob }
-        );
-        if (r.ok) { const tx=(await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript||""; if(tx) memOnTx(tx); }
-      } else if (GROQ_KEY) {
-        const ext = blob.type.includes("mp4")?"mp4":blob.type.includes("ogg")?"ogg":"webm";
-        const fd = new FormData();
-        fd.append("file", new File([blob],`c.${ext}`,{type:blob.type}));
-        fd.append("model","whisper-large-v3"); fd.append("language","ar");
-        fd.append("response_format","json"); fd.append("temperature","0");
-        fd.append("prompt","\u0628\u0633\u0645 \u0627\u0644\u0644\u0647 \u0627\u0644\u0631\u062d\u0645\u0646 \u0627\u0644\u0631\u062d\u064a\u0645");
-        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
-          { method:"POST", headers:{ Authorization:`Bearer ${GROQ_KEY}` }, body: fd });
-        if (r.ok) { const tx=(await r.json())?.text||""; if(tx) memOnTx(tx); }
+      const ext = blob.type.includes("mp4") ? "mp4"
+                : blob.type.includes("ogg") ? "ogg"
+                : "webm";
+      let tx = "";
+
+      // ── 1. Groq Whisper-large-v3 (primary) — verbose_json + silence gate ─
+      if (GROQ_KEY) {
+        try {
+          const fd = new FormData();
+          fd.append("file",            new File([blob], `c.${ext}`, { type: blob.type || "audio/webm" }));
+          fd.append("model",           "whisper-large-v3");
+          fd.append("language",        "ar");
+          fd.append("response_format", "verbose_json");
+          fd.append("temperature",     "0");
+          fd.append("prompt",          QURAN_STYLE_PROMPT);
+          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
+            { method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd });
+          if (r.ok) {
+            const json = await r.json();
+            const segs: { no_speech_prob?: number }[] = json.segments ?? [];
+            const avgNoSpeech = segs.length > 0
+              ? segs.reduce((s, g) => s + (g.no_speech_prob ?? 0), 0) / segs.length
+              : 0;
+            const candidate = (json.text ?? "").trim();
+            // Threshold 0.55 — lenient for Quranic madd / natural breath pauses
+            if (candidate.length >= 2 && avgNoSpeech < 0.55) tx = candidate;
+          }
+        } catch { /* fall through to Deepgram */ }
       }
-    } catch(_) {}
+
+      // ── 2. Deepgram nova-2 (fallback) ─────────────────────────────────────
+      if (!tx && DEEPGRAM_KEY) {
+        try {
+          const r = await fetch(
+            "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&filler_words=false&smart_format=false&numerals=false",
+            { method: "POST", headers: { Authorization: `Token ${DEEPGRAM_KEY}`, "Content-Type": blob.type || "audio/webm" }, body: blob }
+          );
+          if (r.ok) {
+            const candidate = ((await r.json())
+              ?.results?.channels?.[0]?.alternatives?.[0]?.transcript ?? "").trim();
+            if (candidate.length >= 2) tx = candidate;
+          }
+        } catch { /* silent — next chunk will retry */ }
+      }
+
+      if (tx) memOnTx(tx);
+    } catch (_) {}
   }, [memOnTx]);
 
   // Mem: advance to next phase/verse
@@ -318,7 +395,14 @@ export default function RecitationMic({ userId }: Props) {
       memPhaseRef.current = memPhaseRef.current;  // already set
       if (memSilRef.current) clearTimeout(memSilRef.current);
       setMemCompCount(0); setMemLiveText("");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount:      1,       // mono — Whisper works best with mono
+          echoCancellation:  false,   // off — echo-cancellation distorts Quranic tajweed
+          noiseSuppression:  true,    // on  — suppress keyboard / ambient noise
+          autoGainControl:   true,    // on  — normalise volume for quiet reciters
+        }
+      });
       const mime = getMime();
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
       mr.ondataavailable = e => {
@@ -331,7 +415,9 @@ export default function RecitationMic({ userId }: Props) {
         clearInterval(memTimerRef.current!); setMemRecTime(0);
         memAdvance(memPhaseRef.current, memVerseRef.current);
       };
-      mr.start(1500);
+      // 2500 ms chunks — long enough to capture a full Quranic word or short phrase
+      // even with tajweed elongation (madd), without starving the first chunk.
+      mr.start(2500);
       memMrRef.current = mr; setMemRecState("recording");
       memTimerRef.current = setInterval(() => setMemRecTime(t => t+1), 1000);
     } catch { alert("Microphone access denied."); }
@@ -344,7 +430,14 @@ export default function RecitationMic({ userId }: Props) {
     try {
       liveRef.current = ""; chunksRef.current = []; revBlobRef.current = null;
       setLiveTranscript(""); setRevErr("");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount:     1,       // mono — Whisper works best with mono
+          echoCancellation: false,   // off — distorts Quranic tajweed voice
+          noiseSuppression: true,    // on  — suppress ambient / background noise
+          autoGainControl:  true,    // on  — normalise volume for quiet reciters
+        }
+      });
       const mime = getMime();
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
       mr.ondataavailable = e => { if (e.data?.size) chunksRef.current.push(e.data); };
@@ -352,7 +445,7 @@ export default function RecitationMic({ userId }: Props) {
         stream.getTracks().forEach(t => t.stop());
         clearInterval(timerRef.current!);
         const blob = new Blob(chunksRef.current, { type: mime||"audio/webm" });
-        if (blob.size < 500) { setRevErr("Too short — speak for at least 2 seconds."); setRevRecState("idle"); return; }
+        if (blob.size < 1000) { setRevErr("تسجيل قصير جداً — يُرجى التلاوة لمدة ثانيتين على الأقل / Too short — recite for at least 2 seconds."); setRevRecState("idle"); return; }
         revBlobRef.current = blob; setRevAudioBlob(blob);
         setRevRecState("transcribing");
       };
