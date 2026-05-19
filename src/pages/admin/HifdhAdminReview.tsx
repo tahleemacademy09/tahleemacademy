@@ -403,20 +403,29 @@ export default function HifdhAdminReview(){
         teacher_override:{score:newScore,teacher_feedback:ov.feedback,
           reviewed_by:me.user.id,reviewed_at:new Date().toISOString()},
       };
-      const {error}=await (supabase as any).from("hifdh_daily_logs")
-        .update({session_data:updatedSession,avg_score:newScore})
-        .eq("id",log.id);
-      if(!error){
+      // Use SECURITY DEFINER RPC — direct .update() silently fails (RLS returns error:null, 0 rows)
+      const {data:rpcResult,error:rpcError}=await (supabase as any).rpc(
+        "review_hifdh_daily_log",
+        {p_log_id:log.id,p_avg_score:newScore,p_session_data:updatedSession}
+      );
+      const rpcFailed=rpcError||(rpcResult&&rpcResult.error);
+      if(!rpcFailed){
         setLogs(prev=>prev.map(l=>l.id===log.id?{...l,avg_score:newScore,session_data:updatedSession}:l));
         await (supabase as any).from("notifications").insert({
           user_id:log.student_id,title:"📖 Hifdh Revision Reviewed",
-          message:`Your revision on ${fmtDate(log.log_date)} was reviewed. Score: ${newScore}%.${ov.feedback?` "${ov.feedback}"`:""}`,
+          message:`Your revision on ${fmtDate(log.log_date)} was reviewed. Score: ${newScore}%.${ov.feedback?` \"${ov.feedback}\"`:""}`  ,
           type:"hifdh_review",read:false,created_at:new Date().toISOString(),
         });
         toast({title:"✅ Review saved & student notified"});
         setExpandedSession(null);
-      }else{toast({title:"Error saving",variant:"destructive"});}
-    }catch{toast({title:"Error",variant:"destructive"});}
+      }else{
+        console.error("[HifdhAdminReview] RPC error:",rpcError,rpcResult);
+        toast({title:"Error saving review",description:rpcResult?.error||rpcError?.message||"Unknown",variant:"destructive"});
+      }
+    }catch(e:any){
+      console.error("[HifdhAdminReview] exception:",e);
+      toast({title:"Error",description:e?.message,variant:"destructive"});
+    }
     setSaving(null);
   };
 
