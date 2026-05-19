@@ -1360,12 +1360,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     const wordRes   = compareWords(ref, last?.tx ?? "");
     (async () => {
       try {
+        // Preserve teacher override: if teacher already reviewed this log, keep their score and override flag
+        const existingTeacherOverride = todayLog?.session_data?.teacher_override;
         const { error } = await (supabase as any).from("hifdh_daily_logs").upsert({
           student_id:    userId,
           assignment_id: assignment.id,
           log_date:      today,
           pages_revised: todayPages.length,
-          avg_score:     score,
+          avg_score:     existingTeacherOverride ? existingTeacherOverride.score : score,
           duration_secs: recSecsRef.current,
           completed:     false,          // always save — even on failed/retry attempts
           session_data: {
@@ -1385,6 +1387,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 errorWords,
               },
             ],
+            // Preserve teacher override so it isn't wiped by re-attempts
+            ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
           },
         }, { onConflict: "student_id,log_date" });
         if (error) console.warn("[HifdhDaily] interim save error:", error);
@@ -1831,11 +1835,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     // Audio was already uploaded in mr.onstop via Promise.all — just read the ref.
     const audioStorageUrl: string|null = audioStorageUrlRef.current;
 
+    // Preserve teacher override: if teacher already reviewed before re-completion, don't wipe their score
+    const existingTeacherOverride = todayLog?.session_data?.teacher_override;
+    const finalAvgScore = existingTeacherOverride ? existingTeacherOverride.score : overall;
+
     try {
       await (supabase as any).from("hifdh_daily_logs").upsert({
         student_id:userId, assignment_id:assignment.id,
         log_date:today, pages_revised:todayPages.length,
-        avg_score:overall, duration_secs:dur, completed:true,
+        avg_score:finalAvgScore, duration_secs:dur, completed:true,
         session_data:{
           recitation_score:recAvg, test_score:tScore,
           section_a_score: sA, section_b_score: sB,
@@ -1864,6 +1872,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             answer_given: answers[i] ?? null,
             correct: answers[i] === q.correct,
           })),
+          // Preserve teacher override so it isn't wiped on re-completion
+          ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
         },
       },{onConflict:"student_id,log_date"});
 
