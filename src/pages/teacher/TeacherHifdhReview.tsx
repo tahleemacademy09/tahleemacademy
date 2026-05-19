@@ -203,7 +203,6 @@ export default function TeacherHifdhReview() {
       toast({ title: "Error", description: e?.message, variant: "destructive" });
     }
     setSaving(null);
-  }
   };
 
   const isReviewed = (log: DailyLog) => !!(log.session_data?.teacher_override ?? log.session_data?.review);
