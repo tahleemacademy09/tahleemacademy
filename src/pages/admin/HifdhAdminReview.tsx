@@ -30,6 +30,7 @@ interface SessionData {
   recitation_score?:number; test_score?:number; pages_done?:number[];
   audio_url?:string|null; page_results?:PageResult[]; errors?:{word:string;page:number}[];
   review?:{ teacher_score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
+  teacher_override?:{ score:number; teacher_feedback:string; reviewed_by:string; reviewed_at:string; };
 }
 interface DailyLog {
   id:string; student_id:string; assignment_id?:string; log_date:string;
@@ -283,21 +284,21 @@ function SessionDetail({log,ov,saving,onOvChange,onSave,onClose}:{
       )}
 
       {/* Existing review badge */}
-      {reviewed&&log.session_data?.review&&(
+      {reviewed&&(()=>{const rov=log.session_data?.teacher_override??log.session_data?.review;if(!rov)return null;const rovScore=(rov as any).score??(rov as any).teacher_score??log.avg_score??0;return(
         <div style={{padding:"10px 14px",borderRadius:10,background:"#F0FDF4",border:"1px solid #86EFAC"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
             <CheckCircle size={13} color={PASS}/>
             <span style={{fontSize:11,fontWeight:700,color:PASS}}>
-              Reviewed {fmtDate(log.session_data.review.reviewed_at)} · Score: {log.session_data.review.teacher_score}%
+              Reviewed {fmtDate(rov.reviewed_at)} · Score: {rovScore}%
             </span>
           </div>
-          {log.session_data.review.teacher_feedback&&(
+          {rov.teacher_feedback&&(
             <p style={{margin:0,fontSize:12,color:"#166534",fontStyle:"italic"}}>
-              "{log.session_data.review.teacher_feedback}"
+              "{rov.teacher_feedback}"
             </p>
           )}
         </div>
-      )}
+      );})()}
 
       {/* Override / review form */}
       <div style={{background:W,borderRadius:12,border:"1px solid #E5E7EB",padding:"12px 14px"}}>
@@ -381,8 +382,9 @@ export default function HifdhAdminReview(){
 
       const init:Record<string,{score:string;feedback:string}>={};
       enriched.forEach(l=>{
-        const rev=l.session_data?.review;
-        init[l.id]={score:String(rev?.teacher_score??l.avg_score??0),feedback:rev?.teacher_feedback??""};
+        const rev=l.session_data?.teacher_override??l.session_data?.review;
+        const revScore=rev ? ((rev as any).score ?? (rev as any).teacher_score ?? l.avg_score ?? 0) : (l.avg_score??0);
+        init[l.id]={score:String(revScore),feedback:rev?.teacher_feedback??""};
       });
       setOverrides(init);
     }catch(e){console.error(e);}
@@ -398,7 +400,7 @@ export default function HifdhAdminReview(){
       const newScore=Math.min(100,Math.max(0,parseInt(ov.score)||0));
       const updatedSession:SessionData={
         ...log.session_data,
-        review:{teacher_score:newScore,teacher_feedback:ov.feedback,
+        teacher_override:{score:newScore,teacher_feedback:ov.feedback,
           reviewed_by:me.user.id,reviewed_at:new Date().toISOString()},
       };
       const {error}=await (supabase as any).from("hifdh_daily_logs")
@@ -418,7 +420,7 @@ export default function HifdhAdminReview(){
     setSaving(null);
   };
 
-  const isReviewed=(log:DailyLog)=>!!log.session_data?.review;
+  const isReviewed=(log:DailyLog)=>!!(log.session_data?.teacher_override??log.session_data?.review);
   const pendingCount=logs.filter(l=>!isReviewed(l)).length;
 
   /* Filter then group by student */
