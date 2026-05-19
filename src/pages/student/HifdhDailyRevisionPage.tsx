@@ -19,7 +19,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
   ArrowLeft, Mic, MicOff, BookOpen, CalendarDays, Clock, Trophy,
-  Star, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
+  Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Flame, Target, TrendingUp, Play, RefreshCcw, Heart, Loader2,
   BookMarked, BarChart2, Lock, ShieldCheck, Bell, Eye,
   SkipBack, SkipForward,
@@ -245,7 +245,7 @@ function buildProgramDays(
                           .filter(p => p >= 1 && p <= 604);
       const log    = logMap.get(date);
       const status: ProgramDay["status"] =
-        date < today  ? (log?.completed ? "done" : "missed")
+        date < today  ? (log?.completed || log?.session_data?.teacher_override ? "done" : "missed")
         : date===today ? "today"
         : "future";
       days.push({ dayNum: workDayIdx+1, date, isWorkingDay: true, pages, status, log });
@@ -3149,7 +3149,7 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
 
         {/* Header */}
         <div style={{
-          background:day.status==="done"
+          background:(day.status==="done"||log?.session_data?.teacher_override)
             ?"linear-gradient(135deg,#14532d,#166534)"
             :"linear-gradient(135deg,#7f1d1d,#991b1b)",
           margin:"10px 12px",borderRadius:18,padding:"16px"}}>
@@ -3160,10 +3160,10 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
                 Day {day.dayNum} — {fmtDate(day.date)}
               </p>
               <p style={{margin:"3px 0 0",fontWeight:900,fontSize:18,color:W}}>
-                {day.status==="done"?"✓ Session Complete":"✗ Missed Session"}
+                {day.status==="done"?"✓ Session Complete":log?.session_data?.teacher_override?"✓ Session Reviewed":"✗ Missed Session"}
               </p>
             </div>
-            {day.status==="done"&&log?.avg_score!=null&&(
+            {(day.status==="done"||log?.session_data?.teacher_override)&&log?.avg_score!=null&&(
               <div style={{width:56,height:56,borderRadius:"50%",
                 background:"rgba(255,255,255,.12)",
                 border:`2px solid ${scoreColor(log.avg_score)}`,
@@ -3177,7 +3177,7 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
             {[
               {label:"Pages", value:`${day.pages[0]}${day.pages.length>1?`–${day.pages[day.pages.length-1]}`:""}` },
               {label:"Time",  value:fmtSecs(log?.duration_secs)},
-              {label:"Recit.",value:sd?.recitation_score!=null?`${sd.recitation_score}%`:"—"},
+              {label:"Recit.",value:(sd as any)?.teacher_override?`${(sd as any).teacher_override.score}%`:sd?.recitation_score!=null?`${sd.recitation_score}%`:"—"},
             ].map(s=>(
               <div key={s.label} style={{background:"rgba(255,255,255,.1)",borderRadius:10,
                 padding:"8px",textAlign:"center"}}>
@@ -3190,19 +3190,20 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
         </div>
 
         <div style={{padding:"0 16px 32px",display:"flex",flexDirection:"column",gap:12}}>
-          {/* Teacher override */}
-          {(sd as any)?.teacher_override&&(
-            <div style={{padding:"14px",borderRadius:14,background:"#EDE9FE",border:"1.5px solid #7c3aed55"}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-                <Bell size={16} color="#7c3aed"/>
-                <p style={{margin:0,fontWeight:800,fontSize:13,color:"#7c3aed"}}>Teacher Score Override</p>
+          {/* Teacher override — show as simple feedback note, score already reflected in header */}
+          {(sd as any)?.teacher_override?.teacher_feedback&&(
+            <div style={{padding:"12px 14px",borderRadius:12,
+              background:`${PASS}08`,border:`1px solid ${PASS}30`,
+              display:"flex",alignItems:"flex-start",gap:10}}>
+              <CheckCircle size={14} color={PASS} style={{flexShrink:0,marginTop:2}}/>
+              <div>
+                <p style={{margin:"0 0 2px",fontSize:10,fontWeight:700,color:PASS,textTransform:"uppercase",letterSpacing:.4}}>
+                  Teacher Feedback
+                </p>
+                <p style={{margin:0,fontSize:12,color:"#374151",lineHeight:1.6,fontStyle:"italic"}}>
+                  "{(sd as any).teacher_override.teacher_feedback}"
+                </p>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-                <div style={{padding:"8px",borderRadius:10,background:"#7c3aed18",textAlign:"center"}}><p style={{margin:0,fontWeight:900,fontSize:20,color:"#7c3aed"}}>{(sd as any).teacher_override.score}%</p><p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>Teacher Score</p></div>
-                <div style={{padding:"8px",borderRadius:10,background:"#F3F4F6",textAlign:"center"}}><p style={{margin:0,fontWeight:900,fontSize:20,color:"#6B7280"}}>{log?.avg_score??0}%</p><p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>AI Score</p></div>
-              </div>
-              {(sd as any).teacher_override.teacher_feedback&&<p style={{margin:0,fontSize:12,color:"#374151",lineHeight:1.6,fontStyle:"italic"}}>"{(sd as any).teacher_override.teacher_feedback}"</p>}
-              <p style={{margin:"6px 0 0",fontSize:10,color:"#9CA3AF"}}>by {(sd as any).teacher_override.reviewed_by} · {new Date((sd as any).teacher_override.reviewed_at).toLocaleDateString("en-GB")}</p>
             </div>
           )}
 
@@ -3272,8 +3273,8 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
             </div>
           )}
 
-          {/* Missed explanation */}
-          {day.status==="missed"&&(
+          {/* Missed explanation — hide if teacher has already reviewed/overridden */}
+          {day.status==="missed"&&!(log?.session_data as any)?.teacher_override&&(
             <div style={{padding:"14px 16px",borderRadius:16,
               background:`${FAIL}08`,border:`1.5px solid ${FAIL}30`}}>
               <p style={{margin:"0 0 4px",fontSize:12,fontWeight:800,color:FAIL}}>
