@@ -839,10 +839,33 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     let cancelled = false;
     (async () => {
       try {
-        // Fetch bytes — works for both blob: URLs and https: signed URLs
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const arrayBuf = await resp.arrayBuffer();
+        let arrayBuf: ArrayBuffer;
+
+        if (url.startsWith("blob:")) {
+          // Blob URLs can only be fetched if they were created in this same
+          // page session. A revoked/stale blob URL throws a NetworkError.
+          // We catch that specifically and set error so the UI can show a
+          // helpful message instead of crashing.
+          try {
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            arrayBuf = await resp.arrayBuffer();
+          } catch (blobErr) {
+            // Blob URL is stale (page was refreshed / navigated away).
+            // Show a soft error — don't crash the rest of the session.
+            if (!cancelled) {
+              console.warn("FullAudioPlayer: blob URL no longer valid (page refreshed?):", blobErr);
+              setError(true);
+            }
+            return;
+          }
+        } else {
+          // Remote https: URL — normal fetch
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          arrayBuf = await resp.arrayBuffer();
+        }
+
         if (cancelled) return;
         const ctx = getCtx();
         // Resume context so decodeAudioData works (required on some mobile browsers)
@@ -965,7 +988,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
           <p style={{ margin: 0, fontWeight: 800, fontSize: 13, color: G1,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</p>
           <p style={{ margin: 0, fontSize: 10, color: "#9CA3AF" }}>
-            {error ? "⚠ Failed to load audio" : loaded ? `${fmt(duration)} · ${speed}×` : "Loading…"}
+            {error ? "⚠ Recording unavailable (page was refreshed)" : loaded ? `${fmt(duration)} · ${speed}×` : "Loading audio…"}
           </p>
         </div>
         <button onClick={cycleSpeed}
@@ -1211,6 +1234,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [audioUrl,     setAudioUrl]    = useState<string|null>(null);
   const [lastTranscript, setLastTranscript] = useState("");
   const [ayahCorrectness, setAyahCorrectness] = useState<boolean[]>([]);
+  // True when transcription returned nothing because no API key is configured
+  const [noApiWarning, setNoApiWarning] = useState(false);
   const hadith = HADITHS[Math.floor(Math.random()*HADITHS.length)];
   const sessionStart = useRef(Date.now());
   const timerRef     = useRef<any>(null);
@@ -1475,6 +1500,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           //   • FullAudioPlayer fires an error event → player stuck on "⚠ Tap ▶ to retry"
           // The local blob URL is valid for the lifetime of this page session and always
           // plays immediately. The signed storage URL is only needed for admin/DB saving.
+
+          // If no transcription API is configured, show a soft-fail:
+          // score 0 but with a clear message rather than silent 0%.
+          if (tx === "__NO_API__") {
+            setLastTranscript("");
+            lastResultRef.current = { tx: "", ayahCorrectness: [] };
+            setScore(0);
+            setErrorWords([]);
+            setAyahCorrectness([]);
+            setNoApiWarning(true); // show "Transcription unavailable" banner
+            idbDeleteBlob(`${userId}_${todayISO()}_partial`);
+            setCarryOverSecs(0);
+            return;
+          }
+
           const sc   = scoreText(tx, ayahs, capturedSecs);
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
@@ -1549,6 +1589,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         }
       } catch { /* fall through to edge function */ }
     }
+
     // 2. Supabase edge function fallback (Deepgram)
     try {
       const b64 = await new Promise<string>(resolve => {
@@ -1559,8 +1600,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       const { data } = await supabase.functions.invoke("transcribe-hifdh", {
         body: { audio: b64, mimeType: blob.type || "audio/webm" },
       });
-      return data?.text ?? data?.transcript ?? "";
-    } catch { return ""; }
+      const tx = data?.text ?? data?.transcript ?? "";
+      if (tx) return tx;
+    } catch { /* fall through */ }
+
+    // 3. No transcription API available — return a sentinel so the UI
+    //    can show a helpful message instead of 0% with no explanation.
+    console.warn("[HifdhDaily] No transcription API available. Set VITE_GROQ_API_KEY or DEEPGRAM_API_KEY.");
+    return "__NO_API__";
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
@@ -2341,7 +2388,26 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </div>
               )}
 
-              {/* 5 ── Encouragement / retry hint when below threshold */}
+              {/* 5 ── No transcription API warning */}
+              {noApiWarning && (
+                <div style={{padding:"12px 14px",borderRadius:12,
+                  background:"#FFF7ED",border:"1.5px solid #FED7AA",
+                  display:"flex",gap:10,alignItems:"flex-start"}}>
+                  <span style={{fontSize:18,flexShrink:0}}>⚠️</span>
+                  <div>
+                    <p style={{margin:"0 0 4px",fontSize:12,fontWeight:800,color:AMBER}}>
+                      Transcription Unavailable
+                    </p>
+                    <p style={{margin:0,fontSize:11,color:"#78350F",lineHeight:1.6}}>
+                      No speech-to-text API key is configured (VITE_GROQ_API_KEY or DEEPGRAM_API_KEY).
+                      Your audio was recorded and saved, but scoring required transcription.
+                      Please contact your admin to add an API key — then re-record to get a proper score.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* 6 ── Encouragement / retry hint when below threshold */}
               {score<PASS_THRESHOLD&&(
                 <div style={{padding:"12px 14px",borderRadius:12,
                   background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`,
@@ -2900,9 +2966,21 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
     let cancelled=false;
     (async()=>{
       try{
-        const resp=await fetch(url);
-        if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const ab=await resp.arrayBuffer();
+        let ab: ArrayBuffer;
+        if (url.startsWith("blob:")) {
+          try {
+            const resp=await fetch(url);
+            if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            ab=await resp.arrayBuffer();
+          } catch(blobErr) {
+            if(!cancelled){console.warn("AudioPlayerWidget: blob URL stale (page refreshed?):",blobErr);setError(true);}
+            return;
+          }
+        } else {
+          const resp=await fetch(url);
+          if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          ab=await resp.arrayBuffer();
+        }
         if(cancelled) return;
         const ctx=getCtx();
         if(ctx.state==="suspended") await ctx.resume();
@@ -2981,7 +3059,7 @@ function AudioPlayerWidget({url,label="Recitation Recording"}:{url:string;label?
           <p style={{margin:0,fontWeight:800,fontSize:12,color:G1,
             overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{label}</p>
           <p style={{margin:0,fontSize:10,color:"#9CA3AF"}}>
-            {error?"⚠ Tap ▶ to retry":loaded?`${fmt(duration)} · ${speed}×`:"Loading…"}
+            {error?"⚠ Recording unavailable (page refreshed)":loaded?`${fmt(duration)} · ${speed}×`:"Loading…"}
           </p>
         </div>
         <button onClick={cycleSpeed} style={{padding:"3px 8px",borderRadius:20,
