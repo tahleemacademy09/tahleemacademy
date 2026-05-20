@@ -1095,6 +1095,22 @@ const SURAH_PAGE:Record<number,number>={
   109:603,110:603,111:603,112:604,113:604,114:604,
 };
 
+/* Reverse map: page → which surah starts on or before that page.
+   Built once at module level — used to keep tafseer in sync when
+   the user navigates pages in Mushaf / Translation mode.          */
+const PAGE_SURAH:Record<number,number>=(()=>{
+  const map:Record<number,number>={};
+  // Fill all 604 pages; last surah that started on or before each page wins
+  for(let p=1;p<=604;p++){
+    let best=1;
+    for(let s=1;s<=114;s++){
+      if((SURAH_PAGE[s]||1)<=p) best=s;
+    }
+    map[p]=best;
+  }
+  return map;
+})();
+
 type QuranMode="quran"|"translation"|"tafseer";
 
 /* ══ FULL QURAN READER — Page-by-page · Translation · Tafseer Ibn Katheer ══ */
@@ -1377,6 +1393,15 @@ const InClassQuranReader=({onClose}:any)=>{
   useEffect(()=>{
     if(mode==="quran")fetchMushafPage(page);
     if(mode==="translation")fetchTranslation(page);
+    // Keep surahNum in sync so switching to Tafseer shows the correct surah
+    if(mode==="quran"||mode==="translation"){
+      const surahForPage=PAGE_SURAH[page]||1;
+      if(surahForPage!==surahNum){
+        setSurahNum(surahForPage);
+        // Clear old tafseer cache so the new surah loads fresh
+        setExpandedTafseer({});
+      }
+    }
   },[page,mode]);
 
   useEffect(()=>{try{localStorage.setItem(QURAN_PAGE_KEY,String(page));}catch{}},[page]);
@@ -1499,11 +1524,17 @@ const InClassQuranReader=({onClose}:any)=>{
     // Reject mostly-vertical swipes
     if(Math.abs(dy)/Math.max(Math.abs(dx),1) > SWIPE_ANGLE_MAX) return;
     if(Math.abs(dx) < SWIPE_THRESHOLD) return;
-    // Arabic / RTL convention: swipe RIGHT (dx>0) → previous page, swipe LEFT (dx<0) → next page
-    // But physical book feel: swipe left-to-right turns to NEXT page (like turning a right-bound book)
-    // We match this: swipe left (dx<0) = turn right = next page; swipe right (dx>0) = previous
-    if(dx < 0) changePage(1);   // swipe left → next page
-    else        changePage(-1); // swipe right → previous page
+    // Arabic Quran is RTL — the next page is physically to the LEFT of the current page.
+    // To "turn forward" you swipe from right to left (like turning a page in an Arabic book).
+    // BUT on a phone, the natural gesture to reveal the next page is to swipe the current
+    // page away to the LEFT — i.e. dx > 0 means your thumb moved RIGHT which pushes
+    // content left, revealing the next page.
+    //
+    // Standard Arabic Quran apps (Tarteel, Quran.com, Muslim Pro):
+    //   Swipe RIGHT (dx > 0) → next page  (page number increases)
+    //   Swipe LEFT  (dx < 0) → prev page  (page number decreases)
+    if(dx > 0) changePage(1);   // swipe right → next page (Arabic forward)
+    else        changePage(-1); // swipe left  → previous page
   };
   const outerStyle:React.CSSProperties=fullscreen
     ?{position:"fixed",inset:0,zIndex:9999,background:"#000",display:"flex",flexDirection:"column"}
