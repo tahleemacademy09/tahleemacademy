@@ -19,7 +19,7 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
   ArrowLeft, Mic, MicOff, BookOpen, CalendarDays, Clock, Trophy,
-  Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
+  Star, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Flame, Target, TrendingUp, Play, RefreshCcw, Heart, Loader2,
   BookMarked, BarChart2, Lock, ShieldCheck, Bell, Eye,
   SkipBack, SkipForward,
@@ -245,7 +245,7 @@ function buildProgramDays(
                           .filter(p => p >= 1 && p <= 604);
       const log    = logMap.get(date);
       const status: ProgramDay["status"] =
-        date < today  ? (log?.completed || log?.session_data?.teacher_override ? "done" : "missed")
+        date < today  ? (log?.completed ? "done" : "missed")
         : date===today ? "today"
         : "future";
       days.push({ dayNum: workDayIdx+1, date, isWorkingDay: true, pages, status, log });
@@ -325,7 +325,12 @@ function normalizeArabic(t: string): string {
     .replace(/\u06E5/g, "\u0648")
     .replace(/\u06E6/g, "\u064A")
     // 11. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
-    .replace(/[\u06DD\u06DE]/g, "");
+    .replace(/[\u06DD\u06DE]/g, "")
+    // 12. Strip Arabic-Indic digits ٠-٩ (U+0660–U+0669) and Extended Arabic-Indic
+    //     digits ۰-۹ (U+06F0–U+06F9).  Some Quran API text fields embed the ayah
+    //     number as "۝٦" — after step 11 strips ۝, the lone digit "٦" survives
+    //     normalization and appears as a blank pink missing-word tile in the grid.
+    .replace(/[\u0660-\u066C\u06F0-\u06F9]/g, "");
 }
 
 // Keep the old name as an alias so nothing else in the file needs to change
@@ -357,39 +362,60 @@ function levenshtein(a: string, b: string): number {
 
 /**
  * wordsMatch — single source of truth for whether two normalised Arabic words
- * are considered the same.  Strategy (in priority order):
+ * are considered the same during Hifdh evaluation.
  *
+ * Strategy (in priority order):
  *  1. Exact match after normalisation.
- *  2. 3-char prefix overlap — handles long-vowel insertions, e.g.
- *     "الرحمان" (ref, after dagger-alef expand) vs "الرحمن" (Whisper).
- *  3. Edit distance ≤ 1 for words ≥ 4 chars — handles single char drop/swap
- *     due to tajweed rules (e.g. idgham drops the nun: "منهم" → "مهم").
- *  4. Edit distance ≤ 2 for words ≥ 7 chars — handles two-char differences
- *     that commonly arise from emphatic-letter substitution in STT output.
+ *  2. Edit distance ≤ 1 for words ≥ 4 chars — handles single-char tajweed
+ *     variants: alef insertion (الرحمن/الرحمان), hamza drop, idgham consonant
+ *     merge (منهم → مهم is d=1), Whisper madd vowel insertion.
+ *  3. Edit distance ≤ 2 for words ≥ 8 chars ONLY — two-char difference is
+ *     only tolerated for long words where it clearly represents a tajweed
+ *     variant rather than a completely different word.
+ *
+ * ── Why the 3-char prefix check was REMOVED ────────────────────────────────
+ * The old code did: if first 3 chars match → treat as same word.
+ * This caused critical false positives on same-root words with different
+ * Quranic meanings:
+ *   • تلهكم ↔ تلهفوا  (share root "تله" — completely different words)
+ *   • فأصدق ↔ فأصدقوا (share "فاصد" — wrong verb form counted as ✅)
+ *   • يعلمون ↔ يعلم    (share "يعل" — plural vs singular wrongly matched)
+ * Levenshtein handles the legitimate variants the prefix was supposed to
+ * catch, so removing the prefix loses nothing and fixes the false matches.
  */
 function wordsMatch(rw: string, gw: string): boolean {
   if (rw === gw) return true;
+  if (!rw || !gw) return false;
   const minLen = Math.min(rw.length, gw.length);
-  // 3-char prefix (existing behaviour, kept)
-  if (minLen >= 3 &&
-      (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3)))) return true;
-  // Edit distance
   if (minLen >= 4) {
     const d = levenshtein(rw, gw);
-    if (d <= 1) return true;
-    if (minLen >= 7 && d <= 2) return true;
+    if (d <= 1) return true;             // one-char diff: madd, hamza, alef variant
+    if (minLen >= 8 && d <= 2) return true; // two-char diff only for long words
   }
   return false;
 }
+
+// Matches any genuine Arabic letter (not digits, symbols, or markers)
+const HAS_ARABIC_LETTER = /[\u0621-\u063A\u0641-\u064A\u0671-\u06D3]/;
 
 // ── Word-by-word comparison ───────────────────────────────────────────────────
 // Stores the ORIGINAL diacritic form of each reference word so the result
 // grid can display full tashkeel while still using normalised text for matching.
 interface WordResult { word: string; status: "correct" | "missing"; }
 function compareWords(refText: string, gotText: string): WordResult[] {
-  // Split on whitespace — keep originals for display, normalize for matching
-  const origRef = refText.split(/\s+/).filter(Boolean);
-  const normRef = origRef.map(w => normalizeArabic(w));
+  // Build the reference word list, skipping tokens that contain no Arabic
+  // letter after normalization (waqf marks, ayah-end ۝, lone Arabic-Indic
+  // numerals, rub-el-hizb ۞ …).  These render as blank pink boxes in the
+  // word grid and unfairly count as "missing" words, dragging the score down.
+  const origRef: string[] = [];
+  const normRef: string[] = [];
+  for (const w of refText.split(/\s+/).filter(Boolean)) {
+    const n = normalizeArabic(w);
+    if (n.length >= 1 && HAS_ARABIC_LETTER.test(n)) {
+      origRef.push(w);
+      normRef.push(n);
+    }
+  }
   const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
 
   const results: WordResult[] = [];
@@ -451,9 +477,21 @@ function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number 
     }
     totalMatched += matched;
 
-    // Advance gotSearchStart to just after the last matched word of this ayah.
-    // If nothing matched (skipped ayah), don't advance — next ayah searches same region.
-    if (lastHit >= 0) gotSearchStart += lastHit + 1;
+    // ── Critical: only advance gotSearchStart when enough words matched ──────
+    // If Whisper skips a verse entirely, the window for that verse still contains
+    // later transcript words.  Common Quranic vocabulary (لا، من، إلى، هم …)
+    // almost always appears somewhere in the window, giving lastHit ≥ 0 even
+    // when 0/14 "real" words were found.  That false advance pushes gotSearchStart
+    // PAST where the next verse actually starts, causing every following verse to
+    // miss its words → cascade failure → 49% instead of ~85%.
+    //
+    // Fix: require at least 2 matched words for ayahs > 4 words before advancing.
+    // A genuinely recited verse will always satisfy this; a skipped verse where
+    // only one common word accidentally matched will NOT advance the pointer.
+    const minAdvance = refW.length <= 4 ? 1 : 2;
+    if (lastHit >= 0 && matched >= minAdvance) {
+      gotSearchStart += lastHit + 1;
+    }
   }
 
   return totalRef > 0 ? Math.round((totalMatched / totalRef) * 100) : 0;
@@ -497,7 +535,10 @@ function getAyahCorrectness(transcript: string, ayahs: Ayah[], _recSecs?: number
         if (wordsMatch(rw, window[k])) { matched++; lastHit = k; gj = k + 1; break; }
       }
     }
-    if (lastHit >= 0) gotSearchStart += lastHit + 1;
+    // Same minAdvance guard as scoreText: prevent a skipped verse's common words
+    // from falsely advancing gotSearchStart past the next verse's actual position.
+    const minAdv = refW.length <= 4 ? 1 : 2;
+    if (lastHit >= 0 && matched >= minAdv) gotSearchStart += lastHit + 1;
     return refW.length > 0 && (matched / refW.length) >= 0.4;
   });
 }
@@ -776,9 +817,12 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   const ctxRef    = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
   const bufferRef = useRef<AudioBuffer | null>(null);
-  const startedAtRef  = useRef<number>(0);   // ctx.currentTime when playback started
-  const offsetRef     = useRef<number>(0);   // seconds into buffer at last pause
+  const startedAtRef  = useRef<number>(0);
+  const offsetRef     = useRef<number>(0);
   const rafRef        = useRef<number | null>(null);
+  // ── HTML audio fallback (used when AudioContext.decodeAudioData fails) ────
+  const htmlAudioRef = useRef<HTMLAudioElement | null>(null);
+  const htmlTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [playing,  setPlaying]  = useState(false);
   const [progress, setProgress] = useState(0);
@@ -787,6 +831,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   const [loaded,   setLoaded]   = useState(false);
   const [error,    setError]    = useState(false);
   const [speed,    setSpeed]    = useState(1);
+  const [htmlMode, setHtmlMode] = useState(false); // true = HTMLAudioElement fallback
 
   const getCtx = () => {
     if (!ctxRef.current || ctxRef.current.state === "closed") {
@@ -830,8 +875,11 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   // Load + decode audio whenever URL changes
   useEffect(() => {
     setLoaded(false); setError(false); setPlaying(false);
-    setProgress(0); setCurTime(0); setDuration(0);
+    setProgress(0); setCurTime(0); setDuration(0); setHtmlMode(false);
     stopRAF(); stopSource();
+    // Clean up any previous HTML audio fallback
+    if (htmlTimerRef.current) { clearInterval(htmlTimerRef.current); htmlTimerRef.current = null; }
+    if (htmlAudioRef.current) { htmlAudioRef.current.pause(); htmlAudioRef.current = null; }
     offsetRef.current = 0;
     bufferRef.current = null;
     if (!url) return;
@@ -870,10 +918,40 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
         const ctx = getCtx();
         // Resume context so decodeAudioData works (required on some mobile browsers)
         if (ctx.state === "suspended") await ctx.resume();
-        const decoded = await ctx.decodeAudioData(arrayBuf);
+
+        // ── Try AudioContext decode (primary — routes to loudspeaker on Android) ──
+        let decoded: AudioBuffer | null = null;
+        try {
+          decoded = await ctx.decodeAudioData(arrayBuf);
+        } catch {
+          // AudioContext.decodeAudioData fails on some Android Chrome versions with
+          // WebM/Opus blobs recorded via MediaRecorder — known Chromium bug.
+          // Fall back to HTMLAudioElement which uses the OS native decoder.
+          // Note: HTML audio may play through earpiece on Android if the audio
+          // session is still set to MODE_IN_COMMUNICATION after recording, but
+          // it's far better than showing "Failed to load audio".
+          if (!cancelled) {
+            const audio = new Audio(url);
+            // Attempt loudspeaker routing via setSinkId (Chrome 110+, Android)
+            if ("setSinkId" in audio) (audio as any).setSinkId("").catch(() => {});
+            htmlAudioRef.current = audio;
+            audio.onloadedmetadata = () => {
+              if (!cancelled) {
+                setDuration(isFinite(audio.duration) ? audio.duration : 0);
+                setHtmlMode(true);
+                setLoaded(true);
+              }
+            };
+            audio.onerror = () => { if (!cancelled) setError(true); };
+            audio.load();
+          }
+          return; // don't fall through to AudioBuffer path
+        }
+
         if (cancelled) return;
         bufferRef.current = decoded;
         setDuration(decoded.duration);
+        setHtmlMode(false);
         setLoaded(true);
       } catch (e) {
         if (!cancelled) { console.warn("FullAudioPlayer decode error:", e); setError(true); }
@@ -889,11 +967,41 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
     return () => {
       stopRAF(); stopSource();
       ctxRef.current?.close().catch(() => {});
+      if (htmlTimerRef.current) clearInterval(htmlTimerRef.current);
+      if (htmlAudioRef.current) { htmlAudioRef.current.pause(); htmlAudioRef.current = null; }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggle = async () => {
+    // ── HTML audio fallback mode ─────────────────────────────────────────────
+    if (htmlMode) {
+      const audio = htmlAudioRef.current; if (!audio) return;
+      if (playing) {
+        audio.pause();
+        offsetRef.current = audio.currentTime;
+        if (htmlTimerRef.current) { clearInterval(htmlTimerRef.current); htmlTimerRef.current = null; }
+        setPlaying(false);
+      } else {
+        audio.currentTime = offsetRef.current;
+        audio.playbackRate = speed;
+        await audio.play().catch(console.error);
+        setPlaying(true);
+        htmlTimerRef.current = setInterval(() => {
+          const a = htmlAudioRef.current; if (!a) return;
+          const dur = a.duration || 1;
+          setCurTime(a.currentTime);
+          setProgress(a.currentTime / dur);
+          if (a.ended) {
+            offsetRef.current = 0; setCurTime(0); setProgress(0); setPlaying(false);
+            if (htmlTimerRef.current) { clearInterval(htmlTimerRef.current); htmlTimerRef.current = null; }
+          }
+        }, 200);
+      }
+      return;
+    }
+
+    // ── AudioContext mode (primary) ──────────────────────────────────────────
     const buffer = bufferRef.current;
     if (!buffer) return;
 
@@ -936,6 +1044,13 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   };
 
   const skip = (secs: number) => {
+    if (htmlMode) {
+      const audio = htmlAudioRef.current; if (!audio) return;
+      const newTime = Math.max(0, Math.min(audio.duration || 0, (audio.currentTime) + secs));
+      audio.currentTime = newTime; offsetRef.current = newTime;
+      setCurTime(newTime); setProgress((audio.duration || 1) > 0 ? newTime / (audio.duration || 1) : 0);
+      return;
+    }
     const buffer = bufferRef.current; if (!buffer) return;
     const ctx = getCtx();
     if (playing) {
@@ -952,10 +1067,17 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   };
 
   const seek = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
-    const buffer = bufferRef.current; if (!buffer) return;
     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
     const clientX = "touches" in e ? (e as React.TouchEvent).touches[0].clientX : (e as React.MouseEvent).clientX;
     const fraction = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    if (htmlMode) {
+      const audio = htmlAudioRef.current; if (!audio) return;
+      const newTime = fraction * (audio.duration || 0);
+      audio.currentTime = newTime; offsetRef.current = newTime;
+      setCurTime(newTime); setProgress(fraction);
+      return;
+    }
+    const buffer = bufferRef.current; if (!buffer) return;
     offsetRef.current = fraction * buffer.duration;
     setCurTime(offsetRef.current);
     setProgress(fraction);
@@ -1438,10 +1560,24 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const startRecording = useCallback(async () => {
     try {
       setAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
-        try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
-      }) || "";
+      // MP4/AAC is tried first: AudioContext.decodeAudioData() on Android Chrome
+      // reliably decodes MP4/AAC but can silently fail with WebM/Opus, causing
+      // "Failed to load audio" in the player after a successful recording.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount:     1,      // mono — Whisper/Deepgram work best with mono
+          echoCancellation: false,  // off — EC algorithms distort Quranic voice quality
+          noiseSuppression: true,   // on  — suppress ambient / keyboard noise
+          autoGainControl:  true,   // on  — normalise volume for quiet reciters
+        },
+      });
+      const mime = [
+        "audio/mp4;codecs=aac",    // best AudioContext decode support on Android
+        "audio/mp4",
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/ogg",
+      ].find(t => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } }) || "";
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       const blobKey = `${userId}_${todayISO()}_partial`;
       mr.ondataavailable = (e) => {
@@ -1564,7 +1700,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     //   2. Show emphatic letters (ص ض ط ظ) and hamza forms (إ أ ئ)
     //   3. NOT suggest any specific content it might hallucinate
     const stylePrompt =
-      "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
+      "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني. صَ ضَ طَ ظَ إِ أَ ئَ ؤَ";
 
     // 1. Groq Whisper large-v3 — verbose_json for segment-level no_speech_prob
     if (GROQ_KEY) {
@@ -1585,11 +1721,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           const segs: any[] = json.segments ?? [];
           const avgNoSpeech = segs.length > 0
             ? segs.reduce((s: number, g: any) => s + (g.no_speech_prob ?? 0), 0) / segs.length
-            : (json.segments?.[0]?.no_speech_prob ?? 0);
+            : 0; // no segments → assume speech (short audio, Whisper sometimes omits them)
           const txt = (json.text ?? "").trim();
-          // Only reject if most segments are silence (< 0.4 threshold is stricter)
-          if (avgNoSpeech < 0.4 && txt.length > 5) return txt;
-          if (avgNoSpeech >= 0.4) return "";
+          // Lenient threshold 0.60 — Quranic tajweed has long breath pauses (madd,
+          // ghunna) and soft consonants that push segment no_speech_prob above 0.40
+          // even during genuine recitation, causing the old threshold to reject real audio.
+          if (txt.length >= 2 && avgNoSpeech < 0.60) return txt;
+          if (avgNoSpeech >= 0.60) return "";
         }
       } catch { /* fall through to edge function */ }
     }
@@ -1643,10 +1781,20 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const startQRecording = async () => {
     try {
       setQRecChunks([]); setQRecResult(null); setQRecDone(false); setQRecSecs(0);
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4"].find(t => {
-        try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
-      }) || "";
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount:     1,
+          echoCancellation: false,
+          noiseSuppression: true,
+          autoGainControl:  true,
+        },
+      });
+      const mime = [
+        "audio/mp4;codecs=aac",
+        "audio/mp4",
+        "audio/webm;codecs=opus",
+        "audio/webm",
+      ].find(t => { try { return MediaRecorder.isTypeSupported(t); } catch { return false; } }) || "";
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       const chunks: Blob[] = [];
       mr.ondataavailable = (e) => { if (e.data?.size > 0) chunks.push(e.data); };
@@ -3149,7 +3297,7 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
 
         {/* Header */}
         <div style={{
-          background:(day.status==="done"||log?.session_data?.teacher_override)
+          background:day.status==="done"
             ?"linear-gradient(135deg,#14532d,#166534)"
             :"linear-gradient(135deg,#7f1d1d,#991b1b)",
           margin:"10px 12px",borderRadius:18,padding:"16px"}}>
@@ -3160,10 +3308,10 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
                 Day {day.dayNum} — {fmtDate(day.date)}
               </p>
               <p style={{margin:"3px 0 0",fontWeight:900,fontSize:18,color:W}}>
-                {day.status==="done"?"✓ Session Complete":log?.session_data?.teacher_override?"✓ Session Reviewed":"✗ Missed Session"}
+                {day.status==="done"?"✓ Session Complete":"✗ Missed Session"}
               </p>
             </div>
-            {(day.status==="done"||log?.session_data?.teacher_override)&&log?.avg_score!=null&&(
+            {day.status==="done"&&log?.avg_score!=null&&(
               <div style={{width:56,height:56,borderRadius:"50%",
                 background:"rgba(255,255,255,.12)",
                 border:`2px solid ${scoreColor(log.avg_score)}`,
@@ -3177,7 +3325,7 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
             {[
               {label:"Pages", value:`${day.pages[0]}${day.pages.length>1?`–${day.pages[day.pages.length-1]}`:""}` },
               {label:"Time",  value:fmtSecs(log?.duration_secs)},
-              {label:"Recit.",value:(sd as any)?.teacher_override?`${(sd as any).teacher_override.score}%`:sd?.recitation_score!=null?`${sd.recitation_score}%`:"—"},
+              {label:"Recit.",value:sd?.recitation_score!=null?`${sd.recitation_score}%`:"—"},
             ].map(s=>(
               <div key={s.label} style={{background:"rgba(255,255,255,.1)",borderRadius:10,
                 padding:"8px",textAlign:"center"}}>
@@ -3190,20 +3338,19 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
         </div>
 
         <div style={{padding:"0 16px 32px",display:"flex",flexDirection:"column",gap:12}}>
-          {/* Teacher override — show as simple feedback note, score already reflected in header */}
-          {(sd as any)?.teacher_override?.teacher_feedback&&(
-            <div style={{padding:"12px 14px",borderRadius:12,
-              background:`${PASS}08`,border:`1px solid ${PASS}30`,
-              display:"flex",alignItems:"flex-start",gap:10}}>
-              <CheckCircle size={14} color={PASS} style={{flexShrink:0,marginTop:2}}/>
-              <div>
-                <p style={{margin:"0 0 2px",fontSize:10,fontWeight:700,color:PASS,textTransform:"uppercase",letterSpacing:.4}}>
-                  Teacher Feedback
-                </p>
-                <p style={{margin:0,fontSize:12,color:"#374151",lineHeight:1.6,fontStyle:"italic"}}>
-                  "{(sd as any).teacher_override.teacher_feedback}"
-                </p>
+          {/* Teacher override */}
+          {(sd as any)?.teacher_override&&(
+            <div style={{padding:"14px",borderRadius:14,background:"#EDE9FE",border:"1.5px solid #7c3aed55"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                <Bell size={16} color="#7c3aed"/>
+                <p style={{margin:0,fontWeight:800,fontSize:13,color:"#7c3aed"}}>Teacher Score Override</p>
               </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                <div style={{padding:"8px",borderRadius:10,background:"#7c3aed18",textAlign:"center"}}><p style={{margin:0,fontWeight:900,fontSize:20,color:"#7c3aed"}}>{(sd as any).teacher_override.score}%</p><p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>Teacher Score</p></div>
+                <div style={{padding:"8px",borderRadius:10,background:"#F3F4F6",textAlign:"center"}}><p style={{margin:0,fontWeight:900,fontSize:20,color:"#6B7280"}}>{log?.avg_score??0}%</p><p style={{margin:0,fontSize:9,fontWeight:700,color:"#6B7280",textTransform:"uppercase"}}>AI Score</p></div>
+              </div>
+              {(sd as any).teacher_override.teacher_feedback&&<p style={{margin:0,fontSize:12,color:"#374151",lineHeight:1.6,fontStyle:"italic"}}>"{(sd as any).teacher_override.teacher_feedback}"</p>}
+              <p style={{margin:"6px 0 0",fontSize:10,color:"#9CA3AF"}}>by {(sd as any).teacher_override.reviewed_by} · {new Date((sd as any).teacher_override.reviewed_at).toLocaleDateString("en-GB")}</p>
             </div>
           )}
 
@@ -3273,8 +3420,8 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
             </div>
           )}
 
-          {/* Missed explanation — hide if teacher has already reviewed/overridden */}
-          {day.status==="missed"&&!(log?.session_data as any)?.teacher_override&&(
+          {/* Missed explanation */}
+          {day.status==="missed"&&(
             <div style={{padding:"14px 16px",borderRadius:16,
               background:`${FAIL}08`,border:`1.5px solid ${FAIL}30`}}>
               <p style={{margin:"0 0 4px",fontSize:12,fontWeight:800,color:FAIL}}>
