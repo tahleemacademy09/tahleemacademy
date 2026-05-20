@@ -418,101 +418,29 @@ export default function GlobalClassroomOverlay() {
   if (!inCall || !activeSubject) return null;
 
   return (
-    <>
-      {/* ── Minimized pill — visible above everything when class is minimized ── */}
-      {minimized && (
-        <div style={{
-          position:       "fixed",
-          bottom:         20,
-          left:           "50%",
-          transform:      "translateX(-50%)",
-          zIndex:         8100,
-          display:        "flex",
-          alignItems:     "center",
-          gap:            10,
-          background:     "rgba(6,78,59,.97)",
-          backdropFilter: "blur(16px)",
-          WebkitBackdropFilter: "blur(16px)",
-          borderRadius:   50,
-          padding:        "8px 14px 8px 10px",
-          boxShadow:      "0 8px 32px rgba(0,0,0,.55)",
-          border:         "1.5px solid rgba(255,255,255,.18)",
-          minWidth:       220,
-          maxWidth:       "calc(100vw - 32px)",
-        }}>
-          {/* Live pulse dot */}
-          <div style={{
-            width: 34, height: 34, borderRadius: "50%",
-            background: "rgba(34,197,94,.18)", border: "2px solid #22c55e",
-            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-          }}>
-            <div style={{
-              width: 9, height: 9, borderRadius: "50%", background: "#22c55e",
-              animation: "glbl-pulse 1.5s ease infinite",
-            }}/>
-          </div>
-          {/* Class info */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {title}
-            </div>
-            <div style={{ fontSize: 10, color: "rgba(255,255,255,.55)" }}>● Live class in progress</div>
-          </div>
-          {/* Mic toggle */}
-          <button onClick={handleToggleMic} title={localMic ? "Mute" : "Unmute"} style={{
-            width: 30, height: 30, borderRadius: "50%", border: "none", flexShrink: 0, cursor: "pointer",
-            background: localMic ? "rgba(34,197,94,.2)" : "rgba(239,68,68,.2)",
-            color: localMic ? "#22c55e" : "#ef4444",
-            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14,
-          }}>
-            {localMic ? "🎙" : "🔇"}
-          </button>
-          {/* Return button */}
-          <button onClick={handleReturn} style={{
-            padding: "6px 14px", borderRadius: 20, border: "none",
-            background: "#22c55e", color: "#fff", fontSize: 12, fontWeight: 800,
-            cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap",
-          }}>
-            Return
-          </button>
-          {/* Leave button */}
-          <button onClick={handleLeave} style={{
-            width: 28, height: 28, borderRadius: "50%", border: "none",
-            background: "rgba(239,68,68,.85)", color: "#fff", cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-            fontSize: 13, fontWeight: 700,
-          }}>
-            ✕
-          </button>
-          <style>{`@keyframes glbl-pulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
-        </div>
-      )}
-
-      {/* ── Full classroom — always mounted, CSS-hidden when minimized ──
-          display:none would unmount/destroy the LiveKit tree — never use it.
-          visibility:hidden alone is NOT enough: child elements can override it
-          with visibility:visible and still paint (ClassroomView's dark bg bleeds through).
-          opacity:0 is the correct approach — it fully suppresses ALL descendant
-          painting unconditionally, keeping the component tree alive for LiveKit
-          while making the classroom completely invisible.                       */}
-      <div style={{
-        position:      "fixed",
-        inset:         0,
-        zIndex:        8000,
-        display:       "flex",
-        flexDirection: "column",
-        opacity:       minimized ? 0 : 1,
-        pointerEvents: minimized ? "none" : "all",
-        // Instant hide, quick show
-        transition:    minimized ? "none" : "opacity .12s ease",
-      }}>
-        <ClassroomView
-          subject={activeSubject}
-          onLeave={leaveClass}
-          onMinimize={handleMinimize}
-          autoJoin={autoJoin}
-        />
-      </div>
-    </>
+    /* ── Full classroom — always mounted so LiveKit stays alive ──────────────
+       When minimized the browser's own PiP overlay (canvas video) is used.
+       We move the classroom div off-screen with translate instead of opacity/
+       visibility so it has NO visual or layout footprint on the page behind.
+       translate(-200%, 0) shifts it 200vw to the left — completely off canvas —
+       while keeping the React tree and all WebRTC connections intact.           */
+    <div style={{
+      position:      "fixed",
+      inset:         0,
+      zIndex:        8000,
+      display:       "flex",
+      flexDirection: "column",
+      // Off-screen when minimized → zero visual footprint, browser PiP does the rest
+      transform:     minimized ? "translateX(-200%)" : "translateX(0)",
+      pointerEvents: minimized ? "none" : "all",
+      transition:    minimized ? "none" : "transform .12s ease",
+    }}>
+      <ClassroomView
+        subject={activeSubject}
+        onLeave={leaveClass}
+        onMinimize={handleMinimize}
+        autoJoin={autoJoin}
+      />
+    </div>
   );
 }
