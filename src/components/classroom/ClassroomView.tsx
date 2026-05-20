@@ -1304,15 +1304,12 @@ const InClassQuranReader=({onClose}:any)=>{
     setSurahLoading(false);
   };
 
-  /* fetch Arabic Ibn Katheer tafseer per-ayah (on demand) */
-  const toggleTafseer=async(surah:number,ayah:number)=>{
+  /* fetch tafseer for a single ayah — used by auto-loader */
+  const fetchOneTafseer=async(surah:number,ayah:number)=>{
     const key=`${surah}:${ayah}`;
-    if(expandedTafseer[key]!==undefined){
-      setExpandedTafseer(p=>{const n={...p};delete n[key];return n;});return;
-    }
+    if(expandedTafseer[key]!==undefined) return; // already loaded
     setLoadingTafseer(p=>({...p,[key]:true}));
     try{
-      /* Primary: Arabic Ibn Katheer from quran.com (tafsir id 16) */
       const ctrl=new AbortController();
       const t=setTimeout(()=>ctrl.abort(),8000);
       const r=await fetch(`https://api.quran.com/api/v4/tafsirs/16/by_ayah?verse_key=${surah}:${ayah}`,{signal:ctrl.signal});
@@ -1323,7 +1320,6 @@ const InClassQuranReader=({onClose}:any)=>{
         setExpandedTafseer(p=>({...p,[key]:raw.replace(/<[^>]+>/g,"").replace(/&amp;/g,"&").replace(/&nbsp;/g," ").replace(/\s+/g," ").trim()}));
       }else throw new Error("empty");
     }catch{
-      /* Fallback: Arabic muyassar simplified tafseer from alquran.cloud */
       try{
         const r2=await fetch(`https://api.alquran.cloud/v1/ayah/${surah}:${ayah}/ar.muyassar`);
         const j2=await r2.json();
@@ -1336,6 +1332,14 @@ const InClassQuranReader=({onClose}:any)=>{
     }
     setLoadingTafseer(p=>({...p,[key]:false}));
   };
+
+  /* auto-load all tafseer when surahAyahs changes in tafseer mode */
+  useEffect(()=>{
+    if(mode!=="tafseer"||surahAyahs.length===0) return;
+    // Load sequentially to avoid hammering the API
+    (async()=>{for(const a of surahAyahs){await fetchOneTafseer(surahNum,a.numberInSurah);}})();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[surahAyahs,mode]);
 
   /* audio — uses selected reciter */
   const playVerse=(surah:number,verse:number)=>{
@@ -1395,61 +1399,49 @@ const InClassQuranReader=({onClose}:any)=>{
     {key:"tafseer" as QuranMode,icon:"📚",label:"Tafseer"},
   ];
 
-  /* ── compact page nav bar ── */
+  /* ── single-line nav bar: prev | page | next | Surah | reciters (scrollable) ── */
   const PageNav=()=>(
-    <div style={{display:"flex",alignItems:"center",gap:4,padding:"5px 8px",borderBottom:"1px solid #e8dfc8",background:"#fff",flexShrink:0}}>
+    <div style={{display:"flex",alignItems:"center",gap:3,padding:"4px 6px",borderBottom:"1px solid #e8dfc8",background:"#fff",flexShrink:0,overflowX:"auto",WebkitOverflowScrolling:"touch" as any}}>
+      {/* Prev */}
       <button onClick={()=>changePage(-1)} disabled={page<=1}
-        style={{padding:"4px 11px",borderRadius:6,border:"1px solid #d4c9a0",background:"#f5f0e4",color:"#1a3d24",cursor:page<=1?"not-allowed":"pointer",fontSize:15,fontWeight:700,opacity:page<=1?0.35:1,flexShrink:0}}>
+        style={{flexShrink:0,padding:"4px 10px",borderRadius:6,border:"1px solid #d4c9a0",background:"#f5f0e4",color:"#1a3d24",cursor:page<=1?"not-allowed":"pointer",fontSize:14,fontWeight:700,opacity:page<=1?0.35:1}}>
         ←
       </button>
-      {/* Tappable page number / input */}
+      {/* Page number / jump input */}
       {pageInputOpen?(
-        <div style={{flex:1,display:"flex",alignItems:"center",gap:4,justifyContent:"center"}}>
-          <input
-            autoFocus
-            type="number" min={1} max={604}
-            value={pageInput}
+        <div style={{display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+          <input autoFocus type="number" min={1} max={604} value={pageInput}
             onChange={e=>setPageInput(e.target.value)}
             onKeyDown={e=>{if(e.key==="Enter")commitPageInput();if(e.key==="Escape"){setPageInputOpen(false);setPageInput("");}}}
             onBlur={commitPageInput}
-            style={{width:56,textAlign:"center",padding:"3px 6px",border:"2px solid #b7791f",borderRadius:6,fontSize:14,fontWeight:700,color:"#1a3d24",outline:"none"}}
-            placeholder={String(page)}
-          />
-          <span style={{fontSize:10,color:"#b7791f",fontWeight:600}}>/ 604</span>
+            style={{width:48,textAlign:"center",padding:"2px 4px",border:"2px solid #b7791f",borderRadius:6,fontSize:13,fontWeight:700,color:"#1a3d24",outline:"none"}}
+            placeholder={String(page)}/>
+          <span style={{fontSize:9,color:"#b7791f",fontWeight:600,flexShrink:0}}>/ 604</span>
         </div>
       ):(
-        <button onClick={()=>{setPageInput(String(page));setPageInputOpen(true);}}
-          style={{flex:1,background:"none",border:"1px solid transparent",borderRadius:6,cursor:"pointer",padding:"3px 0",textAlign:"center"}}
-          title="Tap to jump to page">
-          <span style={{fontSize:12,fontWeight:700,color:"#1a3d24"}}>P </span>
-          <span style={{fontSize:15,fontWeight:800,color:"#1a3d24"}}>{page}</span>
-          <span style={{fontSize:10,color:"#b7791f"}}> / 604</span>
+        <button onClick={()=>{setPageInput(String(page));setPageInputOpen(true);}} title="Tap to jump"
+          style={{flexShrink:0,background:"none",border:"1px solid transparent",borderRadius:6,cursor:"pointer",padding:"3px 4px"}}>
+          <span style={{fontSize:11,fontWeight:800,color:"#1a3d24"}}>P{page}</span>
+          <span style={{fontSize:9,color:"#b7791f"}}>/604</span>
         </button>
       )}
+      {/* Next */}
       <button onClick={()=>changePage(1)} disabled={page>=604}
-        style={{padding:"4px 11px",borderRadius:6,border:"1px solid #d4c9a0",background:"#f5f0e4",color:"#1a3d24",cursor:page>=604?"not-allowed":"pointer",fontSize:15,fontWeight:700,opacity:page>=604?0.35:1,flexShrink:0}}>
+        style={{flexShrink:0,padding:"4px 10px",borderRadius:6,border:"1px solid #d4c9a0",background:"#f5f0e4",color:"#1a3d24",cursor:page>=604?"not-allowed":"pointer",fontSize:14,fontWeight:700,opacity:page>=604?0.35:1}}>
         →
       </button>
+      {/* Surah picker */}
       <button onClick={()=>setShowPicker(true)}
-        style={{padding:"4px 8px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>
+        style={{flexShrink:0,padding:"4px 8px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>
         ☰ Surah
       </button>
-    </div>
-  );
-
-  /* ── reciter strip (mushaf only) ── */
-  const ReciterStrip=()=>(
-    <div style={{display:"flex",gap:4,overflowX:"auto",padding:"5px 8px",background:"#f9f5ec",borderBottom:"1px solid #e8dfc8",flexShrink:0,WebkitOverflowScrolling:"touch" as any}}>
+      {/* Divider */}
+      <div style={{flexShrink:0,width:1,height:20,background:"#e8dfc8",margin:"0 2px"}}/>
+      {/* Reciters — scroll within the same row */}
       {RECITERS.map(r=>(
         <button key={r.id} onClick={()=>{
           setReciter(r.id);
-          /* if a verse is currently playing, restart it with new reciter */
-          if(playingVerse){
-            const[s,v]=playingVerse.split(":").map(Number);
-            audioRef.current?.pause();
-            setPlayingVerse(null);
-            setTimeout(()=>playVerse(s,v),80);
-          }
+          if(playingVerse){const[s,v]=playingVerse.split(":").map(Number);audioRef.current?.pause();setPlayingVerse(null);setTimeout(()=>playVerse(s,v),80);}
         }}
           style={{flexShrink:0,padding:"3px 9px",borderRadius:12,border:`1.5px solid ${reciter===r.id?"#b7791f":"rgba(183,121,31,.3)"}`,
             background:reciter===r.id?"#b7791f":"#fff",color:reciter===r.id?"#fff":"#7a5c1e",
@@ -1459,6 +1451,9 @@ const InClassQuranReader=({onClose}:any)=>{
       ))}
     </div>
   );
+
+  /* ReciterStrip kept as no-op so existing references don't break */
+  const ReciterStrip=()=>null;
 
   /* ── surah picker overlay ── */
   const SurahPicker=()=>showPicker?(
@@ -1486,7 +1481,30 @@ const InClassQuranReader=({onClose}:any)=>{
     </div>
   ):null;
 
-  /* ── outer container changes with fullscreen ── */
+  /* ── swipe-to-turn-page ── */
+  const swipeStartX = useRef<number|null>(null);
+  const swipeStartY = useRef<number|null>(null);
+  const SWIPE_THRESHOLD = 50; // px horizontal movement needed
+  const SWIPE_ANGLE_MAX = 0.7; // tan(~35°) — reject vertical drags
+
+  const onTouchStart=(e:React.TouchEvent)=>{
+    swipeStartX.current=e.touches[0].clientX;
+    swipeStartY.current=e.touches[0].clientY;
+  };
+  const onTouchEnd=(e:React.TouchEvent)=>{
+    if(swipeStartX.current===null||swipeStartY.current===null) return;
+    const dx=e.changedTouches[0].clientX - swipeStartX.current;
+    const dy=e.changedTouches[0].clientY - swipeStartY.current;
+    swipeStartX.current=null; swipeStartY.current=null;
+    // Reject mostly-vertical swipes
+    if(Math.abs(dy)/Math.max(Math.abs(dx),1) > SWIPE_ANGLE_MAX) return;
+    if(Math.abs(dx) < SWIPE_THRESHOLD) return;
+    // Arabic / RTL convention: swipe RIGHT (dx>0) → previous page, swipe LEFT (dx<0) → next page
+    // But physical book feel: swipe left-to-right turns to NEXT page (like turning a right-bound book)
+    // We match this: swipe left (dx<0) = turn right = next page; swipe right (dx>0) = previous
+    if(dx < 0) changePage(1);   // swipe left → next page
+    else        changePage(-1); // swipe right → previous page
+  };
   const outerStyle:React.CSSProperties=fullscreen
     ?{position:"fixed",inset:0,zIndex:9999,background:"#000",display:"flex",flexDirection:"column"}
     :{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.6)"};
@@ -1532,8 +1550,11 @@ const InClassQuranReader=({onClose}:any)=>{
           <>
             <PageNav/>
             <ReciterStrip/>
-            <div style={{flex:1,overflowY:"auto",background:"linear-gradient(180deg,#f5f0e8 0%,#ede8da 100%)"}}>
-              {mushafLoading&&(
+            <div
+              style={{flex:1,overflowY:"auto",background:"linear-gradient(180deg,#f5f0e8 0%,#ede8da 100%)"}}
+              onTouchStart={onTouchStart}
+              onTouchEnd={onTouchEnd}
+            >              {mushafLoading&&(
                 <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:40,gap:10}}>
                   <div style={{width:28,height:28,border:"3px solid #1a3d24",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
                   <span style={{fontSize:11,color:"#7a9e88",fontFamily:"'Amiri',serif"}}>جارٍ تحميل الصفحة…</span>
@@ -1575,9 +1596,16 @@ const InClassQuranReader=({onClose}:any)=>{
                           w.text.includes("بِسۡمِ") || w.text.includes("بسم")
                         ) && line.words.length <= 8;
                         const isLastLine = li === mushafLines.length - 1;
+                        const hasEndMarker = line.words.some((w: any) => w.isEnd);
+                        // Physical Mushaf justification rules:
+                        // • Basmala / surah opener → center
+                        // • Any line with ≥3 words → space-between (full width), even if it's the last
+                        // • Last line with only 1-2 words and no end marker → flex-end (right-align orphan)
                         const justify = (line.isCentered || isBismillah)
                           ? "center"
-                          : isLastLine ? "flex-end" : "space-between";
+                          : (isLastLine && line.words.length <= 2 && !hasEndMarker)
+                            ? "flex-end"
+                            : "space-between";
 
                         return (
                           <div
@@ -1831,41 +1859,40 @@ const InClassQuranReader=({onClose}:any)=>{
                   )}
                   {surahAyahs.map((a:any)=>{
                     const key=`${surahNum}:${a.numberInSurah}`;
-                    const isExpanded=expandedTafseer[key]!==undefined;
+                    const tafseerText=expandedTafseer[key];
                     const isLoadingT=loadingTafseer[key];
                     return(
-                      <div key={a.numberInSurah} style={{borderBottom:"1px solid #f0e8d4",background:isExpanded?"#fffbf0":"#fff"}}>
+                      <div key={a.numberInSurah} style={{borderBottom:"1px solid #f0e8d4",background:"#fff"}}>
                         {/* Arabic ayah */}
-                        <div style={{padding:"10px 12px 6px"}}>
-                          <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:21,color:"#1a3d24",lineHeight:2.2,textAlign:"right",direction:"rtl",wordBreak:"break-word"}}>
+                        <div style={{padding:"12px 12px 6px"}}>
+                          <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:22,color:"#1a3d24",lineHeight:2.2,textAlign:"right",direction:"rtl",wordBreak:"break-word"}}>
                             {a.text}
-                            <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:"50%",background:"#b7791f",marginRight:5,fontSize:9,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0}}>
+                            <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:24,height:24,borderRadius:"50%",background:"#b7791f",marginRight:6,fontSize:9,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0}}>
                               {toAr(a.numberInSurah)}
                             </span>
                           </div>
-                          <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:4}}>
-                            <button onClick={()=>playVerse(surahNum,a.numberInSurah)}
-                              style={{padding:"3px 9px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===key?"#fee2e2":"#f0fff4",color:playingVerse===key?"#c0392b":"#1a3d24",fontSize:10,fontWeight:700,cursor:"pointer"}}>
-                              {playingVerse===key?"⏹ Stop":"▶ Listen"}
-                            </button>
-                            <button onClick={()=>toggleTafseer(surahNum,a.numberInSurah)}
-                              style={{padding:"3px 9px",borderRadius:5,border:"1px solid rgba(183,121,31,.4)",background:isExpanded?"#fff3d4":"#fff",color:"#b7791f",fontSize:10,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:3}}>
-                              {isLoadingT?<span style={{display:"inline-block",width:9,height:9,border:"2px solid #b7791f",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .6s linear infinite"}}/>:(isExpanded?"▲ Hide":"📚")}
-                              {isLoadingT?"…":isExpanded?"":"Tafseer"}
-                            </button>
-                          </div>
+                          {/* Listen button only */}
+                          <button onClick={()=>playVerse(surahNum,a.numberInSurah)}
+                            style={{padding:"3px 10px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===key?"#fee2e2":"#f0fff4",color:playingVerse===key?"#c0392b":"#1a3d24",fontSize:10,fontWeight:700,cursor:"pointer",marginTop:4}}>
+                            {playingVerse===key?"⏹ Stop":"▶ Listen"}
+                          </button>
                         </div>
-                        {/* Tafseer expanded panel */}
-                        {isExpanded&&(
-                          <div style={{padding:"8px 12px 10px",background:"#fffbf0",borderTop:"1px solid #f5edd8"}}>
-                            <div style={{fontSize:9,fontWeight:800,color:"#b7791f",letterSpacing:.7,textTransform:"uppercase",marginBottom:5}}>
-                              تفسير ابن كثير
-                            </div>
-                            <div style={{fontFamily:"'Amiri',serif",fontSize:14,color:"#3d3522",lineHeight:2,direction:"rtl",textAlign:"right",whiteSpace:"pre-wrap"}}>
-                              {expandedTafseer[key]}
-                            </div>
+                        {/* Tafseer — always visible */}
+                        <div style={{padding:"8px 12px 12px",background:"#fffbf0",borderTop:"1px solid #f5edd8"}}>
+                          <div style={{fontSize:9,fontWeight:800,color:"#b7791f",letterSpacing:.7,textTransform:"uppercase",marginBottom:6}}>
+                            تفسير ابن كثير
                           </div>
-                        )}
+                          {isLoadingT?(
+                            <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 0"}}>
+                              <div style={{width:12,height:12,border:"2px solid #b7791f",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .6s linear infinite",flexShrink:0}}/>
+                              <span style={{fontSize:11,color:"#b7791f"}}>جارٍ تحميل التفسير…</span>
+                            </div>
+                          ):(
+                            <div style={{fontFamily:"'Amiri',serif",fontSize:14,color:"#3d3522",lineHeight:2,direction:"rtl",textAlign:"right",whiteSpace:"pre-wrap"}}>
+                              {tafseerText||"—"}
+                            </div>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
