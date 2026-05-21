@@ -508,6 +508,52 @@ function getAyahCorrectness(transcript: string, ayahs: Ayah[], _recSecs?: number
     return refW.length > 0 && (matched / refW.length) >= 0.4;
   });
 }
+
+/* ── buildKaraokeState ─────────────────────────────────────────────────────
+ * Aligns the live Web-Speech transcript against the reference Quran words so
+ * every word can be coloured in real-time while the student recites.
+ *
+ * Status values:
+ *   "correct"   → word was spoken and matched (green)
+ *   "incorrect" → a spoken word was consumed here but didn't match (red)
+ *   "active"    → next expected word — pulsing gold cursor
+ *   "pending"   → not yet reached (grey)
+ *
+ * Uses a forward-only sliding-window with 1–3 word lookahead for skips.
+ */
+type KaraokeStatus = "correct" | "incorrect" | "active" | "pending";
+interface KaraokeWord { word: string; status: KaraokeStatus; }
+
+function buildKaraokeState(liveText: string, pageAyahs: Ayah[]): KaraokeWord[] {
+  const refWords  = pageAyahs.flatMap(a => a.text.split(/\s+/).filter(Boolean));
+  if (!refWords.length) return [];
+  const refNorm   = refWords.map(normalizeArabic);
+  const spoken    = normalizeArabic(liveText).split(/\s+/).filter(Boolean);
+  const result: KaraokeWord[] = refWords.map(w => ({ word: w, status: "pending" }));
+
+  let rIdx = 0, sIdx = 0;
+  while (sIdx < spoken.length && rIdx < refWords.length) {
+    if (spoken[sIdx] === refNorm[rIdx]) {
+      result[rIdx].status = "correct";
+      rIdx++; sIdx++;
+    } else {
+      // Look ahead 1–3 reference words — student may have skipped one
+      let found = false;
+      for (let la = 1; la <= 3 && rIdx + la < refWords.length; la++) {
+        if (spoken[sIdx] === refNorm[rIdx + la]) {
+          for (let k = 0; k < la; k++) result[rIdx + k].status = "incorrect";
+          result[rIdx + la].status = "correct";
+          rIdx += la + 1; sIdx++;
+          found = true; break;
+        }
+      }
+      if (!found) { result[rIdx].status = "incorrect"; rIdx++; sIdx++; }
+    }
+  }
+  if (rIdx < refWords.length) result[rIdx].status = "active"; // cursor
+  return result;
+}
+
 function shuffle<T>(arr:T[]): T[] {
   const a=[...arr];
   for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
@@ -1340,6 +1386,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // When a tab-switch interrupts recording we set this true so mr.onstop knows
   // NOT to reset carryOverSecs to 0 — the "Continue Recording" banner needs it.
   const tabSwitchStopRef = useRef(false);
+  // Points to the currently-active (next expected) word span for auto-scroll
+  const activeWordRef = useRef<HTMLSpanElement>(null);
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
   useEffect(() => {
@@ -1498,6 +1546,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   /* ── keep recSecsRef in sync so mr.onstop can read it ── */
   useEffect(() => { recSecsRef.current = recSecs; }, [recSecs]);
+
+  // ── Auto-scroll the karaoke view to keep the active word centred ────────
+  useEffect(() => {
+    if (!isRecording) return;
+    activeWordRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [liveText, isRecording]);
 
   /* ── save partial log whenever a page evaluation lands ── */
   /* This lets the admin see the attempt even if the student never passes */
@@ -2252,6 +2306,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         @keyframes wavePulse { 0%,100%{transform:scaleY(.4)} 50%{transform:scaleY(1)} }
         @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+        @keyframes recDot  { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.7)} }
+        @keyframes activeGlow { 0%,100%{box-shadow:0 0 0 2px rgba(180,120,0,.5),0 0 8px rgba(180,120,0,.2)} 50%{box-shadow:0 0 0 3px rgba(180,120,0,.8),0 0 16px rgba(180,120,0,.35)} }
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap');
         .ar-word { unicode-bidi: isolate; display: inline; }
       `}</style>
@@ -2477,42 +2533,108 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               </div>
             )}
 
-            {/* During recitation — show waveform + live rolling transcript */}
-            {isRecording ? (
-              <div style={{display:"flex",flexDirection:"column",alignItems:"center",
-                padding:"24px 16px",gap:14,width:"100%"}}>
-                <Wave/>
-                <p style={{margin:0,fontWeight:900,fontSize:16,color:G1,textAlign:"center"}}>
-                  Listening attentively…
-                </p>
-                <span style={{display:"inline-block",padding:"6px 20px",borderRadius:20,
-                  background:`${PASS}14`,border:`1px solid ${PASS}44`,
-                  fontSize:14,fontWeight:900,color:PASS}}>
-                  🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
-                </span>
-                {/* Live transcript — updates as student speaks */}
-                <div style={{
-                  width:"100%",maxHeight:180,overflowY:"auto",
-                  background:"#f9fafb",borderRadius:12,
-                  padding:"10px 14px",
-                  border:`1.5px solid ${PASS}44`,
-                  direction:"rtl",textAlign:"right",
-                  fontFamily:"'Amiri Quran','Amiri',serif",
-                  fontSize:17,color:"#1a1a1a",lineHeight:2.2,
-                  minHeight:52,
-                }}>
-                  {liveText
-                    ? liveText
-                    : <span style={{color:"#9CA3AF",fontSize:12,fontFamily:"inherit",direction:"ltr",display:"block",textAlign:"center"}}>
-                        {isRecording ? "🎙️ Recording… recite clearly into your mic" : "Start reciting — your words will appear here…"}
+            {/* During recitation — karaoke: each Quran word colours green/red as spoken */}
+            {isRecording ? (()=>{
+              const karaokeWords = buildKaraokeState(liveText, pageAyahs);
+              const done  = karaokeWords.filter(w=>w.status==="correct"||w.status==="incorrect").length;
+              const total = karaokeWords.length;
+              const pct   = total > 0 ? Math.round((done/total)*100) : 0;
+              return (
+                <div style={{display:"flex",flexDirection:"column",gap:12,width:"100%",paddingTop:4}}>
+
+                  {/* ── Timer + progress bar ── */}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                    padding:"10px 14px",background:"rgba(220,38,38,0.06)",borderRadius:12,
+                    border:"1px solid rgba(220,38,38,0.18)"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{width:10,height:10,borderRadius:"50%",background:FAIL,display:"inline-block",
+                        animation:"recDot 1.1s ease-in-out infinite"}}/>
+                      <span style={{fontSize:13,fontWeight:800,color:FAIL,fontFamily:"inherit"}}>
+                        جاري الاستماع…
                       </span>
-                  }
+                    </div>
+                    <span style={{fontSize:15,fontWeight:900,color:G1,fontFamily:"monospace",letterSpacing:1}}>
+                      {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
+                    </span>
+                  </div>
+
+                  {/* Progress strip */}
+                  {total > 0 && (
+                    <div style={{height:5,borderRadius:4,background:"#e5e7eb",overflow:"hidden"}}>
+                      <div style={{height:"100%",width:`${pct}%`,
+                        background:`linear-gradient(to right,${PASS},${G2})`,
+                        borderRadius:4,transition:"width .3s ease"}}/>
+                    </div>
+                  )}
+
+                  {/* ── Word-by-word Quran karaoke ── */}
+                  {pageAyahs.length > 0 ? (
+                    <div style={{
+                      background:"#fffdf6",
+                      borderRadius:14,
+                      border:`2px solid ${GOLD}66`,
+                      padding:"18px 16px 16px",
+                      direction:"rtl",
+                      fontFamily:"'Amiri Quran','Amiri',serif",
+                      fontSize:23,
+                      lineHeight:3.6,
+                      textAlign:"justify",
+                      boxShadow:"0 2px 16px rgba(0,0,0,.07)",
+                    }}>
+                      {karaokeWords.map((w,i)=>{
+                        const isActive = w.status==="active";
+                        return (
+                          <span
+                            key={i}
+                            ref={isActive ? activeWordRef : null}
+                            style={{
+                              display:"inline",
+                              padding:"3px 5px",
+                              borderRadius:7,
+                              margin:"0 2px",
+                              transition:"background .2s ease, color .2s ease",
+                              background:
+                                w.status==="correct"   ? "#16a34a20" :
+                                w.status==="incorrect" ? "#dc262618" :
+                                isActive               ? `${GOLD}2a` : "transparent",
+                              color:
+                                w.status==="correct"   ? "#16a34a" :
+                                w.status==="incorrect" ? "#dc2626" :
+                                isActive               ? G1        : "#adb5bd",
+                              fontWeight: isActive ? 700 : 400,
+                              animation: isActive ? "activeGlow 1.2s ease-in-out infinite" : "none",
+                            }}>
+                            {w.word}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{textAlign:"center",padding:"30px 0",color:"#9CA3AF",fontSize:13}}>
+                      <Loader2 size={22} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
+                      <p style={{margin:"8px 0 0"}}>Loading Quran text…</p>
+                    </div>
+                  )}
+
+                  {/* ── Colour legend ── */}
+                  <div style={{display:"flex",justifyContent:"center",gap:20,flexWrap:"wrap"}}>
+                    {([["#16a34a","Correct ✓"],["#dc2626","Missed / Wrong ✗"],[G1,"Current word"]] as const).map(([c,l])=>(
+                      <span key={l} style={{display:"flex",alignItems:"center",gap:5,
+                        fontSize:11,color:c,fontWeight:700,fontFamily:"inherit"}}>
+                        <span style={{width:9,height:9,borderRadius:"50%",background:c,display:"inline-block",flexShrink:0}}/>
+                        {l}
+                      </span>
+                    ))}
+                  </div>
+
+                  {!liveText && (
+                    <p style={{margin:0,fontSize:12,color:"#9CA3AF",textAlign:"center",fontStyle:"italic"}}>
+                      Start reciting — words light up as you read ✨
+                    </p>
+                  )}
                 </div>
-                <p style={{margin:0,fontSize:11,color:"#6B7280",textAlign:"center"}}>
-                  Recite from start to finish — don't stop mid-verse
-                </p>
-              </div>
-            ) : (
+              );
+            })() : (
               <>
                 {!retryCount && (
                   <div style={{marginBottom:10,padding:"8px 12px",borderRadius:10,
