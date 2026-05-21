@@ -3571,7 +3571,11 @@ export default function HifdhDailyRevisionPage() {
   const [logs,         setLogs]         = useState<DailyLog[]>([]);
   const [todayLog,     setTodayLog]     = useState<DailyLog|null>(null);
   const [tab,          setTab]          = useState<MainTab>("today");
-  const [showSession,  setShowSession]  = useState(false);
+  // Persist showSession so minimizing the app never loses your place
+  const SHOW_SESSION_KEY = `hifdh_show_session_${todayISO()}`;
+  const [showSession, setShowSession] = useState<boolean>(() => {
+    try { return localStorage.getItem(SHOW_SESSION_KEY) === "1"; } catch { return false; }
+  });
   const [historyOpen,  setHistoryOpen]  = useState<string|null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [selectedDay,  setSelectedDay]  = useState<ProgramDay|null>(null);
@@ -3663,8 +3667,20 @@ export default function HifdhDailyRevisionPage() {
     return {date:ds,log,isToday,dayName:d.toLocaleDateString("en-GB",{weekday:"short"})};
   });
 
+  // Keep showSession persisted so minimize never takes user back to intro
+  useEffect(() => {
+    try {
+      if (showSession) {
+        localStorage.setItem(SHOW_SESSION_KEY, "1");
+      } else {
+        localStorage.removeItem(SHOW_SESSION_KEY);
+      }
+    } catch {}
+  }, [showSession, SHOW_SESSION_KEY]);
+
   function handleSessionClose(completed=false) {
     setShowSession(false);
+    try { localStorage.removeItem(SHOW_SESSION_KEY); } catch {}
     if(completed) {
       // Refresh
       supabase.auth.getUser().then(async({data})=>{
@@ -3745,7 +3761,7 @@ export default function HifdhDailyRevisionPage() {
       `}</style>
 
       {/* Session overlay */}
-      {showSession&&userId&&(
+      {showSession&&userId&&assignment&&(
         <SessionOverlay
           assignment={assignment}
           userId={userId}
