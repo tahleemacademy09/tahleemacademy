@@ -1368,11 +1368,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         juzAyahs:  juzAyahs.length  > 0 ? juzAyahs  : undefined,
         score: score ?? undefined,            // ← restore page_result score
         errorWords: errorWords.length > 0 ? errorWords : undefined,
+        lastTranscript: lastTranscript || undefined, // ← restore word analysis
         savedAt: Date.now(),
       }));
     } catch { /* quota exceeded */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, pageIdx, pageResults, recitationScore, score, errorWords]);
+  }, [phase, pageIdx, pageResults, recitationScore, score, errorWords, lastTranscript]);
 
   // ── RETURN BANNER state ───────────────────────────────────────────────────
   const [returnBanner, setReturnBanner] = useState<"recitation"|"test"|null>(null);
@@ -1394,11 +1395,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         if (saved.phase === "page_result" && saved.score != null) {
           setScore(saved.score);
           if (saved.errorWords) setErrorWords(saved.errorWords);
+          if (saved.lastTranscript) setLastTranscript(saved.lastTranscript);
           setPhase("page_result");
+          // No banner — they already saw their result, just restore it silently
         } else {
           setPhase("reading");
+          setReturnBanner("recitation");
         }
-        setReturnBanner("recitation");
         // Attempt to restore the partial audio blob saved to IndexedDB mid-recording
         const blobKey = `${userId}_${todayISO()}_partial`;
         idbLoadBlob(blobKey).then(blob => {
