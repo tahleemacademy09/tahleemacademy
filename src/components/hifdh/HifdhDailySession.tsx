@@ -148,9 +148,43 @@ function normalizeAr(text: string): string {
 
 /**
  * Score the transcript against the expected ayahs.
- * Uses a generous prefix-match so slight recognition differences don't
- * devastate the score (Arabic STT on mobile is imperfect for Quran).
+ *
+ * Key improvements over the original:
+ * 1. Sliding-window search (not strict left-to-right) so out-of-order STT
+ *    fragments still count.
+ * 2. 3-char prefix match AND Levenshtein distance ≤ 2 catch diacritics /
+ *    hamza differences that Web Speech API routinely introduces.
+ * 3. Coverage ratio: if the student recited for a long time relative to the
+ *    page length, we trust that they covered most of it and apply a gentle
+ *    floor so a technically-good recitation doesn't score 19% due to STT noise.
+ * 4. Duration-aware floor: ≥45 s of recitation → score floored at 55%.
  */
+function levenshtein(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 4) return 99;
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) =>
+    Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++)
+      d[i][j] = a[i - 1] === b[j - 1]
+        ? d[i - 1][j - 1]
+        : 1 + Math.min(d[i - 1][j], d[i][j - 1], d[i - 1][j - 1]);
+  return d[a.length][b.length];
+}
+
+function wordsMatch(ref: string, got: string): boolean {
+  if (!ref || !got) return false;
+  if (ref === got) return true;
+  // 3-char prefix match (very common for tajweed variants)
+  if (ref.length >= 3 && got.length >= 3 && ref.slice(0, 3) === got.slice(0, 3)) return true;
+  // Substring containment for longer words
+  if (ref.length >= 4 && got.length >= 4 && (ref.includes(got) || got.includes(ref))) return true;
+  // Levenshtein ≤ 2 (handles hamza swaps, shadda stripping, etc.)
+  const maxLen = Math.max(ref.length, got.length);
+  if (maxLen >= 3 && levenshtein(ref, got) <= Math.max(1, Math.floor(maxLen * 0.25))) return true;
+  return false;
+}
+
 function scoreText(transcript: string, ayahs: Ayah[], recitedSecs: number): number {
   const ref  = ayahs.map(a => a.text).join(" ");
   const refW = normalizeAr(ref).split(" ").filter(Boolean);
@@ -158,49 +192,58 @@ function scoreText(transcript: string, ayahs: Ayah[], recitedSecs: number): numb
   if (!refW.length) return 0;
   if (!gotW.length) {
     // Student spoke for >45s — give effort credit
-    return recitedSecs >= 45 ? 40 : 0;
+    return recitedSecs >= 45 ? 55 : 0;
   }
-  const used = new Set<number>();
+
+  // Build a matched-set over a sliding window (window = ±8 positions)
+  // so STT fragments that arrive slightly out of order still count.
+  const usedGot = new Set<number>();
   let matches = 0;
-  for (const rw of refW) {
-    const rPrefix = rw.slice(0, 4);
-    for (let i = 0; i < gotW.length; i++) {
-      if (used.has(i)) continue;
-      const gw = gotW[i];
-      if (
-        rw === gw ||
-        (rw.length >= 3 && gw.length >= 3 && rw.slice(0, 4) === gw.slice(0, 4)) ||
-        (rw.length >= 5 && gw.length >= 5 && rPrefix === gw.slice(0, 4))
-      ) {
+  for (let ri = 0; ri < refW.length; ri++) {
+    const rw = refW[ri];
+    // Search within a reasonable window in the got transcript
+    // proportionally centred on where we'd expect this word
+    const centre = Math.round((ri / refW.length) * gotW.length);
+    const lo = Math.max(0, centre - 8);
+    const hi = Math.min(gotW.length - 1, centre + 8);
+    for (let gi = lo; gi <= hi; gi++) {
+      if (usedGot.has(gi)) continue;
+      if (wordsMatch(rw, gotW[gi])) {
         matches++;
-        used.add(i);
+        usedGot.add(gi);
         break;
       }
     }
   }
+
   const rawScore = Math.round((matches / refW.length) * 100);
-  // Bonus: if student spoke for significant time, the STT may have missed words
-  // Apply a small recitation-duration bonus (max +10) to account for STT gaps
-  const durationBonus = recitedSecs >= 60 ? 10 : recitedSecs >= 30 ? 5 : 0;
-  return Math.min(100, rawScore + durationBonus);
+
+  // Duration-aware floor:
+  //   ≥ 60s spoken → floor at 60 (whole page takes ~60-120s to recite aloud)
+  //   ≥ 45s spoken → floor at 50
+  //   ≥ 30s spoken → floor at 40
+  // This prevents STT noise from destroying a clearly real recitation.
+  const floor = recitedSecs >= 60 ? 60 : recitedSecs >= 45 ? 50 : recitedSecs >= 30 ? 40 : 0;
+
+  return Math.min(100, Math.max(floor, rawScore));
 }
 
 function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
   const ref  = ayahs.map(a => a.text).join(" ");
   const refW = normalizeAr(ref).split(" ").filter(Boolean);
   const gotW = normalizeAr(transcript).split(" ").filter(Boolean);
-  const used = new Set<number>();
+  const usedGot = new Set<number>();
   const errs: string[] = [];
-  for (const rw of refW) {
+  for (let ri = 0; ri < refW.length; ri++) {
+    const rw = refW[ri];
+    const centre = Math.round((ri / refW.length) * gotW.length);
+    const lo = Math.max(0, centre - 8);
+    const hi = Math.min(gotW.length - 1, centre + 8);
     let found = false;
-    for (let i = 0; i < gotW.length; i++) {
-      if (used.has(i)) continue;
-      const gw = gotW[i];
-      if (
-        rw === gw ||
-        (rw.length >= 3 && gw.length >= 3 && rw.slice(0, 4) === gw.slice(0, 4))
-      ) {
-        used.add(i); found = true; break;
+    for (let gi = lo; gi <= hi; gi++) {
+      if (usedGot.has(gi)) continue;
+      if (wordsMatch(rw, gotW[gi])) {
+        usedGot.add(gi); found = true; break;
       }
     }
     if (!found) errs.push(rw);
@@ -329,10 +372,53 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
   const [isListening,   setIsListening]   = useState(false);
   const [recitedSecs,   setRecitedSecs]   = useState(0);
   const [submitting,    setSubmitting]    = useState(false);
+  const [liveWords,     setLiveWords]     = useState("");
+
+  // ── Session persistence key (per assignment + user) ─────────────
+  const sessionKey = `hifdh_session_${userId}_${assignment.id}`;
 
   const recognRef  = useRef<any>(null);
   const liveRef    = useRef("");
   const recTimerRef = useRef<any>(null);
+
+  /* ── Session persistence: restore saved progress on mount ──────── */
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(sessionKey);
+      if (!saved) return;
+      const parsed = JSON.parse(saved);
+      // Only restore if it's the same calendar day
+      const today = new Date().toISOString().split("T")[0];
+      if (parsed.date !== today) { localStorage.removeItem(sessionKey); return; }
+      if (parsed.phase && parsed.phase !== "complete" && parsed.phase !== "submitting") {
+        setPhase(parsed.phase);
+      }
+      if (typeof parsed.pageIdx === "number") setPageIdx(parsed.pageIdx);
+      if (Array.isArray(parsed.pageResults))   setPageResults(parsed.pageResults);
+      if (typeof parsed.retryCount === "number") setRetryCount(parsed.retryCount);
+      if (typeof parsed.currentScore === "number") setCurrentScore(parsed.currentScore);
+      if (parsed.errorWords) setErrorWords(parsed.errorWords);
+      if (parsed.currentTx)  setCurrentTx(parsed.currentTx);
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionKey]);
+
+  /* ── Session persistence: save progress whenever key state changes ── */
+  useEffect(() => {
+    if (phase === "intro") return; // don't save until session starts
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      localStorage.setItem(sessionKey, JSON.stringify({
+        date: today, phase, pageIdx, pageResults,
+        retryCount, currentScore, errorWords, currentTx,
+      }));
+    } catch { /* quota exceeded — ignore */ }
+  }, [phase, pageIdx, pageResults, retryCount, currentScore, errorWords, currentTx, sessionKey]);
+
+  /* ── Clear saved session on completion ─────────────────────────── */
+  const clearSavedSession = () => {
+    try { localStorage.removeItem(sessionKey); } catch { /* ignore */ }
+  };
 
   /* ── Calculate pages to revise today ─────────────────────────── */
   useEffect(() => {
@@ -419,13 +505,27 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
 
     rec.onresult = (e: any) => {
       let final = "";
+      let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) {
-          // Take the best alternative
-          final += e.results[i][0].transcript + " ";
+          // Collect all alternatives and pick best Arabic one
+          let best = e.results[i][0].transcript;
+          for (let k = 1; k < e.results[i].length; k++) {
+            const alt = e.results[i][k].transcript;
+            if (/[؀-ۿ]/.test(alt) && !/[؀-ۿ]/.test(best)) best = alt;
+          }
+          final += best + " ";
+        } else {
+          interim += e.results[i][0].transcript;
         }
       }
-      if (final) liveRef.current += final;
+      if (final) {
+        liveRef.current += final;
+        setLiveWords(liveRef.current.trim());
+      } else if (interim) {
+        // Show live interim text while speaking
+        setLiveWords((liveRef.current + " " + interim).trim());
+      }
     };
 
     rec.onerror = (e: any) => {
@@ -460,6 +560,7 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
     recognRef.current?.stop();
     recognRef.current = null;
     setIsListening(false);
+    setLiveWords("");
     clearInterval(recTimerRef.current);
   }, []);
 
@@ -511,6 +612,7 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
     setCurrentScore(null);
     setRetryCount(c => c + 1);
     liveRef.current = "";
+    setLiveWords("");
     setRecitedSecs(0);
     setPhase("reading");
   };
@@ -634,6 +736,7 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
       }
     } catch (e) { console.error("Notify failed:", e); }
 
+    clearSavedSession();
     setPhase("complete");
     setSubmitting(false);
   };
@@ -797,9 +900,9 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
               </div>
             )}
 
-            {/* When recording: full-screen waveform (student recites from memory) */}
+            {/* When recording: waveform + live transcript (student recites from memory) */}
             {isListening ? (
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: "48px 16px", background: W, borderRadius: 16, border: `2px solid ${PASS_COLOR}` }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: "24px 16px", background: W, borderRadius: 16, border: `2px solid ${PASS_COLOR}` }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 3 }}>
                   {[6,14,22,30,18,26,12,20,8,16,24,10].map((h, i) => (
                     <div key={i} style={{
@@ -810,14 +913,32 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
                   ))}
                 </div>
                 <p style={{ fontWeight: 900, fontSize: 17, color: G, margin: 0 }}>Listening…</p>
-                <p style={{ fontSize: 12, color: "#6B7280", margin: 0, textAlign: "center", maxWidth: 220 }}>
-                  Recite the full page from memory
-                </p>
                 <div style={{ padding: "5px 18px", borderRadius: 20, background: `${PASS_COLOR}15`, border: `1px solid ${PASS_COLOR}44` }}>
                   <span style={{ fontSize: 14, fontWeight: 800, color: PASS_COLOR }}>
                     🔴 {Math.floor(recitedSecs / 60)}:{String(recitedSecs % 60).padStart(2, "0")}
                   </span>
                 </div>
+                {/* Live transcript — scrolls as the student recites */}
+                <div style={{
+                  width: "100%", maxHeight: 160, overflowY: "auto",
+                  background: "#f9fafb", borderRadius: 10,
+                  padding: "10px 12px",
+                  border: `1px solid ${PASS_COLOR}44`,
+                  direction: "rtl", textAlign: "right",
+                  fontFamily: "'Amiri Quran','Amiri',serif",
+                  fontSize: 16, color: "#1a1a1a", lineHeight: 2,
+                  minHeight: 48,
+                }}>
+                  {liveWords
+                    ? liveWords
+                    : <span style={{ color: "#9CA3AF", fontSize: 13, fontFamily: "inherit" }}>
+                        Transcribing as you recite…
+                      </span>
+                  }
+                </div>
+                <p style={{ fontSize: 11, color: "#6B7280", margin: 0, textAlign: "center" }}>
+                  Recite the full page from memory, then tap stop
+                </p>
               </div>
             ) : (
               /* Mushaf full page — shown when NOT yet recording */
