@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { removeStorageFile } from "@/integrations/supabase/storageClient";
+import { removeStorageFile, getSignedUrl } from "@/integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
@@ -23,6 +23,19 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   const player            = useRecordingPlayer();
 
   const [search, setSearch]       = useState("");
+  const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
+
+  // Pre-resolve storage paths to signed/public URLs when recordings load
+  const resolveUrls = async (recs: any[]) => {
+    const toResolve = recs.filter(r => r.file_url && !r.file_url.startsWith("http"));
+    if (!toResolve.length) return;
+    const resolved: Record<string, string> = {};
+    await Promise.all(toResolve.map(async r => {
+      const url = await getSignedUrl(r.file_url, 7200).catch(() => null);
+      if (url) resolved[r.id] = url;
+    }));
+    setResolvedUrls(prev => ({ ...prev, ...resolved }));
+  };
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm]   = useState({ teacher_name: "", duration_seconds: 0 });
   const [deleteId, setDeleteId]   = useState<string | null>(null);
@@ -46,6 +59,16 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
       });
     },
   });
+
+  // Resolve URLs whenever recordings change
+  const prevRecIdsRef = { current: "" };
+  if (recordings) {
+    const key = (recordings || []).map((r: any) => r.id).join(",");
+    if (key !== prevRecIdsRef.current) {
+      prevRecIdsRef.current = key;
+      resolveUrls(recordings || []);
+    }
+  }
 
   const { data: progressMap } = useQuery({
     queryKey: ["recording-progress", subjectId, user?.id],
@@ -149,7 +172,7 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
 
               {/* Thumbnail */}
               <div style={{ width: 72, height: 56, borderRadius: 10, background: isActive ? `linear-gradient(135deg,#b8850a,${GOLD})` : `linear-gradient(135deg,${G},${GM})`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, position: "relative", cursor: "pointer" }}
-                onClick={() => r.file_url && player.playRecording({ id: r.id, fileUrl: r.file_url, title: dateStr, duration: r.duration_seconds || 0 })}>
+                onClick={() => { const url = resolvedUrls[r.id] || r.file_url; if (url) player.playRecording({ id: r.id, fileUrl: url, title: dateStr, duration: r.duration_seconds || 0 }); }}>
                 {r.thumbnail_url
                   ? <img src={r.thumbnail_url} style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }} alt="" />
                   : isLoadingRec
@@ -197,9 +220,10 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
               <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
                 <button
                   onClick={() => {
-                    if (!r.file_url) return;
+                    const url = resolvedUrls[r.id] || r.file_url;
+                    if (!url) return;
                     if (isActive) player.togglePlay();
-                    else player.playRecording({ id: r.id, fileUrl: r.file_url, title: dateStr, duration: r.duration_seconds || 0 });
+                    else player.playRecording({ id: r.id, fileUrl: url, title: dateStr, duration: r.duration_seconds || 0 });
                   }}
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: isActive ? GOLD : G, border: "none", color: isActive ? G : "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif", minWidth: 90, justifyContent: "center" }}>
                   {isLoadingRec
