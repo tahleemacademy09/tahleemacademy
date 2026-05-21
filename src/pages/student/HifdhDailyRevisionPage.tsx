@@ -1337,6 +1337,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const liveTextRef  = useRef("");    // accumulates final Web Speech API tokens
   const speechRecRef = useRef<any>(null); // Web Speech recognition instance
   const wakeLockRef  = useRef<any>(null);
+  // When a tab-switch interrupts recording we set this true so mr.onstop knows
+  // NOT to reset carryOverSecs to 0 — the "Continue Recording" banner needs it.
+  const tabSwitchStopRef = useRef(false);
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
   useEffect(() => {
@@ -1377,11 +1380,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         errorWords: errorWords.length > 0 ? errorWords : undefined,
         lastTranscript: lastTranscript || undefined,
         pageAyahs: pageAyahs.length > 0 ? pageAyahs : undefined, // ← instant word analysis on restore
+        qIdx,                                                       // ← persist quiz question index so restore lands on correct question
+        answers: answers.length > 0 ? answers : undefined,         // ← persist answers so they survive refresh
         savedAt: Date.now(),
       }));
     } catch { /* quota exceeded */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, pageIdx, pageResults, recitationScore, score, errorWords, lastTranscript, pageAyahs]);
+  }, [phase, pageIdx, pageResults, recitationScore, score, errorWords, lastTranscript, pageAyahs, qIdx, answers]);
 
   // ── RETURN BANNER state ───────────────────────────────────────────────────
   const [returnBanner, setReturnBanner] = useState<"recitation"|"test"|null>(null);
@@ -1421,9 +1426,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         setPageResults(saved.pageResults ?? []);
         if (saved.recitationScore) setRecitationScore(saved.recitationScore);
         if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
-        if (saved.questions) { setQuestions(saved.questions); setAnswers(new Array(saved.questions.length).fill(null)); }
+        if (saved.questions) {
+          setQuestions(saved.questions);
+          // Restore actual answers — don't wipe them, so student continues exactly where they were
+          setAnswers(saved.answers ?? new Array(saved.questions.length).fill(null));
+        }
         if (saved.juzAyahs) setJuzAyahs(saved.juzAyahs);
-        setPhase("proctor_intro");
+        // Restore the exact question they were on — don't restart from Q1
+        if (saved.qIdx != null) setQIdx(saved.qIdx);
+        // Go directly to testing — never send them back to proctor_intro which forces a restart
+        setPhase("testing");
         setReturnBanner("test");
       }
     } catch { localStorage.removeItem(SESSION_KEY); }
@@ -1434,13 +1446,45 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => {
     const handleReturn = () => {
       if (document.visibilityState !== "visible") return;
-      if (isRecording) { handleStop(); setReturnBanner("recitation"); return; }
+      if (isRecording) {
+        // Capture elapsed time NOW — mr.onstop fires async and resets carryOverSecs to 0
+        tabSwitchStopRef.current = true;
+        setCarryOverSecs(recSecsRef.current);
+        handleStop();
+        setReturnBanner("recitation");
+        return;
+      }
       if (phase === "testing") setReturnBanner("test");
     };
     document.addEventListener("visibilitychange", handleReturn);
     return () => document.removeEventListener("visibilitychange", handleReturn);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, isRecording]);
+
+  // ── SAVE recSecs before page unload (covers page refresh during recording) ─────
+  // The persist effect only fires on state-changes — not on every timer tick.
+  // This patches the saved recSecs right before the page unloads so the restore
+  // effect can set carryOverSecs correctly after a refresh.
+  useEffect(() => {
+    const saveRecSecs = () => {
+      if (phase === "intro" || phase === "complete") return;
+      try {
+        const raw = localStorage.getItem(SESSION_KEY);
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        saved.recSecs = recSecsRef.current;
+        saved.savedAt = Date.now();
+        localStorage.setItem(SESSION_KEY, JSON.stringify(saved));
+      } catch { /* non-critical */ }
+    };
+    window.addEventListener("pagehide",     saveRecSecs);
+    window.addEventListener("beforeunload", saveRecSecs);
+    return () => {
+      window.removeEventListener("pagehide",     saveRecSecs);
+      window.removeEventListener("beforeunload", saveRecSecs);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   /* ── fetch ayahs when phase=reading OR page_result (restore case) ── */
   useEffect(() => {
@@ -1644,7 +1688,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               setNoApiWarning(true);
             }
             idbDeleteBlob(`${userId}_${todayISO()}_partial`);
-            setCarryOverSecs(0);
+            if (!tabSwitchStopRef.current) setCarryOverSecs(0);
+            tabSwitchStopRef.current = false;
             return;
           }
 
@@ -1660,7 +1705,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
           // Partial blob no longer needed — clean up IDB and reset carry-over
           idbDeleteBlob(`${userId}_${todayISO()}_partial`);
-          setCarryOverSecs(0);
+          if (!tabSwitchStopRef.current) setCarryOverSecs(0);
+          tabSwitchStopRef.current = false;
         });
       };
       mr.start(200);
@@ -2258,27 +2304,42 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               </>
             ):(
               <>
-                <div style={{width:64,height:64,borderRadius:"50%",background:`${FAIL}12`,
-                  border:`3px solid ${FAIL}`,display:"flex",alignItems:"center",justifyContent:"center",
+                <div style={{width:64,height:64,borderRadius:"50%",background:`${AMBER}12`,
+                  border:`3px solid ${AMBER}`,display:"flex",alignItems:"center",justifyContent:"center",
                   margin:"0 auto 16px"}}>
-                  <ShieldCheck size={28} color={FAIL}/>
+                  <ShieldCheck size={28} color={AMBER}/>
                 </div>
-                <p style={{margin:"0 0 6px",fontWeight:900,fontSize:18,color:G1}}>Test Interrupted</p>
-                <p style={{margin:"0 0 18px",fontSize:13,color:"#6B7280",lineHeight:1.6}}>
-                  You left the test screen. For fairness, the test must <strong>start from scratch</strong>.
-                  Your recitation progress is saved.
+                <p style={{margin:"0 0 6px",fontWeight:900,fontSize:18,color:G1}}>Welcome Back!</p>
+                <p style={{margin:"0 0 10px",fontSize:13,color:"#6B7280",lineHeight:1.6}}>
+                  Your quiz progress is <strong>saved</strong> — continue from where you left off.
                 </p>
-                <button onClick={()=>{
-                  setReturnBanner(null);
-                  setAnswers(new Array(questions.length).fill(null));
-                  setQIdx(0); setTestScore(null);
-                  setPhase("proctor_intro");
-                }} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",cursor:"pointer",
-                  background:`linear-gradient(135deg,${FAIL},#b91c1c)`,color:W,
-                  fontWeight:900,fontSize:14,fontFamily:"inherit",
-                  display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                  <RefreshCcw size={15}/> Restart Test
-                </button>
+                <div style={{padding:"8px 12px",borderRadius:10,background:`${FAIL}10`,
+                  border:`1px solid ${FAIL}33`,marginBottom:14,textAlign:"left"}}>
+                  <p style={{margin:0,fontSize:12,color:FAIL,fontWeight:700}}>
+                    ⚠️ Tab switch detected — flagged for teacher review.
+                  </p>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:10,width:"100%"}}>
+                  <button onClick={()=>{
+                    setReturnBanner(null);
+                  }} style={{width:"100%",padding:"14px",borderRadius:12,border:"none",cursor:"pointer",
+                    background:`linear-gradient(135deg,${G2},${G3})`,color:W,
+                    fontWeight:900,fontSize:14,fontFamily:"inherit",
+                    display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                    <CheckCircle2 size={15}/> Continue Quiz
+                  </button>
+                  <button onClick={()=>{
+                    setReturnBanner(null);
+                    setAnswers(new Array(questions.length).fill(null));
+                    setQIdx(0); setTestScore(null);
+                    setPhase("proctor_intro");
+                  }} style={{width:"100%",padding:"12px",borderRadius:12,
+                    border:`1px solid ${BRD}`,cursor:"pointer",background:W,
+                    color:"#6B7280",fontWeight:700,fontSize:13,fontFamily:"inherit",
+                    display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                    <RefreshCcw size={13}/> Restart Test Instead
+                  </button>
+                </div>
               </>
             )}
           </div>
