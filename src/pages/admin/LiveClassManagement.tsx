@@ -148,15 +148,22 @@ const LiveClassManagement = () => {
 
   useEffect(() => { const iv = setInterval(()=>setNow(new Date()),10000); return ()=>clearInterval(iv); },[]);
 
+  const [recCounts, setRecCounts] = useState<Record<string,number>>({});
+
   const fetchData = useCallback(async () => {
-    const [{ data: subs },{ data: sess },{ data: tt }] = await Promise.all([
+    const [{ data: subs },{ data: sess },{ data: tt },{ data: recs }] = await Promise.all([
       supabase.from("subjects").select("id,title,title_ar,teacher_id,is_active,livekit_room_name"),
       supabase.from("live_sessions").select("*,subjects(title,title_ar)").order("scheduled_at",{ascending:false}),
       supabase.from("subject_timetable").select("*,subjects(id,title,title_ar)").order("day_of_week").order("start_time"),
+      supabase.from("session_recordings").select("id,subject_id"),
     ]);
     setSubjects(subs||[]);
     setSessions(sess||[]);
     setTimetable(tt||[]);
+    // Build per-subject recording count map
+    const counts: Record<string,number> = {};
+    (recs||[]).forEach((r: any) => { counts[r.subject_id] = (counts[r.subject_id]||0)+1; });
+    setRecCounts(counts);
     setLoading(false);
   },[]);
 
@@ -492,11 +499,13 @@ const LiveClassManagement = () => {
               {selectedSub.title_ar && <p dir="rtl" style={{fontSize:13,color:GOLD,marginBottom:10}}>{selectedSub.title_ar}</p>}
               <div style={{display:"flex",justifyContent:"center",gap:24,marginBottom:14}}>
                 {[
-                  {label:"Total",    v:subSess.length,                                c:"rgba(255,255,255,.9)"},
-                  {label:"Live now", v:liveSess?1:0,                                  c:"#ef4444"},
-                  {label:"Scheduled",v:subSess.filter(s=>s.status==="scheduled").length,c:"#60a5fa"},
+                  {label:"Total",    v:subSess.length,                                 c:"rgba(255,255,255,.9)", tab: null},
+                  {label:"Live now", v:liveSess?1:0,                                   c:"#ef4444",             tab: null},
+                  {label:"Scheduled",v:subSess.filter(s=>s.status==="scheduled").length,c:"#60a5fa",            tab: null},
+                  {label:"📹 Recordings", v:"View",                                    c:GOLD,                  tab:"recordings"},
                 ].map((x,i)=>(
-                  <div key={i} style={{textAlign:"center"}}>
+                  <div key={i} style={{textAlign:"center",cursor:x.tab?"pointer":"default"}}
+                    onClick={()=>x.tab&&setSubjectTab(x.tab)}>
                     <div style={{fontSize:18,fontWeight:900,color:x.c}}>{x.v}</div>
                     <div style={{fontSize:10,color:"rgba(255,255,255,.45)",fontWeight:700}}>{x.label}</div>
                   </div>
@@ -840,6 +849,7 @@ const LiveClassManagement = () => {
               {subjects.map(sub=>{
                 const liveSess=sessions.find(s=>s.subject_id===sub.id&&s.status==="live");
                 const cnt=sessions.filter(s=>s.subject_id===sub.id).length;
+                const recCnt=recCounts[sub.id]||0;
                 const attRows=generalAtt.filter(r=>r.subject_id===sub.id);
                 const pct=attRows.length?Math.round(attRows.filter((r:any)=>["present","late"].includes(r.status)).length/attRows.length*100):null;
                 return (
@@ -848,14 +858,23 @@ const LiveClassManagement = () => {
                     <div style={{padding:14}}>
                       <div style={{display:"flex",justifyContent:"space-between",marginBottom:10}}>
                         <div style={{width:38,height:38,borderRadius:10,background:`${G}12`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>📖</div>
-                        {liveSess && <span style={{fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:99,background:"rgba(239,68,68,.12)",color:"#ef4444",display:"inline-flex",alignItems:"center",gap:3}}>
-                          <span style={{width:5,height:5,borderRadius:"50%",background:"#ef4444",display:"inline-block",animation:"lc-pulse 1s infinite"}}/>Live
-                        </span>}
+                        <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                          {recCnt>0 && (
+                            <button
+                              onClick={e=>{ e.stopPropagation(); setSelectedSub(sub); setSubjectTab("recordings"); }}
+                              style={{fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:99,background:`${GOLD}18`,color:GOLD,border:`1px solid ${GOLD}44`,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:3}}>
+                              🎬 {recCnt}
+                            </button>
+                          )}
+                          {liveSess && <span style={{fontSize:9,fontWeight:800,padding:"2px 8px",borderRadius:99,background:"rgba(239,68,68,.12)",color:"#ef4444",display:"inline-flex",alignItems:"center",gap:3}}>
+                            <span style={{width:5,height:5,borderRadius:"50%",background:"#ef4444",display:"inline-block",animation:"lc-pulse 1s infinite"}}/>Live
+                          </span>}
+                        </div>
                       </div>
                       <p style={{fontSize:13,fontWeight:800,color:"#111",marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub.title}</p>
                       {sub.title_ar && <p dir="rtl" style={{fontSize:11,color:"#9ca3af",marginBottom:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sub.title_ar}</p>}
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                        <span style={{fontSize:10,color:"#9ca3af",fontWeight:600}}>{cnt} sessions</span>
+                        <span style={{fontSize:10,color:"#9ca3af",fontWeight:600}}>{cnt} sessions · {recCnt} rec{recCnt!==1?"s":""}</span>
                         {pct!==null && <span style={{fontSize:10,fontWeight:800,color:pct>=75?"#16a34a":pct>=60?GOLD:"#ef4444"}}>{pct}%</span>}
                       </div>
                       {pct!==null && <div style={{marginTop:8}}><div className="lc-att-bar"><div className="lc-att-fill" style={{width:`${pct}%`,background:pct>=75?"#16a34a":pct>=60?GOLD:"#ef4444"}}/></div></div>}
