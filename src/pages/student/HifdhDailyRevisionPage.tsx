@@ -448,58 +448,11 @@ function compareWords(refText: string, gotText: string): WordResult[] {
  * which absorbs gaps caused by Whisper skipping a verse mid-transcription.
  */
 function scoreText(transcript: string, ayahs: Ayah[]): number {
-  const refWords = ayahs.map(a => normalizeArabic(a.text)).join(" ").split(/\s+/).filter(Boolean);
-  const gotWords = normalizeArabic(transcript).split(/\s+/).filter(Boolean);
-  if (!refWords.length) return 0;
-  if (!gotWords.length)  return 0;
-
-  // Score per ayah independently, then average weighted by ayah length.
-  // This prevents a skipped ayah from "using up" gotPtr and penalising later ayahs.
-  let totalRef = 0; let totalMatched = 0;
-  let gotSearchStart = 0; // advance forward-only after each ayah
-
-  for (const ayah of ayahs) {
-    const refW = normalizeArabic(ayah.text).split(/\s+/).filter(Boolean);
-    if (!refW.length) continue;
-    totalRef += refW.length;
-
-    // Search the ENTIRE remaining transcript for this ayah's words.
-    // We use a generous forward window (3× ayah length) but never go backward.
-    const searchEnd = Math.min(gotWords.length, gotSearchStart + refW.length * 4 + 20);
-    const window    = gotWords.slice(gotSearchStart, searchEnd);
-
-    // Greedy LCS within window
-    let matched = 0; let gj = 0; let lastHit = -1;
-    for (const rw of refW) {
-      for (let k = gj; k < window.length; k++) {
-        if (wordsMatch(rw, window[k])) { matched++; lastHit = k; gj = k + 1; break; }
-      }
-    }
-    totalMatched += matched;
-
-    // ── Critical: only advance gotSearchStart when enough words matched ──────
-    // If Whisper skips a verse entirely, the window for that verse still contains
-    // later transcript words.  Common Quranic vocabulary (لا، من، إلى، هم …)
-    // almost always appears somewhere in the window, giving lastHit ≥ 0 even
-    // when 0/14 "real" words were found.  That false advance pushes gotSearchStart
-    // PAST where the next verse actually starts, causing every following verse to
-    // miss its words → cascade failure → 49% instead of ~85%.
-    //
-    // Fix: require at least 2 matched words for ayahs > 4 words before advancing.
-    // A genuinely recited verse will always satisfy this; a skipped verse where
-    // only one common word accidentally matched will NOT advance the pointer.
-    const minAdvance = refW.length <= 4 ? 1 : 2;
-    if (lastHit >= 0 && matched >= minAdvance) {
-      gotSearchStart += lastHit + 1;
-    }
-  }
-
-  if (totalRef === 0) return 0;
-
-  // Score = words correctly recited ÷ total words on the page × 100.
-  // Even a single word recited scores (1 / totalWords * 100).
-  // No duration-based floor — the percentage reflects exactly what was recited.
-  const rawScore = Math.round((totalMatched / totalRef) * 100);
+  const refText = ayahs.map(a => a.text).join(" ");
+  const wordRes = compareWords(refText, transcript);
+  if (!wordRes.length) return 0;
+  const correct = wordRes.filter(w => w.status === "correct").length;
+  const rawScore = Math.round((correct / wordRes.length) * 100);
   return Math.min(100, rawScore);
 }
 
@@ -1682,7 +1635,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             return;
           }
 
-          // If Groq returned empty/very short, try boosting with Web Speech transcript
+          // If Groq returned empty/very short, boost with Web Speech transcript
           const effectiveTx = (tx.length >= 10) ? tx
             : (liveTextRef.current.trim().length > tx.length ? liveTextRef.current.trim() : tx);
 
@@ -1741,7 +1694,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               setLiveText((liveTextRef.current + " " + interimChunk).trim());
             }
           };
-          sr.onerror = () => { /* silent — mic already open for MediaRecorder */ };
+          sr.onerror = (ev: any) => {
+            // On Android, "not-allowed" or "audio-capture" means mic is taken by MediaRecorder.
+            // For recoverable errors (network, aborted), try restarting.
+            const fatal = ev.error === "not-allowed" || ev.error === "audio-capture" || ev.error === "service-not-allowed";
+            if (!fatal && mediaRecRef.current && mediaRecRef.current.state === "recording") {
+              try { sr.start(); } catch { /* already running */ }
+            }
+          };
           sr.onend   = () => {
             // Auto-restart while still recording (browser times out ~60s)
             if (mediaRecRef.current && mediaRecRef.current.state === "recording") {
@@ -2470,7 +2430,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   {liveText
                     ? liveText
                     : <span style={{color:"#9CA3AF",fontSize:12,fontFamily:"inherit",direction:"ltr",display:"block",textAlign:"center"}}>
-                        Start reciting — your words will appear here…
+                        {isRecording ? "🎙️ Recording… recite clearly into your mic" : "Start reciting — your words will appear here…"}
                       </span>
                   }
                 </div>
