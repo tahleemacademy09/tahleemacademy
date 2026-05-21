@@ -1413,11 +1413,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         savedAudioUrl: savedAudioUrl ?? null,
         questions: questions.length > 0 ? questions : undefined,
         juzAyahs:  juzAyahs.length  > 0 ? juzAyahs  : undefined,
+        score: score ?? undefined,            // ← restore page_result score
+        errorWords: errorWords.length > 0 ? errorWords : undefined,
         savedAt: Date.now(),
       }));
     } catch { /* quota exceeded */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, pageIdx, pageResults, recitationScore]);
+  }, [phase, pageIdx, pageResults, recitationScore, score, errorWords]);
 
   // ── RETURN BANNER state ───────────────────────────────────────────────────
   const [returnBanner, setReturnBanner] = useState<"recitation"|"test"|null>(null);
@@ -1435,7 +1437,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         if (saved.recitationScore) setRecitationScore(saved.recitationScore);
         if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
         if (saved.recSecs)   setCarryOverSecs(saved.recSecs);   // ← resume timer
-        setPhase("reading");
+        // If the student was viewing their result, restore them there, not back to reading
+        if (saved.phase === "page_result" && saved.score != null) {
+          setScore(saved.score);
+          if (saved.errorWords) setErrorWords(saved.errorWords);
+          setPhase("page_result");
+        } else {
+          setPhase("reading");
+        }
         setReturnBanner("recitation");
         // Attempt to restore the partial audio blob saved to IndexedDB mid-recording
         const blobKey = `${userId}_${todayISO()}_partial`;
