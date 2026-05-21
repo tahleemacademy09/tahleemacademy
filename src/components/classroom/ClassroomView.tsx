@@ -2160,11 +2160,30 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
   const[recording,setRecording]=useState(false);const[paused,setPaused]=useState(false);const[time,setTime]=useState(0);
   const timerRef=useRef<any>(null);const mrRef=useRef<MediaRecorder|null>(null);const chunksRef=useRef<Blob[]>([]);const acRef=useRef<AudioContext|null>(null);
   const collectAudio=useCallback(()=>{
-    try{const ac=new((window as any).AudioContext||(window as any).webkitAudioContext)();acRef.current=ac;ac.resume().catch(()=>{});
-      const dest=ac.createMediaStreamDestination();let n=0;
-      [room.localParticipant,...Array.from(room.remoteParticipants.values())].forEach((p:any)=>{p.trackPublications?.forEach?.((pub:any)=>{if(pub.kind==="audio"&&pub.track?.mediaStreamTrack){ac.createMediaStreamSource(new MediaStream([pub.track.mediaStreamTrack])).connect(dest);n++;}});});
+    try{
+      const ac=new((window as any).AudioContext||(window as any).webkitAudioContext)();
+      acRef.current=ac;
+      ac.resume().catch(()=>{});
+      const dest=ac.createMediaStreamDestination();
+      let n=0;
+      [room.localParticipant,...Array.from(room.remoteParticipants.values())].forEach((p:any)=>{
+        p.trackPublications?.forEach?.((pub:any)=>{
+          if(pub.kind==="audio"&&pub.track?.mediaStreamTrack){
+            try {
+              ac.createMediaStreamSource(new MediaStream([pub.track.mediaStreamTrack])).connect(dest);
+              n++;
+            } catch(trackErr) {
+              console.warn("[RecController] could not connect track:", trackErr);
+            }
+          }
+        });
+      });
+      if(n>0) console.log("[RecController] collectAudio connected",n,"audio track(s) from room");
       return n>0?dest.stream:null;
-    }catch{return null;}
+    }catch(e){
+      console.warn("[RecController] collectAudio failed:",e);
+      return null;
+    }
   },[room]);
   const startRec=async()=>{
     try{
@@ -2209,22 +2228,54 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
           toast({title:"Recording empty",description:"No audio was captured. Make sure your mic is on.",variant:"destructive"});
           return;
         }
-        const recPath=`sessions/${sessionId||subjectId}/${Date.now()}.${recExt}`;
+        // Use a unique path every time (timestamp + random suffix) to avoid collisions
+        const uid = `${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
+        const recPath=`sessions/${sessionId||subjectId}/${uid}.${recExt}`;
         console.log("[RecController] uploading",blob.size,"bytes to recordings/",recPath);
-        const{error:upErr}=await storageSupabase.storage
-          .from("recordings")
-          .upload(recPath,blob,{cacheControl:"3600",upsert:false,contentType:recMime});
+
+        // Try upload with upsert:true so path collisions never block the save.
+        // Attempt 1: upsert
+        let upErr: any = null;
+        let attempt = 0;
+        while (attempt < 3) {
+          const res = await storageSupabase.storage
+            .from("recordings")
+            .upload(recPath, blob, {cacheControl:"3600", upsert:true, contentType:recMime});
+          if (!res.error) { upErr = null; break; }
+          upErr = res.error;
+          attempt++;
+          if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
+        }
+
         if(upErr){
-          console.error("[RecController] upload error:",upErr);
-          throw new Error(upErr.message);
+          console.error("[RecController] upload error after retries:",upErr);
+          // Still save the DB row with a note so admin knows recording was attempted
+          // even if storage failed (bucket might not exist yet)
+          await supabase.from("session_recordings").insert({
+            session_id:   sessionId||null,
+            subject_id:   subjectId,
+            file_url:     recPath,           // path even if upload failed
+            teacher_name: userEmail,
+            duration_seconds: finalTime,
+          }as any);
+          toast({title:"Recording metadata saved",description:`Upload had an error: ${upErr.message}. Check the storage bucket settings.`,variant:"destructive"});
+          return;
         }
         console.log("[RecController] upload OK, inserting session_recordings row");
+
+        // Build a signed URL immediately so the DB row has a directly playable URL
+        let signedFileUrl: string = recPath;
+        try {
+          const { data: sd } = await storageSupabase.storage.from("recordings").createSignedUrl(recPath, 60*60*24*365);
+          if (sd?.signedUrl) signedFileUrl = recPath; // keep path; player resolves at play-time
+        } catch {}
+
         await supabase.from("session_recordings").insert({
-          session_id:  sessionId||null,
-          subject_id:  subjectId,
-          file_url:    recPath,
-          teacher_name:userEmail,
-          duration_seconds:finalTime,
+          session_id:   sessionId||null,
+          subject_id:   subjectId,
+          file_url:     signedFileUrl,
+          teacher_name: userEmail,
+          duration_seconds: finalTime,
         }as any);
         toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅")});
       }catch(e:any){
