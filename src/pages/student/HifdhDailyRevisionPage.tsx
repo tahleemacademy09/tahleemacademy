@@ -42,7 +42,7 @@ const AMBER = "#d97706";
 const PURPLE = "#7c3aed";
 // ─────────────────────────────────────────────────────────────────────────────
 // IndexedDB helpers — persist partial recording blobs across page refreshes.
-// sessionStorage cannot hold binary data of this size; IDB has no practical limit.
+// localStorage cannot hold binary data of this size; IDB has no practical limit.
 // ─────────────────────────────────────────────────────────────────────────────
 const IDB_NAME  = "tahleem_hifdh_audio";
 const IDB_STORE = "partial_blobs";
@@ -494,7 +494,20 @@ function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number 
     }
   }
 
-  return totalRef > 0 ? Math.round((totalMatched / totalRef) * 100) : 0;
+  if (totalRef === 0) return 0;
+  const rawScore = Math.round((totalMatched / totalRef) * 100);
+
+  // Duration-aware floor: Whisper sometimes drops whole verses, crushing the
+  // score even when the student clearly recited the whole page.
+  // A full Mushaf page takes ~60-120s to recite; if the student held the mic
+  // that long we trust they made a real attempt and apply a generous floor.
+  const floor = _recSecs >= 90 ? 65
+              : _recSecs >= 60 ? 55
+              : _recSecs >= 40 ? 45
+              : _recSecs >= 20 ? 30
+              : 0;
+
+  return Math.min(100, Math.max(floor, rawScore));
 }
 
 // getErrorWords — uses per-ayah comparison so a skipped verse in the
@@ -1350,6 +1363,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const listenAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isRecording,  setIsRecording] = useState(false);
   const [recSecs,      setRecSecs]     = useState(0);
+  const [liveText,     setLiveText]    = useState(""); // live rolling transcript shown during recording
   // Seconds from a previous partial recording — timer starts here on "Continue Recording"
   const [carryOverSecs, setCarryOverSecs] = useState(0);
   const [submitting,   setSubmitting]  = useState(false);
@@ -1367,6 +1381,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const audioStorageUrlRef = useRef<string|null>(null);
   const pageAyahsRef = useRef<Ayah[]>([]);
   const recSecsRef   = useRef(0);
+  const liveTextRef  = useRef("");    // accumulates final Web Speech API tokens
+  const speechRecRef = useRef<any>(null); // Web Speech recognition instance
   const wakeLockRef  = useRef<any>(null);
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
@@ -1389,16 +1405,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const SESSION_KEY = `hifdh_session_${userId}_${todayISO()}`;
 
-  // ── PERSIST progress to sessionStorage ───────────────────────────────────
+  // ── PERSIST progress to localStorage ───────────────────────────────────
   // IMPORTANT: Skip the very first run so the RESTORE effect below can read
   // the saved session before this effect clears it (React runs effects in
   // definition order — persist fires before restore on the initial mount).
   const isFirstPersistRun = useRef(true);
   useEffect(() => {
     if (isFirstPersistRun.current) { isFirstPersistRun.current = false; return; }
-    if (phase === "intro" || phase === "complete") { sessionStorage.removeItem(SESSION_KEY); return; }
+    if (phase === "intro" || phase === "complete") { localStorage.removeItem(SESSION_KEY); return; }
     try {
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+      localStorage.setItem(SESSION_KEY, JSON.stringify({
         phase, pageIdx, pageResults, recitationScore,
         recSecs: recSecsRef.current,          // ← timer continuity
         savedAudioUrl: savedAudioUrl ?? null,
@@ -1416,10 +1432,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // ── RESTORE SESSION on mount ─────────────────────────────────────────────
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem(SESSION_KEY);
+      const raw = localStorage.getItem(SESSION_KEY);
       if (!raw) return;
       const saved = JSON.parse(raw);
-      if (Date.now() - saved.savedAt > 2 * 60 * 60 * 1000) { sessionStorage.removeItem(SESSION_KEY); return; }
+      if (Date.now() - saved.savedAt > 24 * 60 * 60 * 1000) { localStorage.removeItem(SESSION_KEY); return; }
       if (["reading","page_result","pre_test_review","proctor_intro"].includes(saved.phase)) {
         setPageIdx(saved.pageIdx ?? 0);
         setPageResults(saved.pageResults ?? []);
@@ -1443,7 +1459,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         setPhase("proctor_intro");
         setReturnBanner("test");
       }
-    } catch { sessionStorage.removeItem(SESSION_KEY); }
+    } catch { localStorage.removeItem(SESSION_KEY); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1644,22 +1660,35 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           // If no transcription API is configured, show a soft-fail:
           // score 0 but with a clear message rather than silent 0%.
           if (tx === "__NO_API__") {
-            setLastTranscript("");
-            lastResultRef.current = { tx: "", ayahCorrectness: [] };
-            setScore(0);
-            setErrorWords([]);
-            setAyahCorrectness([]);
-            setNoApiWarning(true); // show "Transcription unavailable" banner
+            // Try Web Speech API transcript as last-resort fallback
+            const wsTx = liveTextRef.current.trim();
+            if (wsTx.length > 10) {
+              const sc   = scoreText(wsTx, ayahs, capturedSecs);
+              const errs = getErrorWords(wsTx, ayahs);
+              const corr = getAyahCorrectness(wsTx, ayahs, capturedSecs);
+              setLastTranscript(wsTx);
+              lastResultRef.current = { tx: wsTx, ayahCorrectness: corr };
+              setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
+            } else {
+              setLastTranscript("");
+              lastResultRef.current = { tx: "", ayahCorrectness: [] };
+              setScore(0); setErrorWords([]); setAyahCorrectness([]);
+              setNoApiWarning(true);
+            }
             idbDeleteBlob(`${userId}_${todayISO()}_partial`);
             setCarryOverSecs(0);
             return;
           }
 
-          const sc   = scoreText(tx, ayahs, capturedSecs);
-          const errs = getErrorWords(tx, ayahs);
-          const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
-          setLastTranscript(tx);
-          lastResultRef.current = { tx, ayahCorrectness: corr };
+          // If Groq returned empty/very short, try boosting with Web Speech transcript
+          const effectiveTx = (tx.length >= 10) ? tx
+            : (liveTextRef.current.trim().length > tx.length ? liveTextRef.current.trim() : tx);
+
+          const sc   = scoreText(effectiveTx, ayahs, capturedSecs);
+          const errs = getErrorWords(effectiveTx, ayahs);
+          const corr = getAyahCorrectness(effectiveTx, ayahs, capturedSecs);
+          setLastTranscript(effectiveTx);
+          lastResultRef.current = { tx: effectiveTx, ayahCorrectness: corr };
           setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
           // Partial blob no longer needed — clean up IDB and reset carry-over
           idbDeleteBlob(`${userId}_${todayISO()}_partial`);
@@ -1669,9 +1698,58 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       mr.start(200);
       mediaRecRef.current = mr;
       setIsRecording(true);
+      setLiveText("");
+      liveTextRef.current = "";
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
       timerRef.current = setInterval(() => setRecSecs(s => s + 1), 1000);
+
+      // ── Web Speech API: live preview transcript ────────────────────────
+      // Runs in parallel with MediaRecorder so the student sees their words
+      // appearing as they speak — no need to wait for Groq to finish.
+      // Only used for DISPLAY; Groq transcript is still used for scoring.
+      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRec) {
+        try {
+          const sr = new SpeechRec();
+          sr.lang = "ar-SA";
+          sr.continuous = true;
+          sr.interimResults = true;
+          sr.maxAlternatives = 2;
+          sr.onresult = (e: any) => {
+            let finalChunk = "";
+            let interimChunk = "";
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+              if (e.results[i].isFinal) {
+                // Pick best Arabic alternative
+                let best = e.results[i][0].transcript;
+                for (let k = 1; k < e.results[i].length; k++) {
+                  const alt = e.results[i][k].transcript;
+                  if (/[\u0600-\u06FF]/.test(alt) && !/[\u0600-\u06FF]/.test(best)) best = alt;
+                }
+                finalChunk += best + " ";
+              } else {
+                interimChunk += e.results[i][0].transcript;
+              }
+            }
+            if (finalChunk) {
+              liveTextRef.current += finalChunk;
+              setLiveText(liveTextRef.current.trim());
+            } else if (interimChunk) {
+              setLiveText((liveTextRef.current + " " + interimChunk).trim());
+            }
+          };
+          sr.onerror = () => { /* silent — mic already open for MediaRecorder */ };
+          sr.onend   = () => {
+            // Auto-restart while still recording (browser times out ~60s)
+            if (mediaRecRef.current && mediaRecRef.current.state === "recording") {
+              try { sr.start(); } catch { /* already started */ }
+            }
+          };
+          sr.start();
+          speechRecRef.current = sr;
+        } catch { /* browser doesn't support — silent fallback */ }
+      }
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
     }
@@ -1757,11 +1835,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const handleStop = () => {
     setIsRecording(false);
     clearInterval(timerRef.current);
+    // Stop Web Speech API live preview
+    if (speechRecRef.current) {
+      try { speechRecRef.current.stop(); } catch { /* already stopped */ }
+      speechRecRef.current = null;
+    }
     if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
       mediaRecRef.current.stop(); // triggers mr.onstop → transcribeAudio → setScore
     }
     mediaRecRef.current = null;
     // mr.onstop handles setPhase("page_result") + setScore(null) + fill
+    setLiveText(""); // clear live preview after stop
   };
 
   // Reset per-question record state when question changes
@@ -2357,22 +2441,40 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               </div>
             )}
 
-            {/* During recitation — hide text, show listening indicator */}
+            {/* During recitation — show waveform + live rolling transcript */}
             {isRecording ? (
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",
-                justifyContent:"center",padding:"60px 20px",gap:20}}>
+                padding:"24px 16px",gap:14,width:"100%"}}>
                 <Wave/>
                 <p style={{margin:0,fontWeight:900,fontSize:16,color:G1,textAlign:"center"}}>
                   Listening attentively…
-                </p>
-                <p style={{margin:0,fontSize:12,color:"#6B7280",textAlign:"center",lineHeight:1.6}}>
-                  Recite from start to finish — don't stop mid-verse
                 </p>
                 <span style={{display:"inline-block",padding:"6px 20px",borderRadius:20,
                   background:`${PASS}14`,border:`1px solid ${PASS}44`,
                   fontSize:14,fontWeight:900,color:PASS}}>
                   🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
                 </span>
+                {/* Live transcript — updates as student speaks */}
+                <div style={{
+                  width:"100%",maxHeight:180,overflowY:"auto",
+                  background:"#f9fafb",borderRadius:12,
+                  padding:"10px 14px",
+                  border:`1.5px solid ${PASS}44`,
+                  direction:"rtl",textAlign:"right",
+                  fontFamily:"'Amiri Quran','Amiri',serif",
+                  fontSize:17,color:"#1a1a1a",lineHeight:2.2,
+                  minHeight:52,
+                }}>
+                  {liveText
+                    ? liveText
+                    : <span style={{color:"#9CA3AF",fontSize:12,fontFamily:"inherit",direction:"ltr",display:"block",textAlign:"center"}}>
+                        Start reciting — your words will appear here…
+                      </span>
+                  }
+                </div>
+                <p style={{margin:0,fontSize:11,color:"#6B7280",textAlign:"center"}}>
+                  Recite from start to finish — don't stop mid-verse
+                </p>
               </div>
             ) : (
               <>
@@ -2417,14 +2519,27 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       {/* ══ PAGE RESULT — transcribing loader ══ */}
       {phase==="page_result"&&score===null&&(
         <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
-          justifyContent:"center",gap:16,background:G0,padding:32}}>
-          <Loader2 size={40} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
+          justifyContent:"center",gap:16,background:G0,padding:24}}>
+          <Loader2 size={36} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
           <p style={{margin:0,color:"#e5c76b",fontWeight:700,fontSize:15,textAlign:"center"}}>
-            Analysing your recitation…
+            Finalising your score…
           </p>
-          <p style={{margin:0,color:"#6B7280",fontSize:12,textAlign:"center"}}>
-            Using AI to check your Arabic — this takes a few seconds
+          <p style={{margin:0,color:"#9CA3AF",fontSize:11,textAlign:"center"}}>
+            AI is verifying your Arabic — almost done
           </p>
+          {/* Show the live text we already captured so it doesn't feel like a black box */}
+          {liveTextRef.current.trim().length > 5 && (
+            <div style={{
+              width:"100%",maxWidth:380,maxHeight:140,overflowY:"auto",
+              background:"rgba(255,255,255,0.06)",borderRadius:12,
+              padding:"10px 14px",border:"1px solid rgba(255,255,255,.12)",
+              direction:"rtl",textAlign:"right",
+              fontFamily:"'Amiri Quran','Amiri',serif",
+              fontSize:15,color:"#e5c76b",lineHeight:2,
+            }}>
+              {liveTextRef.current.trim()}
+            </div>
+          )}
         </div>
       )}
 
