@@ -1362,18 +1362,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     try {
       localStorage.setItem(SESSION_KEY, JSON.stringify({
         phase, pageIdx, pageResults, recitationScore,
-        recSecs: recSecsRef.current,          // ← timer continuity
+        recSecs: recSecsRef.current,
         savedAudioUrl: savedAudioUrl ?? null,
         questions: questions.length > 0 ? questions : undefined,
         juzAyahs:  juzAyahs.length  > 0 ? juzAyahs  : undefined,
-        score: score ?? undefined,            // ← restore page_result score
+        score: score ?? undefined,
         errorWords: errorWords.length > 0 ? errorWords : undefined,
-        lastTranscript: lastTranscript || undefined, // ← restore word analysis
+        lastTranscript: lastTranscript || undefined,
+        pageAyahs: pageAyahs.length > 0 ? pageAyahs : undefined, // ← instant word analysis on restore
         savedAt: Date.now(),
       }));
     } catch { /* quota exceeded */ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, pageIdx, pageResults, recitationScore, score, errorWords, lastTranscript]);
+  }, [phase, pageIdx, pageResults, recitationScore, score, errorWords, lastTranscript, pageAyahs]);
 
   // ── RETURN BANNER state ───────────────────────────────────────────────────
   const [returnBanner, setReturnBanner] = useState<"recitation"|"test"|null>(null);
@@ -1396,6 +1397,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           setScore(saved.score);
           if (saved.errorWords) setErrorWords(saved.errorWords);
           if (saved.lastTranscript) setLastTranscript(saved.lastTranscript);
+          if (saved.pageAyahs) { setPageAyahs(saved.pageAyahs); pageAyahsRef.current = saved.pageAyahs; }
           setPhase("page_result");
           // No banner — they already saw their result, just restore it silently
         } else {
@@ -1433,12 +1435,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, isRecording]);
 
-  /* ── fetch ayahs when phase=reading ── */
+  /* ── fetch ayahs when phase=reading OR page_result (restore case) ── */
   useEffect(() => {
-    if (phase!=="reading") return;
+    if (phase !== "reading" && phase !== "page_result") return;
     const pn = todayPages[pageIdx];
     if (!pn) return;
-    setFetchingPage(true); setPageAyahs([]);
+    if (pageAyahs.length > 0) return; // already loaded
+    setFetchingPage(true);
     fetchPageAyahs(pn).then(a => { setPageAyahs(a); pageAyahsRef.current = a; setFetchingPage(false); });
   }, [phase, pageIdx, todayPages]);
 
