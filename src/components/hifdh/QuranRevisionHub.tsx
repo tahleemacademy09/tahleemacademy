@@ -162,47 +162,89 @@ const fmtTime = (s: number) =>
 function normalizeArabic(t: string): string {
   return t
     // 1. Convert dagger alef \u0670 → regular Alef \u0627 BEFORE the bulk strip.
-    //    In Uthmani script this represents an actual long vowel 'a' that Groq
-    //    writes as a full Alef — e.g. عَٰقِبَتَهُمَا → عاقبتهما.
     .replace(/\u0670/g, "\u0627")
     // 2. Strip remaining tashkeel + Quranic annotation characters
     .replace(/[\u064B-\u065F\u0610-\u061A\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
     // 3. Normalise all Alef variants → plain Alef ا
-    //    Alef Wasla ٱ(\u0671) appears on virtually every "ال" in ar.uthmani text
     .replace(/[\u0671\u0622\u0623\u0625]/g, "\u0627")
-    // 4. Alef Maqsura ى → Ya ي (Groq always uses Ya)
+    // 4. Hamzated Waw ؤ → و
+    .replace(/\u0624/g, "\u0648")
+    // 5. Hamzated Ya ئ → ي
+    .replace(/\u0626/g, "\u064A")
+    // 6. Standalone Hamza ء → remove
+    .replace(/\u0621/g, "")
+    // 7. Alef Maqsura ى → Ya ي
     .replace(/\u0649/g, "\u064A")
-    // 5. Ta Marbuta ة → Ha ه
+    // 8. Ta Marbuta ة → Ha ه
     .replace(/\u0629/g, "\u0647")
-    // 6. Strip Tatweel / Kashida ـ
+    // 9. Strip Tatweel / Kashida ـ
     .replace(/\u0640/g, "")
-    // 7. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
-    .replace(/[\u06DD\u06DE]/g, "");
+    // 10. Uthmani small Waw ۥ → و and small Ya ۦ → ي
+    .replace(/\u06E5/g, "\u0648")
+    .replace(/\u06E6/g, "\u064A")
+    // 11. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
+    .replace(/[\u06DD\u06DE]/g, "")
+    // 12. Strip Arabic-Indic and Extended Arabic-Indic digits
+    .replace(/[\u0660-\u066C\u06F0-\u06F9]/g, "");
 }
 
 function stripDiacritics(t: string) { return normalizeArabic(t); }
 
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = Array.from({length: b.length + 1}, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const curr: number[] = [i];
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = a[i-1] === b[j-1] ? prev[j-1] : 1 + Math.min(prev[j], curr[j-1], prev[j-1]);
+    }
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+function wordsMatch(rw: string, gw: string): boolean {
+  if (rw === gw) return true;
+  if (!rw || !gw) return false;
+  const minLen = Math.min(rw.length, gw.length);
+  if (minLen >= 3) {
+    const d = levenshtein(rw, gw);
+    if (d <= 1) return true;
+    if (minLen >= 8 && d <= 2) return true;
+  }
+  // Madd-drop rule: strip trailing long vowel and retry
+  const rwS = rw.replace(/[اوي]$/, "");
+  const gwS = gw.replace(/[اوي]$/, "");
+  if (rwS.length >= 2 && gwS.length >= 2 && rwS === gwS) return true;
+  return false;
+}
+
+const HAS_ARABIC_LETTER = /[\u0621-\u063A\u0641-\u064A\u0671-\u06D3]/;
+
 function compareWords(refText: string, gotText: string): WordResult[] {
-  // Keep originals for display; normalize separately for matching
-  const origRef = refText.split(/\s+/).filter(Boolean);
-  const normRef = origRef.map(w => normalizeArabic(w));
+  const origRef: string[] = [];
+  const normRef: string[] = [];
+  for (const w of refText.split(/\s+/).filter(Boolean)) {
+    const n = normalizeArabic(w);
+    if (n.length >= 1 && HAS_ARABIC_LETTER.test(n)) { origRef.push(w); normRef.push(n); }
+  }
   const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
+  if (!normGot.length) return origRef.map(w => ({ word: w, status: "missing" as const }));
+
   const results: WordResult[] = [];
-  const usedGot = new Set<number>();
+  let gotPtr = 0;
+  const WINDOW = 8;
 
   for (let ri = 0; ri < normRef.length; ri++) {
     const rw = normRef[ri];
+    const searchEnd = Math.min(normGot.length, gotPtr + WINDOW);
     let found = false;
-    for (let i = 0; i < normGot.length; i++) {
-      if (usedGot.has(i)) continue;
-      const gw = normGot[i];
-      const match =
-        rw === gw ||
-        (rw.length > 3 && gw.length > 3 &&
-          (rw.startsWith(gw.slice(0, 3)) || gw.startsWith(rw.slice(0, 3))));
-      if (match) {
+    for (let gi = gotPtr; gi < searchEnd; gi++) {
+      if (wordsMatch(rw, normGot[gi])) {
         results.push({ word: origRef[ri], status: "correct" });
-        usedGot.add(i);
+        gotPtr = gi + 1;
         found = true;
         break;
       }
