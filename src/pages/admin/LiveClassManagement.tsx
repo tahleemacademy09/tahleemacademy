@@ -273,36 +273,96 @@ const LiveClassManagement = () => {
   };
 
   const openAttendance = async (sess:any) => {
+    // Reset all attendance state before loading new session
     setAttSession(sess);
+    setStudents([]);
+    setEditAtt({});
+    setAttLogs([]);
+    setManualAtt([]);
+
     const [{data:logs},{data:manual}] = await Promise.all([
       supabase.from("attendance_logs").select("*,profiles:user_id(full_name)").eq("session_id",sess.id),
       supabase.from("manual_attendance").select("*,profiles:student_id(full_name)").eq("session_id",sess.id),
     ]);
-    setAttLogs(logs||[]); setManualAtt(manual||[]);
+    const logsData = logs||[];
+    const manualData = manual||[];
+    setAttLogs(logsData);
+    setManualAtt(manualData);
+
+    // Build the initial attendance map from saved manual records
+    const map:Record<string,string>={};
+    manualData.forEach((m:any)=>{ map[m.student_id]=m.status; });
+
+    // Also include auto-logged students who joined the session
+    logsData.forEach((l:any)=>{
+      if (!map[l.user_id]) map[l.user_id]="present";
+    });
+
+    // Fetch enrolled students for this subject
     const {data:courses} = await supabase.from("courses").select("id").eq("subject_id",sess.subject_id);
     const cids = (courses||[]).map((c:any)=>c.id);
+
+    let enrolledStudents: any[] = [];
     if (cids.length>0) {
       const {data:enr} = await supabase.from("enrollments").select("user_id").in("course_id",cids);
-      const uids = [...new Set((enr||[]).map((e:any)=>e.user_id))];
+      const uids = [...new Set((enr||[]).map((e:any)=>e.user_id))] as string[];
       if (uids.length>0) {
         const {data} = await supabase.from("profiles").select("user_id,full_name").in("user_id",uids);
-        setStudents(data||[]);
-        const map:Record<string,string>={};
-        (manual||[]).forEach((m:any)=>{map[m.student_id]=m.status;});
-        (data||[]).forEach((s:any)=>{if(!map[s.user_id])map[s.user_id]="absent";});
-        setEditAtt(map);
+        enrolledStudents = data||[];
       }
     }
+
+    // If no enrolled students found via courses, fall back to auto-logged + manual students
+    if (enrolledStudents.length===0) {
+      const seenIds = new Set<string>();
+      const fallback: any[] = [];
+      logsData.forEach((l:any)=>{ if (!seenIds.has(l.user_id)) { seenIds.add(l.user_id); fallback.push({user_id:l.user_id,full_name:l.profiles?.full_name||"Student"}); }});
+      manualData.forEach((m:any)=>{ if (!seenIds.has(m.student_id)) { seenIds.add(m.student_id); fallback.push({user_id:m.student_id,full_name:m.profiles?.full_name||"Student"}); }});
+      enrolledStudents = fallback;
+    }
+
+    // Default every enrolled student to "absent" if not already in map
+    enrolledStudents.forEach((s:any)=>{ if(!map[s.user_id]) map[s.user_id]="absent"; });
+
+    setStudents(enrolledStudents);
+    setEditAtt(map);
   };
+
+  const [savingAtt, setSavingAtt] = useState(false);
+
   const saveAttendance = async () => {
     if (!attSession||!user) return;
-    await supabase.from("manual_attendance").delete().eq("session_id",attSession.id);
-    const records = Object.entries(editAtt).map(([student_id,status])=>({
-      session_id:attSession.id,student_id,subject_id:attSession.subject_id,
-      teacher_id:user.id,status,date:(attSession.created_at||new Date().toISOString()).split("T")[0],
-    }));
-    await supabase.from("manual_attendance").insert(records);
-    toast({title:"Attendance saved"});
+    setSavingAtt(true);
+    try {
+      // Delete existing manual records for this session
+      const {error:delErr} = await supabase.from("manual_attendance").delete().eq("session_id",attSession.id);
+      if (delErr) throw delErr;
+
+      const records = Object.entries(editAtt).map(([student_id,status])=>({
+        session_id:attSession.id,
+        student_id,
+        subject_id:attSession.subject_id,
+        teacher_id:attSession.teacher_id||user.id,
+        status,
+        date:(attSession.scheduled_at||attSession.created_at||new Date().toISOString()).split("T")[0],
+      }));
+
+      if (records.length>0) {
+        const {error:insErr} = await supabase.from("manual_attendance").insert(records);
+        if (insErr) throw insErr;
+      }
+
+      // Re-fetch to confirm persisted data
+      const {data:saved} = await supabase.from("manual_attendance").select("*,profiles:student_id(full_name)").eq("session_id",attSession.id);
+      setManualAtt(saved||[]);
+
+      toast({title:"✅ Attendance saved!", description:`${records.length} student records saved.`});
+    } catch(err:any) {
+      console.error("saveAttendance error:", err);
+      toast({title:"❌ Error saving attendance", description: err?.message||"Please try again.", variant:"destructive"});
+    } finally {
+      setSavingAtt(false);
+    }
   };
   const exportCSV = (logs:any[],manual:any[]) => {
     const rows=[["Student","Status","Joined","Left","Duration"].join(",")];
@@ -400,9 +460,12 @@ const LiveClassManagement = () => {
               ))}
             </div>
           )}
-          <button onClick={saveAttendance} className="lc-btn" style={{width:"100%",justifyContent:"center",background:G,color:"#fff",padding:"14px",borderRadius:14,fontSize:14}}>
-            <CheckCircle style={{width:16,height:16}}/> Save Attendance
+          <button onClick={saveAttendance} disabled={savingAtt} className="lc-btn" style={{width:"100%",justifyContent:"center",background:G,color:"#fff",padding:"14px",borderRadius:14,fontSize:14,opacity:savingAtt?0.7:1}}>
+            <CheckCircle style={{width:16,height:16}}/> {savingAtt?"Saving…":"Save Attendance"}
           </button>
+          {students.length===0 && attLogs.length===0 && (
+            <p style={{textAlign:"center",fontSize:12,color:"#ef4444",marginTop:10}}>⚠️ No students found. Ensure students are enrolled in a course linked to this subject.</p>
+          )}
         </div>
       </div>
     );
