@@ -330,7 +330,12 @@ function normalizeArabic(t: string): string {
     //     digits ۰-۹ (U+06F0–U+06F9).  Some Quran API text fields embed the ayah
     //     number as "۝٦" — after step 11 strips ۝, the lone digit "٦" survives
     //     normalization and appears as a blank pink missing-word tile in the grid.
-    .replace(/[\u0660-\u066C\u06F0-\u06F9]/g, "");
+    .replace(/[\u0660-\u066C\u06F0-\u06F9]/g, "")
+    // 13. Tajweed madd-drop before ال: words ending in ا or و before الله/الر etc.
+    //     e.g. "أطيعوا الله" → Whisper drops the trailing madd alef on the first word.
+    //     Normalise both directions: strip trailing ا/و if the next token starts with ال.
+    // (handled at word level — trailing alef on words ending اْ is kept; Whisper keeps it too)
+    ;
 }
 
 // Keep the old name as an alias so nothing else in the file needs to change
@@ -387,11 +392,18 @@ function wordsMatch(rw: string, gw: string): boolean {
   if (rw === gw) return true;
   if (!rw || !gw) return false;
   const minLen = Math.min(rw.length, gw.length);
-  if (minLen >= 4) {
+  if (minLen >= 3) {
     const d = levenshtein(rw, gw);
     if (d <= 1) return true;             // one-char diff: madd, hamza, alef variant
     if (minLen >= 8 && d <= 2) return true; // two-char diff only for long words
   }
+  // Madd-drop rule: when a word ending in ا/و/ي is followed by ال in recitation,
+  // the madd is dropped. Whisper may or may not include the final long vowel.
+  // e.g. ref "اطيعوا" vs got "اطيعو" (Whisper drops trailing ا before الله).
+  // Strip trailing long vowel from both and retry exact match.
+  const rwStripped = rw.replace(/[اوي]$/, "");
+  const gwStripped = gw.replace(/[اوي]$/, "");
+  if (rwStripped.length >= 2 && gwStripped.length >= 2 && rwStripped === gwStripped) return true;
   return false;
 }
 
@@ -417,21 +429,29 @@ function compareWords(refText: string, gotText: string): WordResult[] {
     }
   }
   const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
+  if (!normGot.length) return origRef.map((w, i) => ({ word: origRef[i], status: "missing" as const }));
 
   const results: WordResult[] = [];
-  const usedGot = new Set<number>();
+
+  // Forward-only positional scan: for each reference word, search a window
+  // ahead in the transcript. This prevents a common word (الله، على، من…)
+  // from being "stolen" by an earlier reference occurrence, which would cause
+  // all later genuine matches of that word to show as red.
+  //
+  // Window size: up to 6 transcript words ahead — generous enough to absorb
+  // Whisper word-order swaps and dropped short words (حرف) but tight enough
+  // to avoid false matches across distant parts of the page.
+  let gotPtr = 0;
+  const WINDOW = 8;
 
   for (let ri = 0; ri < normRef.length; ri++) {
     const rw = normRef[ri];
+    const searchEnd = Math.min(normGot.length, gotPtr + WINDOW);
     let found = false;
-    for (let i = 0; i < normGot.length; i++) {
-      if (usedGot.has(i)) continue;
-      const gw = normGot[i];
-      const match = wordsMatch(rw, gw);
-      if (match) {
-        // Store the original (with diacritics) so the UI renders full tashkeel
+    for (let gi = gotPtr; gi < searchEnd; gi++) {
+      if (wordsMatch(rw, normGot[gi])) {
         results.push({ word: origRef[ri], status: "correct" });
-        usedGot.add(i);
+        gotPtr = gi + 1; // advance past this match — preserve order
         found = true;
         break;
       }
@@ -456,25 +476,12 @@ function scoreText(transcript: string, ayahs: Ayah[]): number {
   return Math.min(100, rawScore);
 }
 
-// getErrorWords — uses per-ayah comparison so a skipped verse in the
-// transcript doesn't flag every word in it as an error
+// getErrorWords — derives missing words from the same compareWords call used for
+// scoring, so the error list is always consistent with the displayed word grid.
 function getErrorWords(transcript: string, ayahs: Ayah[]): string[] {
-  const errors: string[] = [];
-  for (const ayah of ayahs) {
-    const words = compareWords(ayah.text, transcript);
-    // Only flag words that genuinely weren't found anywhere in the transcript
-    const missing = words.filter(w => w.status === "missing").map(w => w.word);
-    // If >90% of the ayah is missing, Whisper likely just skipped the verse —
-    // treat it as partially heard (soft error) rather than total miss
-    const missFrac = words.length > 0 ? missing.length / words.length : 0;
-    if (missFrac < 0.9) {
-      errors.push(...missing);
-    } else {
-      // Verse fully skipped by Whisper — only flag the first few words as errors
-      errors.push(...missing.slice(0, 2));
-    }
-  }
-  return errors;
+  const refText = ayahs.map(a => a.text).join(" ");
+  const wordRes = compareWords(refText, transcript);
+  return wordRes.filter(w => w.status === "missing").map(w => w.word);
 }
 
 /* Per-ayah correctness: true (green) / false (red).
