@@ -447,7 +447,7 @@ function compareWords(refText: string, gotText: string): WordResult[] {
  * the reference in 10-word windows and pick the best alignment per window,
  * which absorbs gaps caused by Whisper skipping a verse mid-transcription.
  */
-function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number {
+function scoreText(transcript: string, ayahs: Ayah[]): number {
   const refWords = ayahs.map(a => normalizeArabic(a.text)).join(" ").split(/\s+/).filter(Boolean);
   const gotWords = normalizeArabic(transcript).split(/\s+/).filter(Boolean);
   if (!refWords.length) return 0;
@@ -495,19 +495,12 @@ function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number 
   }
 
   if (totalRef === 0) return 0;
+
+  // Score = words correctly recited ÷ total words on the page × 100.
+  // Even a single word recited scores (1 / totalWords * 100).
+  // No duration-based floor — the percentage reflects exactly what was recited.
   const rawScore = Math.round((totalMatched / totalRef) * 100);
-
-  // Duration-aware floor: Whisper sometimes drops whole verses, crushing the
-  // score even when the student clearly recited the whole page.
-  // A full Mushaf page takes ~60-120s to recite; if the student held the mic
-  // that long we trust they made a real attempt and apply a generous floor.
-  const floor = _recSecs >= 90 ? 65
-              : _recSecs >= 60 ? 55
-              : _recSecs >= 40 ? 45
-              : _recSecs >= 20 ? 30
-              : 0;
-
-  return Math.min(100, Math.max(floor, rawScore));
+  return Math.min(100, rawScore);
 }
 
 // getErrorWords — uses per-ayah comparison so a skipped verse in the
@@ -1663,7 +1656,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             // Try Web Speech API transcript as last-resort fallback
             const wsTx = liveTextRef.current.trim();
             if (wsTx.length > 10) {
-              const sc   = scoreText(wsTx, ayahs, capturedSecs);
+              const sc   = scoreText(wsTx, ayahs);
               const errs = getErrorWords(wsTx, ayahs);
               const corr = getAyahCorrectness(wsTx, ayahs, capturedSecs);
               setLastTranscript(wsTx);
@@ -1684,7 +1677,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           const effectiveTx = (tx.length >= 10) ? tx
             : (liveTextRef.current.trim().length > tx.length ? liveTextRef.current.trim() : tx);
 
-          const sc   = scoreText(effectiveTx, ayahs, capturedSecs);
+          const sc   = scoreText(effectiveTx, ayahs);
           const errs = getErrorWords(effectiveTx, ayahs);
           const corr = getAyahCorrectness(effectiveTx, ayahs, capturedSecs);
           setLastTranscript(effectiveTx);
