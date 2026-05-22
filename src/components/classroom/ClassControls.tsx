@@ -42,6 +42,8 @@ interface ClassControlsProps {
   chatUnread:            number;
   onLaunchPoll:          () => void;
   onLaunchQuiz:          () => void;
+  /** Override privilege check — set true for guest/public-class hosts who don't have admin/teacher roles */
+  isHostOverride?:       boolean;
 }
 
 const REACTION_EMOJIS = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
@@ -287,12 +289,12 @@ const SettingsModal = ({ onClose, room }: { onClose: () => void; room: any }) =>
    ───────────────────────────────────────────────────────────────────────── */
 const ClassControls = ({
   sessionId, onToggleChat, onToggleParticipants, onEndClass, onLeaveClass,
-  chatUnread, onLaunchPoll, onLaunchQuiz,
+  chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride,
 }: ClassControlsProps) => {
   const room = useRoomContext();
   const { user, hasRole } = useAuth();
   const { t } = useLanguage();
-  const isPrivileged = hasRole("admin") || hasRole("teacher");
+  const isPrivileged = isHostOverride || hasRole("admin") || hasRole("teacher");
 
   // ── Sync mic/cam state into global context so minimized pill shows correct icons ──
   const { setMicEnabled: setCtxMicEnabled, setCamEnabled: setCtxCamEnabled,
