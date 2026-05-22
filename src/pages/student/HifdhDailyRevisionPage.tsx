@@ -278,7 +278,7 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
 /* ── Arabic scoring ─────────────────────────────────────────────── */
 
 /* ── Strip Waqf stop/pause signs from Arabic ─────────────────── */
-const WAQF_REGEX = /[\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u06DD\u06DE\u0615]/g;
+const WAQF_REGEX = /[\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED۝\u06DE\u0615]/g;
 function stripWaqf(text: string): string {
   return text.replace(WAQF_REGEX, "").replace(/\s+/g, " ").trim();
 }
@@ -325,7 +325,7 @@ function normalizeArabic(t: string): string {
     .replace(/\u06E5/g, "\u0648")
     .replace(/\u06E6/g, "\u064A")
     // 11. Strip Quranic end-of-ayah ۝ and rub-el-hizb ۞ markers
-    .replace(/[\u06DD\u06DE]/g, "");
+    .replace(/[۝\u06DE]/g, "");
 }
 
 // Keep the old name as an alias so nothing else in the file needs to change
@@ -1259,7 +1259,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [revealedWordCount, setRevealedWordCount] = useState(0);
   const recognitionRef = useRef<any>(null);
   // Seconds-per-word pacing: reveal one word every ~2 s by default.
-  const SECS_PER_WORD = 2;
+  // Words reveal via speech-match only — no time-based pacing.
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
   useEffect(() => {
@@ -1547,18 +1547,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       mr.start(200);
       mediaRecRef.current = mr;
       setIsRecording(true);
-      setRevealedWordCount(1);             // reveal the first word immediately on start
+      setRevealedWordCount(0);             // start fully blurred — reveal only via speech
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
       timerRef.current = setInterval(() => {
-        setRecSecs(s => {
-          const next = s + 1;
-          // TIME-BASED reveal: advance one word every SECS_PER_WORD seconds.
-          // We use the functional updater form for revealedWordCount so we always
-          // work with the latest value without adding it to the closure's deps.
-          setRevealedWordCount(prev => Math.max(prev, Math.floor(next / SECS_PER_WORD) + 1));
-          return next;
-        });
+        // Only increment the elapsed-seconds counter.
+        // Word reveal is SPEECH-ONLY — no time-based auto-reveal.
+        setRecSecs(s => s + 1);
       }, 1000);
 
       // ── SPEECH-BASED reveal (enhancement over time-based) ─────────────────
@@ -2045,7 +2040,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
     // Detect Bismillah opening
     const firstAyahNorm = pageAyahs.length > 0 ? normalizeArabic(pageAyahs[0].text) : "";
-    const isBism = firstAyahNorm.length > 5 && firstAyahNorm.startsWith(normalizeArabic("\u0628\u0633\u0645 \u0627\u0644\u0644\u0647"));
+    const isBism = firstAyahNorm.length > 5 && firstAyahNorm.startsWith(normalizeArabic("بسم الله"));
 
     // Flatten to word tokens
     type WordToken = { word: string; globalIdx: number; isLast: boolean; numberInSurah: number; isBismWord: boolean; };
@@ -2092,7 +2087,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           fontSize: 14, color: GOLD, margin: "0 4px", fontFamily: "'Amiri',serif",
           filter: revealed ? "none" : "blur(6px)", opacity: revealed ? 1 : 0.2,
           transition: "filter 0.4s ease, opacity 0.4s ease", display: "inline-block",
-        }}>\u06DD{tok.numberInSurah}</span>
+        }}>۝{tok.numberInSurah}</span>
       );
     };
 
@@ -2111,14 +2106,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             {pageAyahs[0]?.surah?.englishName}
             {pageAyahs[pageAyahs.length-1]?.surah?.number!==pageAyahs[0]?.surah?.number && ` — ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
           </span>
-          <span style={{fontFamily:"'Amiri',serif",fontSize:11,color:GOLD}}>\u0635\u0641\u062D\u0629 {todayPages[pageIdx]}</span>
+          <span style={{fontFamily:"'Amiri',serif",fontSize:11,color:GOLD}}>صفحة {todayPages[pageIdx]}</span>
         </div>
 
         {/* Recording progress hint */}
         {isRecording && (
           <div style={{ padding:"5px 14px", background:`linear-gradient(to right,${GOLD}08,${GOLD}18,${GOLD}08)`, borderBottom:`1px solid ${GOLD}22`, textAlign:"center" }}>
             <span style={{fontSize:10,fontWeight:700,color:GOLD,fontFamily:"'Cairo',sans-serif",letterSpacing:.4}}>
-              {revealedWordCount >= tokens.length ? "\u2713 Full page revealed — keep reciting!" : `Recite aloud — words reveal as you speak (${Math.min(revealedWordCount,tokens.length)}/${tokens.length})`}
+              {revealedWordCount >= tokens.length ? "✓ Full page revealed — keep reciting!" : `Recite aloud — words reveal as you speak (${Math.min(revealedWordCount,tokens.length)}/${tokens.length})`}
             </span>
           </div>
         )}
@@ -2139,10 +2134,27 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
         <div style={{padding:"14px 16px 12px"}}>
 
-          {/* Bismillah — centred, on its own line */}
+          {/* Bismillah — centred, isolated on its own line */}
           {bismTokens.length > 0 && (
-            <div style={{ direction:"rtl", textAlign:"center", fontFamily:"'Amiri Quran','Amiri',serif", fontSize:24, color:INK, lineHeight:2.6, marginBottom:12, paddingBottom:10, borderBottom:`1px dashed ${GOLD}55` }}>
-              {bismTokens.map(tok => <span key={tok.globalIdx}>{renderWord(tok)}{tok.isLast && renderAyahNum(tok)}</span>)}
+            <div style={{
+              display: "block",
+              width: "100%",
+              direction: "rtl",
+              textAlign: "center",
+              fontFamily: "'Amiri Quran','Amiri',serif",
+              fontSize: 24,
+              color: INK,
+              lineHeight: 2.8,
+              marginBottom: 16,
+              paddingBottom: 12,
+              borderBottom: `1px dashed ${GOLD}55`,
+            }}>
+              {bismTokens.map(tok => (
+                <span key={tok.globalIdx} style={{display:"inline-block", margin:"0 3px"}}>
+                  {renderWord(tok)}
+                  {tok.isLast && renderAyahNum(tok)}
+                </span>
+              ))}
             </div>
           )}
 
@@ -2153,7 +2165,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         </div>
 
         <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
-        <div style={{padding:"6px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>\u2500\u2500\u2500 {todayPages[pageIdx]} \u2500\u2500\u2500</div>
+        <div style={{padding:"6px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>─── {todayPages[pageIdx]} ───</div>
       </div>
     );
   };
