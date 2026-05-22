@@ -68,6 +68,8 @@ interface LiveClassState {
   camEnabled:    boolean;
   /** True only after LiveKit has confirmed a successful connection */
   hasConnected:  boolean;
+  /** The URL the user was on before joining the class — used to navigate back when minimized/leaving */
+  previousRoute: string;
 }
 interface LiveClassContextType extends LiveClassState {
   joinClass:       (subject: any, opts?: { autoJoin?: boolean }) => void;
@@ -85,7 +87,7 @@ const LiveClassContext = createContext<LiveClassContextType | null>(null);
 export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<LiveClassState>(() => {
     const saved = restore();
-    return saved ?? { activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false, hasConnected: false };
+    return saved ?? { activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false, hasConnected: false, previousRoute: "/" };
   });
 
   const toggleMicFnRef = useRef<() => void>(() => {});
@@ -126,7 +128,8 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
 
   const joinClass = useCallback((subject: any, opts?: { autoJoin?: boolean }) => {
     clearPersist();
-    setState({ activeSubject: subject, inCall: true, minimized: false, autoJoin: opts?.autoJoin ?? false, micEnabled: false, camEnabled: false, hasConnected: false });
+    const previousRoute = window.location.pathname + window.location.search;
+    setState({ activeSubject: subject, inCall: true, minimized: false, autoJoin: opts?.autoJoin ?? false, micEnabled: false, camEnabled: false, hasConnected: false, previousRoute });
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
@@ -134,7 +137,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
 
   const leaveClass = useCallback(() => {
     clearPersist();
-    setState({ activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false, hasConnected: false });
+    setState({ activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false, hasConnected: false, previousRoute: "/" });
   }, []);
 
   const setMinimized = useCallback((v: boolean) => {
@@ -145,8 +148,21 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
       }
       return next;
     });
-    // When restoring from minimized, push guard state again
-    if (!v) history.pushState({ [HISTORY_STATE]: true }, "");
+    // When restoring from minimized, push guard state again AND navigate back to where the user was
+    if (!v) {
+      history.pushState({ [HISTORY_STATE]: true }, "");
+      // Navigate back to the route the user was on before joining the class,
+      // but only if we're currently NOT on that route (e.g. user navigated away)
+      setState(prev => {
+        const target = prev.previousRoute || "/";
+        if (window.location.pathname + window.location.search !== target) {
+          // Use replaceState + dispatch so React Router picks it up without a full reload
+          window.history.replaceState(null, "", target);
+          window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+        }
+        return prev;
+      });
+    }
   }, []);
 
   const setMicEnabled     = useCallback((v: boolean) => setState(prev => ({ ...prev, micEnabled: v })), []);
