@@ -630,10 +630,18 @@ const GuestClassroom = () => {
     return h>0 ? `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}` : `${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
   };
 
-  const handleEndClass = async () => {
-    setShowEndConfirm(false); intentionalRef.current=true;
-    if (classId) await supabase.from("public_classes").update({ status:"ended", actual_end_time:new Date().toISOString() }).eq("id",classId);
+  const handleEndClass = () => {
+    // Set intentional + ended FIRST so any disconnect that fires during the
+    // Supabase write doesn't trigger auto-reconnect.
+    setShowEndConfirm(false);
+    intentionalRef.current = true;
     setEnded(true);
+    if (classId) {
+      supabase.from("public_classes")
+        .update({ status: "ended", actual_end_time: new Date().toISOString() })
+        .eq("id", classId)
+        .then(() => {}).catch(() => {});
+    }
   };
 
   if (!token||!url) return null;
