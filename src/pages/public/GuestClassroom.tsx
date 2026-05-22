@@ -579,6 +579,17 @@ const GuestClassroom = () => {
     h.pip().catch(()=>{});
   }, []);
 
+  /* ── Navigate away while connected → minimize + PiP first ── */
+  const navigateAway = useCallback(async (to: string) => {
+    if (connected && !ended) {
+      await doMinimize();
+      // Small delay so PiP window has time to appear before page changes
+      setTimeout(() => navigate(to), 80);
+    } else {
+      navigate(to);
+    }
+  }, [connected, ended, doMinimize, navigate]);
+
   /* ── Back button → minimize + PiP ── */
   useEffect(() => {
     if (!connected) return;
@@ -646,16 +657,14 @@ const GuestClassroom = () => {
                   <li key={i} style={{ marginBottom:6 }}>✅ {item}</li>
                 ))}
               </ul>
-              <Link to="/register">
-                <button style={{ width:"100%", padding:13, borderRadius:24, border:"none", background:"#c9973a", color:"#fff", fontSize:15, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                  <UserPlus style={{ width:18, height:18 }} /> Register Free — It's Free!
-                </button>
-              </Link>
+              <button onClick={()=>navigateAway("/register")} style={{ width:"100%", padding:13, borderRadius:24, border:"none", background:"#c9973a", color:"#fff", fontSize:15, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                <UserPlus style={{ width:18, height:18 }} /> Register Free — It's Free!
+              </button>
             </div>
           )}
           {isHost
-            ? <Link to="/admin/public-classes" style={{ fontSize:13, color:"rgba(255,255,255,.35)", textDecoration:"underline" }}>Back to Dashboard</Link>
-            : <Link to="/live" style={{ fontSize:13, color:"rgba(255,255,255,.35)", textDecoration:"underline" }}>Maybe Later — Browse Classes</Link>
+            ? <button onClick={()=>navigateAway("/admin/public-classes")} style={{ fontSize:13, color:"rgba(255,255,255,.35)", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>Back to Dashboard</button>
+            : <button onClick={()=>navigateAway("/live")} style={{ fontSize:13, color:"rgba(255,255,255,.35)", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>Maybe Later — Browse Classes</button>
           }
         </div>
       </div>
@@ -667,8 +676,15 @@ const GuestClassroom = () => {
      The div is always present. When minimized it's translated
      off-screen (zero visual footprint) while PiP shows the
      canvas overlay — identical to GlobalClassroomOverlay.
+     A solid black backdrop covers the page body so the white
+     background never bleeds through when minimized.
      ════════════════════════════════════════════════════════ */
   return (
+    <>
+    {/* Black backdrop — visible only when minimized, hides white body behind PiP */}
+    {minimized && (
+      <div style={{ position:"fixed", inset:0, zIndex:7999, background:"#000" }} />
+    )}
     <div
       data-gc-root
       style={{
@@ -768,13 +784,15 @@ const GuestClassroom = () => {
             {/* Record (host only — compact) */}
             <RecordingController classId={classId||""} isHost={!!isHost} onSavingChange={setSavingRec} />
 
-            {/* Register CTA — desktop only */}
+            {/* Register CTA — desktop only — minimizes first so audio keeps running */}
             {!isHost && (
-              <Link to="/register" style={{ display:"none" }} className="sm:block">
-                <button style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:16, border:"1px solid rgba(201,151,58,.4)", background:"transparent", color:"#c9973a", fontSize:11, cursor:"pointer" }}>
-                  <UserPlus style={{ width:11, height:11 }} /> Register
-                </button>
-              </Link>
+              <button
+                onClick={async ()=>{ await doMinimize(); navigate("/register"); }}
+                className="sm:block"
+                style={{ display:"none", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:16, border:"1px solid rgba(201,151,58,.4)", background:"transparent", color:"#c9973a", fontSize:11, cursor:"pointer" }}
+              >
+                <UserPlus style={{ width:11, height:11 }} /> Register
+              </button>
             )}
 
             {/* Minimize */}
@@ -905,6 +923,7 @@ const GuestClassroom = () => {
         </div>
       )}
     </div>
+    </>
   );
 };
 
