@@ -2030,221 +2030,130 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   );
 
   /* ── Quran page display — Mushaf-style ── */
-  // Layout rules that match a physical Mus'haf:
-  //   • Bismillah is centered on its own line (when present at start of a surah)
-  //   • Body text is fully justified, direction RTL, Amiri Quran font
-  //   • Each word has an underline — green when confirmed correct by transcript,
-  //     red when marked missing, gold while still unreviewed (recording in progress)
-  //   • Words blur/reveal progressively during recording; full page shows before/after
+  //
+  // UNDERLINE RULES:
+  //   Before recording  → NO underlines
+  //   While recording   → NO underlines (blur/reveal only)
+  //   After evaluation  → green=correct, red=missed
+  //     (only when phase==="page_result" AND score !== null)
+  //
+  // BISMILLAH: rendered centred on its own line, separated from body.
+  // LAYOUT: direction rtl, textAlign right (not justify), lineHeight 3.2.
   const QuranPage = () => {
-    // ── Flatten page into word tokens ────────────────────────────────────────
-    // isBism: the first ayah is the Basmala (surah-opening Bismillah)
-    const isBism = pageAyahs.length > 0 &&
-      normalizeArabic(pageAyahs[0].text).startsWith(normalizeArabic("بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ".slice(0, 6)));
+    // Only show underlines once transcription is done and score is set
+    const evaluationReady = phase === "page_result" && score !== null && lastTranscript.length > 0;
 
-    type WordToken = {
-      word: string; globalIdx: number; isLast: boolean;
-      numberInSurah: number; isBismWord: boolean;
-    };
+    // Detect Bismillah opening
+    const firstAyahNorm = pageAyahs.length > 0 ? normalizeArabic(pageAyahs[0].text) : "";
+    const isBism = firstAyahNorm.length > 5 && firstAyahNorm.startsWith(normalizeArabic("\u0628\u0633\u0645 \u0627\u0644\u0644\u0647"));
+
+    // Flatten to word tokens
+    type WordToken = { word: string; globalIdx: number; isLast: boolean; numberInSurah: number; isBismWord: boolean; };
     const tokens: WordToken[] = [];
     pageAyahs.forEach((a, ai) => {
-      const words = a.text.split(/\s+/).filter(Boolean);
-      words.forEach((w, wi) => {
-        tokens.push({
-          word: w,
-          globalIdx: tokens.length,
-          isLast: wi === words.length - 1,
-          numberInSurah: a.numberInSurah,
-          isBismWord: isBism && ai === 0,
-        });
+      a.text.split(/\s+/).filter(Boolean).forEach((w, wi, arr) => {
+        tokens.push({ word: w, globalIdx: tokens.length, isLast: wi === arr.length - 1, numberInSurah: a.numberInSurah, isBismWord: isBism && ai === 0 });
       });
     });
 
-    // ── Per-word status from last transcript (only when score is available) ──
-    // During recording: all words are "pending" (gold underline)
-    // After recording: compare against lastTranscript to get correct/missing
-    const wordStatuses: ("correct" | "missing" | "pending")[] = tokens.map(() => "pending");
-    if (!isRecording && lastTranscript) {
+    // Word statuses — only populated after evaluation
+    const wordStatuses: ("correct" | "missing" | "none")[] = tokens.map(() => "none");
+    if (evaluationReady) {
       const ref = pageAyahs.map(a => a.text).join(" ");
-      const results = compareWords(ref, lastTranscript);
-      results.forEach((r, i) => { if (i < wordStatuses.length) wordStatuses[i] = r.status; });
+      compareWords(ref, lastTranscript).forEach((r, i) => { if (i < wordStatuses.length) wordStatuses[i] = r.status; });
     }
 
-    if (fetchingPage) return (
-      <div style={{display:"flex",justifyContent:"center",padding:40}}>
-        <Loader2 size={28} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
-      </div>
-    );
-    if (!pageAyahs.length) return (
-      <div style={{padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13}}>
-        Could not load page — check internet connection.
-      </div>
-    );
-
-    // Split tokens into bism group and body group
-    const bismTokens = tokens.filter(t => t.isBismWord);
-    const bodyTokens = tokens.filter(t => !t.isBismWord);
-
-    const renderWord = (tok: WordToken, extraStyle?: React.CSSProperties) => {
+    const renderWord = (tok: WordToken) => {
       const revealed = !isRecording || tok.globalIdx < revealedWordCount;
       const justRevealed = isRecording && revealed && tok.globalIdx === revealedWordCount - 1;
-      const status = wordStatuses[tok.globalIdx];
-      const underlineColor =
-        isRecording
-          ? (revealed ? `${GOLD}88` : "transparent")
-          : status === "correct" ? "#16a34a"
-          : status === "missing" ? "#dc2626"
-          : `${GOLD}88`;
-
+      const st = wordStatuses[tok.globalIdx];
+      const underline = evaluationReady && st !== "none"
+        ? (st === "correct" ? "2.5px solid #16a34a" : "2.5px solid #dc2626")
+        : "none";
       return (
-        <span
-          key={tok.globalIdx}
-          style={{
-            display: "inline-block",
-            transition: "filter 0.35s ease, opacity 0.35s ease",
-            filter: revealed ? "blur(0px)" : "blur(6px)",
-            opacity: revealed ? 1 : 0.25,
-            borderBottom: `2.5px solid ${underlineColor}`,
-            borderRadius: 2,
-            paddingBottom: 1,
-            marginBottom: 2,
-            background: justRevealed ? `${GOLD}22` : "transparent",
-            ...extraStyle,
-          }}
-        >
-          {tok.word}
-        </span>
+        <span key={tok.globalIdx} style={{
+          display: "inline-block",
+          transition: "filter 0.4s ease, opacity 0.4s ease",
+          filter: revealed ? "none" : "blur(6px)",
+          opacity: revealed ? 1 : 0.2,
+          borderBottom: underline,
+          paddingBottom: evaluationReady && st !== "none" ? 2 : 0,
+          background: justRevealed ? `${GOLD}22` : "transparent",
+          borderRadius: 3,
+          margin: "0 2px",
+        }}>{tok.word}</span>
       );
     };
 
     const renderAyahNum = (tok: WordToken) => {
       const revealed = !isRecording || tok.globalIdx < revealedWordCount;
       return (
-        <span
-          key={`num-${tok.globalIdx}`}
-          style={{
-            fontSize: 14, color: GOLD, margin: "0 4px",
-            fontFamily: "'Amiri',serif",
-            filter: revealed ? "blur(0px)" : "blur(6px)",
-            opacity: revealed ? 1 : 0.25,
-            transition: "filter 0.35s ease, opacity 0.35s ease",
-            display: "inline-block",
-          }}
-        >
-          ۝{tok.numberInSurah}
-        </span>
+        <span key={`n${tok.globalIdx}`} style={{
+          fontSize: 14, color: GOLD, margin: "0 4px", fontFamily: "'Amiri',serif",
+          filter: revealed ? "none" : "blur(6px)", opacity: revealed ? 1 : 0.2,
+          transition: "filter 0.4s ease, opacity 0.4s ease", display: "inline-block",
+        }}>\u06DD{tok.numberInSurah}</span>
       );
     };
 
+    const bismTokens = tokens.filter(t => t.isBismWord);
+    const bodyTokens = tokens.filter(t => !t.isBismWord);
+
+    if (fetchingPage) return <div style={{display:"flex",justifyContent:"center",padding:40}}><Loader2 size={28} color={GOLD} style={{animation:"spin .9s linear infinite"}}/></div>;
+    if (!pageAyahs.length) return <div style={{padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13}}>Could not load page — check internet connection.</div>;
+
     return (
-      <div style={{
-        background: "#fffdf6",
-        borderRadius: 8,
-        border: `2px solid ${GOLD}88`,
-        boxShadow: `0 4px 20px rgba(0,0,0,.1)`,
-        overflow: "hidden",
-        fontFamily: "'Amiri Quran','Amiri',serif",
-      }}>
-        {/* ── Surah / page header ── */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "8px 16px",
-          background: `linear-gradient(to bottom,${GOLD}18,transparent)`,
-          borderBottom: `1px solid ${GOLD}44`,
-        }}>
+      <div style={{ background:"#fffdf6", borderRadius:8, border:`2px solid ${GOLD}88`, boxShadow:"0 4px 20px rgba(0,0,0,.1)", overflow:"hidden" }}>
+
+        {/* Page header */}
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 16px", background:`linear-gradient(to bottom,${GOLD}18,transparent)`, borderBottom:`1px solid ${GOLD}44` }}>
           <span style={{fontFamily:"'Amiri',serif",fontSize:11,fontWeight:700,color:G1}}>
             {pageAyahs[0]?.surah?.englishName}
-            {pageAyahs[pageAyahs.length-1]?.surah?.number!==pageAyahs[0]?.surah?.number &&
-              ` — ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
+            {pageAyahs[pageAyahs.length-1]?.surah?.number!==pageAyahs[0]?.surah?.number && ` — ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
           </span>
-          <span style={{fontFamily:"'Amiri',serif",fontSize:11,color:GOLD}}>
-            صفحة {todayPages[pageIdx]}
-          </span>
+          <span style={{fontFamily:"'Amiri',serif",fontSize:11,color:GOLD}}>\u0635\u0641\u062D\u0629 {todayPages[pageIdx]}</span>
         </div>
 
-        {/* ── Progressive reveal progress hint ── */}
+        {/* Recording progress hint */}
         {isRecording && (
-          <div style={{
-            padding: "5px 14px",
-            background: `linear-gradient(to right,${GOLD}08,${GOLD}18,${GOLD}08)`,
-            borderBottom: `1px solid ${GOLD}22`,
-            textAlign: "center",
-          }}>
+          <div style={{ padding:"5px 14px", background:`linear-gradient(to right,${GOLD}08,${GOLD}18,${GOLD}08)`, borderBottom:`1px solid ${GOLD}22`, textAlign:"center" }}>
             <span style={{fontSize:10,fontWeight:700,color:GOLD,fontFamily:"'Cairo',sans-serif",letterSpacing:.4}}>
-              {revealedWordCount >= tokens.length
-                ? "✓ Full page revealed — keep reciting!"
-                : `Recite aloud — words reveal as you speak (${Math.min(revealedWordCount, tokens.length)}/${tokens.length})`}
+              {revealedWordCount >= tokens.length ? "\u2713 Full page revealed — keep reciting!" : `Recite aloud — words reveal as you speak (${Math.min(revealedWordCount,tokens.length)}/${tokens.length})`}
             </span>
           </div>
         )}
 
-        {/* ── Underline legend (shown after recording stops) ── */}
-        {!isRecording && lastTranscript && (
-          <div style={{
-            padding:"5px 12px",
-            background:"#f9fafb",
-            borderBottom:`1px solid ${GOLD}22`,
-            display:"flex",alignItems:"center",justifyContent:"center",gap:14,
-          }}>
+        {/* Underline legend — ONLY when evaluation is done */}
+        {evaluationReady && (
+          <div style={{ padding:"5px 12px", background:"#f9fafb", borderBottom:`1px solid ${GOLD}22`, display:"flex", alignItems:"center", justifyContent:"center", gap:16 }}>
             <span style={{fontSize:10,color:"#16a34a",fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
-              <span style={{display:"inline-block",width:16,height:2,background:"#16a34a",borderRadius:1}}/>Correct
+              <span style={{display:"inline-block",width:18,height:2.5,background:"#16a34a",borderRadius:1}}/>Correct
             </span>
             <span style={{fontSize:10,color:"#dc2626",fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
-              <span style={{display:"inline-block",width:16,height:2,background:"#dc2626",borderRadius:1}}/>Missed
+              <span style={{display:"inline-block",width:18,height:2.5,background:"#dc2626",borderRadius:1}}/>Missed
             </span>
           </div>
         )}
 
         <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
 
-        {/* ── Mushaf body ── */}
-        <div style={{padding:"14px 16px 10px"}}>
+        <div style={{padding:"14px 16px 12px"}}>
 
-          {/* Bismillah — centered on its own line, larger, ornamental */}
+          {/* Bismillah — centred, on its own line */}
           {bismTokens.length > 0 && (
-            <div style={{
-              textAlign: "center",
-              marginBottom: 14,
-              paddingBottom: 10,
-              borderBottom: `1px dashed ${GOLD}44`,
-              direction: "rtl",
-              fontSize: 24,
-              color: INK,
-              lineHeight: 2.2,
-              letterSpacing: 0,
-            }}>
-              {bismTokens.map((tok, i) => (
-                <span key={i} style={{margin:"0 3px"}}>
-                  {renderWord(tok)}
-                  {tok.isLast && renderAyahNum(tok)}
-                </span>
-              ))}
+            <div style={{ direction:"rtl", textAlign:"center", fontFamily:"'Amiri Quran','Amiri',serif", fontSize:24, color:INK, lineHeight:2.6, marginBottom:12, paddingBottom:10, borderBottom:`1px dashed ${GOLD}55` }}>
+              {bismTokens.map(tok => <span key={tok.globalIdx}>{renderWord(tok)}{tok.isLast && renderAyahNum(tok)}</span>)}
             </div>
           )}
 
-          {/* Body text — justified like a Mus'haf page */}
-          <div style={{
-            direction: "rtl",
-            fontSize: 22,
-            color: INK,
-            lineHeight: 3.2,
-            textAlign: "justify",
-            textAlignLast: "right",  // last line aligns right (RTL), not stretched
-            wordSpacing: 4,
-          }}>
-            {bodyTokens.map((tok) => (
-              <span key={tok.globalIdx} style={{margin:"0 2px"}}>
-                {renderWord(tok)}
-                {tok.isLast && renderAyahNum(tok)}
-              </span>
-            ))}
+          {/* Body — RTL right-aligned Mus'haf style */}
+          <div style={{ direction:"rtl", fontFamily:"'Amiri Quran','Amiri',serif", fontSize:22, color:INK, lineHeight:3.2, textAlign:"right" }}>
+            {bodyTokens.map(tok => <span key={tok.globalIdx}>{renderWord(tok)}{tok.isLast && renderAyahNum(tok)}</span>)}
           </div>
         </div>
 
         <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
-        <div style={{padding:"6px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>
-          ─── {todayPages[pageIdx]} ───
-        </div>
+        <div style={{padding:"6px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>\u2500\u2500\u2500 {todayPages[pageIdx]} \u2500\u2500\u2500</div>
       </div>
     );
   };
