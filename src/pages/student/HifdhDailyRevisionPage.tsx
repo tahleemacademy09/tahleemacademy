@@ -1247,6 +1247,20 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const recSecsRef   = useRef(0);
   const wakeLockRef  = useRef<any>(null);
 
+  // ── PROGRESSIVE REVEAL ────────────────────────────────────────────────────
+  // Words on the Quran page start blurred and reveal progressively as the
+  // student recites. Two reveal mechanisms work together:
+  //   1. TIME-BASED (recSecs): a word reveals automatically every N seconds
+  //      so the page always advances even if SpeechRecognition is unavailable.
+  //   2. SPEECH-BASED (SpeechRecognition): each interim / final transcript
+  //      result bumps the reveal index by the number of words spoken so far,
+  //      giving instant, voice-driven reveals when the browser supports it.
+  // Both mechanisms write to revealedWordCount; the max of the two always wins.
+  const [revealedWordCount, setRevealedWordCount] = useState(0);
+  const recognitionRef = useRef<any>(null);
+  // Seconds-per-word pacing: reveal one word every ~2 s by default.
+  const SECS_PER_WORD = 2;
+
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
   useEffect(() => {
     const acquire = async () => {
@@ -1533,9 +1547,48 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       mr.start(200);
       mediaRecRef.current = mr;
       setIsRecording(true);
+      setRevealedWordCount(1);             // reveal the first word immediately on start
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
-      timerRef.current = setInterval(() => setRecSecs(s => s + 1), 1000);
+      timerRef.current = setInterval(() => {
+        setRecSecs(s => {
+          const next = s + 1;
+          // TIME-BASED reveal: advance one word every SECS_PER_WORD seconds.
+          // We use the functional updater form for revealedWordCount so we always
+          // work with the latest value without adding it to the closure's deps.
+          setRevealedWordCount(prev => Math.max(prev, Math.floor(next / SECS_PER_WORD) + 1));
+          return next;
+        });
+      }, 1000);
+
+      // ── SPEECH-BASED reveal (enhancement over time-based) ─────────────────
+      // SpeechRecognition is not available in all browsers (e.g. Firefox) so
+      // we wrap everything in a try/catch — the time-based reveal above always
+      // works as the fallback.
+      try {
+        const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (SR) {
+          const rec = new SR();
+          rec.lang = "ar-SA";           // Arabic — matches Quranic recitation
+          rec.continuous = true;        // keep recognising across pauses
+          rec.interimResults = true;    // use interim results for faster reveals
+          rec.maxAlternatives = 1;
+          rec.onresult = (event: any) => {
+            // Count words across ALL results (interim + final) accumulated so far
+            let totalWords = 0;
+            for (let i = 0; i < event.results.length; i++) {
+              const txt = (event.results[i][0]?.transcript ?? "").trim();
+              if (txt) totalWords += txt.split(/\s+/).length;
+            }
+            if (totalWords > 0) {
+              setRevealedWordCount(prev => Math.max(prev, totalWords + 1));
+            }
+          };
+          rec.onerror = () => { /* silent — time-based reveal continues */ };
+          rec.start();
+          recognitionRef.current = rec;
+        }
+      } catch { /* SpeechRecognition unavailable — time-based reveal only */ }
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
     }
@@ -1627,6 +1680,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       mediaRecRef.current.stop(); // triggers mr.onstop → transcribeAudio → setScore
     }
     mediaRecRef.current = null;
+    // Stop SpeechRecognition and reset progressive reveal for next attempt
+    try { recognitionRef.current?.stop(); } catch { /* already stopped */ }
+    recognitionRef.current = null;
+    setRevealedWordCount(0);
     // mr.onstop handles setPhase("page_result") + setScore(null) + fill
   };
 
@@ -1778,7 +1835,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const retryPage = () => {
     setRetryMsg(RETRY_MSGS[retryCount%RETRY_MSGS.length]);
-    setScore(null); setRetryCount(c=>c+1); setRecSecs(0); setPhase("reading");
+    setScore(null); setRetryCount(c=>c+1); setRecSecs(0); setRevealedWordCount(0); setPhase("reading");
   };
 
   const pickAnswer=(i:number)=>{ const a=[...answers]; a[qIdx]=i; setAnswers(a); };
@@ -1938,61 +1995,140 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   );
 
   /* ── Quran page display ── */
-  const QuranPage=()=>(
-    fetchingPage
-      ? <div style={{display:"flex",justifyContent:"center",padding:40}}>
-          <Loader2 size={28} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
+  // When recording is active, words start blurred and reveal progressively as
+  // the student recites. Two counters drive this:
+  //   • recSecs (time-based): 1 word reveals every SECS_PER_WORD seconds
+  //   • SpeechRecognition (speech-based): word count from live transcript
+  // The maximum of both is stored in revealedWordCount.
+  // When not recording, the full page is shown normally.
+  const QuranPage=()=>{
+    // Flatten all words across all ayahs with their ayah index so we can
+    // render them in a single inline flow (RTL, matching Quranic layout).
+    type WordToken = { word: string; ayahIdx: number; isLast: boolean; numberInSurah: number };
+    const tokens: WordToken[] = [];
+    pageAyahs.forEach((a, ai) => {
+      const words = a.text.split(/\s+/).filter(Boolean);
+      words.forEach((w, wi) => {
+        tokens.push({ word: w, ayahIdx: ai, isLast: wi === words.length - 1, numberInSurah: a.numberInSurah });
+      });
+    });
+
+    if (fetchingPage) return (
+      <div style={{display:"flex",justifyContent:"center",padding:40}}>
+        <Loader2 size={28} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
+      </div>
+    );
+    if (!pageAyahs.length) return (
+      <div style={{padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13}}>
+        Could not load page — check internet connection.
+      </div>
+    );
+
+    return (
+      <div style={{
+        background:"#fffdf6",
+        borderRadius:8,
+        border:`2px solid ${GOLD}88`,
+        boxShadow:`0 4px 20px rgba(0,0,0,.1)`,
+        overflow:"hidden",
+      }}>
+        {/* Header */}
+        <div style={{
+          display:"flex",alignItems:"center",justifyContent:"space-between",
+          padding:"8px 16px",
+          background:`linear-gradient(to bottom,${GOLD}18,transparent)`,
+          borderBottom:`1px solid ${GOLD}44`,
+        }}>
+          <span style={{fontFamily:"'Amiri',serif",fontSize:11,fontWeight:700,color:G1}}>
+            {pageAyahs[0]?.surah?.englishName}
+            {pageAyahs[pageAyahs.length-1]?.surah?.number!==pageAyahs[0]?.surah?.number&&
+              ` — ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
+          </span>
+          <span style={{fontFamily:"'Amiri',serif",fontSize:11,color:GOLD}}>
+            صفحة {todayPages[pageIdx]}
+          </span>
         </div>
-      : pageAyahs.length>0
-        ? <div style={{
-            background:"#fffdf6",
-            borderRadius:8,
-            border:`2px solid ${GOLD}88`,
-            boxShadow:`0 4px 20px rgba(0,0,0,.1)`,
-            overflow:"hidden",
+
+        {/* Progressive reveal status hint — only shown while recording */}
+        {isRecording && (
+          <div style={{
+            padding:"5px 14px",
+            background:`linear-gradient(to right,${GOLD}08,${GOLD}18,${GOLD}08)`,
+            borderBottom:`1px solid ${GOLD}22`,
+            display:"flex",alignItems:"center",justifyContent:"center",gap:6,
           }}>
-            {/* Header */}
-            <div style={{
-              display:"flex",alignItems:"center",justifyContent:"space-between",
-              padding:"8px 16px",
-              background:`linear-gradient(to bottom,${GOLD}18,transparent)`,
-              borderBottom:`1px solid ${GOLD}44`,
-            }}>
-              <span style={{fontFamily:"'Amiri',serif",fontSize:11,fontWeight:700,color:G1}}>
-                {pageAyahs[0]?.surah?.englishName}
-                {pageAyahs[pageAyahs.length-1]?.surah?.number!==pageAyahs[0]?.surah?.number&&
-                  ` — ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
-              </span>
-              <span style={{fontFamily:"'Amiri',serif",fontSize:11,color:GOLD}}>
-                صفحة {todayPages[pageIdx]}
-              </span>
-            </div>
-            <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
-            {/* Quran text */}
-            <div style={{padding:"14px 16px 10px"}}>
-              <div style={{
-                direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
-                fontSize:22,color:INK,lineHeight:3.0,textAlign:"justify",
-              }}>
-                {pageAyahs.map((a,i)=>(
-                  <span key={i}>
-                    {a.text}
-                    <span style={{fontSize:13,color:GOLD,margin:"0 3px",fontFamily:"'Amiri',serif"}}>
-                      ۝{a.numberInSurah}
+            <span style={{fontSize:10,fontWeight:700,color:GOLD,fontFamily:"'Cairo',sans-serif",letterSpacing:.4}}>
+              {revealedWordCount >= tokens.length
+                ? "✓ Full page revealed — keep reciting!"
+                : `Recite aloud — words reveal as you speak (${Math.min(revealedWordCount, tokens.length)}/${tokens.length})`}
+            </span>
+          </div>
+        )}
+
+        <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
+
+        {/* Quran text — word-by-word reveal when recording, full when not */}
+        <div style={{padding:"14px 16px 10px"}}>
+          <div style={{
+            direction:"rtl",fontFamily:"'Amiri Quran','Amiri',serif",
+            fontSize:22,color:INK,lineHeight:3.0,textAlign:"justify",
+          }}>
+            {isRecording ? (
+              // ── RECORDING MODE: word-by-word progressive reveal ──────────
+              tokens.map((tok, idx) => {
+                const revealed = idx < revealedWordCount;
+                const justRevealed = revealed && idx === revealedWordCount - 1;
+                return (
+                  <span key={idx} style={{display:"inline"}}>
+                    <span style={{
+                      display:"inline-block",
+                      transition:"filter 0.35s ease, opacity 0.35s ease",
+                      filter: revealed ? "blur(0px)" : "blur(7px)",
+                      opacity: revealed ? 1 : 0.3,
+                      background: justRevealed ? `${GOLD}28` : "transparent",
+                      borderRadius:4,
+                      padding:"0 1px",
+                    }}>
+                      {tok.word}
                     </span>
+                    {/* Ayah number marker after last word of each ayah */}
+                    {tok.isLast && (
+                      <span style={{
+                        fontSize:13,color:GOLD,margin:"0 3px",
+                        fontFamily:"'Amiri',serif",
+                        filter: revealed ? "blur(0px)" : "blur(7px)",
+                        opacity: revealed ? 1 : 0.3,
+                        transition:"filter 0.35s ease, opacity 0.35s ease",
+                        display:"inline-block",
+                      }}>
+                        ۝{tok.numberInSurah}
+                      </span>
+                    )}
+                    {" "}
                   </span>
-                ))}
-              </div>
-            </div>
-            <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
-            <div style={{padding:"6px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>
-              ─── {todayPages[pageIdx]} ───
-            </div>
+                );
+              })
+            ) : (
+              // ── NORMAL MODE: full page shown ─────────────────────────────
+              pageAyahs.map((a,i)=>(
+                <span key={i}>
+                  {a.text}
+                  <span style={{fontSize:13,color:GOLD,margin:"0 3px",fontFamily:"'Amiri',serif"}}>
+                    ۝{a.numberInSurah}
+                  </span>
+                </span>
+              ))
+            )}
           </div>
-        : <div style={{padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13}}>
-            Could not load page — check internet connection.
-          </div>
-  );
+        </div>
+
+        <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
+        <div style={{padding:"6px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>
+          ─── {todayPages[pageIdx]} ───
+        </div>
+      </div>
+    );
+  };
 
   /* ════ RENDER PHASES ════ */
   return (
