@@ -228,36 +228,82 @@ const JoinClass = () => {
             {/* Pre-register */}
             {!registered ? (
               <div className="space-y-3">
-                <Label className="text-white/70">Pre-register to get notified</Label>
+                {/* Header with incentive */}
+                <div className="rounded-lg p-3" style={{ background: "rgba(201,151,58,0.08)", border: "1px solid rgba(201,151,58,0.2)" }}>
+                  <p className="text-sm font-semibold" style={{ color: "#c9973a" }}>📩 Get notified when class starts</p>
+                  <p className="text-xs text-white/55 mt-0.5">
+                    Drop your email and we'll send you a direct reminder + the join link — so you don't miss it.
+                  </p>
+                </div>
+
                 <Input
                   value={regName}
                   onChange={e => setRegName(e.target.value)}
-                  placeholder="Your Name"
+                  placeholder="Your Name *"
                   className="bg-white/10 border-white/20 text-white placeholder:text-white/40"
                 />
-                <Input
-                  value={regEmail}
-                  onChange={e => setRegEmail(e.target.value)}
-                  placeholder="Email (optional)"
-                  className="bg-white/10 border-white/20 text-white placeholder:text-white/40"
-                />
-                <Button onClick={handlePreRegister} className="w-full" style={{ background: "#c9973a" }}>
-                  Pre-Register
+
+                {/* Email field with nudge */}
+                <div className="space-y-1">
+                  <Input
+                    value={regEmail}
+                    onChange={e => setRegEmail(e.target.value)}
+                    placeholder="Email address (for reminder)"
+                    type="email"
+                    className="bg-white/10 text-white placeholder:text-white/40"
+                    style={{
+                      border: regName.trim() && !regEmail.trim()
+                        ? "1px solid rgba(201,151,58,0.7)"
+                        : "1px solid rgba(255,255,255,0.2)",
+                    }}
+                  />
+                  {regName.trim() && !regEmail.trim() && (
+                    <p className="text-xs flex items-center gap-1" style={{ color: "#c9973a" }}>
+                      ↑ Add your email so we can remind you — class links aren't always reshared
+                    </p>
+                  )}
+                </div>
+
+                <Button
+                  onClick={handlePreRegister}
+                  disabled={!regName.trim()}
+                  className="w-full font-semibold"
+                  style={{ background: "#c9973a" }}
+                >
+                  {regEmail.trim() ? "✅ Remind Me When It Starts" : "Pre-Register (No Reminder)"}
                 </Button>
+
+                {!regEmail.trim() && regName.trim() && (
+                  <p className="text-xs text-center text-white/40">
+                    Without an email, you'll need to check back manually for the class link.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="text-center p-4 rounded-lg" style={{ background: "rgba(201,151,58,0.15)" }}>
                 <p className="text-[#c9973a] font-semibold">✅ You're registered!</p>
-                <p className="text-sm text-white/60 mt-1">We'll notify you when the class starts.</p>
+                <p className="text-sm text-white/60 mt-1">
+                  {regEmail.trim()
+                    ? `We'll send a reminder to ${regEmail} when the class goes live.`
+                    : "Check back at the scheduled time to join the class."}
+                </p>
               </div>
             )}
 
             {/* Share */}
             <div className="flex gap-2 mt-6">
-              <Button variant="outline" className="flex-1 border-white/20 text-white hover:bg-white/10" onClick={() => { navigator.clipboard.writeText(window.location.href); toast.success("Link copied!"); }}>
+              <Button
+                onClick={() => { navigator.clipboard.writeText(window.location.href); toast.success("Link copied!"); }}
+                className="flex-1 font-medium"
+                style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.2)", color: "white" }}
+              >
                 <Copy className="h-4 w-4 mr-2" /> Copy Link
               </Button>
-              <Button variant="outline" className="flex-1 border-white/20 text-white hover:bg-white/10" onClick={shareWhatsApp}>
+              <Button
+                onClick={shareWhatsApp}
+                className="flex-1 font-medium"
+                style={{ background: "rgba(37,211,102,0.15)", border: "1px solid rgba(37,211,102,0.35)", color: "#25d366" }}
+              >
                 <Share2 className="h-4 w-4 mr-2" /> WhatsApp
               </Button>
             </div>
