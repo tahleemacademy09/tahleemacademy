@@ -13,6 +13,7 @@
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import ClassroomView from "@/components/classroom/ClassroomView";
 import { useEffect, useRef, useCallback, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 /* ─── Silent audio keep-alive ─────────────────────────────────────────── */
 function useSilentAudio(active: boolean) {
@@ -293,7 +294,10 @@ export default function GlobalClassroomOverlay() {
     micEnabled, camEnabled,
     hasConnected,
     toggleMicFnRef,
+    previousRoute,
   } = useLiveClass();
+
+  const navigate = useNavigate();
 
   const title   = activeSubject?.title ?? "Live Class";
   const initial = (activeSubject?.title ?? "L").charAt(0).toUpperCase();
@@ -301,7 +305,15 @@ export default function GlobalClassroomOverlay() {
   const [localMic, setLocalMic] = useState(micEnabled);
   useEffect(() => setLocalMic(micEnabled), [micEnabled]);
 
-  const handleReturn    = useCallback(() => setMinimized(false), [setMinimized]);
+  const handleReturn = useCallback(() => {
+    setMinimized(false);
+    // Navigate back to the page the user was on before joining the class,
+    // but only if we're not already there
+    const target = previousRoute || "/";
+    if (window.location.pathname + window.location.search !== target) {
+      navigate(target, { replace: true });
+    }
+  }, [setMinimized, navigate, previousRoute]);
   const handleLeave     = useCallback(() => leaveClass(),        [leaveClass]);
   const handleToggleMic = useCallback(() => {
     setLocalMic(v => !v);
