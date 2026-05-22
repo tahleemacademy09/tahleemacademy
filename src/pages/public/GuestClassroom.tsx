@@ -866,6 +866,7 @@ const GuestClassroom = () => {
         {sessionId ? (
           <ClassControls
             sessionId={sessionId}
+            isHostOverride={!!isHost}
             onToggleChat={()=>{ setChatOpen(v=>!v); if(!chatOpen) setChatUnread(0); }}
             onToggleParticipants={()=>setPartOpen(v=>!v)}
             onEndClass={isHost?()=>setShowEndConfirm(true):undefined}
