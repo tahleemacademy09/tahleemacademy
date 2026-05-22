@@ -1567,111 +1567,113 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         setRecSecs(s => s + 1);
       }, 1000);
 
-      // ── SPEECH-BASED reveal — strict sequential match ────────────────────
-      // Words only reveal when the student actually recites them in order.
+      // ── SPEECH-BASED reveal — sequential sliding-window match ─────────────
+      // Design goals:
+      //   • Each word reveals only when it (or a close neighbour) is spoken.
+      //   • Random noise / unrelated speech does NOT advance the reveal.
+      //   • Works on Android Chrome where continuous+no-interim = silent.
+      //
       // Algorithm:
-      //   1. Only process FINAL recognition results (interim are too noisy).
-      //   2. Track lastFinalIdx so each final result is processed exactly once.
-      //   3. For each new final result, try to match its words sequentially
-      //      against the next expected Quran tokens starting from matchPos.
-      //   4. A spoken word matches if wordsMatch() returns true (diacritic-
-      //      and hamza-normalised comparison).
-      //   5. If no match: try the next spoken word (skip one noise word).
-      //      If still no match: STOP — do not advance. Never skip expected words.
-      //   6. SpeechRecognition auto-restarts on `end` while still recording.
+      //   - interimResults: true — we get fast word-by-word feedback.
+      //   - Each onresult call gives us the FULL transcript so far (all results
+      //     concatenated). We track lastSpokenCount so we only look at NEW words.
+      //   - For each new spoken word, we try to match it at matchPos OR within
+      //     a small lookahead window (±3 tokens). This handles the case where
+      //     recognition catches the student mid-word or slightly ahead.
+      //   - If a spoken word matches anywhere in the window, matchPos jumps to
+      //     just after that hit. This is safe because matchPos only moves forward.
+      //   - If a spoken word matches NOTHING in the window, it is silently
+      //     discarded (noise). matchPos never moves backward.
+      //   - Auto-restarts on onend so 60s Chrome limit doesn't stop reveals.
       try {
         const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SR) {
-          // Build the flat token list once and keep it outside the closure
-          // so every onresult call works on the same stable array.
-          const buildTokens = () => {
-            const ayahs = pageAyahsRef.current;
+          // Flat normalised token list for this page — built once
+          const buildTokens = (): string[] => {
             const toks: string[] = [];
-            ayahs.forEach(a => {
+            pageAyahsRef.current.forEach(a => {
               a.text.split(/\s+/).filter(Boolean).forEach(w => toks.push(normalizeArabic(w)));
             });
             return toks;
           };
+          const pageTokens = buildTokens();
 
-          // matchPos persists across onresult calls — stored in recognitionRef
-          // so handleStop can read it, but we use a plain closure-captured var here.
+          // matchPos: how many page tokens have been confirmed spoken.
+          // Persists across onend restarts via closure.
           let matchPos = 0;
-          let lastFinalIdx = -1;  // index of last processed final result
+          // How many spoken words we have already processed from accumulated transcript
+          let lastSpokenCount = 0;
+          // Lookahead: how many tokens ahead of matchPos we allow a match
+          const LOOKAHEAD = 3;
 
           const startRec = () => {
+            if (!recognitionRef.current && matchPos >= pageTokens.length) return; // page done
             const rec = new SR();
             rec.lang = "ar-SA";
             rec.continuous = true;
-            rec.interimResults = false;  // FINAL only — no interim noise
-            rec.maxAlternatives = 3;     // try alternatives if primary fails
+            rec.interimResults = true;   // essential on Android Chrome
+            rec.maxAlternatives = 1;
 
             rec.onresult = (event: any) => {
-              const allTokens = buildTokens();
+              // Build full transcript from all results (interim + final)
+              let fullText = "";
+              for (let i = 0; i < event.results.length; i++) {
+                fullText += " " + (event.results[i][0]?.transcript ?? "");
+              }
+              const allSpoken = normalizeArabic(fullText.trim()).split(/\s+/).filter(Boolean);
 
-              // Only process results we haven't seen yet
-              for (let ri = lastFinalIdx + 1; ri < event.results.length; ri++) {
-                if (!event.results[ri].isFinal) continue;
-                lastFinalIdx = ri;
+              // Only process words we haven't seen before
+              const newWords = allSpoken.slice(lastSpokenCount);
+              if (!newWords.length) return;
+              lastSpokenCount = allSpoken.length;
 
-                // Collect words from all alternatives for this result
-                const altWords: string[][] = [];
-                for (let ai = 0; ai < event.results[ri].length; ai++) {
-                  const txt = normalizeArabic((event.results[ri][ai]?.transcript ?? "").trim());
-                  if (txt) altWords.push(txt.split(/\s+/).filter(Boolean));
-                }
-                if (!altWords.length || !altWords[0].length) continue;
+              let changed = false;
+              for (const spokenWord of newWords) {
+                if (matchPos >= pageTokens.length) break;
 
-                // Try each alternative until we get at least one match advance
-                let bestAdvance = 0;
-                for (const spokenWords of altWords) {
-                  let pos = matchPos;
-                  let si = 0;
-                  let consecutiveMisses = 0;
-
-                  while (si < spokenWords.length && pos < allTokens.length) {
-                    if (wordsMatch(allTokens[pos], spokenWords[si])) {
-                      pos++;
-                      si++;
-                      consecutiveMisses = 0;
-                    } else {
-                      // Allow skipping 1 noise word in spoken, but never
-                      // skip an expected Quran word — freeze if too many misses
-                      consecutiveMisses++;
-                      if (consecutiveMisses > 2) break;  // noise — stop processing
-                      si++;
-                    }
+                // Try to find this spoken word in the lookahead window
+                let hitAt = -1;
+                const windowEnd = Math.min(matchPos + LOOKAHEAD + 1, pageTokens.length);
+                for (let wi = matchPos; wi < windowEnd; wi++) {
+                  if (wordsMatch(pageTokens[wi], spokenWord)) {
+                    hitAt = wi;
+                    break;
                   }
-                  const advance = pos - matchPos;
-                  if (advance > bestAdvance) bestAdvance = advance;
                 }
 
-                if (bestAdvance > 0) {
-                  matchPos += bestAdvance;
-                  setRevealedWordCount(prev => Math.max(prev, matchPos));
+                if (hitAt >= 0) {
+                  // Advance matchPos to just after the hit
+                  matchPos = hitAt + 1;
+                  changed = true;
                 }
+                // No match in window → discard this spoken word (noise/wrong verse)
+              }
+
+              if (changed) {
+                setRevealedWordCount(prev => Math.max(prev, matchPos));
               }
             };
 
             rec.onerror = (e: any) => {
-              // "no-speech" and "aborted" are normal — don't log as errors
-              if (e.error !== "no-speech" && e.error !== "aborted") {
+              if (e.error === "no-speech") {
+                // no-speech fires then onend fires → onend handles the restart
+              } else if (e.error !== "aborted") {
                 console.warn("SpeechRecognition error:", e.error);
               }
             };
 
-            // Auto-restart when the browser closes the recognition session
-            // (Chrome stops after ~60s of continuous recognition)
             rec.onend = () => {
+              // handleStop nulls recognitionRef BEFORE calling .stop(), so
+              // by the time onend fires the ref is null → we skip restart.
+              // If ref still points to THIS rec, it ended naturally → restart.
               if (recognitionRef.current === rec) {
-                // Still recording — restart recognition seamlessly
-                try { startRec(); } catch { /* give up silently */ }
+                recognitionRef.current = null;
+                setTimeout(startRec, 100);
               }
             };
 
-            try {
-              rec.start();
-              recognitionRef.current = rec;
-            } catch { /* already started */ }
+            rec.start();
+            recognitionRef.current = rec;
           };
 
           startRec();
