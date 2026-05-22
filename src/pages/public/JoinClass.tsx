@@ -41,6 +41,17 @@ const JoinClass = () => {
   const [guestEmail, setGuestEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [editingName, setEditingName] = useState(false);
+
+  // Restore saved name from localStorage for this room
+  useEffect(() => {
+    if (!roomCode) return;
+    try {
+      const saved = localStorage.getItem(`tahleem_guest_name_${roomCode}`);
+      if (saved) { setGuestName(saved); setEditingName(false); }
+      else        { setEditingName(true); }
+    } catch { setEditingName(true); }
+  }, [roomCode]);
 
   // For pre-registration
   const [regName, setRegName] = useState("");
@@ -104,6 +115,9 @@ const JoinClass = () => {
         setJoining(false);
         return;
       }
+
+      // Remember name for next time this user visits this room
+      try { localStorage.setItem(`tahleem_guest_name_${roomCode}`, guestName.trim()); } catch {}
 
       // Navigate to guest classroom
       navigate(`/live/${roomCode}/classroom`, {
@@ -329,13 +343,26 @@ const JoinClass = () => {
           <div className="space-y-4">
             <div>
               <Label className="text-white/70">Your Name *</Label>
-              <Input
-                value={guestName}
-                onChange={e => setGuestName(e.target.value)}
-                placeholder="Enter your name"
-                className="bg-white/10 border-white/20 text-white placeholder:text-white/40 mt-1"
-                onKeyDown={e => e.key === "Enter" && handleJoin()}
-              />
+              {!editingName && guestName ? (
+                <div className="flex items-center gap-2 mt-1 p-3 rounded-md" style={{ background: "rgba(201,151,58,0.1)", border: "1px solid rgba(201,151,58,0.3)" }}>
+                  <span className="flex-1 text-white font-medium">{guestName}</span>
+                  <button
+                    onClick={() => setEditingName(true)}
+                    style={{ fontSize: 12, color: "#c9973a", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", flexShrink: 0 }}
+                  >
+                    Edit
+                  </button>
+                </div>
+              ) : (
+                <Input
+                  value={guestName}
+                  onChange={e => setGuestName(e.target.value)}
+                  placeholder="Enter your name"
+                  autoFocus
+                  className="bg-white/10 border-white/20 text-white placeholder:text-white/40 mt-1"
+                  onKeyDown={e => e.key === "Enter" && handleJoin()}
+                />
+              )}
             </div>
 
             <div>
