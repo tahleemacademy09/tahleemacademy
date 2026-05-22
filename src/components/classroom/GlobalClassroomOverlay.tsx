@@ -307,13 +307,9 @@ export default function GlobalClassroomOverlay() {
 
   const handleReturn = useCallback(() => {
     setMinimized(false);
-    // Navigate back to the page the user was on before joining the class,
-    // but only if we're not already there
-    const target = previousRoute || "/";
-    if (window.location.pathname + window.location.search !== target) {
-      navigate(target, { replace: true });
-    }
-  }, [setMinimized, navigate, previousRoute]);
+    // No navigate needed here — we already navigated to previousRoute when
+    // minimizing. The classroom slides back in over the correct page.
+  }, [setMinimized]);
   const handleLeave     = useCallback(() => leaveClass(),        [leaveClass]);
   const handleToggleMic = useCallback(() => {
     setLocalMic(v => !v);
@@ -342,6 +338,12 @@ export default function GlobalClassroomOverlay() {
   /* ── Minimize ── */
   const handleMinimize = useCallback(async () => {
     setMinimized(true);
+    // Navigate to previousRoute so the page behind the off-screen classroom
+    // is visible (not a black screen) when the user returns to the browser.
+    const target = previousRoute || "/";
+    if (window.location.pathname + window.location.search !== target) {
+      navigate(target, { replace: true });
+    }
     const h = pipHandle.current;
     if (!h) return;
     if (document.pictureInPictureElement) return;
@@ -352,7 +354,7 @@ export default function GlobalClassroomOverlay() {
       if (live) { try { await live.requestPictureInPicture(); return; } catch {} }
     }
     h.pip().catch(() => {});
-  }, [setMinimized, camEnabled]);
+  }, [setMinimized, camEnabled, navigate, previousRoute]);
 
   /* ── Back button → PiP.
      LiveClassContext already owns the popstate sentinel push and the
@@ -366,27 +368,34 @@ export default function GlobalClassroomOverlay() {
     if (!hasConnected) return;
     const onPop = () => {
       // setMinimized is already done by LiveClassContext's popstate handler.
-      // We just fire PiP so the browser overlay appears.
+      // Navigate to previousRoute and fire PiP.
+      const target = previousRoute || "/";
+      if (window.location.pathname + window.location.search !== target) {
+        navigate(target, { replace: true });
+      }
       setTimeout(() => pipHandle.current?.pip().catch(() => {}), 60);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [hasConnected]);
+  }, [hasConnected, navigate, previousRoute]);
 
-  /* ── Browser minimize (switch app / go home) → setMinimized only.
-     PiP on visibilitychange is NOT allowed by browsers (requires a user
-     gesture). The screen-off effect below already handles PiP when the
-     display goes dark. We just need to hide the classroom so when the
-     user returns to the browser they see the page, not a frozen
-     full-screen classroom behind everything.                            ── */
+  /* ── Browser minimize (switch app / go home) → setMinimized + navigate to previousRoute
+     so the page behind the off-screen classroom renders correctly when the
+     user switches back to the browser tab.                               ── */
   useEffect(() => {
     if (!hasConnected) return;
     const onVis = () => {
-      if (document.visibilityState === "hidden") setMinimized(true);
+      if (document.visibilityState === "hidden") {
+        setMinimized(true);
+        const target = previousRoute || "/";
+        if (window.location.pathname + window.location.search !== target) {
+          navigate(target, { replace: true });
+        }
+      }
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-  }, [hasConnected, setMinimized]);
+  }, [hasConnected, setMinimized, navigate, previousRoute]);
 
   /* ── Screen off → canvas PiP (keep-alive, only when actually connected) ── */
   useEffect(() => {
