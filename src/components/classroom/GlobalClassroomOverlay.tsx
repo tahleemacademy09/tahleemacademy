@@ -418,29 +418,144 @@ export default function GlobalClassroomOverlay() {
   if (!inCall || !activeSubject) return null;
 
   return (
-    /* ── Full classroom — always mounted so LiveKit stays alive ──────────────
-       When minimized the browser's own PiP overlay (canvas video) is used.
-       We move the classroom div off-screen with translate instead of opacity/
-       visibility so it has NO visual or layout footprint on the page behind.
-       translate(-200%, 0) shifts it 200vw to the left — completely off canvas —
-       while keeping the React tree and all WebRTC connections intact.           */
-    <div style={{
-      position:      "fixed",
-      inset:         0,
-      zIndex:        8000,
-      display:       "flex",
-      flexDirection: "column",
-      // Off-screen when minimized → zero visual footprint, browser PiP does the rest
-      transform:     minimized ? "translateX(-200%)" : "translateX(0)",
-      pointerEvents: minimized ? "none" : "all",
-      transition:    minimized ? "none" : "transform .12s ease",
-    }}>
-      <ClassroomView
-        subject={activeSubject}
-        onLeave={leaveClass}
-        onMinimize={handleMinimize}
-        autoJoin={autoJoin}
-      />
-    </div>
+    <>
+      {/* ── Full classroom — always mounted so LiveKit stays alive ──────────────
+         When minimized the browser's own PiP overlay (canvas video) is used.
+         We move the classroom div off-screen with translate instead of opacity/
+         visibility so it has NO visual or layout footprint on the page behind.
+         translate(-200%, 0) shifts it 200vw to the left — completely off canvas —
+         while keeping the React tree and all WebRTC connections intact.           */}
+      <div style={{
+        position:      "fixed",
+        inset:         0,
+        zIndex:        8000,
+        display:       "flex",
+        flexDirection: "column",
+        // Off-screen when minimized → zero visual footprint, floating bar does the rest
+        transform:     minimized ? "translateX(-200%)" : "translateX(0)",
+        pointerEvents: minimized ? "none" : "all",
+        transition:    minimized ? "none" : "transform .12s ease",
+      }}>
+        <ClassroomView
+          subject={activeSubject}
+          onLeave={leaveClass}
+          onMinimize={handleMinimize}
+          autoJoin={autoJoin}
+        />
+      </div>
+
+      {/* ── Floating "return to class" bar — visible only when minimized ── */}
+      {minimized && (
+        <div
+          role="button"
+          aria-label="Return to live class"
+          onClick={handleReturn}
+          style={{
+            position:       "fixed",
+            bottom:         "env(safe-area-inset-bottom, 16px)",
+            left:           "50%",
+            transform:      "translateX(-50%)",
+            zIndex:         9000,
+            display:        "flex",
+            alignItems:     "center",
+            gap:            "10px",
+            padding:        "10px 18px",
+            borderRadius:   "999px",
+            background:     "#0c1f12",
+            border:         "1.5px solid rgba(201,168,76,0.55)",
+            boxShadow:      "0 4px 24px rgba(0,0,0,0.55)",
+            cursor:         "pointer",
+            userSelect:     "none",
+            minWidth:       "220px",
+            maxWidth:       "calc(100vw - 32px)",
+          }}
+        >
+          {/* LIVE dot */}
+          <span style={{
+            width:        "8px",
+            height:       "8px",
+            borderRadius: "50%",
+            background:   "#ef4444",
+            flexShrink:   0,
+            boxShadow:    "0 0 6px 2px rgba(239,68,68,0.6)",
+            animation:    "pip-pulse 1.4s ease-in-out infinite",
+          }} />
+          <style>{`@keyframes pip-pulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
+
+          {/* Avatar */}
+          <span style={{
+            width:           "28px",
+            height:          "28px",
+            borderRadius:    "50%",
+            background:      "#c9a84c",
+            color:           "#0c1f12",
+            fontWeight:      700,
+            fontSize:        "13px",
+            display:         "flex",
+            alignItems:      "center",
+            justifyContent:  "center",
+            flexShrink:      0,
+          }}>
+            {initial}
+          </span>
+
+          {/* Subject name + tap hint */}
+          <span style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
+            <span style={{
+              display:      "block",
+              color:        "rgba(255,255,255,0.92)",
+              fontWeight:   600,
+              fontSize:     "13px",
+              whiteSpace:   "nowrap",
+              overflow:     "hidden",
+              textOverflow: "ellipsis",
+            }}>
+              {title}
+            </span>
+            <span style={{ display: "block", color: "rgba(255,255,255,0.45)", fontSize: "11px" }}>
+              Tap to return
+            </span>
+          </span>
+
+          {/* Mic indicator */}
+          <span style={{
+            width:          "28px",
+            height:         "28px",
+            borderRadius:   "50%",
+            background:     localMic ? "rgba(34,120,60,.9)" : "rgba(239,68,68,.9)",
+            display:        "flex",
+            alignItems:     "center",
+            justifyContent: "center",
+            flexShrink:     0,
+            fontSize:       "14px",
+          }}>
+            {localMic ? "🎙" : "🔇"}
+          </span>
+
+          {/* Leave button */}
+          <span
+            role="button"
+            aria-label="Leave class"
+            onClick={e => { e.stopPropagation(); handleLeave(); }}
+            style={{
+              width:          "28px",
+              height:         "28px",
+              borderRadius:   "50%",
+              background:     "rgba(239,68,68,.15)",
+              border:         "1px solid rgba(239,68,68,.4)",
+              color:          "#ef4444",
+              display:        "flex",
+              alignItems:     "center",
+              justifyContent: "center",
+              flexShrink:     0,
+              fontSize:       "14px",
+              cursor:         "pointer",
+            }}
+          >
+            ✕
+          </span>
+        </div>
+      )}
+    </>
   );
 }
