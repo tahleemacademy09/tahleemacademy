@@ -1452,11 +1452,22 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const startRecording = useCallback(async () => {
     try {
       setAudioUrl(null); setSavedAudioUrl(null); audioChunks.current = []; audioBlobRef.current = null; audioStorageUrlRef.current = null;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 44100,
+          channelCount: 1,
+        }
+      });
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t => {
         try { return MediaRecorder.isTypeSupported(t); } catch { return false; }
       }) || "";
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const mr = new MediaRecorder(stream, mime ? {
+        mimeType: mime,
+        audioBitsPerSecond: 128000,   // 128 kbps — clear enough for Quranic evaluation
+      } : { audioBitsPerSecond: 128000 });
       const blobKey = `${userId}_${todayISO()}_partial`;
       mr.ondataavailable = (e) => {
         if (e.data?.size > 0) {
@@ -1556,69 +1567,116 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         setRecSecs(s => s + 1);
       }, 1000);
 
-      // ── SPEECH-BASED reveal (enhancement over time-based) ─────────────────
-      // SpeechRecognition is not available in all browsers (e.g. Firefox) so
-      // we wrap everything in a try/catch — the time-based reveal above always
-      // works as the fallback.
-      //
-      // IMPORTANT: We do NOT reveal on raw word-count alone — that caused
-      // unrelated Arabic speech (or noise mis-recognised as Arabic) to advance
-      // the reveal.  Instead we match each recognised word against the NEXT
-      // EXPECTED token in the Quran page, using the same normaliseArabic +
-      // wordsMatch logic used for grading.  Only when the spoken word matches
-      // the next expected word do we advance revealedWordCount.
+      // ── SPEECH-BASED reveal — strict sequential match ────────────────────
+      // Words only reveal when the student actually recites them in order.
+      // Algorithm:
+      //   1. Only process FINAL recognition results (interim are too noisy).
+      //   2. Track lastFinalIdx so each final result is processed exactly once.
+      //   3. For each new final result, try to match its words sequentially
+      //      against the next expected Quran tokens starting from matchPos.
+      //   4. A spoken word matches if wordsMatch() returns true (diacritic-
+      //      and hamza-normalised comparison).
+      //   5. If no match: try the next spoken word (skip one noise word).
+      //      If still no match: STOP — do not advance. Never skip expected words.
+      //   6. SpeechRecognition auto-restarts on `end` while still recording.
       try {
         const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SR) {
-          const rec = new SR();
-          rec.lang = "ar-SA";
-          rec.continuous = true;
-          rec.interimResults = true;
-          rec.maxAlternatives = 1;
-
-          // We track how far into the token stream has been *match-confirmed*
-          // via a ref so the closure always reads the latest value.
-          const matchedRef = { current: 0 };
-
-          rec.onresult = (event: any) => {
-            // Collect ALL transcript text from this recognition session
-            let allText = "";
-            for (let i = 0; i < event.results.length; i++) {
-              allText += " " + (event.results[i][0]?.transcript ?? "");
-            }
-            const spokenWords = normalizeArabic(allText.trim()).split(/\s+/).filter(Boolean);
-            if (!spokenWords.length) return;
-
-            // Walk from current match position forward: for each spoken word
-            // check if it matches the next expected Quran token.
+          // Build the flat token list once and keep it outside the closure
+          // so every onresult call works on the same stable array.
+          const buildTokens = () => {
             const ayahs = pageAyahsRef.current;
-            const allTokens: string[] = [];
+            const toks: string[] = [];
             ayahs.forEach(a => {
-              a.text.split(/\s+/).filter(Boolean).forEach(w => allTokens.push(normalizeArabic(w)));
+              a.text.split(/\s+/).filter(Boolean).forEach(w => toks.push(normalizeArabic(w)));
             });
-
-            let matchPos = matchedRef.current;
-            let si = 0; // index into spokenWords
-            while (si < spokenWords.length && matchPos < allTokens.length) {
-              if (wordsMatch(allTokens[matchPos], spokenWords[si])) {
-                matchPos++;
-                si++;
-              } else {
-                // spoken word doesn't match expected — skip spoken word (noise)
-                si++;
-              }
-            }
-
-            if (matchPos > matchedRef.current) {
-              matchedRef.current = matchPos;
-              setRevealedWordCount(prev => Math.max(prev, matchPos + 1));
-            }
+            return toks;
           };
-          rec.onerror = () => { /* silent — time-based reveal continues */ };
-          rec.start();
-          recognitionRef.current = rec;
+
+          // matchPos persists across onresult calls — stored in recognitionRef
+          // so handleStop can read it, but we use a plain closure-captured var here.
+          let matchPos = 0;
+          let lastFinalIdx = -1;  // index of last processed final result
+
+          const startRec = () => {
+            const rec = new SR();
+            rec.lang = "ar-SA";
+            rec.continuous = true;
+            rec.interimResults = false;  // FINAL only — no interim noise
+            rec.maxAlternatives = 3;     // try alternatives if primary fails
+
+            rec.onresult = (event: any) => {
+              const allTokens = buildTokens();
+
+              // Only process results we haven't seen yet
+              for (let ri = lastFinalIdx + 1; ri < event.results.length; ri++) {
+                if (!event.results[ri].isFinal) continue;
+                lastFinalIdx = ri;
+
+                // Collect words from all alternatives for this result
+                const altWords: string[][] = [];
+                for (let ai = 0; ai < event.results[ri].length; ai++) {
+                  const txt = normalizeArabic((event.results[ri][ai]?.transcript ?? "").trim());
+                  if (txt) altWords.push(txt.split(/\s+/).filter(Boolean));
+                }
+                if (!altWords.length || !altWords[0].length) continue;
+
+                // Try each alternative until we get at least one match advance
+                let bestAdvance = 0;
+                for (const spokenWords of altWords) {
+                  let pos = matchPos;
+                  let si = 0;
+                  let consecutiveMisses = 0;
+
+                  while (si < spokenWords.length && pos < allTokens.length) {
+                    if (wordsMatch(allTokens[pos], spokenWords[si])) {
+                      pos++;
+                      si++;
+                      consecutiveMisses = 0;
+                    } else {
+                      // Allow skipping 1 noise word in spoken, but never
+                      // skip an expected Quran word — freeze if too many misses
+                      consecutiveMisses++;
+                      if (consecutiveMisses > 2) break;  // noise — stop processing
+                      si++;
+                    }
+                  }
+                  const advance = pos - matchPos;
+                  if (advance > bestAdvance) bestAdvance = advance;
+                }
+
+                if (bestAdvance > 0) {
+                  matchPos += bestAdvance;
+                  setRevealedWordCount(prev => Math.max(prev, matchPos));
+                }
+              }
+            };
+
+            rec.onerror = (e: any) => {
+              // "no-speech" and "aborted" are normal — don't log as errors
+              if (e.error !== "no-speech" && e.error !== "aborted") {
+                console.warn("SpeechRecognition error:", e.error);
+              }
+            };
+
+            // Auto-restart when the browser closes the recognition session
+            // (Chrome stops after ~60s of continuous recognition)
+            rec.onend = () => {
+              if (recognitionRef.current === rec) {
+                // Still recording — restart recognition seamlessly
+                try { startRec(); } catch { /* give up silently */ }
+              }
+            };
+
+            try {
+              rec.start();
+              recognitionRef.current = rec;
+            } catch { /* already started */ }
+          };
+
+          startRec();
         }
-      } catch { /* SpeechRecognition unavailable — time-based reveal only */ }
+      } catch { /* SpeechRecognition unavailable */ }
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
     }
@@ -1710,9 +1768,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       mediaRecRef.current.stop(); // triggers mr.onstop → transcribeAudio → setScore
     }
     mediaRecRef.current = null;
-    // Stop SpeechRecognition and reset progressive reveal for next attempt
-    try { recognitionRef.current?.stop(); } catch { /* already stopped */ }
+    // Stop SpeechRecognition — null the ref FIRST so onend doesn't auto-restart
+    const recToStop = recognitionRef.current;
     recognitionRef.current = null;
+    try { recToStop?.stop(); } catch { /* already stopped */ }
     setRevealedWordCount(0);
     // mr.onstop handles setPhase("page_result") + setScore(null) + fill
   };
