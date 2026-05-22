@@ -1,213 +1,244 @@
+/*
+  GuestClassroom.tsx — Tahleem Academy Public Live Class
+  ──────────────────────────────────────────────────────
+  WhatsApp-call-style background behaviour:
+  • Canvas PiP (Picture-in-Picture) fires automatically when:
+      - user presses the Minimize button
+      - user presses the Android Back button
+      - screen turns off / browser is sent to background
+  • Audio keeps playing via silent AudioContext keep-alive
+  • MediaSession exposes lock-screen controls (return / leave)
+  • Wake-lock prevents screen sleeping mid-class
+  • Auto-reconnect: up to 5 attempts, progressive back-off
+  • Top bar: compact mobile layout — no overflow/overlap
+*/
+
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useLocation, useNavigate, Link } from "react-router-dom";
 import {
-  LiveKitRoom,
-  VideoConference,
-  RoomAudioRenderer,
-  useRoomContext,
+  LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { Track, ConnectionState, RoomEvent } from "livekit-client";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
-  LogOut, UserPlus, Radio, Users, Circle, Loader2,
-  Mic, Pause, Play, Square, X, MessageSquare, BarChart3,
-  Minimize2, Maximize2, Wifi, WifiOff, RefreshCw, Phone,
-  AlertTriangle,
+  UserPlus, Radio, Circle, Loader2,
+  Mic, Pause, Play, Square, X, Phone,
+  Minimize2, RefreshCw,
 } from "lucide-react";
-import ClassChatPanel from "@/components/classroom/ClassChatPanel";
-import ClassPolls from "@/components/classroom/ClassPolls";
+import ClassChatPanel    from "@/components/classroom/ClassChatPanel";
+import ClassPolls        from "@/components/classroom/ClassPolls";
 import ClassParticipants from "@/components/classroom/ClassParticipants";
-import ClassControls from "@/components/classroom/ClassControls";
-import LiveQuizOverlay from "@/components/classroom/LiveQuizOverlay";
-import { useIsMobile } from "@/hooks/use-mobile";
+import ClassControls     from "@/components/classroom/ClassControls";
+import LiveQuizOverlay   from "@/components/classroom/LiveQuizOverlay";
+import { useIsMobile }   from "@/hooks/use-mobile";
 
-/* ══════════════════════════════════════════════════════
-   INLINE CSS — Google Meet–quality animations & layout
-   ══════════════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════════
+   STYLES
+   ════════════════════════════════════════════════════════ */
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&display=swap');
 
-  @keyframes gc-spin       { to { transform:rotate(360deg); } }
-  @keyframes gc-pulse      { 0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.85)} }
-  @keyframes gc-rec-pulse  { 0%,100%{opacity:1}50%{opacity:.3} }
-  @keyframes gc-fade-up    { from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)} }
-  @keyframes gc-slide-up   { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
-  @keyframes gc-bounce-in  { 0%{transform:scale(.85);opacity:0}60%{transform:scale(1.04)}100%{transform:scale(1);opacity:1} }
-  @keyframes gc-bar-appear { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
-  @keyframes gc-speak-bar  { 0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)} }
-  @keyframes gc-connect-glow {
-    0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0); }
-    50%     { box-shadow: 0 0 0 6px rgba(34,197,94,.18); }
-  }
-  @keyframes gc-reconnect-spin {
-    to { transform: rotate(360deg); }
-  }
+  @keyframes gc-spin      { to { transform:rotate(360deg); } }
+  @keyframes gc-pulse     { 0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)} }
+  @keyframes gc-rec-pulse { 0%,100%{opacity:1}50%{opacity:.25} }
+  @keyframes gc-fade-up   { from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)} }
+  @keyframes gc-slide-up  { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
+  @keyframes gc-bounce-in { 0%{transform:scale(.82);opacity:0}60%{transform:scale(1.05)}100%{transform:scale(1);opacity:1} }
 
   [data-gc-root] {
-    font-family: 'Google Sans', 'Roboto', sans-serif;
-    -webkit-font-smoothing: antialiased;
-    overscroll-behavior: none;
-    -webkit-overflow-scrolling: touch;
-    touch-action: pan-y;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    font-family:'Google Sans','Roboto',sans-serif;
+    -webkit-font-smoothing:antialiased;
+    overscroll-behavior:none;
+    -webkit-overflow-scrolling:touch;
+    touch-action:pan-y;
+    padding-bottom:env(safe-area-inset-bottom,0px);
   }
-
-  [data-gc-root] * { box-sizing: border-box; }
+  [data-gc-root] * { box-sizing:border-box; }
   [data-gc-root] button {
-    -webkit-tap-highlight-color: transparent;
-    touch-action: manipulation;
-    font-family: 'Google Sans', 'Roboto', sans-serif;
+    -webkit-tap-highlight-color:transparent;
+    touch-action:manipulation;
+    font-family:'Google Sans','Roboto',sans-serif;
   }
 
-  .gc-badge {
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 4px 10px; border-radius: 20px;
-    font-size: 12px; font-weight: 500;
-    font-family: 'Google Sans', sans-serif;
+  /* Badge pill */
+  .gc-pill {
+    display:inline-flex; align-items:center; gap:4px;
+    padding:4px 8px; border-radius:20px;
+    font-size:11px; font-weight:600; white-space:nowrap; flex-shrink:0;
+    font-family:'Google Sans',sans-serif;
   }
 
-  /* Side panel */
+  /* Sidebar */
   .gc-sidebar {
-    width: 288px; display: flex; flex-direction: column;
-    background: rgba(32,33,36,.97);
-    border-left: 1px solid rgba(255,255,255,.07);
-    flex-shrink: 0;
-    animation: gc-slide-up .22s ease;
+    width:280px; display:flex; flex-direction:column;
+    background:rgba(32,33,36,.97);
+    border-left:1px solid rgba(255,255,255,.07);
+    flex-shrink:0; animation:gc-slide-up .22s ease;
   }
 
-  /* Connection quality bars */
-  .gc-quality-bar {
-    transition: background .3s ease, transform .2s ease;
-  }
-
-  /* Minimize pill */
-  .gc-min-pill {
-    position: fixed; bottom: 24px; right: 20px;
-    z-index: 9000;
-    display: flex; align-items: center; gap: 10px;
-    background: rgba(32,33,36,.96); backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,.12);
-    border-radius: 50px; padding: 8px 14px;
-    box-shadow: 0 8px 32px rgba(0,0,0,.6);
-    cursor: pointer;
-    animation: gc-bounce-in .3s cubic-bezier(.34,1.56,.64,1) both;
-    transition: box-shadow .2s ease, transform .15s ease;
-  }
-  .gc-min-pill:hover {
-    box-shadow: 0 12px 40px rgba(0,0,0,.75);
-    transform: translateY(-2px);
-  }
-
-  /* Reconnecting overlay */
+  /* Reconnect overlay */
   .gc-reconnect-overlay {
-    position: absolute; inset: 0; z-index: 200;
-    background: rgba(32,33,36,.9); backdrop-filter: blur(12px);
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 16px;
-    animation: gc-fade-up .2s ease;
+    position:absolute; inset:0; z-index:200;
+    background:rgba(32,33,36,.92); backdrop-filter:blur(12px);
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:16px;
+    animation:gc-fade-up .2s ease;
   }
 
-  /* LK overrides */
-  [data-lk-theme] { height: 100% !important; display: flex !important; flex-direction: column !important; }
-  .lk-video-conference { height: 100% !important; }
+  /* LK theme override */
+  [data-lk-theme] { height:100%!important; display:flex!important; flex-direction:column!important; }
+  .lk-video-conference { height:100%!important; }
 `;
 
-/* ─── Connection Quality Indicator ─── */
-const ConnectionIndicator = () => {
-  const room = useRoomContext();
-  const [quality, setQuality] = useState<"excellent" | "good" | "fair" | "poor">("excellent");
-  const [connState, setConnState] = useState<ConnectionState>(ConnectionState.Connected);
+/* ════════════════════════════════════════════════════════
+   CANVAS PiP  — same engine as GlobalClassroomOverlay
+   ════════════════════════════════════════════════════════ */
+const GOLD = "#c9a84c";
+const DARK_BG = "#0c1f12";
+const PIP_W = 320, PIP_H = 180;
 
-  useEffect(() => {
-    const syncQuality = () => {
-      const stats = room.localParticipant.connectionQuality as unknown as number;
-      if (stats >= 3) setQuality("excellent");
-      else if (stats >= 2) setQuality("good");
-      else if (stats >= 1) setQuality("fair");
-      else setQuality("poor");
-    };
-    const syncState = () => setConnState(room.state);
-
-    room.on(RoomEvent.ConnectionStateChanged, syncState);
-    room.on(RoomEvent.ConnectionQualityChanged, syncQuality);
-    const iv = setInterval(syncQuality, 2500);
-    syncQuality();
-    return () => {
-      room.off(RoomEvent.ConnectionStateChanged, syncState);
-      room.off(RoomEvent.ConnectionQualityChanged, syncQuality);
-      clearInterval(iv);
-    };
-  }, [room]);
-
-  const colors = {
-    excellent: "#22c55e",
-    good:      "#86efac",
-    fair:      "#facc15",
-    poor:      "#ef4444",
-  };
-  const bars = { excellent: 4, good: 3, fair: 2, poor: 1 };
-  const col = colors[quality];
-
-  if (connState === ConnectionState.Reconnecting) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <RefreshCw style={{ width: 12, height: 12, color: "#facc15", animation: "gc-reconnect-spin .8s linear infinite" }} />
-        <span style={{ fontSize: 11, color: "#facc15", fontWeight: 500 }}>Reconnecting</span>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 14 }}>
-        {[1, 2, 3, 4].map(i => (
-          <div
-            key={i}
-            className="gc-quality-bar"
-            style={{
-              width: 3, borderRadius: 2,
-              height: `${i * 3 + 2}px`,
-              background: i <= bars[quality] ? col : "rgba(255,255,255,.2)",
-            }}
-          />
-        ))}
-      </div>
-      <span style={{ fontSize: 10, color: col, fontWeight: 600, letterSpacing: ".3px" }}>
-        {quality.toUpperCase()}
-      </span>
-    </div>
-  );
-};
-
-/* ─── High-Quality Auto-Reconnect Monitor ─── */
-interface ReconnectMonitorProps {
-  onReconnecting: () => void;
-  onReconnected: () => void;
-  onDisconnected: () => void;
+interface PipHandle {
+  video:       HTMLVideoElement;
+  setMicMuted: (v: boolean) => void;
+  setInitial:  (v: string)  => void;
+  pip:         () => Promise<void>;
+  stop:        () => void;
 }
-const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: ReconnectMonitorProps) => {
-  const room = useRoomContext();
-  useEffect(() => {
-    const onStateChange = (state: ConnectionState) => {
-      if (state === ConnectionState.Reconnecting) onReconnecting();
-      else if (state === ConnectionState.Connected)  onReconnected();
-      else if (state === ConnectionState.Disconnected) onDisconnected();
-    };
-    room.on(RoomEvent.ConnectionStateChanged, onStateChange);
-    return () => { room.off(RoomEvent.ConnectionStateChanged, onStateChange); };
-  }, [room, onReconnecting, onReconnected, onDisconnected]);
-  return null;
-};
 
-/* ─── Silent Audio Keep-Alive (prevents Android tab suspension) ─── */
+function buildCanvasPip(
+  initialChar: string,
+  subjectName: string,
+  onTap: () => void,
+): PipHandle | null {
+  if (!("requestPictureInPicture" in HTMLVideoElement.prototype)) return null;
+
+  const cv = document.createElement("canvas");
+  cv.width = PIP_W; cv.height = PIP_H;
+  const ctx = cv.getContext("2d");
+  if (!ctx) return null;
+
+  let micMuted = true;
+  let letter   = initialChar;
+  let raf      = 0;
+
+  const drawMic = (mx: number, my: number, r: number) => {
+    ctx.fillStyle = micMuted ? "rgba(239,68,68,.95)" : "rgba(34,120,60,.95)";
+    ctx.beginPath(); ctx.arc(mx, my, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
+    const cs = r * 0.28;
+    if (micMuted) {
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath(); ctx.arc(mx, my - cs, cs, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = r * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(mx - r * 0.52, my + r * 0.48);
+      ctx.lineTo(mx + r * 0.52, my - r * 0.48);
+      ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.arc(mx, my - cs, cs, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(mx - cs * 1.2, my - cs * 0.3);
+      ctx.quadraticCurveTo(mx - cs * 1.2, my + cs * 1.4, mx, my + cs * 1.7);
+      ctx.quadraticCurveTo(mx + cs * 1.2, my + cs * 1.4, mx + cs * 1.2, my - cs * 0.3);
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(mx, my + cs * 1.7); ctx.lineTo(mx, my + cs * 2.5); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(mx - cs * 0.9, my + cs * 2.5); ctx.lineTo(mx + cs * 0.9, my + cs * 2.5); ctx.stroke();
+    }
+  };
+
+  const draw = () => {
+    ctx.clearRect(0, 0, PIP_W, PIP_H);
+    ctx.fillStyle = DARK_BG; ctx.fillRect(0, 0, PIP_W, PIP_H);
+    ctx.fillStyle = "rgba(201,168,76,0.35)"; ctx.fillRect(0, PIP_H - 2, PIP_W, 2);
+
+    // LIVE strip
+    const STRIP = 52;
+    ctx.fillStyle = "rgba(255,255,255,0.04)"; ctx.fillRect(0, 0, STRIP, PIP_H);
+    const p = 0.4 + 0.6 * Math.abs(Math.sin(Date.now() / 700));
+    ctx.fillStyle = `rgba(239,68,68,${p})`;
+    ctx.beginPath(); ctx.arc(STRIP / 2, PIP_H / 2 - 10, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = `rgba(239,68,68,${p * 0.4})`; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(STRIP / 2, PIP_H / 2 - 10, 10, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "bold 10px system-ui,sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("LIVE", STRIP / 2, PIP_H / 2 + 8);
+    ctx.fillStyle = "rgba(201,168,76,0.2)"; ctx.fillRect(STRIP, 20, 1, PIP_H - 40);
+
+    // Avatar
+    const avX = STRIP + 52, avY = PIP_H / 2, avR = 36;
+    ctx.fillStyle = GOLD;
+    ctx.beginPath(); ctx.arc(avX, avY, avR, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = DARK_BG;
+    ctx.font = `bold ${avR * 0.75}px system-ui,-apple-system,sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(letter.toUpperCase().slice(0, 1), avX, avY);
+
+    // Subject name
+    const nameX = avX + avR + 12;
+    const nameW = PIP_W - nameX - 52;
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.font = "600 13px system-ui,-apple-system,sans-serif";
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    let name = subjectName;
+    while (name.length > 1 && ctx.measureText(name).width > nameW) name = name.slice(0, -1);
+    if (name !== subjectName) name = name.trimEnd() + "…";
+    ctx.fillText(name, nameX, PIP_H / 2 - 8);
+    ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "10px system-ui,sans-serif";
+    ctx.fillText("Tap to return", nameX, PIP_H / 2 + 12);
+
+    drawMic(PIP_W - 30, PIP_H / 2, 20);
+    raf = requestAnimationFrame(draw);
+  };
+  draw();
+
+  const vid = document.createElement("video");
+  vid.srcObject = cv.captureStream(12);
+  vid.muted = true; vid.playsInline = true;
+  (vid as any).autopictureinpicture = true;
+  vid.setAttribute("autopictureinpicture", "");
+  vid.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;pointer-events:none;opacity:.01;z-index:-999;";
+  document.body.appendChild(vid);
+  vid.addEventListener("leavepictureinpicture", onTap);
+
+  const keepPlaying = () => { if (document.body.contains(vid)) vid.play().catch(() => {}); };
+  vid.addEventListener("pause", keepPlaying);
+  vid.addEventListener("ended", keepPlaying);
+  keepPlaying();
+
+  const ensurePlaying = async () => {
+    if (vid.paused || vid.readyState < 2) {
+      try { await vid.play(); } catch {}
+      await new Promise(r => setTimeout(r, 80));
+    }
+  };
+
+  const pip = async () => {
+    if (document.pictureInPictureElement === vid) return;
+    await ensurePlaying();
+    try { await vid.requestPictureInPicture(); } catch {}
+  };
+
+  const stop = () => {
+    cancelAnimationFrame(raf);
+    vid.removeEventListener("pause", keepPlaying);
+    vid.removeEventListener("ended", keepPlaying);
+    (vid.srcObject as MediaStream | null)?.getTracks().forEach(t => t.stop());
+    if (document.pictureInPictureElement === vid) document.exitPictureInPicture().catch(() => {});
+    vid.remove();
+  };
+
+  return { video: vid, setMicMuted: v => { micMuted = v; }, setInitial: v => { letter = v; }, pip, stop };
+}
+
+/* ════════════════════════════════════════════════════════
+   HOOKS
+   ════════════════════════════════════════════════════════ */
 function useSilentAudio(active: boolean) {
-  const acRef  = useRef<AudioContext | null>(null);
+  const acRef = useRef<AudioContext | null>(null);
   const srcRef = useRef<AudioBufferSourceNode | null>(null);
   useEffect(() => {
     if (!active) {
@@ -217,7 +248,7 @@ function useSilentAudio(active: boolean) {
     }
     const start = () => {
       try {
-        const AC  = window.AudioContext || (window as any).webkitAudioContext;
+        const AC = window.AudioContext || (window as any).webkitAudioContext;
         const ctx = new AC();
         const buf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
         const src = ctx.createBufferSource();
@@ -245,7 +276,6 @@ function useSilentAudio(active: boolean) {
   }, [active]);
 }
 
-/* ─── Wake Lock (keeps screen on during class) ─── */
 function useWakeLock(active: boolean) {
   const lockRef = useRef<WakeLockSentinel | null>(null);
   const request = useCallback(async () => {
@@ -261,690 +291,615 @@ function useWakeLock(active: boolean) {
   }, [active, request]);
 }
 
-/* ─── Recording Controller (host only) ─── */
-interface RecordingControllerProps {
-  sessionId: string | null;
-  classId: string;
-  userName: string;
-  isHost: boolean;
-  onSavingChange: (saving: boolean) => void;
+function useMediaSession(active: boolean, title: string, onReturn: () => void, onLeave: () => void) {
+  useEffect(() => {
+    if (!active || !("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({ title, artist: "Tahleem Academy", album: "🟢 Live Class" });
+    navigator.mediaSession.playbackState = "playing";
+    const sa = (a: MediaSessionAction, h: () => void) => { try { navigator.mediaSession.setActionHandler(a, h); } catch {} };
+    sa("play", onReturn); sa("pause", onReturn); sa("stop", onLeave);
+    sa("previoustrack", onReturn); sa("nexttrack", onReturn);
+    return () => {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = "none";
+      (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[])
+        .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
+    };
+  }, [active, title, onReturn, onLeave]);
 }
 
-const RecordingController = ({ sessionId, classId, userName, isHost, onSavingChange }: RecordingControllerProps) => {
+/* ════════════════════════════════════════════════════════
+   CONNECTION QUALITY INDICATOR (inside LiveKitRoom)
+   ════════════════════════════════════════════════════════ */
+const ConnectionIndicator = () => {
   const room = useRoomContext();
-  const [recording, setRecording] = useState(false);
-  const [recordingPaused, setRecordingPaused] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [savingRecording, setSavingRecording] = useState(false);
-  const [recordingMode, setRecordingMode] = useState<"screen" | "audio" | null>(null);
-  const timerRef = useRef<any>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
-  const streamsRef = useRef<MediaStream[]>([]);
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const [quality, setQuality] = useState<"excellent"|"good"|"fair"|"poor">("excellent");
+  const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      streamsRef.current.forEach(s => s.getTracks().forEach(t => t.stop()));
+    const syncQ = () => {
+      const q = room.localParticipant.connectionQuality as unknown as number;
+      setQuality(q >= 3 ? "excellent" : q >= 2 ? "good" : q >= 1 ? "fair" : "poor");
     };
-  }, []);
+    const syncS = (s: ConnectionState) => setReconnecting(s === ConnectionState.Reconnecting);
+    room.on(RoomEvent.ConnectionQualityChanged, syncQ);
+    room.on(RoomEvent.ConnectionStateChanged, syncS);
+    const iv = setInterval(syncQ, 2500);
+    syncQ();
+    return () => { room.off(RoomEvent.ConnectionQualityChanged, syncQ); room.off(RoomEvent.ConnectionStateChanged, syncS); clearInterval(iv); };
+  }, [room]);
 
-  const collectRoomAudioStream = useCallback((): MediaStream | null => {
+  if (reconnecting) return (
+    <div style={{ display:"flex", alignItems:"center", gap:3 }}>
+      <RefreshCw style={{ width:10, height:10, color:"#facc15", animation:"gc-spin .8s linear infinite" }} />
+      <span style={{ fontSize:9, color:"#facc15", fontWeight:600 }}>SYNC</span>
+    </div>
+  );
+
+  const col = { excellent:"#22c55e", good:"#86efac", fair:"#facc15", poor:"#ef4444" }[quality];
+  const bars = { excellent:4, good:3, fair:2, poor:1 }[quality];
+  return (
+    <div style={{ display:"flex", alignItems:"flex-end", gap:2, height:13 }}>
+      {[1,2,3,4].map(i => (
+        <div key={i} style={{ width:3, borderRadius:2, height:`${i*3+2}px`, background: i<=bars ? col : "rgba(255,255,255,.18)", transition:"background .3s" }} />
+      ))}
+    </div>
+  );
+};
+
+/* ════════════════════════════════════════════════════════
+   RECONNECT MONITOR (inside LiveKitRoom)
+   ════════════════════════════════════════════════════════ */
+const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
+  onReconnecting: () => void; onReconnected: () => void; onDisconnected: () => void;
+}) => {
+  const room = useRoomContext();
+  useEffect(() => {
+    const h = (s: ConnectionState) => {
+      if (s === ConnectionState.Reconnecting)  onReconnecting();
+      else if (s === ConnectionState.Connected) onReconnected();
+      else if (s === ConnectionState.Disconnected) onDisconnected();
+    };
+    room.on(RoomEvent.ConnectionStateChanged, h);
+    return () => { room.off(RoomEvent.ConnectionStateChanged, h); };
+  }, [room, onReconnecting, onReconnected, onDisconnected]);
+  return null;
+};
+
+/* ════════════════════════════════════════════════════════
+   RECORDING CONTROLLER (host only)
+   ════════════════════════════════════════════════════════ */
+const RecordingController = ({ classId, isHost, onSavingChange }: {
+  classId: string; isHost: boolean; onSavingChange:(v:boolean)=>void;
+}) => {
+  const room = useRoomContext();
+  const [recording, setRecording]         = useState(false);
+  const [paused, setPaused]               = useState(false);
+  const [recTime, setRecTime]             = useState(0);
+  const [saving, setSaving]               = useState(false);
+  const [mode, setMode]                   = useState<"screen"|"audio"|null>(null);
+  const timerRef     = useRef<any>(null);
+  const recRef       = useRef<MediaRecorder|null>(null);
+  const chunksRef    = useRef<Blob[]>([]);
+  const streamsRef   = useRef<MediaStream[]>([]);
+  const acRef        = useRef<AudioContext|null>(null);
+
+  useEffect(() => () => { clearInterval(timerRef.current); streamsRef.current.forEach(s=>s.getTracks().forEach(t=>t.stop())); }, []);
+
+  const collectAudio = useCallback((): MediaStream|null => {
     try {
-      const audioContext = new AudioContext();
-      audioContextRef.current = audioContext;
-      const destination = audioContext.createMediaStreamDestination();
-      let trackCount = 0;
-      const participants = [room.localParticipant, ...Array.from(room.remoteParticipants.values())];
-      for (const participant of participants) {
-        const pubs = [...participant.trackPublications.values()];
-        for (const pub of pubs) {
-          if (pub.track && (pub.source === Track.Source.Microphone || pub.source === Track.Source.ScreenShareAudio)) {
+      const ac = new AudioContext(); acRef.current = ac;
+      const dest = ac.createMediaStreamDestination();
+      let n = 0;
+      for (const p of [room.localParticipant, ...Array.from(room.remoteParticipants.values())]) {
+        for (const pub of p.trackPublications.values()) {
+          if (pub.track && (pub.source===Track.Source.Microphone||pub.source===Track.Source.ScreenShareAudio)) {
             const mst = pub.track.mediaStreamTrack;
-            if (mst && mst.readyState === "live") {
-              const source = audioContext.createMediaStreamSource(new MediaStream([mst]));
-              source.connect(destination);
-              trackCount++;
-            }
+            if (mst?.readyState==="live") { ac.createMediaStreamSource(new MediaStream([mst])).connect(dest); n++; }
           }
         }
       }
-      if (trackCount === 0) return null;
-      return destination.stream;
+      return n > 0 ? dest.stream : null;
     } catch { return null; }
   }, [room]);
 
-  const startRecording = useCallback(async () => {
-    let stream: MediaStream | null = null;
-    let mode: "screen" | "audio" = "audio";
+  const start = useCallback(async () => {
+    let stream: MediaStream|null = null; let m: "screen"|"audio" = "audio";
     if (typeof navigator.mediaDevices.getDisplayMedia === "function") {
       try {
-        stream = await navigator.mediaDevices.getDisplayMedia({ video: { width: 1280, height: 720 } as any, audio: true });
-        mode = "screen";
-        const roomAudio = collectRoomAudioStream();
-        if (roomAudio && audioContextRef.current) {
-          const ctx = audioContextRef.current;
-          const dest = ctx.createMediaStreamDestination();
-          stream.getAudioTracks().forEach(t => { const src = ctx.createMediaStreamSource(new MediaStream([t])); src.connect(dest); });
-          roomAudio.getAudioTracks().forEach(t => { const src = ctx.createMediaStreamSource(new MediaStream([t])); src.connect(dest); });
+        stream = await navigator.mediaDevices.getDisplayMedia({ video:{ width:1280, height:720 } as any, audio:true });
+        m = "screen";
+        const ra = collectAudio();
+        if (ra && acRef.current) {
+          const ctx=acRef.current; const dest=ctx.createMediaStreamDestination();
+          stream.getAudioTracks().forEach(t=>{ ctx.createMediaStreamSource(new MediaStream([t])).connect(dest); });
+          ra.getAudioTracks().forEach(t=>{ ctx.createMediaStreamSource(new MediaStream([t])).connect(dest); });
           stream = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
         }
-      } catch { stream = null; }
+      } catch { stream=null; }
     }
-    if (!stream) {
-      mode = "audio";
-      stream = collectRoomAudioStream();
-      if (!stream) {
-        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-        catch { return; }
-      }
-    }
+    if (!stream) { m="audio"; stream=collectAudio(); if (!stream) { try { stream=await navigator.mediaDevices.getUserMedia({audio:true}); } catch { return; } } }
     streamsRef.current.push(stream);
-    const isVideo = stream.getVideoTracks().length > 0;
-    const mimeType = isVideo
-      ? (MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus") ? "video/webm;codecs=vp9,opus" : "video/webm")
-      : (MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm");
-    const recorder = new MediaRecorder(stream, { mimeType });
-    recordedChunksRef.current = [];
-    recorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
-    if (isVideo) { stream.getVideoTracks()[0]?.addEventListener("ended", () => { if (mediaRecorderRef.current?.state !== "inactive") stopRecording(); }); }
-    recorder.start(1000);
-    mediaRecorderRef.current = recorder;
-    setRecordingMode(mode);
-    setRecording(true);
-    setRecordingPaused(false);
-    setRecordingTime(0);
-    timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
-  }, [collectRoomAudioStream]);
+    const isVid = stream.getVideoTracks().length > 0;
+    const mime = isVid
+      ? (MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")?"video/webm;codecs=vp9,opus":"video/webm")
+      : (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":"audio/webm");
+    const rec = new MediaRecorder(stream, { mimeType:mime });
+    chunksRef.current = [];
+    rec.ondataavailable = e => { if (e.data.size>0) chunksRef.current.push(e.data); };
+    if (isVid) stream.getVideoTracks()[0]?.addEventListener("ended", ()=>{ if (recRef.current?.state!=="inactive") stop(); });
+    rec.start(1000); recRef.current=rec; setMode(m); setRecording(true); setPaused(false); setRecTime(0);
+    timerRef.current = setInterval(()=>setRecTime(p=>p+1), 1000);
+  }, [collectAudio]);
 
-  const pauseRecording = useCallback(() => {
-    if (mediaRecorderRef.current?.state === "recording") {
-      mediaRecorderRef.current.pause(); setRecordingPaused(true); clearInterval(timerRef.current);
-    }
-  }, []);
-
-  const resumeRecording = useCallback(() => {
-    if (mediaRecorderRef.current?.state === "paused") {
-      mediaRecorderRef.current.resume(); setRecordingPaused(false);
-      timerRef.current = setInterval(() => setRecordingTime(p => p + 1), 1000);
-    }
-  }, []);
-
-  const stopRecording = useCallback(async () => {
+  const stop = useCallback(async () => {
     clearInterval(timerRef.current);
-    const duration = recordingTime;
-    const mode = recordingMode;
-    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === "inactive") {
-      setRecording(false); setRecordingPaused(false); setRecordingTime(0); return;
-    }
-    setSavingRecording(true); onSavingChange(true);
-    await new Promise<void>((resolve) => { mediaRecorderRef.current!.onstop = () => resolve(); mediaRecorderRef.current!.stop(); });
-    streamsRef.current.forEach(s => s.getTracks().forEach(t => t.stop()));
-    streamsRef.current = [];
-    if (audioContextRef.current) { audioContextRef.current.close().catch(() => {}); audioContextRef.current = null; }
-    setRecording(false); setRecordingPaused(false); setRecordingTime(0);
-    const isVideo = mode === "screen";
-    const contentType = isVideo ? "video/webm" : "audio/webm";
-    const blob = new Blob(recordedChunksRef.current, { type: contentType });
-    recordedChunksRef.current = [];
-    if (blob.size < 500) { setSavingRecording(false); onSavingChange(false); return; }
+    const m=mode;
+    if (!recRef.current||recRef.current.state==="inactive") { setRecording(false); setPaused(false); setRecTime(0); return; }
+    setSaving(true); onSavingChange(true);
+    await new Promise<void>(res=>{ recRef.current!.onstop=()=>res(); recRef.current!.stop(); });
+    streamsRef.current.forEach(s=>s.getTracks().forEach(t=>t.stop())); streamsRef.current=[];
+    if (acRef.current) { acRef.current.close().catch(()=>{}); acRef.current=null; }
+    setRecording(false); setPaused(false); setRecTime(0);
+    const isVid=m==="screen";
+    const blob=new Blob(chunksRef.current, { type:isVid?"video/webm":"audio/webm" });
+    chunksRef.current=[];
+    if (blob.size<500) { setSaving(false); onSavingChange(false); return; }
     try {
-      const timestamp = Date.now();
-      const storagePath = `recordings/public-class/${classId}/${timestamp}.webm`;
-      const { error: uploadErr } = await storageSupabase.storage.from("subject-files").upload(storagePath, blob, { contentType, upsert: false });
-      if (uploadErr) throw uploadErr;
-    } catch (err) {
-      console.error("Recording save failed", err);
-    } finally { setSavingRecording(false); onSavingChange(false); }
-  }, [recordingTime, recordingMode, classId, onSavingChange]);
+      const { error } = await storageSupabase.storage.from("subject-files")
+        .upload(`recordings/public-class/${classId}/${Date.now()}.webm`, blob, { contentType:isVid?"video/webm":"audio/webm", upsert:false });
+      if (error) throw error;
+    } catch (e) { console.error("Recording save failed", e); }
+    finally { setSaving(false); onSavingChange(false); }
+  }, [mode, classId, onSavingChange]);
 
-  const formatTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+  const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   if (!isHost) return null;
 
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+    <div style={{ display:"flex", alignItems:"center", gap:5 }}>
       {recording && (
-        <div className="gc-badge" style={{
-          background: "rgba(239,68,68,.15)", border: "1px solid rgba(239,68,68,.4)",
-          color: "#fca5a5", animation: "gc-rec-pulse 1.4s ease-in-out infinite",
-        }}>
-          <Circle style={{ width: 7, height: 7, fill: "#ef4444", color: "#ef4444" }} />
-          {recordingMode === "audio" ? "REC (Audio)" : "REC"} {formatTime(recordingTime)}
-          {recordingPaused && <span style={{ fontSize: 10, opacity: .7 }}>(PAUSED)</span>}
+        <div className="gc-pill" style={{ background:"rgba(239,68,68,.15)", border:"1px solid rgba(239,68,68,.35)", color:"#fca5a5", animation:"gc-rec-pulse 1.4s ease-in-out infinite" }}>
+          <Circle style={{ width:6, height:6, fill:"#ef4444", color:"#ef4444" }} />
+          {fmtT(recTime)}{paused?" ⏸":""}
         </div>
       )}
-      {savingRecording && (
-        <div className="gc-badge" style={{ background: "rgba(255,255,255,.07)", border: "1px solid rgba(255,255,255,.12)", color: "rgba(255,255,255,.6)" }}>
-          <Loader2 style={{ width: 12, height: 12, animation: "gc-spin .8s linear infinite" }} />
-          Saving…
+      {saving && (
+        <div className="gc-pill" style={{ background:"rgba(255,255,255,.07)", border:"1px solid rgba(255,255,255,.1)", color:"rgba(255,255,255,.5)" }}>
+          <Loader2 style={{ width:10, height:10, animation:"gc-spin .8s linear infinite" }} /> Saving
         </div>
       )}
-      {!recording && !savingRecording && (
-        <button onClick={startRecording} style={{
-          display: "flex", alignItems: "center", gap: 5,
-          padding: "5px 12px", borderRadius: 20, border: "none",
-          background: "#ef4444", color: "#fff", fontSize: 12, fontWeight: 600,
-          cursor: "pointer", fontFamily: "'Google Sans', sans-serif",
-        }}>
-          <Circle style={{ width: 8, height: 8, fill: "#fff", color: "#fff" }} />
-          Record
+      {!recording && !saving && (
+        <button onClick={start} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:20, border:"none", background:"#ef4444", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+          <Circle style={{ width:6, height:6, fill:"#fff", color:"#fff" }} /> REC
         </button>
       )}
       {recording && (
         <>
-          {recordingPaused ? (
-            <button onClick={resumeRecording} style={{
-              display: "flex", alignItems: "center", gap: 4,
-              padding: "5px 10px", borderRadius: 20,
-              border: "1px solid rgba(255,255,255,.2)", background: "rgba(255,255,255,.08)",
-              color: "#fff", fontSize: 12, cursor: "pointer",
-            }}><Play style={{ width: 11, height: 11 }} />Resume</button>
-          ) : (
-            <button onClick={pauseRecording} style={{
-              display: "flex", alignItems: "center", gap: 4,
-              padding: "5px 10px", borderRadius: 20,
-              border: "1px solid rgba(255,255,255,.2)", background: "rgba(255,255,255,.08)",
-              color: "#fff", fontSize: 12, cursor: "pointer",
-            }}><Pause style={{ width: 11, height: 11 }} />Pause</button>
-          )}
-          <button onClick={stopRecording} style={{
-            display: "flex", alignItems: "center", gap: 4,
-            padding: "5px 10px", borderRadius: 20, border: "none",
-            background: "#ef4444", color: "#fff", fontSize: 12, cursor: "pointer",
-          }}><Square style={{ width: 11, height: 11 }} />Stop</button>
+          {paused
+            ? <button onClick={()=>{ recRef.current?.resume(); setPaused(false); timerRef.current=setInterval(()=>setRecTime(p=>p+1),1000); }} style={{ display:"flex", alignItems:"center", gap:3, padding:"4px 9px", borderRadius:20, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.08)", color:"#fff", fontSize:10, cursor:"pointer" }}><Play style={{width:9,height:9}}/>Resume</button>
+            : <button onClick={()=>{ recRef.current?.pause(); setPaused(true); clearInterval(timerRef.current); }} style={{ display:"flex", alignItems:"center", gap:3, padding:"4px 9px", borderRadius:20, border:"1px solid rgba(255,255,255,.2)", background:"rgba(255,255,255,.08)", color:"#fff", fontSize:10, cursor:"pointer" }}><Pause style={{width:9,height:9}}/>Pause</button>
+          }
+          <button onClick={stop} style={{ display:"flex", alignItems:"center", gap:3, padding:"4px 9px", borderRadius:20, border:"none", background:"#ef4444", color:"#fff", fontSize:10, cursor:"pointer" }}><Square style={{width:9,height:9}}/>Stop</button>
         </>
       )}
     </div>
   );
 };
 
-/* ═══════════════════════════════════════════════
-   MAIN GuestClassroom
-   ═══════════════════════════════════════════════ */
+/* ════════════════════════════════════════════════════════
+   MAIN COMPONENT
+   ════════════════════════════════════════════════════════ */
 const GuestClassroom = () => {
-  const location = useLocation();
-  const navigate = useNavigate();
-  const isMobile = useIsMobile();
+  const location  = useLocation();
+  const navigate  = useNavigate();
+  const isMobile  = useIsMobile();
 
-  const [connected, setConnected] = useState(false);
-  const [ended, setEnded] = useState(false);
+  const [connected, setConnected]         = useState(false);
+  const [ended, setEnded]                 = useState(false);
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [classDuration, setClassDuration] = useState(0);
-  const [savingRecording, setSavingRecording] = useState(false);
-
-  // Minimize state
-  const [minimized, setMinimized] = useState(false);
-
-  // Reconnection state
-  const [reconnecting, setReconnecting] = useState(false);
+  const [savingRec, setSavingRec]         = useState(false);
+  const [minimized, setMinimized]         = useState(false);
+  const [reconnecting, setReconnecting]   = useState(false);
   const [reconnectCount, setReconnectCount] = useState(0);
-  const [roomKey, setRoomKey] = useState(0);
-  const intentionalLeaveRef = useRef(false);
+  const [roomKey, setRoomKey]             = useState(0);
+  const intentionalRef = useRef(false);
 
   // Side panels
-  const [chatOpen, setChatOpen] = useState(!isMobile);
-  const [participantsOpen, setParticipantsOpen] = useState(false);
-  const [activeSideTab, setActiveSideTab] = useState<"chat" | "polls">("chat");
-  const [chatUnread, setChatUnread] = useState(0);
-  const [showQuiz, setShowQuiz] = useState(false);
+  const [chatOpen, setChatOpen]           = useState(!isMobile);
+  const [partOpen, setPartOpen]           = useState(false);
+  const [sideTab, setSideTab]             = useState<"chat"|"polls">("chat");
+  const [chatUnread, setChatUnread]       = useState(0);
+  const [showQuiz, setShowQuiz]           = useState(false);
+
+  const pipHandle    = useRef<PipHandle|null>(null);
+  const handleRetRef = useRef<()=>void>(()=>{});
 
   const {
-    token, url, room, guestName, classTitle, classTitleAr,
+    token, url, room: roomName, guestName, classTitle, classTitleAr,
     isHost, classId, sessionId,
-  } = (location.state || {}) as {
-    token?: string; url?: string; room?: string;
-    guestName?: string; classTitle?: string; classTitleAr?: string;
-    isHost?: boolean; classId?: string; sessionId?: string;
+  } = (location.state||{}) as {
+    token?:string; url?:string; room?:string; guestName?:string;
+    classTitle?:string; classTitleAr?:string;
+    isHost?:boolean; classId?:string; sessionId?:string;
   };
 
-  // Keep-alive & wake-lock during live class
+  const title   = classTitle || "Public Class";
+  const initial = title.charAt(0).toUpperCase();
+
+  // Keep-alive / wake-lock
   useSilentAudio(connected && !ended);
   useWakeLock(connected && !ended);
 
-  useEffect(() => {
-    if (!token || !url) navigate("/live");
-  }, [token, url, navigate]);
+  const handleReturn = useCallback(() => setMinimized(false), []);
+  const handleLeave  = useCallback(() => { intentionalRef.current=true; setEnded(true); }, []);
+  handleRetRef.current = handleReturn;
+
+  useMediaSession(connected && !ended, title, handleReturn, handleLeave);
+
+  useEffect(() => { if (!token||!url) navigate("/live"); }, [token, url, navigate]);
 
   // Duration timer
   useEffect(() => {
     if (!connected) return;
-    const timer = setInterval(() => setClassDuration(prev => prev + 1), 1000);
-    return () => clearInterval(timer);
+    const t = setInterval(()=>setClassDuration(p=>p+1), 1000);
+    return () => clearInterval(t);
   }, [connected]);
 
-  const formatTime = (s: number) => {
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    return h > 0
-      ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`
-      : `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-  };
+  // Build PiP once connected
+  useEffect(() => {
+    if (!connected) { pipHandle.current?.stop(); pipHandle.current=null; return; }
+    const h = buildCanvasPip(initial, title, ()=>handleRetRef.current());
+    if (h) { h.video.play().catch(()=>{}); pipHandle.current=h; }
+    return () => { pipHandle.current?.stop(); pipHandle.current=null; };
+  }, [connected, initial, title]);
 
-  // Auto-reconnect on unexpected disconnect (up to 5 attempts)
+  // Auto-reconnect (up to 5 attempts)
   const autoReconnect = useCallback(() => {
-    if (intentionalLeaveRef.current) return;
+    if (intentionalRef.current) return;
+    setReconnecting(true);
     setReconnectCount(prev => {
       if (prev >= 5) { setEnded(true); return prev; }
-      setTimeout(() => {
-        setReconnecting(false);
-        setRoomKey(k => k + 1);
-      }, 2000 + prev * 1000);
-      return prev + 1;
+      setTimeout(() => { setReconnecting(false); setRoomKey(k=>k+1); }, 2000 + prev*1000);
+      return prev+1;
     });
   }, []);
 
-  const handleEndClass = async () => {
-    setShowEndConfirm(false);
-    intentionalLeaveRef.current = true;
-    if (classId) {
-      await supabase.from("public_classes").update({
-        status: "ended",
-        actual_end_time: new Date().toISOString(),
-      }).eq("id", classId);
+  /* ── Minimize → PiP ── */
+  const doMinimize = useCallback(async () => {
+    setMinimized(true);
+    const h = pipHandle.current;
+    if (!h) return;
+    if (document.pictureInPictureElement) return;
+    // Try a live video element first (camera on)
+    const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
+    const live = vids.find(v => v.readyState>=2 && v.videoWidth>0 && v!==h.video);
+    if (live) { try { await live.requestPictureInPicture(); return; } catch {} }
+    h.pip().catch(()=>{});
+  }, []);
+
+  /* ── Back button → minimize + PiP ── */
+  useEffect(() => {
+    if (!connected) return;
+    const onPop = () => {
+      setMinimized(true);
+      setTimeout(()=>pipHandle.current?.pip().catch(()=>{}), 60);
+    };
+    window.history.pushState({ gc: true }, "");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [connected]);
+
+  /* ── Browser backgrounded (home button / app switch) → minimize + PiP ── */
+  useEffect(() => {
+    if (!connected) return;
+    let pipTimer: ReturnType<typeof setTimeout>|null = null;
+    const onVis = () => {
+      if (document.visibilityState === "hidden") {
+        setMinimized(true);
+        if (!document.pictureInPictureElement) {
+          pipTimer = setTimeout(()=>pipHandle.current?.pip().catch(()=>{}), 150);
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { document.removeEventListener("visibilitychange", onVis); if (pipTimer) clearTimeout(pipTimer); };
+  }, [connected]);
+
+  /* ── Return from minimized → exit PiP ── */
+  useEffect(() => {
+    if (!minimized && document.pictureInPictureElement) {
+      document.exitPictureInPicture().catch(()=>{});
     }
+  }, [minimized]);
+
+  const fmtT = (s:number) => {
+    const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+    return h>0 ? `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}` : `${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
+  };
+
+  const handleEndClass = async () => {
+    setShowEndConfirm(false); intentionalRef.current=true;
+    if (classId) await supabase.from("public_classes").update({ status:"ended", actual_end_time:new Date().toISOString() }).eq("id",classId);
     setEnded(true);
   };
 
-  const handleLeave = () => {
-    intentionalLeaveRef.current = true;
-    setEnded(true);
-  };
+  if (!token||!url) return null;
 
-  if (!token || !url) return null;
-
-  /* ─── Ended Screen ─── */
+  /* ── Ended screen ── */
   if (ended) {
     return (
-      <div style={{ height: "100dvh", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, background: "#0f3122", color: "white", fontFamily: "'Google Sans', sans-serif" }}>
+      <div style={{ height:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", padding:16, background:"#0f3122", color:"#fff", fontFamily:"'Google Sans',sans-serif" }}>
         <style>{CSS}</style>
-        <div style={{ maxWidth: 420, width: "100%", textAlign: "center", animation: "gc-fade-up .3s ease" }}>
-          <p style={{ fontSize: 32, marginBottom: 4, fontFamily: "'Amiri', serif", color: "#c9973a" }}>الدرس انتهى</p>
-          <h2 style={{ fontSize: 22, fontWeight: 600, color: "#fff", marginBottom: 6 }}>Class Has Ended</h2>
-          <p style={{ color: "#c9973a", fontFamily: "'Amiri', serif", marginBottom: 4 }}>جزاكم الله خيراً</p>
-          <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, marginBottom: 28 }}>JazakAllahu Khayran for joining!</p>
+        <div style={{ maxWidth:420, width:"100%", textAlign:"center", animation:"gc-fade-up .3s ease" }}>
+          <p style={{ fontSize:30, marginBottom:4, fontFamily:"'Amiri',serif", color:"#c9973a" }}>الدرس انتهى</p>
+          <h2 style={{ fontSize:22, fontWeight:600, color:"#fff", marginBottom:6 }}>Class Has Ended</h2>
+          <p style={{ color:"#c9973a", fontFamily:"'Amiri',serif", marginBottom:4 }}>جزاكم الله خيراً</p>
+          <p style={{ color:"rgba(255,255,255,.5)", fontSize:13, marginBottom:28 }}>JazakAllahu Khayran for joining!</p>
           {!isHost && (
-            <div style={{ borderRadius: 16, padding: "20px 22px", marginBottom: 20, background: "rgba(201,151,58,.09)", border: "1px solid rgba(201,151,58,.28)" }}>
-              <p style={{ color: "#fff", fontWeight: 600, marginBottom: 10 }}>Enjoyed the class?</p>
-              <p style={{ fontSize: 13, color: "rgba(255,255,255,.55)", marginBottom: 12 }}>Join Tahleem Academy for FREE and get:</p>
-              <ul style={{ fontSize: 13, color: "rgba(255,255,255,.7)", textAlign: "left", listStyle: "none", padding: 0, marginBottom: 14 }}>
-                {["Access to all course recordings","Live classes every week","Personal progress tracking","Quran Hifdh programme","Revision centre","Chat with teachers and students"].map((item, i) => (
-                  <li key={i} style={{ marginBottom: 6 }}>✅ {item}</li>
+            <div style={{ borderRadius:16, padding:"20px 22px", marginBottom:20, background:"rgba(201,151,58,.09)", border:"1px solid rgba(201,151,58,.28)" }}>
+              <p style={{ color:"#fff", fontWeight:600, marginBottom:10 }}>Enjoyed the class?</p>
+              <p style={{ fontSize:13, color:"rgba(255,255,255,.55)", marginBottom:12 }}>Join Tahleem Academy for FREE and get:</p>
+              <ul style={{ fontSize:13, color:"rgba(255,255,255,.7)", textAlign:"left", listStyle:"none", padding:0, marginBottom:14 }}>
+                {["Access to all course recordings","Live classes every week","Personal progress tracking","Quran Hifdh programme","Revision centre","Chat with teachers and students"].map((item,i)=>(
+                  <li key={i} style={{ marginBottom:6 }}>✅ {item}</li>
                 ))}
               </ul>
               <Link to="/register">
-                <button style={{ width: "100%", padding: "13px", borderRadius: 24, border: "none", background: "#c9973a", color: "#fff", fontSize: 15, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                  <UserPlus style={{ width: 18, height: 18 }} /> Register Free — It's Free!
+                <button style={{ width:"100%", padding:13, borderRadius:24, border:"none", background:"#c9973a", color:"#fff", fontSize:15, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
+                  <UserPlus style={{ width:18, height:18 }} /> Register Free — It's Free!
                 </button>
               </Link>
             </div>
           )}
-          {isHost ? (
-            <Link to="/admin/public-classes" style={{ fontSize: 13, color: "rgba(255,255,255,.35)", textDecoration: "underline" }}>Back to Dashboard</Link>
-          ) : (
-            <Link to="/live" style={{ fontSize: 13, color: "rgba(255,255,255,.35)", textDecoration: "underline" }}>Maybe Later — Browse Classes</Link>
-          )}
+          {isHost
+            ? <Link to="/admin/public-classes" style={{ fontSize:13, color:"rgba(255,255,255,.35)", textDecoration:"underline" }}>Back to Dashboard</Link>
+            : <Link to="/live" style={{ fontSize:13, color:"rgba(255,255,255,.35)", textDecoration:"underline" }}>Maybe Later — Browse Classes</Link>
+          }
         </div>
       </div>
     );
   }
 
-  /* ─── Minimized Pill ─── */
-  if (minimized) {
-    return (
-      <div data-gc-root>
-        <style>{CSS}</style>
-        <div className="gc-min-pill" onClick={() => setMinimized(false)}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#22c55e", animation: "gc-pulse 1.8s ease-in-out infinite", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, fontWeight: 500, color: "#fff", maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {classTitle || "Live Class"}
-          </span>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,.5)", fontVariantNumeric: "tabular-nums" }}>
-            {formatTime(classDuration)}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, borderLeft: "1px solid rgba(255,255,255,.12)", paddingLeft: 10, marginLeft: 2 }}>
-            <Maximize2 style={{ width: 14, height: 14, color: "rgba(255,255,255,.6)" }} />
-            <button
-              onClick={e => { e.stopPropagation(); intentionalLeaveRef.current = true; setEnded(true); }}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%", border: "none", background: "rgba(239,68,68,.3)", color: "#fca5a5", cursor: "pointer" }}
-            >
-              <Phone style={{ width: 11, height: 11, transform: "rotate(135deg)" }} />
-            </button>
-          </div>
-        </div>
-        {/* LiveKit still running in background (hidden, connection maintained) */}
-        <div style={{ position: "fixed", width: 1, height: 1, opacity: 0, pointerEvents: "none", overflow: "hidden" }}>
-          <LiveKitRoom
-            key={roomKey}
-            serverUrl={url}
-            token={token}
-            connect={true}
-            options={{
-              adaptiveStream: true, dynacast: true,
-              audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, sampleRate: 48000 },
-              disconnectOnPageLeave: false,
-            }}
-            data-lk-theme="default"
-          >
-            <RoomAudioRenderer />
-            <ReconnectMonitor
-              onReconnecting={() => setReconnecting(true)}
-              onReconnected={() => { setReconnecting(false); setReconnectCount(0); }}
-              onDisconnected={autoReconnect}
-            />
-          </LiveKitRoom>
-        </div>
-      </div>
-    );
-  }
-
-  /* ─── Full Live Classroom ─── */
+  /* ════════════════════════════════════════════════════════
+     LIVE CLASSROOM
+     The div is always present. When minimized it's translated
+     off-screen (zero visual footprint) while PiP shows the
+     canvas overlay — identical to GlobalClassroomOverlay.
+     ════════════════════════════════════════════════════════ */
   return (
     <div
       data-gc-root
-      style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "#202124", overflow: "hidden" }}
+      style={{
+        position:"fixed", inset:0, zIndex:8000,
+        display:"flex", flexDirection:"column",
+        background:"#202124",
+        // Move off-screen when minimized — keeps LiveKit/audio alive
+        transform: minimized ? "translateX(-200%)" : "translateX(0)",
+        pointerEvents: minimized ? "none" : "all",
+        transition: minimized ? "none" : "transform .12s ease",
+      }}
     >
       <style>{CSS}</style>
+
       <LiveKitRoom
         key={roomKey}
         serverUrl={url}
         token={token}
         connect={true}
-        onConnected={() => { setConnected(true); setReconnecting(false); setReconnectCount(0); }}
-        onDisconnected={() => { if (!intentionalLeaveRef.current) autoReconnect(); }}
+        onConnected={()=>{ setConnected(true); setReconnecting(false); setReconnectCount(0); }}
+        onDisconnected={()=>{ if (!intentionalRef.current) autoReconnect(); }}
         options={{
-          adaptiveStream: { pixelDensity: "screen" },
-          dynacast: true,
-          disconnectOnPageLeave: false,
-          audioCaptureDefaults: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            sampleRate: 48000,
-            channelCount: 1,
+          adaptiveStream:{ pixelDensity:"screen" },
+          dynacast:true,
+          disconnectOnPageLeave:false,
+          audioCaptureDefaults:{
+            echoCancellation:true, noiseSuppression:true,
+            autoGainControl:true, sampleRate:48000, channelCount:1,
           },
-          publishDefaults: {
-            audioPreset: { maxBitrate: 64000 },
-            dtx: false,
-            red: true,
-            stopMicTrackOnMute: false,
-            videoEncoding: { maxBitrate: 700_000, maxFramerate: 20 },
-            backupCodec: true,
+          publishDefaults:{
+            audioPreset:{ maxBitrate:64000 },
+            dtx:false, red:true, stopMicTrackOnMute:false,
+            videoEncoding:{ maxBitrate:700_000, maxFramerate:20 },
+            backupCodec:true,
           },
-          videoCaptureDefaults: {
-            resolution: { width: 1280, height: 720 },
-          },
+          videoCaptureDefaults:{ resolution:{ width:1280, height:720 } },
         }}
-        style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" }}
+        style={{ flex:1, display:"flex", flexDirection:"column", minHeight:0, position:"relative" }}
         data-lk-theme="default"
       >
-        {/* Reconnect Monitor */}
         <ReconnectMonitor
-          onReconnecting={() => setReconnecting(true)}
-          onReconnected={() => { setReconnecting(false); setReconnectCount(0); }}
+          onReconnecting={()=>setReconnecting(true)}
+          onReconnected={()=>{ setReconnecting(false); setReconnectCount(0); }}
           onDisconnected={autoReconnect}
         />
 
-        {/* ── Reconnecting overlay ── */}
+        {/* Reconnecting overlay */}
         {reconnecting && (
           <div className="gc-reconnect-overlay">
-            <div style={{ width: 52, height: 52, border: "3px solid rgba(138,180,248,.2)", borderTopColor: "#8ab4f8", borderRadius: "50%", animation: "gc-reconnect-spin .8s linear infinite" }} />
-            <p style={{ color: "#e8eaed", fontSize: 16, fontWeight: 500 }}>Reconnecting…</p>
-            <p style={{ color: "rgba(255,255,255,.4)", fontSize: 13 }}>
-              {reconnectCount > 0 ? `Attempt ${reconnectCount}/5 — Please stay on the page` : "Please stay on the page"}
+            <div style={{ width:52, height:52, border:"3px solid rgba(138,180,248,.2)", borderTopColor:"#8ab4f8", borderRadius:"50%", animation:"gc-spin .8s linear infinite" }} />
+            <p style={{ color:"#e8eaed", fontSize:16, fontWeight:500, fontFamily:"'Google Sans',sans-serif" }}>Reconnecting…</p>
+            <p style={{ color:"rgba(255,255,255,.4)", fontSize:13, fontFamily:"'Google Sans',sans-serif" }}>
+              {reconnectCount>0 ? `Attempt ${reconnectCount} of 5` : "Please stay on the page"}
             </p>
           </div>
         )}
 
-        {/* ═══ TOP BAR ═══ */}
+        {/* ════ TOP BAR — compact, no overflow ════ */}
         <div style={{
-          height: 56, flexShrink: 0,
-          background: "rgba(32,33,36,.97)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)",
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "0 14px 0 16px",
-          borderBottom: "1px solid rgba(255,255,255,.06)", gap: 8,
+          height:48, flexShrink:0,
+          background:"rgba(32,33,36,.97)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)",
+          display:"flex", alignItems:"center",
+          padding:"0 10px", gap:6,
+          borderBottom:"1px solid rgba(255,255,255,.06)",
+          overflow:"hidden",
         }}>
-          {/* LEFT */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
-            {isHost ? (
-              <div className="gc-badge" style={{ background: "rgba(239,68,68,.13)", border: "1px solid rgba(239,68,68,.3)", color: "#fca5a5", flexShrink: 0 }}>
-                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", display: "inline-block", animation: "gc-pulse 1.8s ease-in-out infinite" }} />
-                <Radio style={{ width: 10, height: 10 }} /> LIVE
-              </div>
-            ) : (
-              <div className="gc-badge" style={{ background: "rgba(201,151,58,.12)", border: "1px solid rgba(201,151,58,.3)", color: "#c9973a", flexShrink: 0 }}>
-                Guest
-              </div>
-            )}
+          {/* LEFT GROUP */}
+          <div style={{ display:"flex", alignItems:"center", gap:5, flex:1, minWidth:0, overflow:"hidden" }}>
+            {/* LIVE / Guest badge */}
+            {isHost
+              ? <div className="gc-pill" style={{ background:"rgba(239,68,68,.13)", border:"1px solid rgba(239,68,68,.3)", color:"#fca5a5" }}>
+                  <span style={{ width:6, height:6, borderRadius:"50%", background:"#ef4444", display:"inline-block", animation:"gc-pulse 1.8s ease-in-out infinite" }} />
+                  LIVE
+                </div>
+              : <div className="gc-pill" style={{ background:"rgba(201,151,58,.12)", border:"1px solid rgba(201,151,58,.3)", color:"#c9973a" }}>
+                  Guest
+                </div>
+            }
 
-            <div className="gc-badge" style={{ background: "rgba(255,255,255,.07)", border: "1px solid rgba(255,255,255,.1)", color: "rgba(255,255,255,.85)", flexShrink: 0, maxWidth: 180 }}>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{classTitle || "Public Class"}</span>
-            </div>
+            {/* Class title — truncated */}
+            <span style={{ fontSize:12, fontWeight:600, color:"rgba(255,255,255,.85)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1, minWidth:0 }}>
+              {title}
+            </span>
 
-            {classTitleAr && (
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,.4)", fontFamily: "'Amiri', serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }} className="hidden sm:block">
-                {classTitleAr}
-              </span>
-            )}
-
-            <div className="gc-badge" style={{ background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)", color: "rgba(255,255,255,.7)", flexShrink: 0 }}>
-              <Circle style={{ width: 6, height: 6, fill: "#ef4444", color: "#ef4444", animation: "gc-rec-pulse 1.4s ease-in-out infinite" }} />
-              <span style={{ fontVariantNumeric: "tabular-nums" }}>{formatTime(classDuration)}</span>
+            {/* Timer */}
+            <div className="gc-pill" style={{ background:"rgba(255,255,255,.06)", border:"1px solid rgba(255,255,255,.1)", color:"rgba(255,255,255,.65)", fontVariantNumeric:"tabular-nums" }}>
+              <Circle style={{ width:5, height:5, fill:"#ef4444", color:"#ef4444", animation:"gc-rec-pulse 1.4s ease-in-out infinite", flexShrink:0 }} />
+              {fmtT(classDuration)}
             </div>
           </div>
 
-          {/* RIGHT */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          {/* RIGHT GROUP */}
+          <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
+            {/* Connection quality */}
             <ConnectionIndicator />
 
-            <RecordingController
-              sessionId={sessionId || null}
-              classId={classId || ""}
-              userName={guestName || "Host"}
-              isHost={!!isHost}
-              onSavingChange={setSavingRecording}
-            />
+            {/* Record (host only — compact) */}
+            <RecordingController classId={classId||""} isHost={!!isHost} onSavingChange={setSavingRec} />
 
+            {/* Register CTA — desktop only */}
             {!isHost && (
-              <span style={{ fontSize: 11, color: "rgba(255,255,255,.4)", whiteSpace: "nowrap" }} className="hidden sm:block">
-                as <span style={{ color: "#fff", fontWeight: 500 }}>{guestName}</span>
-              </span>
-            )}
-
-            {!isHost && (
-              <Link to="/register" className="hidden sm:block">
-                <button style={{
-                  display: "flex", alignItems: "center", gap: 5, padding: "5px 12px",
-                  borderRadius: 20, border: "1px solid rgba(201,151,58,.5)",
-                  background: "transparent", color: "#c9973a", fontSize: 12, cursor: "pointer",
-                  fontFamily: "'Google Sans', sans-serif",
-                }}>
-                  <UserPlus style={{ width: 12, height: 12 }} /> Create Account
+              <Link to="/register" style={{ display:"none" }} className="sm:block">
+                <button style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:16, border:"1px solid rgba(201,151,58,.4)", background:"transparent", color:"#c9973a", fontSize:11, cursor:"pointer" }}>
+                  <UserPlus style={{ width:11, height:11 }} /> Register
                 </button>
               </Link>
             )}
 
-            {/* Minimize button */}
+            {/* Minimize */}
             <button
-              onClick={() => setMinimized(true)}
-              title="Minimize — audio stays connected"
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                width: 32, height: 32, borderRadius: "50%", border: "none",
-                background: "rgba(255,255,255,.1)", color: "rgba(255,255,255,.7)",
-                cursor: "pointer", transition: "background .15s",
-              }}
+              onClick={doMinimize}
+              title="Minimize — audio stays on"
+              style={{ display:"flex", alignItems:"center", justifyContent:"center", width:30, height:30, borderRadius:"50%", border:"none", background:"rgba(255,255,255,.1)", color:"rgba(255,255,255,.7)", cursor:"pointer" }}
             >
-              <Minimize2 style={{ width: 15, height: 15 }} />
+              <Minimize2 style={{ width:14, height:14 }} />
             </button>
           </div>
         </div>
 
-        {/* ═══ MAIN CONTENT ═══ */}
-        <div style={{ flex: 1, display: "flex", minHeight: 0, overflow: "hidden" }}>
-          {/* Participants panel (desktop) */}
-          {participantsOpen && !isMobile && sessionId && (
-            <div style={{ width: 224, background: "rgba(32,33,36,.97)", borderRight: "1px solid rgba(255,255,255,.07)", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+        {/* ════ MAIN CONTENT ════ */}
+        <div style={{ flex:1, display:"flex", minHeight:0, overflow:"hidden" }}>
+          {/* Participants (desktop) */}
+          {partOpen && !isMobile && sessionId && (
+            <div style={{ width:216, background:"rgba(32,33,36,.97)", borderRight:"1px solid rgba(255,255,255,.07)", display:"flex", flexDirection:"column", flexShrink:0 }}>
               <ClassParticipants
                 sessionId={sessionId}
-                onMuteStudent={isHost ? (studentId) => {
-                  supabase.from("class_participants").update({ is_muted: true }).eq("session_id", sessionId).eq("student_id", studentId);
-                } : undefined}
-                onRemoveStudent={isHost ? (studentId) => {
-                  supabase.from("class_participants").update({ left_at: new Date().toISOString() }).eq("session_id", sessionId).eq("student_id", studentId);
-                } : undefined}
+                onMuteStudent={isHost?(id)=>{ supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId).eq("student_id",id); }:undefined}
+                onRemoveStudent={isHost?(id)=>{ supabase.from("class_participants").update({left_at:new Date().toISOString()}).eq("session_id",sessionId).eq("student_id",id); }:undefined}
               />
             </div>
           )}
 
-          {/* Video area */}
-          <div style={{ flex: 1, position: "relative", minWidth: 0 }}>
+          {/* Video */}
+          <div style={{ flex:1, position:"relative", minWidth:0 }}>
             <VideoConference />
             <RoomAudioRenderer />
           </div>
 
-          {/* Right panel: Chat/Polls (desktop) */}
+          {/* Chat / Polls (desktop) */}
           {chatOpen && !isMobile && sessionId && (
             <div className="gc-sidebar">
-              <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,.07)", flexShrink: 0, background: "rgba(32,33,36,.97)" }}>
-                {(["chat", "polls"] as const).map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => { setActiveSideTab(tab); if (tab === "chat") setChatUnread(0); }}
-                    style={{
-                      flex: 1, padding: "14px 4px", background: "none", border: "none",
-                      color: activeSideTab === tab ? "#8ab4f8" : "rgba(255,255,255,.4)",
-                      fontSize: 13, fontWeight: activeSideTab === tab ? 600 : 400,
-                      borderBottom: activeSideTab === tab ? "2px solid #8ab4f8" : "2px solid transparent",
-                      cursor: "pointer", fontFamily: "'Google Sans', sans-serif", transition: "color .15s",
-                    }}
-                  >
-                    {tab === "chat" ? "💬 Chat" : "📊 Polls"}
-                    {tab === "chat" && chatUnread > 0 && (
-                      <span style={{ marginLeft: 4, background: "#ef4444", color: "#fff", borderRadius: 10, fontSize: 10, padding: "1px 5px" }}>
-                        {chatUnread}
-                      </span>
+              <div style={{ display:"flex", borderBottom:"1px solid rgba(255,255,255,.07)", flexShrink:0, background:"rgba(32,33,36,.97)" }}>
+                {(["chat","polls"] as const).map(tab=>(
+                  <button key={tab} onClick={()=>{ setSideTab(tab); if(tab==="chat") setChatUnread(0); }} style={{
+                    flex:1, padding:"13px 4px", background:"none", border:"none",
+                    color:sideTab===tab?"#8ab4f8":"rgba(255,255,255,.4)",
+                    fontSize:13, fontWeight:sideTab===tab?600:400,
+                    borderBottom:sideTab===tab?"2px solid #8ab4f8":"2px solid transparent",
+                    cursor:"pointer", fontFamily:"'Google Sans',sans-serif", transition:"color .15s",
+                  }}>
+                    {tab==="chat"?"💬 Chat":"📊 Polls"}
+                    {tab==="chat" && chatUnread>0 && (
+                      <span style={{ marginLeft:4, background:"#ef4444", color:"#fff", borderRadius:10, fontSize:10, padding:"1px 5px" }}>{chatUnread}</span>
                     )}
                   </button>
                 ))}
-                <button
-                  onClick={() => setChatOpen(false)}
-                  style={{ background: "none", border: "none", color: "rgba(255,255,255,.3)", cursor: "pointer", padding: "0 14px", flexShrink: 0 }}
-                >
-                  <X style={{ width: 15, height: 15 }} />
+                <button onClick={()=>setChatOpen(false)} style={{ background:"none", border:"none", color:"rgba(255,255,255,.3)", cursor:"pointer", padding:"0 12px", flexShrink:0 }}>
+                  <X style={{ width:14, height:14 }} />
                 </button>
               </div>
-              <div style={{ flex: 1, overflow: "hidden" }}>
-                {activeSideTab === "chat" ? (
-                  <ClassChatPanel sessionId={sessionId} />
-                ) : (
-                  <ClassPolls sessionId={sessionId} />
-                )}
+              <div style={{ flex:1, overflow:"hidden" }}>
+                {sideTab==="chat" ? <ClassChatPanel sessionId={sessionId} /> : <ClassPolls sessionId={sessionId} />}
               </div>
             </div>
           )}
         </div>
 
-        {/* ═══ BOTTOM CONTROL BAR ═══ */}
+        {/* ════ CONTROLS ════ */}
         {sessionId ? (
           <ClassControls
             sessionId={sessionId}
-            onToggleChat={() => { setChatOpen(!chatOpen); if (!chatOpen) setChatUnread(0); }}
-            onToggleParticipants={() => setParticipantsOpen(!participantsOpen)}
-            onEndClass={isHost ? () => setShowEndConfirm(true) : undefined}
+            onToggleChat={()=>{ setChatOpen(v=>!v); if(!chatOpen) setChatUnread(0); }}
+            onToggleParticipants={()=>setPartOpen(v=>!v)}
+            onEndClass={isHost?()=>setShowEndConfirm(true):undefined}
             onLeaveClass={handleLeave}
             chatUnread={chatUnread}
-            onLaunchPoll={isHost ? () => { setChatOpen(true); setActiveSideTab("polls"); } : undefined}
-            onLaunchQuiz={isHost ? () => setShowQuiz(true) : undefined}
+            onLaunchPoll={isHost?()=>{ setChatOpen(true); setSideTab("polls"); }:undefined}
+            onLaunchQuiz={isHost?()=>setShowQuiz(true):undefined}
           />
         ) : (
-          <div style={{ height: 1, background: "rgba(255,255,255,.06)", flexShrink: 0 }} />
+          <div style={{ height:1, background:"rgba(255,255,255,.06)", flexShrink:0 }} />
         )}
 
-        {/* Live Quiz Overlay */}
-        {sessionId && (
-          <LiveQuizOverlay
-            sessionId={sessionId}
-            isOpen={showQuiz}
-            onClose={() => setShowQuiz(false)}
-          />
-        )}
+        {sessionId && <LiveQuizOverlay sessionId={sessionId} isOpen={showQuiz} onClose={()=>setShowQuiz(false)} />}
       </LiveKitRoom>
 
-      {/* ═══ MOBILE BOTTOM SHEETS ═══ */}
-      {isMobile && participantsOpen && sessionId && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", zIndex: 50 }} onClick={() => setParticipantsOpen(false)}>
-          <div
-            style={{ position: "absolute", bottom: 64, left: 0, right: 0, background: "#13181f", borderRadius: "22px 22px 0 0", maxHeight: "65vh", overflow: "auto", animation: "gc-slide-up .22s ease" }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ width: 40, height: 4, borderRadius: 2, background: "rgba(255,255,255,.2)", margin: "12px auto 6px" }} />
+      {/* ════ MOBILE BOTTOM SHEETS ════ */}
+      {isMobile && partOpen && sessionId && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.65)", zIndex:50 }} onClick={()=>setPartOpen(false)}>
+          <div style={{ position:"absolute", bottom:64, left:0, right:0, background:"#13181f", borderRadius:"22px 22px 0 0", maxHeight:"65vh", overflow:"auto", animation:"gc-slide-up .22s ease" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ width:40, height:4, borderRadius:2, background:"rgba(255,255,255,.2)", margin:"12px auto 6px" }} />
             <ClassParticipants sessionId={sessionId} />
           </div>
         </div>
       )}
 
       {isMobile && chatOpen && sessionId && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.65)", zIndex: 50 }} onClick={() => setChatOpen(false)}>
-          <div
-            style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "#13181f", borderRadius: "22px 22px 0 0", maxHeight: "82vh", display: "flex", flexDirection: "column", animation: "gc-slide-up .22s ease", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: "flex", alignItems: "center", padding: "12px 16px 0", flexShrink: 0 }}>
-              <div style={{ flex: 1, display: "flex" }}>
-                {(["chat", "polls"] as const).map(tab => (
-                  <button key={tab} onClick={() => setActiveSideTab(tab)} style={{
-                    flex: 1, padding: "10px 6px", background: "none", border: "none",
-                    color: activeSideTab === tab ? "#fff" : "rgba(255,255,255,.35)",
-                    fontSize: 13, fontWeight: activeSideTab === tab ? 700 : 400,
-                    borderBottom: activeSideTab === tab ? "2px solid #0a7c68" : "2px solid transparent",
-                    cursor: "pointer",
-                  }}>
-                    {tab === "chat" ? "💬 Chat" : "📊 Polls"}
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.65)", zIndex:50 }} onClick={()=>setChatOpen(false)}>
+          <div style={{ position:"absolute", bottom:0, left:0, right:0, background:"#13181f", borderRadius:"22px 22px 0 0", maxHeight:"82vh", display:"flex", flexDirection:"column", animation:"gc-slide-up .22s ease", paddingBottom:"env(safe-area-inset-bottom,0px)" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ display:"flex", alignItems:"center", padding:"12px 16px 0", flexShrink:0 }}>
+              <div style={{ flex:1, display:"flex" }}>
+                {(["chat","polls"] as const).map(tab=>(
+                  <button key={tab} onClick={()=>setSideTab(tab)} style={{ flex:1, padding:"10px 6px", background:"none", border:"none", color:sideTab===tab?"#fff":"rgba(255,255,255,.35)", fontSize:13, fontWeight:sideTab===tab?700:400, borderBottom:sideTab===tab?"2px solid #0a7c68":"2px solid transparent", cursor:"pointer" }}>
+                    {tab==="chat"?"💬 Chat":"📊 Polls"}
                   </button>
                 ))}
               </div>
-              <button onClick={() => setChatOpen(false)} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,.1)", border: "none", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <X style={{ width: 14, height: 14 }} />
+              <button onClick={()=>setChatOpen(false)} style={{ width:32, height:32, borderRadius:"50%", background:"rgba(255,255,255,.1)", border:"none", color:"#fff", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                <X style={{ width:14, height:14 }} />
               </button>
             </div>
-            <div style={{ flex: 1, overflow: "hidden", minHeight: 320 }}>
-              {activeSideTab === "chat" ? <ClassChatPanel sessionId={sessionId} /> : <ClassPolls sessionId={sessionId} />}
+            <div style={{ flex:1, overflow:"hidden", minHeight:320 }}>
+              {sideTab==="chat" ? <ClassChatPanel sessionId={sessionId} /> : <ClassPolls sessionId={sessionId} />}
             </div>
           </div>
         </div>
       )}
 
-      {/* ═══ END CLASS CONFIRMATION ═══ */}
+      {/* ════ END CLASS CONFIRM ════ */}
       {showEndConfirm && (
-        <div
-          style={{ position: "fixed", inset: 0, zIndex: 9500, background: "rgba(0,0,0,.65)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center" }}
-          onClick={() => setShowEndConfirm(false)}
-        >
-          <div
-            style={{ background: "#2D2E30", borderRadius: 20, padding: "32px 28px 24px", width: "100%", maxWidth: 380, margin: "0 16px", boxShadow: "0 24px 64px rgba(0,0,0,.7)", border: "1px solid rgba(255,255,255,.08)", animation: "gc-fade-up .18s ease" }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(239,68,68,.12)", border: "1px solid rgba(239,68,68,.2)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 18px" }}>
-              <Phone style={{ width: 22, height: 22, color: "#ef4444", transform: "rotate(135deg)" }} />
+        <div style={{ position:"fixed", inset:0, zIndex:9500, background:"rgba(0,0,0,.65)", backdropFilter:"blur(8px)", display:"flex", alignItems:"center", justifyContent:"center" }} onClick={()=>setShowEndConfirm(false)}>
+          <div style={{ background:"#2D2E30", borderRadius:20, padding:"32px 28px 24px", width:"100%", maxWidth:380, margin:"0 16px", boxShadow:"0 24px 64px rgba(0,0,0,.7)", border:"1px solid rgba(255,255,255,.08)", animation:"gc-fade-up .18s ease" }} onClick={e=>e.stopPropagation()}>
+            <div style={{ width:56, height:56, borderRadius:"50%", background:"rgba(239,68,68,.12)", border:"1px solid rgba(239,68,68,.2)", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 18px" }}>
+              <Phone style={{ width:22, height:22, color:"#ef4444", transform:"rotate(135deg)" }} />
             </div>
-            <h2 style={{ textAlign: "center", fontSize: 18, fontWeight: 500, color: "#e8eaed", marginBottom: 8, fontFamily: "'Google Sans', sans-serif" }}>
-              End class for everyone?
-            </h2>
-            <p style={{ textAlign: "center", fontSize: 13, color: "rgba(255,255,255,.45)", marginBottom: 24, lineHeight: 1.6 }}>
-              This will disconnect all participants and end the recording.
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <button onClick={handleEndClass} style={{ width: "100%", padding: 13, borderRadius: 24, border: "none", background: "#ea4335", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'Google Sans', sans-serif" }}>
-                End for All
-              </button>
-              <button onClick={() => { setShowEndConfirm(false); handleLeave(); }} style={{ width: "100%", padding: 12, borderRadius: 24, border: "1px solid rgba(255,255,255,.15)", background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.8)", fontSize: 14, cursor: "pointer", fontFamily: "'Google Sans', sans-serif" }}>
-                Leave but Keep Open
-              </button>
-              <button onClick={() => setShowEndConfirm(false)} style={{ width: "100%", padding: 12, borderRadius: 24, border: "none", background: "transparent", color: "rgba(255,255,255,.4)", fontSize: 14, cursor: "pointer", fontFamily: "'Google Sans', sans-serif" }}>
-                Cancel
-              </button>
+            <h2 style={{ textAlign:"center", fontSize:18, fontWeight:500, color:"#e8eaed", marginBottom:8, fontFamily:"'Google Sans',sans-serif" }}>End class for everyone?</h2>
+            <p style={{ textAlign:"center", fontSize:13, color:"rgba(255,255,255,.45)", marginBottom:24, lineHeight:1.6, fontFamily:"'Google Sans',sans-serif" }}>This will disconnect all participants.</p>
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              <button onClick={handleEndClass} style={{ width:"100%", padding:13, borderRadius:24, border:"none", background:"#ea4335", color:"#fff", fontSize:14, fontWeight:600, cursor:"pointer", fontFamily:"'Google Sans',sans-serif" }}>End for All</button>
+              <button onClick={()=>{ setShowEndConfirm(false); handleLeave(); }} style={{ width:"100%", padding:12, borderRadius:24, border:"1px solid rgba(255,255,255,.15)", background:"rgba(255,255,255,.06)", color:"rgba(255,255,255,.8)", fontSize:14, cursor:"pointer", fontFamily:"'Google Sans',sans-serif" }}>Leave but Keep Open</button>
+              <button onClick={()=>setShowEndConfirm(false)} style={{ width:"100%", padding:12, borderRadius:24, border:"none", background:"transparent", color:"rgba(255,255,255,.4)", fontSize:14, cursor:"pointer", fontFamily:"'Google Sans',sans-serif" }}>Cancel</button>
             </div>
           </div>
         </div>
