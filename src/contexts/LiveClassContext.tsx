@@ -148,21 +148,8 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
       }
       return next;
     });
-    // When restoring from minimized, push guard state again AND navigate back to where the user was
-    if (!v) {
-      history.pushState({ [HISTORY_STATE]: true }, "");
-      // Navigate back to the route the user was on before joining the class,
-      // but only if we're currently NOT on that route (e.g. user navigated away)
-      setState(prev => {
-        const target = prev.previousRoute || "/";
-        if (window.location.pathname + window.location.search !== target) {
-          // Use replaceState + dispatch so React Router picks it up without a full reload
-          window.history.replaceState(null, "", target);
-          window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
-        }
-        return prev;
-      });
-    }
+    // When restoring from minimized, push guard state again
+    if (!v) history.pushState({ [HISTORY_STATE]: true }, "");
   }, []);
 
   const setMicEnabled     = useCallback((v: boolean) => setState(prev => ({ ...prev, micEnabled: v })), []);
