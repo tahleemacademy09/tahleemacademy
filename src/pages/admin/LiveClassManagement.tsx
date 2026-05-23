@@ -204,15 +204,15 @@ const LiveClassManagement = () => {
     return (cfg as any)?.color || "#6b7280";
   };
 
-  const resetForm = () => setForm({subject_id:"",topic:"",topic_ar:"",scheduled_at:"",duration_minutes:60,recording_enabled:true,chat_enabled:true,hand_raise_enabled:true,waiting_room_enabled:true,homework:"",homework_ar:""});
+  const resetForm = () => setForm({subject_id:"",topic:"",topic_ar:"",scheduled_at:"",duration_minutes:60,recording_enabled:true,chat_enabled:true,hand_raise_enabled:true,waiting_room_enabled:true,homework:"",homework_ar:"",quiz_code:""});
   const openCreate = () => { resetForm(); setEditingSession(null); setShowCreate(true); };
   const openEdit   = (s:any) => {
-    setForm({subject_id:s.subject_id||"",topic:s.topic||"",topic_ar:s.topic_ar||"",scheduled_at:s.scheduled_at?s.scheduled_at.slice(0,16):"",duration_minutes:s.duration_minutes||60,recording_enabled:s.recording_enabled??true,chat_enabled:s.chat_enabled??true,hand_raise_enabled:s.hand_raise_enabled??true,waiting_room_enabled:s.waiting_room_enabled??true,homework:s.homework||"",homework_ar:s.homework_ar||""});
+    setForm({subject_id:s.subject_id||"",topic:s.topic||"",topic_ar:s.topic_ar||"",scheduled_at:s.scheduled_at?s.scheduled_at.slice(0,16):"",duration_minutes:s.duration_minutes||60,recording_enabled:s.recording_enabled??true,chat_enabled:s.chat_enabled??true,hand_raise_enabled:s.hand_raise_enabled??true,waiting_room_enabled:s.waiting_room_enabled??true,homework:s.homework||"",homework_ar:s.homework_ar||"",quiz_code:s.quiz_code||""});
     setEditingSession(s); setShowCreate(true);
   };
   const handleSave = async () => {
     if (!form.subject_id) { toast({title:"Please select a subject",variant:"destructive"}); return; }
-    const payload = {subject_id:form.subject_id,topic:form.topic||null,topic_ar:form.topic_ar||null,scheduled_at:form.scheduled_at||null,duration_minutes:form.duration_minutes,recording_enabled:form.recording_enabled,chat_enabled:form.chat_enabled,hand_raise_enabled:form.hand_raise_enabled,waiting_room_enabled:form.waiting_room_enabled,homework:form.homework||null,homework_ar:form.homework_ar||null};
+    const payload = {subject_id:form.subject_id,topic:form.topic||null,topic_ar:form.topic_ar||null,scheduled_at:form.scheduled_at||null,duration_minutes:form.duration_minutes,recording_enabled:form.recording_enabled,chat_enabled:form.chat_enabled,hand_raise_enabled:form.hand_raise_enabled,waiting_room_enabled:form.waiting_room_enabled,homework:form.homework||null,homework_ar:form.homework_ar||null,quiz_code:form.quiz_code||null};
     if (editingSession) {
       await supabase.from("live_sessions").update(payload).eq("id",editingSession.id);
       toast({title:"Class updated"});
@@ -1174,6 +1174,17 @@ const CreateEditDialog = ({open,onClose,form,setForm,subjects,editing,onSave}:an
         <div className="space-y-1.5">
           <Label className="text-xs font-semibold">Homework (EN)</Label>
           <Textarea value={form.homework} onChange={(e:any)=>setForm((f:any)=>({...f,homework:e.target.value}))} rows={2} className="text-sm resize-none"/>
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs font-semibold">🎯 Post-Class Quiz Code</Label>
+          <Input
+            value={form.quiz_code||""}
+            onChange={(e:any)=>setForm((f:any)=>({...f,quiz_code:e.target.value.toUpperCase()}))}
+            className="h-10 text-sm font-mono tracking-widest"
+            placeholder="e.g. ABC123 — create quiz first, then paste code here"
+            maxLength={10}
+          />
+          <p className="text-xs text-muted-foreground">Create the quiz room in Al-Musabaqah, copy the 6-letter code, and paste it here. Students will be auto-redirected with this code after class.</p>
         </div>
         <div className="rounded-xl border divide-y">
           {([
