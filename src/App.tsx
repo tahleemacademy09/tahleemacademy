@@ -189,6 +189,9 @@ const App = () => (
                   {/* New: Qur'an recitation competition — full-screen like /live-quiz */}
                   <Route path="/musabaqah/recitation" element={<ProtectedRoute><MustabaqahPage /></ProtectedRoute>} />
 
+                  {/* Public quiz — no login needed; guests join a room with a code */}
+                  <Route path="/quiz" element={<LiveQuiz />} />
+
                   {/* Public Live Classes */}
                   <Route path="/live"                       element={<LiveClasses />} />
                   <Route path="/public/classes"             element={<LiveClasses />} />
