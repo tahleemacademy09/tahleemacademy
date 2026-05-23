@@ -728,6 +728,7 @@ const GuestClassroom = () => {
 
   const [connected, setConnected]         = useState(false);
   const [ended, setEnded]                 = useState(false);
+  const [quizCode, setQuizCode]           = useState<string>("");
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [classDuration, setClassDuration] = useState(0);
   const [savingRec, setSavingRec]         = useState(false);
@@ -813,6 +814,17 @@ const GuestClassroom = () => {
     const t = setInterval(()=>setClassDuration(p=>p+1), 1000);
     return () => clearInterval(t);
   }, [connected]);
+
+  // Fetch quiz_code from live_sessions for the post-class quiz auto-fill
+  useEffect(() => {
+    if (!classId) return;
+    supabase
+      .from("live_sessions")
+      .select("quiz_code")
+      .eq("id", classId)
+      .single()
+      .then(({ data }) => { if (data?.quiz_code) setQuizCode(data.quiz_code); });
+  }, [classId]);
 
   // Fix LiveKit video: object-fit cover + un-mirror remote tiles.
   useEffect(() => {
@@ -1001,12 +1013,17 @@ const GuestClassroom = () => {
               Reinforce what you just learned — answer questions from today's class and track your progress.
             </p>
             <a
-              href="/quiz"
+              href={`/quiz${quizCode ? `?code=${quizCode}&` : "?"}name=${encodeURIComponent(title)}`}
               className="gc-cta-btn"
               style={{ display:"block", textAlign:"center", padding:"13px 0", borderRadius:999, background:"#22c55e", color:"#0b1f13", fontSize:14, fontWeight:800, textDecoration:"none" }}
             >
-              Start Quiz →
+              {quizCode ? "Join Quiz →" : "Go to Quiz →"}
             </a>
+            {quizCode && (
+              <p style={{ textAlign:"center", fontSize:12, color:"rgba(255,255,255,0.4)", margin:"8px 0 0" }}>
+                Room code <strong style={{color:"#22c55e",fontFamily:"monospace",letterSpacing:2}}>{quizCode}</strong> will be pre-filled
+              </p>
+            )}
           </div>
 
           {/* ── Enroll CTA ── */}
