@@ -181,7 +181,10 @@ const LiveQuiz = () => {
   const [countdown,    setCountdown]    = useState(3);
   const [joinCode,     setJoinCode]     = useState("");
   const [playerName,   setPlayerName]   = useState("");
-  const [settings,     setSettings]     = useState({ topic:"All Topics", numQ:10, timeQ:20 });
+  const [settings,     setSettingsRaw]  = useState(() => {
+    try { const s = sessionStorage.getItem("lq_settings"); return s ? JSON.parse(s) : { topic:"All Topics", numQ:10, timeQ:20 }; } catch { return { topic:"All Topics", numQ:10, timeQ:20 }; }
+  });
+  const setSettings = (fn: any) => setSettingsRaw((prev: any) => { const next = typeof fn === "function" ? fn(prev) : fn; try { sessionStorage.setItem("lq_settings", JSON.stringify(next)); } catch {} return next; });
 
   // ── Missing state declarations (caused blank screen crash) ──
   const [customQs,     setCustomQs]     = useState<Omit<Question,"id">[]>([]);
@@ -195,11 +198,14 @@ const LiveQuiz = () => {
     { question:"", optA:"", optB:"", optC:"", optD:"", correct:"A", explanation:"" }
   );
 
-  // ── New: quiz name + bulk paste state ──────────────────────────────────
-  const [quizName,   setQuizName]   = useState<string>("");
-  const [bulkText,   setBulkText]   = useState<string>("");
-  const [bulkParsed, setBulkParsed] = useState<Omit<Question,"id">[]>([]);
-  const [bulkError,  setBulkError]  = useState<string>("");
+  // ── Quiz name + bulk paste — persisted to sessionStorage so tab switches don't wipe state ──
+  const [quizName,   setQuizNameRaw]   = useState<string>(() => sessionStorage.getItem("lq_quiz_name") || "");
+  const [bulkText,   setBulkTextRaw]   = useState<string>(() => sessionStorage.getItem("lq_bulk_text") || "");
+  const [bulkParsed, setBulkParsed]    = useState<Omit<Question,"id">[]>([]);
+  const [bulkError,  setBulkError]     = useState<string>("");
+
+  const setQuizName = (v: string) => { setQuizNameRaw(v); try { sessionStorage.setItem("lq_quiz_name", v); } catch {} };
+  const setBulkText = (v: string) => { setBulkTextRaw(v); try { sessionStorage.setItem("lq_bulk_text", v); } catch {} };
 
   const timerRef        = useRef<any>(null);
   const channelRef      = useRef<any>(null);
@@ -1097,19 +1103,26 @@ Note: The Quran has 114 Surahs.
           <textarea
             value={bulkText}
             onChange={e=>{ setBulkText(e.target.value); setBulkError(""); }}
-            rows={14}
-            placeholder={`Q: What is the first pillar of Islam?\nA: Salah\nB: Shahada*\nC: Zakat\nD: Hajj\nNote: The Shahada is the declaration of faith.\n---\nQ: Next question...`}
-            style={{width:"100%",padding:"13px 14px",borderRadius:11,border:`1.5px solid rgba(201,146,42,0.3)`,background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:12,outline:"none",boxSizing:"border-box" as const,fontFamily:"'Courier New',monospace",lineHeight:1.7,resize:"vertical" as const}}
+            onInput={e=>{ const v=(e.target as HTMLTextAreaElement).value; if(v!==bulkText){ setBulkText(v); setBulkError(""); } }}
+            onPaste={e=>{ e.preventDefault(); const txt=e.clipboardData.getData("text/plain"); const cur=(e.target as HTMLTextAreaElement); const start=cur.selectionStart??0; const end=cur.selectionEnd??cur.value.length; const next=cur.value.slice(0,start)+txt+cur.value.slice(end); setBulkText(next); setBulkError(""); }}
+            placeholder={"Q: What is the first pillar of Islam?\nA: Salah\nB: Shahada*\nC: Zakat\nD: Hajj\nNote: The Shahada is the declaration of faith.\n---\nQ: Next question..."}
+            style={{width:"100%",padding:"13px 14px",borderRadius:11,border:`1.5px solid rgba(201,146,42,0.3)`,background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:12,outline:"none",boxSizing:"border-box" as const,fontFamily:"'Courier New',monospace",lineHeight:1.8,minHeight:280,resize:"vertical" as const}}
           />
           {bulkError && (
             <div style={{background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:10,padding:"10px 14px"}}>
               <p style={{fontSize:12,color:"#f87171",margin:0}}>⚠️ {bulkError}</p>
             </div>
           )}
-          <button onClick={handleBulkParse} disabled={!bulkText.trim()}
-            style={{...goldBtn, opacity:bulkText.trim()?1:0.4, cursor:bulkText.trim()?"pointer":"not-allowed"}}>
-            <Eye size={16}/> Parse &amp; Preview Questions →
-          </button>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={()=>{ setBulkText(""); setBulkError(""); }} disabled={!bulkText.trim()}
+              style={{padding:"13px 18px",borderRadius:12,border:"1.5px solid rgba(239,68,68,0.4)",background:"transparent",color:"rgba(239,68,68,0.7)",cursor:bulkText.trim()?"pointer":"not-allowed",fontSize:13,fontWeight:700,opacity:bulkText.trim()?1:0.4}}>
+              Clear
+            </button>
+            <button onClick={handleBulkParse} disabled={!bulkText.trim()}
+              style={{...goldBtn, flex:1, opacity:bulkText.trim()?1:0.4, cursor:bulkText.trim()?"pointer":"not-allowed"}}>
+              <Eye size={16}/> Parse &amp; Preview →
+            </button>
+          </div>
         </div>
       </div>
     </div>
