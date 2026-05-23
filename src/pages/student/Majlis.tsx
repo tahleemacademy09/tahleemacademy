@@ -475,6 +475,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   // Android back button
   useEffect(()=>{
     const onBack=(e:PopStateEvent)=>{
+      // If this pop came from the live-class back-button guard, ignore it —
+      // LiveClassContext handles minimizing the classroom and re-pushes its guard.
+      if(e.state?.["tahleem-live-class"]) return;
       if(showMessageMenu){setShowMessageMenu(null);window.history.pushState({layer:"chat"},"",window.location.href);return;}
       if(showDeleteSheet){setShowDeleteSheet(null);window.history.pushState({layer:"chat"},"",window.location.href);return;}
       if(showAttachSheet){setShowAttachSheet(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
