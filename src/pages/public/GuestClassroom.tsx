@@ -349,20 +349,31 @@ const ConnectionIndicator = () => {
 
 /* ════════════════════════════════════════════════════════
    RECONNECT MONITOR (inside LiveKitRoom)
+   Uses refs for all callbacks so the room listener is only
+   ever registered once — no stale-closure or re-registration
+   issues when parent re-renders during intentional disconnect.
    ════════════════════════════════════════════════════════ */
 const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
   onReconnecting: () => void; onReconnected: () => void; onDisconnected: () => void;
 }) => {
   const room = useRoomContext();
+  const onReconnectingRef  = useRef(onReconnecting);
+  const onReconnectedRef   = useRef(onReconnected);
+  const onDisconnectedRef  = useRef(onDisconnected);
+  // Keep refs current on every render without re-registering the listener
+  onReconnectingRef.current  = onReconnecting;
+  onReconnectedRef.current   = onReconnected;
+  onDisconnectedRef.current  = onDisconnected;
+
   useEffect(() => {
     const h = (s: ConnectionState) => {
-      if (s === ConnectionState.Reconnecting)  onReconnecting();
-      else if (s === ConnectionState.Connected) onReconnected();
-      else if (s === ConnectionState.Disconnected) onDisconnected();
+      if (s === ConnectionState.Reconnecting)   onReconnectingRef.current();
+      else if (s === ConnectionState.Connected)  onReconnectedRef.current();
+      else if (s === ConnectionState.Disconnected) onDisconnectedRef.current();
     };
     room.on(RoomEvent.ConnectionStateChanged, h);
     return () => { room.off(RoomEvent.ConnectionStateChanged, h); };
-  }, [room, onReconnecting, onReconnected, onDisconnected]);
+  }, [room]); // ← only re-register if the room instance itself changes
   return null;
 };
 
@@ -556,8 +567,13 @@ const GuestClassroom = () => {
   }, [connected, initial, title]);
 
   // Auto-reconnect (up to 5 attempts)
+  // intentionalRef.current=true means the disconnect was deliberate — never reconnect.
+  // We also check the ended state via a ref so the closure is always fresh.
+  const endedRef = useRef(false);
+  useEffect(() => { endedRef.current = ended; }, [ended]);
+
   const autoReconnect = useCallback(() => {
-    if (intentionalRef.current) return;
+    if (intentionalRef.current || endedRef.current) return;
     setReconnecting(true);
     setReconnectCount(prev => {
       if (prev >= 5) { setEnded(true); return prev; }
@@ -748,7 +764,7 @@ const GuestClassroom = () => {
         token={token}
         connect={true}
         onConnected={()=>{ setConnected(true); setReconnecting(false); setReconnectCount(0); }}
-        onDisconnected={()=>{ if (!intentionalRef.current) autoReconnect(); }}
+        onDisconnected={autoReconnect}
         options={{
           adaptiveStream:{ pixelDensity:"screen" },
           dynacast:true,
