@@ -1,19 +1,26 @@
 /*
   GlobalClassroomOverlay.tsx — Tahleem Academy
   ─────────────────────────────────────────────
-  PiP strategy:
-    - Canvas video PiP only (no Document PiP).
-    - Document PiP was removed because Android Chrome enforces a ~300×200px
-      minimum on it. Video element PiP has a much smaller minimum (~160×90px).
-    - Canvas is 16:9 (320×180) so Chrome doesn't letterbox.
-    - Content is a horizontal bar: LIVE dot | avatar | label | mic badge.
-    - Screen-off: canvas auto-enters PiP via visibilitychange.
+  The classroom is a position:fixed overlay (z-8000) that sits on top of
+  whatever page React Router is currently rendering.
+
+  Key insight: we NEVER navigate() during a class. The page underneath
+  the fixed overlay is always whatever route was active — it renders
+  normally. We just slide the classroom on/off screen with translateX.
+
+  Minimize behaviour:
+    • Minimize button / back button  → translateX(-200%) + floating bar
+    • Phone home/recents button      → visibilitychange hidden → same
+    • Floating bar tap               → translateX(0), classroom back
+    • PiP canvas                     → shows on screen-lock only
+
+  Back-button: LiveClassContext intercepts popstate and sets minimized.
+  We do NOT push extra history entries here to avoid double-guard bugs.
 */
 
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import ClassroomView from "@/components/classroom/ClassroomView";
 import { useEffect, useRef, useCallback, useState } from "react";
-import { useNavigate } from "react-router-dom";
 
 /* ─── Silent audio keep-alive ─────────────────────────────────────────── */
 function useSilentAudio(active: boolean) {
@@ -97,14 +104,10 @@ function useMediaSession(
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   CANVAS VIDEO PiP
-   16:9 canvas (320×180). Android Chrome video PiP minimum is ~160×90px —
-   significantly smaller than Document PiP (~300×200px minimum).
-   Layout: dark green fill · horizontal row · LIVE | avatar | name | mic
+   CANVAS VIDEO PiP — only used for screen-lock keep-alive
    ══════════════════════════════════════════════════════════════════════ */
 const GOLD = "#c9a84c";
 const DARK = "#0c1f12";
-// 16:9 — matches what Chrome expects for a video PiP window
 const W = 320, H = 180;
 
 interface PipHandle {
@@ -131,14 +134,11 @@ function buildCanvasPip(
   let letter   = initialChar;
   let raf      = 0;
 
-  // ── Mic icon drawn at (mx, my) ──────────────────────────────────────
   const drawMic = (mx: number, my: number, r: number) => {
     ctx.fillStyle = micMuted ? "rgba(239,68,68,.95)" : "rgba(34,120,60,.95)";
     ctx.beginPath(); ctx.arc(mx, my, r, 0, Math.PI * 2); ctx.fill();
-
     ctx.fillStyle = "#fff"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
-    const cs = r * 0.28; // capsule size
-
+    const cs = r * 0.28;
     if (micMuted) {
       ctx.globalAlpha = 0.35;
       ctx.beginPath(); ctx.arc(mx, my - cs, cs, 0, Math.PI * 2); ctx.fill();
@@ -165,39 +165,21 @@ function buildCanvasPip(
 
   const draw = () => {
     ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = DARK; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = "rgba(201,168,76,0.35)"; ctx.fillRect(0, H - 2, W, 2);
 
-    // ── Background ────────────────────────────────────────────────────
-    ctx.fillStyle = DARK;
-    ctx.fillRect(0, 0, W, H);
-
-    // Thin gold bottom border (decorative)
-    ctx.fillStyle = "rgba(201,168,76,0.35)";
-    ctx.fillRect(0, H - 2, W, 2);
-
-    // ── LIVE indicator (left strip) ───────────────────────────────────
     const STRIP = 52;
-    ctx.fillStyle = "rgba(255,255,255,0.04)";
-    ctx.fillRect(0, 0, STRIP, H);
-
+    ctx.fillStyle = "rgba(255,255,255,0.04)"; ctx.fillRect(0, 0, STRIP, H);
     const p = 0.4 + 0.6 * Math.abs(Math.sin(Date.now() / 700));
-    // dot
     ctx.fillStyle = `rgba(239,68,68,${p})`;
     ctx.beginPath(); ctx.arc(STRIP / 2, H / 2 - 10, 6, 0, Math.PI * 2); ctx.fill();
-    // pulse ring
-    ctx.strokeStyle = `rgba(239,68,68,${p * 0.4})`;
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = `rgba(239,68,68,${p * 0.4})`; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(STRIP / 2, H / 2 - 10, 10, 0, Math.PI * 2); ctx.stroke();
-    // "LIVE" text
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 10px system-ui,sans-serif";
+    ctx.fillStyle = "#fff"; ctx.font = "bold 10px system-ui,sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText("LIVE", STRIP / 2, H / 2 + 8);
+    ctx.fillStyle = "rgba(201,168,76,0.2)"; ctx.fillRect(STRIP, 20, 1, H - 40);
 
-    // Divider
-    ctx.fillStyle = "rgba(201,168,76,0.2)";
-    ctx.fillRect(STRIP, 20, 1, H - 40);
-
-    // ── Avatar circle ─────────────────────────────────────────────────
     const avX = STRIP + 52, avY = H / 2, avR = 36;
     ctx.fillStyle = GOLD;
     ctx.beginPath(); ctx.arc(avX, avY, avR, 0, Math.PI * 2); ctx.fill();
@@ -206,27 +188,19 @@ function buildCanvasPip(
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(letter.toUpperCase().slice(0, 1), avX, avY);
 
-    // ── Subject name ──────────────────────────────────────────────────
     const nameX = avX + avR + 12;
-    const nameW = W - nameX - 52; // leave room for mic
+    const nameW = W - nameX - 52;
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.font = "600 13px system-ui,-apple-system,sans-serif";
     ctx.textAlign = "left"; ctx.textBaseline = "middle";
-    // Truncate if too long
     let name = subjectName;
-    while (name.length > 1 && ctx.measureText(name).width > nameW) {
-      name = name.slice(0, -1);
-    }
+    while (name.length > 1 && ctx.measureText(name).width > nameW) name = name.slice(0, -1);
     if (name !== subjectName) name = name.trimEnd() + "…";
     ctx.fillText(name, nameX, H / 2 - 8);
-
-    ctx.fillStyle = "rgba(255,255,255,0.4)";
-    ctx.font = "10px system-ui,sans-serif";
+    ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "10px system-ui,sans-serif";
     ctx.fillText("Tap to return", nameX, H / 2 + 12);
 
-    // ── Mic badge (right) ─────────────────────────────────────────────
     drawMic(W - 30, H / 2, 20);
-
     raf = requestAnimationFrame(draw);
   };
 
@@ -245,11 +219,7 @@ function buildCanvasPip(
   document.body.appendChild(vid);
   vid.addEventListener("leavepictureinpicture", onTap);
 
-  // Keep video playing at all times so PiP is always ready (screen-off needs it)
-  const keepPlaying = () => {
-    if (!document.body.contains(vid)) return;
-    vid.play().catch(() => {});
-  };
+  const keepPlaying = () => { if (document.body.contains(vid)) vid.play().catch(() => {}); };
   vid.addEventListener("pause", keepPlaying);
   vid.addEventListener("ended", keepPlaying);
   keepPlaying();
@@ -257,7 +227,6 @@ function buildCanvasPip(
   const ensurePlaying = async () => {
     if (vid.paused || vid.readyState < 2) {
       try { await vid.play(); } catch {}
-      // give the browser a tick to update readyState
       await new Promise(r => setTimeout(r, 80));
     }
   };
@@ -294,10 +263,7 @@ export default function GlobalClassroomOverlay() {
     micEnabled, camEnabled,
     hasConnected,
     toggleMicFnRef,
-    previousRoute,
   } = useLiveClass();
-
-  const navigate = useNavigate();
 
   const title   = activeSubject?.title ?? "Live Class";
   const initial = (activeSubject?.title ?? "L").charAt(0).toUpperCase();
@@ -305,12 +271,11 @@ export default function GlobalClassroomOverlay() {
   const [localMic, setLocalMic] = useState(micEnabled);
   useEffect(() => setLocalMic(micEnabled), [micEnabled]);
 
-  const handleReturn = useCallback(() => {
-    setMinimized(false);
-    // No navigate needed here — we already navigated to previousRoute when
-    // minimizing. The classroom slides back in over the correct page.
-  }, [setMinimized]);
-  const handleLeave     = useCallback(() => leaveClass(),        [leaveClass]);
+  // handleReturn: just slide the classroom back in — no navigate() needed.
+  // The page underneath is exactly the same route that was showing before
+  // the classroom appeared (position:fixed overlay doesn't change the route).
+  const handleReturn = useCallback(() => setMinimized(false), [setMinimized]);
+  const handleLeave  = useCallback(() => leaveClass(), [leaveClass]);
   const handleToggleMic = useCallback(() => {
     setLocalMic(v => !v);
     toggleMicFnRef.current?.();
@@ -324,7 +289,7 @@ export default function GlobalClassroomOverlay() {
   const handleReturnRef = useRef(handleReturn);
   handleReturnRef.current = handleReturn;
 
-  /* ── Build canvas PiP only once actually connected to the class ── */
+  /* ── Build canvas PiP once connected ── */
   useEffect(() => {
     if (!hasConnected) { pipHandle.current?.stop(); pipHandle.current = null; return; }
     const h = buildCanvasPip(initial, title, () => handleReturnRef.current());
@@ -335,69 +300,53 @@ export default function GlobalClassroomOverlay() {
   /* ── Sync mic state into canvas ── */
   useEffect(() => { pipHandle.current?.setMicMuted(!localMic); }, [localMic]);
 
-  /* ── Minimize ── */
+  /* ── Minimize button ── */
   const handleMinimize = useCallback(async () => {
+    // Just flip minimized — the underlying page renders correctly because
+    // the classroom is position:fixed and doesn't affect the React Router route.
     setMinimized(true);
-    // Navigate to previousRoute so the page behind the off-screen classroom
-    // is visible (not a black screen) when the user returns to the browser.
-    const target = previousRoute || "/";
-    if (window.location.pathname + window.location.search !== target) {
-      navigate(target, { replace: true });
-    }
     const h = pipHandle.current;
-    if (!h) return;
-    if (document.pictureInPictureElement) return;
-    // Camera on → try real video element first
+    if (!h || document.pictureInPictureElement) return;
     if (camEnabled) {
       const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
       const live = vids.find(v => v.readyState >= 2 && v.videoWidth > 0 && v !== h.video);
       if (live) { try { await live.requestPictureInPicture(); return; } catch {} }
     }
     h.pip().catch(() => {});
-  }, [setMinimized, camEnabled, navigate, previousRoute]);
+  }, [setMinimized, camEnabled]);
 
-  /* ── Back button → PiP.
-     LiveClassContext already owns the popstate sentinel push and the
-     setMinimized(true) call. We only need to layer on the canvas PiP
-     request so the browser overlay appears. No extra pushState here —
-     adding one caused a double-sentinel that navigated the admin away
-     from their page on leaveClass().                                    ── */
-  const handleMinimizeRef = useRef(handleMinimize);
-  handleMinimizeRef.current = handleMinimize;
+  /* ── Back button: LiveClassContext already sets minimized=true via popstate.
+     We just need to trigger PiP for the canvas overlay on screen-lock.      ── */
+  const pipHandleRef = useRef(pipHandle);
+  pipHandleRef.current = pipHandle;
   useEffect(() => {
     if (!hasConnected) return;
     const onPop = () => {
-      // setMinimized is already done by LiveClassContext's popstate handler.
-      // Navigate to previousRoute and fire PiP.
-      const target = previousRoute || "/";
-      if (window.location.pathname + window.location.search !== target) {
-        navigate(target, { replace: true });
-      }
+      // Don't setMinimized here — LiveClassContext already did it.
+      // Just fire PiP so the canvas appears on screen-lock.
       setTimeout(() => pipHandle.current?.pip().catch(() => {}), 60);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [hasConnected, navigate, previousRoute]);
+  }, [hasConnected]);
 
-  /* ── Browser minimize (switch app / go home) → setMinimized + navigate to previousRoute
-     so the page behind the off-screen classroom renders correctly when the
-     user switches back to the browser tab.                               ── */
+  /* ── Phone home/recent button: visibilitychange → hidden → setMinimized.
+     We do NOT call navigate() here. The route under the fixed overlay is
+     still correct. When the user switches back, the floating bar appears.  ── */
   useEffect(() => {
     if (!hasConnected) return;
     const onVis = () => {
       if (document.visibilityState === "hidden") {
         setMinimized(true);
-        const target = previousRoute || "/";
-        if (window.location.pathname + window.location.search !== target) {
-          navigate(target, { replace: true });
-        }
+        // PiP is blocked by browsers on visibility:hidden (no user gesture).
+        // Screen-off effect below handles PiP for screen-lock separately.
       }
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-  }, [hasConnected, setMinimized, navigate, previousRoute]);
+  }, [hasConnected, setMinimized]);
 
-  /* ── Screen off → canvas PiP (keep-alive, only when actually connected) ── */
+  /* ── Screen off (lock button) → canvas PiP keep-alive ── */
   useEffect(() => {
     if (!hasConnected) return;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -407,18 +356,13 @@ export default function GlobalClassroomOverlay() {
       if (document.pictureInPictureElement) return;
       const h = pipHandle.current;
       if (!h) return;
-      try {
-        await h.pip();
-      } catch {
-        if (attempt < 3) {
-          retryTimer = setTimeout(() => tryPip(attempt + 1), 300 * (attempt + 1));
-        }
+      try { await h.pip(); } catch {
+        if (attempt < 3) retryTimer = setTimeout(() => tryPip(attempt + 1), 300 * (attempt + 1));
       }
     };
 
     const onHide = () => {
-      if (document.visibilityState !== "hidden") return;
-      if (document.pictureInPictureElement) return;
+      if (document.visibilityState !== "hidden" || document.pictureInPictureElement) return;
       retryTimer = setTimeout(() => tryPip(0), 150);
     };
 
@@ -429,7 +373,7 @@ export default function GlobalClassroomOverlay() {
     };
   }, [hasConnected]);
 
-  /* ── Return to full class → exit PiP ── */
+  /* ── Return from minimized → exit PiP ── */
   useEffect(() => {
     if (!minimized && document.pictureInPictureElement) {
       document.exitPictureInPicture().catch(() => {});
@@ -440,19 +384,16 @@ export default function GlobalClassroomOverlay() {
 
   return (
     <>
-      {/* ── Full classroom — always mounted so LiveKit stays alive ──────────────
-         When minimized the browser's own PiP overlay (canvas video) is used.
-         We move the classroom div off-screen with translate instead of opacity/
-         visibility so it has NO visual or layout footprint on the page behind.
-         translate(-200%, 0) shifts it 200vw to the left — completely off canvas —
-         while keeping the React tree and all WebRTC connections intact.           */}
+      {/* ── Full classroom — always mounted so LiveKit stays alive.
+         position:fixed means it overlays whatever page React Router renders.
+         translateX(-200%) moves it fully off-screen when minimized without
+         affecting the route or causing any re-renders of the page below.   */}
       <div style={{
         position:      "fixed",
         inset:         0,
         zIndex:        8000,
         display:       "flex",
         flexDirection: "column",
-        // Off-screen when minimized → zero visual footprint, floating bar does the rest
         transform:     minimized ? "translateX(-200%)" : "translateX(0)",
         pointerEvents: minimized ? "none" : "all",
         transition:    minimized ? "none" : "transform .12s ease",
@@ -465,7 +406,7 @@ export default function GlobalClassroomOverlay() {
         />
       </div>
 
-      {/* ── Floating "return to class" bar — visible only when minimized ── */}
+      {/* ── Floating "return to class" bar — shown whenever minimized ── */}
       {minimized && (
         <div
           role="button"
@@ -473,7 +414,7 @@ export default function GlobalClassroomOverlay() {
           onClick={handleReturn}
           style={{
             position:       "fixed",
-            bottom:         "env(safe-area-inset-bottom, 16px)",
+            bottom:         "max(env(safe-area-inset-bottom, 0px) + 16px, 16px)",
             left:           "50%",
             transform:      "translateX(-50%)",
             zIndex:         9000,
@@ -489,47 +430,36 @@ export default function GlobalClassroomOverlay() {
             userSelect:     "none",
             minWidth:       "220px",
             maxWidth:       "calc(100vw - 32px)",
+            WebkitTapHighlightColor: "transparent",
           }}
         >
+          <style>{`@keyframes pip-pulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
+
           {/* LIVE dot */}
           <span style={{
-            width:        "8px",
-            height:       "8px",
-            borderRadius: "50%",
-            background:   "#ef4444",
-            flexShrink:   0,
-            boxShadow:    "0 0 6px 2px rgba(239,68,68,0.6)",
-            animation:    "pip-pulse 1.4s ease-in-out infinite",
+            width: "8px", height: "8px", borderRadius: "50%",
+            background: "#ef4444", flexShrink: 0,
+            boxShadow: "0 0 6px 2px rgba(239,68,68,0.6)",
+            animation: "pip-pulse 1.4s ease-in-out infinite",
           }} />
-          <style>{`@keyframes pip-pulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
 
           {/* Avatar */}
           <span style={{
-            width:           "28px",
-            height:          "28px",
-            borderRadius:    "50%",
-            background:      "#c9a84c",
-            color:           "#0c1f12",
-            fontWeight:      700,
-            fontSize:        "13px",
-            display:         "flex",
-            alignItems:      "center",
-            justifyContent:  "center",
-            flexShrink:      0,
+            width: "28px", height: "28px", borderRadius: "50%",
+            background: "#c9a84c", color: "#0c1f12",
+            fontWeight: 700, fontSize: "13px",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            flexShrink: 0,
           }}>
             {initial}
           </span>
 
-          {/* Subject name + tap hint */}
+          {/* Subject name */}
           <span style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
             <span style={{
-              display:      "block",
-              color:        "rgba(255,255,255,0.92)",
-              fontWeight:   600,
-              fontSize:     "13px",
-              whiteSpace:   "nowrap",
-              overflow:     "hidden",
-              textOverflow: "ellipsis",
+              display: "block", color: "rgba(255,255,255,0.92)",
+              fontWeight: 600, fontSize: "13px",
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
             }}>
               {title}
             </span>
@@ -540,15 +470,10 @@ export default function GlobalClassroomOverlay() {
 
           {/* Mic indicator */}
           <span style={{
-            width:          "28px",
-            height:         "28px",
-            borderRadius:   "50%",
-            background:     localMic ? "rgba(34,120,60,.9)" : "rgba(239,68,68,.9)",
-            display:        "flex",
-            alignItems:     "center",
-            justifyContent: "center",
-            flexShrink:     0,
-            fontSize:       "14px",
+            width: "28px", height: "28px", borderRadius: "50%",
+            background: localMic ? "rgba(34,120,60,.9)" : "rgba(239,68,68,.9)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            flexShrink: 0, fontSize: "14px",
           }}>
             {localMic ? "🎙" : "🔇"}
           </span>
@@ -559,18 +484,12 @@ export default function GlobalClassroomOverlay() {
             aria-label="Leave class"
             onClick={e => { e.stopPropagation(); handleLeave(); }}
             style={{
-              width:          "28px",
-              height:         "28px",
-              borderRadius:   "50%",
-              background:     "rgba(239,68,68,.15)",
-              border:         "1px solid rgba(239,68,68,.4)",
-              color:          "#ef4444",
-              display:        "flex",
-              alignItems:     "center",
-              justifyContent: "center",
-              flexShrink:     0,
-              fontSize:       "14px",
-              cursor:         "pointer",
+              width: "28px", height: "28px", borderRadius: "50%",
+              background: "rgba(239,68,68,.15)", border: "1px solid rgba(239,68,68,.4)",
+              color: "#ef4444",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0, fontSize: "14px", cursor: "pointer",
+              WebkitTapHighlightColor: "transparent",
             }}
           >
             ✕
