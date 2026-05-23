@@ -190,13 +190,8 @@ const JoinClass = () => {
             </p>
             <p className="text-sm text-white/50 mb-6">JazakAllahu Khayran for your interest!</p>
             <div className="space-y-3">
-              <Link to="/register" className="block">
-                <Button className="w-full" style={{ background: "#c9973a" }}>
-                  Register Free — Join Future Classes
-                </Button>
-              </Link>
               <Link to="/live" className="block">
-                <Button variant="outline" className="w-full border-white/20 text-white hover:bg-white/10">
+                <Button className="w-full" style={{ background: "#c9973a" }}>
                   Browse Other Classes
                 </Button>
               </Link>
