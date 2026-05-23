@@ -75,6 +75,8 @@ const PublicClassManagement = () => {
   const [reminderDlg, setReminderDlg]= useState<PublicClass | null>(null);
   const [emailDialog, setEmailDialog]= useState(false);
   const [moreMenu,    setMoreMenu]   = useState<string | null>(null); // class id
+  const [rescheduleTarget, setRescheduleTarget] = useState<PublicClass | null>(null);
+  const [rescheduleDate,   setRescheduleDate]   = useState("");
 
   /* form (create + edit share the same) */
   const [form, setForm] = useState(blankForm);
@@ -250,6 +252,20 @@ const PublicClassManagement = () => {
   const endClass = async (id: string) => {
     await supabase.from("public_classes").update({ status: "ended", actual_end_time: new Date().toISOString() }).eq("id", id);
     toast.success("Class ended"); fetchClasses();
+  };
+
+  const rescheduleClass = async (cls: PublicClass, newDate: string) => {
+    const update: Record<string, any> = {
+      status: "scheduled",
+      actual_end_time: null,
+      actual_start_time: null,
+    };
+    if (newDate) update.scheduled_at = new Date(newDate).toISOString();
+    await supabase.from("public_classes").update(update).eq("id", cls.id);
+    toast.success("Class rescheduled — same link still works!");
+    setRescheduleTarget(null);
+    setRescheduleDate("");
+    fetchClasses();
   };
 
   const deleteClass = async (id: string) => {
@@ -600,6 +616,13 @@ const PublicClassManagement = () => {
                               End
                             </button>
                           )}
+                          {/* Reschedule button for ended classes */}
+                          {cls.status==="ended" && (
+                            <button onClick={()=>{ setRescheduleTarget(cls); setRescheduleDate(cls.scheduled_at ? new Date(cls.scheduled_at).toISOString().slice(0,16) : ""); }}
+                              style={{display:"flex",alignItems:"center",gap:5,padding:"9px 16px",borderRadius:10,border:"none",background:"#16A34A",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:700,flexShrink:0}}>
+                              <Calendar size={13}/> Reschedule
+                            </button>
+                          )}
                           {/* Secondary actions — icon+label buttons */}
                           {isScheduled && (
                             <button onClick={()=>{setRegDialog(cls);fetchRegistrants(cls.id);setRegSearch("");}}
@@ -821,6 +844,61 @@ const PublicClassManagement = () => {
                     {b.icon}{b.label}
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ════════════════════════════════════
+          RESCHEDULE DIALOG
+      ════════════════════════════════════ */}
+      <Dialog open={!!rescheduleTarget} onOpenChange={v=>{ if(!v){ setRescheduleTarget(null); setRescheduleDate(""); } }}>
+        <DialogContent style={{maxWidth:420,borderRadius:20,padding:0,overflow:"hidden"}}>
+          <div style={{background:G,padding:"20px 22px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div>
+              <h2 style={{fontWeight:800,fontSize:15,color:"#fff",margin:0}}>Reschedule Class</h2>
+              <p style={{fontSize:11,color:"rgba(255,255,255,.65)",margin:0}}>{rescheduleTarget?.title}</p>
+            </div>
+            <button onClick={()=>setRescheduleTarget(null)} style={{background:"rgba(255,255,255,.15)",border:"none",borderRadius:7,padding:"5px 7px",cursor:"pointer",color:"#fff"}}><X size={15}/></button>
+          </div>
+          {rescheduleTarget && (
+            <div style={{padding:"20px 22px 24px"}}>
+              {/* Same link notice */}
+              <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"10px 14px",marginBottom:18,display:"flex",alignItems:"flex-start",gap:8}}>
+                <span style={{fontSize:16,flexShrink:0}}>🔗</span>
+                <div>
+                  <p style={{margin:0,fontSize:13,fontWeight:700,color:"#166534"}}>Same link — no need to reshare</p>
+                  <p style={{margin:"2px 0 0",fontSize:12,color:"#166534",opacity:.8}}>
+                    Everyone who has <code style={{fontFamily:"monospace",fontWeight:800}}>/live/{rescheduleTarget.room_code}</code> can still join with the same link.
+                  </p>
+                </div>
+              </div>
+
+              {/* New date/time */}
+              <label style={{fontSize:13,fontWeight:700,color:"#374151",display:"block",marginBottom:6}}>
+                New date & time <span style={{fontWeight:400,color:"#9CA3AF"}}>(optional)</span>
+              </label>
+              <input
+                type="datetime-local"
+                value={rescheduleDate}
+                onChange={e=>setRescheduleDate(e.target.value)}
+                style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E5E7EB",fontSize:14,color:"#111827",outline:"none",boxSizing:"border-box",marginBottom:20}}
+              />
+
+              <div style={{display:"flex",gap:8}}>
+                <button
+                  onClick={()=>rescheduleClass(rescheduleTarget, rescheduleDate)}
+                  style={{flex:1,padding:"11px 0",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}
+                >
+                  ✅ Reschedule
+                </button>
+                <button
+                  onClick={()=>{ setRescheduleTarget(null); setRescheduleDate(""); }}
+                  style={{padding:"11px 16px",borderRadius:10,border:"1.5px solid #E5E7EB",background:"#fff",color:"#374151",fontSize:14,fontWeight:600,cursor:"pointer"}}
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           )}
