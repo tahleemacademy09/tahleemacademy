@@ -826,40 +826,69 @@ const GuestClassroom = () => {
     }
   }, [connected, ended, doMinimize, navigate]);
 
-  /* ── Back button → minimize + PiP ── */
+  /* ── Back button: intercept every press while in class.
+     Re-push the sentinel entry each time so the back button
+     is always caught, whether the user is in or out of minimized. ── */
   useEffect(() => {
     if (!connected) return;
+
+    // Push sentinel so first back press is caught
     window.history.pushState({ gc: true }, "");
+
     const onPop = () => {
       setMinimized(true);
-      setTimeout(()=>pipHandle.current?.pip().catch(()=>{}), 60);
+      setTimeout(() => pipHandle.current?.pip().catch(() => {}), 60);
+      // Re-push so the NEXT back press is also caught
+      window.history.pushState({ gc: true }, "");
     };
+
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, [connected]);
 
-  /* ── Browser backgrounded → minimize + PiP ── */
+  /* ── Home button / app switcher / screen lock → minimize + PiP.
+     visibilitychange fires hidden on: home button, app switcher,
+     screen lock, browser tab switch. ── */
   useEffect(() => {
     if (!connected) return;
-    let pipTimer: ReturnType<typeof setTimeout>|null = null;
+    let pipTimer: ReturnType<typeof setTimeout> | null = null;
+
     const onVis = () => {
       if (document.visibilityState === "hidden") {
         setMinimized(true);
         if (!document.pictureInPictureElement) {
-          pipTimer = setTimeout(()=>pipHandle.current?.pip().catch(()=>{}), 150);
+          pipTimer = setTimeout(() => pipHandle.current?.pip().catch(() => {}), 150);
         }
       }
     };
+
+    // Also catch pagehide for browsers that don't fire visibilitychange reliably
+    const onPageHide = () => {
+      setMinimized(true);
+      if (!document.pictureInPictureElement) {
+        pipTimer = setTimeout(() => pipHandle.current?.pip().catch(() => {}), 150);
+      }
+    };
+
     document.addEventListener("visibilitychange", onVis);
-    return () => { document.removeEventListener("visibilitychange", onVis); if (pipTimer) clearTimeout(pipTimer); };
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", onPageHide);
+      if (pipTimer) clearTimeout(pipTimer);
+    };
   }, [connected]);
 
-  /* ── Return from minimized → exit PiP ── */
+  /* ── Return from minimized → re-push sentinel + exit PiP ── */
   useEffect(() => {
-    if (!minimized && document.pictureInPictureElement) {
-      document.exitPictureInPicture().catch(()=>{});
+    if (!minimized) {
+      // Re-push so back button is caught again after returning
+      if (connected) window.history.pushState({ gc: true }, "");
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture().catch(() => {});
+      }
     }
-  }, [minimized]);
+  }, [minimized, connected]);
 
 
 
