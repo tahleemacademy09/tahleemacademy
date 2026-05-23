@@ -12,7 +12,7 @@ import {
   Plus, Copy, Share2, QrCode, Trash2, Radio, Calendar, Users,
   Mail, Bell, BellOff, Send, Globe, Lock, Video, Loader2,
   Download, Phone, AtSign, CheckCircle, X, Search, RefreshCw,
-  Pencil, MoreHorizontal, ExternalLink
+  Pencil, MoreHorizontal, ExternalLink, Archive, BarChart2, CopyPlus
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
@@ -74,9 +74,13 @@ const PublicClassManagement = () => {
   const [regDialog,   setRegDialog]  = useState<PublicClass | null>(null);
   const [reminderDlg, setReminderDlg]= useState<PublicClass | null>(null);
   const [emailDialog, setEmailDialog]= useState(false);
-  const [moreMenu,    setMoreMenu]   = useState<string | null>(null); // class id
+  const [moreMenu,    setMoreMenu]   = useState<string | null>(null);
   const [rescheduleTarget, setRescheduleTarget] = useState<PublicClass | null>(null);
   const [rescheduleDate,   setRescheduleDate]   = useState("");
+  const [statsTarget,      setStatsTarget]      = useState<PublicClass | null>(null);
+  const [deleteTarget,     setDeleteTarget]     = useState<PublicClass | null>(null);
+  const [deleting,         setDeleting]         = useState(false);
+  const [showArchived,     setShowArchived]     = useState(false);
 
   /* form (create + edit share the same) */
   const [form, setForm] = useState(blankForm);
@@ -268,10 +272,47 @@ const PublicClassManagement = () => {
     fetchClasses();
   };
 
-  const deleteClass = async (id: string) => {
-    if (!confirm("Delete this class and all its registrations?")) return;
-    await supabase.from("public_classes").delete().eq("id", id);
-    toast.success("Deleted"); fetchClasses();
+  const deleteClass = async (cls: PublicClass) => {
+    setDeleting(true);
+    try {
+      // Delete child records first to avoid FK constraint violations
+      await supabase.from("public_class_registrations").delete().eq("class_id", cls.id);
+      const { error } = await supabase.from("public_classes").delete().eq("id", cls.id);
+      if (error) throw error;
+      toast.success("Class deleted");
+      setDeleteTarget(null);
+      fetchClasses();
+    } catch (e: any) {
+      toast.error(e?.message || "Delete failed — try again");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const archiveClass = async (id: string) => {
+    await supabase.from("public_classes").update({ status: "archived" }).eq("id", id);
+    toast.success("Class archived — hidden from lists but data is kept");
+    setMoreMenu(null);
+    fetchClasses();
+  };
+
+  const duplicateClass = async (cls: PublicClass) => {
+    const { error } = await supabase.from("public_classes").insert({
+      title:        cls.title + " (Copy)",
+      title_ar:     cls.title_ar,
+      description:  cls.description,
+      description_ar: cls.description_ar,
+      room_code:    generateRoomCode(),
+      max_guests:   cls.max_guests,
+      password:     cls.password,
+      is_featured:  false,
+      status:       "scheduled",
+      scheduled_at: null,
+    });
+    if (error) { toast.error("Duplicate failed"); return; }
+    toast.success("Class duplicated — edit it to set a new date");
+    setMoreMenu(null);
+    fetchClasses();
   };
 
   /* ── email blast ── */
@@ -330,10 +371,12 @@ const PublicClassManagement = () => {
   };
 
   /* ── derived ── */
-  const displayed      = filterTab==="contacts" ? [] : classes.filter(c => filterTab==="all" || c.status===filterTab);
-  const liveCount      = classes.filter(c=>c.status==="live").length;
-  const scheduledCount = classes.filter(c=>c.status==="scheduled").length;
-  const endedCount     = classes.filter(c=>c.status==="ended").length;
+  const visibleClasses = showArchived ? classes : classes.filter(c => c.status !== "archived");
+  const displayed      = filterTab==="contacts" ? [] : visibleClasses.filter(c => filterTab==="all" || c.status===filterTab);
+  const liveCount      = visibleClasses.filter(c=>c.status==="live").length;
+  const scheduledCount = visibleClasses.filter(c=>c.status==="scheduled").length;
+  const endedCount     = visibleClasses.filter(c=>c.status==="ended").length;
+  const archivedCount  = classes.filter(c=>c.status==="archived").length;
   const withEmail      = allContacts.filter(r=>r.email).length;
 
   const filteredRegs  = registrants.filter(r => r.name.toLowerCase().includes(regSearch.toLowerCase()) || (r.email||"").toLowerCase().includes(regSearch.toLowerCase()));
@@ -423,7 +466,7 @@ const PublicClassManagement = () => {
             </div>
             <div>
               <h1 style={{fontSize:17,fontWeight:800,color:"#111",margin:0}}>Public Classes</h1>
-              <p style={{fontSize:11,color:"#6B7280",margin:0}}>{classes.length} classes · {liveCount>0?`🔴 ${liveCount} live`:`${scheduledCount} scheduled`}</p>
+              <p style={{fontSize:11,color:"#6B7280",margin:0}}>{visibleClasses.length} classes · {liveCount>0?`🔴 ${liveCount} live`:`${scheduledCount} scheduled`}</p>
             </div>
           </div>
           <button onClick={()=>{setForm(blankForm);setCreateOpen(true);}}
@@ -462,10 +505,17 @@ const PublicClassManagement = () => {
                   background:filterTab===tab?G:"transparent",color:filterTab===tab?"#fff":"#6B7280"}}>
                 {tab==="live"?"🔴 ":tab==="scheduled"?"📅 ":tab==="ended"?"✅ ":tab==="contacts"?"👥 ":""}
                 {tab.charAt(0).toUpperCase()+tab.slice(1)}
-                {tab!=="contacts"&&` (${tab==="all"?classes.length:classes.filter(c=>c.status===tab).length})`}
+                {tab!=="contacts"&&` (${tab==="all"?visibleClasses.length:visibleClasses.filter(c=>c.status===tab).length})`}
               </button>
             ))}
           </div>
+          {/* Archived toggle */}
+          {archivedCount > 0 && (
+            <button onClick={()=>setShowArchived(v=>!v)}
+              style={{display:"flex",alignItems:"center",gap:5,padding:"6px 12px",borderRadius:8,border:`1.5px solid ${showArchived?"#C9A84C":"#E5E7EB"}`,background:showArchived?"#FFFBEB":"#fff",color:showArchived?"#92400E":"#6B7280",fontSize:12,fontWeight:600,cursor:"pointer",marginTop:8,alignSelf:"flex-start"}}>
+              <Archive size={12}/> {showArchived ? "Hide" : "Show"} Archived ({archivedCount})
+            </button>
+          )}
         </div>
 
         {/* ══════════════════════════════════
@@ -565,21 +615,24 @@ const PublicClassManagement = () => {
                                 </button>
                                 {moreMenu===cls.id && (
                                   <div onClick={e=>e.stopPropagation()}
-                                    style={{position:"absolute",right:0,top:"calc(100% + 5px)",background:"#fff",borderRadius:12,border:"1.5px solid #E5E7EB",boxShadow:"0 8px 24px rgba(0,0,0,.12)",zIndex:50,minWidth:170,overflow:"hidden"}}>
+                                    style={{position:"absolute",right:0,top:"calc(100% + 5px)",background:"#fff",borderRadius:12,border:"1.5px solid #E5E7EB",boxShadow:"0 8px 24px rgba(0,0,0,.12)",zIndex:50,minWidth:180,overflow:"hidden"}}>
                                     {[
-                                      {label:"Copy Link",   icon:<Copy size={13}/>,        action:()=>{copyLink(cls);setMoreMenu(null);}},
-                                      {label:"Share",       icon:<Share2 size={13}/>,       action:()=>{setShareClass(cls);setMoreMenu(null);}},
-                                      {label:"Open Preview",icon:<ExternalLink size={13}/>, action:()=>{window.open(`/live/${cls.room_code}`,"_blank");setMoreMenu(null);}},
-                                      {label:"QR Code",     icon:<QrCode size={13}/>,       action:()=>{window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(window.location.origin+"/live/"+cls.room_code)}`,"_blank");setMoreMenu(null);}},
+                                      {label:"Copy Link",    icon:<Copy size={13}/>,        action:()=>{copyLink(cls);setMoreMenu(null);}},
+                                      {label:"Share",        icon:<Share2 size={13}/>,       action:()=>{setShareClass(cls);setMoreMenu(null);}},
+                                      {label:"Open Preview", icon:<ExternalLink size={13}/>, action:()=>{window.open(`/live/${cls.room_code}`,"_blank");setMoreMenu(null);}},
+                                      {label:"QR Code",      icon:<QrCode size={13}/>,       action:()=>{window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(window.location.origin+"/live/"+cls.room_code)}`,"_blank");setMoreMenu(null);}},
+                                      {label:"Duplicate",    icon:<CopyPlus size={13}/>,     action:()=>duplicateClass(cls)},
+                                      ...(cls.status==="ended"||cls.status==="archived" ? [{label:"View Stats", icon:<BarChart2 size={13}/>, action:()=>{setStatsTarget(cls);setMoreMenu(null);}}] : []),
+                                      ...(cls.status!=="archived" ? [{label:"Archive",  icon:<Archive size={13}/>, action:()=>archiveClass(cls.id)}] : [{label:"Unarchive", icon:<Archive size={13}/>, action:async()=>{await supabase.from("public_classes").update({status:"ended"}).eq("id",cls.id);toast.success("Unarchived");setMoreMenu(null);fetchClasses();}}]),
                                     ].map((item,i)=>(
                                       <button key={i} onClick={item.action}
                                         style={{width:"100%",padding:"11px 14px",border:"none",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",gap:9,fontSize:13,fontWeight:600,color:"#374151",textAlign:"left",borderBottom:"1px solid #F3F4F6"}}>
                                         {item.icon}{item.label}
                                       </button>
                                     ))}
-                                    <button onClick={()=>{deleteClass(cls.id);setMoreMenu(null);}}
+                                    <button onClick={()=>{setDeleteTarget(cls);setMoreMenu(null);}}
                                       style={{width:"100%",padding:"11px 14px",border:"none",background:"#FEF2F2",cursor:"pointer",display:"flex",alignItems:"center",gap:9,fontSize:13,fontWeight:600,color:"#DC2626",textAlign:"left"}}>
-                                      <Trash2 size={13}/>Delete Class
+                                      <Trash2 size={13}/>Delete Permanently
                                     </button>
                                   </div>
                                 )}
@@ -900,6 +953,80 @@ const PublicClassManagement = () => {
                   Cancel
                 </button>
               </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ════════════════════════════════════
+          DELETE CONFIRM DIALOG
+      ════════════════════════════════════ */}
+      <Dialog open={!!deleteTarget} onOpenChange={v=>{ if(!v) setDeleteTarget(null); }}>
+        <DialogContent style={{maxWidth:380,borderRadius:20,padding:0,overflow:"hidden"}}>
+          <div style={{padding:"28px 24px 24px",textAlign:"center"}}>
+            <div style={{width:56,height:56,borderRadius:"50%",background:"#FEF2F2",border:"1px solid #FECACA",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px"}}>
+              <Trash2 size={22} color="#DC2626"/>
+            </div>
+            <h2 style={{fontSize:18,fontWeight:700,color:"#111",marginBottom:6}}>Delete permanently?</h2>
+            <p style={{fontSize:13,color:"#6B7280",marginBottom:4}}>
+              <strong style={{color:"#111"}}>{deleteTarget?.title}</strong>
+            </p>
+            <p style={{fontSize:13,color:"#6B7280",marginBottom:24,lineHeight:1.6}}>
+              This will delete the class and all its registrant data. This cannot be undone.
+              <br/><br/>
+              <span style={{color:"#16A34A",fontWeight:600}}>💡 Tip: Use Archive instead to keep the data hidden but safe.</span>
+            </p>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>deleteTarget && deleteClass(deleteTarget)} disabled={deleting}
+                style={{flex:1,padding:"11px 0",borderRadius:10,border:"none",background:"#DC2626",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",opacity:deleting?.5:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                {deleting ? <><Loader2 size={14} style={{animation:"spin .7s linear infinite"}}/>Deleting…</> : <><Trash2 size={14}/>Delete</>}
+              </button>
+              <button onClick={()=>deleteTarget && archiveClass(deleteTarget.id)}
+                style={{flex:1,padding:"11px 0",borderRadius:10,border:"1.5px solid #E5E7EB",background:"#fff",color:"#374151",fontSize:14,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <Archive size={14}/>Archive Instead
+              </button>
+            </div>
+            <button onClick={()=>setDeleteTarget(null)} style={{marginTop:10,width:"100%",padding:"10px 0",borderRadius:10,border:"none",background:"transparent",color:"#9CA3AF",fontSize:13,cursor:"pointer"}}>Cancel</button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ════════════════════════════════════
+          STATS DIALOG
+      ════════════════════════════════════ */}
+      <Dialog open={!!statsTarget} onOpenChange={v=>{ if(!v) setStatsTarget(null); }}>
+        <DialogContent style={{maxWidth:420,borderRadius:20,padding:0,overflow:"hidden"}}>
+          <div style={{background:G,padding:"20px 22px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div>
+              <h2 style={{fontWeight:800,fontSize:15,color:"#fff",margin:0}}>Class Stats</h2>
+              <p style={{fontSize:11,color:"rgba(255,255,255,.65)",margin:0}}>{statsTarget?.title}</p>
+            </div>
+            <button onClick={()=>setStatsTarget(null)} style={{background:"rgba(255,255,255,.15)",border:"none",borderRadius:7,padding:"5px 7px",cursor:"pointer",color:"#fff"}}><X size={15}/></button>
+          </div>
+          {statsTarget && (
+            <div style={{padding:"20px 22px 24px"}}>
+              {[
+                {label:"Total Guests Joined", value:`${statsTarget.guest_count} / ${statsTarget.max_guests}`, icon:"👥"},
+                {label:"Room Code",           value:statsTarget.room_code,                                    icon:"🔑"},
+                {label:"Scheduled",           value:statsTarget.scheduled_at ? format(new Date(statsTarget.scheduled_at),"EEE d MMM yyyy, h:mm a") : "No date set", icon:"📅"},
+                {label:"Started",             value:statsTarget.actual_start_time ? format(new Date(statsTarget.actual_start_time),"EEE d MMM yyyy, h:mm a") : "—", icon:"▶️"},
+                {label:"Ended",               value:statsTarget.actual_end_time   ? format(new Date(statsTarget.actual_end_time),  "EEE d MMM yyyy, h:mm a") : "—", icon:"⏹️"},
+                {label:"Duration", value: statsTarget.actual_start_time && statsTarget.actual_end_time
+                  ? `${Math.round((new Date(statsTarget.actual_end_time).getTime() - new Date(statsTarget.actual_start_time).getTime()) / 60000)} minutes`
+                  : "—", icon:"⏱️"},
+              ].map((s,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 0",borderBottom:i<5?"1px solid #F3F4F6":"none"}}>
+                  <span style={{fontSize:18,width:26,textAlign:"center",flexShrink:0}}>{s.icon}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <p style={{margin:0,fontSize:11,color:"#9CA3AF",fontWeight:600}}>{s.label}</p>
+                    <p style={{margin:0,fontSize:14,fontWeight:700,color:"#111",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.value}</p>
+                  </div>
+                </div>
+              ))}
+              <button onClick={()=>{setRegDialog(statsTarget);setStatsTarget(null);fetchRegistrants(statsTarget.id);setRegSearch("");}}
+                style={{marginTop:16,width:"100%",padding:"11px 0",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
+                <Users size={14}/> View All Registrants
+              </button>
             </div>
           )}
         </DialogContent>
