@@ -26,7 +26,7 @@ import {
   LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Track, ConnectionState, RoomEvent, Participant } from "livekit-client";
+import { Track, ConnectionState, RoomEvent, Participant, ConnectionQuality } from "livekit-client";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import {
@@ -363,20 +363,38 @@ function playChime(type: "join" | "leave") {
    ════════════════════════════════════════════════════════ */
 const ConnectionIndicator = () => {
   const room = useRoomContext();
-  const [quality, setQuality] = useState<"excellent"|"good"|"fair"|"poor">("excellent");
+  const [quality, setQuality] = useState<"excellent"|"good"|"fair"|"poor">("good");
   const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
-    const syncQ = () => {
-      const q = room.localParticipant.connectionQuality as unknown as number;
-      setQuality(q >= 3 ? "excellent" : q >= 2 ? "good" : q >= 1 ? "fair" : "poor");
+    // RoomEvent.ConnectionQualityChanged fires with (quality: ConnectionQuality, participant: Participant)
+    const syncQ = (q: ConnectionQuality, participant: Participant) => {
+      if (participant.identity !== room.localParticipant.identity) return;
+      setQuality(
+        q === ConnectionQuality.Excellent ? "excellent" :
+        q === ConnectionQuality.Good      ? "good"      :
+        q === ConnectionQuality.Poor      ? "poor"      : "fair"
+      );
+    };
+    // Also poll from localParticipant directly as fallback
+    const pollQ = () => {
+      const q = room.localParticipant.connectionQuality;
+      setQuality(
+        q === ConnectionQuality.Excellent ? "excellent" :
+        q === ConnectionQuality.Good      ? "good"      :
+        q === ConnectionQuality.Poor      ? "poor"      : "good"
+      );
     };
     const syncS = (s: ConnectionState) => setReconnecting(s === ConnectionState.Reconnecting);
     room.on(RoomEvent.ConnectionQualityChanged, syncQ);
     room.on(RoomEvent.ConnectionStateChanged, syncS);
-    const iv = setInterval(syncQ, 2500);
-    syncQ();
-    return () => { room.off(RoomEvent.ConnectionQualityChanged, syncQ); room.off(RoomEvent.ConnectionStateChanged, syncS); clearInterval(iv); };
+    const iv = setInterval(pollQ, 3000);
+    pollQ();
+    return () => {
+      room.off(RoomEvent.ConnectionQualityChanged, syncQ);
+      room.off(RoomEvent.ConnectionStateChanged, syncS);
+      clearInterval(iv);
+    };
   }, [room]);
 
   if (reconnecting) return (
@@ -996,16 +1014,6 @@ const GuestClassroom = () => {
             >
               {soundEnabled ? "🔔" : "🔕"}
             </button>
-
-            {/* Minimize */}
-            <button
-              onClick={doMinimize}
-              title="Minimize — audio stays on"
-              style={{ display:"flex", alignItems:"center", justifyContent:"center", width:30, height:30, borderRadius:"50%", border:"none", background:"rgba(255,255,255,.1)", color:"rgba(255,255,255,.7)", cursor:"pointer" }}
-            >
-              <Minimize2 style={{ width:14, height:14 }} />
-            </button>
-
           </div>
         </div>
 
@@ -1022,10 +1030,30 @@ const GuestClassroom = () => {
             </div>
           )}
 
-          {/* Video — LiveKit default leave button is hidden via CSS */}
-          <div style={{ flex:1, position:"relative", minWidth:0 }}>
+          {/* Video + LK control bar — wrapped so we can overlay Leave icon */}
+          <div style={{ flex:1, position:"relative", minWidth:0, display:"flex", flexDirection:"column" }}>
             <VideoConference />
             <RoomAudioRenderer />
+
+            {/* ── Leave / End icon — overlaid at the right of the LK control bar ──
+                The LK control bar is ~68px tall. We position our button at the
+                same vertical centre so it reads as part of that row.
+                intentionalRef is set BEFORE disconnect → no auto-reconnect.     */}
+            <button
+              onClick={handleLeaveClick}
+              title={isHost ? "End class for everyone" : "Leave class"}
+              style={{
+                position:"absolute", bottom:14, right:14,
+                width:44, height:44, borderRadius:"50%",
+                border:"none", background:"#ea4335",
+                color:"#fff", cursor:"pointer",
+                display:"flex", alignItems:"center", justifyContent:"center",
+                boxShadow:"0 2px 12px rgba(234,67,53,.55)",
+                zIndex:10,
+              }}
+            >
+              <Phone style={{ width:18, height:18, transform:"rotate(135deg)" }} />
+            </button>
           </div>
 
           {/* Chat / Polls (desktop) */}
