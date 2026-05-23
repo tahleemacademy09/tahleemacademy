@@ -21,7 +21,7 @@
 */
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams, MemoryRouter, Route, Routes } from "react-router-dom";
 import {
   LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext,
 } from "@livekit/components-react";
@@ -40,6 +40,7 @@ import ClassParticipants from "@/components/classroom/ClassParticipants";
 import ClassControls     from "@/components/classroom/ClassControls";
 import LiveQuizOverlay   from "@/components/classroom/LiveQuizOverlay";
 import { useIsMobile }   from "@/hooks/use-mobile";
+import JoinClass          from "@/pages/public/JoinClass";
 
 /* ════════════════════════════════════════════════════════
    STYLES
@@ -692,6 +693,7 @@ const RecordingController = ({ classId, isHost, onSavingChange }: {
 const GuestClassroom = () => {
   const location  = useLocation();
   const navigate  = useNavigate();
+  const { roomCode } = useParams<{ roomCode: string }>();
   const isMobile  = useIsMobile();
 
   const [connected, setConnected]         = useState(false);
@@ -738,10 +740,7 @@ const GuestClassroom = () => {
   useSilentAudio(connected && !ended);
   useWakeLock(connected && !ended);
 
-  const handleReturn = useCallback(() => {
-    setMinimized(false);
-    navigate(1); // go forward — back to the classroom route
-  }, [navigate]);
+  const handleReturn = useCallback(() => setMinimized(false), []);
   const handleLeave  = useCallback(() => {
     intentionalRef.current = true;
     setReconnecting(false);
@@ -807,20 +806,16 @@ const GuestClassroom = () => {
     });
   }, []);
 
-  /* ── Minimize → navigate back so the previous page shows, PiP floats over it ── */
+  /* ── Minimize → slide classroom off-screen, PiP floats, JoinClass renders underneath ── */
   const doMinimize = useCallback(async () => {
     setMinimized(true);
-    // Fire PiP first so the canvas window appears before we navigate away
     const h = pipHandle.current;
-    if (h && !document.pictureInPictureElement) {
-      const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
-      const live = vids.find(v => v.readyState>=2 && v.videoWidth>0 && v!==h.video);
-      if (live) { try { await live.requestPictureInPicture(); } catch {} }
-      else { try { await h.pip(); } catch {} }
-    }
-    // Navigate back to the previous page (JoinClass / live listing)
-    navigate(-1);
-  }, [navigate]);
+    if (!h || document.pictureInPictureElement) return;
+    const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
+    const live = vids.find(v => v.readyState>=2 && v.videoWidth>0 && v!==h.video);
+    if (live) { try { await live.requestPictureInPicture(); return; } catch {} }
+    h.pip().catch(()=>{});
+  }, []);
 
   const navigateAway = useCallback(async (to: string) => {
     if (connected && !ended) {
@@ -831,7 +826,7 @@ const GuestClassroom = () => {
     }
   }, [connected, ended, doMinimize, navigate]);
 
-  /* ── Back button → minimize + PiP (browser already navigated back, just sync state) ── */
+  /* ── Back button → minimize + PiP ── */
   useEffect(() => {
     if (!connected) return;
     window.history.pushState({ gc: true }, "");
@@ -894,18 +889,27 @@ const GuestClassroom = () => {
     );
   }
 
-  /* When minimized, render nothing — the browser's native PiP floats freely
-     and the underlying page shows through naturally.                         */
-  if (minimized) return null;
-
   return (
     <>
+    {/* ── JoinClass renders underneath when minimized — classroom slides off-screen.
+         Wrap in MemoryRouter so useParams works with the correct roomCode.       ── */}
+    {minimized && roomCode && (
+      <MemoryRouter initialEntries={[`/live/${roomCode}`]}>
+        <Routes>
+          <Route path="/live/:roomCode" element={<JoinClass />} />
+        </Routes>
+      </MemoryRouter>
+    )}
+
     <div
       data-gc-root
       style={{
         position:"fixed", inset:0, zIndex:8000,
         display:"flex", flexDirection:"column",
         background:"#202124",
+        transform: minimized ? "translateX(-200%)" : "translateX(0)",
+        pointerEvents: minimized ? "none" : "all",
+        transition: minimized ? "none" : "transform .12s ease",
       }}
     >
       <style>{CSS}</style>
