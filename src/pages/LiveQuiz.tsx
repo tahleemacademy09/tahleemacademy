@@ -168,11 +168,26 @@ const LiveQuiz = () => {
     | "lobby-host" | "countdown-host" | "question-host" | "reveal-host" | "results-host"
     | "lobby-player" | "countdown-player" | "question-player" | "reveal-player" | "results-player";
 
-  const [view,         setView]         = useState<View>("hub");
-  const [room,         setRoom]         = useState<Room|null>(null);
-  const [participant,  setParticipant]  = useState<Participant|null>(null);
+  /* ── State — lazy-initialized from sessionStorage so navigation never wipes an active quiz ── */
+  const [view, setView] = useState<View>(() => {
+    try {
+      const s = sessionStorage.getItem("lq_view") as View | null;
+      if (!s || s === "hub") return "hub";
+      if (s === "countdown-host")   return "question-host";
+      if (s === "countdown-player") return "question-player";
+      return s;
+    } catch { return "hub"; }
+  });
+  const [room,         setRoom]         = useState<Room|null>(() => {
+    try { const s = sessionStorage.getItem("lq_room"); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
+  const [participant,  setParticipant]  = useState<Participant|null>(() => {
+    try { const s = sessionStorage.getItem("lq_participant"); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
   const [participants, setParticipants] = useState<Participant[]>([]);
-  const [currentQ,     setCurrentQ]     = useState<Question|null>(null);
+  const [currentQ,     setCurrentQ]     = useState<Question|null>(() => {
+    try { const s = sessionStorage.getItem("lq_current_q"); return s ? JSON.parse(s) : null; } catch { return null; }
+  });
   const [selectedAns,  setSelectedAns]  = useState<string|null>(null);
   const [timeLeft,     setTimeLeft]     = useState(20);
   const [answerCounts, setAnswerCounts] = useState<Record<string,number>>({});
@@ -210,12 +225,17 @@ const LiveQuiz = () => {
   const timerRef        = useRef<any>(null);
   const channelRef      = useRef<any>(null);
   const broadcastRef    = useRef<any>(null);
-  // Ref to track current question index — avoids stale closure bug in nextQuestion
-  const questionIdxRef  = useRef<number>(0);
+  // Ref tracks current question index for nextQuestion's stale-closure avoidance.
+  // Seeded from sessionStorage so it's correct after a page navigation.
+  const questionIdxRef  = useRef<number>((() => {
+    try { return parseInt(sessionStorage.getItem("lq_q_index") || "0") || 0; } catch { return 0; }
+  })());
   const [copiedCode, setCopiedCode] = useState(false);
-  // ── Explicit question-index state — updated from broadcast, DB events, and local actions.
-  // Avoids the race-condition where room.current_question_index lags the broadcast arrival.
-  const [currentQIndex, setCurrentQIndex] = useState<number>(0);
+  // ── Explicit question-index state — lazy-initialized from sessionStorage,
+  // then updated from broadcast (players), DB events (both), and local actions (host).
+  const [currentQIndex, setCurrentQIndex] = useState<number>(() => {
+    try { return parseInt(sessionStorage.getItem("lq_q_index") || "0") || 0; } catch { return 0; }
+  });
 
   /* ── Persist quiz session so page-switches / navigation don't wipe state ── */
   useEffect(() => { try { sessionStorage.setItem("lq_view", view); } catch {} }, [view]);
@@ -224,41 +244,13 @@ const LiveQuiz = () => {
   useEffect(() => { try { currentQ ? sessionStorage.setItem("lq_current_q", JSON.stringify(currentQ)) : sessionStorage.removeItem("lq_current_q"); } catch {} }, [currentQ]);
   useEffect(() => { try { sessionStorage.setItem("lq_q_index", String(currentQIndex)); } catch {} }, [currentQIndex]);
 
-  /* ── Mount: restore saved session + auto-fill from URL params ── */
+  /* ── Mount: auto-fill from URL params (state restoration is handled by lazy initialisers above) ── */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const code   = params.get("code");
     const name   = params.get("name");
-
-    if (code) {
-      // URL params take priority — they indicate an intentional join flow
-      setJoinCode(code.toUpperCase());
-      setView("joining");
-    }
+    if (code) { setJoinCode(code.toUpperCase()); setView("joining"); }
     if (name) setQuizName(decodeURIComponent(name));
-
-    if (!code) {
-      // Restore quiz state so switching away and back doesn't lose the session
-      try {
-        const savedRoom        = sessionStorage.getItem("lq_room");
-        const savedParticipant = sessionStorage.getItem("lq_participant");
-        const savedQ           = sessionStorage.getItem("lq_current_q");
-        const savedQIndex      = sessionStorage.getItem("lq_q_index");
-        const savedView        = sessionStorage.getItem("lq_view") as View | null;
-        if (savedRoom)        setRoom(JSON.parse(savedRoom));
-        if (savedParticipant) setParticipant(JSON.parse(savedParticipant));
-        if (savedQ)           setCurrentQ(JSON.parse(savedQ));
-        if (savedQIndex)      setCurrentQIndex(parseInt(savedQIndex) || 0);
-        if (savedView && savedView !== "hub") {
-          // Map transient countdown views to their stable neighbours
-          const safeView: View =
-            savedView === "countdown-host"   ? "question-host"
-          : savedView === "countdown-player" ? "question-player"
-          : savedView as View;
-          setView(safeView);
-        }
-      } catch {}
-    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Bulk paste parser ─────────────────────────────────────────────────
