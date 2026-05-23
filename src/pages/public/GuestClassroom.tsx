@@ -656,23 +656,9 @@ const GuestClassroom = () => {
           <h2 style={{ fontSize:22, fontWeight:600, color:"#fff", marginBottom:6 }}>Class Has Ended</h2>
           <p style={{ color:"#c9973a", fontFamily:"'Amiri',serif", marginBottom:4 }}>جزاكم الله خيراً</p>
           <p style={{ color:"rgba(255,255,255,.5)", fontSize:13, marginBottom:28 }}>JazakAllahu Khayran for joining!</p>
-          {!isHost && (
-            <div style={{ borderRadius:16, padding:"20px 22px", marginBottom:20, background:"rgba(201,151,58,.09)", border:"1px solid rgba(201,151,58,.28)" }}>
-              <p style={{ color:"#fff", fontWeight:600, marginBottom:10 }}>Enjoyed the class?</p>
-              <p style={{ fontSize:13, color:"rgba(255,255,255,.55)", marginBottom:12 }}>Join Tahleem Academy for FREE and get:</p>
-              <ul style={{ fontSize:13, color:"rgba(255,255,255,.7)", textAlign:"left", listStyle:"none", padding:0, marginBottom:14 }}>
-                {["Access to all course recordings","Live classes every week","Personal progress tracking","Quran Hifdh programme","Revision centre","Chat with teachers and students"].map((item,i)=>(
-                  <li key={i} style={{ marginBottom:6 }}>✅ {item}</li>
-                ))}
-              </ul>
-              <button onClick={()=>navigateAway("/register")} style={{ width:"100%", padding:13, borderRadius:24, border:"none", background:"#c9973a", color:"#fff", fontSize:15, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                <UserPlus style={{ width:18, height:18 }} /> Register Free — It's Free!
-              </button>
-            </div>
-          )}
           {isHost
             ? <button onClick={()=>navigateAway("/admin/public-classes")} style={{ fontSize:13, color:"rgba(255,255,255,.35)", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>Back to Dashboard</button>
-            : <button onClick={()=>navigateAway("/live")} style={{ fontSize:13, color:"rgba(255,255,255,.35)", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>Maybe Later — Browse Classes</button>
+            : <button onClick={()=>navigateAway("/live")} style={{ fontSize:13, color:"rgba(255,255,255,.35)", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>Browse Other Classes</button>
           }
         </div>
       </div>
