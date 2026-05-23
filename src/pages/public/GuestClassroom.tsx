@@ -352,34 +352,52 @@ function useMediaSession(active: boolean, title: string, onReturn: () => void, o
 
 /* ════════════════════════════════════════════════════════
    CHIME — synthesised Google Meet-style join/leave sound
-   Uses Web Audio API: no external files needed.
+   Shared AudioContext — primed on first user gesture so
+   it works after mobile browser autoplay policy.
    ════════════════════════════════════════════════════════ */
-function playChime(type: "join" | "leave") {
+let _sharedAC: AudioContext | null = null;
+function getAudioContext(): AudioContext | null {
   try {
     const AC = window.AudioContext || (window as any).webkitAudioContext;
-    const ctx = new AC();
-    const master = ctx.createGain();
-    master.gain.value = 0.22;
-    master.connect(ctx.destination);
+    if (!_sharedAC || _sharedAC.state === "closed") _sharedAC = new AC();
+    return _sharedAC;
+  } catch { return null; }
+}
+function primeAudioContext() {
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
+}
+if (typeof document !== "undefined") {
+  ["touchstart", "touchend", "click", "keydown"].forEach(ev => {
+    document.addEventListener(ev, primeAudioContext, { once: false, passive: true, capture: true });
+  });
+}
 
-    const notes = type === "join"
-      ? [{ freq:880, start:0, dur:0.12 }, { freq:1046, start:0.10, dur:0.18 }]
-      : [{ freq:880, start:0, dur:0.12 }, { freq:698, start:0.10, dur:0.18 }];
-
-    notes.forEach(({ freq, start, dur }) => {
-      const osc  = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0, ctx.currentTime + start);
-      gain.gain.linearRampToValueAtTime(1, ctx.currentTime + start + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
-      osc.connect(gain); gain.connect(master);
-      osc.start(ctx.currentTime + start);
-      osc.stop(ctx.currentTime + start + dur + 0.05);
-    });
-
-    setTimeout(() => ctx.close().catch(() => {}), 700);
+function playChime(type: "join" | "leave") {
+  try {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const resume = ctx.state === "suspended" ? ctx.resume() : Promise.resolve();
+    resume.then(() => {
+      const master = ctx.createGain();
+      master.gain.value = 0.22;
+      master.connect(ctx.destination);
+      const notes = type === "join"
+        ? [{ freq:880, start:0, dur:0.12 }, { freq:1046, start:0.10, dur:0.18 }]
+        : [{ freq:880, start:0, dur:0.12 }, { freq:698, start:0.10, dur:0.18 }];
+      notes.forEach(({ freq, start, dur }) => {
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, ctx.currentTime + start);
+        gain.gain.linearRampToValueAtTime(1, ctx.currentTime + start + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+        osc.connect(gain); gain.connect(master);
+        osc.start(ctx.currentTime + start);
+        osc.stop(ctx.currentTime + start + dur + 0.05);
+      });
+    }).catch(() => {});
   } catch {}
 }
 
@@ -492,21 +510,22 @@ const ParticipantEventHandler = ({
 }) => {
   const room = useRoomContext();
   const toastId = useRef(0);
-  // Don't fire for the first few seconds (initial roster, not new joins)
-  const readyRef = useRef(false);
+  // Seed with participants already in the room — only toast truly new arrivals.
+  const seenRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
-    const t = setTimeout(() => { readyRef.current = true; }, 3000);
-    return () => clearTimeout(t);
-  }, []);
+    room.remoteParticipants.forEach((_, identity) => seenRef.current.add(identity));
+  }, [room]);
 
   useEffect(() => {
     const onJoin = (p: Participant) => {
-      if (!readyRef.current) return;
+      if (seenRef.current.has(p.identity)) return; // reconnect echo — skip
+      seenRef.current.add(p.identity);
       if (soundEnabled) playChime("join");
       onToast({ id: ++toastId.current, name: p.name || p.identity || "Someone", type: "join" });
     };
     const onLeave = (p: Participant) => {
-      if (!readyRef.current) return;
+      seenRef.current.delete(p.identity);
       onToast({ id: ++toastId.current, name: p.name || p.identity || "Someone", type: "leave" });
     };
     room.on(RoomEvent.ParticipantConnected, onJoin);
@@ -869,70 +888,53 @@ const GuestClassroom = () => {
 
   return (
     <>
-    {/* ── Minimized overlay ──────────────────────────────────────────────
-         Rendered whenever `minimized === true` AND class is not ended.
-         zIndex 7999 sits BELOW the translateX'd classroom (8000) so it
-         only shows when the classroom is off-screen. Covers every path
-         that hides the class view: back button, home button, doMinimize().  */}
+    {/* ── Minimized: slim bottom bar only — let the browser's native PiP float freely ── */}
     {minimized && (
-      <div style={{
-        position:"fixed", inset:0, zIndex:7999,
-        background:"#0b1f14",
-        display:"flex", flexDirection:"column",
-        alignItems:"center", justifyContent:"center",
-        gap:14, padding:28,
-        fontFamily:"'Google Sans', sans-serif",
-      }}>
-        <style>{`
-          @keyframes gc-pulse-min{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.82)}}
-          @keyframes gc-spin-ring{to{transform:rotate(360deg)}}
-        `}</style>
-
-        {/* Pulsing LIVE ring */}
-        <div style={{ position:"relative", width:88, height:88, marginBottom:4 }}>
-          <div style={{ position:"absolute", inset:-6, borderRadius:"50%", border:"2px solid rgba(239,68,68,.35)", animation:"gc-spin-ring 3s linear infinite" }} />
-          <div style={{ position:"absolute", inset:-12, borderRadius:"50%", border:"1px solid rgba(239,68,68,.15)" }} />
-          <div style={{ width:88, height:88, borderRadius:"50%", background:"#c9973a", color:"#0b1f14", display:"flex", alignItems:"center", justifyContent:"center", fontSize:36, fontWeight:800 }}>
-            {initial}
-          </div>
-        </div>
-
-        {/* LIVE badge */}
-        <div style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(239,68,68,.15)", border:"1px solid rgba(239,68,68,.35)", borderRadius:999, padding:"5px 14px" }}>
-          <span style={{ width:7, height:7, borderRadius:"50%", background:"#ef4444", boxShadow:"0 0 7px #ef4444", animation:"gc-pulse-min 1.6s ease-in-out infinite" }} />
-          <span style={{ color:"#ef4444", fontSize:12, fontWeight:700, letterSpacing:1.2 }}>LIVE</span>
-        </div>
-
-        {/* Class name */}
-        <p style={{ color:"#fff", fontSize:19, fontWeight:700, margin:0, textAlign:"center", lineHeight:1.3 }}>{classTitle || title}</p>
-        {classTitleAr && <p style={{ color:"rgba(255,255,255,.45)", fontFamily:"'Amiri',serif", fontSize:15, margin:"-6px 0 0", direction:"rtl" }}>{classTitleAr}</p>}
-
-        {/* Duration */}
-        <p style={{ color:"rgba(255,255,255,.4)", fontSize:13, margin:0, fontVariantNumeric:"tabular-nums" }}>
-          ⏱ {fmtT(classDuration)} elapsed
-        </p>
-
-        {/* Return button */}
-        <button
+      <>
+        <style>{`@keyframes gc-pip-pulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
+        <div
+          role="button"
+          aria-label="Return to live class"
           onClick={handleReturn}
           style={{
-            marginTop:8, padding:"13px 32px", borderRadius:999,
-            border:"none", background:"#c9973a",
-            color:"#0b1f14", fontSize:15, fontWeight:800, cursor:"pointer",
-            boxShadow:"0 4px 18px rgba(201,151,58,.4)",
+            position:"fixed",
+            bottom:"max(env(safe-area-inset-bottom,0px) + 16px, 16px)",
+            left:"50%",
+            transform:"translateX(-50%)",
+            zIndex:9000,
+            display:"flex", alignItems:"center", gap:10,
+            padding:"10px 18px", borderRadius:999,
+            background:"#0c1f12",
+            border:"1.5px solid rgba(201,168,76,.55)",
+            boxShadow:"0 4px 24px rgba(0,0,0,.55)",
+            cursor:"pointer", userSelect:"none",
+            minWidth:220, maxWidth:"calc(100vw - 32px)",
+            WebkitTapHighlightColor:"transparent",
+            fontFamily:"'Google Sans','Roboto',sans-serif",
           }}
         >
-          ↩ Return to Class
-        </button>
-
-        {/* Leave quietly */}
-        <button
-          onClick={handleLeave}
-          style={{ background:"none", border:"none", color:"rgba(255,255,255,.3)", fontSize:13, cursor:"pointer", marginTop:2 }}
-        >
-          Leave class
-        </button>
-      </div>
+          {/* LIVE dot */}
+          <span style={{ width:8, height:8, borderRadius:"50%", background:"#ef4444", flexShrink:0, boxShadow:"0 0 6px 2px rgba(239,68,68,.6)", animation:"gc-pip-pulse 1.4s ease-in-out infinite" }} />
+          {/* Avatar */}
+          <span style={{ width:28, height:28, borderRadius:"50%", background:"#c9a84c", color:"#0c1f12", fontWeight:700, fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+            {initial}
+          </span>
+          {/* Title + subtitle */}
+          <span style={{ flex:1, overflow:"hidden", minWidth:0 }}>
+            <span style={{ display:"block", color:"rgba(255,255,255,.92)", fontWeight:600, fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{title}</span>
+            <span style={{ display:"block", color:"rgba(255,255,255,.45)", fontSize:11 }}>⏱ {fmtT(classDuration)} · Tap to return</span>
+          </span>
+          {/* Leave button */}
+          <span
+            role="button"
+            aria-label="Leave class"
+            onClick={e=>{ e.stopPropagation(); handleLeave(); }}
+            style={{ width:28, height:28, borderRadius:"50%", background:"rgba(239,68,68,.15)", border:"1px solid rgba(239,68,68,.4)", color:"#ef4444", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:14, cursor:"pointer", WebkitTapHighlightColor:"transparent" }}
+          >
+            ✕
+          </span>
+        </div>
+      </>
     )}
 
     <div
