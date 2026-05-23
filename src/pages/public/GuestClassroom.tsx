@@ -11,21 +11,28 @@
   • Wake-lock prevents screen sleeping mid-class
   • Auto-reconnect: up to 5 attempts, progressive back-off
   • Top bar: compact mobile layout — no overflow/overlap
+  
+  Fixes:
+  • Leave/End button in header — sets intentional flag BEFORE disconnect
+  • LiveKit default leave button is hidden (it reconnects without the flag)
+  • Participant count badge in header
+  • Join/leave chime sounds (Web Audio API — no external file needed)
+  • Participant join toast notification
 */
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useLocation, useNavigate, Link } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Track, ConnectionState, RoomEvent } from "livekit-client";
+import { Track, ConnectionState, RoomEvent, Participant } from "livekit-client";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import {
   UserPlus, Radio, Circle, Loader2,
   Mic, Pause, Play, Square, X, Phone,
-  Minimize2, RefreshCw,
+  Minimize2, RefreshCw, Users,
 } from "lucide-react";
 import ClassChatPanel    from "@/components/classroom/ClassChatPanel";
 import ClassPolls        from "@/components/classroom/ClassPolls";
@@ -46,6 +53,8 @@ const CSS = `
   @keyframes gc-fade-up   { from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)} }
   @keyframes gc-slide-up  { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
   @keyframes gc-bounce-in { 0%{transform:scale(.82);opacity:0}60%{transform:scale(1.05)}100%{transform:scale(1);opacity:1} }
+  @keyframes gc-toast-in  { from{opacity:0;transform:translateY(-14px) scale(.94)}to{opacity:1;transform:translateY(0) scale(1)} }
+  @keyframes gc-toast-out { from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-8px)} }
 
   [data-gc-root] {
     font-family:'Google Sans','Roboto',sans-serif;
@@ -87,13 +96,14 @@ const CSS = `
     animation:gc-fade-up .2s ease;
   }
 
-  /* LK theme override */
+  /* LK theme override — hide the default leave button */
   [data-lk-theme] { height:100%!important; display:flex!important; flex-direction:column!important; }
   .lk-video-conference { height:100%!important; }
+  .lk-disconnect-button { display:none!important; }
 `;
 
 /* ════════════════════════════════════════════════════════
-   CANVAS PiP  — same engine as GlobalClassroomOverlay
+   CANVAS PiP
    ════════════════════════════════════════════════════════ */
 const GOLD = "#c9a84c";
 const DARK_BG = "#0c1f12";
@@ -155,7 +165,6 @@ function buildCanvasPip(
     ctx.fillStyle = DARK_BG; ctx.fillRect(0, 0, PIP_W, PIP_H);
     ctx.fillStyle = "rgba(201,168,76,0.35)"; ctx.fillRect(0, PIP_H - 2, PIP_W, 2);
 
-    // LIVE strip
     const STRIP = 52;
     ctx.fillStyle = "rgba(255,255,255,0.04)"; ctx.fillRect(0, 0, STRIP, PIP_H);
     const p = 0.4 + 0.6 * Math.abs(Math.sin(Date.now() / 700));
@@ -168,7 +177,6 @@ function buildCanvasPip(
     ctx.fillText("LIVE", STRIP / 2, PIP_H / 2 + 8);
     ctx.fillStyle = "rgba(201,168,76,0.2)"; ctx.fillRect(STRIP, 20, 1, PIP_H - 40);
 
-    // Avatar
     const avX = STRIP + 52, avY = PIP_H / 2, avR = 36;
     ctx.fillStyle = GOLD;
     ctx.beginPath(); ctx.arc(avX, avY, avR, 0, Math.PI * 2); ctx.fill();
@@ -177,7 +185,6 @@ function buildCanvasPip(
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(letter.toUpperCase().slice(0, 1), avX, avY);
 
-    // Subject name
     const nameX = avX + avR + 12;
     const nameW = PIP_W - nameX - 52;
     ctx.fillStyle = "rgba(255,255,255,0.9)";
@@ -309,6 +316,39 @@ function useMediaSession(active: boolean, title: string, onReturn: () => void, o
 }
 
 /* ════════════════════════════════════════════════════════
+   CHIME — synthesised Google Meet-style join/leave sound
+   Uses Web Audio API: no external files needed.
+   ════════════════════════════════════════════════════════ */
+function playChime(type: "join" | "leave") {
+  try {
+    const AC = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new AC();
+    const master = ctx.createGain();
+    master.gain.value = 0.22;
+    master.connect(ctx.destination);
+
+    const notes = type === "join"
+      ? [{ freq:880, start:0, dur:0.12 }, { freq:1046, start:0.10, dur:0.18 }]
+      : [{ freq:880, start:0, dur:0.12 }, { freq:698, start:0.10, dur:0.18 }];
+
+    notes.forEach(({ freq, start, dur }) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, ctx.currentTime + start);
+      gain.gain.linearRampToValueAtTime(1, ctx.currentTime + start + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+      osc.connect(gain); gain.connect(master);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + dur + 0.05);
+    });
+
+    setTimeout(() => ctx.close().catch(() => {}), 700);
+  } catch {}
+}
+
+/* ════════════════════════════════════════════════════════
    CONNECTION QUALITY INDICATOR (inside LiveKitRoom)
    ════════════════════════════════════════════════════════ */
 const ConnectionIndicator = () => {
@@ -348,10 +388,87 @@ const ConnectionIndicator = () => {
 };
 
 /* ════════════════════════════════════════════════════════
+   PARTICIPANT COUNT BADGE (inside LiveKitRoom context)
+   ════════════════════════════════════════════════════════ */
+const ParticipantCountBadge = ({ onClick }: { onClick?: () => void }) => {
+  const room = useRoomContext();
+  const [count, setCount] = useState(room.numParticipants || 1);
+
+  useEffect(() => {
+    const update = () => setCount(room.numParticipants || 1);
+    room.on(RoomEvent.ParticipantConnected, update);
+    room.on(RoomEvent.ParticipantDisconnected, update);
+    room.on(RoomEvent.ConnectionStateChanged, update);
+    update();
+    return () => {
+      room.off(RoomEvent.ParticipantConnected, update);
+      room.off(RoomEvent.ParticipantDisconnected, update);
+      room.off(RoomEvent.ConnectionStateChanged, update);
+    };
+  }, [room]);
+
+  return (
+    <button
+      onClick={onClick}
+      title="Participants"
+      className="gc-pill"
+      style={{
+        background:"rgba(255,255,255,.07)", border:"1px solid rgba(255,255,255,.12)",
+        color:"rgba(255,255,255,.8)", cursor:onClick?"pointer":"default",
+        gap:4,
+      }}
+    >
+      <Users style={{ width:10, height:10 }} />
+      {count}
+    </button>
+  );
+};
+
+/* ════════════════════════════════════════════════════════
+   PARTICIPANT JOIN/LEAVE SOUNDS + TOAST
+   (inside LiveKitRoom context)
+   ════════════════════════════════════════════════════════ */
+interface JoinToast { id: number; name: string; type: "join"|"leave"; }
+
+const ParticipantEventHandler = ({
+  onToast,
+  soundEnabled,
+}: {
+  onToast: (t: JoinToast) => void;
+  soundEnabled: boolean;
+}) => {
+  const room = useRoomContext();
+  const toastId = useRef(0);
+  // Don't fire for the first few seconds (initial roster, not new joins)
+  const readyRef = useRef(false);
+  useEffect(() => {
+    const t = setTimeout(() => { readyRef.current = true; }, 3000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    const onJoin = (p: Participant) => {
+      if (!readyRef.current) return;
+      if (soundEnabled) playChime("join");
+      onToast({ id: ++toastId.current, name: p.name || p.identity || "Someone", type: "join" });
+    };
+    const onLeave = (p: Participant) => {
+      if (!readyRef.current) return;
+      onToast({ id: ++toastId.current, name: p.name || p.identity || "Someone", type: "leave" });
+    };
+    room.on(RoomEvent.ParticipantConnected, onJoin);
+    room.on(RoomEvent.ParticipantDisconnected, onLeave);
+    return () => {
+      room.off(RoomEvent.ParticipantConnected, onJoin);
+      room.off(RoomEvent.ParticipantDisconnected, onLeave);
+    };
+  }, [room, onToast, soundEnabled]);
+
+  return null;
+};
+
+/* ════════════════════════════════════════════════════════
    RECONNECT MONITOR (inside LiveKitRoom)
-   Uses refs for all callbacks so the room listener is only
-   ever registered once — no stale-closure or re-registration
-   issues when parent re-renders during intentional disconnect.
    ════════════════════════════════════════════════════════ */
 const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
   onReconnecting: () => void; onReconnected: () => void; onDisconnected: () => void;
@@ -360,7 +477,6 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
   const onReconnectingRef  = useRef(onReconnecting);
   const onReconnectedRef   = useRef(onReconnected);
   const onDisconnectedRef  = useRef(onDisconnected);
-  // Keep refs current on every render without re-registering the listener
   onReconnectingRef.current  = onReconnecting;
   onReconnectedRef.current   = onReconnected;
   onDisconnectedRef.current  = onDisconnected;
@@ -373,7 +489,7 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
     };
     room.on(RoomEvent.ConnectionStateChanged, h);
     return () => { room.off(RoomEvent.ConnectionStateChanged, h); };
-  }, [room]); // ← only re-register if the room instance itself changes
+  }, [room]);
   return null;
 };
 
@@ -515,7 +631,15 @@ const GuestClassroom = () => {
   const [reconnecting, setReconnecting]   = useState(false);
   const [reconnectCount, setReconnectCount] = useState(0);
   const [roomKey, setRoomKey]             = useState(0);
+  const [soundEnabled, setSoundEnabled]   = useState(true);
   const intentionalRef = useRef(false);
+
+  // Join/leave toasts
+  const [joinToasts, setJoinToasts] = useState<JoinToast[]>([]);
+  const addToast = useCallback((t: JoinToast) => {
+    setJoinToasts(prev => [...prev.slice(-2), t]); // max 3 toasts
+    setTimeout(() => setJoinToasts(prev => prev.filter(x => x.id !== t.id)), 3500);
+  }, []);
 
   // Side panels
   const [chatOpen, setChatOpen]           = useState(!isMobile);
@@ -539,13 +663,41 @@ const GuestClassroom = () => {
   const title   = classTitle || "Public Class";
   const initial = title.charAt(0).toUpperCase();
 
-  // Keep-alive / wake-lock
   useSilentAudio(connected && !ended);
   useWakeLock(connected && !ended);
 
   const handleReturn = useCallback(() => setMinimized(false), []);
-  const handleLeave  = useCallback(() => { intentionalRef.current=true; setReconnecting(false); setEnded(true); }, []);
+  const handleLeave  = useCallback(() => {
+    intentionalRef.current = true;
+    setReconnecting(false);
+    setEnded(true);
+  }, []);
   handleRetRef.current = handleReturn;
+
+  /* ── Host: end class for everyone ── */
+  const handleEndClass = useCallback(() => {
+    setShowEndConfirm(false);
+    intentionalRef.current = true;
+    setReconnecting(false);
+    setEnded(true);
+    if (classId) {
+      supabase.from("public_classes")
+        .update({ status: "ended", actual_end_time: new Date().toISOString() })
+        .eq("id", classId)
+        .then(() => {}).catch(() => {});
+    }
+  }, [classId]);
+
+  /* ── Leave button click (used in header) ──
+     Sets intentional flag first, THEN the room will disconnect naturally
+     when `ended` causes the LiveKitRoom to unmount. */
+  const handleLeaveClick = useCallback(() => {
+    if (isHost) {
+      setShowEndConfirm(true);
+    } else {
+      handleLeave();
+    }
+  }, [isHost, handleLeave]);
 
   useMediaSession(connected && !ended, title, handleReturn, handleLeave);
 
@@ -567,8 +719,6 @@ const GuestClassroom = () => {
   }, [connected, initial, title]);
 
   // Auto-reconnect (up to 5 attempts)
-  // intentionalRef.current=true means the disconnect was deliberate — never reconnect.
-  // We also check the ended state via a ref so the closure is always fresh.
   const endedRef = useRef(false);
   useEffect(() => { endedRef.current = ended; }, [ended]);
 
@@ -588,18 +738,15 @@ const GuestClassroom = () => {
     const h = pipHandle.current;
     if (!h) return;
     if (document.pictureInPictureElement) return;
-    // Try a live video element first (camera on)
     const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
     const live = vids.find(v => v.readyState>=2 && v.videoWidth>0 && v!==h.video);
     if (live) { try { await live.requestPictureInPicture(); return; } catch {} }
     h.pip().catch(()=>{});
   }, []);
 
-  /* ── Navigate away while connected → minimize + PiP first ── */
   const navigateAway = useCallback(async (to: string) => {
     if (connected && !ended) {
       await doMinimize();
-      // Small delay so PiP window has time to appear before page changes
       setTimeout(() => navigate(to), 80);
     } else {
       navigate(to);
@@ -618,7 +765,7 @@ const GuestClassroom = () => {
     return () => window.removeEventListener("popstate", onPop);
   }, [connected]);
 
-  /* ── Browser backgrounded (home button / app switch) → minimize + PiP ── */
+  /* ── Browser backgrounded → minimize + PiP ── */
   useEffect(() => {
     if (!connected) return;
     let pipTimer: ReturnType<typeof setTimeout>|null = null;
@@ -646,19 +793,6 @@ const GuestClassroom = () => {
     return h>0 ? `${h}:${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}` : `${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`;
   };
 
-  const handleEndClass = () => {
-    setShowEndConfirm(false);
-    intentionalRef.current = true;
-    setReconnecting(false);
-    setEnded(true);
-    if (classId) {
-      supabase.from("public_classes")
-        .update({ status: "ended", actual_end_time: new Date().toISOString() })
-        .eq("id", classId)
-        .then(() => {}).catch(() => {});
-    }
-  };
-
   if (!token||!url) return null;
 
   /* ── Ended screen ── */
@@ -680,19 +814,9 @@ const GuestClassroom = () => {
     );
   }
 
-  /* ════════════════════════════════════════════════════════
-     LIVE CLASSROOM
-     The div is always present. When minimized it's translated
-     off-screen (zero visual footprint) while PiP shows the
-     canvas overlay — identical to GlobalClassroomOverlay.
-     A solid black backdrop covers the page body so the white
-     background never bleeds through when minimized.
-     ════════════════════════════════════════════════════════ */
   return (
     <>
-    {/* ── Minimized backdrop: shown when classroom is off-screen ──────────
-        Shows a proper app-themed screen so user sees something meaningful
-        instead of a black void. The floating bar sits on top of this.    */}
+    {/* ── Minimized backdrop ── */}
     {minimized && (
       <div style={{
         position: "fixed", inset: 0, zIndex: 7999,
@@ -702,7 +826,6 @@ const GuestClassroom = () => {
         gap: 12, padding: 24,
         fontFamily: "'Google Sans', sans-serif",
       }}>
-        {/* Avatar */}
         <div style={{
           width: 72, height: 72, borderRadius: "50%",
           background: "#c9973a", color: "#0f3122",
@@ -711,52 +834,54 @@ const GuestClassroom = () => {
         }}>
           {initial}
         </div>
-        {/* LIVE badge */}
         <div style={{
           display: "flex", alignItems: "center", gap: 6,
           background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)",
           borderRadius: 999, padding: "4px 12px",
         }}>
-          <span style={{
-            width: 7, height: 7, borderRadius: "50%", background: "#ef4444",
-            boxShadow: "0 0 6px rgba(239,68,68,0.7)",
-            animation: "gc-pulse 1.4s ease-in-out infinite",
-          }} />
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", boxShadow: "0 0 6px rgba(239,68,68,0.7)", animation: "gc-pulse 1.4s ease-in-out infinite" }} />
           <span style={{ color: "#ef4444", fontSize: 12, fontWeight: 700, letterSpacing: 1 }}>LIVE</span>
         </div>
-        {/* Class name */}
-        <p style={{ color: "#fff", fontSize: 18, fontWeight: 600, margin: 0, textAlign: "center" }}>
-          {classTitle || title}
-        </p>
-        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 13, margin: 0 }}>
-          Class is running in the background
-        </p>
-        {/* Tap to return hint */}
-        <div style={{
-          marginTop: 16, padding: "10px 22px", borderRadius: 999,
-          background: "rgba(201,151,58,0.15)", border: "1px solid rgba(201,151,58,0.35)",
-          color: "#c9973a", fontSize: 13, fontWeight: 600, cursor: "pointer",
-        }}
-          onClick={handleReturn}
-        >
+        <p style={{ color: "#fff", fontSize: 18, fontWeight: 600, margin: 0, textAlign: "center" }}>{classTitle || title}</p>
+        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 13, margin: 0 }}>Class is running in the background</p>
+        <div style={{ marginTop: 16, padding: "10px 22px", borderRadius: 999, background: "rgba(201,151,58,0.15)", border: "1px solid rgba(201,151,58,0.35)", color: "#c9973a", fontSize: 13, fontWeight: 600, cursor: "pointer" }} onClick={handleReturn}>
           Tap to return to class
         </div>
         <style>{`@keyframes gc-pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
       </div>
     )}
+
     <div
       data-gc-root
       style={{
         position:"fixed", inset:0, zIndex:8000,
         display:"flex", flexDirection:"column",
         background:"#202124",
-        // Move off-screen when minimized — keeps LiveKit/audio alive
         transform: minimized ? "translateX(-200%)" : "translateX(0)",
         pointerEvents: minimized ? "none" : "all",
         transition: minimized ? "none" : "transform .12s ease",
       }}
     >
       <style>{CSS}</style>
+
+      {/* ── Join/Leave toasts ── */}
+      <div style={{ position:"absolute", top:56, left:"50%", transform:"translateX(-50%)", zIndex:9000, display:"flex", flexDirection:"column", gap:6, alignItems:"center", pointerEvents:"none" }}>
+        {joinToasts.map(t => (
+          <div key={t.id} style={{
+            display:"flex", alignItems:"center", gap:8,
+            background:"rgba(32,33,36,.95)", backdropFilter:"blur(16px)",
+            border:"1px solid rgba(255,255,255,.1)", borderRadius:24,
+            padding:"7px 14px", fontSize:12, fontWeight:600,
+            color:"rgba(255,255,255,.9)", whiteSpace:"nowrap",
+            boxShadow:"0 4px 20px rgba(0,0,0,.4)",
+            animation:"gc-toast-in .22s ease forwards",
+          }}>
+            <span style={{ width:8, height:8, borderRadius:"50%", background: t.type==="join"?"#22c55e":"#ef4444", flexShrink:0 }} />
+            <span style={{ fontWeight:700, color: t.type==="join"?"#86efac":"#fca5a5" }}>{t.name}</span>
+            <span style={{ color:"rgba(255,255,255,.55)" }}>{t.type==="join"?"joined":"left"}</span>
+          </div>
+        ))}
+      </div>
 
       <LiveKitRoom
         key={roomKey}
@@ -790,6 +915,9 @@ const GuestClassroom = () => {
           onDisconnected={()=>{ if (!intentionalRef.current) autoReconnect(); }}
         />
 
+        {/* Participant event handler (sounds + toasts) */}
+        <ParticipantEventHandler onToast={addToast} soundEnabled={soundEnabled} />
+
         {/* Reconnecting overlay */}
         {reconnecting && (
           <div className="gc-reconnect-overlay">
@@ -801,7 +929,7 @@ const GuestClassroom = () => {
           </div>
         )}
 
-        {/* ════ TOP BAR — compact, no overflow ════ */}
+        {/* ════ TOP BAR ════ */}
         <div style={{
           height:48, flexShrink:0,
           background:"rgba(32,33,36,.97)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)",
@@ -812,7 +940,6 @@ const GuestClassroom = () => {
         }}>
           {/* LEFT GROUP */}
           <div style={{ display:"flex", alignItems:"center", gap:5, flex:1, minWidth:0, overflow:"hidden" }}>
-            {/* LIVE / Guest badge */}
             {isHost
               ? <div className="gc-pill" style={{ background:"rgba(239,68,68,.13)", border:"1px solid rgba(239,68,68,.3)", color:"#fca5a5" }}>
                   <span style={{ width:6, height:6, borderRadius:"50%", background:"#ef4444", display:"inline-block", animation:"gc-pulse 1.8s ease-in-out infinite" }} />
@@ -823,7 +950,7 @@ const GuestClassroom = () => {
                 </div>
             }
 
-            {/* Class title — truncated */}
+            {/* Class title */}
             <span style={{ fontSize:12, fontWeight:600, color:"rgba(255,255,255,.85)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flex:1, minWidth:0 }}>
               {title}
             </span>
@@ -833,6 +960,9 @@ const GuestClassroom = () => {
               <Circle style={{ width:5, height:5, fill:"#ef4444", color:"#ef4444", animation:"gc-rec-pulse 1.4s ease-in-out infinite", flexShrink:0 }} />
               {fmtT(classDuration)}
             </div>
+
+            {/* Participant count badge — IN HEADER */}
+            <ParticipantCountBadge onClick={()=>setPartOpen(v=>!v)} />
           </div>
 
           {/* RIGHT GROUP */}
@@ -840,19 +970,22 @@ const GuestClassroom = () => {
             {/* Connection quality */}
             <ConnectionIndicator />
 
-            {/* Record (host only — compact) */}
+            {/* Record (host only) */}
             <RecordingController classId={classId||""} isHost={!!isHost} onSavingChange={setSavingRec} />
 
-            {/* Register CTA — desktop only — minimizes first so audio keeps running */}
-            {!isHost && (
-              <button
-                onClick={async ()=>{ await doMinimize(); navigate("/register"); }}
-                className="sm:block"
-                style={{ display:"none", alignItems:"center", gap:4, padding:"4px 10px", borderRadius:16, border:"1px solid rgba(201,151,58,.4)", background:"transparent", color:"#c9973a", fontSize:11, cursor:"pointer" }}
-              >
-                <UserPlus style={{ width:11, height:11 }} /> Register
-              </button>
-            )}
+            {/* Sound toggle */}
+            <button
+              onClick={()=>setSoundEnabled(v=>!v)}
+              title={soundEnabled?"Mute join sounds":"Unmute join sounds"}
+              style={{
+                width:28, height:28, borderRadius:"50%", border:"none",
+                background: soundEnabled ? "rgba(255,255,255,.1)" : "rgba(239,68,68,.15)",
+                color: soundEnabled ? "rgba(255,255,255,.6)" : "#fca5a5",
+                cursor:"pointer", fontSize:12, display:"flex", alignItems:"center", justifyContent:"center",
+              }}
+            >
+              {soundEnabled ? "🔔" : "🔕"}
+            </button>
 
             {/* Minimize */}
             <button
@@ -861,6 +994,23 @@ const GuestClassroom = () => {
               style={{ display:"flex", alignItems:"center", justifyContent:"center", width:30, height:30, borderRadius:"50%", border:"none", background:"rgba(255,255,255,.1)", color:"rgba(255,255,255,.7)", cursor:"pointer" }}
             >
               <Minimize2 style={{ width:14, height:14 }} />
+            </button>
+
+            {/* ── LEAVE / END BUTTON — always visible in header ──
+                This sets intentionalRef BEFORE any disconnect, so autoReconnect is skipped. */}
+            <button
+              onClick={handleLeaveClick}
+              title={isHost ? "End class for everyone" : "Leave class"}
+              style={{
+                display:"flex", alignItems:"center", justifyContent:"center",
+                gap:5, height:32, padding:"0 12px", borderRadius:20,
+                border:"none", background:"#ea4335", color:"#fff",
+                cursor:"pointer", fontSize:12, fontWeight:700,
+                flexShrink:0,
+              }}
+            >
+              <Phone style={{ width:13, height:13, transform:"rotate(135deg)" }} />
+              <span style={{ display:"block" }}>{isHost ? "End" : "Leave"}</span>
             </button>
           </div>
         </div>
@@ -878,7 +1028,7 @@ const GuestClassroom = () => {
             </div>
           )}
 
-          {/* Video */}
+          {/* Video — LiveKit default leave button is hidden via CSS */}
           <div style={{ flex:1, position:"relative", minWidth:0 }}>
             <VideoConference />
             <RoomAudioRenderer />
