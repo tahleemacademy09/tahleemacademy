@@ -738,7 +738,10 @@ const GuestClassroom = () => {
   useSilentAudio(connected && !ended);
   useWakeLock(connected && !ended);
 
-  const handleReturn = useCallback(() => setMinimized(false), []);
+  const handleReturn = useCallback(() => {
+    setMinimized(false);
+    navigate(1); // go forward — back to the classroom route
+  }, [navigate]);
   const handleLeave  = useCallback(() => {
     intentionalRef.current = true;
     setReconnecting(false);
@@ -804,17 +807,20 @@ const GuestClassroom = () => {
     });
   }, []);
 
-  /* ── Minimize → PiP ── */
+  /* ── Minimize → navigate back so the previous page shows, PiP floats over it ── */
   const doMinimize = useCallback(async () => {
     setMinimized(true);
+    // Fire PiP first so the canvas window appears before we navigate away
     const h = pipHandle.current;
-    if (!h) return;
-    if (document.pictureInPictureElement) return;
-    const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
-    const live = vids.find(v => v.readyState>=2 && v.videoWidth>0 && v!==h.video);
-    if (live) { try { await live.requestPictureInPicture(); return; } catch {} }
-    h.pip().catch(()=>{});
-  }, []);
+    if (h && !document.pictureInPictureElement) {
+      const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
+      const live = vids.find(v => v.readyState>=2 && v.videoWidth>0 && v!==h.video);
+      if (live) { try { await live.requestPictureInPicture(); } catch {} }
+      else { try { await h.pip(); } catch {} }
+    }
+    // Navigate back to the previous page (JoinClass / live listing)
+    navigate(-1);
+  }, [navigate]);
 
   const navigateAway = useCallback(async (to: string) => {
     if (connected && !ended) {
@@ -825,14 +831,14 @@ const GuestClassroom = () => {
     }
   }, [connected, ended, doMinimize, navigate]);
 
-  /* ── Back button → minimize + PiP ── */
+  /* ── Back button → minimize + PiP (browser already navigated back, just sync state) ── */
   useEffect(() => {
     if (!connected) return;
+    window.history.pushState({ gc: true }, "");
     const onPop = () => {
       setMinimized(true);
       setTimeout(()=>pipHandle.current?.pip().catch(()=>{}), 60);
     };
-    window.history.pushState({ gc: true }, "");
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, [connected]);
@@ -859,6 +865,8 @@ const GuestClassroom = () => {
       document.exitPictureInPicture().catch(()=>{});
     }
   }, [minimized]);
+
+
 
   const fmtT = (s:number) => {
     const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
