@@ -368,7 +368,10 @@ const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }:
   // Android back-nav guard
   useEffect(() => {
     window.history.pushState({ smModalGuard: true }, "");
-    const handlePopState = () => {
+    const handlePopState = (e: PopStateEvent) => {
+      // If this pop came from the live-class back-button guard, ignore it —
+      // LiveClassContext handles it and will re-push its own guard.
+      if (e.state?.["tahleem-live-class"]) return;
       window.history.pushState({ smModalGuard: true }, "");
       if (pickerOpenRef.current) pickerOpenRef.current = false;
       else onClose();
