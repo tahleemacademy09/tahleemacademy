@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "@/integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +13,8 @@ import {
   Plus, Copy, Share2, QrCode, Trash2, Radio, Calendar, Users,
   Mail, Bell, BellOff, Send, Globe, Lock, Video, Loader2,
   Download, Phone, AtSign, CheckCircle, X, Search, RefreshCw,
-  Pencil, MoreHorizontal, ExternalLink, Archive, BarChart2, CopyPlus
+  Pencil, MoreHorizontal, ExternalLink, Archive, BarChart2, CopyPlus,
+  PlayCircle, Film, Mic, Pause, Play
 } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
@@ -50,6 +52,11 @@ interface Registration {
 
 interface ReminderConfig { enabled: boolean; minutesBefore: number; lastSentAt?: string; }
 
+interface RecordingFile {
+  name: string; id: string | null; updated_at: string | null;
+  created_at: string | null; metadata: any;
+}
+
 /* ─── blank form shared by create & edit ─── */
 const blankForm = {
   title:"", title_ar:"", description:"", description_ar:"",
@@ -81,6 +88,13 @@ const PublicClassManagement = () => {
   const [deleteTarget,     setDeleteTarget]     = useState<PublicClass | null>(null);
   const [deleting,         setDeleting]         = useState(false);
   const [showArchived,     setShowArchived]     = useState(false);
+
+  /* recordings */
+  const [recordingsDialog, setRecordingsDialog] = useState<PublicClass | null>(null);
+  const [recordings,       setRecordings]       = useState<RecordingFile[]>([]);
+  const [recordingsLoading,setRecordingsLoading]= useState(false);
+  const [playingUrl,       setPlayingUrl]       = useState<string | null>(null);
+  const [deletingRec,      setDeletingRec]      = useState<string | null>(null);
 
   /* form (create + edit share the same) */
   const [form, setForm] = useState(blankForm);
@@ -152,6 +166,59 @@ const PublicClassManagement = () => {
     if (data) setAllContacts(data.map((r: any) => ({ ...r, class_title: r.public_classes?.title ?? "Unknown" })) as Registration[]);
     setContactsLoading(false);
   }, []);
+
+  /* ── recordings ── */
+  const fetchRecordings = useCallback(async (cls: PublicClass) => {
+    setRecordingsLoading(true);
+    setRecordings([]);
+    setPlayingUrl(null);
+    try {
+      const path = `recordings/public-class/${cls.id}`;
+      const { data, error } = await storageSupabase.storage
+        .from("subject-files")
+        .list(path, { sortBy: { column: "created_at", order: "desc" } });
+      if (error) throw error;
+      setRecordings((data || []).filter((f: RecordingFile) => f.name !== ".emptyFolderPlaceholder"));
+    } catch (e: any) {
+      toast.error("Could not load recordings: " + (e?.message || "unknown error"));
+    } finally {
+      setRecordingsLoading(false);
+    }
+  }, []);
+
+  const openRecordingsDialog = (cls: PublicClass) => {
+    setRecordingsDialog(cls);
+    setMoreMenu(null);
+    fetchRecordings(cls);
+  };
+
+  const getRecordingUrl = async (cls: PublicClass, fileName: string): Promise<string | null> => {
+    const path = `recordings/public-class/${cls.id}/${fileName}`;
+    const { data } = storageSupabase.storage.from("subject-files").getPublicUrl(path);
+    return data?.publicUrl || null;
+  };
+
+  const handlePlayRecording = async (cls: PublicClass, fileName: string) => {
+    const url = await getRecordingUrl(cls, fileName);
+    if (url) setPlayingUrl(url);
+    else toast.error("Could not get playback URL");
+  };
+
+  const handleDownloadRecording = async (cls: PublicClass, fileName: string) => {
+    const url = await getRecordingUrl(cls, fileName);
+    if (!url) { toast.error("Could not get download URL"); return; }
+    const a = document.createElement("a");
+    a.href = url; a.download = fileName; a.click();
+  };
+
+  const handleDeleteRecording = async (cls: PublicClass, fileName: string) => {
+    setDeletingRec(fileName);
+    const path = `recordings/public-class/${cls.id}/${fileName}`;
+    const { error } = await storageSupabase.storage.from("subject-files").remove([path]);
+    if (error) { toast.error("Delete failed: " + error.message); }
+    else { toast.success("Recording deleted"); fetchRecordings(cls); }
+    setDeletingRec(null);
+  };
 
   const saveReminderConfig = (u: Record<string, ReminderConfig>) => {
     setReminderConfig(u);
@@ -382,6 +449,22 @@ const PublicClassManagement = () => {
   const filteredRegs  = registrants.filter(r => r.name.toLowerCase().includes(regSearch.toLowerCase()) || (r.email||"").toLowerCase().includes(regSearch.toLowerCase()));
   const filteredConts = allContacts.filter(r => r.name.toLowerCase().includes(contactSearch.toLowerCase()) || (r.email||"").toLowerCase().includes(contactSearch.toLowerCase()) || (r.class_title||"").toLowerCase().includes(contactSearch.toLowerCase()));
 
+  /* ── helpers ── */
+  const formatFileSize = (bytes: number) => {
+    if (!bytes) return "—";
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+  const formatRecName = (name: string) => {
+    const ts = name.replace(/\.(webm|mp4|mp3)$/, "");
+    const num = parseInt(ts);
+    if (!isNaN(num) && num > 1000000000) {
+      try { return format(new Date(num), "dd MMM yyyy, h:mm a"); } catch {}
+    }
+    return name;
+  };
+  const isVideo = (name: string) => name.endsWith(".webm") || name.endsWith(".mp4");
+
   /* ── shared sub-components ── */
   const TR = ({ label, sub, checked, onChange }: any) => (
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid #F3F4F6"}}>
@@ -583,9 +666,10 @@ const PublicClassManagement = () => {
                     const isScheduled = cls.status==="scheduled";
                     const reminder    = reminderConfig[cls.id];
                     return (
+                      /* ── CARD: no overflow:hidden so dropdown can escape ── */
                       <div key={cls.id} style={{background:"#fff",borderRadius:16,
                         border:`2px solid ${cls.status==="live"?"#FECACA":cls.is_featured?"#FDE68A":"#E5E7EB"}`,
-                        overflow:"hidden"}}>
+                        position:"relative"}}>
 
                         {/* ── Card top: title + badges + edit/more ── */}
                         <div style={{padding:"14px 14px 0"}}>
@@ -615,12 +699,13 @@ const PublicClassManagement = () => {
                                 </button>
                                 {moreMenu===cls.id && (
                                   <div onClick={e=>e.stopPropagation()}
-                                    style={{position:"absolute",right:0,top:"calc(100% + 5px)",background:"#fff",borderRadius:12,border:"1.5px solid #E5E7EB",boxShadow:"0 8px 24px rgba(0,0,0,.12)",zIndex:50,minWidth:180,overflow:"hidden"}}>
+                                    style={{position:"absolute",right:0,top:"calc(100% + 5px)",background:"#fff",borderRadius:12,border:"1.5px solid #E5E7EB",boxShadow:"0 8px 24px rgba(0,0,0,.15)",zIndex:200,minWidth:190,overflow:"hidden"}}>
                                     {[
                                       {label:"Copy Link",    icon:<Copy size={13}/>,        action:()=>{copyLink(cls);setMoreMenu(null);}},
                                       {label:"Share",        icon:<Share2 size={13}/>,       action:()=>{setShareClass(cls);setMoreMenu(null);}},
                                       {label:"Open Preview", icon:<ExternalLink size={13}/>, action:()=>{window.open(`/live/${cls.room_code}`,"_blank");setMoreMenu(null);}},
                                       {label:"QR Code",      icon:<QrCode size={13}/>,       action:()=>{window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(window.location.origin+"/live/"+cls.room_code)}`,"_blank");setMoreMenu(null);}},
+                                      {label:"Recordings",   icon:<Film size={13}/>,         action:()=>openRecordingsDialog(cls)},
                                       {label:"Duplicate",    icon:<CopyPlus size={13}/>,     action:()=>duplicateClass(cls)},
                                       ...(cls.status==="ended"||cls.status==="archived" ? [{label:"View Stats", icon:<BarChart2 size={13}/>, action:()=>{setStatsTarget(cls);setMoreMenu(null);}}] : []),
                                       ...(cls.status!=="archived" ? [{label:"Archive",  icon:<Archive size={13}/>, action:()=>archiveClass(cls.id)}] : [{label:"Unarchive", icon:<Archive size={13}/>, action:async()=>{await supabase.from("public_classes").update({status:"ended"}).eq("id",cls.id);toast.success("Unarchived");setMoreMenu(null);fetchClasses();}}]),
@@ -676,7 +761,7 @@ const PublicClassManagement = () => {
                               <Calendar size={13}/> Reschedule
                             </button>
                           )}
-                          {/* Secondary actions — icon+label buttons */}
+                          {/* Secondary actions */}
                           {isScheduled && (
                             <button onClick={()=>{setRegDialog(cls);fetchRegistrants(cls.id);setRegSearch("");}}
                               style={{display:"flex",alignItems:"center",gap:5,padding:"9px 13px",borderRadius:10,border:"1.5px solid #E5E7EB",background:"#fff",cursor:"pointer",fontSize:12,fontWeight:600,color:"#374151",flexShrink:0}}>
@@ -692,6 +777,11 @@ const PublicClassManagement = () => {
                           <button onClick={()=>setShareClass(cls)}
                             style={{display:"flex",alignItems:"center",gap:5,padding:"9px 13px",borderRadius:10,border:"1.5px solid #E5E7EB",background:"#fff",cursor:"pointer",fontSize:12,fontWeight:600,color:"#374151",flexShrink:0}}>
                             <Share2 size={13}/> Share
+                          </button>
+                          {/* Recordings quick access button */}
+                          <button onClick={()=>openRecordingsDialog(cls)}
+                            style={{display:"flex",alignItems:"center",gap:5,padding:"9px 13px",borderRadius:10,border:"1.5px solid #E5E7EB",background:"#fff",cursor:"pointer",fontSize:12,fontWeight:600,color:"#374151",flexShrink:0}}>
+                            <Film size={13} color={G}/> Recordings
                           </button>
                         </div>
                       </div>
@@ -714,7 +804,7 @@ const PublicClassManagement = () => {
           <div style={{padding:"12px 16px",borderTop:"1px solid #E5E7EB",flexShrink:0}}>
             <button onClick={handleCreate} disabled={!form.title||saving}
               style={{width:"100%",padding:"12px 0",borderRadius:12,border:"none",background:!form.title||saving?"#E5E7EB":GOLD,color:!form.title||saving?"#9CA3AF":"#fff",cursor:"pointer",fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              {saving?<><Loader2 size={15} style={{animation:"spin .8s linear infinite"}}/>Creating…</>:"Create Public Class"}
+              {saving?<><Loader2 size={15} style={{animation:"spin .7s linear infinite"}}/>Creating…</>:"Create Public Class"}
             </button>
           </div>
         </DialogContent>
@@ -743,7 +833,7 @@ const PublicClassManagement = () => {
             </button>
             <button onClick={handleUpdate} disabled={!form.title||saving}
               style={{flex:2,padding:"12px 0",borderRadius:12,border:"none",background:!form.title||saving?"#E5E7EB":G,color:!form.title||saving?"#9CA3AF":"#fff",cursor:"pointer",fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              {saving?<><Loader2 size={15} style={{animation:"spin .8s linear infinite"}}/>Saving…</>:"Save Changes"}
+              {saving?<><Loader2 size={15} style={{animation:"spin .7s linear infinite"}}/>Saving…</>:"Save Changes"}
             </button>
           </div>
         </DialogContent>
@@ -917,7 +1007,6 @@ const PublicClassManagement = () => {
           </div>
           {rescheduleTarget && (
             <div style={{padding:"20px 22px 24px"}}>
-              {/* Same link notice */}
               <div style={{background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:10,padding:"10px 14px",marginBottom:18,display:"flex",alignItems:"flex-start",gap:8}}>
                 <span style={{fontSize:16,flexShrink:0}}>🔗</span>
                 <div>
@@ -927,8 +1016,6 @@ const PublicClassManagement = () => {
                   </p>
                 </div>
               </div>
-
-              {/* New date/time */}
               <label style={{fontSize:13,fontWeight:700,color:"#374151",display:"block",marginBottom:6}}>
                 New date & time <span style={{fontWeight:400,color:"#9CA3AF"}}>(optional)</span>
               </label>
@@ -938,7 +1025,6 @@ const PublicClassManagement = () => {
                 onChange={e=>setRescheduleDate(e.target.value)}
                 style={{width:"100%",padding:"10px 12px",borderRadius:10,border:"1.5px solid #E5E7EB",fontSize:14,color:"#111827",outline:"none",boxSizing:"border-box",marginBottom:20}}
               />
-
               <div style={{display:"flex",gap:8}}>
                 <button
                   onClick={()=>rescheduleClass(rescheduleTarget, rescheduleDate)}
@@ -1009,10 +1095,10 @@ const PublicClassManagement = () => {
                 {label:"Total Guests Joined", value:`${statsTarget.guest_count} / ${statsTarget.max_guests}`, icon:"👥"},
                 {label:"Room Code",           value:statsTarget.room_code,                                    icon:"🔑"},
                 {label:"Scheduled",           value:statsTarget.scheduled_at ? format(new Date(statsTarget.scheduled_at),"EEE d MMM yyyy, h:mm a") : "No date set", icon:"📅"},
-                {label:"Started",             value:statsTarget.actual_start_time ? format(new Date(statsTarget.actual_start_time),"EEE d MMM yyyy, h:mm a") : "—", icon:"▶️"},
-                {label:"Ended",               value:statsTarget.actual_end_time   ? format(new Date(statsTarget.actual_end_time),  "EEE d MMM yyyy, h:mm a") : "—", icon:"⏹️"},
-                {label:"Duration", value: statsTarget.actual_start_time && statsTarget.actual_end_time
-                  ? `${Math.round((new Date(statsTarget.actual_end_time).getTime() - new Date(statsTarget.actual_start_time).getTime()) / 60000)} minutes`
+                {label:"Started",             value:(statsTarget as any).actual_start_time ? format(new Date((statsTarget as any).actual_start_time),"EEE d MMM yyyy, h:mm a") : "—", icon:"▶️"},
+                {label:"Ended",               value:(statsTarget as any).actual_end_time   ? format(new Date((statsTarget as any).actual_end_time),  "EEE d MMM yyyy, h:mm a") : "—", icon:"⏹️"},
+                {label:"Duration", value: (statsTarget as any).actual_start_time && (statsTarget as any).actual_end_time
+                  ? `${Math.round((new Date((statsTarget as any).actual_end_time).getTime() - new Date((statsTarget as any).actual_start_time).getTime()) / 60000)} minutes`
                   : "—", icon:"⏱️"},
               ].map((s,i)=>(
                 <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 0",borderBottom:i<5?"1px solid #F3F4F6":"none"}}>
@@ -1027,6 +1113,144 @@ const PublicClassManagement = () => {
                 style={{marginTop:16,width:"100%",padding:"11px 0",borderRadius:10,border:"none",background:G,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:6}}>
                 <Users size={14}/> View All Registrants
               </button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ════════════════════════════════════
+          RECORDINGS DIALOG
+      ════════════════════════════════════ */}
+      <Dialog open={!!recordingsDialog} onOpenChange={v=>{ if(!v){ setRecordingsDialog(null); setPlayingUrl(null); } }}>
+        <DialogContent style={{maxWidth:520,borderRadius:20,padding:0,maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
+          {/* Header */}
+          <div style={{background:G,padding:"16px 18px",borderRadius:"20px 20px 0 0",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:34,height:34,borderRadius:9,background:"rgba(255,255,255,.12)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <Film size={16} color={GOLD}/>
+              </div>
+              <div>
+                <h2 style={{fontWeight:800,fontSize:15,color:"#fff",margin:0}}>Class Recordings</h2>
+                <p style={{fontSize:11,color:"rgba(255,255,255,.65)",margin:0}}>{recordingsDialog?.title}</p>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:6,alignItems:"center"}}>
+              <button onClick={()=>recordingsDialog&&fetchRecordings(recordingsDialog)}
+                style={{background:"rgba(255,255,255,.12)",border:"none",borderRadius:7,padding:"6px 8px",cursor:"pointer",color:"#fff",display:"flex",alignItems:"center"}}>
+                <RefreshCw size={13}/>
+              </button>
+              <button onClick={()=>{ setRecordingsDialog(null); setPlayingUrl(null); }}
+                style={{background:"rgba(255,255,255,.15)",border:"none",borderRadius:7,padding:"5px 7px",cursor:"pointer",color:"#fff"}}>
+                <X size={15}/>
+              </button>
+            </div>
+          </div>
+
+          {/* Player (shown when a file is selected) */}
+          {playingUrl && (
+            <div style={{background:"#000",flexShrink:0}}>
+              {playingUrl.endsWith(".webm")||playingUrl.includes("video") ? (
+                <video src={playingUrl} controls autoPlay
+                  style={{width:"100%",maxHeight:220,display:"block",background:"#000"}}/>
+              ) : (
+                <audio src={playingUrl} controls autoPlay
+                  style={{width:"100%",padding:"12px 16px",boxSizing:"border-box"}}/>
+              )}
+            </div>
+          )}
+
+          {/* Count bar */}
+          <div style={{padding:"10px 16px",background:"#F9FAFB",borderBottom:"1px solid #E5E7EB",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+            <p style={{fontSize:13,fontWeight:700,color:"#374151",margin:0}}>
+              {recordingsLoading ? "Loading…" : `${recordings.length} recording${recordings.length!==1?"s":""} found`}
+            </p>
+            {recordings.length > 0 && (
+              <span style={{fontSize:11,color:"#9CA3AF"}}>Tap ▶ to play · ↓ to download</span>
+            )}
+          </div>
+
+          {/* List */}
+          <div style={{flex:1,overflowY:"auto",padding:"0 0 8px"}}>
+            {recordingsLoading ? (
+              <div style={{textAlign:"center",padding:48}}>
+                <Loader2 size={28} style={{animation:"spin .8s linear infinite",color:G}}/>
+                <p style={{fontSize:13,color:"#9CA3AF",marginTop:10}}>Loading recordings…</p>
+              </div>
+            ) : recordings.length === 0 ? (
+              <div style={{textAlign:"center",padding:"48px 24px"}}>
+                <Film size={40} color="#D1D5DB" style={{margin:"0 auto 12px"}}/>
+                <p style={{fontSize:15,fontWeight:700,color:"#374151",marginBottom:4}}>No recordings yet</p>
+                <p style={{fontSize:13,color:"#9CA3AF"}}>Recordings will appear here after a class has been recorded.</p>
+              </div>
+            ) : recordings.map((rec, i) => {
+              const vid = isVideo(rec.name);
+              const sizeMb = rec.metadata?.size ? formatFileSize(rec.metadata.size) : "—";
+              const isPlaying = playingUrl !== null && playingUrl.includes(rec.name);
+              const isDeleting = deletingRec === rec.name;
+              return (
+                <div key={rec.name} style={{
+                  display:"flex",alignItems:"center",gap:12,padding:"12px 16px",
+                  borderBottom:"1px solid #F3F4F6",
+                  background:isPlaying?"#F0FDF4":"#fff",
+                }}>
+                  {/* Icon */}
+                  <div style={{width:40,height:40,borderRadius:10,background:vid?"#DBEAFE":"#FEF9C3",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    {vid ? <Film size={18} color="#1D4ED8"/> : <Mic size={18} color="#92400E"/>}
+                  </div>
+                  {/* Info */}
+                  <div style={{flex:1,minWidth:0}}>
+                    <p style={{fontSize:13,fontWeight:700,color:"#111",margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      {formatRecName(rec.name)}
+                    </p>
+                    <div style={{display:"flex",gap:8,marginTop:2}}>
+                      <span style={{fontSize:11,color:"#9CA3AF"}}>{vid?"Video":"Audio"}</span>
+                      <span style={{fontSize:11,color:"#9CA3AF"}}>·</span>
+                      <span style={{fontSize:11,color:"#9CA3AF"}}>{sizeMb}</span>
+                      {rec.created_at && (
+                        <>
+                          <span style={{fontSize:11,color:"#9CA3AF"}}>·</span>
+                          <span style={{fontSize:11,color:"#9CA3AF"}}>
+                            {format(new Date(rec.created_at),"dd MMM, h:mm a")}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {/* Actions */}
+                  <div style={{display:"flex",gap:5,flexShrink:0}}>
+                    <button
+                      onClick={()=>recordingsDialog && handlePlayRecording(recordingsDialog, rec.name)}
+                      title="Play"
+                      style={{width:34,height:34,borderRadius:8,border:"none",
+                        background:isPlaying?"#16A34A":"#F0FDF4",
+                        cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <Play size={14} color={isPlaying?"#fff":"#16A34A"}/>
+                    </button>
+                    <button
+                      onClick={()=>recordingsDialog && handleDownloadRecording(recordingsDialog, rec.name)}
+                      title="Download"
+                      style={{width:34,height:34,borderRadius:8,border:"none",background:"#EFF6FF",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                      <Download size={14} color="#1D4ED8"/>
+                    </button>
+                    <button
+                      onClick={()=>recordingsDialog && handleDeleteRecording(recordingsDialog, rec.name)}
+                      disabled={isDeleting}
+                      title="Delete"
+                      style={{width:34,height:34,borderRadius:8,border:"none",background:"#FEF2F2",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",opacity:isDeleting?.5:1}}>
+                      {isDeleting ? <Loader2 size={12} style={{animation:"spin .7s linear infinite",color:"#DC2626"}}/> : <Trash2 size={14} color="#DC2626"/>}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Footer note */}
+          {recordings.length > 0 && (
+            <div style={{padding:"10px 16px",borderTop:"1px solid #E5E7EB",background:"#FAFAFA",flexShrink:0}}>
+              <p style={{fontSize:11,color:"#9CA3AF",margin:0,textAlign:"center"}}>
+                Recordings are stored in your Supabase storage bucket · <code style={{fontFamily:"monospace"}}>subject-files/recordings/public-class/{recordingsDialog?.id}</code>
+              </p>
             </div>
           )}
         </DialogContent>
