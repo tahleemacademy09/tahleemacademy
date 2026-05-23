@@ -902,17 +902,89 @@ const GuestClassroom = () => {
   /* ── Ended screen ── */
   if (ended) {
     return (
-      <div style={{ height:"100dvh", display:"flex", alignItems:"center", justifyContent:"center", padding:16, background:"#0f3122", color:"#fff", fontFamily:"'Google Sans',sans-serif" }}>
-        <style>{CSS}</style>
-        <div style={{ maxWidth:420, width:"100%", textAlign:"center", animation:"gc-fade-up .3s ease" }}>
-          <p style={{ fontSize:30, marginBottom:4, fontFamily:"'Amiri',serif", color:"#c9973a" }}>الدرس انتهى</p>
-          <h2 style={{ fontSize:22, fontWeight:600, color:"#fff", marginBottom:6 }}>Class Has Ended</h2>
-          <p style={{ color:"#c9973a", fontFamily:"'Amiri',serif", marginBottom:4 }}>جزاكم الله خيراً</p>
-          <p style={{ color:"rgba(255,255,255,.5)", fontSize:13, marginBottom:28 }}>JazakAllahu Khayran for joining!</p>
-          {isHost
-            ? <button onClick={()=>navigateAway("/admin/public-classes")} style={{ fontSize:13, color:"rgba(255,255,255,.35)", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>Back to Dashboard</button>
-            : <button onClick={()=>navigateAway("/live")} style={{ fontSize:13, color:"rgba(255,255,255,.35)", background:"none", border:"none", cursor:"pointer", textDecoration:"underline" }}>Browse Other Classes</button>
-          }
+      <div style={{ minHeight:"100dvh", overflowY:"auto", background:"#0b1f13", color:"#fff", fontFamily:"'Google Sans','Roboto',sans-serif", padding:"0 0 48px" }}>
+        <style>{`
+          ${CSS}
+          @keyframes gc-ended-fade{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+          .gc-ended-card{animation:gc-ended-fade .35s ease both;}
+          .gc-cta-btn{transition:opacity .15s,transform .1s;cursor:pointer;}
+          .gc-cta-btn:active{opacity:.8;transform:scale(.97);}
+        `}</style>
+
+        {/* ── Header ── */}
+        <div style={{ background:"linear-gradient(160deg,#0f2e1a 0%,#0b1f13 100%)", padding:"48px 24px 36px", textAlign:"center", borderBottom:"1px solid rgba(201,151,58,.15)" }}>
+          {/* Gold divider */}
+          <div style={{ width:48, height:2, background:"#c9973a", borderRadius:2, margin:"0 auto 20px", opacity:.7 }} />
+          <p style={{ fontSize:28, fontFamily:"'Amiri',serif", color:"#c9973a", margin:"0 0 8px", lineHeight:1.4 }}>جزاكم الله خيراً</p>
+          <h2 style={{ fontSize:22, fontWeight:700, color:"#fff", margin:"0 0 8px" }}>Class Has Ended</h2>
+          <p style={{ color:"rgba(255,255,255,.45)", fontSize:13, margin:0 }}>JazakAllahu Khayran for attending <strong style={{color:"rgba(255,255,255,.75)"}}>{title}</strong></p>
+        </div>
+
+        <div style={{ maxWidth:460, margin:"0 auto", padding:"0 16px" }}>
+
+          {/* ── Enroll CTA ── */}
+          <div className="gc-ended-card" style={{ marginTop:28, background:"rgba(201,151,58,.08)", border:"1.5px solid rgba(201,151,58,.3)", borderRadius:20, padding:"24px 20px", animationDelay:".05s" }}>
+            <p style={{ fontSize:11, fontWeight:700, letterSpacing:1.4, color:"#c9973a", margin:"0 0 8px", textTransform:"uppercase" }}>🎓 Want to learn more?</p>
+            <h3 style={{ fontSize:18, fontWeight:700, color:"#fff", margin:"0 0 8px", lineHeight:1.3 }}>Enrol in Full Courses at Tahleem Academy</h3>
+            <p style={{ fontSize:13, color:"rgba(255,255,255,.5)", margin:"0 0 20px", lineHeight:1.6 }}>
+              Access structured Islamic studies — Qur'an, Fiqh, Aqeedah, Arabic &amp; more — taught by qualified scholars. Live classes, recordings, and personal feedback.
+            </p>
+            <a
+              href="/courses"
+              className="gc-cta-btn"
+              style={{ display:"block", textAlign:"center", padding:"13px 0", borderRadius:999, background:"#c9973a", color:"#0b1f13", fontSize:14, fontWeight:800, textDecoration:"none" }}
+            >
+              Browse Courses →
+            </a>
+            <a
+              href="/register"
+              className="gc-cta-btn"
+              style={{ display:"block", textAlign:"center", marginTop:10, padding:"12px 0", borderRadius:999, border:"1px solid rgba(201,151,58,.4)", background:"transparent", color:"#c9973a", fontSize:13, fontWeight:600, textDecoration:"none" }}
+            >
+              Create Free Account
+            </a>
+          </div>
+
+          {/* ── More live classes ── */}
+          <div className="gc-ended-card" style={{ marginTop:16, background:"rgba(255,255,255,.04)", border:"1px solid rgba(255,255,255,.08)", borderRadius:20, padding:"20px", animationDelay:".12s" }}>
+            <p style={{ fontSize:11, fontWeight:700, letterSpacing:1.4, color:"rgba(255,255,255,.4)", margin:"0 0 8px", textTransform:"uppercase" }}>📡 Free Live Classes</p>
+            <p style={{ fontSize:14, color:"rgba(255,255,255,.7)", margin:"0 0 16px", lineHeight:1.5 }}>
+              We host regular free public classes open to everyone — no account needed.
+            </p>
+            <a
+              href="/live"
+              className="gc-cta-btn"
+              style={{ display:"block", textAlign:"center", padding:"12px 0", borderRadius:999, background:"rgba(255,255,255,.08)", border:"1px solid rgba(255,255,255,.12)", color:"rgba(255,255,255,.85)", fontSize:13, fontWeight:600, textDecoration:"none" }}
+            >
+              See Upcoming Classes
+            </a>
+          </div>
+
+          {/* ── WhatsApp ── */}
+          <div className="gc-ended-card" style={{ marginTop:16, background:"rgba(37,211,102,.05)", border:"1px solid rgba(37,211,102,.2)", borderRadius:20, padding:"20px", animationDelay:".18s" }}>
+            <p style={{ fontSize:11, fontWeight:700, letterSpacing:1.4, color:"#25d366", margin:"0 0 8px", textTransform:"uppercase" }}>💬 Stay Connected</p>
+            <p style={{ fontSize:14, color:"rgba(255,255,255,.6)", margin:"0 0 16px", lineHeight:1.5 }}>
+              Get notified about upcoming classes, new courses, and announcements directly on WhatsApp.
+            </p>
+            <a
+              href="https://wa.me/2348163310471"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="gc-cta-btn"
+              style={{ display:"block", textAlign:"center", padding:"12px 0", borderRadius:999, background:"rgba(37,211,102,.12)", border:"1px solid rgba(37,211,102,.3)", color:"#25d366", fontSize:13, fontWeight:700, textDecoration:"none" }}
+            >
+              WhatsApp Us
+            </a>
+          </div>
+
+          {/* ── Host nav / Guest browse ── */}
+          <div style={{ textAlign:"center", marginTop:28 }}>
+            {isHost
+              ? <button onClick={()=>navigateAway("/admin/public-classes")} style={{ fontSize:13, color:"rgba(255,255,255,.3)", background:"none", border:"none", cursor:"pointer", textDecoration:"underline", fontFamily:"inherit" }}>Back to Dashboard</button>
+              : <button onClick={()=>navigateAway("/live")} style={{ fontSize:13, color:"rgba(255,255,255,.3)", background:"none", border:"none", cursor:"pointer", textDecoration:"underline", fontFamily:"inherit" }}>Browse Other Classes</button>
+            }
+          </div>
+
         </div>
       </div>
     );
