@@ -100,6 +100,16 @@ const CSS = `
   [data-lk-theme] { height:100%!important; display:flex!important; flex-direction:column!important; }
   .lk-video-conference { height:100%!important; }
   .lk-disconnect-button { display:none!important; }
+
+  /* LK control bar: give it a subtle top separator and slight bg so it
+     sits clearly above the video participant-name overlay */
+  .lk-control-bar {
+    border-top: 1px solid rgba(255,255,255,.08) !important;
+    background: rgba(28,29,31,.97) !important;
+    backdrop-filter: blur(16px) !important;
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
 `;
 
 /* ════════════════════════════════════════════════════════
@@ -996,22 +1006,6 @@ const GuestClassroom = () => {
               <Minimize2 style={{ width:14, height:14 }} />
             </button>
 
-            {/* ── LEAVE / END BUTTON — always visible in header ──
-                This sets intentionalRef BEFORE any disconnect, so autoReconnect is skipped. */}
-            <button
-              onClick={handleLeaveClick}
-              title={isHost ? "End class for everyone" : "Leave class"}
-              style={{
-                display:"flex", alignItems:"center", justifyContent:"center",
-                gap:5, height:32, padding:"0 12px", borderRadius:20,
-                border:"none", background:"#ea4335", color:"#fff",
-                cursor:"pointer", fontSize:12, fontWeight:700,
-                flexShrink:0,
-              }}
-            >
-              <Phone style={{ width:13, height:13, transform:"rotate(135deg)" }} />
-              <span style={{ display:"block" }}>{isHost ? "End" : "Leave"}</span>
-            </button>
           </div>
         </div>
 
@@ -1077,7 +1071,56 @@ const GuestClassroom = () => {
             onLaunchQuiz={isHost?()=>setShowQuiz(true):undefined}
           />
         ) : (
-          <div style={{ height:1, background:"rgba(255,255,255,.06)", flexShrink:0 }} />
+          /* ── Footer bar (no sessionId / public class) ──
+             Sits BELOW the LiveKit control bar so it never overlaps
+             the participant name text overlay inside the video tile.
+             The 1px top border acts as a visual separator from the LK bar. */
+          <div style={{
+            flexShrink:0,
+            background:"rgba(22,23,25,.98)",
+            borderTop:"1px solid rgba(255,255,255,.07)",
+            display:"flex", alignItems:"center", justifyContent:"center",
+            padding:"10px 16px",
+            paddingBottom:"calc(10px + env(safe-area-inset-bottom, 0px))",
+            gap:12,
+          }}>
+            {/* Minimize — keep audio alive */}
+            <button
+              onClick={doMinimize}
+              title="Minimize — audio keeps running"
+              style={{
+                display:"flex", alignItems:"center", gap:6,
+                height:44, padding:"0 18px", borderRadius:22,
+                border:"1.5px solid rgba(255,255,255,.14)",
+                background:"rgba(255,255,255,.07)",
+                color:"rgba(255,255,255,.75)",
+                cursor:"pointer", fontSize:13, fontWeight:600,
+                flexShrink:0,
+              }}
+            >
+              <Minimize2 style={{ width:15, height:15 }} />
+              <span>Minimize</span>
+            </button>
+
+            {/* End / Leave — intentional disconnect */}
+            <button
+              onClick={handleLeaveClick}
+              title={isHost ? "End class for everyone" : "Leave class"}
+              style={{
+                display:"flex", alignItems:"center", gap:7,
+                height:44, padding:"0 28px", borderRadius:22,
+                border:"none",
+                background:"#ea4335",
+                color:"#fff",
+                cursor:"pointer", fontSize:14, fontWeight:700,
+                flexShrink:0,
+                boxShadow:"0 2px 12px rgba(234,67,53,.45)",
+              }}
+            >
+              <Phone style={{ width:15, height:15, transform:"rotate(135deg)" }} />
+              <span>{isHost ? "End Class" : "Leave"}</span>
+            </button>
+          </div>
         )}
 
         {sessionId && <LiveQuizOverlay sessionId={sessionId} isOpen={showQuiz} onClose={()=>setShowQuiz(false)} />}
