@@ -136,6 +136,27 @@ const CSS = `
   .lk-control-bar > .lk-button:hover {
     background: rgba(255,255,255,.14) !important;
   }
+
+  /* ── Fix: fill tile — no black side bars ── */
+  .lk-participant-tile video {
+    object-fit: cover !important;
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  /* ── Fix: un-mirror remote participants ── */
+  /* LiveKit mirrors ALL videos by default via scaleX(-1).
+     Strip it from every tile that is NOT the local participant. */
+  .lk-participant-tile:not([data-lk-local-participant]) video,
+  .lk-participant-tile:not([data-lk-local-participant="true"]) video {
+    transform: none !important;
+  }
+
+  /* Keep local camera mirrored so it feels natural to the sender */
+  .lk-participant-tile[data-lk-local-participant] video,
+  .lk-participant-tile[data-lk-local-participant="true"] video {
+    transform: scaleX(-1) !important;
+  }
 `;
 
 /* ════════════════════════════════════════════════════════
