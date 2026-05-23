@@ -106,7 +106,7 @@ const CSS = `
     border-top: 1px solid rgba(255,255,255,.08) !important;
     background: rgba(22,23,25,.98) !important;
     backdrop-filter: blur(16px) !important;
-    padding: 10px 16px !important;
+    padding: 10px 118px 10px 16px !important;
     padding-bottom: calc(10px + env(safe-area-inset-bottom,0px)) !important;
     gap: 10px !important;
     position: relative !important;
@@ -869,38 +869,69 @@ const GuestClassroom = () => {
 
   return (
     <>
-    {/* ── Minimized backdrop ── */}
+    {/* ── Minimized overlay ──────────────────────────────────────────────
+         Rendered whenever `minimized === true` AND class is not ended.
+         zIndex 7999 sits BELOW the translateX'd classroom (8000) so it
+         only shows when the classroom is off-screen. Covers every path
+         that hides the class view: back button, home button, doMinimize().  */}
     {minimized && (
       <div style={{
-        position: "fixed", inset: 0, zIndex: 7999,
-        background: "#0f3122",
-        display: "flex", flexDirection: "column",
-        alignItems: "center", justifyContent: "center",
-        gap: 12, padding: 24,
-        fontFamily: "'Google Sans', sans-serif",
+        position:"fixed", inset:0, zIndex:7999,
+        background:"#0b1f14",
+        display:"flex", flexDirection:"column",
+        alignItems:"center", justifyContent:"center",
+        gap:14, padding:28,
+        fontFamily:"'Google Sans', sans-serif",
       }}>
-        <div style={{
-          width: 72, height: 72, borderRadius: "50%",
-          background: "#c9973a", color: "#0f3122",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 32, fontWeight: 700, marginBottom: 4,
-        }}>
-          {initial}
+        <style>{`
+          @keyframes gc-pulse-min{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.82)}}
+          @keyframes gc-spin-ring{to{transform:rotate(360deg)}}
+        `}</style>
+
+        {/* Pulsing LIVE ring */}
+        <div style={{ position:"relative", width:88, height:88, marginBottom:4 }}>
+          <div style={{ position:"absolute", inset:-6, borderRadius:"50%", border:"2px solid rgba(239,68,68,.35)", animation:"gc-spin-ring 3s linear infinite" }} />
+          <div style={{ position:"absolute", inset:-12, borderRadius:"50%", border:"1px solid rgba(239,68,68,.15)" }} />
+          <div style={{ width:88, height:88, borderRadius:"50%", background:"#c9973a", color:"#0b1f14", display:"flex", alignItems:"center", justifyContent:"center", fontSize:36, fontWeight:800 }}>
+            {initial}
+          </div>
         </div>
-        <div style={{
-          display: "flex", alignItems: "center", gap: 6,
-          background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)",
-          borderRadius: 999, padding: "4px 12px",
-        }}>
-          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", boxShadow: "0 0 6px rgba(239,68,68,0.7)", animation: "gc-pulse 1.4s ease-in-out infinite" }} />
-          <span style={{ color: "#ef4444", fontSize: 12, fontWeight: 700, letterSpacing: 1 }}>LIVE</span>
+
+        {/* LIVE badge */}
+        <div style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(239,68,68,.15)", border:"1px solid rgba(239,68,68,.35)", borderRadius:999, padding:"5px 14px" }}>
+          <span style={{ width:7, height:7, borderRadius:"50%", background:"#ef4444", boxShadow:"0 0 7px #ef4444", animation:"gc-pulse-min 1.6s ease-in-out infinite" }} />
+          <span style={{ color:"#ef4444", fontSize:12, fontWeight:700, letterSpacing:1.2 }}>LIVE</span>
         </div>
-        <p style={{ color: "#fff", fontSize: 18, fontWeight: 600, margin: 0, textAlign: "center" }}>{classTitle || title}</p>
-        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 13, margin: 0 }}>Class is running in the background</p>
-        <div style={{ marginTop: 16, padding: "10px 22px", borderRadius: 999, background: "rgba(201,151,58,0.15)", border: "1px solid rgba(201,151,58,0.35)", color: "#c9973a", fontSize: 13, fontWeight: 600, cursor: "pointer" }} onClick={handleReturn}>
-          Tap to return to class
-        </div>
-        <style>{`@keyframes gc-pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
+
+        {/* Class name */}
+        <p style={{ color:"#fff", fontSize:19, fontWeight:700, margin:0, textAlign:"center", lineHeight:1.3 }}>{classTitle || title}</p>
+        {classTitleAr && <p style={{ color:"rgba(255,255,255,.45)", fontFamily:"'Amiri',serif", fontSize:15, margin:"-6px 0 0", direction:"rtl" }}>{classTitleAr}</p>}
+
+        {/* Duration */}
+        <p style={{ color:"rgba(255,255,255,.4)", fontSize:13, margin:0, fontVariantNumeric:"tabular-nums" }}>
+          ⏱ {fmtT(classDuration)} elapsed
+        </p>
+
+        {/* Return button */}
+        <button
+          onClick={handleReturn}
+          style={{
+            marginTop:8, padding:"13px 32px", borderRadius:999,
+            border:"none", background:"#c9973a",
+            color:"#0b1f14", fontSize:15, fontWeight:800, cursor:"pointer",
+            boxShadow:"0 4px 18px rgba(201,151,58,.4)",
+          }}
+        >
+          ↩ Return to Class
+        </button>
+
+        {/* Leave quietly */}
+        <button
+          onClick={handleLeave}
+          style={{ background:"none", border:"none", color:"rgba(255,255,255,.3)", fontSize:13, cursor:"pointer", marginTop:2 }}
+        >
+          Leave class
+        </button>
       </div>
     )}
 
@@ -1060,24 +1091,51 @@ const GuestClassroom = () => {
             <VideoConference />
             <RoomAudioRenderer />
 
-            {/* ── Leave / End icon — overlaid at the right of the LK control bar ──
-                The LK control bar is ~68px tall. We position our button at the
-                same vertical centre so it reads as part of that row.
-                intentionalRef is set BEFORE disconnect → no auto-reconnect.     */}
+          {/* ── Custom buttons overlaid at the right of the LK control bar ──
+                Order: [Minimize] [Leave]  (chat is the last LK button to their left)
+                The control bar has padding-right:118px to reserve this space.    */}
+
+            {/* Minimize button */}
+            <button
+              onClick={doMinimize}
+              title="Minimize — audio stays on"
+              style={{
+                position:"absolute",
+                bottom: "calc(env(safe-area-inset-bottom,0px) + 11px)",
+                right: 68,           /* 12(leave) + 48(leave-width) + 8(gap) */
+                width: 48, height: 46,
+                borderRadius: 24,
+                border: "none",
+                background: "rgba(255,255,255,.1)",
+                color: "rgba(255,255,255,.85)",
+                cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                zIndex: 20,
+              }}
+            >
+              <Minimize2 style={{ width:18, height:18 }} />
+            </button>
+
+            {/* Leave / End button — pill shape matching image 2 */}
             <button
               onClick={handleLeaveClick}
               title={isHost ? "End class for everyone" : "Leave class"}
               style={{
-                position:"absolute", bottom:14, right:14,
-                width:44, height:44, borderRadius:"50%",
-                border:"none", background:"#ea4335",
-                color:"#fff", cursor:"pointer",
-                display:"flex", alignItems:"center", justifyContent:"center",
-                boxShadow:"0 2px 12px rgba(234,67,53,.55)",
-                zIndex:10,
+                position:"absolute",
+                bottom: "calc(env(safe-area-inset-bottom,0px) + 11px)",
+                right: 12,
+                width: 48, height: 46,
+                borderRadius: 24,
+                border: "none",
+                background: "#ea4335",
+                color: "#fff",
+                cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: "0 2px 12px rgba(234,67,53,.45)",
+                zIndex: 20,
               }}
             >
-              <Phone style={{ width:18, height:18, transform:"rotate(135deg)" }} />
+              <LogOut style={{ width:19, height:19 }} />
             </button>
           </div>
 
