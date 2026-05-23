@@ -32,7 +32,7 @@ import { storageSupabase } from "../../integrations/supabase/storageClient";
 import {
   UserPlus, Radio, Circle, Loader2,
   Mic, Pause, Play, Square, X, Phone,
-  Minimize2, RefreshCw, Users,
+  Minimize2, RefreshCw, Users, LogOut,
 } from "lucide-react";
 import ClassChatPanel    from "@/components/classroom/ClassChatPanel";
 import ClassPolls        from "@/components/classroom/ClassPolls";
@@ -96,19 +96,44 @@ const CSS = `
     animation:gc-fade-up .2s ease;
   }
 
-  /* LK theme override — hide the default leave button */
+  /* LK theme override — hide the default leave/disconnect button */
   [data-lk-theme] { height:100%!important; display:flex!important; flex-direction:column!important; }
   .lk-video-conference { height:100%!important; }
   .lk-disconnect-button { display:none!important; }
 
-  /* LK control bar: give it a subtle top separator and slight bg so it
-     sits clearly above the video participant-name overlay */
+  /* LK control bar */
   .lk-control-bar {
     border-top: 1px solid rgba(255,255,255,.08) !important;
-    background: rgba(28,29,31,.97) !important;
+    background: rgba(22,23,25,.98) !important;
     backdrop-filter: blur(16px) !important;
-    padding-top: 8px !important;
-    padding-bottom: 8px !important;
+    padding: 10px 16px !important;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom,0px)) !important;
+    gap: 10px !important;
+    position: relative !important;
+  }
+
+  /* Mic and Camera split-button groups — dark pill background like image 3 */
+  .lk-button-group {
+    background: rgba(255,255,255,.1) !important;
+    border-radius: 24px !important;
+    overflow: visible !important;
+  }
+  .lk-button-group .lk-button {
+    background: transparent !important;
+    border-radius: 24px !important;
+  }
+  .lk-button-group .lk-button:hover {
+    background: rgba(255,255,255,.08) !important;
+  }
+
+  /* All other standalone buttons in the control bar */
+  .lk-control-bar > .lk-button {
+    background: rgba(255,255,255,.08) !important;
+    border-radius: 24px !important;
+    padding: 10px 14px !important;
+  }
+  .lk-control-bar > .lk-button:hover {
+    background: rgba(255,255,255,.14) !important;
   }
 `;
 
@@ -1098,58 +1123,7 @@ const GuestClassroom = () => {
             onLaunchPoll={isHost?()=>{ setChatOpen(true); setSideTab("polls"); }:undefined}
             onLaunchQuiz={isHost?()=>setShowQuiz(true):undefined}
           />
-        ) : (
-          /* ── Footer bar (no sessionId / public class) ──
-             Sits BELOW the LiveKit control bar so it never overlaps
-             the participant name text overlay inside the video tile.
-             The 1px top border acts as a visual separator from the LK bar. */
-          <div style={{
-            flexShrink:0,
-            background:"rgba(22,23,25,.98)",
-            borderTop:"1px solid rgba(255,255,255,.07)",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            padding:"10px 16px",
-            paddingBottom:"calc(10px + env(safe-area-inset-bottom, 0px))",
-            gap:12,
-          }}>
-            {/* Minimize — keep audio alive */}
-            <button
-              onClick={doMinimize}
-              title="Minimize — audio keeps running"
-              style={{
-                display:"flex", alignItems:"center", gap:6,
-                height:44, padding:"0 18px", borderRadius:22,
-                border:"1.5px solid rgba(255,255,255,.14)",
-                background:"rgba(255,255,255,.07)",
-                color:"rgba(255,255,255,.75)",
-                cursor:"pointer", fontSize:13, fontWeight:600,
-                flexShrink:0,
-              }}
-            >
-              <Minimize2 style={{ width:15, height:15 }} />
-              <span>Minimize</span>
-            </button>
-
-            {/* End / Leave — intentional disconnect */}
-            <button
-              onClick={handleLeaveClick}
-              title={isHost ? "End class for everyone" : "Leave class"}
-              style={{
-                display:"flex", alignItems:"center", gap:7,
-                height:44, padding:"0 28px", borderRadius:22,
-                border:"none",
-                background:"#ea4335",
-                color:"#fff",
-                cursor:"pointer", fontSize:14, fontWeight:700,
-                flexShrink:0,
-                boxShadow:"0 2px 12px rgba(234,67,53,.45)",
-              }}
-            >
-              <Phone style={{ width:15, height:15, transform:"rotate(135deg)" }} />
-              <span>{isHost ? "End Class" : "Leave"}</span>
-            </button>
-          </div>
-        )}
+        ) : null}
 
         {sessionId && <LiveQuizOverlay sessionId={sessionId} isOpen={showQuiz} onClose={()=>setShowQuiz(false)} />}
       </LiveKitRoom>
