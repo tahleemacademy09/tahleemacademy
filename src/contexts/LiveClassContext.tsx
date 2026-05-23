@@ -1,7 +1,22 @@
 /*
   LiveClassContext.tsx — Tahleem Academy
   Manages global live class state. Persists across navigation.
-  Handles back-button interception and browser-minimize → overlay.
+
+  Back-button strategy (revised):
+  ─────────────────────────────────
+  • When inCall becomes true, we push ONE guard history entry.
+  • popstate fires → we set minimized=true and immediately push
+    the guard entry again (so the next back press also minimizes).
+  • When leaving class (leaveClass), we do NOT pop history manually —
+    we let the browser's natural history handle itself. This avoids
+    the double-pop bug that was causing pages to unexpectedly navigate.
+  • We do NOT push guard entries from GlobalClassroomOverlay to avoid
+    double-sentinel issues.
+
+  Minimize/visibilitychange:
+  ─────────────────────────────────
+  • NO navigate() calls. The classroom is position:fixed — the React Router
+    route under it is always the correct page. Just toggle minimized state.
 */
 
 import {
@@ -12,24 +27,16 @@ import {
 const STORAGE_KEY   = "tahleem_live_class";
 const HISTORY_STATE = "tahleem-live-class";
 
-/* ── SW keep-alive: pings the service worker every 20s during a live class
-   to prevent the browser from suspending the tab and killing WebRTC.     */
+/* ── SW keep-alive ── */
 function useLiveClassKeepAlive(inCall: boolean) {
   useEffect(() => {
     if (!inCall) return;
     const sw = navigator.serviceWorker?.controller;
-    // Tell SW a live class started
     sw?.postMessage({ type: "LIVE_CLASS_START" });
-
-    const ping = () => {
-      navigator.serviceWorker?.controller?.postMessage({ type: "LIVE_CLASS_KEEPALIVE" });
-    };
-    // Ping every 20 seconds
+    const ping = () => navigator.serviceWorker?.controller?.postMessage({ type: "LIVE_CLASS_KEEPALIVE" });
     const iv = setInterval(ping, 20_000);
-    // Also ping immediately when tab becomes visible again (wake from background)
     const onVis = () => { if (document.visibilityState === "visible") ping(); };
     document.addEventListener("visibilitychange", onVis);
-
     return () => {
       clearInterval(iv);
       document.removeEventListener("visibilitychange", onVis);
@@ -53,7 +60,7 @@ function restore(): LiveClassState | null {
     const raw = localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const p = JSON.parse(raw);
-    if (p?.inCall && p?.activeSubject) return { ...p, autoJoin: true };
+    if (p?.inCall && p?.activeSubject) return { ...p, autoJoin: true, hasConnected: false };
   } catch {}
   return null;
 }
@@ -66,10 +73,7 @@ interface LiveClassState {
   autoJoin:      boolean;
   micEnabled:    boolean;
   camEnabled:    boolean;
-  /** True only after LiveKit has confirmed a successful connection */
   hasConnected:  boolean;
-  /** The URL the user was on before joining the class — used to navigate back when minimized/leaving */
-  previousRoute: string;
 }
 interface LiveClassContextType extends LiveClassState {
   joinClass:       (subject: any, opts?: { autoJoin?: boolean }) => void;
@@ -83,17 +87,19 @@ interface LiveClassContextType extends LiveClassState {
 }
 const LiveClassContext = createContext<LiveClassContextType | null>(null);
 
+const DEFAULT_STATE: LiveClassState = {
+  activeSubject: null, inCall: false, minimized: false,
+  autoJoin: false, micEnabled: false, camEnabled: false, hasConnected: false,
+};
+
 /* ── Provider ── */
 export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
-  const [state, setState] = useState<LiveClassState>(() => {
-    const saved = restore();
-    return saved ?? { activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false, hasConnected: false, previousRoute: "/" };
-  });
+  const [state, setState] = useState<LiveClassState>(() => restore() ?? DEFAULT_STATE);
+  const guardPushed = useRef(false);
 
   const toggleMicFnRef = useRef<() => void>(() => {});
   const toggleCamFnRef = useRef<() => void>(() => {});
 
-  // SW keep-alive during live class
   useLiveClassKeepAlive(state.inCall);
 
   // Persist call state
@@ -105,22 +111,26 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [state.inCall, state.minimized, state.activeSubject]);
 
-  // Push a history entry when call starts so back button can be intercepted
+  // Push ONE guard entry when the call starts (and only once)
   useEffect(() => {
-    if (state.inCall && !state.minimized) {
-      // Push a "guard" state so popstate fires before leaving the page
+    if (state.inCall && !guardPushed.current) {
       history.pushState({ [HISTORY_STATE]: true }, "");
+      guardPushed.current = true;
+    }
+    if (!state.inCall) {
+      guardPushed.current = false;
     }
   }, [state.inCall]);
 
   // Back button → minimize instead of navigating away
+  // Re-push the guard so the NEXT back press also minimizes.
   useEffect(() => {
     if (!state.inCall) return;
     const onPop = (e: PopStateEvent) => {
-      if (!e.state?.[HISTORY_STATE]) {
-        history.pushState({ [HISTORY_STATE]: true }, "");
-      }
-      setState(prev => (prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev));
+      // Always re-push the guard so back button keeps working
+      history.pushState({ [HISTORY_STATE]: true }, "");
+      // Minimize the classroom
+      setState(prev => prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -128,8 +138,12 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
 
   const joinClass = useCallback((subject: any, opts?: { autoJoin?: boolean }) => {
     clearPersist();
-    const previousRoute = window.location.pathname + window.location.search;
-    setState({ activeSubject: subject, inCall: true, minimized: false, autoJoin: opts?.autoJoin ?? false, micEnabled: false, camEnabled: false, hasConnected: false, previousRoute });
+    guardPushed.current = false; // reset so the effect pushes a fresh guard
+    setState({
+      activeSubject: subject, inCall: true, minimized: false,
+      autoJoin: opts?.autoJoin ?? false, micEnabled: false,
+      camEnabled: false, hasConnected: false,
+    });
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission().catch(() => {});
     }
@@ -137,7 +151,8 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
 
   const leaveClass = useCallback(() => {
     clearPersist();
-    setState({ activeSubject: null, inCall: false, minimized: false, autoJoin: false, micEnabled: false, camEnabled: false, hasConnected: false, previousRoute: "/" });
+    guardPushed.current = false;
+    setState(DEFAULT_STATE);
   }, []);
 
   const setMinimized = useCallback((v: boolean) => {
@@ -148,13 +163,11 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
       }
       return next;
     });
-    // When restoring from minimized, push guard state again
-    if (!v) history.pushState({ [HISTORY_STATE]: true }, "");
   }, []);
 
-  const setMicEnabled     = useCallback((v: boolean) => setState(prev => ({ ...prev, micEnabled: v })), []);
-  const setCamEnabled     = useCallback((v: boolean) => setState(prev => ({ ...prev, camEnabled: v })), []);
-  const setHasConnected   = useCallback((v: boolean) => setState(prev => ({ ...prev, hasConnected: v })), []);
+  const setMicEnabled   = useCallback((v: boolean) => setState(prev => ({ ...prev, micEnabled: v })), []);
+  const setCamEnabled   = useCallback((v: boolean) => setState(prev => ({ ...prev, camEnabled: v })), []);
+  const setHasConnected = useCallback((v: boolean) => setState(prev => ({ ...prev, hasConnected: v })), []);
 
   return (
     <LiveClassContext.Provider value={{
