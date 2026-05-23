@@ -137,7 +137,20 @@ const CSS = `
     background: rgba(255,255,255,.14) !important;
   }
 
-  /* ── Fix: fill tile — no black side bars (all LiveKit videos) ── */
+  /* ── Fix: tile containers — LiveKit forces aspect-ratio:16/9 which
+     letterboxes portrait phone video. Strip it so tiles fill freely. ── */
+  .lk-grid-layout,
+  .lk-focus-layout {
+    width: 100% !important;
+    height: 100% !important;
+  }
+  .lk-participant-tile {
+    overflow: hidden !important;
+    aspect-ratio: unset !important;
+    width: 100% !important;
+  }
+
+  /* ── Fix: videos fill their tile with no black bars ── */
   .lk-participant-tile video,
   .lk-grid-layout video,
   .lk-focus-layout video,
@@ -147,12 +160,9 @@ const CSS = `
     height: 100% !important;
   }
 
-  /* ── CSS baseline: strip any stylesheet-level mirror from all tiles.
-     The MutationObserver below re-applies scaleX(-1) to the local tile
-     via inline style (which wins over !important in a stylesheet). ── */
-  .lk-participant-tile video,
-  .lk-grid-layout video,
-  .lk-focus-layout video {
+  /* ── CSS baseline: strip mirror from all tiles.
+     The MutationObserver sets per-tile inline !important which wins. ── */
+  .lk-participant-tile video {
     transform: none !important;
     -webkit-transform: none !important;
   }
@@ -804,40 +814,61 @@ const GuestClassroom = () => {
     return () => clearInterval(t);
   }, [connected]);
 
-  // Fix LiveKit video styles: cover + un-mirror remote tiles.
-  // CSS !important strips the stylesheet-level mirror; this observer
-  // re-applies scaleX(-1) to the LOCAL tile only via inline style
-  // (setProperty with "important" beats !important in a stylesheet).
+  // Fix LiveKit video: object-fit cover + un-mirror remote tiles.
+  // Strategy:
+  //   • CSS baseline already strips stylesheet-level mirror (transform:none !important).
+  //   • This effect re-applies scaleX(-1) to LOCAL tile only via inline !important,
+  //     which beats any stylesheet rule regardless of specificity.
+  //   • Guard (patching flag) prevents MutationObserver infinite loop.
+  //   • setInterval runs for the whole session to catch LiveKit re-renders.
   useEffect(() => {
     if (!connected) return;
 
+    let patching = false;
+
     const patchVideos = () => {
-      document.querySelectorAll<HTMLElement>(".lk-participant-tile").forEach(tile => {
-        const attr = tile.getAttribute("data-lk-local-participant");
-        const isLocal = attr === "true" || (attr !== null && attr !== "false");
-        tile.querySelectorAll<HTMLVideoElement>("video").forEach(vid => {
-          vid.style.setProperty("object-fit", "cover", "important");
-          vid.style.setProperty("width",      "100%",  "important");
-          vid.style.setProperty("height",     "100%",  "important");
-          const mirror = isLocal ? "scaleX(-1)" : "none";
-          vid.style.setProperty("transform",         mirror, "important");
-          vid.style.setProperty("-webkit-transform", mirror, "important");
+      if (patching) return;
+      patching = true;
+      try {
+        document.querySelectorAll<HTMLElement>(".lk-participant-tile").forEach(tile => {
+          const attr = tile.getAttribute("data-lk-local-participant");
+          // LiveKit renders attr="true" for local, attr="false" for remote
+          const isLocal = attr === "true";
+          const wantedTransform = isLocal ? "scaleX(-1)" : "none";
+
+          tile.querySelectorAll<HTMLVideoElement>("video").forEach(vid => {
+            // Only write if something differs — prevents triggering the observer again
+            const curTransform = vid.style.getPropertyValue("transform");
+            const curPriority  = vid.style.getPropertyPriority("transform");
+            const curObjFit    = vid.style.getPropertyValue("object-fit");
+
+            if (curTransform !== wantedTransform || curPriority !== "important" || curObjFit !== "cover") {
+              vid.style.setProperty("object-fit", "cover", "important");
+              vid.style.setProperty("width",      "100%",  "important");
+              vid.style.setProperty("height",     "100%",  "important");
+              vid.style.setProperty("transform",         wantedTransform, "important");
+              vid.style.setProperty("-webkit-transform", wantedTransform, "important");
+            }
+          });
         });
-      });
+      } finally {
+        patching = false;
+      }
     };
 
+    // Immediate patch + watch for any DOM/attribute changes
     patchVideos();
-    const lkRoot = document.querySelector(".lk-video-conference") ?? document.body;
-    const observer = new MutationObserver(patchVideos);
-    observer.observe(lkRoot, { childList: true, subtree: true, attributes: true });
-    // Poll briefly after connect to catch late-rendered tiles
-    const poll    = setInterval(patchVideos, 500);
-    const stopPoll = setTimeout(() => clearInterval(poll), 8000);
+    const observer = new MutationObserver(() => { if (!patching) patchVideos(); });
+    observer.observe(document.body, {
+      childList: true, subtree: true,
+      attributes: true, attributeFilter: ["style", "data-lk-local-participant"],
+    });
+    // Persistent poll — covers LiveKit re-renders that slip past the observer
+    const poll = setInterval(patchVideos, 500);
 
     return () => {
       observer.disconnect();
       clearInterval(poll);
-      clearTimeout(stopPoll);
     };
   }, [connected]);
 
