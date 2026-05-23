@@ -213,15 +213,53 @@ const LiveQuiz = () => {
   // Ref to track current question index — avoids stale closure bug in nextQuestion
   const questionIdxRef  = useRef<number>(0);
   const [copiedCode, setCopiedCode] = useState(false);
+  // ── Explicit question-index state — updated from broadcast, DB events, and local actions.
+  // Avoids the race-condition where room.current_question_index lags the broadcast arrival.
+  const [currentQIndex, setCurrentQIndex] = useState<number>(0);
 
-  /* ── Auto-fill from URL params (?code=XXXX&name=ClassName) ── */
+  /* ── Persist quiz session so page-switches / navigation don't wipe state ── */
+  useEffect(() => { try { sessionStorage.setItem("lq_view", view); } catch {} }, [view]);
+  useEffect(() => { try { room ? sessionStorage.setItem("lq_room", JSON.stringify(room)) : sessionStorage.removeItem("lq_room"); } catch {} }, [room]);
+  useEffect(() => { try { participant ? sessionStorage.setItem("lq_participant", JSON.stringify(participant)) : sessionStorage.removeItem("lq_participant"); } catch {} }, [participant]);
+  useEffect(() => { try { currentQ ? sessionStorage.setItem("lq_current_q", JSON.stringify(currentQ)) : sessionStorage.removeItem("lq_current_q"); } catch {} }, [currentQ]);
+  useEffect(() => { try { sessionStorage.setItem("lq_q_index", String(currentQIndex)); } catch {} }, [currentQIndex]);
+
+  /* ── Mount: restore saved session + auto-fill from URL params ── */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    const name = params.get("name");
-    if (code) { setJoinCode(code.toUpperCase()); setView("joining"); }
+    const code   = params.get("code");
+    const name   = params.get("name");
+
+    if (code) {
+      // URL params take priority — they indicate an intentional join flow
+      setJoinCode(code.toUpperCase());
+      setView("joining");
+    }
     if (name) setQuizName(decodeURIComponent(name));
-  }, []);
+
+    if (!code) {
+      // Restore quiz state so switching away and back doesn't lose the session
+      try {
+        const savedRoom        = sessionStorage.getItem("lq_room");
+        const savedParticipant = sessionStorage.getItem("lq_participant");
+        const savedQ           = sessionStorage.getItem("lq_current_q");
+        const savedQIndex      = sessionStorage.getItem("lq_q_index");
+        const savedView        = sessionStorage.getItem("lq_view") as View | null;
+        if (savedRoom)        setRoom(JSON.parse(savedRoom));
+        if (savedParticipant) setParticipant(JSON.parse(savedParticipant));
+        if (savedQ)           setCurrentQ(JSON.parse(savedQ));
+        if (savedQIndex)      setCurrentQIndex(parseInt(savedQIndex) || 0);
+        if (savedView && savedView !== "hub") {
+          // Map transient countdown views to their stable neighbours
+          const safeView: View =
+            savedView === "countdown-host"   ? "question-host"
+          : savedView === "countdown-player" ? "question-player"
+          : savedView as View;
+          setView(safeView);
+        }
+      } catch {}
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Bulk paste parser ─────────────────────────────────────────────────
      Format (one block per question, separated by ---):
@@ -288,7 +326,11 @@ const LiveQuiz = () => {
       .on("broadcast", { event: "question" }, ({ payload }: any) => {
         // Students receive full question object from host
         if (!isHost && payload?.q) {
-          setCurrentQ(payload.q as Question);
+          const q = payload.q as Question;
+          setCurrentQ(q);
+          // ── KEY FIX: set the counter immediately from the broadcast payload
+          // so it's correct BEFORE the postgres_changes event arrives from the DB.
+          if (typeof q.order_index === "number") setCurrentQIndex(q.order_index);
           setSelectedAns(null);
           setCountdown(3);
           setView("countdown-player");
@@ -302,6 +344,9 @@ const LiveQuiz = () => {
       .on("postgres_changes",{ event:"*", schema:"public", table:"live_quiz_rooms", filter:`id=eq.${room.id}` }, async (p:any) => {
         const r = p.new as Room;
         setRoom(r);
+        // Keep currentQIndex in sync with the DB — this is the authoritative source for the host
+        // and a fallback for players (broadcast already updates it, but this catches edge cases).
+        if (typeof r.current_question_index === "number") setCurrentQIndex(r.current_question_index);
         if (!isHost) {
           // Students rely on broadcast for question data (no RLS issues)
           // Only handle reveal and finished from DB events
@@ -571,6 +616,7 @@ Make questions educational, clearly worded, and accurate.`
     if (!room) return;
     // Reset index ref — avoids stale closure in nextQuestion
     questionIdxRef.current = 0;
+    setCurrentQIndex(0);
     // Load Q0 on host side
     const { data: qData } = await supabase.from("live_quiz_questions" as any).select("*").eq("room_id", room.id).eq("order_index", 0).single();
      const q = qData ? { ...(qData as any), options: (qData as any).options as string[] } as Question : null;
@@ -612,6 +658,7 @@ Make questions educational, clearly worded, and accurate.`
       }
       // Advance ref BEFORE the DB update so subsequent calls read the correct value
       questionIdxRef.current = next;
+      setCurrentQIndex(next);
       await supabase.from("live_quiz_rooms" as any).update({ status:"countdown", current_question_index:next } as any).eq("id", room.id);
       setRoom(r => r ? { ...r, current_question_index: next, status: "countdown" } : r);
       setCountdown(3); setView("countdown-host"); setAnswerCounts({}); setNumAnswered(0);
@@ -640,7 +687,12 @@ Make questions educational, clearly worded, and accurate.`
   const resetAll = () => {
     setView("hub"); setRoom(null); setParticipant(null);
     setParticipants([]); setCurrentQ(null); setSelectedAns(null);
-    setJoinCode(""); setPlayerName("");
+    setJoinCode(""); setPlayerName(""); setCurrentQIndex(0);
+    questionIdxRef.current = 0;
+    // Clear persisted session so the next quiz starts fresh
+    try {
+      ["lq_view","lq_room","lq_participant","lq_current_q","lq_q_index"].forEach(k => sessionStorage.removeItem(k));
+    } catch {}
   };
 
   /* ══════════════════════════════════════════════════
@@ -1323,7 +1375,7 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <div>
             <p style={{fontSize:13,color:"rgba(255,255,255,0.45)",margin:0}}>
-              Question {(room.current_question_index||0)+1} / {room.total_questions}
+              Question {currentQIndex+1} / {room.total_questions}
             </p>
             <p style={{fontSize:11,color:GOLD,margin:0,fontWeight:700,letterSpacing:0.5}}>{currentQ.topic}</p>
           </div>
@@ -1338,7 +1390,7 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
 
         {/* Progress */}
         <div style={{height:3,background:"rgba(255,255,255,0.08)",borderRadius:2,marginBottom:18,overflow:"hidden"}}>
-          <div style={{width:`${((room.current_question_index||0)/room.total_questions)*100}%`,height:"100%",background:GOLD,borderRadius:2,transition:"width .4s"}}/>
+          <div style={{width:`${(currentQIndex/room.total_questions)*100}%`,height:"100%",background:GOLD,borderRadius:2,transition:"width .4s"}}/>
         </div>
 
         {/* Question card */}
@@ -1385,7 +1437,7 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
       <IslamicBg opacity={0.08}/>
       <div style={{position:"relative",zIndex:1,textAlign:"center"}}>
         <p style={{fontSize:11,color:"rgba(255,255,255,0.5)",fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:6}}>
-          Question {(room?.current_question_index||0)+1} of {room?.total_questions}
+          Question {currentQIndex+1} of {room?.total_questions}
         </p>
         <p style={{fontSize:14,color:GOLD,fontWeight:700,letterSpacing:2,textTransform:"uppercase",marginBottom:28}}>
           Launching in…
@@ -1498,7 +1550,7 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
         {currentQ && (<>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
           <div>
-            <p style={{fontSize:13,color:"rgba(255,255,255,0.45)",margin:0}}>Q{(room?.current_question_index||0)+1}</p>
+            <p style={{fontSize:13,color:"rgba(255,255,255,0.45)",margin:0}}>Q{currentQIndex+1}</p>
             <p style={{fontSize:12,color:GOLD,fontWeight:700,margin:0}}>{participant?.player_name} · {participant?.score||0} pts</p>
           </div>
           <TimerRing seconds={timeLeft} total={currentQ.time_limit}/>
@@ -1591,7 +1643,7 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
         </div>
 
         <button onClick={nextQuestion} style={goldBtn}>
-          {(room.current_question_index||0)+1 >= room.total_questions
+          {currentQIndex+1 >= room.total_questions
             ? "🏁 Show Final Results"
             : <>Next Question <ArrowRight size={16}/></>}
         </button>
