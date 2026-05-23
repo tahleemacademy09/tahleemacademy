@@ -815,12 +815,15 @@ const GuestClassroom = () => {
   }, [connected]);
 
   // Fix LiveKit video: object-fit cover + un-mirror remote tiles.
-  // Strategy:
-  //   • CSS baseline already strips stylesheet-level mirror (transform:none !important).
-  //   • This effect re-applies scaleX(-1) to LOCAL tile only via inline !important,
-  //     which beats any stylesheet rule regardless of specificity.
-  //   • Guard (patching flag) prevents MutationObserver infinite loop.
-  //   • setInterval runs for the whole session to catch LiveKit re-renders.
+  //
+  // Problem: LiveKit applies transform:rotateY(180deg) to all (or some) video
+  // elements.  We need: local tile = scaleX(-1) (selfie mirror), remote = none.
+  //
+  // Strategy: query ALL <video> elements inside [data-lk-theme], use closest()
+  // to walk up to whichever ancestor carries data-lk-local-participant (works
+  // regardless of class name changes across LiveKit versions).  Write via
+  // setProperty("important") so we beat any stylesheet !important.  Guard flag
+  // prevents the MutationObserver from looping on its own style writes.
   useEffect(() => {
     if (!connected) return;
 
@@ -830,46 +833,55 @@ const GuestClassroom = () => {
       if (patching) return;
       patching = true;
       try {
-        document.querySelectorAll<HTMLElement>(".lk-participant-tile").forEach(tile => {
-          const attr = tile.getAttribute("data-lk-local-participant");
-          // LiveKit renders attr="true" for local, attr="false" for remote
-          const isLocal = attr === "true";
+        const lkRoot = document.querySelector("[data-lk-theme]") ?? document.body;
+        lkRoot.querySelectorAll<HTMLVideoElement>("video").forEach(vid => {
+
+          // Walk up to find the element that carries data-lk-local-participant.
+          // It may sit on the tile div, a wrapper, or even the video itself.
+          const carrier = (
+            vid.closest("[data-lk-local-participant]") as HTMLElement | null
+          );
+          const attr = carrier
+            ? carrier.getAttribute("data-lk-local-participant")
+            : vid.getAttribute("data-lk-local-participant");
+
+          // attr="true" or attr="" (boolean-present) → local
+          // attr="false" or attr=null                → remote
+          const isLocal = attr === "true" || attr === "";
           const wantedTransform = isLocal ? "scaleX(-1)" : "none";
 
-          tile.querySelectorAll<HTMLVideoElement>("video").forEach(vid => {
-            // Only write if something differs — prevents triggering the observer again
-            const curTransform = vid.style.getPropertyValue("transform");
-            const curPriority  = vid.style.getPropertyPriority("transform");
-            const curObjFit    = vid.style.getPropertyValue("object-fit");
+          // Only write when needed — avoids triggering the observer on our own writes
+          const curTransform = vid.style.getPropertyValue("transform");
+          const curPriority  = vid.style.getPropertyPriority("transform");
+          const curObjFit    = vid.style.getPropertyValue("object-fit");
 
-            if (curTransform !== wantedTransform || curPriority !== "important" || curObjFit !== "cover") {
-              vid.style.setProperty("object-fit", "cover", "important");
-              vid.style.setProperty("width",      "100%",  "important");
-              vid.style.setProperty("height",     "100%",  "important");
-              vid.style.setProperty("transform",         wantedTransform, "important");
-              vid.style.setProperty("-webkit-transform", wantedTransform, "important");
-            }
-          });
+          if (
+            curTransform !== wantedTransform ||
+            curPriority  !== "important"     ||
+            curObjFit    !== "cover"
+          ) {
+            vid.style.setProperty("object-fit", "cover",          "important");
+            vid.style.setProperty("width",      "100%",           "important");
+            vid.style.setProperty("height",     "100%",           "important");
+            vid.style.setProperty("transform",         wantedTransform, "important");
+            vid.style.setProperty("-webkit-transform", wantedTransform, "important");
+          }
         });
       } finally {
         patching = false;
       }
     };
 
-    // Immediate patch + watch for any DOM/attribute changes
     patchVideos();
     const observer = new MutationObserver(() => { if (!patching) patchVideos(); });
     observer.observe(document.body, {
       childList: true, subtree: true,
-      attributes: true, attributeFilter: ["style", "data-lk-local-participant"],
+      attributes: true,
+      attributeFilter: ["style", "data-lk-local-participant"],
     });
-    // Persistent poll — covers LiveKit re-renders that slip past the observer
-    const poll = setInterval(patchVideos, 500);
+    const poll = setInterval(patchVideos, 300);   // persistent — no timeout
 
-    return () => {
-      observer.disconnect();
-      clearInterval(poll);
-    };
+    return () => { observer.disconnect(); clearInterval(poll); };
   }, [connected]);
 
   // Build PiP once connected
