@@ -21,7 +21,7 @@
 */
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import { useLocation, useNavigate, useParams, MemoryRouter, Route, Routes } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext,
 } from "@livekit/components-react";
@@ -40,7 +40,7 @@ import ClassParticipants from "@/components/classroom/ClassParticipants";
 import ClassControls     from "@/components/classroom/ClassControls";
 import LiveQuizOverlay   from "@/components/classroom/LiveQuizOverlay";
 import { useIsMobile }   from "@/hooks/use-mobile";
-import JoinClass          from "@/pages/public/JoinClass";
+
 
 /* ════════════════════════════════════════════════════════
    STYLES
@@ -891,16 +891,72 @@ const GuestClassroom = () => {
 
   return (
     <>
-    {/* ── JoinClass renders underneath when minimized — classroom slides off-screen.
-         Wrap in MemoryRouter so useParams works with the correct roomCode.       ── */}
-    {minimized && roomCode && (
-      <MemoryRouter initialEntries={[`/live/${roomCode}`]}>
-        <Routes>
-          <Route path="/live/:roomCode" element={<JoinClass />} />
-        </Routes>
-      </MemoryRouter>
+    {/* ── Minimized screen: self-contained, no routing, just show class info + return button ── */}
+    {minimized && (
+      <div style={{
+        position:"fixed", inset:0, zIndex:7999,
+        background:"#0b1f13",
+        display:"flex", flexDirection:"column",
+        alignItems:"center", justifyContent:"center",
+        gap:16, padding:32,
+        fontFamily:"'Google Sans','Roboto',sans-serif",
+      }}>
+        <style>{`
+          @keyframes gc-min-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.85)}}
+          @keyframes gc-min-ring{to{transform:rotate(360deg)}}
+        `}</style>
+
+        {/* Avatar with live ring */}
+        <div style={{ position:"relative", width:88, height:88 }}>
+          <div style={{ position:"absolute", inset:-8, borderRadius:"50%", border:"2px solid rgba(239,68,68,.4)", animation:"gc-min-ring 3s linear infinite" }} />
+          <div style={{ width:88, height:88, borderRadius:"50%", background:"#c9973a", color:"#0b1f13", display:"flex", alignItems:"center", justifyContent:"center", fontSize:36, fontWeight:800 }}>
+            {initial}
+          </div>
+        </div>
+
+        {/* LIVE badge */}
+        <div style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(239,68,68,.12)", border:"1px solid rgba(239,68,68,.3)", borderRadius:999, padding:"5px 14px" }}>
+          <span style={{ width:7, height:7, borderRadius:"50%", background:"#ef4444", boxShadow:"0 0 6px #ef4444", animation:"gc-min-pulse 1.6s ease-in-out infinite" }} />
+          <span style={{ color:"#ef4444", fontSize:12, fontWeight:700, letterSpacing:1.2 }}>LIVE</span>
+        </div>
+
+        {/* Class name */}
+        <p style={{ color:"#fff", fontSize:20, fontWeight:700, margin:0, textAlign:"center", lineHeight:1.3 }}>{title}</p>
+        {classTitleAr && (
+          <p style={{ color:"rgba(255,255,255,.45)", fontFamily:"'Amiri',serif", fontSize:15, margin:"-8px 0 0", direction:"rtl" }}>{classTitleAr}</p>
+        )}
+
+        {/* Duration */}
+        <p style={{ color:"rgba(255,255,255,.4)", fontSize:13, margin:0, fontVariantNumeric:"tabular-nums" }}>
+          ⏱ {fmtT(classDuration)} elapsed
+        </p>
+
+        {/* Return button */}
+        <button
+          onClick={handleReturn}
+          style={{
+            marginTop:8, padding:"14px 36px", borderRadius:999,
+            border:"none", background:"#c9973a",
+            color:"#0b1f13", fontSize:15, fontWeight:800, cursor:"pointer",
+            boxShadow:"0 4px 20px rgba(201,151,58,.4)",
+            fontFamily:"'Google Sans','Roboto',sans-serif",
+          }}
+        >
+          ↩ Return to Class
+        </button>
+
+        {/* Leave quietly */}
+        <button
+          onClick={handleLeave}
+          style={{ background:"none", border:"none", color:"rgba(255,255,255,.3)", fontSize:13, cursor:"pointer", fontFamily:"'Google Sans','Roboto',sans-serif" }}
+        >
+          Leave class
+        </button>
+      </div>
     )}
 
+    {/* ── Classroom: always mounted so LiveKit never disconnects.
+         Slides off-screen when minimized — connection stays alive. ── */}
     <div
       data-gc-root
       style={{
