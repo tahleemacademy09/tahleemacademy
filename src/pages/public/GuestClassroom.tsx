@@ -886,66 +886,18 @@ const GuestClassroom = () => {
     );
   }
 
+  /* When minimized, render nothing — the browser's native PiP floats freely
+     and the underlying page shows through naturally.                         */
+  if (minimized) return null;
+
   return (
     <>
-    {/* ── Minimized: slim bottom bar only — let the browser's native PiP float freely ── */}
-    {minimized && (
-      <>
-        <style>{`@keyframes gc-pip-pulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
-        <div
-          role="button"
-          aria-label="Return to live class"
-          onClick={handleReturn}
-          style={{
-            position:"fixed",
-            bottom:"max(env(safe-area-inset-bottom,0px) + 16px, 16px)",
-            left:"50%",
-            transform:"translateX(-50%)",
-            zIndex:9000,
-            display:"flex", alignItems:"center", gap:10,
-            padding:"10px 18px", borderRadius:999,
-            background:"#0c1f12",
-            border:"1.5px solid rgba(201,168,76,.55)",
-            boxShadow:"0 4px 24px rgba(0,0,0,.55)",
-            cursor:"pointer", userSelect:"none",
-            minWidth:220, maxWidth:"calc(100vw - 32px)",
-            WebkitTapHighlightColor:"transparent",
-            fontFamily:"'Google Sans','Roboto',sans-serif",
-          }}
-        >
-          {/* LIVE dot */}
-          <span style={{ width:8, height:8, borderRadius:"50%", background:"#ef4444", flexShrink:0, boxShadow:"0 0 6px 2px rgba(239,68,68,.6)", animation:"gc-pip-pulse 1.4s ease-in-out infinite" }} />
-          {/* Avatar */}
-          <span style={{ width:28, height:28, borderRadius:"50%", background:"#c9a84c", color:"#0c1f12", fontWeight:700, fontSize:13, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-            {initial}
-          </span>
-          {/* Title + subtitle */}
-          <span style={{ flex:1, overflow:"hidden", minWidth:0 }}>
-            <span style={{ display:"block", color:"rgba(255,255,255,.92)", fontWeight:600, fontSize:13, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{title}</span>
-            <span style={{ display:"block", color:"rgba(255,255,255,.45)", fontSize:11 }}>⏱ {fmtT(classDuration)} · Tap to return</span>
-          </span>
-          {/* Leave button */}
-          <span
-            role="button"
-            aria-label="Leave class"
-            onClick={e=>{ e.stopPropagation(); handleLeave(); }}
-            style={{ width:28, height:28, borderRadius:"50%", background:"rgba(239,68,68,.15)", border:"1px solid rgba(239,68,68,.4)", color:"#ef4444", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:14, cursor:"pointer", WebkitTapHighlightColor:"transparent" }}
-          >
-            ✕
-          </span>
-        </div>
-      </>
-    )}
-
     <div
       data-gc-root
       style={{
         position:"fixed", inset:0, zIndex:8000,
         display:"flex", flexDirection:"column",
         background:"#202124",
-        transform: minimized ? "translateX(-200%)" : "translateX(0)",
-        pointerEvents: minimized ? "none" : "all",
-        transition: minimized ? "none" : "transform .12s ease",
       }}
     >
       <style>{CSS}</style>
