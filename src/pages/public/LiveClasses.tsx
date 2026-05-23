@@ -164,11 +164,8 @@ const LiveClasses = () => {
             </div>
             <h3 style={{ fontSize:20, fontWeight:700, color:G, marginBottom:8 }}>No Classes Scheduled Yet</h3>
             <p style={{ fontSize:14, color:"rgba(6,78,59,.6)", maxWidth:340, margin:"0 auto 24px", lineHeight:1.6 }}>
-              Check back soon — free public classes are added regularly. Register for a free account to get notified.
+              Check back soon — public classes are added regularly.
             </p>
-            <Link to="/register" style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"12px 24px", borderRadius:24, background:G, color:"#fff", fontWeight:700, fontSize:14, textDecoration:"none" }}>
-              <UserPlus style={{ width:16, height:16 }} /> Register Free
-            </Link>
           </div>
         )}
 
@@ -202,10 +199,10 @@ const LiveClasses = () => {
           <p style={{ fontFamily:"'Amiri',serif", fontSize:16, color:GOLD, marginBottom:6 }}>انضم إلى مجتمع المتعلمين</p>
           <h3 style={{ fontSize:20, fontWeight:800, color:"#fff", marginBottom:8 }}>Want Full Access?</h3>
           <p style={{ fontSize:13, color:"rgba(255,255,255,.6)", maxWidth:380, margin:"0 auto 20px", lineHeight:1.6 }}>
-            Register free for Tahleem Academy — get recordings, live classes, Hifdh programme, and more.
+            Join Tahleem Academy — get recordings, live classes, Hifdh programme, and more.
           </p>
           <Link to="/register" style={{ display:"inline-flex", alignItems:"center", gap:8, padding:"13px 28px", borderRadius:24, background:GOLD, color:"#fff", fontWeight:800, fontSize:15, textDecoration:"none" }}>
-            <UserPlus style={{ width:17, height:17 }} /> Register Free
+            <UserPlus style={{ width:17, height:17 }} /> Register Now
             <ArrowRight style={{ width:15, height:15 }} />
           </Link>
         </div>
