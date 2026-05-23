@@ -533,7 +533,7 @@ const GuestClassroom = () => {
   useWakeLock(connected && !ended);
 
   const handleReturn = useCallback(() => setMinimized(false), []);
-  const handleLeave  = useCallback(() => { intentionalRef.current=true; setEnded(true); }, []);
+  const handleLeave  = useCallback(() => { intentionalRef.current=true; setReconnecting(false); setEnded(true); }, []);
   handleRetRef.current = handleReturn;
 
   useMediaSession(connected && !ended, title, handleReturn, handleLeave);
@@ -631,10 +631,9 @@ const GuestClassroom = () => {
   };
 
   const handleEndClass = () => {
-    // Set intentional + ended FIRST so any disconnect that fires during the
-    // Supabase write doesn't trigger auto-reconnect.
     setShowEndConfirm(false);
     intentionalRef.current = true;
+    setReconnecting(false);
     setEnded(true);
     if (classId) {
       supabase.from("public_classes")
@@ -675,9 +674,59 @@ const GuestClassroom = () => {
      ════════════════════════════════════════════════════════ */
   return (
     <>
-    {/* Black backdrop — visible only when minimized, hides white body behind PiP */}
+    {/* ── Minimized backdrop: shown when classroom is off-screen ──────────
+        Shows a proper app-themed screen so user sees something meaningful
+        instead of a black void. The floating bar sits on top of this.    */}
     {minimized && (
-      <div style={{ position:"fixed", inset:0, zIndex:7999, background:"#000" }} />
+      <div style={{
+        position: "fixed", inset: 0, zIndex: 7999,
+        background: "#0f3122",
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        gap: 12, padding: 24,
+        fontFamily: "'Google Sans', sans-serif",
+      }}>
+        {/* Avatar */}
+        <div style={{
+          width: 72, height: 72, borderRadius: "50%",
+          background: "#c9973a", color: "#0f3122",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 32, fontWeight: 700, marginBottom: 4,
+        }}>
+          {initial}
+        </div>
+        {/* LIVE badge */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 6,
+          background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.35)",
+          borderRadius: 999, padding: "4px 12px",
+        }}>
+          <span style={{
+            width: 7, height: 7, borderRadius: "50%", background: "#ef4444",
+            boxShadow: "0 0 6px rgba(239,68,68,0.7)",
+            animation: "gc-pulse 1.4s ease-in-out infinite",
+          }} />
+          <span style={{ color: "#ef4444", fontSize: 12, fontWeight: 700, letterSpacing: 1 }}>LIVE</span>
+        </div>
+        {/* Class name */}
+        <p style={{ color: "#fff", fontSize: 18, fontWeight: 600, margin: 0, textAlign: "center" }}>
+          {classTitle || title}
+        </p>
+        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 13, margin: 0 }}>
+          Class is running in the background
+        </p>
+        {/* Tap to return hint */}
+        <div style={{
+          marginTop: 16, padding: "10px 22px", borderRadius: 999,
+          background: "rgba(201,151,58,0.15)", border: "1px solid rgba(201,151,58,0.35)",
+          color: "#c9973a", fontSize: 13, fontWeight: 600, cursor: "pointer",
+        }}
+          onClick={handleReturn}
+        >
+          Tap to return to class
+        </div>
+        <style>{`@keyframes gc-pulse{0%,100%{opacity:1}50%{opacity:.3}}`}</style>
+      </div>
     )}
     <div
       data-gc-root
@@ -722,7 +771,7 @@ const GuestClassroom = () => {
         <ReconnectMonitor
           onReconnecting={()=>setReconnecting(true)}
           onReconnected={()=>{ setReconnecting(false); setReconnectCount(0); }}
-          onDisconnected={autoReconnect}
+          onDisconnected={()=>{ if (!intentionalRef.current) autoReconnect(); }}
         />
 
         {/* Reconnecting overlay */}
