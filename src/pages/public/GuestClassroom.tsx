@@ -815,51 +815,25 @@ const GuestClassroom = () => {
   }, [connected]);
 
   // Fix LiveKit video: object-fit cover + un-mirror remote tiles.
-  //
-  // Problem: LiveKit applies transform:rotateY(180deg) to all (or some) video
-  // elements.  We need: local tile = scaleX(-1) (selfie mirror), remote = none.
-  //
-  // Strategy: query ALL <video> elements inside [data-lk-theme], use closest()
-  // to walk up to whichever ancestor carries data-lk-local-participant (works
-  // regardless of class name changes across LiveKit versions).  Write via
-  // setProperty("important") so we beat any stylesheet !important.  Guard flag
-  // prevents the MutationObserver from looping on its own style writes.
   useEffect(() => {
     if (!connected) return;
-
     let patching = false;
-
     const patchVideos = () => {
       if (patching) return;
       patching = true;
       try {
         const lkRoot = document.querySelector("[data-lk-theme]") ?? document.body;
         lkRoot.querySelectorAll<HTMLVideoElement>("video").forEach(vid => {
-
-          // Walk up to find the element that carries data-lk-local-participant.
-          // It may sit on the tile div, a wrapper, or even the video itself.
-          const carrier = (
-            vid.closest("[data-lk-local-participant]") as HTMLElement | null
-          );
+          const carrier = vid.closest("[data-lk-local-participant]") as HTMLElement | null;
           const attr = carrier
             ? carrier.getAttribute("data-lk-local-participant")
             : vid.getAttribute("data-lk-local-participant");
-
-          // attr="true" or attr="" (boolean-present) → local
-          // attr="false" or attr=null                → remote
           const isLocal = attr === "true" || attr === "";
           const wantedTransform = isLocal ? "scaleX(-1)" : "none";
-
-          // Only write when needed — avoids triggering the observer on our own writes
           const curTransform = vid.style.getPropertyValue("transform");
           const curPriority  = vid.style.getPropertyPriority("transform");
           const curObjFit    = vid.style.getPropertyValue("object-fit");
-
-          if (
-            curTransform !== wantedTransform ||
-            curPriority  !== "important"     ||
-            curObjFit    !== "cover"
-          ) {
+          if (curTransform !== wantedTransform || curPriority !== "important" || curObjFit !== "cover") {
             vid.style.setProperty("object-fit", "cover",          "important");
             vid.style.setProperty("width",      "100%",           "important");
             vid.style.setProperty("height",     "100%",           "important");
@@ -871,16 +845,13 @@ const GuestClassroom = () => {
         patching = false;
       }
     };
-
     patchVideos();
     const observer = new MutationObserver(() => { if (!patching) patchVideos(); });
     observer.observe(document.body, {
       childList: true, subtree: true,
-      attributes: true,
-      attributeFilter: ["style", "data-lk-local-participant"],
+      attributes: true, attributeFilter: ["style", "data-lk-local-participant"],
     });
-    const poll = setInterval(patchVideos, 300);   // persistent — no timeout
-
+    const poll = setInterval(patchVideos, 300);
     return () => { observer.disconnect(); clearInterval(poll); };
   }, [connected]);
 
@@ -1021,6 +992,22 @@ const GuestClassroom = () => {
         </div>
 
         <div style={{ maxWidth:460, margin:"0 auto", padding:"0 16px" }}>
+
+          {/* ── Post-class Quiz CTA ── */}
+          <div className="gc-ended-card" style={{ marginTop:28, background:"rgba(34,197,94,.06)", border:"1.5px solid rgba(34,197,94,.3)", borderRadius:20, padding:"24px 20px", animationDelay:"0s" }}>
+            <p style={{ fontSize:11, fontWeight:700, letterSpacing:1.4, color:"#22c55e", margin:"0 0 8px", textTransform:"uppercase" }}>📝 Test Your Knowledge</p>
+            <h3 style={{ fontSize:18, fontWeight:700, color:"#fff", margin:"0 0 8px", lineHeight:1.3 }}>Take the Post-Class Quiz</h3>
+            <p style={{ fontSize:13, color:"rgba(255,255,255,.5)", margin:"0 0 20px", lineHeight:1.6 }}>
+              Reinforce what you just learned — answer questions from today's class and track your progress.
+            </p>
+            <a
+              href="/quiz"
+              className="gc-cta-btn"
+              style={{ display:"block", textAlign:"center", padding:"13px 0", borderRadius:999, background:"#22c55e", color:"#0b1f13", fontSize:14, fontWeight:800, textDecoration:"none" }}
+            >
+              Start Quiz →
+            </a>
+          </div>
 
           {/* ── Enroll CTA ── */}
           <div className="gc-ended-card" style={{ marginTop:28, background:"rgba(201,151,58,.08)", border:"1.5px solid rgba(201,151,58,.3)", borderRadius:20, padding:"24px 20px", animationDelay:".05s" }}>
