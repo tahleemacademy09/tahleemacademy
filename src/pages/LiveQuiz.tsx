@@ -195,12 +195,82 @@ const LiveQuiz = () => {
     { question:"", optA:"", optB:"", optC:"", optD:"", correct:"A", explanation:"" }
   );
 
+  // ── New: quiz name + bulk paste state ──────────────────────────────────
+  const [quizName,   setQuizName]   = useState<string>("");
+  const [bulkText,   setBulkText]   = useState<string>("");
+  const [bulkParsed, setBulkParsed] = useState<Omit<Question,"id">[]>([]);
+  const [bulkError,  setBulkError]  = useState<string>("");
+
   const timerRef        = useRef<any>(null);
   const channelRef      = useRef<any>(null);
   const broadcastRef    = useRef<any>(null);
   // Ref to track current question index — avoids stale closure bug in nextQuestion
   const questionIdxRef  = useRef<number>(0);
   const [copiedCode, setCopiedCode] = useState(false);
+
+  /* ── Auto-fill from URL params (?code=XXXX&name=ClassName) ── */
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const name = params.get("name");
+    if (code) { setJoinCode(code.toUpperCase()); setView("joining"); }
+    if (name) setQuizName(decodeURIComponent(name));
+  }, []);
+
+  /* ── Bulk paste parser ─────────────────────────────────────────────────
+     Format (one block per question, separated by ---):
+       Q: Question text
+       A: Option A
+       B: Option B*   ← asterisk marks the correct answer
+       C: Option C
+       D: Option D
+       Note: Optional explanation
+  ─────────────────────────────────────────────────────────────────────── */
+  const parseBulkText = (text: string): { questions: Omit<Question,"id">[]; errors: string[] } => {
+    const errors: string[] = [];
+    const questions: Omit<Question,"id">[] = [];
+    const blocks = text.split(/^---+$/m).map(b => b.trim()).filter(Boolean);
+
+    blocks.forEach((block, bi) => {
+      const lines = block.split("\n").map(l => l.trim()).filter(Boolean);
+      let question = "";
+      const options: string[] = [];
+      let correct_answer = "";
+      let explanation = "";
+
+      for (const line of lines) {
+        if (/^Q:/i.test(line)) {
+          question = line.replace(/^Q:\s*/i, "").trim();
+        } else if (/^[A-D]:/i.test(line)) {
+          const raw   = line.replace(/^[A-D]:\s*/i, "").trim();
+          const isCorrect = raw.endsWith("*");
+          const opt   = isCorrect ? raw.slice(0, -1).trim() : raw;
+          options.push(opt);
+          if (isCorrect) correct_answer = opt;
+        } else if (/^(Note|Explanation|E):/i.test(line)) {
+          explanation = line.replace(/^(Note|Explanation|E):\s*/i, "").trim();
+        }
+      }
+
+      if (!question)          { errors.push(`Block ${bi+1}: missing Q:`); return; }
+      if (options.length < 2) { errors.push(`Block ${bi+1}: need at least 2 options`); return; }
+      if (!correct_answer)    { errors.push(`Block ${bi+1}: mark correct answer with * e.g. "B: Answer*"`); return; }
+
+      questions.push({ question, options, correct_answer, explanation, time_limit: settings.timeQ, topic: "Manual" });
+    });
+
+    return { questions, errors };
+  };
+
+  const handleBulkParse = () => {
+    setBulkError("");
+    if (!bulkText.trim()) { setBulkError("Paste your questions above first."); return; }
+    const { questions, errors } = parseBulkText(bulkText);
+    if (errors.length) { setBulkError(errors.join(" · ")); return; }
+    setBulkParsed(questions);
+    setCustomQs(questions);
+    setView("q-preview");
+  };
 
   /* ── Realtime subscription ── */
   useEffect(() => {
@@ -441,7 +511,8 @@ Make questions educational, clearly worded, and accurate.`
 
       const { data: rd, error } = await supabase.from("live_quiz_rooms" as any).insert({
         code, host_id: user.id, status: "waiting",
-        current_question_index: 0, total_questions: selected.length, topic: settings.topic,
+        current_question_index: 0, total_questions: selected.length,
+        topic: quizName.trim() || settings.topic,
       } as any).select().single();
       if (error) throw error;
 
@@ -714,6 +785,18 @@ Make questions educational, clearly worded, and accurate.`
 
       <div style={{position:"relative",zIndex:1,maxWidth:460,margin:"0 auto",padding:"20px 18px",display:"flex",flexDirection:"column",gap:20}}>
 
+        {/* ── SECTION 0: Quiz Name ── */}
+        <div style={{...glassCard, display:"flex", flexDirection:"column", gap:10}}>
+          <label style={{fontSize:11,fontWeight:700,color:GOLD,letterSpacing:1.5,textTransform:"uppercase" as const}}>📋 Quiz Name</label>
+          <input
+            value={quizName}
+            onChange={e=>setQuizName(e.target.value)}
+            placeholder="e.g. Tajweed Class — Noon Sakin Rules"
+            style={{width:"100%",padding:"12px 14px",borderRadius:11,border:`1.5px solid rgba(201,146,42,0.35)`,background:"rgba(255,255,255,0.06)",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box" as const,fontFamily:"inherit"}}
+          />
+          <p style={{fontSize:11,color:"rgba(255,255,255,0.3)",margin:0}}>Shown to students in the lobby. Pre-filled from the class name when coming from a live class.</p>
+        </div>
+
         {/* ── SECTION 1: Question Source ── */}
         <div>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
@@ -978,73 +1061,56 @@ Make questions educational, clearly worded, and accurate.`
       <IslamicBg opacity={0.08}/>
       <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto"}}>
         <button onClick={()=>setView("creating")} style={backBtn}>← Back</button>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:24}}>✍️</span>
-            <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Manual Entry</h2>
-          </div>
-          <span style={{fontSize:13,fontWeight:800,color:GOLD,background:"rgba(201,146,42,0.15)",padding:"4px 12px",borderRadius:20}}>{customQs.length} added</span>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+          <span style={{fontSize:24}}>✍️</span>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:26,color:"#fff",margin:0}}>Bulk Entry</h2>
         </div>
-        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:20}}>Add questions one by one</p>
+        <p style={{fontSize:13,color:"rgba(255,255,255,0.4)",marginBottom:20}}>Paste all your questions at once using the format below</p>
 
-        {/* Added questions list */}
-        {customQs.length > 0 && (
-          <div style={{...glassCard, marginBottom:14}}>
-            <p style={{fontSize:11,color:GOLD,fontWeight:700,margin:"0 0 10px",letterSpacing:1.5,textTransform:"uppercase"}}>Added Questions</p>
-            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:160,overflowY:"auto"}}>
-              {customQs.map((q,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:8,background:"rgba(255,255,255,0.04)"}}>
-                  <span style={{fontSize:11,color:GOLD,fontWeight:700,minWidth:20}}>#{i+1}</span>
-                  <p style={{fontSize:12,color:"rgba(255,255,255,0.7)",margin:0,flex:1,lineHeight:1.3}}>{q.question.slice(0,60)}{q.question.length>60?"…":""}</p>
-                  <button onClick={()=>setCustomQs(prev=>prev.filter((_,j)=>j!==i))}
-                    style={{background:"none",border:"none",cursor:"pointer",color:"rgba(239,68,68,0.7)",fontSize:16,padding:"2px"}}>✕</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Format example */}
+        <div style={{background:"rgba(201,146,42,0.08)",border:"1px solid rgba(201,146,42,0.25)",borderRadius:14,padding:"14px 16px",marginBottom:16}}>
+          <p style={{fontSize:11,fontWeight:700,color:GOLD,margin:"0 0 8px",letterSpacing:1.2}}>📐 FORMAT — copy this pattern:</p>
+          <pre style={{fontSize:11,color:"rgba(255,255,255,0.65)",margin:0,lineHeight:1.9,fontFamily:"'Courier New',monospace",whiteSpace:"pre-wrap" as const}}>{`Q: What is the first pillar of Islam?
+A: Salah
+B: Shahada*
+C: Zakat
+D: Hajj
+Note: The Shahada is the declaration of faith.
+---
+Q: How many Surahs are in the Quran?
+A: 110
+B: 112
+C: 114*
+D: 116
+Note: The Quran has 114 Surahs.
+---`}</pre>
+          <p style={{fontSize:10,color:"rgba(255,255,255,0.35)",margin:"8px 0 0",lineHeight:1.6}}>
+            • Add <strong style={{color:GOLD}}>*</strong> after the correct option (e.g. <code style={{color:GOLD}}>B: Answer*</code>)<br/>
+            • Separate questions with <strong style={{color:GOLD}}>---</strong> on its own line<br/>
+            • <code style={{color:"rgba(255,255,255,0.5)"}}>Note:</code> line is optional
+          </p>
+        </div>
 
-        {/* Add question form */}
+        {/* Paste box */}
         <div style={{...glassCard, display:"flex", flexDirection:"column", gap:12}}>
-          <p style={{fontSize:11,color:GOLD,fontWeight:700,margin:0,letterSpacing:1.5,textTransform:"uppercase"}}>New Question</p>
-          <input value={manualQ.question} onChange={e=>setManualQ(p=>({...p,question:e.target.value}))}
-            placeholder="Question text *"
-            style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid rgba(201,146,42,0.3)",background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {["A","B","C","D"].map((lbl,idx)=>{
-              const key = (["optA","optB","optC","optD"] as const)[idx];
-              return (
-                <input key={lbl} value={manualQ[key]} onChange={e=>setManualQ(p=>({...p,[key]:e.target.value}))}
-                  placeholder={`Option ${lbl}${idx<2?" *":""}`}
-                  style={{padding:"9px 12px",borderRadius:9,border:`1.5px solid ${manualQ.correct===lbl?"rgba(34,197,94,0.6)":"rgba(255,255,255,0.1)"}`,background:"rgba(255,255,255,0.04)",color:"#fff",fontSize:12,outline:"none",fontFamily:"inherit"}}/>
-              );
-            })}
-          </div>
-          <div>
-            <label style={{fontSize:11,color:"rgba(255,255,255,0.5)",display:"block",marginBottom:6}}>Correct Answer</label>
-            <div style={{display:"flex",gap:8}}>
-              {["A","B","C","D"].map(lbl=>(
-                <button key={lbl} onClick={()=>setManualQ(p=>({...p,correct:lbl}))}
-                  style={{flex:1,padding:"9px",borderRadius:9,border:`1.5px solid ${manualQ.correct===lbl?"#22C55E":"rgba(255,255,255,0.12)"}`,background:manualQ.correct===lbl?"rgba(34,197,94,0.15)":"transparent",color:manualQ.correct===lbl?"#22C55E":"rgba(255,255,255,0.55)",cursor:"pointer",fontWeight:800,fontSize:14}}>
-                  {lbl}
-                </button>
-              ))}
+          <label style={{fontSize:11,fontWeight:700,color:GOLD,letterSpacing:1.5,textTransform:"uppercase" as const}}>Paste Questions Here</label>
+          <textarea
+            value={bulkText}
+            onChange={e=>{ setBulkText(e.target.value); setBulkError(""); }}
+            rows={14}
+            placeholder={`Q: What is the first pillar of Islam?\nA: Salah\nB: Shahada*\nC: Zakat\nD: Hajj\nNote: The Shahada is the declaration of faith.\n---\nQ: Next question...`}
+            style={{width:"100%",padding:"13px 14px",borderRadius:11,border:`1.5px solid rgba(201,146,42,0.3)`,background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:12,outline:"none",boxSizing:"border-box" as const,fontFamily:"'Courier New',monospace",lineHeight:1.7,resize:"vertical" as const}}
+          />
+          {bulkError && (
+            <div style={{background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:10,padding:"10px 14px"}}>
+              <p style={{fontSize:12,color:"#f87171",margin:0}}>⚠️ {bulkError}</p>
             </div>
-          </div>
-          <input value={manualQ.explanation} onChange={e=>setManualQ(p=>({...p,explanation:e.target.value}))}
-            placeholder="Explanation (optional)"
-            style={{width:"100%",padding:"11px 14px",borderRadius:10,border:"1.5px solid rgba(255,255,255,0.1)",background:"rgba(255,255,255,0.04)",color:"#fff",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
-          <button onClick={addManualQ} disabled={!manualQ.question.trim()||!manualQ.optA.trim()||!manualQ.optB.trim()}
-            style={{...outlineBtn, opacity:manualQ.question.trim()&&manualQ.optA.trim()&&manualQ.optB.trim()?1:0.4}}>
-            <PlusCircle size={16}/> Add Question
+          )}
+          <button onClick={handleBulkParse} disabled={!bulkText.trim()}
+            style={{...goldBtn, opacity:bulkText.trim()?1:0.4, cursor:bulkText.trim()?"pointer":"not-allowed"}}>
+            <Eye size={16}/> Parse &amp; Preview Questions →
           </button>
         </div>
-
-        {customQs.length > 0 && (
-          <button onClick={()=>setView("q-preview")} style={{...goldBtn, marginTop:14}}>
-            Preview {customQs.length} Questions →
-          </button>
-        )}
       </div>
     </div>
   );
