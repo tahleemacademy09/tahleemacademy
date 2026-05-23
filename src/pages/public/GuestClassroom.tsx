@@ -137,25 +137,24 @@ const CSS = `
     background: rgba(255,255,255,.14) !important;
   }
 
-  /* ── Fix: fill tile — no black side bars ── */
-  .lk-participant-tile video {
+  /* ── Fix: fill tile — no black side bars (all LiveKit videos) ── */
+  .lk-participant-tile video,
+  .lk-grid-layout video,
+  .lk-focus-layout video,
+  .lk-video-conference video {
     object-fit: cover !important;
     width: 100% !important;
     height: 100% !important;
   }
 
-  /* ── Fix: un-mirror remote participants ── */
-  /* LiveKit mirrors ALL videos by default via scaleX(-1).
-     Strip it from every tile that is NOT the local participant. */
-  .lk-participant-tile:not([data-lk-local-participant]) video,
-  .lk-participant-tile:not([data-lk-local-participant="true"]) video {
+  /* ── CSS baseline: strip any stylesheet-level mirror from all tiles.
+     The MutationObserver below re-applies scaleX(-1) to the local tile
+     via inline style (which wins over !important in a stylesheet). ── */
+  .lk-participant-tile video,
+  .lk-grid-layout video,
+  .lk-focus-layout video {
     transform: none !important;
-  }
-
-  /* Keep local camera mirrored so it feels natural to the sender */
-  .lk-participant-tile[data-lk-local-participant] video,
-  .lk-participant-tile[data-lk-local-participant="true"] video {
-    transform: scaleX(-1) !important;
+    -webkit-transform: none !important;
   }
 `;
 
@@ -803,6 +802,43 @@ const GuestClassroom = () => {
     if (!connected) return;
     const t = setInterval(()=>setClassDuration(p=>p+1), 1000);
     return () => clearInterval(t);
+  }, [connected]);
+
+  // Fix LiveKit video styles: cover + un-mirror remote tiles.
+  // CSS !important strips the stylesheet-level mirror; this observer
+  // re-applies scaleX(-1) to the LOCAL tile only via inline style
+  // (setProperty with "important" beats !important in a stylesheet).
+  useEffect(() => {
+    if (!connected) return;
+
+    const patchVideos = () => {
+      document.querySelectorAll<HTMLElement>(".lk-participant-tile").forEach(tile => {
+        const attr = tile.getAttribute("data-lk-local-participant");
+        const isLocal = attr === "true" || (attr !== null && attr !== "false");
+        tile.querySelectorAll<HTMLVideoElement>("video").forEach(vid => {
+          vid.style.setProperty("object-fit", "cover", "important");
+          vid.style.setProperty("width",      "100%",  "important");
+          vid.style.setProperty("height",     "100%",  "important");
+          const mirror = isLocal ? "scaleX(-1)" : "none";
+          vid.style.setProperty("transform",         mirror, "important");
+          vid.style.setProperty("-webkit-transform", mirror, "important");
+        });
+      });
+    };
+
+    patchVideos();
+    const lkRoot = document.querySelector(".lk-video-conference") ?? document.body;
+    const observer = new MutationObserver(patchVideos);
+    observer.observe(lkRoot, { childList: true, subtree: true, attributes: true });
+    // Poll briefly after connect to catch late-rendered tiles
+    const poll    = setInterval(patchVideos, 500);
+    const stopPoll = setTimeout(() => clearInterval(poll), 8000);
+
+    return () => {
+      observer.disconnect();
+      clearInterval(poll);
+      clearTimeout(stopPoll);
+    };
   }, [connected]);
 
   // Build PiP once connected
