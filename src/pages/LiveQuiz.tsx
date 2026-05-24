@@ -13,7 +13,7 @@ import {
   Trophy, Users, Play, ArrowRight, Star,
   Crown, Zap, RotateCcw, X,
   BookOpen, Eye, PlusCircle, Sparkles,
-  Copy, Share2, Check,
+  Copy, Share2, Check, Pencil, Trash2, ChevronDown, ChevronUp, Plus,
 } from "lucide-react";
 
 /* ── Brand Colors ─────────────────────────────────────── */
@@ -172,7 +172,7 @@ const LiveQuiz = () => {
   const isHost           = hasRole?.("admin") || hasRole?.("teacher");
 
   type View =
-    | "hub" | "creating" | "joining" | "saved-quizzes"
+    | "hub" | "creating" | "joining" | "saved-quizzes" | "edit-quiz"
     | "q-source" | "q-preview" | "q-ai" | "q-bank" | "q-upload" | "q-manual"
     | "lobby-host" | "countdown-host" | "question-host" | "reveal-host" | "results-host"
     | "lobby-player" | "countdown-player" | "question-player" | "reveal-player" | "results-player"
@@ -242,6 +242,13 @@ const LiveQuiz = () => {
   })());
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedSavedId, setCopiedSavedId] = useState<string|null>(null);
+
+  // ── Edit Saved Quiz ──
+  const [editingQuizId, setEditingQuizId]   = useState<string|null>(null);
+  const [editQs,        setEditQs]          = useState<Omit<Question,"id">[]>([]);
+  const [editName,      setEditName]        = useState<string>("");
+  const [editSettings,  setEditSettings]    = useState<{topic:string;numQ:number;timeQ:number}>({topic:"All Topics",numQ:10,timeQ:20});
+  const [expandedEditQ, setExpandedEditQ]   = useState<number|null>(null);
   // ── Saved Quizzes ──
   const [savedQuizzes, setSavedQuizzesRaw] = useState<SavedQuiz[]>(() => {
     try { const s = localStorage.getItem("lq_saved_quizzes"); return s ? JSON.parse(s) : []; } catch { return []; }
@@ -268,6 +275,44 @@ const LiveQuiz = () => {
   };
   const deleteSavedQuiz = (id: string) => setSavedQuizzes(prev => prev.filter(q => q.id !== id));
   const refreshSavedCode = (id: string) => setSavedQuizzes(prev => prev.map(q => q.id === id ? { ...q, persistentCode: genCode() } : q));
+
+  const startEditQuiz = (sq: SavedQuiz) => {
+    setEditingQuizId(sq.id);
+    setEditQs(sq.questions.map(q => ({ ...q })));
+    setEditName(sq.name);
+    setEditSettings({ ...sq.settings });
+    setExpandedEditQ(null);
+    setView("edit-quiz");
+  };
+
+  const saveEditedQuiz = () => {
+    if (!editingQuizId) return;
+    setSavedQuizzes(prev => prev.map(q =>
+      q.id === editingQuizId
+        ? { ...q, name: editName.trim() || q.name, questions: editQs, settings: editSettings }
+        : q
+    ));
+    toast({ title: "✅ Quiz updated!" });
+    setView("saved-quizzes");
+  };
+
+  const updateEditQ = (idx: number, patch: Partial<Omit<Question,"id">>) => {
+    setEditQs(prev => prev.map((q, i) => i === idx ? { ...q, ...patch } : q));
+  };
+
+  const deleteEditQ = (idx: number) => {
+    setEditQs(prev => prev.filter((_, i) => i !== idx));
+    setExpandedEditQ(null);
+  };
+
+  const addEditQ = () => {
+    const newQ: Omit<Question,"id"> = {
+      question: "", options: ["", "", "", ""], correct_answer: "",
+      explanation: "", time_limit: editSettings.timeQ, topic: "Manual",
+    };
+    setEditQs(prev => [...prev, newQ]);
+    setExpandedEditQ(editQs.length);
+  };
   const launchSavedQuiz = async (sq: SavedQuiz) => {
     setQuizName(sq.name);
     setSettings(sq.settings);
@@ -930,9 +975,16 @@ Make questions educational, clearly worded, and accurate.`
                       </span>
                     </div>
                   </div>
-                  <button onClick={()=>deleteSavedQuiz(sq.id)}
-                    style={{flexShrink:0,background:"none",border:"none",color:"rgba(239,68,68,0.45)",cursor:"pointer",fontSize:18,padding:"2px 6px",lineHeight:1}}
-                    title="Delete quiz">✕</button>
+                  <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                    <button onClick={()=>startEditQuiz(sq)}
+                      title="Edit quiz"
+                      style={{background:"none",border:"none",color:GOLD,cursor:"pointer",padding:"2px 6px",lineHeight:1,display:"flex",alignItems:"center",gap:3,fontSize:13,fontWeight:700}}>
+                      <Pencil size={13}/> Edit
+                    </button>
+                    <button onClick={()=>deleteSavedQuiz(sq.id)}
+                      style={{flexShrink:0,background:"none",border:"none",color:"rgba(239,68,68,0.45)",cursor:"pointer",fontSize:18,padding:"2px 6px",lineHeight:1}}
+                      title="Delete quiz">✕</button>
+                  </div>
                 </div>
 
                 {/* Question preview */}
@@ -969,6 +1021,179 @@ Make questions educational, clearly worded, and accurate.`
             + Create New Quiz
           </button>
         </div>
+      </div>
+    </div>
+  );
+
+  /* ══ EDIT SAVED QUIZ ════════════════════════════════ */
+  if (view === "edit-quiz") return (
+    <div style={{...pageStyle, padding:"0 0 60px", overflowY:"auto"}}>
+      <IslamicBg opacity={0.08}/>
+      {/* Sticky header */}
+      <div style={{position:"sticky",top:0,zIndex:10,background:"rgba(6,20,14,0.97)",backdropFilter:"blur(14px)",borderBottom:"1px solid rgba(201,146,42,0.2)",padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={()=>setView("saved-quizzes")} style={{...backBtn,margin:0}}>← Back</button>
+        <div style={{flex:1,textAlign:"center"}}>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:20,color:"#fff",margin:0}}>Edit Quiz</h2>
+        </div>
+        <button
+          onClick={saveEditedQuiz}
+          disabled={!editName.trim() || editQs.length === 0}
+          style={{padding:"8px 18px",borderRadius:12,border:"none",background:editName.trim()&&editQs.length>0?`linear-gradient(135deg,${GOLD},${GOLD2})`:"rgba(255,255,255,0.08)",color:editName.trim()&&editQs.length>0?"#fff":"rgba(255,255,255,0.3)",fontWeight:800,fontSize:13,cursor:editName.trim()&&editQs.length>0?"pointer":"not-allowed",flexShrink:0}}>
+          Save
+        </button>
+      </div>
+
+      <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto",padding:"20px 18px",display:"flex",flexDirection:"column",gap:18}}>
+
+        {/* ── Quiz Name ── */}
+        <div style={{...glassCard, display:"flex", flexDirection:"column", gap:10}}>
+          <label style={{fontSize:11,fontWeight:700,color:GOLD,letterSpacing:1.5,textTransform:"uppercase" as const}}>📋 Quiz Name</label>
+          <input
+            value={editName}
+            onChange={e=>setEditName(e.target.value)}
+            placeholder="Quiz name…"
+            style={{width:"100%",padding:"12px 14px",borderRadius:11,border:`1.5px solid rgba(201,146,42,0.35)`,background:"rgba(255,255,255,0.06)",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box" as const,fontFamily:"inherit"}}
+          />
+        </div>
+
+        {/* ── Settings ── */}
+        <div style={{...glassCard, display:"flex", flexDirection:"column", gap:14}}>
+          <p style={{fontSize:11,fontWeight:700,color:GOLD,letterSpacing:1.5,textTransform:"uppercase" as const,margin:0}}>⚙️ Settings</p>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+            <div>
+              <label style={{fontSize:11,color:"rgba(255,255,255,0.5)",display:"block",marginBottom:5}}>Secs / Question</label>
+              <input type="number" min={5} max={120} value={editSettings.timeQ}
+                onChange={e=>setEditSettings(s=>({...s,timeQ:parseInt(e.target.value)||20}))}
+                style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid rgba(201,146,42,0.3)`,background:"rgba(255,255,255,0.06)",color:"#fff",fontSize:15,fontWeight:700,outline:"none",boxSizing:"border-box" as const}}/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:"rgba(255,255,255,0.5)",display:"block",marginBottom:5}}># Qs to Launch</label>
+              <input type="number" min={1} max={editQs.length} value={editSettings.numQ}
+                onChange={e=>setEditSettings(s=>({...s,numQ:Math.min(editQs.length,parseInt(e.target.value)||10)}))}
+                style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid rgba(201,146,42,0.3)`,background:"rgba(255,255,255,0.06)",color:"#fff",fontSize:15,fontWeight:700,outline:"none",boxSizing:"border-box" as const}}/>
+            </div>
+          </div>
+          <div>
+            <label style={{fontSize:11,color:"rgba(255,255,255,0.5)",display:"block",marginBottom:5}}>Topic</label>
+            <select value={editSettings.topic} onChange={e=>setEditSettings(s=>({...s,topic:e.target.value}))}
+              style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid rgba(201,146,42,0.3)`,background:"rgba(6,20,14,0.9)",color:"#fff",fontSize:14,outline:"none",boxSizing:"border-box" as const}}>
+              {TOPICS.map(t=><option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* ── Questions ── */}
+        <div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+            <p style={{fontSize:13,fontWeight:800,color:"#fff",margin:0}}>{editQs.length} Question{editQs.length!==1?"s":""}</p>
+            <button onClick={addEditQ}
+              style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:10,border:`1.5px solid rgba(201,146,42,0.4)`,background:"rgba(201,146,42,0.08)",color:GOLD,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+              <Plus size={13}/> Add Question
+            </button>
+          </div>
+
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {editQs.map((q, idx) => {
+              const isOpen = expandedEditQ === idx;
+              const isValid = q.question.trim() && q.options.filter(o=>o.trim()).length >= 2 && q.correct_answer.trim();
+              return (
+                <div key={idx} style={{background:"rgba(255,255,255,0.04)",border:`1.5px solid ${isOpen?"rgba(201,146,42,0.5)":"rgba(255,255,255,0.08)"}`,borderRadius:16,overflow:"hidden",transition:"border-color .2s"}}>
+                  {/* Question header (always visible) */}
+                  <div
+                    onClick={()=>setExpandedEditQ(isOpen ? null : idx)}
+                    style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",cursor:"pointer",userSelect:"none" as const}}>
+                    <span style={{width:24,height:24,borderRadius:8,background:`rgba(201,146,42,0.15)`,border:`1px solid rgba(201,146,42,0.3)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:800,color:GOLD,flexShrink:0}}>{idx+1}</span>
+                    <p style={{flex:1,margin:0,fontSize:13,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" as const,opacity:q.question.trim()?1:0.35}}>
+                      {q.question.trim() || "Untitled question…"}
+                    </p>
+                    <span style={{fontSize:10,color:isValid?"#22C55E":"rgba(239,68,68,0.6)",flexShrink:0,fontWeight:700}}>{isValid?"✓":"!"}</span>
+                    {isOpen ? <ChevronUp size={14} color="rgba(255,255,255,0.4)"/> : <ChevronDown size={14} color="rgba(255,255,255,0.3)"/>}
+                  </div>
+
+                  {/* Expanded editor */}
+                  {isOpen && (
+                    <div style={{padding:"0 14px 16px",display:"flex",flexDirection:"column",gap:12,borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+                      {/* Question text */}
+                      <div style={{paddingTop:12}}>
+                        <label style={{fontSize:10,fontWeight:700,color:GOLD,display:"block",marginBottom:5,letterSpacing:1.2,textTransform:"uppercase" as const}}>Question Text</label>
+                        <textarea
+                          value={q.question}
+                          onChange={e=>updateEditQ(idx,{question:e.target.value})}
+                          rows={2}
+                          placeholder="Enter question…"
+                          style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid rgba(201,146,42,0.3)`,background:"rgba(255,255,255,0.06)",color:"#fff",fontSize:13,outline:"none",boxSizing:"border-box" as const,fontFamily:"inherit",resize:"vertical" as const}}
+                        />
+                      </div>
+
+                      {/* Options */}
+                      <div>
+                        <label style={{fontSize:10,fontWeight:700,color:GOLD,display:"block",marginBottom:8,letterSpacing:1.2,textTransform:"uppercase" as const}}>Options (mark correct with ✓)</label>
+                        <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                          {["A","B","C","D"].map((lbl,oi)=>{
+                            const isCorrect = q.correct_answer === q.options[oi];
+                            return (
+                              <div key={lbl} style={{display:"flex",alignItems:"center",gap:8}}>
+                                <button
+                                  onClick={()=>updateEditQ(idx,{correct_answer:q.options[oi]})}
+                                  title="Mark as correct"
+                                  style={{width:28,height:28,borderRadius:8,border:`2px solid ${isCorrect?"#22C55E":"rgba(255,255,255,0.2)"}`,background:isCorrect?"rgba(34,197,94,0.2)":"transparent",color:isCorrect?"#22C55E":"rgba(255,255,255,0.3)",cursor:"pointer",fontSize:12,fontWeight:800,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",transition:"all .15s"}}>
+                                  {isCorrect?"✓":lbl}
+                                </button>
+                                <input
+                                  value={q.options[oi]||""}
+                                  onChange={e=>{
+                                    const newOpts = [...q.options];
+                                    const oldOpt = newOpts[oi];
+                                    newOpts[oi] = e.target.value;
+                                    const newCorrect = q.correct_answer === oldOpt ? e.target.value : q.correct_answer;
+                                    updateEditQ(idx,{options:newOpts,correct_answer:newCorrect});
+                                  }}
+                                  placeholder={`Option ${lbl}…`}
+                                  style={{flex:1,padding:"8px 11px",borderRadius:9,border:`1.5px solid ${isCorrect?"rgba(34,197,94,0.4)":"rgba(255,255,255,0.12)"}`,background:"rgba(255,255,255,0.05)",color:"#fff",fontSize:13,outline:"none",boxSizing:"border-box" as const,fontFamily:"inherit"}}
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Explanation */}
+                      <div>
+                        <label style={{fontSize:10,fontWeight:700,color:"rgba(255,255,255,0.4)",display:"block",marginBottom:5,letterSpacing:1.2,textTransform:"uppercase" as const}}>Explanation (optional)</label>
+                        <input
+                          value={q.explanation||""}
+                          onChange={e=>updateEditQ(idx,{explanation:e.target.value})}
+                          placeholder="Brief explanation shown after answer…"
+                          style={{width:"100%",padding:"9px 11px",borderRadius:9,border:`1.5px solid rgba(255,255,255,0.1)`,background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.7)",fontSize:12,outline:"none",boxSizing:"border-box" as const,fontFamily:"inherit"}}
+                        />
+                      </div>
+
+                      {/* Delete question */}
+                      <button onClick={()=>deleteEditQ(idx)}
+                        style={{display:"flex",alignItems:"center",gap:6,alignSelf:"flex-start" as const,padding:"7px 12px",borderRadius:9,border:"1px solid rgba(239,68,68,0.3)",background:"rgba(239,68,68,0.07)",color:"rgba(239,68,68,0.7)",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                        <Trash2 size={12}/> Remove Question
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {editQs.length === 0 && (
+            <div style={{textAlign:"center",padding:"32px 24px",background:"rgba(255,255,255,0.02)",borderRadius:16,border:"1px solid rgba(255,255,255,0.06)"}}>
+              <p style={{fontSize:13,color:"rgba(255,255,255,0.3)",margin:0}}>No questions yet — tap "Add Question" above</p>
+            </div>
+          )}
+        </div>
+
+        {/* Save button */}
+        <button
+          onClick={saveEditedQuiz}
+          disabled={!editName.trim() || editQs.length === 0}
+          style={{...goldBtn, opacity:editName.trim()&&editQs.length>0?1:0.45, cursor:editName.trim()&&editQs.length>0?"pointer":"not-allowed", marginTop:4}}>
+          💾 Save Changes ({editQs.length} question{editQs.length!==1?"s":""})
+        </button>
       </div>
     </div>
   );
