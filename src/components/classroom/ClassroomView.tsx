@@ -18,8 +18,6 @@ import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
-import { resolveParticipantName } from "@/components/classroom/participantUtils";
-
 import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -324,18 +322,6 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
   const hiddenAt     = useRef<number | null>(null);
   const wsDropped    = useRef(false); // did LiveKit also fire Disconnected?
 
-  // ── BUG FIX: keep callback refs always current so the useEffect below never
-  // needs to re-run when the parent recreates its callbacks (e.g. on every
-  // autoReconnectCount increment).  Re-running the effect tears down and
-  // re-adds room listeners, creating a window where Disconnected events are
-  // silently dropped mid-reconnection storm.
-  const onReconnectingRef = useRef(onReconnecting);
-  const onReconnectedRef  = useRef(onReconnected);
-  const onDisconnectedRef = useRef(onDisconnected);
-  onReconnectingRef.current = onReconnecting;
-  onReconnectedRef.current  = onReconnected;
-  onDisconnectedRef.current = onDisconnected;
-
   useEffect(() => {
     const clearGrace = () => {
       if (graceTimer.current) { clearTimeout(graceTimer.current); graceTimer.current = null; }
@@ -348,20 +334,11 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
       // If still within grace window — wait; grace timer will call onDisconnected
       if (graceTimer.current) return;
       // No grace window active (tab is visible) → reconnect immediately
-      onDisconnectedRef.current();
+      onDisconnected();
     };
 
-    // Stable wrapper functions so room.off() can remove exactly the same references
-    const handleReconnecting = () => onReconnectingRef.current();
-    const handleReconnected  = () => {
-      // BUG FIX: clear the grace timer when LiveKit itself reconnects so we
-      // don't fire onDisconnected after the connection has already been restored.
-      clearGrace();
-      onReconnectedRef.current();
-    };
-
-    room.on(RoomEvent.Reconnecting, handleReconnecting);
-    room.on(RoomEvent.Reconnected,  handleReconnected);
+    room.on(RoomEvent.Reconnecting, onReconnecting);
+    room.on(RoomEvent.Reconnected,  onReconnected);
     room.on(RoomEvent.Disconnected, handleDisconnect);
 
     const onVis = async () => {
@@ -372,7 +349,7 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
           graceTimer.current = null;
           // 5 minutes elapsed in background — disconnect if WS also dropped
           if (wsDropped.current || room.state === ConnectionState.Disconnected) {
-            onDisconnectedRef.current();
+            onDisconnected();
           }
           // If somehow still connected after 5 min — leave as-is; LiveKit
           // will reconnect on its own when the tab returns.
@@ -382,7 +359,7 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
 
       // Tab coming back to foreground
       clearGrace();
-      if (room.state === ConnectionState.Disconnected) { onDisconnectedRef.current(); return; }
+      if (room.state === ConnectionState.Disconnected) { onDisconnected(); return; }
       try {
         if (room.state === ConnectionState.Connected) {
           const lp = room.localParticipant;
@@ -391,7 +368,7 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
             await new Promise(r => setTimeout(r, 150));
             await lp.setMicrophoneEnabled(true);
           }
-          onReconnectedRef.current();
+          onReconnected();
         }
       } catch {}
     };
@@ -399,13 +376,12 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
     document.addEventListener("visibilitychange", onVis);
     return () => {
       clearGrace();
-      room.off(RoomEvent.Reconnecting, handleReconnecting);
-      room.off(RoomEvent.Reconnected,  handleReconnected);
+      room.off(RoomEvent.Reconnecting, onReconnecting);
+      room.off(RoomEvent.Reconnected,  onReconnected);
       room.off(RoomEvent.Disconnected, handleDisconnect);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [room]); // BUG FIX: only re-run if the room instance itself changes,
-              // NOT when callback props change — avoids listener gaps
+  }, [room, onReconnecting, onReconnected, onDisconnected]);
   return null;
 };
 
@@ -2543,7 +2519,7 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
     };
   },[participant,attachVideo,room,isLocal]);
 
-  const name = resolveParticipantName(participant);
+  const name=participant.name||participant.identity||"User";
   // avatarSz/avatarFs kept for speaking wave sizing only
   const avatarSz = size==="large" ? 80 : size==="small" ? 40 : 56;
 
@@ -3125,11 +3101,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   /* ── reconnect state ── */
   const[roomKey,setRoomKey]=useState(0);          // bump to remount <LiveKitRoom> with fresh token
   const[autoReconnectCount,setAutoReconnectCount]=useState(0);
-  // BUG FIX: always-current ref so autoReconnect never captures a stale count value
-  const autoReconnectCountRef=useRef(0);
-  useEffect(()=>{autoReconnectCountRef.current=autoReconnectCount;},[autoReconnectCount]);
-  // BUG FIX: gate against concurrent autoReconnect calls (e.g. rapid Disconnected events)
-  const reconnectInFlight=useRef(false);
   const intentionalLeaveRef=useRef(false);         // true on manual leave → skip auto-reconnect
   const participantCountRef=useRef(0);              // tracks peak live participant count for ClassEndScreen
   /* ── lobby media choices ── */
@@ -3272,13 +3243,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       if(!tk||!url){const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});if(e)throw e;if(data?.error)throw new Error(data.error);tk=data.token;url=data.url;}
       setToken(tk!);setWsUrl(url!);
       const{data:sessions}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
-
-      // Students must have a live session to join; privileged users create one via start_session.
-      // If no session exists and the user is a student, block them with a clear message.
-      if(!sessions?.length && !isPrivileged){
-        throw new Error("No live class is in session right now. Please wait for your teacher to start.");
-      }
-
       if(sessions?.length){
         const freshSessionId=sessions[0].id;
         // FIX BUG 1: Apply class settings using the freshly-retrieved session ID, not the
@@ -3287,7 +3251,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         setSessionId(freshSessionId);setSessionInfo(sessions[0]);
         const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
         if(att)setAttendanceId(att.id);
-        // Track participant (both students and privileged users) so admin dashboard shows accurate counts
         await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});
         // FIX BUG 8: Subscribe to session-end immediately here — before the useEffect cycle —
         // so there is no window where the teacher can end the class and students miss the event.
@@ -3309,29 +3272,18 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
      Fires when LiveKit emits Disconnected unexpectedly (e.g. Android tab suspension).
      Fetches a fresh token, bumps roomKey to force <LiveKitRoom> remount, up to 5 tries.
      intentionalLeaveRef guards against triggering this on a manual leave/end.           */
-  /* ══ AUTO-RECONNECT ══
-     Fires when LiveKit emits Disconnected unexpectedly (e.g. Android tab suspension).
-     Fetches a fresh token, bumps roomKey to force <LiveKitRoom> remount, up to 5 tries.
-     intentionalLeaveRef guards against triggering this on a manual leave/end.
-     BUG FIX: no longer depends on autoReconnectCount (uses ref instead) so the
-     function reference is stable — ReconnectMonitor never needs to swap listeners. */
   const autoReconnect=useCallback(async()=>{
     if(intentionalLeaveRef.current)return;
-    // BUG FIX: prevent two concurrent reconnect attempts (rapid Disconnected events)
-    if(reconnectInFlight.current)return;
-    reconnectInFlight.current=true;
-    const count=autoReconnectCountRef.current; // BUG FIX: read current value from ref
-    if(count>=5){
+    if(autoReconnectCount>=5){
       setReconnecting(false);
       setError("Connection lost after several attempts. Please try again.");
       setPhase("lobby");
-      setHasConnected(false);
-      reconnectInFlight.current=false;
+      setHasConnected(false);  // reset — not in class anymore
       return;
     }
     setReconnecting(true);
     // FIX BUG 7 (partial) + REC 1: Exponential backoff — 1s, 2s, 4s, 8s, 15s cap
-    const backoffMs=Math.min(1000*Math.pow(2,count),15000);
+    const backoffMs=Math.min(1000*Math.pow(2,autoReconnectCount),15000);
     await new Promise(r=>setTimeout(r,backoffMs));
     try{
       const{data}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}});
@@ -3348,10 +3300,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       setPhase("lobby");
     }finally{
       setReconnecting(false);
-      reconnectInFlight.current=false;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[subject.id,isPrivileged]); // BUG FIX: no autoReconnectCount dep — uses ref instead
+  },[subject.id,isPrivileged,autoReconnectCount]);
 
   useEffect(()=>()=>{
     if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
@@ -3469,7 +3420,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         <div style={{display:"flex",gap:12,justifyContent:"center"}}>
           <button onClick={()=>{
             intentionalLeaveRef.current=false;setAutoReconnectCount(0);
-            reconnectInFlight.current=false;
             setError(null);setToken(null);setWsUrl(null);
             connect(isPrivileged?"start_session":"join");
           }} style={{
