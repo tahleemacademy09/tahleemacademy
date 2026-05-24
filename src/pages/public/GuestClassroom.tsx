@@ -40,6 +40,7 @@ import ClassParticipants from "@/components/classroom/ClassParticipants";
 import ClassControls     from "@/components/classroom/ClassControls";
 import LiveQuizOverlay   from "@/components/classroom/LiveQuizOverlay";
 import { useIsMobile }   from "@/hooks/use-mobile";
+import { resolveParticipantName } from "@/components/classroom/participantUtils";
 
 
 /* ════════════════════════════════════════════════════════
@@ -553,11 +554,11 @@ const ParticipantEventHandler = ({
       if (seenRef.current.has(p.identity)) return; // reconnect echo — skip
       seenRef.current.add(p.identity);
       if (soundEnabled) playChime("join");
-      onToast({ id: ++toastId.current, name: p.name || p.identity || "Someone", type: "join" });
+      onToast({ id: ++toastId.current, name: resolveParticipantName(p), type: "join" });
     };
     const onLeave = (p: Participant) => {
       seenRef.current.delete(p.identity);
-      onToast({ id: ++toastId.current, name: p.name || p.identity || "Someone", type: "leave" });
+      onToast({ id: ++toastId.current, name: resolveParticipantName(p), type: "leave" });
     };
     room.on(RoomEvent.ParticipantConnected, onJoin);
     room.on(RoomEvent.ParticipantDisconnected, onLeave);
