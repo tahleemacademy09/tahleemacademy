@@ -9,10 +9,11 @@
   normally. We just slide the classroom on/off screen with translateX.
 
   Minimize behaviour:
-    • Minimize button / back button  → translateX(-200%) + floating bar
-    • Phone home/recents button      → visibilitychange hidden → same
-    • Floating bar tap               → translateX(0), classroom back
-    • PiP canvas                     → shows on screen-lock only
+    • Minimize button                → translateX(-200%) + browser PiP opens
+    • Phone home/recents button      → visibilitychange hidden → translateX(-200%)
+    • Back button                    → popstate → translateX(-200%)
+    • Tapping the PiP window         → exitPictureInPicture + translateX(0)
+    • Screen lock                    → canvas PiP keep-alive (re-enters PiP)
 
   Back-button: LiveClassContext intercepts popstate and sets minimized.
   We do NOT push extra history entries here to avoid double-guard bugs.
@@ -80,13 +81,25 @@ function useWakeLock(active: boolean) {
 
 /* ─── MediaSession ───────────────────────────────────────────────────── */
 function useMediaSession(
-  active: boolean, title: string,
-  onReturn: () => void, onLeave: () => void,
+  active: boolean,
+  minimized: boolean,
+  title: string,
+  onReturn: () => void,
+  onLeave: () => void,
 ) {
   useEffect(() => {
-    if (!active || !("mediaSession" in navigator)) return;
+    if (!("mediaSession" in navigator)) return;
+    // Only show the system media bar when minimized — prevents the
+    // "Tap to return" overlay appearing while the classroom is fullscreen.
+    if (!active || !minimized) {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = "none";
+      (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[])
+        .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
+      return;
+    }
     navigator.mediaSession.metadata = new MediaMetadata({
-      title, artist: "Tahleem Academy", album: "🟢 Live Class",
+      title, artist: "Tahleem Academy", album: "\u{1F7E2} Live Class",
     });
     navigator.mediaSession.playbackState = "playing";
     const sa = (a: MediaSessionAction, h: () => void) => {
@@ -100,7 +113,7 @@ function useMediaSession(
       (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[])
         .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
     };
-  }, [active, title, onReturn, onLeave]);
+  }, [active, minimized, title, onReturn, onLeave]);
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -273,10 +286,16 @@ export default function GlobalClassroomOverlay() {
   const [localMic, setLocalMic] = useState(micEnabled);
   useEffect(() => setLocalMic(micEnabled), [micEnabled]);
 
+  // Track whether the user explicitly minimized vs tab-switched — used by visibilitychange handler
+  const userMinimizedRef = useRef(false);
+
   // handleReturn: just slide the classroom back in — no navigate() needed.
   // The page underneath is exactly the same route that was showing before
   // the classroom appeared (position:fixed overlay doesn't change the route).
-  const handleReturn = useCallback(() => setMinimized(false), [setMinimized]);
+  const handleReturn = useCallback(() => {
+    userMinimizedRef.current = false; // user chose to return — clear the flag
+    setMinimized(false);
+  }, [setMinimized]);
   const handleLeave  = useCallback(() => leaveClass(), [leaveClass]);
   const handleToggleMic = useCallback(() => {
     setLocalMic(v => !v);
@@ -285,7 +304,7 @@ export default function GlobalClassroomOverlay() {
 
   useSilentAudio(hasConnected);
   useWakeLock(hasConnected);
-  useMediaSession(hasConnected, title, handleReturn, handleLeave);
+  useMediaSession(hasConnected, minimized, title, handleReturn, handleLeave);
 
   const pipHandle       = useRef<PipHandle | null>(null);
   const handleReturnRef = useRef(handleReturn);
@@ -304,23 +323,21 @@ export default function GlobalClassroomOverlay() {
 
   /* ── Minimize button ── */
   const handleMinimize = useCallback(async () => {
-    // Just flip minimized — shows the floating bar. The classroom div slides off-screen
-    // via translateX(-200%) so the React Router route underneath is unaffected.
+    // User explicitly minimized — set flag so visibility restore doesn't auto-return
+    userMinimizedRef.current = true;
     setMinimized(true);
 
-    // BUG FIX: do NOT trigger the canvas PiP here. Per design, canvas PiP is for
-    // screen-lock ONLY (handled by the visibilitychange handler below). Calling
-    // h.pip() from the minimize button was causing students to see BOTH the floating
-    // bar AND a browser PiP popup every time they tapped Minimize.
-    //
-    // Exception: if the user's real camera is on, show their actual camera stream
-    // in browser PiP (genuinely useful), but never fall back to the canvas overlay.
-    if (!camEnabled || document.pictureInPictureElement) return;
+    // Always open browser PiP when minimized — this is the ONLY UI shown.
+    // Prefer a live camera stream (if cam is on), otherwise fall back to the canvas overlay.
+    if (document.pictureInPictureElement) return; // already in PiP
     const h = pipHandle.current;
     const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
-    const live = vids.find(v => v.readyState >= 2 && v.videoWidth > 0 && (!h || v !== h.video));
-    if (live) { try { await live.requestPictureInPicture(); } catch {} }
-    // No canvas PiP fallback — canvas PiP is screen-lock only
+    const liveCam = vids.find(v => v.readyState >= 2 && v.videoWidth > 0 && (!h || v !== h.video));
+    if (liveCam) {
+      try { await liveCam.requestPictureInPicture(); return; } catch {}
+    }
+    // Canvas PiP fallback — works even when camera is off (audio-only class)
+    if (h) { try { await h.pip(); } catch {} }
   }, [setMinimized, camEnabled]);
 
   /* ── Back button: LiveClassContext already sets minimized=true via popstate.
@@ -332,15 +349,17 @@ export default function GlobalClassroomOverlay() {
   pipHandleRef.current = pipHandle;
 
   /* ── Phone home/recent button: visibilitychange → hidden → setMinimized.
-     We do NOT call navigate() here. The route under the fixed overlay is
-     still correct. When the user switches back, the floating bar appears.  ── */
+     When the user returns (visible), auto-restore the classroom so there is no
+     persistent floating bar requiring an extra tap. The floating bar is only for
+     users who deliberately minimized (via the minimize button or back button).   ── */
   useEffect(() => {
     if (!hasConnected) return;
     const onVis = () => {
       if (document.visibilityState === "hidden") {
         setMinimized(true);
-        // PiP is blocked by browsers on visibility:hidden (no user gesture).
-        // Screen-off effect below handles PiP for screen-lock separately.
+      } else if (document.visibilityState === "visible" && !userMinimizedRef.current) {
+        // Auto-restore: user switched back to the browser tab — bring classroom back
+        setMinimized(false);
       }
     };
     document.addEventListener("visibilitychange", onVis);
@@ -407,96 +426,7 @@ export default function GlobalClassroomOverlay() {
         />
       </div>
 
-      {/* ── Floating "return to class" bar — shown whenever minimized ── */}
-      {minimized && (
-        <div
-          role="button"
-          aria-label="Return to live class"
-          onClick={handleReturn}
-          style={{
-            position:       "fixed",
-            bottom:         "max(env(safe-area-inset-bottom, 0px) + 16px, 16px)",
-            left:           "50%",
-            transform:      "translateX(-50%)",
-            zIndex:         9000,
-            display:        "flex",
-            alignItems:     "center",
-            gap:            "10px",
-            padding:        "10px 18px",
-            borderRadius:   "999px",
-            background:     "#0c1f12",
-            border:         "1.5px solid rgba(201,168,76,0.55)",
-            boxShadow:      "0 4px 24px rgba(0,0,0,0.55)",
-            cursor:         "pointer",
-            userSelect:     "none",
-            minWidth:       "220px",
-            maxWidth:       "calc(100vw - 32px)",
-            WebkitTapHighlightColor: "transparent",
-          }}
-        >
-          <style>{`@keyframes pip-pulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
-
-          {/* LIVE dot */}
-          <span style={{
-            width: "8px", height: "8px", borderRadius: "50%",
-            background: "#ef4444", flexShrink: 0,
-            boxShadow: "0 0 6px 2px rgba(239,68,68,0.6)",
-            animation: "pip-pulse 1.4s ease-in-out infinite",
-          }} />
-
-          {/* Avatar */}
-          <span style={{
-            width: "28px", height: "28px", borderRadius: "50%",
-            background: "#c9a84c", color: "#0c1f12",
-            fontWeight: 700, fontSize: "13px",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            flexShrink: 0,
-          }}>
-            {initial}
-          </span>
-
-          {/* Subject name */}
-          <span style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
-            <span style={{
-              display: "block", color: "rgba(255,255,255,0.92)",
-              fontWeight: 600, fontSize: "13px",
-              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-            }}>
-              {title}
-            </span>
-            <span style={{ display: "block", color: "rgba(255,255,255,0.45)", fontSize: "11px" }}>
-              Tap to return
-            </span>
-          </span>
-
-          {/* Mic indicator */}
-          <span style={{
-            width: "28px", height: "28px", borderRadius: "50%",
-            background: localMic ? "rgba(34,120,60,.9)" : "rgba(239,68,68,.9)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            flexShrink: 0, fontSize: "14px",
-          }}>
-            {localMic ? "🎙" : "🔇"}
-          </span>
-
-          {/* Leave button */}
-          <span
-            role="button"
-            aria-label="Leave class"
-            onClick={e => { e.stopPropagation(); handleLeave(); }}
-            style={{
-              width: "28px", height: "28px", borderRadius: "50%",
-              background: "rgba(239,68,68,.15)", border: "1px solid rgba(239,68,68,.4)",
-              color: "#ef4444",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0, fontSize: "14px", cursor: "pointer",
-              WebkitTapHighlightColor: "transparent",
-            }}
-          >
-            ✕
-          </span>
-        </div>
-      )}
+      {/* Floating bar removed — browser PiP is the only minimized UI */}
     </>
   );
 }
