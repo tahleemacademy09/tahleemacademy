@@ -166,7 +166,8 @@ const LiveQuiz = () => {
     | "hub" | "creating" | "joining"
     | "q-source" | "q-preview" | "q-ai" | "q-bank" | "q-upload" | "q-manual"
     | "lobby-host" | "countdown-host" | "question-host" | "reveal-host" | "results-host"
-    | "lobby-player" | "countdown-player" | "question-player" | "reveal-player" | "results-player";
+    | "lobby-player" | "countdown-player" | "question-player" | "reveal-player" | "results-player"
+    | "post-chat" | "farewell";
 
   /* ── State — lazy-initialized from sessionStorage so navigation never wipes an active quiz ── */
   const [view, setView] = useState<View>(() => {
@@ -231,6 +232,10 @@ const LiveQuiz = () => {
     try { return parseInt(sessionStorage.getItem("lq_q_index") || "0") || 0; } catch { return 0; }
   })());
   const [copiedCode, setCopiedCode] = useState(false);
+  // ── Chat state ──
+  const [chatMessages, setChatMessages] = useState<{id:string;name:string;text:string;ts:number;isHost:boolean}[]>([]);
+  const [chatInput,    setChatInput]    = useState("");
+  const chatEndRef = useRef<HTMLDivElement>(null);
   // ── Explicit question-index state — lazy-initialized from sessionStorage,
   // then updated from broadcast (players), DB events (both), and local actions (host).
   const [currentQIndex, setCurrentQIndex] = useState<number>(() => {
@@ -327,6 +332,25 @@ const LiveQuiz = () => {
           setCountdown(3);
           setView("countdown-player");
         }
+      })
+      // ── Post-quiz chat ──
+      .on("broadcast", { event: "chat_start" }, () => {
+        // Host opens discussion → all players auto-join
+        setChatMessages([]);
+        setView("post-chat");
+      })
+      .on("broadcast", { event: "chat_msg" }, ({ payload }: any) => {
+        if (payload?.id) {
+          setChatMessages(prev => {
+            // Deduplicate (sender already added it optimistically)
+            if (prev.some(m => m.id === payload.id)) return prev;
+            return [...prev, payload];
+          });
+        }
+      })
+      .on("broadcast", { event: "chat_end" }, () => {
+        // Host closes discussion → everyone sees the farewell screen
+        if (!isHost) setView("farewell");
       })
       .subscribe();
     broadcastRef.current = bc;
@@ -686,6 +710,38 @@ Make questions educational, clearly worded, and accurate.`
       ["lq_view","lq_room","lq_participant","lq_current_q","lq_q_index"].forEach(k => sessionStorage.removeItem(k));
     } catch {}
   };
+
+  /* ── Chat helpers ── */
+  const myChatName = isHost
+    ? "🎓 Teacher"
+    : (participant?.player_name || "Student");
+
+  const openDiscussion = () => {
+    setChatMessages([]);
+    broadcastRef.current?.send({ type:"broadcast", event:"chat_start", payload:{} });
+    setView("post-chat");
+  };
+
+  const sendChatMsg = () => {
+    const text = chatInput.trim();
+    if (!text) return;
+    const msg = { id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, name:myChatName, text, ts:Date.now(), isHost };
+    setChatMessages(prev => [...prev, msg]);
+    setChatInput("");
+    broadcastRef.current?.send({ type:"broadcast", event:"chat_msg", payload:msg });
+    // Auto-scroll
+    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior:"smooth" }), 60);
+  };
+
+  const closeChatForAll = () => {
+    broadcastRef.current?.send({ type:"broadcast", event:"chat_end", payload:{} });
+    setView("farewell");
+  };
+
+  /* ── Chat auto-scroll ── */
+  useEffect(() => {
+    if (view === "post-chat") chatEndRef.current?.scrollIntoView({ behavior:"smooth" });
+  }, [chatMessages, view]);
 
   /* ══════════════════════════════════════════════════
      SHARED STYLES
@@ -1772,9 +1828,244 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
             </div>
           )}
 
-          <button onClick={resetAll} style={goldBtn}>
-            <RotateCcw size={16}/> Back to Home
+          {/* Post-quiz actions */}
+          {view === "results-host" ? (
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button onClick={openDiscussion} style={{...goldBtn,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                <span style={{fontSize:18}}>💬</span> Open Class Discussion
+              </button>
+              <button onClick={resetAll} style={{...backBtn,justifyContent:"center",textAlign:"center"}}>
+                Skip → Return Home
+              </button>
+            </div>
+          ) : (
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{padding:"12px 16px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(201,146,42,0.15)",borderRadius:14,display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:20}}>💬</span>
+                <p style={{fontSize:13,color:"rgba(255,255,255,0.55)",margin:0}}>
+                  Waiting for teacher to open the discussion…
+                </p>
+              </div>
+              <button onClick={resetAll} style={{...backBtn,justifyContent:"center",textAlign:"center"}}>
+                Return Home
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  /* ══ POST-QUIZ LIVE CHAT ══════════════════════════ */
+  if (view === "post-chat" && room) {
+    const isMe = (name: string) => name === myChatName;
+    return (
+      <div style={{...pageStyle, display:"flex", flexDirection:"column", height:"100svh", overflow:"hidden"}}>
+        <IslamicBg opacity={0.06}/>
+
+        {/* ── Header ── */}
+        <div style={{position:"relative",zIndex:2,padding:"14px 16px 12px",borderBottom:`1px solid rgba(201,146,42,0.18)`,backdropFilter:"blur(12px)",background:"rgba(2,31,22,0.7)",display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
+          <div style={{flex:1,minWidth:0}}>
+            <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:17,color:"#fff",margin:"0 0 1px",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+              💬 Class Discussion
+            </h2>
+            <p style={{fontSize:11,color:GOLD,margin:0,fontFamily:"'Amiri',serif",letterSpacing:1}}>
+              {room.topic} · {participants.length} participants
+            </p>
+          </div>
+          {isHost ? (
+            <button
+              onClick={closeChatForAll}
+              style={{flexShrink:0,padding:"8px 16px",borderRadius:12,border:`1px solid rgba(201,146,42,0.4)`,background:"rgba(201,146,42,0.12)",color:GOLD,fontWeight:700,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}
+            >
+              ✓ Close &amp; Return Home
+            </button>
+          ) : (
+            <button
+              onClick={resetAll}
+              style={{flexShrink:0,padding:"8px 12px",borderRadius:12,border:"1px solid rgba(255,255,255,0.12)",background:"rgba(255,255,255,0.06)",color:"rgba(255,255,255,0.6)",fontSize:12,cursor:"pointer"}}
+            >
+              Leave
+            </button>
+          )}
+        </div>
+
+        {/* ── Welcome banner — shown until first message ── */}
+        {chatMessages.length === 0 && (
+          <div style={{position:"relative",zIndex:1,padding:"20px 20px 0",flexShrink:0}}>
+            <div style={{padding:"18px 20px",background:"rgba(201,146,42,0.07)",border:`1px solid rgba(201,146,42,0.2)`,borderRadius:18,textAlign:"center"}}>
+              <div style={{fontSize:32,marginBottom:8}}>🌟</div>
+              <p style={{fontFamily:"'Amiri',serif",fontSize:17,color:GOLD,margin:"0 0 4px",letterSpacing:1}}>
+                بارك الله فيكم جميعاً
+              </p>
+              <p style={{fontSize:13,color:"rgba(255,255,255,0.5)",margin:0,lineHeight:1.65}}>
+                May Allāh bless every one of you for your efforts.<br/>
+                Commend your classmates or share your thoughts below.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Messages ── */}
+        <div style={{position:"relative",zIndex:1,flex:1,overflowY:"auto",padding:"14px 14px 4px",display:"flex",flexDirection:"column",gap:12}}>
+          {chatMessages.map(msg => (
+            <div key={msg.id} style={{display:"flex",flexDirection:"column",alignItems:isMe(msg.name)?"flex-end":"flex-start"}}>
+              <span style={{
+                fontSize:10,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",
+                color: msg.isHost ? GOLD : "rgba(255,255,255,0.38)",
+                marginBottom:3,
+                paddingLeft: isMe(msg.name) ? 0 : 6,
+                paddingRight: isMe(msg.name) ? 6 : 0,
+              }}>
+                {msg.name}{isMe(msg.name) ? " · You" : ""}
+              </span>
+              <div style={{
+                maxWidth:"78%",
+                padding:"10px 14px",
+                borderRadius: isMe(msg.name) ? "18px 4px 18px 18px" : "4px 18px 18px 18px",
+                background: isMe(msg.name)
+                  ? `linear-gradient(135deg,${GOLD},${GOLD2})`
+                  : msg.isHost
+                    ? "rgba(201,146,42,0.13)"
+                    : "rgba(255,255,255,0.07)",
+                border: isMe(msg.name) ? "none" : msg.isHost ? `1px solid rgba(201,146,42,0.3)` : "1px solid rgba(255,255,255,0.09)",
+                color: isMe(msg.name) ? "#1a1108" : "#fff",
+                fontSize:14,
+                lineHeight:1.5,
+                wordBreak:"break-word",
+              }}>
+                {msg.text}
+              </div>
+            </div>
+          ))}
+          <div ref={chatEndRef}/>
+        </div>
+
+        {/* ── Participants name strip ── */}
+        <div style={{position:"relative",zIndex:2,padding:"7px 14px",borderTop:`1px solid rgba(255,255,255,0.05)`,display:"flex",gap:6,overflowX:"auto",flexShrink:0,alignItems:"center"}}>
+          <span style={{fontSize:10,color:"rgba(255,255,255,0.25)",marginRight:2,flexShrink:0}}>IN CHAT:</span>
+          {participants.map(p => (
+            <span key={p.id} style={{
+              flexShrink:0,fontSize:10,fontWeight:700,padding:"3px 10px",borderRadius:20,
+              background: p.id === participant?.id ? `rgba(201,146,42,0.18)` : "rgba(255,255,255,0.05)",
+              border: p.id === participant?.id ? `1px solid rgba(201,146,42,0.35)` : "1px solid rgba(255,255,255,0.08)",
+              color: p.id === participant?.id ? GOLD : "rgba(255,255,255,0.4)",
+            }}>
+              {p.player_name}
+            </span>
+          ))}
+        </div>
+
+        {/* ── Input ── */}
+        <div style={{position:"relative",zIndex:2,padding:"10px 12px 16px",borderTop:`1px solid rgba(201,146,42,0.15)`,backdropFilter:"blur(12px)",background:"rgba(2,31,22,0.6)",display:"flex",gap:8,flexShrink:0}}>
+          <input
+            value={chatInput}
+            onChange={e => setChatInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMsg(); } }}
+            placeholder={`${myChatName} — share a thought…`}
+            style={{flex:1,background:"rgba(255,255,255,0.07)",border:`1px solid rgba(201,146,42,0.22)`,borderRadius:14,padding:"11px 14px",color:"#fff",fontSize:14,outline:"none",fontFamily:"inherit"}}
+          />
+          <button
+            onClick={sendChatMsg}
+            disabled={!chatInput.trim()}
+            style={{
+              flexShrink:0,width:46,height:46,borderRadius:14,border:"none",
+              background: chatInput.trim() ? `linear-gradient(135deg,${GOLD},${GOLD2})` : "rgba(255,255,255,0.06)",
+              color: chatInput.trim() ? "#1a1108" : "rgba(255,255,255,0.2)",
+              fontSize:18,cursor:chatInput.trim()?"pointer":"default",
+              display:"flex",alignItems:"center",justifyContent:"center",transition:"all .2s",
+            }}
+          >
+            ➤
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ══ FAREWELL — Appreciation + Course Suggestions ══ */
+  if (view === "farewell") {
+    return (
+      <div style={{...pageStyle, overflowY:"auto"}}>
+        <IslamicBg opacity={0.1}/>
+        <div style={{position:"relative",zIndex:1,maxWidth:500,margin:"0 auto",padding:"32px 18px 48px"}}>
+
+          {/* ── Appreciation header ── */}
+          <div style={{textAlign:"center",marginBottom:28}}>
+            {/* Decorative star row */}
+            <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:18,opacity:0.6}}>
+              {["✦","★","✦","★","✦"].map((s,i)=>(
+                <span key={i} style={{color:GOLD,fontSize:i===2?18:12}}>{s}</span>
+              ))}
+            </div>
+
+            <div style={{width:72,height:72,borderRadius:"50%",background:`linear-gradient(135deg,${GOLD},${GOLD2})`,display:"inline-flex",alignItems:"center",justifyContent:"center",marginBottom:16,boxShadow:`0 0 40px rgba(201,146,42,0.35)`}}>
+              <span style={{fontSize:34}}>🤲</span>
+            </div>
+
+            <h1 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:28,color:"#fff",margin:"0 0 6px",lineHeight:1.2}}>
+              جزاكم الله خيراً
+            </h1>
+            <p style={{fontFamily:"'Amiri',serif",fontSize:15,color:GOLD,margin:"0 0 20px",letterSpacing:1}}>
+              May Allāh reward you all with the best
+            </p>
+
+            {/* Appreciation card */}
+            <div style={{padding:"22px 24px",background:"rgba(201,146,42,0.07)",border:`1px solid rgba(201,146,42,0.22)`,borderRadius:20,textAlign:"left",marginBottom:8}}>
+              <p style={{fontSize:14,color:"rgba(255,255,255,0.8)",margin:"0 0 14px",lineHeight:1.75}}>
+                Assalāmu ʿalaykum wa rahmatullāhi wa barakātuh,
+              </p>
+              <p style={{fontSize:14,color:"rgba(255,255,255,0.72)",margin:"0 0 14px",lineHeight:1.75}}>
+                A heartfelt <strong style={{color:GOLD}}>جزاكم الله خيراً</strong> to every one of you who joined today's quiz.
+                Your presence, effort, and eagerness to learn are a source of joy and a sign of Allāh's blessing upon this madrosah.
+              </p>
+              <p style={{fontSize:14,color:"rgba(255,255,255,0.72)",margin:"0 0 14px",lineHeight:1.75}}>
+                Whether you topped the leaderboard or simply gave it your best — <strong style={{color:GOLD}}>every step taken for the sake of knowledge is worship.</strong>
+              </p>
+              <p style={{fontFamily:"'Amiri',serif",fontSize:16,color:GOLD,margin:"0 0 6px",textAlign:"center",lineHeight:1.8}}>
+                اللّهُمَّ انْفَعْنَا بِمَا عَلَّمْتَنَا وَعَلِّمْنَا مَا يَنْفَعُنَا وَزِدْنَا عِلْمًا
+              </p>
+              <p style={{fontSize:12,color:"rgba(255,255,255,0.38)",textAlign:"center",margin:0,fontStyle:"italic"}}>
+                "O Allāh, benefit us with what You have taught us, teach us what benefits us, and increase us in knowledge."
+              </p>
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:24}}>
+            <div style={{flex:1,height:1,background:`linear-gradient(90deg,transparent,rgba(201,146,42,0.3))`}}/>
+            <span style={{color:GOLD,fontSize:16}}>✦</span>
+            <p style={{fontSize:11,color:GOLD,fontWeight:700,letterSpacing:2,textTransform:"uppercase",margin:0}}>Continue Your Journey</p>
+            <span style={{color:GOLD,fontSize:16}}>✦</span>
+            <div style={{flex:1,height:1,background:`linear-gradient(90deg,rgba(201,146,42,0.3),transparent)`}}/>
+          </div>
+
+          <p style={{fontSize:13,color:"rgba(255,255,255,0.45)",marginBottom:18,textAlign:"center",lineHeight:1.65}}>
+            The best of you are those who learn the Qur'an and teach it. — <em>Sahih al-Bukhāri</em><br/>
+            Explore our courses and keep the flame of learning alive. 🕯️
+          </p>
+
+          <button
+            onClick={() => { resetAll(); navigate("/"); }}
+            style={{...goldBtn,display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:10}}
+          >
+            🏡 Visit Tahleem Academy
+          </button>
+
+          {/* Closing dua */}
+          <div style={{marginTop:32,textAlign:"center",opacity:0.6}}>
+            <div style={{display:"flex",justifyContent:"center",gap:8,marginBottom:10}}>
+              {["✦","★","✦","★","✦"].map((s,i)=>(
+                <span key={i} style={{color:GOLD,fontSize:i===2?14:9}}>{s}</span>
+              ))}
+            </div>
+            <p style={{fontFamily:"'Amiri',serif",fontSize:14,color:GOLD,margin:"0 0 4px"}}>
+              وَفَّقَكُمُ اللهُ وَسَدَّدَكُمْ
+            </p>
+            <p style={{fontSize:11,color:"rgba(255,255,255,0.3)",margin:0,fontStyle:"italic"}}>
+              May Allāh grant you tawfīq and keep you steadfast
+            </p>
+          </div>
         </div>
       </div>
     );
