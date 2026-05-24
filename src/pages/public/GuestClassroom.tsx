@@ -32,7 +32,7 @@ import { storageSupabase } from "../../integrations/supabase/storageClient";
 import {
   UserPlus, Radio, Circle, Loader2,
   Mic, Pause, Play, Square, X, Phone,
-  Hand, Smile, RefreshCw, Users, LogOut,
+  Hand, Smile, MoreVertical, RefreshCw, Users, LogOut,
 } from "lucide-react";
 import ClassChatPanel    from "@/components/classroom/ClassChatPanel";
 import ClassPolls        from "@/components/classroom/ClassPolls";
@@ -52,7 +52,9 @@ const CSS = `
   @keyframes gc-pulse     { 0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)} }
   @keyframes gc-rec-pulse { 0%,100%{opacity:1}50%{opacity:.25} }
   @keyframes gc-fade-up   { from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)} }
-  @keyframes gc-slide-up  { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
+  @keyframes gc-slide-up   { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
+  @keyframes gc-emoji-float { 0%{transform:translateY(0) scale(1);opacity:1}70%{opacity:.9}100%{transform:translateY(-280px) scale(1.3);opacity:0} }
+  @keyframes gc-hand-bounce { 0%,100%{transform:translateY(0)}45%{transform:translateY(-5px)} }
   @keyframes gc-bounce-in { 0%{transform:scale(.82);opacity:0}60%{transform:scale(1.05)}100%{transform:scale(1);opacity:1} }
   @keyframes gc-toast-in  { from{opacity:0;transform:translateY(-14px) scale(.94)}to{opacity:1;transform:translateY(0) scale(1)} }
   @keyframes gc-toast-out { from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-8px)} }
@@ -538,6 +540,37 @@ const ParticipantCountBadge = ({ onClick }: { onClick?: () => void }) => {
 };
 
 /* ════════════════════════════════════════════════════════
+   ROOM DATA BRIDGE — listens for emoji_react + hand_raise inside LiveKitRoom
+   ════════════════════════════════════════════════════════ */
+interface FloatingEmoji { id: number; emoji: string; sender: string; }
+interface RaisedHand    { identity: string; name: string; }
+
+const RoomDataBridge = ({
+  onEmoji,
+  onHand,
+  exposeRoom,
+}: {
+  onEmoji: (emoji: string, sender: string) => void;
+  onHand:  (identity: string, name: string, raised: boolean) => void;
+  exposeRoom: (r: any) => void;
+}) => {
+  const room = useRoomContext();
+  useEffect(() => { exposeRoom(room); }, [room, exposeRoom]);
+  useEffect(() => {
+    const onData = (data: Uint8Array) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(data));
+        if (msg.type === "emoji_react") onEmoji(msg.emoji, msg.sender || "");
+        if (msg.type === "hand_raise")  onHand(msg.identity || "", msg.name || "Guest", !!msg.raised);
+      } catch {}
+    };
+    room.on(RoomEvent.DataReceived, onData);
+    return () => { room.off(RoomEvent.DataReceived, onData); };
+  }, [room, onEmoji, onHand]);
+  return null;
+};
+
+/* ════════════════════════════════════════════════════════
    PARTICIPANT JOIN/LEAVE SOUNDS + TOAST
    (inside LiveKitRoom context)
    ════════════════════════════════════════════════════════ */
@@ -745,7 +778,10 @@ const GuestClassroom = () => {
   const [savingRec, setSavingRec]         = useState(false);
   const [minimized, setMinimized]         = useState(false);
   const [handUp,    setHandUp]             = useState(false);
-  const [emojiOpen, setEmojiOpen]          = useState(false);
+  const [gcMoreOpen,      setGcMoreOpen]      = useState(false);
+  const [emojiTrayOpen,   setEmojiTrayOpen]   = useState(false);
+  const [floatingEmojis,  setFloatingEmojis]  = useState<{id:number;emoji:string;sender:string}[]>([]);
+  const [raisedHands,     setRaisedHands]     = useState<{identity:string;name:string}[]>([]);
   const [reconnecting, setReconnecting]   = useState(false);
   const [reconnectCount, setReconnectCount] = useState(0);
   const [roomKey, setRoomKey]             = useState(0);
@@ -754,6 +790,8 @@ const GuestClassroom = () => {
   const [editingGuestName, setEditingGuestName] = useState(false);
   const [guestNameInput, setGuestNameInput] = useState<string>("");
   const intentionalRef = useRef(false);
+  const roomRef = useRef<any>(null);
+  const exposeRoom = useCallback((r: any) => { roomRef.current = r; }, []);
 
   // Join/leave toasts
   const [joinToasts, setJoinToasts] = useState<JoinToast[]>([]);
@@ -912,25 +950,40 @@ const GuestClassroom = () => {
   }, []);
 
   /* ── Emoji + Raise Hand for public class ── */
-  const sendGuestEmoji = useCallback((e: string) => {
-    setEmojiOpen(false);
-    // Broadcast via LiveKit data if room is available — best-effort
+  const addFloatingEmoji = useCallback((emoji: string, sender: string) => {
+    const id = Date.now() + Math.random();
+    setFloatingEmojis(prev => [...prev, { id, emoji, sender }]);
+    setTimeout(() => setFloatingEmojis(prev => prev.filter(f => f.id !== id)), 3000);
+  }, []);
+
+  const sendGuestEmoji = useCallback((emoji: string) => {
+    setEmojiTrayOpen(false);
+    setGcMoreOpen(false);
+    const sender = localGuestName || guestName || "Guest";
+    addFloatingEmoji(emoji, sender);
     try {
-      const enc = new TextEncoder().encode(JSON.stringify({ type: "emoji_react", emoji: e, sender: localGuestName || guestName || "Guest" }));
-      (window as any).__gcRoom?.localParticipant?.publishData(enc, { reliable: false });
+      const enc = new TextEncoder().encode(JSON.stringify({ type: "emoji_react", emoji, sender }));
+      roomRef.current?.localParticipant?.publishData(enc, { reliable: false });
     } catch {}
-  }, [localGuestName, guestName]);
+  }, [localGuestName, guestName, addFloatingEmoji]);
 
   const toggleGuestHand = useCallback(async () => {
     const next = !handUp;
     setHandUp(next);
-    if (sessionId) {
-      try {
-        const enc = new TextEncoder().encode(JSON.stringify({ type: "hand_raise", identity: "guest", name: localGuestName || guestName || "Guest", raised: next }));
-        (window as any).__gcRoom?.localParticipant?.publishData(enc, { reliable: true });
-      } catch {}
+    setGcMoreOpen(false);
+    const name = localGuestName || guestName || "Guest";
+    const identity = roomRef.current?.localParticipant?.identity || "guest";
+    try {
+      const enc = new TextEncoder().encode(JSON.stringify({ type: "hand_raise", identity, name, raised: next }));
+      roomRef.current?.localParticipant?.publishData(enc, { reliable: true });
+    } catch {}
+    // Show locally too
+    if (next) {
+      setRaisedHands(prev => prev.some(h => h.identity === identity) ? prev : [...prev, { identity, name }]);
+    } else {
+      setRaisedHands(prev => prev.filter(h => h.identity !== identity));
     }
-  }, [handUp, sessionId, localGuestName, guestName]);
+  }, [handUp, localGuestName, guestName]);
 
   /* ── Minimize → slide classroom off-screen. Audio stays alive via keep-alive hooks. ── */
   const doMinimize = useCallback(() => {
@@ -1213,6 +1266,15 @@ const GuestClassroom = () => {
 
         {/* Participant event handler (sounds + toasts) */}
         <ParticipantEventHandler onToast={addToast} soundEnabled={soundEnabled} />
+        <RoomDataBridge
+          exposeRoom={exposeRoom}
+          onEmoji={(emoji, sender) => addFloatingEmoji(emoji, sender)}
+          onHand={(identity, name, raised) => setRaisedHands(prev =>
+            raised
+              ? prev.some(h => h.identity === identity) ? prev : [...prev, { identity, name }]
+              : prev.filter(h => h.identity !== identity)
+          )}
+        />
 
         {/* Reconnecting overlay */}
         {reconnecting && (
@@ -1303,71 +1365,133 @@ const GuestClassroom = () => {
             <VideoConference />
             <RoomAudioRenderer />
 
-          {/* ── Custom buttons overlaid at the right of the LK control bar ──
-                Order: [Emoji] [Hand] [Leave]  replacing the old Minimize button.
-                The control bar has padding-right:170px to reserve this space.    */}
+          {/* ── Floating emoji layer ── */}
+            <div style={{ position:"absolute", inset:0, pointerEvents:"none", zIndex:25, overflow:"hidden" }}>
+              {floatingEmojis.map(fe => (
+                <div key={fe.id} style={{
+                  position:"absolute",
+                  bottom: 80,
+                  left: `${20 + Math.random() * 60}%`,
+                  display:"flex", flexDirection:"column", alignItems:"center", gap:3,
+                  animation:"gc-emoji-float 2.8s ease-out forwards",
+                  pointerEvents:"none",
+                }}>
+                  <span style={{ fontSize:38, filter:"drop-shadow(0 2px 8px rgba(0,0,0,.5))", lineHeight:1 }}>{fe.emoji}</span>
+                  {fe.sender && <span style={{ fontSize:10, color:"rgba(255,255,255,.7)", fontWeight:600, background:"rgba(0,0,0,.4)", borderRadius:8, padding:"1px 6px", whiteSpace:"nowrap" }}>{fe.sender}</span>}
+                </div>
+              ))}
+            </div>
 
-            {/* Emoji tray popup */}
-            {emojiOpen && (
+            {/* ── Raised hands overlay ── */}
+            {raisedHands.length > 0 && (
+              <div style={{
+                position:"absolute", top:56, left:"50%", transform:"translateX(-50%)",
+                zIndex:26, display:"flex", gap:8, pointerEvents:"none", flexWrap:"wrap", justifyContent:"center",
+              }}>
+                {raisedHands.map(h => (
+                  <div key={h.identity} style={{
+                    display:"flex", alignItems:"center", gap:5,
+                    background:"rgba(32,33,36,.92)", backdropFilter:"blur(12px)",
+                    border:"1px solid rgba(251,191,36,.4)", borderRadius:20,
+                    padding:"5px 12px", fontSize:12, fontWeight:600, color:"#fbbf24",
+                    animation:"gc-toast-in .22s ease forwards",
+                  }}>
+                    <span style={{ fontSize:16, animation:"gc-hand-bounce 1.2s ease-in-out infinite" }}>✋</span>
+                    <span style={{ color:"rgba(255,255,255,.9)" }}>{h.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+          {/* ── Three-dot menu + Leave ── */}
+
+            {/* Click-away for three-dot menu */}
+            {(gcMoreOpen || emojiTrayOpen) && (
+              <div onClick={()=>{ setGcMoreOpen(false); setEmojiTrayOpen(false); }}
+                style={{ position:"fixed", inset:0, zIndex:28 }} />
+            )}
+
+            {/* Emoji tray (slides up from menu) */}
+            {emojiTrayOpen && (
               <div style={{
                 position:"absolute",
                 bottom:"calc(env(safe-area-inset-bottom,0px) + 62px)",
-                right: 128,
+                right: 68,
                 display:"flex", gap:6,
                 background:"rgba(32,33,36,.97)", backdropFilter:"blur(20px)",
-                border:"1px solid rgba(255,255,255,.1)", borderRadius:16,
-                padding:"8px 10px", zIndex:30,
+                border:"1px solid rgba(255,255,255,.12)", borderRadius:16,
+                padding:"10px 12px", zIndex:29,
+                boxShadow:"0 8px 32px rgba(0,0,0,.5)",
               }}>
                 {["👏","🤲","❤️","😂","🌟","👍","🙏","🔥"].map(e=>(
                   <button key={e} onClick={()=>sendGuestEmoji(e)} style={{
-                    width:36, height:36, borderRadius:10, border:"none",
-                    background:"none", fontSize:22, cursor:"pointer",
+                    width:38, height:38, borderRadius:10, border:"none",
+                    background:"none", fontSize:24, cursor:"pointer",
                     display:"flex", alignItems:"center", justifyContent:"center",
-                    transition:"transform .1s",
                   }}>{e}</button>
                 ))}
               </div>
             )}
 
-            {/* Emoji button */}
-            <button
-              onClick={()=>setEmojiOpen(v=>!v)}
-              title="Send a reaction"
-              style={{
+            {/* Three-dot menu */}
+            {gcMoreOpen && !emojiTrayOpen && (
+              <div style={{
                 position:"absolute",
-                bottom: "calc(env(safe-area-inset-bottom,0px) + 11px)",
-                right: 128,
-                width: 48, height: 46,
-                borderRadius: 24, border: "none",
-                background: emojiOpen ? "rgba(251,191,36,.2)" : "rgba(255,255,255,.1)",
-                color: emojiOpen ? "#fbbf24" : "rgba(255,255,255,.85)",
-                cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                zIndex: 20,
-              }}
-            >
-              <Smile style={{ width:19, height:19 }} />
-            </button>
+                bottom:"calc(env(safe-area-inset-bottom,0px) + 62px)",
+                right: 68,
+                background:"rgba(32,33,36,.97)", backdropFilter:"blur(20px)",
+                border:"1px solid rgba(255,255,255,.1)", borderRadius:14,
+                padding:"6px 0", zIndex:29, minWidth:190,
+                boxShadow:"0 8px 32px rgba(0,0,0,.5)",
+              }}>
+                {/* Send a Reaction */}
+                <button onClick={()=>{ setEmojiTrayOpen(true); setGcMoreOpen(false); }} style={{
+                  width:"100%", padding:"11px 16px", border:"none", background:"none",
+                  color:"#e8eaed", fontSize:13, fontWeight:500, cursor:"pointer",
+                  display:"flex", alignItems:"center", gap:10, textAlign:"left",
+                  fontFamily:"'Google Sans',sans-serif",
+                  borderBottom:"1px solid rgba(255,255,255,.07)",
+                }}>
+                  <Smile style={{ width:16, height:16, opacity:.75, flexShrink:0 }} />
+                  Send a Reaction
+                </button>
+                {/* Raise / Lower Hand */}
+                <button onClick={toggleGuestHand} style={{
+                  width:"100%", padding:"11px 16px", border:"none", background:"none",
+                  color: handUp ? "#fbbf24" : "#e8eaed",
+                  fontSize:13, fontWeight:500, cursor:"pointer",
+                  display:"flex", alignItems:"center", gap:10, textAlign:"left",
+                  fontFamily:"'Google Sans',sans-serif",
+                }}>
+                  <Hand style={{ width:16, height:16, opacity:.75, flexShrink:0 }} />
+                  {handUp ? "Lower Hand ✋" : "Raise Hand ✋"}
+                </button>
+              </div>
+            )}
 
-            {/* Raise Hand button */}
+            {/* Three-dot button */}
             <button
-              onClick={toggleGuestHand}
-              title={handUp ? "Lower hand" : "Raise hand"}
+              onClick={()=>{ setGcMoreOpen(v=>!v); setEmojiTrayOpen(false); }}
+              title="More options"
               style={{
                 position:"absolute",
                 bottom: "calc(env(safe-area-inset-bottom,0px) + 11px)",
                 right: 68,
                 width: 48, height: 46,
                 borderRadius: 24, border: "none",
-                background: handUp ? "rgba(251,191,36,.25)" : "rgba(255,255,255,.1)",
-                color: handUp ? "#fbbf24" : "rgba(255,255,255,.85)",
+                background: (gcMoreOpen || emojiTrayOpen || handUp)
+                  ? "rgba(251,191,36,.2)" : "rgba(255,255,255,.1)",
+                color: (gcMoreOpen || emojiTrayOpen || handUp)
+                  ? "#fbbf24" : "rgba(255,255,255,.85)",
                 cursor: "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center",
-                zIndex: 20,
-                animation: handUp ? "gc-pulse 1.4s ease-in-out infinite" : "none",
+                zIndex: 30,
               }}
             >
-              <Hand style={{ width:19, height:19 }} />
+              {handUp
+                ? <span style={{ fontSize:18, animation:"gc-hand-bounce 1.2s ease-in-out infinite" }}>✋</span>
+                : <MoreVertical style={{ width:19, height:19 }} />
+              }
             </button>
 
             {/* Leave / End button */}
