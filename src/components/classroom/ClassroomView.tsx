@@ -3100,7 +3100,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[reconnecting,setReconnecting]=useState(false);
   /* ── reconnect state ── */
   const[roomKey,setRoomKey]=useState(0);          // bump to remount <LiveKitRoom> with fresh token
-  const[autoReconnectCount,setAutoReconnectCount]=useState(0);
+  // Use refs instead of state so autoReconnect useCallback never needs them as deps.
+  // State-based count was causing useCallback to recreate on every attempt, which
+  // destabilised ReconnectMonitor's event listeners and caused the infinite reconnect loop.
+  const autoReconnectCountRef=useRef(0);
+  const isReconnectingRef=useRef(false);           // guard against concurrent autoReconnect calls
   const intentionalLeaveRef=useRef(false);         // true on manual leave → skip auto-reconnect
   const participantCountRef=useRef(0);              // tracks peak live participant count for ClassEndScreen
   /* ── lobby media choices ── */
@@ -3270,39 +3274,53 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
 
   /* ══ AUTO-RECONNECT ══
      Fires when LiveKit emits Disconnected unexpectedly (e.g. Android tab suspension).
-     Fetches a fresh token, bumps roomKey to force <LiveKitRoom> remount, up to 5 tries.
-     intentionalLeaveRef guards against triggering this on a manual leave/end.           */
+     Uses refs for count + in-progress flag so the useCallback is stable (no deps that
+     change mid-session). A stable callback means ReconnectMonitor never re-registers
+     its event listeners mid-reconnect — which was the root cause of the infinite loop. */
   const autoReconnect=useCallback(async()=>{
+    // Guard 1: user manually left — never auto-reconnect
     if(intentionalLeaveRef.current)return;
-    if(autoReconnectCount>=5){
+    // Guard 2: already mid-reconnect — don't stack concurrent calls
+    if(isReconnectingRef.current)return;
+    // Guard 3: exhausted retries — give up and drop back to lobby
+    if(autoReconnectCountRef.current>=5){
       setReconnecting(false);
       setError("Connection lost after several attempts. Please try again.");
       setPhase("lobby");
-      setHasConnected(false);  // reset — not in class anymore
+      setHasConnected(false);
       return;
     }
+    isReconnectingRef.current=true;
     setReconnecting(true);
-    // FIX BUG 7 (partial) + REC 1: Exponential backoff — 1s, 2s, 4s, 8s, 15s cap
-    const backoffMs=Math.min(1000*Math.pow(2,autoReconnectCount),15000);
+    // Exponential backoff: 1s, 2s, 4s, 8s, 15s cap
+    const backoffMs=Math.min(1000*Math.pow(2,autoReconnectCountRef.current),15000);
     await new Promise(r=>setTimeout(r,backoffMs));
     try{
       const{data}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}});
       if(data?.token&&data?.url){
-        // FIX BUG 6: Store with fetchedAt timestamp so connect() can check freshness
         prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now()};
+        autoReconnectCountRef.current+=1;  // ref — won't trigger useCallback recreation
         setToken(data.token);
         setWsUrl(data.url);
-        setRoomKey(k=>k+1); // remount LiveKitRoom with the fresh token
-        setAutoReconnectCount(c=>c+1);
+        setRoomKey(k=>k+1); // remount LiveKitRoom with fresh token
+        // Do NOT setReconnecting(false) here — overlay stays up until the new room
+        // fires Connected, which triggers onReconnected → setReconnecting(false).
+      }else{
+        // Token fetch returned no usable data
+        setError("Reconnection failed. Please try again.");
+        setPhase("lobby");
+        isReconnectingRef.current=false;
+        setReconnecting(false);
       }
     }catch{
       setError("Reconnection failed. Please try again.");
       setPhase("lobby");
-    }finally{
+      isReconnectingRef.current=false;
       setReconnecting(false);
     }
+    // No finally{setReconnecting(false)} — success path is cleared by onReconnected
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[subject.id,isPrivileged,autoReconnectCount]);
+  },[subject.id,isPrivileged]); // stable — refs handle mutable values
 
   useEffect(()=>()=>{
     if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
@@ -3419,7 +3437,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         <p style={{color:"rgba(255,255,255,.45)",fontSize:14,marginBottom:28,lineHeight:1.6,fontFamily:"'Google Sans',sans-serif"}}>{error}</p>
         <div style={{display:"flex",gap:12,justifyContent:"center"}}>
           <button onClick={()=>{
-            intentionalLeaveRef.current=false;setAutoReconnectCount(0);
+            intentionalLeaveRef.current=false;
+            isReconnectingRef.current=false;
+            autoReconnectCountRef.current=0;
             setError(null);setToken(null);setWsUrl(null);
             connect(isPrivileged?"start_session":"join");
           }} style={{
@@ -3453,7 +3473,12 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* onDisconnected wired to autoReconnect — handles Android tab suspension */}
           <ReconnectMonitor
             onReconnecting={()=>setReconnecting(true)}
-            onReconnected={()=>{setReconnecting(false);setAutoReconnectCount(0);/* FIX BUG 7: reset counter so the next disconnection gets a fresh 5 attempts */}}
+            onReconnected={()=>{
+              // New room is fully connected — clear overlay and reset all reconnect state
+              isReconnectingRef.current=false;
+              autoReconnectCountRef.current=0;
+              setReconnecting(false);
+            }}
             onDisconnected={autoReconnect}
           />
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
