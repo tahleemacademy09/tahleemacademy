@@ -209,8 +209,10 @@ function buildCanvasPip(
   const vid = document.createElement("video");
   vid.srcObject = cv.captureStream(12);
   vid.muted = true; vid.playsInline = true;
-  (vid as any).autopictureinpicture = true;
-  vid.setAttribute("autopictureinpicture", "");
+  // BUG FIX: do NOT set autopictureinpicture — that attribute tells the browser
+  // to auto-enter PiP whenever the tab loses focus (every app switch), which is
+  // the "overlay that is not the browser pip" students were seeing uninvited.
+  // Canvas PiP is only triggered explicitly on screen-lock via the visibility handler.
   vid.style.cssText = [
     "position:fixed", "top:-9999px", "left:-9999px",
     "width:1px", "height:1px",
@@ -302,33 +304,32 @@ export default function GlobalClassroomOverlay() {
 
   /* ── Minimize button ── */
   const handleMinimize = useCallback(async () => {
-    // Just flip minimized — the underlying page renders correctly because
-    // the classroom is position:fixed and doesn't affect the React Router route.
+    // Just flip minimized — shows the floating bar. The classroom div slides off-screen
+    // via translateX(-200%) so the React Router route underneath is unaffected.
     setMinimized(true);
+
+    // BUG FIX: do NOT trigger the canvas PiP here. Per design, canvas PiP is for
+    // screen-lock ONLY (handled by the visibilitychange handler below). Calling
+    // h.pip() from the minimize button was causing students to see BOTH the floating
+    // bar AND a browser PiP popup every time they tapped Minimize.
+    //
+    // Exception: if the user's real camera is on, show their actual camera stream
+    // in browser PiP (genuinely useful), but never fall back to the canvas overlay.
+    if (!camEnabled || document.pictureInPictureElement) return;
     const h = pipHandle.current;
-    if (!h || document.pictureInPictureElement) return;
-    if (camEnabled) {
-      const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
-      const live = vids.find(v => v.readyState >= 2 && v.videoWidth > 0 && v !== h.video);
-      if (live) { try { await live.requestPictureInPicture(); return; } catch {} }
-    }
-    h.pip().catch(() => {});
+    const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
+    const live = vids.find(v => v.readyState >= 2 && v.videoWidth > 0 && (!h || v !== h.video));
+    if (live) { try { await live.requestPictureInPicture(); } catch {} }
+    // No canvas PiP fallback — canvas PiP is screen-lock only
   }, [setMinimized, camEnabled]);
 
   /* ── Back button: LiveClassContext already sets minimized=true via popstate.
-     We just need to trigger PiP for the canvas overlay on screen-lock.      ── */
+     Nothing extra needed here — the floating bar appears automatically.
+     BUG FIX: the old code was calling pip() here, which showed the canvas PiP
+     window every time the student pressed Back. That was the second source of
+     the unwanted overlay. Canvas PiP is screen-lock only (handled below).   ── */
   const pipHandleRef = useRef(pipHandle);
   pipHandleRef.current = pipHandle;
-  useEffect(() => {
-    if (!hasConnected) return;
-    const onPop = () => {
-      // Don't setMinimized here — LiveClassContext already did it.
-      // Just fire PiP so the canvas appears on screen-lock.
-      setTimeout(() => pipHandle.current?.pip().catch(() => {}), 60);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
-  }, [hasConnected]);
 
   /* ── Phone home/recent button: visibilitychange → hidden → setMinimized.
      We do NOT call navigate() here. The route under the fixed overlay is
