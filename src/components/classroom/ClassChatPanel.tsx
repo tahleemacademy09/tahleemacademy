@@ -9,11 +9,15 @@ interface ClassChatPanelProps {
   /** ISO timestamp of when this session started — used to filter out
       messages from any previous run of the same session row.          */
   sessionStartedAt?: string;
+  /** Guest's display name (used for public class guests) */
+  guestName?: string;
+  /** Callback to open name-edit (for public class guests) */
+  onEditName?: () => void;
 }
 
 const EMOJI_LIST = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
 
-const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) => {
+const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: ClassChatPanelProps) => {
   const { user, hasRole } = useAuth();
   const { t } = useLanguage();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
@@ -138,6 +142,24 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) =>
   return (
     <div style={{display:"flex",flexDirection:"column",height:"100%",background:T.bg,fontFamily:"system-ui,sans-serif"}}>
 
+      {/* Guest name banner — shown only for public-class guests */}
+      {guestName && (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"7px 12px",background:"rgba(201,168,76,.09)",borderBottom:`1px solid rgba(201,168,76,.18)`,flexShrink:0}}>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{fontSize:11,color:T.gold}}>💬</span>
+            <span style={{fontSize:11,color:T.gold,fontWeight:600}}>Chatting as <strong>{guestName}</strong></span>
+          </div>
+          {onEditName && (
+            <button
+              onClick={onEditName}
+              style={{fontSize:10,color:"rgba(201,168,76,.7)",background:"rgba(201,168,76,.12)",border:"1px solid rgba(201,168,76,.25)",borderRadius:10,padding:"2px 8px",cursor:"pointer",fontFamily:"inherit"}}
+            >
+              Edit Name
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Pinned messages */}
       {messages.filter(m => m.is_pinned).map(m => (
         <div key={`pin-${m.id}`} style={{background:"rgba(201,168,76,.12)",borderBottom:`1px solid ${T.border}`,padding:"6px 12px",display:"flex",alignItems:"center",gap:6}}>
@@ -151,9 +173,13 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) =>
         {messages.map(m => {
           const isMe = m.sender_id === user?.id;
           const prof = profiles[m.sender_id];
-          // Always show "You" for own messages so the bubble has a name label
-          const name = isMe ? t("You", "أنت") : (prof?.name || "Student");
+          // For own messages: use guestName if provided (public class guest), else "You"
+          const name = isMe
+            ? (guestName ? guestName : t("You", "أنت"))
+            : (prof?.name || "Student");
           const isTeacher = !isMe && (prof?.role === "teacher" || prof?.role === "admin");
+          // ** prefix marks admin/teacher to prevent impersonation
+          const displayName = isTeacher ? `** ${name}` : name;
 
           if (m.type === "system") {
             return (
@@ -168,7 +194,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) =>
               <div key={m.id} style={{display:"flex",justifyContent:isMe?"flex-end":"flex-start"}}>
                 <div style={{textAlign:"center"}}>
                   <span style={{fontSize:26}}>{m.message}</span>
-                  <p style={{fontSize:9,color:T.muted,margin:"2px 0 0"}}>{name}</p>
+                  <p style={{fontSize:9,color:T.muted,margin:"2px 0 0"}}>{displayName}</p>
                 </div>
               </div>
             );
@@ -181,13 +207,13 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt }: ClassChatPanelProps) =>
                 background:isMe?T.mine:T.theirs,
                 borderLeft:isTeacher?`3px solid ${T.gold}`:"none",
               }}>
-                {/* Show name for ALL messages — own messages show "You" */}
+                {/* Show name for ALL messages — own messages show guestName or "You" */}
                 <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:3}}>
                   <span style={{
                     fontSize:10,
                     color: isMe ? "rgba(255,255,255,.38)" : isTeacher ? T.gold : T.muted,
                     fontWeight: isMe ? 400 : 700,
-                  }}>{name}</span>
+                  }}>{displayName}</span>
                   {isTeacher && (
                     <span style={{fontSize:9,background:"rgba(201,168,76,.18)",color:T.gold,borderRadius:8,padding:"1px 5px",fontWeight:700}}>
                       {t("Teacher","معلم")}
