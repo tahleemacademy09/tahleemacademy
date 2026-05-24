@@ -89,6 +89,10 @@ const PublicClassManagement = () => {
   const [deleting,         setDeleting]         = useState(false);
   const [showArchived,     setShowArchived]     = useState(false);
 
+  /* join-as-host name dialog */
+  const [joinNameDlg,   setJoinNameDlg]   = useState<PublicClass|null>(null);
+  const [joinNameInput, setJoinNameInput] = useState("");
+
   /* recordings */
   const [recordingsDialog, setRecordingsDialog] = useState<PublicClass | null>(null);
   const [recordings,       setRecordings]       = useState<RecordingFile[]>([]);
@@ -301,16 +305,17 @@ const PublicClassManagement = () => {
   };
 
   /* ── go live / end / delete ── */
-  const goLive = async (cls: PublicClass) => {
+  const goLive = async (cls: PublicClass, displayName?: string) => {
     await supabase.from("public_classes").update({ status: "live", actual_start_time: new Date().toISOString() }).eq("id", cls.id);
     try {
       const session = await supabase.auth.getSession();
       const token   = session.data.session?.access_token;
       const url     = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
+      const name    = (displayName || "").trim() || user?.user_metadata?.full_name || "Teacher";
       const res     = await fetch(`${url}/functions/v1/public-class-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "apikey": import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY, "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ room_code: cls.room_code, guest_name: user?.user_metadata?.full_name || "Teacher" }),
+        body: JSON.stringify({ room_code: cls.room_code, guest_name: name }),
       });
       const data = await res.json();
       if (!res.ok) { toast.error(data.error || "Failed"); return; }
@@ -743,7 +748,7 @@ const PublicClassManagement = () => {
                         <div style={{padding:"10px 14px 14px",display:"flex",gap:7,overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
                           {/* Primary action */}
                           {(cls.status==="scheduled"||cls.status==="live") && (
-                            <button onClick={()=>goLive(cls)}
+                            <button onClick={()=>{ setJoinNameInput(user?.user_metadata?.full_name || "Teacher"); setJoinNameDlg(cls); }}
                               style={{display:"flex",alignItems:"center",gap:5,padding:"9px 16px",borderRadius:10,border:"none",background:"#16A34A",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:700,flexShrink:0}}>
                               <Video size={13}/>{cls.status==="live"?"Rejoin":"Go Live"}
                             </button>
@@ -1257,6 +1262,50 @@ const PublicClassManagement = () => {
       </Dialog>
 
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+
+      {/* ════════════════════════════════════
+          JOIN NAME DIALOG
+      ════════════════════════════════════ */}
+      <Dialog open={!!joinNameDlg} onOpenChange={v=>{ if(!v){ setJoinNameDlg(null); setJoinNameInput(""); } }}>
+        <DialogContent style={{maxWidth:380,borderRadius:20,padding:0,overflow:"hidden"}}>
+          <div style={{background:G,padding:"16px 18px",borderRadius:"20px 20px 0 0",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div>
+              <h2 style={{fontWeight:800,fontSize:15,color:"#fff",margin:0}}>
+                {joinNameDlg?.status==="live" ? "Rejoin Class" : "Go Live"}
+              </h2>
+              <p style={{fontSize:11,color:"rgba(255,255,255,.65)",margin:0}}>{joinNameDlg?.title}</p>
+            </div>
+            <button onClick={()=>{ setJoinNameDlg(null); setJoinNameInput(""); }} style={{background:"rgba(255,255,255,.15)",border:"none",borderRadius:7,padding:"5px 7px",cursor:"pointer",color:"#fff"}}><X size={15}/></button>
+          </div>
+          <div style={{padding:"20px 18px",display:"flex",flexDirection:"column",gap:14}}>
+            <div>
+              <label style={{fontSize:12,fontWeight:700,color:"#374151",display:"block",marginBottom:6}}>Your display name in the class</label>
+              <Input
+                value={joinNameInput}
+                onChange={e=>setJoinNameInput(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"&&joinNameInput.trim()&&joinNameDlg){ goLive(joinNameDlg,joinNameInput); setJoinNameDlg(null); } }}
+                placeholder="e.g. Ustadh Ahmad"
+                style={{borderRadius:10}}
+                autoFocus
+              />
+              <p style={{fontSize:11,color:"#9CA3AF",margin:"6px 0 0"}}>This is the name students will see next to your camera. You can use your title (e.g. "Ustadh" or "Ustadha").</p>
+            </div>
+            <div style={{display:"flex",gap:8,paddingTop:4}}>
+              <button onClick={()=>{ setJoinNameDlg(null); setJoinNameInput(""); }}
+                style={{flex:1,padding:"11px 0",borderRadius:12,border:"1.5px solid #E5E7EB",background:"#fff",cursor:"pointer",fontWeight:600,fontSize:14,color:"#374151"}}>
+                Cancel
+              </button>
+              <button
+                onClick={()=>{ if(joinNameDlg&&joinNameInput.trim()){ goLive(joinNameDlg,joinNameInput); setJoinNameDlg(null); } }}
+                disabled={!joinNameInput.trim()}
+                style={{flex:2,padding:"11px 0",borderRadius:12,border:"none",background:joinNameInput.trim()?"#16A34A":"#E5E7EB",color:joinNameInput.trim()?"#fff":"#9CA3AF",cursor:joinNameInput.trim()?"pointer":"not-allowed",fontWeight:700,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                <Video size={15}/> {joinNameDlg?.status==="live" ? "Rejoin Class" : "Go Live"}
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 };
