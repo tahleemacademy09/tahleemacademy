@@ -18,6 +18,8 @@ import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
+import { resolveParticipantName } from "@/components/classroom/participantUtils";
+
 import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -2541,7 +2543,7 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
     };
   },[participant,attachVideo,room,isLocal]);
 
-  const name=participant.name||participant.identity||"User";
+  const name = resolveParticipantName(participant);
   // avatarSz/avatarFs kept for speaking wave sizing only
   const avatarSz = size==="large" ? 80 : size==="small" ? 40 : 56;
 
@@ -3270,6 +3272,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       if(!tk||!url){const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});if(e)throw e;if(data?.error)throw new Error(data.error);tk=data.token;url=data.url;}
       setToken(tk!);setWsUrl(url!);
       const{data:sessions}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
+
+      // Students must have a live session to join; privileged users create one via start_session.
+      // If no session exists and the user is a student, block them with a clear message.
+      if(!sessions?.length && !isPrivileged){
+        throw new Error("No live class is in session right now. Please wait for your teacher to start.");
+      }
+
       if(sessions?.length){
         const freshSessionId=sessions[0].id;
         // FIX BUG 1: Apply class settings using the freshly-retrieved session ID, not the
@@ -3278,6 +3287,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         setSessionId(freshSessionId);setSessionInfo(sessions[0]);
         const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
         if(att)setAttendanceId(att.id);
+        // Track participant (both students and privileged users) so admin dashboard shows accurate counts
         await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});
         // FIX BUG 8: Subscribe to session-end immediately here — before the useEffect cycle —
         // so there is no window where the teacher can end the class and students miss the event.
