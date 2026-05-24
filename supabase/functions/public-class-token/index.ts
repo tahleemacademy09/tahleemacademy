@@ -156,6 +156,7 @@ Deno.serve(async (req) => {
       video: videoGrant,
       metadata: JSON.stringify({
         role: isHost ? 'host' : 'guest',
+        name: participantName,          // resolveParticipantName() reads this as fallback
         guest_id: isHost ? null : guestId,
         class_id: publicClass.id,
         is_registered: isRegisteredUser,
