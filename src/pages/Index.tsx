@@ -93,23 +93,60 @@ const Index = () => {
       .ta-pillars-ar { font-family:'Scheherazade New',serif; font-size:22px; color:rgba(201,151,58,.55); direction:rtl; margin-bottom:12px; display:block; }
 
       /* COURSES */
-      .ta-courses { background:#0c2115; padding:88px 24px; }
-      .ta-courses-inner { max-width:1100px; margin:0 auto; }
-      .ta-courses-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:20px; margin-top:48px; }
-      .ta-ccard { background:rgba(255,255,255,.04); border:1px solid rgba(201,151,58,.14); border-radius:3px; overflow:hidden; transition:.3s; }
-      .ta-ccard:hover { border-color:rgba(201,151,58,.48); transform:translateY(-5px); background:rgba(255,255,255,.07); }
-      .ta-ccard-img { height:185px; overflow:hidden; position:relative; }
-      .ta-ccard-img img { width:100%; height:100%; object-fit:cover; transition:.5s; }
-      .ta-ccard:hover .ta-ccard-img img { transform:scale(1.07); }
-      .ta-ccard-badge { position:absolute; top:12px; left:12px; background:#c9973a; color:#fff; font-size:10px; font-weight:800; padding:4px 12px; border-radius:2px; letter-spacing:1px; text-transform:uppercase; }
-      .ta-ccard-body { padding:22px 20px; }
-      .ta-ccard-ar { font-family:'Scheherazade New',serif; font-size:18px; color:#c9973a; direction:rtl; margin-bottom:6px; }
-      .ta-ccard-en { color:#fff; font-size:16px; font-weight:700; margin-bottom:8px; }
-      .ta-ccard-desc { color:rgba(255,255,255,.52); font-size:13px; line-height:1.7; margin-bottom:18px; }
-      .ta-ccard-footer { display:flex; align-items:center; justify-content:space-between; }
-      .ta-ccard-level { color:#e8c270; font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; }
-      .ta-ccard-btn { padding:8px 20px; background:transparent; border:1px solid rgba(201,151,58,.45); color:#c9973a; border-radius:3px; font-size:12px; font-weight:800; cursor:pointer; font-family:'Mulish',sans-serif; transition:.2s; letter-spacing:.5px; }
-      .ta-ccard-btn:hover { background:#c9973a; color:#fff; }
+      .ta-courses { background:#0a1c10; padding:96px 24px; position:relative; overflow:hidden; }
+      .ta-courses::before { content:''; position:absolute; inset:0; opacity:.035; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cpolygon points='40,4 76,20 76,60 40,76 4,60 4,20' fill='none' stroke='%23c9973a' stroke-width='.7'/%3E%3Ccircle cx='40' cy='40' r='14' fill='none' stroke='%23c9973a' stroke-width='.4'/%3E%3C/svg%3E"); pointer-events:none; }
+      .ta-courses-inner { max-width:1160px; margin:0 auto; position:relative; z-index:1; }
+      .ta-courses-hdr { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:52px; flex-wrap:wrap; }
+      .ta-courses-hdr-left { max-width:520px; }
+      .ta-courses-all { display:inline-flex; align-items:center; gap:8px; color:#c9973a; font-size:13px; font-weight:800; letter-spacing:.5px; border:1.5px solid rgba(201,151,58,.35); padding:10px 22px; border-radius:40px; cursor:pointer; transition:.25s; white-space:nowrap; }
+      .ta-courses-all:hover { background:rgba(201,151,58,.1); border-color:#c9973a; }
+      .ta-courses-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:28px; }
+      .ta-ccard {
+        background:rgba(255,255,255,.045);
+        border:1px solid rgba(255,255,255,.07);
+        border-radius:20px; overflow:hidden;
+        transition:.35s cubic-bezier(.25,.46,.45,.94);
+        display:flex; flex-direction:column;
+      }
+      .ta-ccard:hover {
+        border-color:rgba(201,151,58,.5);
+        transform:translateY(-8px);
+        background:rgba(255,255,255,.075);
+        box-shadow:0 24px 60px rgba(0,0,0,.45), 0 0 0 1px rgba(201,151,58,.18);
+      }
+      .ta-ccard-img { height:220px; overflow:hidden; position:relative; flex-shrink:0; }
+      .ta-ccard-img img { width:100%; height:100%; object-fit:cover; transition:.55s ease; }
+      .ta-ccard:hover .ta-ccard-img img { transform:scale(1.08); }
+      .ta-ccard-img-overlay { position:absolute; inset:0; background:linear-gradient(to top, rgba(6,18,10,.85) 0%, rgba(6,18,10,.2) 50%, transparent 100%); }
+      .ta-ccard-badge {
+        position:absolute; top:16px; left:16px;
+        background:linear-gradient(135deg,#c9973a,#a67c22);
+        color:#fff; font-size:10px; font-weight:800;
+        padding:5px 14px; border-radius:40px;
+        letter-spacing:1px; text-transform:uppercase;
+        box-shadow:0 4px 14px rgba(201,151,58,.45);
+      }
+      .ta-ccard-level-pill {
+        position:absolute; bottom:16px; right:16px;
+        background:rgba(255,255,255,.12); backdrop-filter:blur(8px);
+        border:1px solid rgba(255,255,255,.18);
+        color:#fff; font-size:10px; font-weight:700;
+        padding:4px 12px; border-radius:40px; letter-spacing:.5px;
+      }
+      .ta-ccard-body { padding:26px 24px 28px; display:flex; flex-direction:column; flex:1; }
+      .ta-ccard-ar { font-family:'Scheherazade New',serif; font-size:20px; color:#c9973a; direction:rtl; margin-bottom:8px; line-height:1.5; }
+      .ta-ccard-en { color:#fff; font-size:18px; font-weight:800; margin-bottom:10px; font-family:'Playfair Display',serif; line-height:1.25; }
+      .ta-ccard-desc { color:rgba(255,255,255,.55); font-size:13.5px; line-height:1.8; margin-bottom:24px; flex:1; }
+      .ta-ccard-footer { display:flex; align-items:center; justify-content:space-between; padding-top:18px; border-top:1px solid rgba(255,255,255,.07); }
+      .ta-ccard-level { color:rgba(201,151,58,.8); font-size:11px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; display:flex; align-items:center; gap:5px; }
+      .ta-ccard-btn {
+        padding:10px 24px; background:transparent;
+        border:1.5px solid rgba(201,151,58,.55); color:#c9973a;
+        border-radius:40px; font-size:12px; font-weight:800;
+        cursor:pointer; font-family:'Mulish',sans-serif;
+        transition:.25s; letter-spacing:.5px;
+      }
+      .ta-ccard-btn:hover { background:#c9973a; color:#fff; border-color:#c9973a; box-shadow:0 8px 24px rgba(201,151,58,.35); }
 
       /* STATS */
       .ta-stats { position:relative; padding:80px 24px; background:url('https://images.unsplash.com/photo-1585036156171-384164a8c675?w=1600&q=80') center/cover no-repeat; overflow:hidden; }
@@ -169,7 +206,8 @@ const Index = () => {
       @media(max-width:900px) {
         .ta-pillars-hdr { grid-template-columns:1fr; gap:12px; }
         .ta-pillars-grid { grid-template-columns:1fr 1fr; }
-        .ta-courses-grid { grid-template-columns:1fr; }
+        .ta-courses-grid { grid-template-columns:1fr 1fr; gap:18px; }
+        .ta-courses-hdr { flex-direction:column; align-items:flex-start; gap:16px; }
         .ta-stats-grid { grid-template-columns:1fr 1fr; }
         .ta-footer-top { grid-template-columns:1fr; gap:32px; }
         .ta-strip { flex-wrap:wrap; }
@@ -177,6 +215,7 @@ const Index = () => {
       }
       @media(max-width:600px) {
         .ta-pillars-grid { grid-template-columns:1fr; }
+        .ta-courses-grid { grid-template-columns:1fr; gap:20px; }
         .ta-ayah-box { padding:36px 18px; }
         .ta-stat { padding:20px 10px; }
         .ta-btn-p, .ta-btn-s { padding:13px 26px; font-size:14px; }
@@ -321,26 +360,35 @@ const Index = () => {
       {/* COURSES */}
       <section className="ta-courses">
         <div className="ta-courses-inner">
-          <div className="ta-eyebrow" style={{ color:"#e8c270" }}><span className="ta-eyebrow-line" style={{ background:"#c9973a" }} />Our Programs</div>
-          <h2 className="ta-heading" style={{ color:"#fff" }}>Explore Our Courses</h2>
-          <p className="ta-body" style={{ color:"rgba(255,255,255,.58)" }}>Each course is carefully structured with live sessions, assignments, and certified assessments.</p>
+          <div className="ta-courses-hdr">
+            <div className="ta-courses-hdr-left">
+              <div className="ta-eyebrow" style={{ color:"#e8c270" }}><span className="ta-eyebrow-line" style={{ background:"#c9973a" }} />Our Programs</div>
+              <h2 className="ta-heading" style={{ color:"#fff", marginBottom:10 }}>Explore Our Courses</h2>
+              <p className="ta-body" style={{ color:"rgba(255,255,255,.52)", marginBottom:0 }}>Each course is carefully structured with live sessions, assignments, and certified assessments.</p>
+            </div>
+            <button className="ta-courses-all" onClick={() => navigate("/register")}>
+              View All &amp; Enrol →
+            </button>
+          </div>
           <div className="ta-courses-grid">
             {[
-              { img:"/images/quran-tajweed.jpeg", badge:"Most Popular", ar:"القرآن والتجويد", en:"Quran & Tajweed", desc:"Perfect your recitation with certified Huffadh — from beginner Qa'ida to advanced Tajweed rules.", level:"All Levels" },
-              { img:"/images/arabic-language.jpeg", badge:"Beginner Friendly", ar:"اللغة العربية", en:"Arabic Language", desc:"From Iqra to advanced grammar — reading, writing, Nahw, Sarf and spoken Arabic.", level:"All Levels" },
-              { img:"https://images.unsplash.com/photo-1519817650390-64a93db51149?w=600&q=80", badge:"Certified", ar:"العلوم الإسلامية", en:"Islamic Sciences", desc:"Fiqh, Aqeedah, Seerah, Hadith — comprehensive Islamic education with qualified scholars.", level:"Intermediate+" },
+              { img:"/images/quran-tajweed.jpeg",       badge:"Most Popular",       ar:"القرآن والتجويد",    en:"Quran & Tajweed",    desc:"Perfect your recitation with certified Huffadh — from beginner Qa'ida to advanced Tajweed rules and Hifdh support.", level:"All Levels" },
+              { img:"/images/arabic-language.jpeg",     badge:"Beginner Friendly",  ar:"اللغة العربية",      en:"Arabic Language",    desc:"From Iqra to advanced grammar — reading, writing, Nahw, Sarf and spoken Arabic in a structured bilingual setting.", level:"All Levels" },
+              { img:"https://images.unsplash.com/photo-1519817650390-64a93db51149?w=600&q=80", badge:"Certified", ar:"العلوم الإسلامية", en:"Islamic Sciences", desc:"Fiqh, Aqeedah, Seerah, Hadith — comprehensive Islamic education delivered by qualified scholars.", level:"Intermediate+" },
             ].map(c => (
               <div className="ta-ccard" key={c.en}>
                 <div className="ta-ccard-img">
                   <img src={c.img} alt={c.en} />
+                  <div className="ta-ccard-img-overlay" />
                   <div className="ta-ccard-badge">{c.badge}</div>
+                  <div className="ta-ccard-level-pill">⭐ {c.level}</div>
                 </div>
                 <div className="ta-ccard-body">
                   <div className="ta-ccard-ar">{c.ar}</div>
                   <div className="ta-ccard-en">{c.en}</div>
                   <div className="ta-ccard-desc">{c.desc}</div>
                   <div className="ta-ccard-footer">
-                    <span className="ta-ccard-level">⭐ {c.level}</span>
+                    <span className="ta-ccard-level">✦ Certified Programme</span>
                     <button className="ta-ccard-btn" onClick={() => navigate("/register")}>Enrol Now</button>
                   </div>
                 </div>
