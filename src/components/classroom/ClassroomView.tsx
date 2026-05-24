@@ -2931,9 +2931,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
             <Circle style={{width:13,height:13,fill:stuRec?"#ef4444":"none"}}/> {stuRec?"Stop Recording":"Record Audio"}
           </button>
         )}
-        {onMinimize&&<button className="gm-more-item" onClick={()=>{onMinimize();setMoreOpen(false);}}>
-          <ChevronDown style={{width:16,height:16,opacity:.7}}/> Minimize
-        </button>}
+
       </div>,portal
     )}
 
