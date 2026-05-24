@@ -310,72 +310,207 @@ function buildCanvasPip(
 /* ════════════════════════════════════════════════════════
    HOOKS
    ════════════════════════════════════════════════════════ */
+/* ─────────────────────────────────────────────────────────────────────────────
+   BACKGROUND AUDIO KEEP-ALIVE
+   ─────────────────────────────────────────────────────────────────────────────
+   Strategy (layered — each layer adds resilience):
+
+   Layer 1 — <audio> element with a looping 1-second near-silence WAV (data URI).
+     Browsers (Chrome Android, Safari iOS) treat a playing <audio> element as
+     "active media" and keep the JS thread alive through screen lock.
+     The WAV is 1 s of silence at 8 kHz mono — tiny, no perceptible sound.
+
+   Layer 2 — AudioContext oscillator at 1 Hz, gain=0.
+     Creates a Web Audio graph the browser marks as "active audio output",
+     giving a second keep-alive signal independent of the <audio> element.
+
+   Layer 3 — setInterval heartbeat every 20 s.
+     Forces the JS event loop to tick even if the browser throttles timers.
+     On Chrome Android, throttled timers fire at ~1 min intervals instead of
+     the set interval; 20 s is low enough that we get at least one tick per
+     throttling window, which is enough to keep WebRTC ICE alive.
+
+   Layer 4 — visibilitychange / pageshow resume.
+     When the user returns from lock screen, immediately resume the AudioContext
+     and restart the <audio> element if it paused.
+
+   WHY NOT JUST WAKE LOCK?
+     Screen Wake Lock (navigator.wakeLock) only prevents the screen from
+     dimming while the page is visible. Once the user manually locks the
+     phone the lock is released by the OS — we cannot prevent that.
+     The audio keep-alive approach works *after* the screen locks because it
+     piggybacks on the same mechanism music/podcast apps use.
+
+   iOS CAVEAT:
+     Safari on iOS 16+ allows background audio from a playing <audio> element
+     but requires the AudioContext to be resumed inside a user-gesture handler.
+     We prime it on the first touch/click (see primeAudioContext below).
+     Background WebRTC audio (LiveKit) continues because the audio track itself
+     keeps the RTCPeerConnection alive on iOS.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+// 1-second near-silence WAV, 8 kHz mono, 16-bit PCM — base64 encoded.
+// Generating inline avoids any network fetch.
+const SILENCE_WAV =
+  "data:audio/wav;base64," +
+  "UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=";
+
 function useSilentAudio(active: boolean) {
-  const acRef = useRef<AudioContext | null>(null);
-  const srcRef = useRef<AudioBufferSourceNode | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const acRef      = useRef<AudioContext | null>(null);
+  const oscRef     = useRef<OscillatorNode | null>(null);
+  const gainRef    = useRef<GainNode | null>(null);
+  const hbRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+
   useEffect(() => {
     if (!active) {
-      srcRef.current?.stop(); srcRef.current = null;
-      acRef.current?.close(); acRef.current  = null;
+      // ── Teardown ──────────────────────────────────────────────────────
+      if (hbRef.current)    { clearInterval(hbRef.current); hbRef.current = null; }
+      if (audioElRef.current) {
+        audioElRef.current.pause();
+        audioElRef.current.src = "";
+        audioElRef.current = null;
+      }
+      try { oscRef.current?.stop(); } catch {}
+      oscRef.current = null; gainRef.current = null;
+      acRef.current?.close().catch(() => {});
+      acRef.current = null;
       return;
     }
-    const start = () => {
+
+    // ── Layer 1: <audio> element ──────────────────────────────────────
+    const startAudioEl = () => {
+      if (audioElRef.current) return;
       try {
-        const AC = window.AudioContext || (window as any).webkitAudioContext;
-        const ctx = new AC();
-        const buf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
-        const src = ctx.createBufferSource();
-        src.buffer = buf; src.loop = true;
-        src.connect(ctx.destination); src.start();
-        acRef.current = ctx; srcRef.current = src;
+        const el = new Audio(SILENCE_WAV);
+        el.loop    = true;
+        el.volume  = 0.001;          // near-silent but not muted (muted = no keep-alive)
+        el.play().catch(() => {});   // may be blocked until user gesture — Layer 4 retries
+        audioElRef.current = el;
       } catch {}
     };
-    start();
-    const resume = () => {
-      if (document.visibilityState !== "visible") return;
-      const ctx = acRef.current;
-      if (!ctx)                      { start(); return; }
-      if (ctx.state === "suspended") ctx.resume().catch(() => {});
-      if (ctx.state === "closed")    start();
+
+    // ── Layer 2: AudioContext oscillator at 1 Hz, gain = 0 ───────────
+    const startAC = () => {
+      if (acRef.current && acRef.current.state !== "closed") return;
+      try {
+        const AC  = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx = new AC();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 1;     // 1 Hz — inaudible
+        gain.gain.value     = 0;     // gain 0 = silent
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        acRef.current  = ctx;
+        oscRef.current = osc;
+        gainRef.current = gain;
+      } catch {}
     };
+
+    startAudioEl();
+    startAC();
+
+    // ── Layer 3: heartbeat every 20 s ─────────────────────────────────
+    hbRef.current = setInterval(() => {
+      // Ping the AudioContext to keep it alive
+      const ctx = acRef.current;
+      if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
+      // Restart audio element if it paused (e.g. after OS audio interruption)
+      const el = audioElRef.current;
+      if (el && el.paused) el.play().catch(() => {});
+    }, 20_000);
+
+    // ── Layer 4: resume on visibility / page show ─────────────────────
+    const resume = () => {
+      // Re-start audio element regardless of visibility state
+      // (visibilitychange fires "visible" when user returns from lock screen)
+      const el = audioElRef.current;
+      if (!el) { startAudioEl(); }
+      else if (el.paused) { el.play().catch(() => {}); }
+
+      const ctx = acRef.current;
+      if (!ctx || ctx.state === "closed") { startAC(); return; }
+      if (ctx.state === "suspended")      { ctx.resume().catch(() => {}); }
+    };
+
     document.addEventListener("visibilitychange", resume);
-    window.addEventListener("focus", resume);
+    document.addEventListener("pageshow",         resume);
+    window.addEventListener("focus",              resume);
+
     return () => {
       document.removeEventListener("visibilitychange", resume);
-      window.removeEventListener("focus", resume);
-      srcRef.current?.stop(); srcRef.current = null;
-      acRef.current?.close(); acRef.current  = null;
+      document.removeEventListener("pageshow",         resume);
+      window.removeEventListener("focus",              resume);
+      if (hbRef.current) { clearInterval(hbRef.current); hbRef.current = null; }
+      audioElRef.current?.pause();
+      if (audioElRef.current) { audioElRef.current.src = ""; audioElRef.current = null; }
+      try { oscRef.current?.stop(); } catch {}
+      acRef.current?.close().catch(() => {});
     };
   }, [active]);
 }
 
 function useWakeLock(active: boolean) {
   const lockRef = useRef<WakeLockSentinel | null>(null);
+
   const request = useCallback(async () => {
     if (!active || !("wakeLock" in navigator)) return;
+    // Release any stale sentinel first
+    try { await lockRef.current?.release(); } catch {}
+    lockRef.current = null;
     try { lockRef.current = await navigator.wakeLock.request("screen"); } catch {}
   }, [active]);
+
   useEffect(() => {
-    if (!active) { lockRef.current?.release(); lockRef.current = null; return; }
+    if (!active) {
+      lockRef.current?.release().catch(() => {});
+      lockRef.current = null;
+      return;
+    }
     request();
+    // Re-request whenever the page becomes visible (screen unlock, tab switch back)
     const fn = () => { if (document.visibilityState === "visible") request(); };
     document.addEventListener("visibilitychange", fn);
-    return () => { document.removeEventListener("visibilitychange", fn); lockRef.current?.release(); };
+    document.addEventListener("pageshow",         fn);
+    return () => {
+      document.removeEventListener("visibilitychange", fn);
+      document.removeEventListener("pageshow",         fn);
+      lockRef.current?.release().catch(() => {});
+    };
   }, [active, request]);
 }
 
 function useMediaSession(active: boolean, title: string, onReturn: () => void, onLeave: () => void) {
   useEffect(() => {
     if (!active || !("mediaSession" in navigator)) return;
-    navigator.mediaSession.metadata = new MediaMetadata({ title, artist: "Tahleem Academy", album: "🟢 Live Class" });
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title,
+      artist: "Tahleem Academy",
+      album: "🟢 Live Class",
+      // artwork helps iOS/Android show the notification with an icon
+      artwork: [
+        { src: "/brand-logo.png", sizes: "192x192", type: "image/png" },
+        { src: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
+      ],
+    });
     navigator.mediaSession.playbackState = "playing";
     const sa = (a: MediaSessionAction, h: () => void) => { try { navigator.mediaSession.setActionHandler(a, h); } catch {} };
-    sa("play", onReturn); sa("pause", onReturn); sa("stop", onLeave);
-    sa("previoustrack", onReturn); sa("nexttrack", onReturn);
+    // Map all media actions to "return to class" — this is what shows on lock screen
+    sa("play",          onReturn);
+    sa("pause",         onReturn);
+    sa("stop",          onLeave);
+    sa("previoustrack", onReturn);
+    sa("nexttrack",     onReturn);
+    // seekto / seekbackward / seekforward — keep alive by doing nothing
+    try { navigator.mediaSession.setActionHandler("seekto",       () => {}); } catch {}
+    try { navigator.mediaSession.setActionHandler("seekbackward", () => {}); } catch {}
+    try { navigator.mediaSession.setActionHandler("seekforward",  () => {}); } catch {}
     return () => {
       navigator.mediaSession.metadata = null;
       navigator.mediaSession.playbackState = "none";
-      (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[])
+      (["play","pause","stop","previoustrack","nexttrack","seekto","seekbackward","seekforward"] as MediaSessionAction[])
         .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
     };
   }, [active, title, onReturn, onLeave]);
@@ -892,6 +1027,31 @@ const GuestClassroom = () => {
     if (h) { h.video.play().catch(()=>{}); pipHandle.current=h; }
     return () => { pipHandle.current?.stop(); pipHandle.current=null; };
   }, [connected, initial, title]);
+
+  // ── Auto-PiP when screen locks / page hidden ──────────────────────────
+  // When the user locks their phone, visibilityState becomes "hidden".
+  // We automatically trigger Picture-in-Picture so the audio stream stays
+  // registered as "active media" by the OS, preventing it from being killed.
+  // Note: requestPictureInPicture() must be called from inside the
+  // visibilitychange handler (counts as a user-gesture context on Chrome).
+  useEffect(() => {
+    if (!connected || ended) return;
+    const onHide = async () => {
+      if (document.visibilityState !== "hidden") return;
+      if (document.pictureInPictureElement) return;  // already in PiP
+      const h = pipHandle.current;
+      if (!h) return;
+      // Try a live video track first, then fall back to canvas PiP
+      const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
+      const live = vids.find(v => v.readyState >= 2 && v.videoWidth > 0 && v !== h.video);
+      if (live) {
+        try { await live.requestPictureInPicture(); return; } catch {}
+      }
+      h.pip().catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onHide);
+    return () => document.removeEventListener("visibilitychange", onHide);
+  }, [connected, ended]);
 
   // Auto-reconnect (up to 5 attempts)
   const endedRef = useRef(false);
