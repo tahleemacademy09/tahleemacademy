@@ -30,7 +30,7 @@ const Index = () => {
       @keyframes pulse   { 0%,100%{opacity:1} 50%{opacity:.35} }
 
       /* HERO */
-      .ta-hero { position:relative; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
+      .ta-hero { position:relative; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; overflow:hidden; }
       .ta-hero-bg { position:absolute; inset:0; background-image:url('https://images.unsplash.com/photo-1609599006353-e629aaabfeae?w=1600&q=90'); background-size:cover; background-position:center 25%; }
       .ta-hero-overlay { position:absolute; inset:0; background:linear-gradient(175deg,rgba(6,18,10,.92) 0%,rgba(11,36,22,.84) 50%,rgba(6,14,9,.94) 100%); }
       .ta-hero-tile { position:absolute; inset:0; opacity:.04; background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cg fill='none' stroke='%23c9973a' stroke-width='.8'%3E%3Cpolygon points='60,6 114,33 114,87 60,114 6,87 6,33'/%3E%3Cpolygon points='60,22 98,42 98,78 60,98 22,78 22,42'/%3E%3Ccircle cx='60' cy='60' r='22'/%3E%3Cline x1='60' y1='6' x2='60' y2='22'/%3E%3Cline x1='114' y1='33' x2='98' y2='42'/%3E%3Cline x1='114' y1='87' x2='98' y2='78'/%3E%3Cline x1='60' y1='114' x2='60' y2='98'/%3E%3Cline x1='6' y1='87' x2='22' y2='78'/%3E%3Cline x1='6' y1='33' x2='22' y2='42'/%3E%3C/g%3E%3C/svg%3E"); }
@@ -38,7 +38,7 @@ const Index = () => {
       .ta-hero-arch::before { content:''; position:absolute; top:0; left:-1px; right:-1px; height:3px; background:linear-gradient(90deg,transparent,#c9973a,transparent); }
       .ta-hero-arch::after  { content:''; position:absolute; bottom:0; left:-1px; right:-1px; height:3px; background:linear-gradient(90deg,transparent,#c9973a,transparent); }
 
-      .ta-hero-content { position:relative; z-index:2; text-align:center; padding:0 24px; max-width:700px; width:100%; animation:scaleIn .9s ease both; }
+      .ta-hero-content { position:relative; z-index:2; text-align:center; padding:clamp(72px,14vh,130px) 24px clamp(48px,8vh,80px); max-width:700px; width:100%; animation:scaleIn .9s ease both; }
       .ta-hero-badge { display:inline-flex; align-items:center; gap:10px; background:rgba(201,151,58,.1); border:1px solid rgba(201,151,58,.32); color:#e8c270; padding:7px 20px; border-radius:40px; font-size:11px; letter-spacing:2px; text-transform:uppercase; font-weight:800; margin-bottom:30px; animation:fadeUp .7s .1s ease both; }
       .ta-hero-bismi { font-family:'Scheherazade New',serif; font-size:clamp(24px,5vw,46px); color:#fff; line-height:1.65; direction:rtl; margin-bottom:12px; text-shadow:0 0 40px rgba(201,151,58,.45); animation:fadeUp .7s .2s ease both; }
       .ta-hero-div { display:flex; align-items:center; gap:14px; justify-content:center; margin:14px 0 20px; animation:fadeUp .7s .25s ease both; }
