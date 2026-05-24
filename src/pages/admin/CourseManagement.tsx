@@ -1337,42 +1337,49 @@ export default function CourseManagement() {
         </div>
       )}
 
-      <div style={{ padding: 16, maxWidth: 900, margin: "0 auto" }}>
+      <div style={{ padding: "16px 16px 32px", maxWidth: 960, margin: "0 auto" }}>
 
         {/* ═══ COURSES ═══════════════════════════════════════ */}
         {view === "courses" && (
           cLoad ? <div style={{ textAlign: "center", padding: 40 }}><Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
             : fCourses.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: "#9CA3AF" }}><FolderOpen size={48} style={{ margin: "0 auto 12px", display: "block" }} /><p>No courses yet. Create your first course above.</p></div>
-              : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 20 }}>
                 {fCourses.map((c: any) => {
                   const lv = lvlCfg[(c.level as Level) || "all"];
                   return (
-                    <div key={c.id} className="chov" style={{ background: "#fff", borderRadius: 16, border: `1px solid ${lv.border}`, overflow: "hidden", display: "flex", height: 120, boxShadow: "0 1px 6px rgba(0,0,0,0.06)", transition: "box-shadow .2s, border-color .2s" }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 4px 18px rgba(6,78,59,0.13)"; (e.currentTarget as HTMLDivElement).style.borderColor = `${G}55`; }}
-                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 1px 6px rgba(0,0,0,0.06)"; (e.currentTarget as HTMLDivElement).style.borderColor = lv.border; }}
+                    <div key={c.id} className="chov" style={{ background: "#fff", borderRadius: 20, border: "1px solid #F0F0F0", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 2px 12px rgba(0,0,0,0.06)", transition: "box-shadow .2s, transform .2s" }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 8px 32px rgba(6,78,59,0.14)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(-2px)"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.boxShadow = "0 2px 12px rgba(0,0,0,0.06)"; (e.currentTarget as HTMLDivElement).style.transform = "translateY(0)"; }}
                     >
-                      <div style={{ position: "relative", width: 130, flexShrink: 0, overflow: "hidden", background: lv.bg, cursor: "pointer" }} onClick={() => openSubjectsView(c)}>
+                      {/* Image area */}
+                      <div style={{ position: "relative", width: "100%", height: 164, flexShrink: 0, overflow: "hidden", background: lv.bg, cursor: "pointer" }} onClick={() => openSubjectsView(c)}>
                         <SubjThumb url={c.image_url} title={c.title} bg={lv.bg} />
-                        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to right, transparent 55%, rgba(255,255,255,0.85))", pointerEvents: "none" }} />
-                        {!c.is_published && <div style={{ position: "absolute", top: 6, left: 5, padding: "2px 7px", borderRadius: 20, background: "#FEF2F2", color: "#DC2626", fontSize: 8, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</div>}
-                        {c.visibility === "private" && <div style={{ position: "absolute", bottom: 6, left: 5, padding: "2px 6px", borderRadius: 20, background: "#F3E8FF", color: "#7C3AED", fontSize: 8, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</div>}
-                        {c.visibility === "general" && <div style={{ position: "absolute", bottom: 6, left: 5, padding: "2px 6px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 8, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</div>}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0, padding: "11px 13px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                        <div>
-                          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 6, marginBottom: 2 }}>
-                            <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: 0, lineHeight: 1.25, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", cursor: "pointer" }} onClick={() => openSubjectsView(c)}>{c.title}</p>
-                            <span style={{ flexShrink: 0, padding: "2px 8px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: lv.bg, color: lv.text, border: `1px solid ${lv.border}`, whiteSpace: "nowrap" }}>{lv.label}</span>
-                          </div>
-                          {c.title_ar && <p style={{ fontWeight: 600, fontSize: 11, color: GOLD, margin: "0 0 3px", direction: "rtl", fontFamily: "'Amiri',serif", lineHeight: 1.3 }}>{c.title_ar}</p>}
-                          {c.description && <p style={{ fontSize: 11, color: "#6B7280", margin: 0, lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as any, overflow: "hidden" }}>{c.description}</p>}
+                        {/* gradient overlay for readability */}
+                        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.45) 0%, transparent 55%)", pointerEvents: "none" }} />
+                        {/* badges top-left */}
+                        <div style={{ position: "absolute", top: 10, left: 10, display: "flex", gap: 5 }}>
+                          {!c.is_published && <span style={{ padding: "3px 9px", borderRadius: 20, background: "rgba(254,242,242,0.95)", color: "#DC2626", fontSize: 9, fontWeight: 700, border: "1px solid #FECACA" }}>Draft</span>}
+                          {c.visibility === "private" && <span style={{ padding: "3px 9px", borderRadius: 20, background: "rgba(243,232,255,0.95)", color: "#7C3AED", fontSize: 9, fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</span>}
+                          {c.visibility === "general" && <span style={{ padding: "3px 9px", borderRadius: 20, background: "rgba(239,246,255,0.95)", color: "#3b82f6", fontSize: 9, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</span>}
                         </div>
-                        <div style={{ display: "flex", gap: 5, marginTop: 8 }}>
-                          <button type="button" onClick={() => openSubjectsView(c)} style={{ flex: 1, padding: "6px 8px", borderRadius: 8, border: "none", background: `linear-gradient(135deg,${G},#075E54)`, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                            <Layers size={12} /> Manage
+                        {/* level badge bottom-right */}
+                        <span style={{ position: "absolute", bottom: 10, right: 10, padding: "3px 10px", borderRadius: 20, fontSize: 9, fontWeight: 700, background: "rgba(255,255,255,0.93)", color: lv.text, border: `1px solid ${lv.border}`, backdropFilter: "blur(4px)" }}>{lv.label}</span>
+                      </div>
+
+                      {/* Body */}
+                      <div style={{ flex: 1, padding: "16px 18px 18px", display: "flex", flexDirection: "column", gap: 0 }}>
+                        {c.title_ar && <p style={{ fontWeight: 600, fontSize: 12, color: GOLD, margin: "0 0 4px", direction: "rtl", fontFamily: "'Amiri',serif", lineHeight: 1.4 }}>{c.title_ar}</p>}
+                        <p style={{ fontWeight: 800, fontSize: 15, color: "#111", margin: "0 0 7px", lineHeight: 1.3, cursor: "pointer" }} onClick={() => openSubjectsView(c)}>{c.title}</p>
+                        {c.description && <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 16px", lineHeight: 1.6, display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as any, overflow: "hidden", flex: 1 }}>{c.description}</p>}
+                        {!c.description && <div style={{ flex: 1 }} />}
+
+                        {/* Action row */}
+                        <div style={{ display: "flex", gap: 6, paddingTop: 12, borderTop: "1px solid #F3F4F6" }}>
+                          <button type="button" onClick={() => openSubjectsView(c)} style={{ flex: 1, padding: "9px 8px", borderRadius: 10, border: "none", background: `linear-gradient(135deg,${G},#075E54)`, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                            <Layers size={13} /> Manage
                           </button>
-                          <button type="button" onClick={() => { setEdCourse(c); setShowCourse(true); }} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${G}22`, background: "#F0FDF4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Edit"><Edit2 size={13} color={G} /></button>
-                          <button type="button" onClick={() => delCourse(c.id)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Delete"><Trash2 size={13} color="#DC2626" /></button>
+                          <button type="button" onClick={() => { setEdCourse(c); setShowCourse(true); }} style={{ padding: "9px 12px", borderRadius: 10, border: `1.5px solid ${G}22`, background: "#F0FDF4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Edit"><Edit2 size={14} color={G} /></button>
+                          <button type="button" onClick={() => delCourse(c.id)} style={{ padding: "9px 12px", borderRadius: 10, border: "1.5px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }} title="Delete"><Trash2 size={14} color="#DC2626" /></button>
                         </div>
                       </div>
                     </div>
