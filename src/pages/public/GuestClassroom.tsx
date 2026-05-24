@@ -737,6 +737,9 @@ const GuestClassroom = () => {
   const [reconnectCount, setReconnectCount] = useState(0);
   const [roomKey, setRoomKey]             = useState(0);
   const [soundEnabled, setSoundEnabled]   = useState(true);
+  const [localGuestName, setLocalGuestName] = useState<string>("");
+  const [editingGuestName, setEditingGuestName] = useState(false);
+  const [guestNameInput, setGuestNameInput] = useState<string>("");
   const intentionalRef = useRef(false);
 
   // Join/leave toasts
@@ -763,6 +766,21 @@ const GuestClassroom = () => {
     token?:string; url?:string; room?:string; guestName?:string;
     classTitle?:string; classTitleAr?:string;
     isHost?:boolean; classId?:string; sessionId?:string;
+  };
+
+  // Initialise localGuestName once from location state
+  useEffect(() => {
+    if (guestName && !localGuestName) {
+      setLocalGuestName(guestName);
+      setGuestNameInput(guestName);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guestName]);
+
+  const saveGuestName = () => {
+    const trimmed = guestNameInput.trim();
+    if (trimmed) setLocalGuestName(trimmed);
+    setEditingGuestName(false);
   };
 
   const title   = classTitle || "Public Class";
@@ -1005,6 +1023,42 @@ const GuestClassroom = () => {
 
         <div style={{ maxWidth:460, margin:"0 auto", padding:"0 16px" }}>
 
+          {/* ── Name edit section (for guests) ── */}
+          {!isHost && (
+            <div className="gc-ended-card" style={{ marginTop:24, background:"rgba(138,180,248,.06)", border:"1.5px solid rgba(138,180,248,.2)", borderRadius:20, padding:"18px 20px", animationDelay:"0s" }}>
+              <p style={{ fontSize:11, fontWeight:700, letterSpacing:1.4, color:"#8ab4f8", margin:"0 0 6px", textTransform:"uppercase" }}>👤 Your Display Name</p>
+              {editingGuestName ? (
+                <div style={{ display:"flex", gap:8, alignItems:"center", marginTop:4 }}>
+                  <input
+                    value={guestNameInput}
+                    onChange={e => setGuestNameInput(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && saveGuestName()}
+                    autoFocus
+                    placeholder="Enter your name"
+                    style={{ flex:1, background:"rgba(255,255,255,.08)", border:"1px solid rgba(138,180,248,.35)", borderRadius:10, padding:"8px 12px", fontSize:14, color:"#fff", outline:"none", fontFamily:"'Google Sans',sans-serif" }}
+                  />
+                  <button
+                    onClick={saveGuestName}
+                    style={{ padding:"8px 16px", borderRadius:10, border:"none", background:"#8ab4f8", color:"#0b1f13", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"'Google Sans',sans-serif" }}
+                  >Save</button>
+                  <button
+                    onClick={() => setEditingGuestName(false)}
+                    style={{ padding:"8px 12px", borderRadius:10, border:"1px solid rgba(255,255,255,.15)", background:"transparent", color:"rgba(255,255,255,.5)", fontSize:13, cursor:"pointer", fontFamily:"'Google Sans',sans-serif" }}
+                  >Cancel</button>
+                </div>
+              ) : (
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4 }}>
+                  <span style={{ fontSize:16, fontWeight:600, color:"#fff" }}>{localGuestName || guestName || "Guest"}</span>
+                  <button
+                    onClick={() => { setGuestNameInput(localGuestName || guestName || ""); setEditingGuestName(true); }}
+                    style={{ fontSize:12, color:"#8ab4f8", background:"rgba(138,180,248,.1)", border:"1px solid rgba(138,180,248,.25)", borderRadius:10, padding:"4px 12px", cursor:"pointer", fontFamily:"'Google Sans',sans-serif" }}
+                  >✏️ Edit</button>
+                </div>
+              )}
+              <p style={{ fontSize:11, color:"rgba(255,255,255,.35)", margin:"6px 0 0", lineHeight:1.5 }}>This is the name shown during class discussion. The <strong style={{color:"rgba(201,168,76,.7)"}}>**</strong> prefix is reserved for verified teachers/admins only.</p>
+            </div>
+          )}
+
           {/* ── Post-class Quiz CTA ── */}
           <div className="gc-ended-card" style={{ marginTop:28, background:"rgba(34,197,94,.06)", border:"1.5px solid rgba(34,197,94,.3)", borderRadius:20, padding:"24px 20px", animationDelay:"0s" }}>
             <p style={{ fontSize:11, fontWeight:700, letterSpacing:1.4, color:"#22c55e", margin:"0 0 8px", textTransform:"uppercase" }}>📝 Test Your Knowledge</p>
@@ -1013,7 +1067,7 @@ const GuestClassroom = () => {
               Reinforce what you just learned — answer questions from today's class and track your progress.
             </p>
             <a
-              href={`/quiz${quizCode ? `?code=${quizCode}&` : "?"}name=${encodeURIComponent(title)}`}
+              href={`/quiz${quizCode ? `?code=${quizCode}&` : "?"}name=${encodeURIComponent(localGuestName || guestName || title)}`}
               className="gc-cta-btn"
               style={{ display:"block", textAlign:"center", padding:"13px 0", borderRadius:999, background:"#22c55e", color:"#0b1f13", fontSize:14, fontWeight:800, textDecoration:"none" }}
             >
@@ -1392,7 +1446,7 @@ const GuestClassroom = () => {
                 </button>
               </div>
               <div style={{ flex:1, overflow:"hidden" }}>
-                {sideTab==="chat" ? <ClassChatPanel sessionId={sessionId} /> : <ClassPolls sessionId={sessionId} />}
+                {sideTab==="chat" ? <ClassChatPanel sessionId={sessionId} guestName={!isHost ? (localGuestName || guestName) : undefined} onEditName={!isHost ? () => { setEditingGuestName(true); setGuestNameInput(localGuestName || guestName || ""); } : undefined} /> : <ClassPolls sessionId={sessionId} />}
               </div>
             </div>
           )}
@@ -1442,7 +1496,39 @@ const GuestClassroom = () => {
               </button>
             </div>
             <div style={{ flex:1, overflow:"hidden", minHeight:320 }}>
-              {sideTab==="chat" ? <ClassChatPanel sessionId={sessionId} /> : <ClassPolls sessionId={sessionId} />}
+              {sideTab==="chat" ? <ClassChatPanel sessionId={sessionId} guestName={!isHost ? (localGuestName || guestName) : undefined} onEditName={!isHost ? () => { setChatOpen(false); setTimeout(()=>setEditingGuestName(true), 200); } : undefined} /> : <ClassPolls sessionId={sessionId} />}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ════ EDIT GUEST NAME MODAL ════ */}
+      {editingGuestName && (
+        <div style={{ position:"fixed", inset:0, zIndex:9600, background:"rgba(0,0,0,.65)", backdropFilter:"blur(8px)", display:"flex", alignItems:"center", justifyContent:"center" }} onClick={()=>setEditingGuestName(false)}>
+          <div style={{ background:"#1e2535", borderRadius:20, padding:"28px 24px", width:"100%", maxWidth:360, margin:"0 16px", boxShadow:"0 24px 64px rgba(0,0,0,.7)", border:"1px solid rgba(138,180,248,.2)", animation:"gc-fade-up .18s ease" }} onClick={e=>e.stopPropagation()}>
+            <h2 style={{ textAlign:"center", fontSize:17, fontWeight:700, color:"#e8eaed", marginBottom:6, fontFamily:"'Google Sans',sans-serif" }}>✏️ Edit Your Name</h2>
+            <p style={{ textAlign:"center", fontSize:12, color:"rgba(255,255,255,.4)", marginBottom:20, lineHeight:1.5, fontFamily:"'Google Sans',sans-serif" }}>
+              This is the name shown in the class chat and discussion.<br/>
+              <span style={{color:"rgba(201,168,76,.7)",fontWeight:600}}>**</span> prefix is reserved for verified teachers &amp; admins.
+            </p>
+            <input
+              value={guestNameInput}
+              onChange={e => setGuestNameInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && saveGuestName()}
+              autoFocus
+              placeholder="Enter your display name"
+              style={{ width:"100%", background:"rgba(255,255,255,.08)", border:"1px solid rgba(138,180,248,.35)", borderRadius:12, padding:"11px 14px", fontSize:15, color:"#fff", outline:"none", fontFamily:"'Google Sans',sans-serif", boxSizing:"border-box" }}
+            />
+            <div style={{ display:"flex", flexDirection:"column", gap:8, marginTop:16 }}>
+              <button
+                onClick={saveGuestName}
+                disabled={!guestNameInput.trim()}
+                style={{ width:"100%", padding:12, borderRadius:24, border:"none", background:guestNameInput.trim()?"#8ab4f8":"rgba(255,255,255,.12)", color:guestNameInput.trim()?"#0b1f13":"rgba(255,255,255,.3)", fontSize:14, fontWeight:700, cursor:guestNameInput.trim()?"pointer":"default", fontFamily:"'Google Sans',sans-serif" }}
+              >Save Name</button>
+              <button
+                onClick={() => setEditingGuestName(false)}
+                style={{ width:"100%", padding:11, borderRadius:24, border:"1px solid rgba(255,255,255,.12)", background:"transparent", color:"rgba(255,255,255,.5)", fontSize:13, cursor:"pointer", fontFamily:"'Google Sans',sans-serif" }}
+              >Cancel</button>
             </div>
           </div>
         </div>
