@@ -32,7 +32,7 @@ import { storageSupabase } from "../../integrations/supabase/storageClient";
 import {
   UserPlus, Radio, Circle, Loader2,
   Mic, Pause, Play, Square, X, Phone,
-  Minimize2, RefreshCw, Users, LogOut,
+  Hand, Smile, RefreshCw, Users, LogOut,
 } from "lucide-react";
 import ClassChatPanel    from "@/components/classroom/ClassChatPanel";
 import ClassPolls        from "@/components/classroom/ClassPolls";
@@ -169,143 +169,19 @@ const CSS = `
 `;
 
 /* ════════════════════════════════════════════════════════
-   CANVAS PiP
+   HOOKS
+   (Canvas PiP removed — background keep-alive only)
    ════════════════════════════════════════════════════════ */
-const GOLD = "#c9a84c";
-const DARK_BG = "#0c1f12";
-const PIP_W = 320, PIP_H = 180;
 
 interface PipHandle {
-  video:       HTMLVideoElement;
+  stop:        () => void;
+  pip:         () => Promise<void>;
   setMicMuted: (v: boolean) => void;
   setInitial:  (v: string)  => void;
-  pip:         () => Promise<void>;
-  stop:        () => void;
 }
+// Canvas PiP removed — always returns null.
+function buildCanvasPip(_a: string, _b: string, _c: () => void): PipHandle | null { return null; }
 
-function buildCanvasPip(
-  initialChar: string,
-  subjectName: string,
-  onTap: () => void,
-): PipHandle | null {
-  if (!("requestPictureInPicture" in HTMLVideoElement.prototype)) return null;
-
-  const cv = document.createElement("canvas");
-  cv.width = PIP_W; cv.height = PIP_H;
-  const ctx = cv.getContext("2d");
-  if (!ctx) return null;
-
-  let micMuted = true;
-  let letter   = initialChar;
-  let raf      = 0;
-
-  const drawMic = (mx: number, my: number, r: number) => {
-    ctx.fillStyle = micMuted ? "rgba(239,68,68,.95)" : "rgba(34,120,60,.95)";
-    ctx.beginPath(); ctx.arc(mx, my, r, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#fff"; ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5;
-    const cs = r * 0.28;
-    if (micMuted) {
-      ctx.globalAlpha = 0.35;
-      ctx.beginPath(); ctx.arc(mx, my - cs, cs, 0, Math.PI * 2); ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.lineWidth = r * 0.18;
-      ctx.beginPath();
-      ctx.moveTo(mx - r * 0.52, my + r * 0.48);
-      ctx.lineTo(mx + r * 0.52, my - r * 0.48);
-      ctx.stroke();
-    } else {
-      ctx.beginPath(); ctx.arc(mx, my - cs, cs, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(mx - cs * 1.2, my - cs * 0.3);
-      ctx.quadraticCurveTo(mx - cs * 1.2, my + cs * 1.4, mx, my + cs * 1.7);
-      ctx.quadraticCurveTo(mx + cs * 1.2, my + cs * 1.4, mx + cs * 1.2, my - cs * 0.3);
-      ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(mx, my + cs * 1.7); ctx.lineTo(mx, my + cs * 2.5); ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(mx - cs * 0.9, my + cs * 2.5); ctx.lineTo(mx + cs * 0.9, my + cs * 2.5); ctx.stroke();
-    }
-  };
-
-  const draw = () => {
-    ctx.clearRect(0, 0, PIP_W, PIP_H);
-    ctx.fillStyle = DARK_BG; ctx.fillRect(0, 0, PIP_W, PIP_H);
-    ctx.fillStyle = "rgba(201,168,76,0.35)"; ctx.fillRect(0, PIP_H - 2, PIP_W, 2);
-
-    const STRIP = 52;
-    ctx.fillStyle = "rgba(255,255,255,0.04)"; ctx.fillRect(0, 0, STRIP, PIP_H);
-    const p = 0.4 + 0.6 * Math.abs(Math.sin(Date.now() / 700));
-    ctx.fillStyle = `rgba(239,68,68,${p})`;
-    ctx.beginPath(); ctx.arc(STRIP / 2, PIP_H / 2 - 10, 6, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = `rgba(239,68,68,${p * 0.4})`; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(STRIP / 2, PIP_H / 2 - 10, 10, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = "#fff"; ctx.font = "bold 10px system-ui,sans-serif";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText("LIVE", STRIP / 2, PIP_H / 2 + 8);
-    ctx.fillStyle = "rgba(201,168,76,0.2)"; ctx.fillRect(STRIP, 20, 1, PIP_H - 40);
-
-    const avX = STRIP + 52, avY = PIP_H / 2, avR = 36;
-    ctx.fillStyle = GOLD;
-    ctx.beginPath(); ctx.arc(avX, avY, avR, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = DARK_BG;
-    ctx.font = `bold ${avR * 0.75}px system-ui,-apple-system,sans-serif`;
-    ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(letter.toUpperCase().slice(0, 1), avX, avY);
-
-    const nameX = avX + avR + 12;
-    const nameW = PIP_W - nameX - 52;
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    ctx.font = "600 13px system-ui,-apple-system,sans-serif";
-    ctx.textAlign = "left"; ctx.textBaseline = "middle";
-    let name = subjectName;
-    while (name.length > 1 && ctx.measureText(name).width > nameW) name = name.slice(0, -1);
-    if (name !== subjectName) name = name.trimEnd() + "…";
-    ctx.fillText(name, nameX, PIP_H / 2 - 8);
-    ctx.fillStyle = "rgba(255,255,255,0.4)"; ctx.font = "10px system-ui,sans-serif";
-    ctx.fillText("Tap to return", nameX, PIP_H / 2 + 12);
-
-    drawMic(PIP_W - 30, PIP_H / 2, 20);
-    raf = requestAnimationFrame(draw);
-  };
-  draw();
-
-  const vid = document.createElement("video");
-  vid.srcObject = cv.captureStream(12);
-  vid.muted = true; vid.playsInline = true;
-  (vid as any).autopictureinpicture = true;
-  vid.setAttribute("autopictureinpicture", "");
-  vid.style.cssText = "position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;pointer-events:none;opacity:.01;z-index:-999;";
-  document.body.appendChild(vid);
-  vid.addEventListener("leavepictureinpicture", onTap);
-
-  const keepPlaying = () => { if (document.body.contains(vid)) vid.play().catch(() => {}); };
-  vid.addEventListener("pause", keepPlaying);
-  vid.addEventListener("ended", keepPlaying);
-  keepPlaying();
-
-  const ensurePlaying = async () => {
-    if (vid.paused || vid.readyState < 2) {
-      try { await vid.play(); } catch {}
-      await new Promise(r => setTimeout(r, 80));
-    }
-  };
-
-  const pip = async () => {
-    if (document.pictureInPictureElement === vid) return;
-    await ensurePlaying();
-    try { await vid.requestPictureInPicture(); } catch {}
-  };
-
-  const stop = () => {
-    cancelAnimationFrame(raf);
-    vid.removeEventListener("pause", keepPlaying);
-    vid.removeEventListener("ended", keepPlaying);
-    (vid.srcObject as MediaStream | null)?.getTracks().forEach(t => t.stop());
-    if (document.pictureInPictureElement === vid) document.exitPictureInPicture().catch(() => {});
-    vid.remove();
-  };
-
-  return { video: vid, setMicMuted: v => { micMuted = v; }, setInitial: v => { letter = v; }, pip, stop };
-}
 
 /* ════════════════════════════════════════════════════════
    HOOKS
@@ -868,6 +744,8 @@ const GuestClassroom = () => {
   const [classDuration, setClassDuration] = useState(0);
   const [savingRec, setSavingRec]         = useState(false);
   const [minimized, setMinimized]         = useState(false);
+  const [handUp,    setHandUp]             = useState(false);
+  const [emojiOpen, setEmojiOpen]          = useState(false);
   const [reconnecting, setReconnecting]   = useState(false);
   const [reconnectCount, setReconnectCount] = useState(0);
   const [roomKey, setRoomKey]             = useState(0);
@@ -891,7 +769,6 @@ const GuestClassroom = () => {
   const [chatUnread, setChatUnread]       = useState(0);
   const [showQuiz, setShowQuiz]           = useState(false);
 
-  const pipHandle    = useRef<PipHandle|null>(null);
   const handleRetRef = useRef<()=>void>(()=>{});
 
   const {
@@ -1020,39 +897,6 @@ const GuestClassroom = () => {
     return () => { observer.disconnect(); clearInterval(poll); };
   }, [connected]);
 
-  // Build PiP once connected
-  useEffect(() => {
-    if (!connected) { pipHandle.current?.stop(); pipHandle.current=null; return; }
-    const h = buildCanvasPip(initial, title, ()=>handleRetRef.current());
-    if (h) { h.video.play().catch(()=>{}); pipHandle.current=h; }
-    return () => { pipHandle.current?.stop(); pipHandle.current=null; };
-  }, [connected, initial, title]);
-
-  // ── Auto-PiP when screen locks / page hidden ──────────────────────────
-  // When the user locks their phone, visibilityState becomes "hidden".
-  // We automatically trigger Picture-in-Picture so the audio stream stays
-  // registered as "active media" by the OS, preventing it from being killed.
-  // Note: requestPictureInPicture() must be called from inside the
-  // visibilitychange handler (counts as a user-gesture context on Chrome).
-  useEffect(() => {
-    if (!connected || ended) return;
-    const onHide = async () => {
-      if (document.visibilityState !== "hidden") return;
-      if (document.pictureInPictureElement) return;  // already in PiP
-      const h = pipHandle.current;
-      if (!h) return;
-      // Try a live video track first, then fall back to canvas PiP
-      const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
-      const live = vids.find(v => v.readyState >= 2 && v.videoWidth > 0 && v !== h.video);
-      if (live) {
-        try { await live.requestPictureInPicture(); return; } catch {}
-      }
-      h.pip().catch(() => {});
-    };
-    document.addEventListener("visibilitychange", onHide);
-    return () => document.removeEventListener("visibilitychange", onHide);
-  }, [connected, ended]);
-
   // Auto-reconnect (up to 5 attempts)
   const endedRef = useRef(false);
   useEffect(() => { endedRef.current = ended; }, [ended]);
@@ -1067,16 +911,31 @@ const GuestClassroom = () => {
     });
   }, []);
 
-  /* ── Minimize → slide classroom off-screen, PiP floats, JoinClass renders underneath ── */
-  const doMinimize = useCallback(async () => {
+  /* ── Emoji + Raise Hand for public class ── */
+  const sendGuestEmoji = useCallback((e: string) => {
+    setEmojiOpen(false);
+    // Broadcast via LiveKit data if room is available — best-effort
+    try {
+      const enc = new TextEncoder().encode(JSON.stringify({ type: "emoji_react", emoji: e, sender: localGuestName || guestName || "Guest" }));
+      (window as any).__gcRoom?.localParticipant?.publishData(enc, { reliable: false });
+    } catch {}
+  }, [localGuestName, guestName]);
+
+  const toggleGuestHand = useCallback(async () => {
+    const next = !handUp;
+    setHandUp(next);
+    if (sessionId) {
+      try {
+        const enc = new TextEncoder().encode(JSON.stringify({ type: "hand_raise", identity: "guest", name: localGuestName || guestName || "Guest", raised: next }));
+        (window as any).__gcRoom?.localParticipant?.publishData(enc, { reliable: true });
+      } catch {}
+    }
+  }, [handUp, sessionId, localGuestName, guestName]);
+
+  /* ── Minimize → slide classroom off-screen. Audio stays alive via keep-alive hooks. ── */
+  const doMinimize = useCallback(() => {
     setMinimized(true);
-    const h = pipHandle.current;
-    if (!h || document.pictureInPictureElement) return;
-    const vids = Array.from(document.querySelectorAll("video")) as HTMLVideoElement[];
-    const live = vids.find(v => v.readyState>=2 && v.videoWidth>0 && v!==h.video);
-    if (live) { try { await live.requestPictureInPicture(); return; } catch {} }
-    h.pip().catch(()=>{});
-  }, []);
+  }, [setMinimized]);
 
   const navigateAway = useCallback(async (to: string) => {
     if (connected && !ended) {
@@ -1098,7 +957,6 @@ const GuestClassroom = () => {
 
     const onPop = () => {
       setMinimized(true);
-      setTimeout(() => pipHandle.current?.pip().catch(() => {}), 60);
       // Re-push so the NEXT back press is also caught
       window.history.pushState({ gc: true }, "");
     };
@@ -1107,47 +965,25 @@ const GuestClassroom = () => {
     return () => window.removeEventListener("popstate", onPop);
   }, [connected]);
 
-  /* ── Home button / app switcher / screen lock → minimize + PiP.
-     visibilitychange fires hidden on: home button, app switcher,
-     screen lock, browser tab switch. ── */
+  /* ── Home button / app switcher → minimize. Auto-restore when returning. ── */
   useEffect(() => {
     if (!connected) return;
-    let pipTimer: ReturnType<typeof setTimeout> | null = null;
-
     const onVis = () => {
       if (document.visibilityState === "hidden") {
         setMinimized(true);
-        if (!document.pictureInPictureElement) {
-          pipTimer = setTimeout(() => pipHandle.current?.pip().catch(() => {}), 150);
-        }
+      } else if (document.visibilityState === "visible") {
+        // Auto-restore: user switched back — bring classroom straight back
+        setMinimized(false);
       }
     };
-
-    // Also catch pagehide for browsers that don't fire visibilitychange reliably
-    const onPageHide = () => {
-      setMinimized(true);
-      if (!document.pictureInPictureElement) {
-        pipTimer = setTimeout(() => pipHandle.current?.pip().catch(() => {}), 150);
-      }
-    };
-
     document.addEventListener("visibilitychange", onVis);
-    window.addEventListener("pagehide", onPageHide);
-    return () => {
-      document.removeEventListener("visibilitychange", onVis);
-      window.removeEventListener("pagehide", onPageHide);
-      if (pipTimer) clearTimeout(pipTimer);
-    };
+    return () => document.removeEventListener("visibilitychange", onVis);
   }, [connected]);
 
-  /* ── Return from minimized → re-push sentinel + exit PiP ── */
+  /* ── Return from minimized → re-push sentinel ── */
   useEffect(() => {
-    if (!minimized) {
-      // Re-push so back button is caught again after returning
-      if (connected) window.history.pushState({ gc: true }, "");
-      if (document.pictureInPictureElement) {
-        document.exitPictureInPicture().catch(() => {});
-      }
+    if (!minimized && connected) {
+      window.history.pushState({ gc: true }, "");
     }
   }, [minimized, connected]);
 
@@ -1310,81 +1146,13 @@ const GuestClassroom = () => {
 
   return (
     <>
-    {/* ── Minimized screen: self-contained, no routing, just show class info + return button ── */}
-    {minimized && (
-      <div style={{
-        position:"fixed", inset:0, zIndex:7999,
-        background:"#0b1f13",
-        display:"flex", flexDirection:"column",
-        alignItems:"center", justifyContent:"center",
-        gap:16, padding:32,
-        fontFamily:"'Google Sans','Roboto',sans-serif",
-      }}>
-        <style>{`
-          @keyframes gc-min-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.85)}}
-          @keyframes gc-min-ring{to{transform:rotate(360deg)}}
-        `}</style>
-
-        {/* Avatar with live ring */}
-        <div style={{ position:"relative", width:88, height:88 }}>
-          <div style={{ position:"absolute", inset:-8, borderRadius:"50%", border:"2px solid rgba(239,68,68,.4)", animation:"gc-min-ring 3s linear infinite" }} />
-          <div style={{ width:88, height:88, borderRadius:"50%", background:"#c9973a", color:"#0b1f13", display:"flex", alignItems:"center", justifyContent:"center", fontSize:36, fontWeight:800 }}>
-            {initial}
-          </div>
-        </div>
-
-        {/* LIVE badge */}
-        <div style={{ display:"flex", alignItems:"center", gap:6, background:"rgba(239,68,68,.12)", border:"1px solid rgba(239,68,68,.3)", borderRadius:999, padding:"5px 14px" }}>
-          <span style={{ width:7, height:7, borderRadius:"50%", background:"#ef4444", boxShadow:"0 0 6px #ef4444", animation:"gc-min-pulse 1.6s ease-in-out infinite" }} />
-          <span style={{ color:"#ef4444", fontSize:12, fontWeight:700, letterSpacing:1.2 }}>LIVE</span>
-        </div>
-
-        {/* Class name */}
-        <p style={{ color:"#fff", fontSize:20, fontWeight:700, margin:0, textAlign:"center", lineHeight:1.3 }}>{title}</p>
-        {classTitleAr && (
-          <p style={{ color:"rgba(255,255,255,.45)", fontFamily:"'Amiri',serif", fontSize:15, margin:"-8px 0 0", direction:"rtl" }}>{classTitleAr}</p>
-        )}
-
-        {/* Duration */}
-        <p style={{ color:"rgba(255,255,255,.4)", fontSize:13, margin:0, fontVariantNumeric:"tabular-nums" }}>
-          ⏱ {fmtT(classDuration)} elapsed
-        </p>
-
-        {/* Return button */}
-        <button
-          onClick={handleReturn}
-          style={{
-            marginTop:8, padding:"14px 36px", borderRadius:999,
-            border:"none", background:"#c9973a",
-            color:"#0b1f13", fontSize:15, fontWeight:800, cursor:"pointer",
-            boxShadow:"0 4px 20px rgba(201,151,58,.4)",
-            fontFamily:"'Google Sans','Roboto',sans-serif",
-          }}
-        >
-          ↩ Return to Class
-        </button>
-
-        {/* Leave quietly */}
-        <button
-          onClick={handleLeave}
-          style={{ background:"none", border:"none", color:"rgba(255,255,255,.3)", fontSize:13, cursor:"pointer", fontFamily:"'Google Sans','Roboto',sans-serif" }}
-        >
-          Leave class
-        </button>
-      </div>
-    )}
-
-    {/* ── Classroom: always mounted so LiveKit never disconnects.
-         Slides off-screen when minimized — connection stays alive. ── */}
+    {/* Classroom always visible — slides off-screen when backgrounded, auto-restores. */}
     <div
       data-gc-root
       style={{
         position:"fixed", inset:0, zIndex:8000,
         display:"flex", flexDirection:"column",
         background:"#202124",
-        transform: minimized ? "translateX(-200%)" : "translateX(0)",
-        pointerEvents: minimized ? "none" : "all",
-        transition: minimized ? "none" : "transform .12s ease",
       }}
     >
       <style>{CSS}</style>
@@ -1536,31 +1304,73 @@ const GuestClassroom = () => {
             <RoomAudioRenderer />
 
           {/* ── Custom buttons overlaid at the right of the LK control bar ──
-                Order: [Minimize] [Leave]  (chat is the last LK button to their left)
-                The control bar has padding-right:118px to reserve this space.    */}
+                Order: [Emoji] [Hand] [Leave]  replacing the old Minimize button.
+                The control bar has padding-right:170px to reserve this space.    */}
 
-            {/* Minimize button */}
+            {/* Emoji tray popup */}
+            {emojiOpen && (
+              <div style={{
+                position:"absolute",
+                bottom:"calc(env(safe-area-inset-bottom,0px) + 62px)",
+                right: 128,
+                display:"flex", gap:6,
+                background:"rgba(32,33,36,.97)", backdropFilter:"blur(20px)",
+                border:"1px solid rgba(255,255,255,.1)", borderRadius:16,
+                padding:"8px 10px", zIndex:30,
+              }}>
+                {["👏","🤲","❤️","😂","🌟","👍","🙏","🔥"].map(e=>(
+                  <button key={e} onClick={()=>sendGuestEmoji(e)} style={{
+                    width:36, height:36, borderRadius:10, border:"none",
+                    background:"none", fontSize:22, cursor:"pointer",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    transition:"transform .1s",
+                  }}>{e}</button>
+                ))}
+              </div>
+            )}
+
+            {/* Emoji button */}
             <button
-              onClick={doMinimize}
-              title="Minimize — audio stays on"
+              onClick={()=>setEmojiOpen(v=>!v)}
+              title="Send a reaction"
               style={{
                 position:"absolute",
                 bottom: "calc(env(safe-area-inset-bottom,0px) + 11px)",
-                right: 68,           /* 12(leave) + 48(leave-width) + 8(gap) */
+                right: 128,
                 width: 48, height: 46,
-                borderRadius: 24,
-                border: "none",
-                background: "rgba(255,255,255,.1)",
-                color: "rgba(255,255,255,.85)",
+                borderRadius: 24, border: "none",
+                background: emojiOpen ? "rgba(251,191,36,.2)" : "rgba(255,255,255,.1)",
+                color: emojiOpen ? "#fbbf24" : "rgba(255,255,255,.85)",
                 cursor: "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 zIndex: 20,
               }}
             >
-              <Minimize2 style={{ width:18, height:18 }} />
+              <Smile style={{ width:19, height:19 }} />
             </button>
 
-            {/* Leave / End button — pill shape matching image 2 */}
+            {/* Raise Hand button */}
+            <button
+              onClick={toggleGuestHand}
+              title={handUp ? "Lower hand" : "Raise hand"}
+              style={{
+                position:"absolute",
+                bottom: "calc(env(safe-area-inset-bottom,0px) + 11px)",
+                right: 68,
+                width: 48, height: 46,
+                borderRadius: 24, border: "none",
+                background: handUp ? "rgba(251,191,36,.25)" : "rgba(255,255,255,.1)",
+                color: handUp ? "#fbbf24" : "rgba(255,255,255,.85)",
+                cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                zIndex: 20,
+                animation: handUp ? "gc-pulse 1.4s ease-in-out infinite" : "none",
+              }}
+            >
+              <Hand style={{ width:19, height:19 }} />
+            </button>
+
+            {/* Leave / End button */}
             <button
               onClick={handleLeaveClick}
               title={isHost ? "End class for everyone" : "Leave class"}
@@ -1569,10 +1379,8 @@ const GuestClassroom = () => {
                 bottom: "calc(env(safe-area-inset-bottom,0px) + 11px)",
                 right: 12,
                 width: 48, height: 46,
-                borderRadius: 24,
-                border: "none",
-                background: "#ea4335",
-                color: "#fff",
+                borderRadius: 24, border: "none",
+                background: "#ea4335", color: "#fff",
                 cursor: "pointer",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 boxShadow: "0 2px 12px rgba(234,67,53,.45)",
