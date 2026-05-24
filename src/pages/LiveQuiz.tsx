@@ -41,6 +41,15 @@ interface Question {
   correct_answer: string; explanation?: string;
   time_limit: number; topic?: string; order_index?: number;
 }
+interface SavedQuiz {
+  id: string;
+  name: string;
+  questions: Omit<Question,"id">[];
+  settings: { topic: string; numQ: number; timeQ: number };
+  createdAt: number;
+  lastLaunched?: number;
+  persistentCode: string;
+}
 
 /* ── Built-in Islamic Questions Pool ────────────────── */
 const POOL: Omit<Question,"id">[] = [
@@ -163,7 +172,7 @@ const LiveQuiz = () => {
   const isHost           = hasRole?.("admin") || hasRole?.("teacher");
 
   type View =
-    | "hub" | "creating" | "joining"
+    | "hub" | "creating" | "joining" | "saved-quizzes"
     | "q-source" | "q-preview" | "q-ai" | "q-bank" | "q-upload" | "q-manual"
     | "lobby-host" | "countdown-host" | "question-host" | "reveal-host" | "results-host"
     | "lobby-player" | "countdown-player" | "question-player" | "reveal-player" | "results-player"
@@ -232,6 +241,65 @@ const LiveQuiz = () => {
     try { return parseInt(sessionStorage.getItem("lq_q_index") || "0") || 0; } catch { return 0; }
   })());
   const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedSavedId, setCopiedSavedId] = useState<string|null>(null);
+  // ── Saved Quizzes ──
+  const [savedQuizzes, setSavedQuizzesRaw] = useState<SavedQuiz[]>(() => {
+    try { const s = localStorage.getItem("lq_saved_quizzes"); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  const setSavedQuizzes = (fn: SavedQuiz[] | ((prev: SavedQuiz[]) => SavedQuiz[])) => {
+    setSavedQuizzesRaw(prev => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      try { localStorage.setItem("lq_saved_quizzes", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  const saveCurrentQuiz = (qs: Omit<Question,"id">[]) => {
+    if (!quizName.trim() || qs.length === 0) return;
+    const entry: SavedQuiz = {
+      id: `sq-${Date.now()}`,
+      name: quizName.trim(),
+      questions: qs,
+      settings: { ...settings },
+      createdAt: Date.now(),
+      persistentCode: genCode(),
+    };
+    setSavedQuizzes(prev => [entry, ...prev]);
+    return entry;
+  };
+  const deleteSavedQuiz = (id: string) => setSavedQuizzes(prev => prev.filter(q => q.id !== id));
+  const refreshSavedCode = (id: string) => setSavedQuizzes(prev => prev.map(q => q.id === id ? { ...q, persistentCode: genCode() } : q));
+  const launchSavedQuiz = async (sq: SavedQuiz) => {
+    setQuizName(sq.name);
+    setSettings(sq.settings);
+    setCustomQs(sq.questions);
+    setSavedQuizzes(prev => prev.map(q => q.id === sq.id ? { ...q, lastLaunched: Date.now() } : q));
+    // Directly create room using the persistent code
+    if (!user) return;
+    setLoading(true);
+    try {
+      const code = sq.persistentCode;
+      const selected = sq.questions.slice(0, sq.settings.numQ).map(q => ({ ...q, time_limit: sq.settings.timeQ }));
+      const { data: rd, error } = await supabase.from("live_quiz_rooms" as any).insert({
+        code, host_id: user.id, status: "waiting",
+        current_question_index: 0, total_questions: selected.length,
+        topic: sq.name,
+      } as any).select().single();
+      if (error) throw error;
+      setRoom(rd as unknown as Room);
+      for (let i = 0; i < selected.length; i++) {
+        await supabase.from("live_quiz_questions" as any).insert({
+          room_id: (rd as any).id, question: selected[i].question,
+          options: selected[i].options, correct_answer: selected[i].correct_answer,
+          explanation: selected[i].explanation || null, time_limit: sq.settings.timeQ,
+          order_index: i, topic: selected[i].topic,
+        } as any);
+      }
+      setView("lobby-host");
+      toast({ title: `✅ Room launched! Code: ${code}` });
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally { setLoading(false); }
+  };
   // ── Chat state ──
   const [chatMessages, setChatMessages] = useState<{id:string;name:string;text:string;ts:number;isHost:boolean}[]>([]);
   const [chatInput,    setChatInput]    = useState("");
@@ -789,6 +857,122 @@ Make questions educational, clearly worded, and accurate.`
     </div>
   );
 
+  /* ══ SAVED QUIZZES ════════════════════════════════ */
+  if (view === "saved-quizzes") return (
+    <div style={{...pageStyle, padding:"0 0 40px", overflowY:"auto"}}>
+      <IslamicBg opacity={0.08}/>
+      {/* Sticky header */}
+      <div style={{position:"sticky",top:0,zIndex:10,background:"rgba(6,20,14,0.95)",backdropFilter:"blur(12px)",borderBottom:"1px solid rgba(201,146,42,0.2)",padding:"14px 18px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={()=>setView("hub")} style={{...backBtn,margin:0}}>← Back</button>
+        <div style={{flex:1,textAlign:"center"}}>
+          <h2 style={{fontFamily:"'Playfair Display',serif",fontWeight:900,fontSize:20,color:"#fff",margin:0}}>Saved Quizzes</h2>
+        </div>
+        <div style={{width:50}}/>
+      </div>
+
+      <div style={{position:"relative",zIndex:1,maxWidth:480,margin:"0 auto",padding:"20px 18px",display:"flex",flexDirection:"column",gap:16}}>
+        {savedQuizzes.length === 0 ? (
+          <div style={{textAlign:"center",padding:"48px 24px",background:"rgba(255,255,255,0.03)",borderRadius:20,border:"1px solid rgba(255,255,255,0.07)"}}>
+            <div style={{fontSize:48,marginBottom:12,opacity:0.4}}>💾</div>
+            <p style={{fontSize:15,fontWeight:700,color:"rgba(255,255,255,0.4)",margin:"0 0 6px"}}>No saved quizzes yet</p>
+            <p style={{fontSize:13,color:"rgba(255,255,255,0.25)",margin:0}}>Build a quiz and tap "Save for Later" on the preview screen</p>
+          </div>
+        ) : (
+          savedQuizzes.map(sq => (
+            <div key={sq.id} style={{background:"rgba(255,255,255,0.04)",border:"1.5px solid rgba(201,146,42,0.2)",borderRadius:20,overflow:"hidden"}}>
+
+              {/* ── Join Code Hero ── */}
+              <div style={{background:"rgba(201,146,42,0.1)",borderBottom:"1px solid rgba(201,146,42,0.2)",padding:"16px 18px"}}>
+                <p style={{fontSize:10,fontWeight:700,color:GOLD,letterSpacing:2,textTransform:"uppercase",margin:"0 0 8px"}}>Join Code</p>
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <span style={{fontSize:36,fontWeight:900,color:GOLD,letterSpacing:8,fontFamily:"'Courier New',monospace",flex:1}}>
+                    {sq.persistentCode}
+                  </span>
+                  {/* Copy button */}
+                  <button
+                    onClick={()=>{
+                      navigator.clipboard.writeText(sq.persistentCode).then(()=>{
+                        setCopiedSavedId(sq.id);
+                        setTimeout(()=>setCopiedSavedId(null), 2000);
+                      });
+                    }}
+                    style={{flexShrink:0,display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:10,border:`1px solid ${GOLD}`,background:"rgba(201,146,42,0.15)",color:GOLD,fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                    {copiedSavedId===sq.id ? <><Check size={13}/> Copied!</> : <><Copy size={13}/> Copy</>}
+                  </button>
+                  {/* Refresh code button */}
+                  <button
+                    onClick={()=>refreshSavedCode(sq.id)}
+                    title="Generate a new code"
+                    style={{flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",width:36,height:36,borderRadius:10,border:"1px solid rgba(255,255,255,0.15)",background:"rgba(255,255,255,0.06)",color:"rgba(255,255,255,0.5)",cursor:"pointer",fontSize:16}}>
+                    <RotateCcw size={14}/>
+                  </button>
+                </div>
+                <p style={{fontSize:10,color:"rgba(255,255,255,0.3)",margin:"6px 0 0"}}>
+                  Students enter this at tahleemacademy.vercel.app · tap 🔄 to change
+                </p>
+              </div>
+
+              {/* ── Quiz Info ── */}
+              <div style={{padding:"14px 18px 16px",display:"flex",flexDirection:"column",gap:10}}>
+                {/* Name + delete */}
+                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <p style={{fontSize:15,fontWeight:900,color:"#fff",margin:"0 0 5px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sq.name}</p>
+                    <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                      <span style={{fontSize:11,color:GOLD,background:"rgba(201,146,42,0.1)",padding:"2px 8px",borderRadius:20,border:"1px solid rgba(201,146,42,0.25)",fontWeight:700}}>
+                        {sq.questions.length} Qs
+                      </span>
+                      <span style={{fontSize:11,color:"rgba(255,255,255,0.45)",background:"rgba(255,255,255,0.05)",padding:"2px 8px",borderRadius:20,border:"1px solid rgba(255,255,255,0.08)",fontWeight:600}}>
+                        {sq.settings.timeQ}s/Q
+                      </span>
+                      <span style={{fontSize:11,color:"rgba(255,255,255,0.45)",background:"rgba(255,255,255,0.05)",padding:"2px 8px",borderRadius:20,border:"1px solid rgba(255,255,255,0.08)",fontWeight:600}}>
+                        {sq.settings.topic}
+                      </span>
+                    </div>
+                  </div>
+                  <button onClick={()=>deleteSavedQuiz(sq.id)}
+                    style={{flexShrink:0,background:"none",border:"none",color:"rgba(239,68,68,0.45)",cursor:"pointer",fontSize:18,padding:"2px 6px",lineHeight:1}}
+                    title="Delete quiz">✕</button>
+                </div>
+
+                {/* Question preview */}
+                <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                  {sq.questions.slice(0,2).map((q,i) => (
+                    <p key={i} style={{fontSize:12,color:"rgba(255,255,255,0.35)",margin:0,lineHeight:1.4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      <span style={{color:"rgba(201,146,42,0.5)",fontWeight:700}}>#{i+1}</span> {q.question}
+                    </p>
+                  ))}
+                  {sq.questions.length > 2 && (
+                    <p style={{fontSize:11,color:"rgba(255,255,255,0.2)",margin:0}}>+{sq.questions.length-2} more questions</p>
+                  )}
+                </div>
+
+                {/* Launch row */}
+                <div style={{display:"flex",alignItems:"center",gap:8,paddingTop:6,borderTop:"1px solid rgba(255,255,255,0.06)"}}>
+                  <p style={{fontSize:10,color:"rgba(255,255,255,0.22)",margin:0,flex:1}}>
+                    {sq.lastLaunched ? `Last launched ${new Date(sq.lastLaunched).toLocaleDateString()}` : `Saved ${new Date(sq.createdAt).toLocaleDateString()}`}
+                  </p>
+                  <button
+                    onClick={()=>launchSavedQuiz(sq)}
+                    disabled={loading}
+                    style={{display:"flex",alignItems:"center",gap:8,padding:"10px 22px",borderRadius:12,border:"none",background:`linear-gradient(135deg,${GOLD},${GOLD2})`,color:"#fff",fontWeight:900,fontSize:14,cursor:loading?"not-allowed":"pointer",opacity:loading?0.6:1,boxShadow:`0 4px 16px rgba(201,146,42,0.35)`,fontFamily:"'Playfair Display',serif"}}>
+                    <Play size={15}/> {loading ? "Launching…" : "Launch →"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+
+        <div style={{marginTop:4,textAlign:"center"}}>
+          <button onClick={()=>setView("creating")} style={{...outlineBtn, fontSize:13, padding:"12px"}}>
+            + Create New Quiz
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   /* ══ HUB ══════════════════════════════════════════ */
   if (view === "hub") return (
     <div style={{...pageStyle, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:"40px 20px", position:"relative"}}>
@@ -822,9 +1006,16 @@ Make questions educational, clearly worded, and accurate.`
             <Zap size={18} color={GOLD}/> Join a Quiz
           </button>
           {isHost && (
-            <button onClick={()=>setView("creating")} style={goldBtn}>
-              <Crown size={18}/> Host a Quiz
-            </button>
+            <>
+              <button onClick={()=>setView("creating")} style={goldBtn}>
+                <Crown size={18}/> Host a Quiz
+              </button>
+              {savedQuizzes.length > 0 && (
+                <button onClick={()=>setView("saved-quizzes")} style={{...outlineBtn, borderColor:`rgba(201,146,42,0.5)`}}>
+                  <BookOpen size={18} color={GOLD}/> Saved Quizzes ({savedQuizzes.length})
+                </button>
+              )}
+            </>
           )}
         </div>
 
@@ -1278,6 +1469,18 @@ Note: The Quran has 114 Surahs.
             disabled={loading} style={{...goldBtn, fontSize:17, padding:18}}>
             {loading ? "Creating Room…" : <><Play size={20}/> Launch Quiz Room!</>}
           </button>
+          {customQs.length > 0 && quizName.trim() && (
+            <button
+              onClick={() => { saveCurrentQuiz(customQs.length > 0 ? customQs : previewList); toast({ title: "✅ Quiz saved! Find it in Saved Quizzes." }); }}
+              style={{ ...outlineBtn, marginTop: 10, fontSize: 14 }}>
+              💾 Save for Later
+            </button>
+          )}
+          {customQs.length > 0 && !quizName.trim() && (
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", textAlign: "center", marginTop: 8 }}>
+              Add a quiz name above to enable saving
+            </p>
+          )}
         </div>
       </div>
     );
