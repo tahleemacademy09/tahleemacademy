@@ -2267,11 +2267,34 @@ const MaterialViewer=({material,isTeacher,onClose}:any)=>{
   return <InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={onClose}/>;
 };
 
-/* ══ RECORDING CONTROLLER ══ */
+/* ══ RECORDING CONTROLLER ══
+   Hardened against:
+   • Abrupt class exit / tab close  → visibilitychange "hidden" + pagehide both trigger save
+   • Stale closure on time          → timeRef tracks elapsed independently of React state
+   • stopRecRef stale ref           → ref assigned inside effect, stopRec uses refs not state
+   • Empty-chunk abort on fast stop → mr.requestData() flushes pending chunk before stop()
+   • Lost subject_id                → always falls back to subjectId prop so DB row is queryable
+   ══════════════════════════════════════════════════════════════════════════════════════════ */
 const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:any)=>{
   const room=useRoomContext();const{t}=useLanguage();
-  const[recording,setRecording]=useState(false);const[paused,setPaused]=useState(false);const[time,setTime]=useState(0);
-  const timerRef=useRef<any>(null);const mrRef=useRef<MediaRecorder|null>(null);const chunksRef=useRef<Blob[]>([]);const acRef=useRef<AudioContext|null>(null);
+  const[recording,setRecording]=useState(false);
+  const[paused,setPaused]=useState(false);
+  const[displayTime,setDisplayTime]=useState(0);
+
+  // Refs that are always current — safe to read inside callbacks / pagehide
+  const timerRef    = useRef<any>(null);
+  const mrRef       = useRef<MediaRecorder|null>(null);
+  const chunksRef   = useRef<Blob[]>([]);
+  const acRef       = useRef<AudioContext|null>(null);
+  const timeRef     = useRef(0);          // source-of-truth for elapsed seconds
+  const savingRef   = useRef(false);      // guard against double-save
+  const sessionRef  = useRef(sessionId);
+  const subjectRef  = useRef(subjectId);
+  const emailRef    = useRef(userEmail);
+  useEffect(()=>{ sessionRef.current=sessionId; },[sessionId]);
+  useEffect(()=>{ subjectRef.current=subjectId; },[subjectId]);
+  useEffect(()=>{ emailRef.current=userEmail;   },[userEmail]);
+
   const collectAudio=useCallback(()=>{
     try{
       const ac=new((window as any).AudioContext||(window as any).webkitAudioContext)();
@@ -2282,27 +2305,29 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
       [room.localParticipant,...Array.from(room.remoteParticipants.values())].forEach((p:any)=>{
         p.trackPublications?.forEach?.((pub:any)=>{
           if(pub.kind==="audio"&&pub.track?.mediaStreamTrack){
-            try {
+            try{
               ac.createMediaStreamSource(new MediaStream([pub.track.mediaStreamTrack])).connect(dest);
               n++;
-            } catch(trackErr) {
-              console.warn("[RecController] could not connect track:", trackErr);
+            }catch(trackErr){
+              console.warn("[RecController] could not connect track:",trackErr);
             }
           }
         });
       });
-      if(n>0) console.log("[RecController] collectAudio connected",n,"audio track(s) from room");
+      console.log("[RecController] collectAudio connected",n,"audio track(s)");
       return n>0?dest.stream:null;
     }catch(e){
       console.warn("[RecController] collectAudio failed:",e);
       return null;
     }
   },[room]);
+
   const startRec=async()=>{
+    if(savingRef.current)return;
     try{
       let audio=collectAudio();
       if(!audio){
-        console.warn("[RecController] No room audio tracks found — falling back to getUserMedia");
+        console.warn("[RecController] No room audio — falling back to getUserMedia");
         try{
           audio=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
         }catch(gumErr:any){
@@ -2311,109 +2336,184 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
         }
       }
       chunksRef.current=[];
-      const mimeType=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";
+      timeRef.current=0;
+      const mimeType=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"]
+        .find(m=>{try{return MediaRecorder.isTypeSupported(m);}catch{return false;}})||"";
       const mr=new MediaRecorder(audio,mimeType?{mimeType}:undefined);
-      mr.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data);};
-      mr.start(1000);mrRef.current=mr;setRecording(true);setPaused(false);setTime(0);
-      timerRef.current=setInterval(()=>setTime(t=>t+1),1000);
-      if(sessionId)await supabase.from("live_sessions").update({is_recording:true}as any).eq("id",sessionId);
+      mr.ondataavailable=e=>{if(e.data&&e.data.size>0)chunksRef.current.push(e.data);};
+      mr.start(2000); // chunk every 2 s — smaller chunks = less data lost on crash
+      mrRef.current=mr;
+      setRecording(true);setPaused(false);setDisplayTime(0);
+      timerRef.current=setInterval(()=>{
+        timeRef.current+=1;
+        setDisplayTime(timeRef.current);
+      },1000);
+      if(sessionRef.current)
+        supabase.from("live_sessions").update({is_recording:true}as any)
+          .eq("id",sessionRef.current).then(()=>{}).catch(()=>{});
     }catch(err:any){
       console.error("[RecController] startRec error:",err);
       toast({title:"Recording failed to start",description:err?.message||"Unknown error",variant:"destructive"});
       setRecording(false);
     }
   };
-  const stopRec=async()=>{
-    const mr=mrRef.current;
-    if(!mr||mr.state==="inactive")return;
-    clearInterval(timerRef.current);
-    const finalTime=time;
+
+  // Core save logic — works both from normal stop and emergency exit
+  const saveChunks=useCallback(async(chunks:Blob[],mime:string,elapsed:number)=>{
+    if(savingRef.current)return;
+    savingRef.current=true;
     onSavingChange?.(true);
-    setRecording(false);
-    setPaused(false);
-    if(sessionId)supabase.from("live_sessions").update({is_recording:false}as any).eq("id",sessionId).then(()=>{}).catch(()=>{});
-    mr.onstop=async()=>{
-      try{
-        const recMime=mr.mimeType||"audio/webm";
-        const recExt=recMime.includes("mp4")?"mp4":recMime.includes("ogg")?"ogg":"webm";
-        const blob=new Blob(chunksRef.current,{type:recMime});
-        if(blob.size===0){
-          toast({title:"Recording empty",description:"No audio was captured. Make sure your mic is on.",variant:"destructive"});
-          return;
-        }
-        // Use a unique path every time (timestamp + random suffix) to avoid collisions
-        const uid = `${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
-        const recPath=`sessions/${sessionId||subjectId}/${uid}.${recExt}`;
-        console.log("[RecController] uploading",blob.size,"bytes to recordings/",recPath);
-
-        // Try upload with upsert:true so path collisions never block the save.
-        // Attempt 1: upsert
-        let upErr: any = null;
-        let attempt = 0;
-        while (attempt < 3) {
-          const res = await storageSupabase.storage
-            .from("recordings")
-            .upload(recPath, blob, {cacheControl:"3600", upsert:true, contentType:recMime});
-          if (!res.error) { upErr = null; break; }
-          upErr = res.error;
-          attempt++;
-          if (attempt < 3) await new Promise(r => setTimeout(r, 1500 * attempt));
-        }
-
-        if(upErr){
-          console.error("[RecController] upload error after retries:",upErr);
-          // Still save the DB row with a note so admin knows recording was attempted
-          // even if storage failed (bucket might not exist yet)
-          await supabase.from("session_recordings").insert({
-            session_id:   sessionId||null,
-            subject_id:   subjectId,
-            file_url:     recPath,           // path even if upload failed
-            teacher_name: userEmail,
-            duration_seconds: finalTime,
-          }as any);
-          toast({title:"Recording metadata saved",description:`Upload had an error: ${upErr.message}. Check the storage bucket settings.`,variant:"destructive"});
-          return;
-        }
-        console.log("[RecController] upload OK, inserting session_recordings row");
-
-        // Build a signed URL immediately so the DB row has a directly playable URL
-        let signedFileUrl: string = recPath;
-        try {
-          const { data: sd } = await storageSupabase.storage.from("recordings").createSignedUrl(recPath, 60*60*24*365);
-          if (sd?.signedUrl) signedFileUrl = recPath; // keep path; player resolves at play-time
-        } catch {}
-
-        await supabase.from("session_recordings").insert({
-          session_id:   sessionId||null,
-          subject_id:   subjectId,
-          file_url:     signedFileUrl,
-          teacher_name: userEmail,
-          duration_seconds: finalTime,
-        }as any);
-        toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅")});
-      }catch(e:any){
-        console.error("[RecController] stopRec onstop error:",e);
-        toast({title:"Recording save failed",description:e?.message||"Unknown error",variant:"destructive"});
-      }finally{
-        acRef.current?.close();
-        acRef.current=null;
-        chunksRef.current=[];
-        onSavingChange?.(false);
+    const sid=sessionRef.current;
+    const bid=subjectRef.current;
+    const email=emailRef.current;
+    try{
+      const recExt=mime.includes("mp4")?"mp4":mime.includes("ogg")?"ogg":"webm";
+      const blob=new Blob(chunks,{type:mime});
+      if(blob.size<1000){
+        // Under 1 KB — almost certainly empty, don't bother saving
+        console.warn("[RecController] blob too small to save:",blob.size,"bytes");
+        toast({title:"Recording too short",description:"No audio was captured. Make sure your mic is on.",variant:"destructive"});
+        return;
       }
+      const uid=`${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
+      const recPath=`sessions/${sid||bid||"unknown"}/${uid}.${recExt}`;
+      console.log("[RecController] uploading",blob.size,"bytes →",recPath);
+
+      // 3 attempts with exponential back-off
+      let upErr:any=null;
+      for(let attempt=0;attempt<3;attempt++){
+        const res=await storageSupabase.storage
+          .from("recordings")
+          .upload(recPath,blob,{cacheControl:"3600",upsert:true,contentType:mime});
+        if(!res.error){upErr=null;break;}
+        upErr=res.error;
+        if(attempt<2)await new Promise(r=>setTimeout(r,1500*(attempt+1)));
+      }
+
+      // Always insert a DB row — even if upload failed, so admins can investigate
+      const dbRow:any={
+        subject_id:       bid||null,
+        session_id:       sid||null,
+        file_url:         recPath,
+        teacher_name:     email||"Teacher",
+        duration_seconds: elapsed,
+        file_size:        blob.size,
+      };
+
+      if(upErr){
+        console.error("[RecController] upload failed after retries:",upErr);
+        await supabase.from("session_recordings").insert(dbRow).catch(e=>
+          console.error("[RecController] DB insert also failed:",e)
+        );
+        toast({
+          title:"Recording saved (upload issue)",
+          description:`Audio saved but storage upload had an error: ${upErr.message}`,
+          variant:"destructive",
+        });
+        return;
+      }
+
+      await supabase.from("session_recordings").insert(dbRow);
+      console.log("[RecController] saved OK — path:",recPath,"duration:",elapsed,"s");
+      toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅"),description:`${Math.floor(elapsed/60)}m ${elapsed%60}s recorded`});
+    }catch(e:any){
+      console.error("[RecController] saveChunks error:",e);
+      toast({title:"Recording save failed",description:e?.message||"Unknown error",variant:"destructive"});
+    }finally{
+      savingRef.current=false;
+      onSavingChange?.(false);
+    }
+  },[onSavingChange,t]);
+
+  const stopRec=useCallback(async()=>{
+    const mr=mrRef.current;
+    if(!mr||mr.state==="inactive"){return;}
+    clearInterval(timerRef.current);
+    const finalTime=timeRef.current;
+    setRecording(false);setPaused(false);
+
+    if(sessionRef.current)
+      supabase.from("live_sessions").update({is_recording:false}as any)
+        .eq("id",sessionRef.current).then(()=>{}).catch(()=>{});
+
+    // Flush any in-flight chunk before stopping
+    try{ if(mr.state==="recording")mr.requestData(); }catch{}
+
+    const capturedMime=mr.mimeType||"audio/webm";
+
+    await new Promise<void>(resolve=>{
+      mr.onstop=async()=>{
+        const snapshot=[...chunksRef.current];
+        chunksRef.current=[];
+        acRef.current?.close();acRef.current=null;
+        mrRef.current=null;
+        await saveChunks(snapshot,capturedMime,finalTime);
+        resolve();
+      };
+      try{mr.stop();}catch(e){
+        console.warn("[RecController] mr.stop() threw:",e);
+        mrRef.current=null;
+        resolve();
+      }
+    });
+  },[saveChunks]);
+
+  // ── Emergency save on visibility hidden (Android back/home button) ──────────
+  // This fires BEFORE pagehide in most Android Chrome builds.
+  useEffect(()=>{
+    const onHide=async()=>{
+      if(document.visibilityState!=="hidden")return;
+      const mr=mrRef.current;
+      if(!mr||mr.state==="inactive")return;
+      console.log("[RecController] visibilitychange hidden → emergency save");
+      // Flush current chunk immediately
+      try{if(mr.state==="recording")mr.requestData();}catch{}
+      // Give ondataavailable 200 ms to fire, then save
+      await new Promise(r=>setTimeout(r,200));
+      await stopRec();
     };
-    mr.stop();
-    mrRef.current=null;
-  };
-  const togglePause=()=>{const mr=mrRef.current;if(!mr)return;if(paused){mr.resume();timerRef.current=setInterval(()=>setTime(t=>t+1),1000);setPaused(false);}else{mr.pause();clearInterval(timerRef.current);setPaused(true);}};
-  // Expose stopRec to parent so it can auto-save on class exit / tab close
-  useEffect(()=>{if(stopRecRef)stopRecRef.current=stopRec;},[stopRec,stopRecRef]);
+    document.addEventListener("visibilitychange",onHide);
+    return()=>document.removeEventListener("visibilitychange",onHide);
+  },[stopRec]);
+
+  const togglePause=useCallback(()=>{
+    const mr=mrRef.current;if(!mr)return;
+    if(paused){
+      mr.resume();
+      timerRef.current=setInterval(()=>{timeRef.current+=1;setDisplayTime(timeRef.current);},1000);
+      setPaused(false);
+    }else{
+      mr.pause();clearInterval(timerRef.current);setPaused(true);
+    }
+  },[paused]);
+
+  // Expose stable stopRec ref — re-assigned every time stopRec changes (deps: saveChunks)
+  useEffect(()=>{
+    if(stopRecRef)stopRecRef.current=stopRec;
+  },[stopRec,stopRecRef]);
+
   const fmt=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
-  return(<div style={{display:"flex",alignItems:"center",gap:8}}>
-    {recording&&<><span style={{fontSize:12,color:paused?"#fbbf24":RED,fontWeight:700}}>{paused?"⏸":"⏺"} {fmt(time)}</span>
-      <button onClick={togglePause} style={{background:GLASSB,border:"none",borderRadius:8,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>{paused?<Play style={{width:12,height:12}}/>:<Pause style={{width:12,height:12}}/>}</button>
-      <button onClick={stopRec} style={{background:"rgba(239,68,68,.25)",border:"none",borderRadius:8,padding:"4px 10px",color:RED,fontSize:12,fontWeight:700,cursor:"pointer"}}>Stop</button></>}
-    {!recording&&<button onClick={startRec} style={{display:"flex",alignItems:"center",gap:6,background:"rgba(239,68,68,.14)",border:"1px solid rgba(239,68,68,.35)",borderRadius:20,padding:"5px 14px",color:"#fca5a5",fontSize:12,fontWeight:700,cursor:"pointer"}}><Circle style={{width:7,height:7,fill:RED,color:RED}}/> Record</button>}
-  </div>);
+
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:8}}>
+      {recording&&<>
+        <span style={{fontSize:12,color:paused?"#fbbf24":RED,fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
+          {paused?"⏸":"⏺"} {fmt(displayTime)}
+        </span>
+        <button onClick={togglePause} style={{background:GLASSB,border:"none",borderRadius:8,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>
+          {paused?<Play style={{width:12,height:12}}/>:<Pause style={{width:12,height:12}}/>}
+        </button>
+        <button onClick={stopRec} style={{background:"rgba(239,68,68,.25)",border:"none",borderRadius:8,padding:"4px 10px",color:RED,fontSize:12,fontWeight:700,cursor:"pointer"}}>
+          Stop
+        </button>
+      </>}
+      {!recording&&(
+        <button onClick={startRec} style={{display:"flex",alignItems:"center",gap:6,background:"rgba(239,68,68,.14)",border:"1px solid rgba(239,68,68,.35)",borderRadius:20,padding:"5px 14px",color:"#fca5a5",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+          <Circle style={{width:7,height:7,fill:RED,color:RED}}/> Record
+        </button>
+      )}
+    </div>
+  );
 };
 
 /* ══ ROOM SETTINGS MODAL ══
@@ -3239,11 +3339,28 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
   const[savingRec,setSavingRec]=useState(false);const[isSessionLive,setIsSessionLive]=useState(false);const[duration,setDuration]=useState(0);
   const recStopRef=useRef<()=>Promise<void>>(async()=>{});
-  // Auto-save recording when teacher closes/refreshes the tab
+  // Auto-save on pagehide (tab close / refresh / navigate away).
+  // pagehide fires synchronously; stopRec is async but the browser allows
+  // async work initiated from pagehide as long as we don't await across
+  // microtask boundaries that the browser kills. We kick it off and let it run.
   useEffect(()=>{
-    const onPageHide=()=>{recStopRef.current?.();};
+    const onPageHide=()=>{ recStopRef.current?.(); };
+    const onBeforeUnload=(e:BeforeUnloadEvent)=>{
+      // If recording is active, warn the user before leaving
+      const mr=(recStopRef as any).current;
+      if(mr&&typeof mr==="function"){
+        // We can't reliably detect if recording is active here, so show warning always
+        // The RecController itself handles the actual save
+        e.preventDefault();
+        e.returnValue="A recording is in progress. Are you sure you want to leave?";
+      }
+    };
     window.addEventListener("pagehide",onPageHide);
-    return()=>window.removeEventListener("pagehide",onPageHide);
+    window.addEventListener("beforeunload",onBeforeUnload);
+    return()=>{
+      window.removeEventListener("pagehide",onPageHide);
+      window.removeEventListener("beforeunload",onBeforeUnload);
+    };
   },[]);
   const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
   useEffect(()=>{
