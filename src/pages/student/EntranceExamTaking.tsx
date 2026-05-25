@@ -1,6 +1,7 @@
 /**
  * EntranceExamTaking — Complete Mobile-First Exam Interface
  * - Beautiful Islamic-themed pre-exam instructions
+ * - Camera + mic pre-check before proctored exam starts
  * - Full proctoring integration (data stored in proctoring_logs)
  * - Collapsible bottom number navigation
  * - After submit → advance to recitation step
@@ -222,6 +223,238 @@ const ViolationWarning = ({ count, onReturn }: { count: number; onReturn: () => 
   );
 };
 
+// ── Camera + Mic Pre-Check ────────────────────────────────────────────────────
+// Shown before a proctored exam starts. Requests camera/mic access, shows a
+// live preview and mic level meter, and only enables "Start Exam" once the
+// student confirms the camera is working.
+const CameraSetup = ({ exam, onReady }: { exam: any; onReady: () => void }) => {
+  const isMobile = useIsMobile();
+
+  type CamState = "requesting" | "ready" | "denied" | "na";
+  const [camState,    setCamState]    = useState<CamState>("requesting");
+  const [micLevel,    setMicLevel]    = useState(0);
+  const [micReady,    setMicReady]    = useState(false);
+  const [confirmed,   setConfirmed]   = useState(false);
+  const [cameraOptional, setCameraOptional] = useState(false);
+
+  const videoRef    = useRef<HTMLVideoElement>(null);
+  const streamRef   = useRef<MediaStream | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const micRafRef   = useRef<number>();
+
+  useEffect(() => {
+    let cancelled = false;
+    setCameraOptional(!exam?.webcam_required);
+
+    (async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: true,
+        });
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(() => {});
+        }
+        setCamState("ready");
+
+        // Mic level meter
+        try {
+          const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+          audioCtxRef.current = ctx;
+          const analyser = ctx.createAnalyser(); analyser.fftSize = 256;
+          ctx.createMediaStreamSource(stream).connect(analyser);
+          const buf = new Uint8Array(analyser.frequencyBinCount);
+          const tick = () => {
+            if (cancelled) return;
+            analyser.getByteFrequencyData(buf);
+            const level = Math.min(100, (buf.reduce((a,b)=>a+b,0)/buf.length/128)*200);
+            setMicLevel(level);
+            if (level > 15) setMicReady(true);
+            micRafRef.current = requestAnimationFrame(tick);
+          };
+          micRafRef.current = requestAnimationFrame(tick);
+        } catch { /* mic level not critical */ }
+      } catch (e: any) {
+        if (cancelled) return;
+        if (e.name === "NotAllowedError") setCamState("denied");
+        else setCamState("na");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (micRafRef.current) cancelAnimationFrame(micRafRef.current);
+      audioCtxRef.current?.close().catch(() => {});
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    };
+  }, [exam?.webcam_required]);
+
+  const handleStart = () => {
+    // Stop the preview stream — proctoring will open its own stream
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    audioCtxRef.current?.close().catch(() => {});
+    onReady();
+  };
+
+  const retryCamera = async () => {
+    setCamState("requesting");
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(()=>{}); }
+      setCamState("ready");
+    } catch { setCamState("denied"); }
+  };
+
+  const camOk     = camState === "ready";
+  const canStart  = confirmed && (camOk || cameraOptional);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 60,
+      background: "linear-gradient(160deg,#021a0e 0%,#0c2d1a 50%,#041409 100%)",
+      overflowY: "auto", display: "flex", alignItems: "flex-start", justifyContent: "center",
+      padding: isMobile ? "16px 12px 32px" : "40px 20px",
+    }}>
+      <div style={{
+        width: "100%", maxWidth: 520, zIndex: 1,
+        background: "rgba(255,255,255,.04)", border: "1px solid rgba(201,168,76,.2)",
+        borderRadius: isMobile ? 20 : 28, padding: isMobile ? "24px 18px" : "36px 32px",
+        backdropFilter: "blur(8px)",
+      }}>
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ width: 64, height: 64, borderRadius: "50%", margin: "0 auto 16px", background: "rgba(201,168,76,.12)", border: "2px solid rgba(201,168,76,.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Camera size={28} color={GOLD} />
+          </div>
+          <h2 style={{ fontSize: isMobile ? 18 : 22, fontWeight: 900, color: "#fff", margin: "0 0 6px" }}>
+            Camera &amp; Mic Check
+          </h2>
+          <p style={{ fontSize: 13, color: "rgba(255,255,255,.55)", margin: 0, lineHeight: 1.6 }}>
+            {exam?.webcam_required
+              ? "Camera is required for this exam. Please ensure it is on before starting."
+              : "Your camera helps us verify your identity. Confirm it's working before starting."}
+          </p>
+        </div>
+
+        {/* Camera preview */}
+        <div style={{ background: "#000", borderRadius: 14, overflow: "hidden", marginBottom: 16, aspectRatio: "4/3", position: "relative", border: `2px solid ${camOk ? "rgba(34,197,94,.5)" : "rgba(255,255,255,.1)"}` }}>
+          {camState === "requesting" && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10 }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", border: `3px solid ${GOLD}`, borderTopColor: "transparent", animation: "spin .8s linear infinite" }} />
+              <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13, margin: 0 }}>Requesting camera…</p>
+            </div>
+          )}
+          {(camState === "denied" || camState === "na") && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 20, textAlign: "center" }}>
+              <span style={{ fontSize: 36 }}>📷</span>
+              <p style={{ color: "#ef4444", fontSize: 14, fontWeight: 700, margin: 0 }}>
+                {camState === "denied" ? "Camera permission denied" : "Camera not available"}
+              </p>
+              <p style={{ color: "rgba(255,255,255,.45)", fontSize: 12, margin: 0, lineHeight: 1.5 }}>
+                {camState === "denied"
+                  ? "Please allow camera access in your browser settings, then tap Retry."
+                  : "No camera detected on this device."}
+              </p>
+              <button onClick={retryCamera} style={{ padding: "10px 22px", borderRadius: 10, border: `1.5px solid ${GOLD}`, background: "transparent", color: GOLD, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                🔄 Retry Camera
+              </button>
+            </div>
+          )}
+          <video
+            ref={videoRef}
+            autoPlay muted playsInline
+            style={{
+              width: "100%", height: "100%", objectFit: "cover",
+              transform: "scaleX(-1)", // mirror selfie view
+              display: camState === "ready" ? "block" : "none",
+            }}
+          />
+          {camOk && (
+            <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(34,197,94,.9)", borderRadius: 20, padding: "4px 10px", fontSize: 11, fontWeight: 700, color: "#fff" }}>
+              ✓ Camera On
+            </div>
+          )}
+        </div>
+
+        {/* Mic level */}
+        <div style={{ marginBottom: 16, background: "rgba(255,255,255,.06)", borderRadius: 12, padding: "12px 14px", border: "1px solid rgba(255,255,255,.1)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,.6)", letterSpacing: .8 }}>🎙 MIC LEVEL</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: micReady ? "#22c55e" : "rgba(255,255,255,.4)" }}>
+              {micReady ? "Detected ✓" : "Speak to test…"}
+            </span>
+          </div>
+          <div style={{ height: 8, background: "rgba(255,255,255,.1)", borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${micLevel}%`, background: micLevel > 60 ? "#22c55e" : micLevel > 20 ? GOLD : "rgba(255,255,255,.3)", borderRadius: 4, transition: "width .08s" }} />
+          </div>
+          <p style={{ fontSize: 11, color: "rgba(255,255,255,.3)", margin: "6px 0 0" }}>Say a few words to confirm your microphone is working</p>
+        </div>
+
+        {/* Checklist items */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+          {[
+            { emoji: "🔇", text: "I'm in a quiet environment", key: "quiet" },
+            { emoji: "💡", text: "My face is clearly visible and well-lit", key: "lit" },
+            { emoji: "🚫", text: "No other devices or materials nearby", key: "alone" },
+          ].map((item, i) => (
+            <div key={i} style={{ display: "flex", gap: 10, alignItems: "center", background: "rgba(255,255,255,.04)", borderRadius: 10, padding: "10px 12px", border: "1px solid rgba(255,255,255,.08)", cursor: "default" }}>
+              <span style={{ fontSize: 16, flexShrink: 0 }}>{item.emoji}</span>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,.7)", flex: 1 }}>{item.text}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Confirm checkbox */}
+        <div
+          onClick={() => setConfirmed(v => !v)}
+          style={{ display: "flex", gap: 12, alignItems: "flex-start", background: "rgba(255,255,255,.04)", borderRadius: 12, padding: "14px", cursor: "pointer", marginBottom: 20, border: `1px solid ${confirmed ? "rgba(201,168,76,.4)" : "rgba(255,255,255,.1)"}` }}
+        >
+          <div style={{ width: 22, height: 22, borderRadius: 6, border: `2px solid ${confirmed ? GOLD : "rgba(255,255,255,.3)"}`, background: confirmed ? GOLD : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+            {confirmed && <CheckCircle2 size={13} color="#000" />}
+          </div>
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,.65)", margin: 0, lineHeight: 1.6 }}>
+            I confirm my camera and microphone are working. I'm ready to start the proctored exam.
+          </p>
+        </div>
+
+        {/* Start button */}
+        <button
+          onClick={handleStart}
+          disabled={!canStart}
+          style={{
+            width: "100%", padding: "16px", borderRadius: 14, border: "none",
+            background: canStart ? `linear-gradient(135deg,${G},${GM})` : "rgba(255,255,255,.08)",
+            color: canStart ? "#fff" : "rgba(255,255,255,.3)",
+            fontSize: 15, fontWeight: 800, cursor: canStart ? "pointer" : "not-allowed",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+            boxShadow: canStart ? "0 8px 32px rgba(6,78,59,.5)" : "none",
+            transition: "all .2s",
+          }}
+        >
+          {!canStart && !confirmed && "✓ Confirm your readiness above"}
+          {!canStart && confirmed && !camOk && !cameraOptional && "📷 Enable camera to continue"}
+          {canStart && <><BookOpen size={18} /> Start Exam — ابدأ الاختبار</>}
+        </button>
+
+        {/* Skip camera (only if not required) */}
+        {cameraOptional && !camOk && confirmed && (
+          <button
+            onClick={handleStart}
+            style={{ width: "100%", marginTop: 10, padding: "12px", borderRadius: 12, border: "1.5px solid rgba(255,165,0,.4)", background: "transparent", color: "rgba(255,165,0,.8)", fontSize: 13, fontWeight: 600, cursor: "pointer" }}
+          >
+            ⚠️ Proceed without camera (not recommended)
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ══════════════════════════════════════════════════════════════════════════════
@@ -244,6 +477,7 @@ const EntranceExamTaking = () => {
   const [submitting,        setSubmitting]        = useState(false);
   const [showConfirm,       setShowConfirm]       = useState(false);
   const [showInstructions,  setShowInstructions]  = useState(true);
+  const [showCameraSetup,   setShowCameraSetup]   = useState(false); // camera pre-check step
   const [procConfig,        setProcConfig]        = useState<any>({});
   const [violationCount,    setViolationCount]    = useState(0);
   const [showViolation,     setShowViolation]     = useState(false);
@@ -255,6 +489,8 @@ const EntranceExamTaking = () => {
   const submittedRef   = useRef(false);
   const answersRef     = useRef(answers);
   const timerRef       = useRef<any>(null);
+  // Grace period: don't count violations for first 8 seconds after exam starts
+  const examStartTimeRef = useRef<number>(0);
 
   useEffect(() => { answersRef.current = answers; }, [answers]);
 
@@ -305,20 +541,25 @@ const EntranceExamTaking = () => {
     })();
   }, [attemptId, user, navigate, toast]);
 
-  // ── Timer ────────────────────────────────────────────────────────────────
+  // ── Timer — only starts after camera setup is done ───────────────────────
   useEffect(() => {
-    if (loading || showInstructions || timeLeft <= 0) return;
+    if (loading || showInstructions || showCameraSetup || timeLeft <= 0) return;
     timerRef.current = setInterval(() => {
       setTimeLeft(t => { if (t <= 1) { clearInterval(timerRef.current); if (!submittedRef.current) handleSubmit(); return 0; } return t - 1; });
     }, 1000);
     return () => clearInterval(timerRef.current);
-  }, [loading, showInstructions]);
+  }, [loading, showInstructions, showCameraSetup]);
 
-  // ── Violation tracking ───────────────────────────────────────────────────
+  // ── Violation tracking ────────────────────────────────────────────────────
+  // 8-second grace period after exam starts so the camera permission dialog
+  // doesn't count as a tab-switch violation.
   useEffect(() => {
-    if (showInstructions || loading) return;
+    if (showInstructions || showCameraSetup || loading) return;
+    const GRACE_MS = 8000;
+    examStartTimeRef.current = Date.now();
     const fire = () => {
       if (!examActiveRef.current || submittedRef.current) return;
+      if (Date.now() - examStartTimeRef.current < GRACE_MS) return; // still in grace period
       violationRef.current += 1;
       const c = violationRef.current; setViolationCount(c);
       if (c >= 3) { toast({ title: "⚠️ Exam auto-submitted", variant: "destructive" }); setTimeout(() => { if (!submittedRef.current) handleSubmit(); }, 1000); }
@@ -330,10 +571,10 @@ const EntranceExamTaking = () => {
     window.addEventListener("blur", onBlur);
     examActiveRef.current = true;
     return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("blur", onBlur); examActiveRef.current = false; };
-  }, [showInstructions, loading]);
+  }, [showInstructions, showCameraSetup, loading]);
 
-  // ── Proctoring ───────────────────────────────────────────────────────────
-  const procEnabled = !showInstructions && !loading && (procConfig.proctoring_enabled ?? false);
+  // ── Proctoring — only enabled after camera setup ──────────────────────────
+  const procEnabled = !showInstructions && !showCameraSetup && !loading && (procConfig.proctoring_enabled ?? false);
   const proc = useProctoring(
     { attemptId: attemptId!, userId: user?.id || "", ...procConfig },
     procEnabled,
@@ -399,7 +640,28 @@ const EntranceExamTaking = () => {
     <PreExamInstructions
       exam={exam} procEnabled={procConfig.proctoring_enabled}
       regConfig={regConfig}
-      onStart={() => { setShowInstructions(false); examActiveRef.current = true; }}
+      onStart={() => {
+        setShowInstructions(false);
+        // If proctoring enabled, go to camera setup first; otherwise start exam directly
+        if (procConfig.proctoring_enabled) {
+          setShowCameraSetup(true);
+        } else {
+          examActiveRef.current = true;
+          examStartTimeRef.current = Date.now();
+        }
+      }}
+    />
+  );
+
+  // ── Camera + Mic Pre-Check (proctored exams only) ─────────────────────────
+  if (showCameraSetup) return (
+    <CameraSetup
+      exam={exam}
+      onReady={() => {
+        setShowCameraSetup(false);
+        examActiveRef.current = true;
+        examStartTimeRef.current = Date.now();
+      }}
     />
   );
 
