@@ -53,6 +53,119 @@ const GREEN = "#22c55e";
 const RED   = "#ef4444";
 const BAR_H = 76;
 
+/* ══════════════════════════════════════════════════════════════════════
+   BACKGROUND AUDIO KEEP-ALIVE
+   Keeps LiveKit audio alive when the student/teacher backgrounds the tab,
+   locks the screen, or switches apps on mobile.
+
+   Layer 1 — <audio> element (near-silent looping WAV)
+     Browsers treat a playing <audio> as "active media" → JS thread stays
+     alive through screen lock, just like a music app.
+
+   Layer 2 — AudioContext oscillator at 1 Hz, gain = 0
+     A second keep-alive signal independent of the <audio> element.
+
+   Layer 3 — setInterval heartbeat every 20 s
+     Forces event-loop ticks even when Chrome throttles background timers.
+
+   Layer 4 — visibilitychange / pageshow resume
+     Re-starts both layers the moment the user returns to the tab.
+   ══════════════════════════════════════════════════════════════════════ */
+
+const _CV_SILENCE_WAV =
+  "data:audio/wav;base64," +
+  "UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=";
+
+function useSilentAudioKeepAlive(active: boolean) {
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const acRef      = useRef<AudioContext | null>(null);
+  const oscRef     = useRef<OscillatorNode | null>(null);
+  const gainRef    = useRef<GainNode | null>(null);
+  const hbRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!active) {
+      if (hbRef.current)      { clearInterval(hbRef.current); hbRef.current = null; }
+      if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.src = ""; audioElRef.current = null; }
+      try { oscRef.current?.stop(); } catch {}
+      oscRef.current = null; gainRef.current = null;
+      acRef.current?.close().catch(() => {}); acRef.current = null;
+      return;
+    }
+
+    // Layer 1 — <audio>
+    const startAudioEl = () => {
+      if (audioElRef.current) return;
+      try {
+        const el = new Audio(_CV_SILENCE_WAV);
+        el.loop = true; el.volume = 0.001;
+        el.play().catch(() => {});
+        audioElRef.current = el;
+      } catch {}
+    };
+
+    // iOS primer — first touch/click unlocks AudioContext
+    const prime = () => {
+      startAudioEl();
+      const ctx = acRef.current;
+      if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+    };
+    ["touchstart","pointerdown","click","keydown"].forEach(ev =>
+      document.addEventListener(ev, prime, { once: true, passive: true, capture: true })
+    );
+
+    // Layer 2 — AudioContext
+    const startAC = () => {
+      if (acRef.current && acRef.current.state !== "closed") return;
+      try {
+        const AC   = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx  = new AC();
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 1; gain.gain.value = 0;
+        osc.connect(gain); gain.connect(ctx.destination); osc.start();
+        acRef.current = ctx; oscRef.current = osc; gainRef.current = gain;
+      } catch {}
+    };
+
+    startAudioEl(); startAC();
+
+    // Layer 3 — heartbeat
+    hbRef.current = setInterval(() => {
+      const ctx = acRef.current;
+      if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+      const el = audioElRef.current;
+      if (el?.paused) el.play().catch(() => {});
+    }, 20_000);
+
+    // Layer 4 — resume on return
+    const resume = () => {
+      const el = audioElRef.current;
+      if (!el)       startAudioEl();
+      else if (el.paused) el.play().catch(() => {});
+      const ctx = acRef.current;
+      if (!ctx || ctx.state === "closed") startAC();
+      else if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    };
+
+    document.addEventListener("visibilitychange", resume);
+    document.addEventListener("pageshow",         resume);
+    window.addEventListener("focus",              resume);
+
+    return () => {
+      document.removeEventListener("visibilitychange", resume);
+      document.removeEventListener("pageshow",         resume);
+      window.removeEventListener("focus",              resume);
+      if (hbRef.current) { clearInterval(hbRef.current); hbRef.current = null; }
+      audioElRef.current?.pause();
+      if (audioElRef.current) { audioElRef.current.src = ""; audioElRef.current = null; }
+      try { oscRef.current?.stop(); } catch {}
+      acRef.current?.close().catch(() => {});
+    };
+  }, [active]);
+}
+
+
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Google+Sans+Display:wght@400;500;700&display=swap');
 
@@ -3108,6 +3221,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   /* ── lobby media choices ── */
   const[lobbyMic,setLobbyMic]=useState(false); // OFF by default — user must explicitly enable
   const[lobbyCam,setLobbyCam]=useState(false); // OFF by default — user must explicitly enable
+  /* ── Background keep-alive: silent audio + wake lock (student & teacher) ── */
+  useSilentAudioKeepAlive(phase === "live");
+
   const wakeLockRef=useRef<any>(null);
   useEffect(()=>{
     if(phase!=="live")return;
