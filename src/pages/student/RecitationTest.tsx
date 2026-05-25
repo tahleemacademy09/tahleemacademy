@@ -1,7 +1,9 @@
 /*  src/pages/student/RecitationTest.tsx
     3-Stage Recitation Proficiency Test
     Stage 1: Record audio
-    Stage 2: AI accuracy scoring  
+    Stage 2: AI analysis — score shown as PREVIEW only (not saved)
+             User must press "Submit Score" to confirm and advance.
+             Refreshing before submit = back to Stage 1 (re-record).
     Stage 3: Book virtual session with admin → advance to level_assignment
 */
 import { useState, useRef, useEffect, useMemo } from "react";
@@ -15,7 +17,7 @@ import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import {
   Mic, Upload, CheckCircle2, Video, Clock,
   Star, ArrowRight, Loader2, RotateCcw, BookOpen,
-  AlertCircle, Calendar,
+  AlertCircle, Calendar, Send,
 } from "lucide-react";
 
 const G    = "#064E3B";
@@ -28,6 +30,139 @@ const DEEPGRAM_KEY = import.meta.env.VITE_DEEPGRAM_API_KEY || "";
 
 const WAVE_H = [4,8,14,10,18,12,6,16,9,13,7,15,11,5,17,8,12,6,14,10];
 
+// ── Arabic text utilities ────────────────────────────────────────────────────
+function normalizeArabic(s: string): string {
+  return s
+    // Remove all tashkeel / diacritics
+    .replace(/[\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED]/g, "")
+    // Normalize Alef variants
+    .replace(/[أإآٱ]/g, "ا")
+    // Normalize Ta marbuta → Ha
+    .replace(/ة/g, "ه")
+    // Normalize Alef maqsura → Ya
+    .replace(/ى/g, "ي")
+    // Normalize Waw variants
+    .replace(/ؤ/g, "و")
+    // Normalize Ya variants
+    .replace(/ئ/g, "ي")
+    // Strip non-Arabic chars (keep spaces)
+    .replace(/[^\u0600-\u06FF\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function editDistance(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  // Rolling array O(n) space
+  const dp = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let prev = i - 1;
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1]
+        ? prev
+        : 1 + Math.min(prev, dp[j - 1], dp[j]);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+interface ScoreBreakdown {
+  total: number;
+  coverage: number;   // % of reference words recited
+  accuracy: number;   // precision of what was heard
+  fluency: number;    // pronunciation similarity
+}
+
+/**
+ * Score a recitation against a reference text.
+ * Uses LCS (Longest Common Subsequence) for order-aware word matching,
+ * fuzzy edit-distance fallback, and Deepgram per-word confidence for fluency.
+ */
+function scoreRecitation(
+  transcript: string,
+  reference: string,
+  wordConfidences: number[] = []
+): ScoreBreakdown {
+  const refNorm = normalizeArabic(reference);
+  const gotNorm = normalizeArabic(transcript);
+
+  const refWords = refNorm.split(" ").filter(w => w.length >= 2);
+  const gotWords = gotNorm.split(" ").filter(w => w.length >= 2);
+
+  if (!refWords.length || !gotWords.length) {
+    return { total: 0, coverage: 0, accuracy: 0, fluency: 0 };
+  }
+
+  // ── LCS with fuzzy fallback ──────────────────────────────────────────────
+  // dp[i][j] = best match count for refWords[0..i-1] vs gotWords[0..j-1]
+  const R = refWords.length, G2 = gotWords.length;
+  // Use flat array for speed
+  const dp = new Float32Array((R + 1) * (G2 + 1));
+  for (let i = 1; i <= R; i++) {
+    for (let j = 1; j <= G2; j++) {
+      const exact = refWords[i - 1] === gotWords[j - 1];
+      if (exact) {
+        dp[i * (G2 + 1) + j] = dp[(i - 1) * (G2 + 1) + (j - 1)] + 1;
+      } else {
+        // Fuzzy: within 1 edit AND word length > 2 → 0.7 credit
+        const ed = editDistance(refWords[i - 1], gotWords[j - 1]);
+        const len = Math.min(refWords[i - 1].length, gotWords[j - 1].length);
+        const fuzzyCredit = (ed <= 1 && len > 2) ? 0.7 : (ed <= 2 && len > 4) ? 0.4 : 0;
+        const skip = Math.max(
+          dp[(i - 1) * (G2 + 1) + j],
+          dp[i * (G2 + 1) + (j - 1)]
+        );
+        dp[i * (G2 + 1) + j] = Math.max(
+          skip,
+          dp[(i - 1) * (G2 + 1) + (j - 1)] + fuzzyCredit
+        );
+      }
+    }
+  }
+
+  const lcsLen = dp[R * (G2 + 1) + G2];
+  const coverage  = Math.round((lcsLen / R) * 100);   // recall
+  const precision = Math.round((lcsLen / G2) * 100);  // precision
+  const accuracy  = Math.round(coverage * 0.65 + precision * 0.35);
+
+  // ── Fluency score ─────────────────────────────────────────────────────────
+  let fluency: number;
+  if (wordConfidences.length > 0) {
+    // Deepgram gives per-word confidence 0–1 → scale to 0–100
+    fluency = Math.round(
+      (wordConfidences.reduce((a, b) => a + b, 0) / wordConfidences.length) * 100
+    );
+  } else {
+    // Estimate: for each recited word, find closest reference word
+    // and compute 1 - (editDist / wordLen) similarity
+    let simSum = 0, simCount = 0;
+    gotWords.forEach(got => {
+      let bestSim = 0;
+      for (const ref of refWords) {
+        const ed  = editDistance(got, ref);
+        const len = Math.max(got.length, ref.length, 1);
+        const sim = Math.max(0, 1 - ed / len);
+        if (sim > bestSim) bestSim = sim;
+      }
+      if (bestSim > 0.4) { simSum += bestSim; simCount++; }
+    });
+    fluency = simCount > 0 ? Math.round((simSum / simCount) * 100) : 55;
+  }
+
+  const total = Math.round(accuracy * 0.6 + fluency * 0.4);
+  return {
+    total:    Math.min(100, Math.max(0, total)),
+    coverage: Math.min(100, coverage),
+    accuracy: Math.min(100, accuracy),
+    fluency:  Math.min(100, fluency),
+  };
+}
+
 const RecitationTest = () => {
   const { user, profile }  = useAuth();
   const { toast }          = useToast();
@@ -35,7 +170,7 @@ const RecitationTest = () => {
   const { settings, loading: settingsLoading } = useRecitationSettings();
   const { currentStep, loading: stepLoading, advanceStep } = useTasjeel();
 
-  // ── Step guard: if user's pipeline step doesn't belong here, send them to the right page ──
+  // ── Step guard ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (stepLoading || !currentStep) return;
     const allowed = ["recitation", "schedule_session", "completed"];
@@ -51,9 +186,14 @@ const RecitationTest = () => {
   const [audioBlob, setAudioBlob] = useState<Blob|null>(null);
   const [uploading, setUploading] = useState(false);
 
-  const [scoring,      setScoring]      = useState(false);
-  const [aiScore,      setAiScore]      = useState<number|null>(null);
-  const [aiTranscript, setAiTranscript] = useState<string|null>(null);
+  // AI analysis state — score is PREVIEW only until user presses Submit
+  const [scoring,        setScoring]        = useState(false);
+  const [aiScore,        setAiScore]        = useState<number|null>(null);
+  const [aiTranscript,   setAiTranscript]   = useState<string|null>(null);
+  const [scoreBreakdown, setScoreBreakdown] = useState<ScoreBreakdown|null>(null);
+  const [submittingScore, setSubmittingScore] = useState(false);
+  // Track the audio path used in this session (needed for re-score on refresh)
+  const [savedAudioPath, setSavedAudioPath] = useState<string|null>(null);
 
   const [sessionDate, setSessionDate] = useState("");
   const [sessionTime, setSessionTime] = useState("");
@@ -76,7 +216,7 @@ const RecitationTest = () => {
     for (let i = 0; i < user.id.length; i++) {
       h = Math.imul(31, h) + user.id.charCodeAt(i) | 0;
     }
-    return (Math.abs(h) % 604) + 1;           // pages 1–604
+    return (Math.abs(h) % 604) + 1;
   }, [user?.id]);
 
   useEffect(() => {
@@ -95,7 +235,6 @@ const RecitationTest = () => {
           juz:     first.juz               || 1,
           page:    assignedPage,
         });
-        // Save assigned page so admin can see same page
         (supabase as any).from("recitation_tests").upsert(
           { user_id: user!.id, assigned_page: assignedPage },
           { onConflict: "user_id" }
@@ -107,7 +246,12 @@ const RecitationTest = () => {
 
   const fr = (s: number) => `${Math.floor(s/60).toString().padStart(2,"0")}:${(s%60).toString().padStart(2,"0")}`;
 
-  // ── Check if student already completed stage(s) ─────────────────────────
+  // ── Resume state check ────────────────────────────────────────────────────
+  // Rules:
+  //  stage >= 3 OR status = awaiting_teacher → show stage 3 (session booked)
+  //  stage === 2 AND status = stage2_complete → show stage 3 (AI scored & submitted, pending session)
+  //  stage === 1 OR status = stage1_complete  → back to STAGE 1 re-record
+  //  (audio was uploaded but score was never submitted — must retake)
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -117,23 +261,30 @@ const RecitationTest = () => {
         .eq("user_id", user.id)
         .maybeSingle();
       if (!data) return;
+
       if (data.status === "awaiting_teacher" || data.stage >= 3) {
+        // Fully submitted + session booked
         setAiScore(data.ai_score ?? null);
         setSessionDate(data.virtual_session_date || "");
         setSessionTime(data.virtual_session_time || "");
         setBookingDone(true);
         setStage(3);
-      } else if (data.stage >= 2) {
-        // AI already scored — jump straight to session booking
+      } else if (data.status === "stage2_complete" || data.stage >= 2) {
+        // AI score was submitted — move to session booking
         setAiScore(data.ai_score ?? null);
         setStage(3);
-      } else if (data.stage >= 1) {
-        // Audio uploaded but AI never ran (e.g. user refreshed mid-scoring).
-        // Re-trigger AI analysis using the saved path. runAIScoring falls back
-        // to a demo score if the blob is no longer in memory, so the user
-        // will never be stuck on a blank stage-2 screen.
-        setStage(2);
-        runAIScoring(data.audio_path || "");
+      } else {
+        // stage === 1 (audio uploaded but score NOT submitted) → force re-record
+        // The user refreshed before pressing "Submit Score".
+        // Reset to idle stage 1 so they must re-record.
+        setStage(1);
+        setSubstage("idle");
+        if (data.stage >= 1) {
+          toast({
+            title: "Recitation not submitted",
+            description: "Your previous recording was not submitted. Please re-record.",
+          });
+        }
       }
     })();
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -176,10 +327,10 @@ const RecitationTest = () => {
   };
   const retake = () => {
     setAudioBlob(null); setAudioUrl(null); setSubstage("idle");
-    setAiScore(null); setAiTranscript(null);
+    setAiScore(null); setAiTranscript(null); setScoreBreakdown(null);
   };
 
-  // ── Upload ───────────────────────────────────────────────────────────────
+  // ── Upload (stage 1 complete) ─────────────────────────────────────────────
   const uploadAudio = async () => {
     if (!audioBlob || !user) return;
     setUploading(true);
@@ -195,91 +346,185 @@ const RecitationTest = () => {
         finalPath = b64;
       }
 
+      // stage = 1, status = stage1_complete — NOT yet stage 2
+      // Score is NOT saved here; only the audio path is persisted.
       await (supabase as any).from("recitation_tests").upsert({
         user_id: user.id, audio_path: finalPath, stage: 1,
         stage1_submitted_at: new Date().toISOString(), status: "stage1_complete",
       }, { onConflict: "user_id" });
 
+      setSavedAudioPath(finalPath);
       setSubstage("done");
-      toast({ title: "✅ Audio uploaded!", description: "Proceeding to AI analysis…" });
-      setTimeout(() => { setStage(2); runAIScoring(finalPath); }, 800);
+      toast({ title: "✅ Audio uploaded!", description: "AI is now analysing your recitation…" });
+      setTimeout(() => { setStage(2); runAIScoring(audioBlob, finalPath); }, 800);
     } catch (e: any) {
       toast({ title: "Upload error", description: e.message, variant: "destructive" });
     } finally { setUploading(false); }
   };
 
-  // ── AI Scoring ───────────────────────────────────────────────────────────
-  const runAIScoring = async (path: string) => {
+  // ── AI Scoring ────────────────────────────────────────────────────────────
+  // IMPORTANT: This function analyses and sets the score as a PREVIEW.
+  // It does NOT write to the database. The score is only saved when the
+  // user explicitly presses "Submit Score" (handleSubmitScore below).
+  const runAIScoring = async (blob: Blob | null, _path?: string) => {
     setScoring(true);
+    setAiScore(null);
+    setAiTranscript(null);
+    setScoreBreakdown(null);
+
     try {
-      let audioData: Blob | null = path.startsWith("data:") ? await (await fetch(path)).blob() : audioBlob;
+      // If we have the blob in memory, use it; otherwise we cannot re-score
+      // (user must re-record — this is intentional per product spec).
+      const audioData = blob;
 
       if (!audioData || (!DEEPGRAM_KEY && !GROQ_KEY)) {
-        await new Promise(r => setTimeout(r, 2000));
-        const demo = Math.floor(Math.random() * 30) + 65;
-        setAiScore(demo); setAiTranscript("بسم الله الرحمن الرحيم الحمد لله رب العالمين");
-        await saveAIScore(demo, "Demo transcription"); setScoring(false); return;
+        // No API keys — produce a demo score so the UI isn't stuck
+        await new Promise(r => setTimeout(r, 1800));
+        const demo = Math.floor(Math.random() * 20) + 60;
+        const breakdown: ScoreBreakdown = { total: demo, coverage: demo, accuracy: demo, fluency: demo };
+        setAiScore(demo);
+        setAiTranscript("بسم الله الرحمن الرحيم الحمد لله رب العالمين");
+        setScoreBreakdown(breakdown);
+        setScoring(false);
+        return;
       }
 
-      let transcript = "";
-      let wordScores: number[] = [];
+      let transcript   = "";
+      let wordConf: number[] = [];
 
+      // ── Deepgram (preferred — gives per-word confidence) ──────────────────
       if (DEEPGRAM_KEY && audioData) {
         try {
-          const r = await fetch("https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&words=true", {
-            method: "POST",
-            headers: { Authorization: `Token ${DEEPGRAM_KEY}`, "Content-Type": audioData.type || "audio/webm" },
-            body: audioData,
-          });
+          const r = await fetch(
+            "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false&words=true",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Token ${DEEPGRAM_KEY}`,
+                "Content-Type": audioData.type || "audio/webm",
+              },
+              body: audioData,
+            }
+          );
           if (r.ok) {
             const d = await r.json();
-            transcript   = d?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
-            wordScores   = (d?.results?.channels?.[0]?.alternatives?.[0]?.words || []).map((w: any) => Math.round((w.confidence||0)*100));
+            transcript = d?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
+            wordConf   = (d?.results?.channels?.[0]?.alternatives?.[0]?.words || [])
+              .map((w: any) => w.confidence ?? 0);
+          }
+        } catch { /* fall through to Groq */ }
+      }
+
+      // ── Groq Whisper (fallback) ───────────────────────────────────────────
+      if (!transcript && GROQ_KEY && audioData) {
+        try {
+          const fd = new FormData();
+          const ext = audioData.type.includes("mp4") ? "mp4"
+                    : audioData.type.includes("ogg") ? "ogg" : "webm";
+          fd.append("file", new File([audioData], `recitation.${ext}`, { type: audioData.type }));
+          fd.append("model",           GROQ_MODEL);
+          fd.append("language",        "ar");
+          fd.append("response_format", "verbose_json");
+          fd.append("temperature",     "0");
+          fd.append("prompt",          "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني. صَ ضَ طَ ظَ إِ أَ ئَ ؤَ");
+
+          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${GROQ_KEY}` },
+            body: fd,
+          });
+          if (r.ok) {
+            const json = await r.json();
+            // Silence gate
+            const segs: { no_speech_prob?: number }[] = json.segments ?? [];
+            const avgNS = segs.length > 0
+              ? segs.reduce((s, g) => s + (g.no_speech_prob ?? 0), 0) / segs.length
+              : 0;
+            if (avgNS < 0.55) {
+              transcript = (json.text ?? "").trim();
+            }
           }
         } catch { /* fall through */ }
       }
 
-      if (!transcript && GROQ_KEY && audioData) {
-        const fd = new FormData();
-        fd.append("file", audioData, "recitation.webm");
-        fd.append("model", GROQ_MODEL); fd.append("language", "ar"); fd.append("response_format", "json");
-        fd.append("prompt", "بسم الله الرحمن الرحيم الحمد لله رب العالمين الرحمن الرحيم");
-        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-          method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
-        });
-        if (r.ok) transcript = (await r.json()).text || "";
+      setAiTranscript(transcript || null);
+
+      // ── Score against reference ───────────────────────────────────────────
+      // Build reference text: prefer settings.surah_reference, fall back to
+      // the page ayahs loaded from the Quran API.
+      const refText = (settings.surah_reference || "")
+        || quranAyahs.map(a => a.text).join(" ");
+
+      let breakdown: ScoreBreakdown;
+      if (transcript && refText) {
+        breakdown = scoreRecitation(transcript, refText, wordConf);
+      } else if (transcript) {
+        // No reference configured — score purely on fluency from confidence
+        const fl = wordConf.length > 0
+          ? Math.round((wordConf.reduce((a,b) => a+b,0)/wordConf.length)*100)
+          : 65;
+        breakdown = { total: fl, coverage: 0, accuracy: fl, fluency: fl };
+      } else {
+        // No transcript at all — unable to score
+        setAiScore(null);
+        setScoreBreakdown(null);
+        setScoring(false);
+        return;
       }
 
-      setAiTranscript(transcript);
-
-      const ref  = (settings.surah_reference || "").replace(/[^\u0600-\u06FF\s]/g,"").trim().split(/\s+/);
-      const got  = transcript.replace(/[^\u0600-\u06FF\s]/g,"").trim().split(/\s+/);
-      let matched = 0;
-      const usedRef = new Set<number>();
-      got.forEach(w => {
-        const idx = ref.findIndex((r2,i) => !usedRef.has(i) && r2.includes(w.slice(0,3)));
-        if (idx >= 0) { matched++; usedRef.add(idx); }
-      });
-      const matchScore = Math.min(100, Math.round((matched / Math.max(ref.length,1)) * 100));
-      let finalScore = matchScore;
-      if (wordScores.length > 0) {
-        const avg = Math.round(wordScores.reduce((a,b)=>a+b,0)/wordScores.length);
-        finalScore = Math.round(matchScore*0.6 + avg*0.4);
-      }
-      setAiScore(finalScore);
-      await saveAIScore(finalScore, transcript || "No transcript");
+      setAiScore(breakdown.total);
+      setScoreBreakdown(breakdown);
     } catch {
-      const fb = 72; setAiScore(fb); setAiTranscript("Admin will review manually");
-      await saveAIScore(fb, "Auto-scoring failed");
-    } finally { setScoring(false); }
+      // Graceful fallback so UI isn't stuck
+      const fb = 68;
+      const fbBreakdown: ScoreBreakdown = { total: fb, coverage: fb, accuracy: fb, fluency: fb };
+      setAiScore(fb);
+      setAiTranscript("Admin will review manually");
+      setScoreBreakdown(fbBreakdown);
+    } finally {
+      setScoring(false);
+    }
   };
 
-  const saveAIScore = async (score: number, transcript: string) => {
-    if (!user) return;
-    await (supabase as any).from("recitation_tests").update({
-      ai_score: score, ai_transcript: transcript, stage: 2,
-      stage2_completed_at: new Date().toISOString(), status: "stage2_complete",
-    }).eq("user_id", user.id);
+  // ── Submit Score (user-initiated) ─────────────────────────────────────────
+  // This is the ONLY place scores are written to the database.
+  const handleSubmitScore = async () => {
+    if (!user || aiScore === null) return;
+    setSubmittingScore(true);
+    try {
+      await (supabase as any).from("recitation_tests").update({
+        ai_score:              aiScore,
+        ai_transcript:         aiTranscript || "No transcript",
+        stage:                 2,
+        stage2_completed_at:   new Date().toISOString(),
+        status:                "stage2_complete",
+      }).eq("user_id", user.id);
+
+      toast({ title: "✅ Score submitted!" });
+      setStage(3);
+    } catch (e: any) {
+      toast({ title: "Could not save score", description: e.message, variant: "destructive" });
+    } finally {
+      setSubmittingScore(false);
+    }
+  };
+
+  // ── Re-record (from stage 2 preview) ─────────────────────────────────────
+  const handleReRecord = async () => {
+    // Clear the stage-1 DB row so resume logic doesn't redirect to stage 2
+    if (user) {
+      await (supabase as any).from("recitation_tests")
+        .update({ stage: 0, status: "retake", audio_path: null })
+        .eq("user_id", user.id);
+    }
+    setAiScore(null);
+    setAiTranscript(null);
+    setScoreBreakdown(null);
+    setAudioBlob(null);
+    setAudioUrl(null);
+    setSavedAudioPath(null);
+    setSubstage("idle");
+    setStage(1);
   };
 
   // ── Book Session ─────────────────────────────────────────────────────────
@@ -289,18 +534,17 @@ const RecitationTest = () => {
     }
     setBooking(true);
     try {
-      // Store with separate columns (used by LevelAssignment admin view)
       await (supabase as any).from("recitation_tests").update({
         stage: 3,
-        virtual_session_date:    sessionDate,
-        virtual_session_time:    sessionTime,
-        stage3_session_date:     `${sessionDate}T${sessionTime}:00`,
+        virtual_session_date:      sessionDate,
+        virtual_session_time:      sessionTime,
+        stage3_session_date:       `${sessionDate}T${sessionTime}:00`,
         virtual_session_booked_at: new Date().toISOString(),
-        stage3_requested_at:     new Date().toISOString(),
-        status:                  "awaiting_teacher",
+        stage3_requested_at:       new Date().toISOString(),
+        status:                    "awaiting_teacher",
       }).eq("user_id", user.id);
 
-      // Notify ALL admins about the booking
+      // Notify admins
       try {
         const { data: adminRoles } = await supabase.from("user_roles").select("user_id").eq("role", "admin");
         const adminIds = (adminRoles || []).map((r: any) => r.user_id);
@@ -317,7 +561,6 @@ const RecitationTest = () => {
         }
       } catch { /* non-critical */ }
 
-      // Advance pipeline → level_assignment (awaiting admin approval)
       if (currentStep && currentStep !== "completed") {
         await advanceStep("level_assignment");
       }
@@ -332,9 +575,6 @@ const RecitationTest = () => {
   const scoreColor = (s: number) => s >= 80 ? "#16A34A" : s >= 60 ? "#D97706" : "#DC2626";
   const scoreLabel = (s: number) => s >= 80 ? "Excellent" : s >= 60 ? "Good" : "Needs Practice";
 
-  // ── Available session slots ──────────────────────────────────────────────
-  // ── Fixed time slots: 20:30 → 22:00 every 15 min ───────────────────────────
-  // ── Time slots: 20:30–22:00 every 15 min, stored as 24h, displayed as 12h AM/PM ──
   const availableSlots = (() => {
     const slots: string[] = [];
     for (let h = 20; h <= 22; h++) {
@@ -346,7 +586,6 @@ const RecitationTest = () => {
     return slots;
   })();
 
-  // Convert "20:30" → "8:30 PM"
   const fmt12h = (t: string) => {
     const [hStr, mStr] = t.split(":");
     let h = parseInt(hStr, 10);
@@ -356,7 +595,6 @@ const RecitationTest = () => {
     return `${h}:${m} ${ampm}`;
   };
 
-  // ── Available dates: today + tomorrow ────────────────────────────────────────
   const sessionDates = Array.from({ length: 2 }, (_, i) => {
     const d = new Date(); d.setDate(d.getDate() + i);
     return d.toISOString().split("T")[0];
@@ -393,7 +631,7 @@ const RecitationTest = () => {
       <div style={{ flex:1, display:"flex", alignItems:"flex-start", justifyContent:"center", padding:"20px 16px 40px" }}>
         <div style={{ width:"100%", maxWidth:560, background:"#fff", borderRadius:24, boxShadow:"0 24px 80px rgba(0,0,0,.3)", overflow:"hidden", animation:"fadeUp .4s ease" }}>
 
-          {/* Stage progress bar */}
+          {/* Stage progress */}
           <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"20px 24px" }}>
             <div style={{ display:"flex", alignItems:"center", gap:0 }}>
               {[
@@ -420,7 +658,7 @@ const RecitationTest = () => {
 
           <div style={{ padding:"24px" }}>
 
-            {/* ─── STAGE 1: RECORD ────────────────────────────────────── */}
+            {/* ─── STAGE 1: RECORD ──────────────────────────────────────── */}
             {stage === 1 && (
               <div>
                 <div style={{ textAlign:"center", marginBottom:20 }}>
@@ -430,9 +668,8 @@ const RecitationTest = () => {
                   </div>
                 </div>
 
-                {/* ── Mushaf Page Display ── */}
+                {/* Mushaf page */}
                 <div style={{ background:"#FFFEF5", borderRadius:16, border:"2px solid #E8D5A3", marginBottom:18, overflow:"hidden", boxShadow:"0 4px 20px rgba(0,0,0,.08)" }}>
-                  {/* Page header */}
                   <div style={{ background:"linear-gradient(135deg,#F5ECD5,#EDD9A3)", padding:"10px 16px", display:"flex", justifyContent:"space-between", alignItems:"center", borderBottom:"1px solid #DBC580" }}>
                     <span style={{ fontSize:12, fontWeight:700, color:"#7D5A1E", fontFamily:"'Amiri',serif" }}>
                       {quranMeta ? `الجزء ${quranMeta.juz}` : "الجزء"}
@@ -441,7 +678,6 @@ const RecitationTest = () => {
                       {quranMeta?.surahEn || settings.surah_name || "Al-Fatiha"}
                     </span>
                   </div>
-                  {/* Verses */}
                   <div style={{ padding:"18px 16px", minHeight:180, direction:"rtl" as const }}>
                     {loadingQuran ? (
                       <div style={{ textAlign:"center", padding:"30px 0", display:"flex", flexDirection:"column", alignItems:"center", gap:10 }}>
@@ -460,13 +696,11 @@ const RecitationTest = () => {
                         ))}
                       </div>
                     ) : (
-                      /* Fallback to settings text if API fails */
                       <div style={{ fontSize:22, fontFamily:"'Amiri Quran','Amiri',serif", lineHeight:2.6, color:"#1A1A1A", textAlign:"justify" as const }}>
                         {settings.surah_arabic || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَٰنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ"}
                       </div>
                     )}
                   </div>
-                  {/* Page footer */}
                   {quranMeta && (
                     <div style={{ borderTop:"1px solid #DBC580", padding:"6px 16px", background:"#F9F0DC", textAlign:"center" as const }}>
                       <span style={{ fontSize:10, fontWeight:700, color:"#9C7722", letterSpacing:.8 }}>PAGE {quranMeta.page} · RECITE THIS PAGE</span>
@@ -533,7 +767,7 @@ const RecitationTest = () => {
                         <RotateCcw size={15} /> Re-record
                       </button>
                       <button onClick={uploadAudio} disabled={uploading} style={{ flex:2, padding:"12px", borderRadius:12, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}>
-                        <Upload size={16} /> Submit Recording
+                        <Upload size={16} /> Continue to AI Scoring
                       </button>
                     </div>
                   </div>
@@ -541,39 +775,45 @@ const RecitationTest = () => {
               </div>
             )}
 
-            {/* ─── STAGE 2: AI SCORING ───────────────────────────────── */}
+            {/* ─── STAGE 2: AI SCORING (PREVIEW) ────────────────────────── */}
             {stage === 2 && (
               <div style={{ textAlign:"center" }}>
-                <div style={{ fontSize:18, fontWeight:800, color:G, marginBottom:6 }}>Stage 2 — AI Accuracy Analysis</div>
+                <div style={{ fontSize:18, fontWeight:800, color:G, marginBottom:6 }}>Stage 2 — AI Recitation Analysis</div>
                 <div style={{ fontSize:13, color:"#666", marginBottom:24, lineHeight:1.6 }}>
-                  Our AI is comparing your recitation to the reference text.
+                  Review your AI score below. Submit when you're happy, or re-record to try again.
                 </div>
 
                 {scoring && (
                   <div style={{ padding:"30px 0" }}>
                     <Loader2 style={{ width:48, height:48, color:GM, animation:"spin .8s linear infinite", margin:"0 auto 16px" }} />
                     <div style={{ fontSize:15, fontWeight:700, color:G, marginBottom:6 }}>Analysing recitation…</div>
-                    <div style={{ fontSize:13, color:"#9ca3af" }}>This takes a few seconds</div>
+                    <div style={{ fontSize:13, color:"#9ca3af" }}>Comparing with reference text</div>
                   </div>
                 )}
 
-                {/* ── Fallback: AI done but no score (network/API failure) ── */}
                 {!scoring && aiScore === null && (
                   <div style={{ animation:"fadeUp .4s ease", padding:"10px 0" }}>
                     <div style={{ width:64, height:64, borderRadius:"50%", background:"#FFF7ED", border:"2px solid #FCA5A5", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px", fontSize:28 }}>⚠️</div>
                     <div style={{ fontSize:14, fontWeight:700, color:"#7C2D12", marginBottom:6 }}>AI analysis could not complete</div>
                     <div style={{ fontSize:13, color:"#9ca3af", marginBottom:20, lineHeight:1.6 }}>
-                      Your recording was saved. You can retry the analysis or skip ahead — an instructor will evaluate your recitation live in Stage 3.
+                      Your recording could not be scored automatically. An instructor will evaluate you live in Stage 3.
                     </div>
                     <div style={{ display:"flex", gap:10, flexDirection:"column" }}>
                       <button
-                        onClick={() => runAIScoring("")}
-                        style={{ width:"100%", padding:"13px", borderRadius:13, border:"2px solid #064E3B", background:"#fff", color:"#064E3B", fontSize:14, fontWeight:700, cursor:"pointer" }}
+                        onClick={handleReRecord}
+                        style={{ width:"100%", padding:"13px", borderRadius:13, border:"2px solid #064E3B", background:"#fff", color:"#064E3B", fontSize:14, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
                       >
-                        🔄 Retry AI Analysis
+                        <RotateCcw size={15} /> Re-record
                       </button>
                       <button
-                        onClick={() => setStage(3)}
+                        onClick={async () => {
+                          // Skip AI score — go to session booking without a score
+                          await (supabase as any).from("recitation_tests").update({
+                            ai_score: null, ai_transcript: "No transcript — manual review",
+                            stage: 2, stage2_completed_at: new Date().toISOString(), status: "stage2_complete",
+                          }).eq("user_id", user!.id);
+                          setStage(3);
+                        }}
                         style={{ width:"100%", padding:"13px", borderRadius:13, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
                       >
                         Skip to Session Booking <ArrowRight size={16} />
@@ -584,32 +824,67 @@ const RecitationTest = () => {
 
                 {!scoring && aiScore !== null && (
                   <div style={{ animation:"fadeUp .4s ease" }}>
-                    <div style={{ width:120, height:120, borderRadius:"50%", background:`${scoreColor(aiScore)}15`, border:`4px solid ${scoreColor(aiScore)}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
-                      <div style={{ fontSize:32, fontWeight:900, color:scoreColor(aiScore) }}>{aiScore}%</div>
-                      <div style={{ fontSize:11, color:scoreColor(aiScore), fontWeight:700 }}>{scoreLabel(aiScore)}</div>
+                    {/* Score circle */}
+                    <div style={{ width:130, height:130, borderRadius:"50%", background:`${scoreColor(aiScore)}15`, border:`5px solid ${scoreColor(aiScore)}`, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", margin:"0 auto 16px", boxShadow:`0 0 0 8px ${scoreColor(aiScore)}08` }}>
+                      <div style={{ fontSize:36, fontWeight:900, color:scoreColor(aiScore), lineHeight:1 }}>{aiScore}%</div>
+                      <div style={{ fontSize:11, color:scoreColor(aiScore), fontWeight:700, marginTop:2 }}>{scoreLabel(aiScore)}</div>
                     </div>
 
-                    <div style={{ fontSize:13, color:"#666", marginBottom:20, lineHeight:1.6 }}>
-                      Your AI recitation score is <strong style={{ color:scoreColor(aiScore) }}>{aiScore}%</strong>.<br/>
-                      An instructor will conduct a live evaluation in Stage 3.
-                    </div>
+                    {/* Score breakdown */}
+                    {scoreBreakdown && (
+                      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:16 }}>
+                        {[
+                          { label:"Coverage", value:scoreBreakdown.coverage, tip:"Words recited" },
+                          { label:"Accuracy", value:scoreBreakdown.accuracy, tip:"Correct words" },
+                          { label:"Fluency",  value:scoreBreakdown.fluency,  tip:"Pronunciation" },
+                        ].map((m,i) => (
+                          <div key={i} style={{ background:"#f9fafb", borderRadius:12, padding:"10px 8px", border:"1px solid #e5e7eb", textAlign:"center" as const }}>
+                            <div style={{ fontSize:18, fontWeight:900, color: m.value >= 70 ? "#16A34A" : m.value >= 50 ? "#D97706" : "#DC2626" }}>{m.value}%</div>
+                            <div style={{ fontSize:10, fontWeight:700, color:"#6b7280", marginTop:2 }}>{m.label}</div>
+                            <div style={{ fontSize:9, color:"#9ca3af" }}>{m.tip}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
+                    {/* What AI heard */}
                     {aiTranscript && aiTranscript !== "Admin will review manually" && (
-                      <div style={{ background:"#f9fafb", borderRadius:12, padding:"12px 14px", border:"1px solid #e5e7eb", marginBottom:20, textAlign:"right" }}>
-                        <div style={{ fontSize:11, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:.5, marginBottom:6, textAlign:"left" }}>What AI heard:</div>
+                      <div style={{ background:"#f9fafb", borderRadius:12, padding:"12px 14px", border:"1px solid #e5e7eb", marginBottom:16, textAlign:"right" as const }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:"#9ca3af", textTransform:"uppercase", letterSpacing:.5, marginBottom:6, textAlign:"left" as const }}>What AI heard:</div>
                         <div style={{ fontSize:14, fontFamily:"'Amiri',serif", direction:"rtl", color:"#333", lineHeight:1.8 }}>{aiTranscript}</div>
                       </div>
                     )}
 
-                    <button onClick={() => setStage(3)} style={{ width:"100%", padding:"14px", borderRadius:14, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:15, fontWeight:800, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
-                      Continue — Book Virtual Session <ArrowRight size={17} />
-                    </button>
+                    {/* Important notice */}
+                    <div style={{ background:"#FFFBEB", borderRadius:12, padding:"12px 14px", border:"1px solid #F9D46A", fontSize:12, color:"#78350F", lineHeight:1.6, display:"flex", gap:8, alignItems:"flex-start", marginBottom:20 }}>
+                      <AlertCircle size={14} color={GOLD} style={{ flexShrink:0, marginTop:1 }} />
+                      <span>This score is a <strong>preview only</strong>. Press "Submit Score" to confirm and proceed to session booking. If you're not satisfied, you can re-record.</span>
+                    </div>
+
+                    {/* Action buttons */}
+                    <div style={{ display:"flex", gap:10, flexDirection:"column" }}>
+                      <button
+                        onClick={handleSubmitScore}
+                        disabled={submittingScore}
+                        style={{ width:"100%", padding:"15px", borderRadius:14, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:15, fontWeight:800, cursor: submittingScore ? "not-allowed" : "pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:10, opacity: submittingScore ? 0.7 : 1 }}
+                      >
+                        {submittingScore
+                          ? <><Loader2 style={{ width:18, height:18, animation:"spin .8s linear infinite" }} /> Submitting…</>
+                          : <><Send size={18} /> Submit Score & Book Session</>}
+                      </button>
+                      <button
+                        onClick={handleReRecord}
+                        style={{ width:"100%", padding:"12px", borderRadius:13, border:"2px solid #e5e7eb", background:"#fff", color:"#666", fontSize:13, fontWeight:600, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8 }}
+                      >
+                        <RotateCcw size={15} /> Re-record
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
             )}
 
-            {/* ─── STAGE 3: BOOK SESSION ─────────────────────────────── */}
+            {/* ─── STAGE 3: BOOK SESSION ────────────────────────────────── */}
             {stage === 3 && (
               <div>
                 <div style={{ textAlign:"center", marginBottom:20 }}>
@@ -625,7 +900,6 @@ const RecitationTest = () => {
 
                 {!bookingDone ? (
                   <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-                    {/* What teacher evaluates */}
                     <div style={{ background:"#EFF6FF", borderRadius:12, padding:"14px 16px", border:"1px solid #93C5FD" }}>
                       <div style={{ fontSize:12, fontWeight:700, color:"#1E3A5F", marginBottom:8 }}>What the instructor evaluates:</div>
                       {["Makharij — correct pronunciation of letters","Sifaat — characteristics of letters","Noon Saakin & Tanween rules (Ikhfaa, Idghaam, Iqlaab)","Madd (lengthening) rules and Waqf","Overall fluency, rhythm and confidence"].map((t,i) => (
@@ -635,7 +909,6 @@ const RecitationTest = () => {
                       ))}
                     </div>
 
-                    {/* Date + Time — always fully visible, tap any slot to pick both at once */}
                     <div>
                       <label style={{ fontSize:13, fontWeight:700, color:"#374151", marginBottom:12, display:"block" }}>
                         <Calendar size={14} style={{ display:"inline", marginRight:6, verticalAlign:"middle" }} />
@@ -680,7 +953,6 @@ const RecitationTest = () => {
                     </button>
                   </div>
                 ) : (
-                  /* ── Booking confirmed ── */
                   <div style={{ textAlign:"center", animation:"fadeUp .4s ease" }}>
                     <div style={{ width:72, height:72, borderRadius:"50%", background:"#E8F5E9", border:"3px solid #22c55e", display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 16px" }}>
                       <CheckCircle2 size={36} color="#22c55e" />
