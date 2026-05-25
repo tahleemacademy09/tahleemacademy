@@ -106,7 +106,11 @@ export function useTasjeel() {
         .maybeSingle();
 
       if (!didTimeout) {
-        setCurrentStep(data?.current_step ?? "completed");
+        // SAFETY: if no tasjeel_progress row exists yet, treat as "enrollment"
+        // (beginning of the pipeline), NOT "completed". Falling back to
+        // "completed" silently grants full dashboard access to brand-new
+        // users who haven't finished registration.
+        setCurrentStep(data?.current_step ?? "enrollment");
       }
     } catch {
       if (!didTimeout) {
