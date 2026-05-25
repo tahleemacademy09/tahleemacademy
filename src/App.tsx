@@ -17,6 +17,7 @@ import PublicLayout from "@/components/layout/PublicLayout";
 import NotFound from "@/pages/NotFound";
 import IdleWarningModal from "@/components/IdleWarningModal";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import TasjeelGuard from "@/components/TasjeelGuard";
 import { LiveClassProvider } from "@/contexts/LiveClassContext";
 import RecordingPlayerProvider from "@/contexts/RecordingPlayerContext";
 const GlobalClassroomOverlay = lazy(() => import("./components/classroom/GlobalClassroomOverlay"));
@@ -203,7 +204,8 @@ const App = () => (
                   <Route path="/recordings/:recordingId" element={<ProtectedRoute><RecordingPlayer /></ProtectedRoute>} />
 
                   {/* ── Student routes (inside DashboardLayout) ─────────── */}
-                  <Route element={<ProtectedRoute><DashboardLayout role="student" /></ProtectedRoute>}>
+                  {/* TasjeelGuard blocks dashboard access for mid-registration students */}
+                  <Route element={<ProtectedRoute><TasjeelGuard><DashboardLayout role="student" /></TasjeelGuard></ProtectedRoute>}>
                     <Route path="/student"                     element={<StudentDashboard />} />
                     <Route path="/student/courses"             element={<LearningHub />} />
                     <Route path="/student/courses/:courseId"   element={<LearningHub />} />
