@@ -41,13 +41,52 @@ const Login = () => {
   // receives authLoading=true and empty roles, causing ProtectedRoute to bounce
   // the user back to login. Removing the duplicate navigate from handleSubmit
   // and relying solely on this effect fixes the "must refresh to login" bug.
+  //
+  // BUG 4 FIX: For students who are mid-registration, navigating to /student
+  // relies on TasjeelGuard to redirect them — but if TasjeelGuard times out
+  // on a slow connection they get stuck on the spinner forever. Instead, we
+  // proactively fetch their tasjeel step here and send them straight to the
+  // right pipeline page, bypassing TasjeelGuard entirely for this case.
   useEffect(() => {
     if (!user || authLoading) return;
     const isAdmin   = roles.includes("admin");
     const isTeacher = roles.includes("teacher");
-    if (isAdmin)        navigate("/admin",   { replace: true });
-    else if (isTeacher) navigate("/teacher", { replace: true });
-    else                navigate("/student", { replace: true });
+    if (isAdmin)        { navigate("/admin",   { replace: true }); return; }
+    if (isTeacher)      { navigate("/teacher", { replace: true }); return; }
+
+    // Student: check their registration step before navigating
+    (async () => {
+      try {
+        const { data: tp } = await supabase
+          .from("tasjeel_progress" as any)
+          .select("current_step")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        const step = (tp as any)?.current_step;
+
+        // Route map matching TASJEEL_ROUTES in useTasjeel.ts
+        const pipelineRoute: Record<string, string> = {
+          enrollment:       "/register",
+          payment:          "/register",
+          onboarding:       "/onboarding",
+          exam:             "/student/entrance-exam",
+          recitation:       "/student/recitation-test",
+          schedule_session: "/student/recitation-test",
+          level_assignment: "/student/awaiting-level",
+        };
+
+        if (step && step !== "completed" && pipelineRoute[step]) {
+          navigate(pipelineRoute[step], { replace: true });
+        } else {
+          // completed or unknown — go to dashboard as normal
+          navigate("/student", { replace: true });
+        }
+      } catch {
+        // If the query fails just go to /student and let TasjeelGuard handle it
+        navigate("/student", { replace: true });
+      }
+    })();
   }, [user, roles, authLoading, navigate]);
 
   const validateEmail = (val: string) => {
