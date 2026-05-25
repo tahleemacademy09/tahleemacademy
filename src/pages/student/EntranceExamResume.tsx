@@ -1,11 +1,10 @@
 // src/pages/student/EntranceExamResume.tsx
-// Redirect page for /student/entrance-exam (no attemptId)
-// Finds the active in-progress attempt and navigates to it.
-// If none found, creates a new one. Called by TasjeelGuard when step === "exam".
-//
-// RULE: No step is ever skipped. If the exam is not configured in the DB,
-// the user sees a clear error and must contact support. They do NOT advance
-// to the next step without completing the exam.
+// Redirect page for /student/entrance-exam (no attemptId).
+// Looks up the entrance exam by is_entrance=true (NOT a hardcoded UUID)
+// so it works regardless of which exam ID is in the database.
+// Finds or creates an in-progress attempt, then navigates to the exam.
+// No step is ever skipped — if the exam is not configured, user sees a
+// clear error and must wait for admin to set it up.
 
 import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -14,7 +13,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
 
-const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
 const G  = "#064E3B";
 const GM = "#075E54";
 
@@ -23,16 +21,15 @@ const EntranceExamResume = () => {
   const navigate  = useNavigate();
   const { currentStep, loading: stepLoading } = useTasjeel();
 
-  const [status,  setStatus]  = useState<"loading" | "error">("loading");
-  const [message, setMessage] = useState("Finding your exam…");
-  const [retryCount, setRetryCount] = useState(0); // increment to retry
+  const [status,     setStatus]     = useState<"loading" | "error">("loading");
+  const [message,    setMessage]    = useState("Finding your exam…");
+  const [retryCount, setRetryCount] = useState(0);
   const didNavigate = useRef(false);
 
   useEffect(() => {
-    // Wait until both auth and tasjeel are ready
     if (!user || stepLoading) return;
 
-    // Step guard — if they don't belong here, redirect to the right page
+    // Step guard — redirect if they don't belong here
     if (currentStep && currentStep !== "exam" && TASJEEL_ROUTES[currentStep]) {
       navigate(TASJEEL_ROUTES[currentStep], { replace: true });
       return;
@@ -42,7 +39,7 @@ const EntranceExamResume = () => {
     setStatus("loading");
     setMessage("Finding your exam…");
 
-    // ── 10 second timeout — spinner NEVER hangs forever ──────────────────────
+    // 10s timeout — spinner never hangs forever
     const timeoutId = setTimeout(() => {
       if (!didNavigate.current) {
         setStatus("error");
@@ -52,16 +49,39 @@ const EntranceExamResume = () => {
 
     (async () => {
       try {
-        // 1. Look for an existing in-progress attempt → resume it
+        // ── Step 1: Find the entrance exam by is_entrance flag ──────────────
+        // NEVER use a hardcoded UUID — look it up so it works on any DB.
+        const { data: examRow, error: examErr } = await supabase
+          .from("exams")
+          .select("id, title")
+          .eq("is_entrance", true)
+          .maybeSingle();
+
+        if (examErr) throw new Error(`Could not load exam config: ${examErr.message}`);
+
+        if (!examRow) {
+          // Admin has not created the entrance exam yet — block and inform user.
+          // Do NOT skip this step.
+          clearTimeout(timeoutId);
+          setStatus("error");
+          setMessage(
+            "The entrance exam has not been set up yet. Please contact Tahleem Academy support — your place is saved and no steps will be skipped."
+          );
+          return;
+        }
+
+        const EXAM_ID = examRow.id;
+
+        // ── Step 2: Resume an existing in-progress attempt ──────────────────
         const { data: existing, error: e1 } = await supabase
           .from("exam_attempts")
-          .select("id, status")
-          .eq("exam_id", ENTRANCE_EXAM_ID)
+          .select("id")
+          .eq("exam_id", EXAM_ID)
           .eq("user_id", user.id)
           .eq("status", "in_progress")
           .maybeSingle();
 
-        if (e1) throw new Error(`Could not load exam: ${e1.message}`);
+        if (e1) throw new Error(`Could not check existing attempt: ${e1.message}`);
 
         if (existing) {
           clearTimeout(timeoutId);
@@ -71,18 +91,17 @@ const EntranceExamResume = () => {
           return;
         }
 
-        // 2. Check if already submitted — tasjeel step should have been advanced
-        //    by the exam submission handler but may have been missed. Fix it now.
+        // ── Step 3: Check if already submitted — fix stuck tasjeel step ─────
         const { data: submitted } = await supabase
           .from("exam_attempts")
-          .select("id, status")
-          .eq("exam_id", ENTRANCE_EXAM_ID)
+          .select("id")
+          .eq("exam_id", EXAM_ID)
           .eq("user_id", user.id)
           .in("status", ["submitted", "graded", "completed"])
           .maybeSingle();
 
         if (submitted) {
-          // Exam was already completed — advance the stuck tasjeel step and continue
+          // Exam was already completed but tasjeel step wasn't advanced — fix it
           clearTimeout(timeoutId);
           await (supabase as any).from("tasjeel_progress").update({
             current_step: "recitation",
@@ -93,33 +112,12 @@ const EntranceExamResume = () => {
           return;
         }
 
-        // 3. No attempt at all — verify the exam exists in the DB first.
-        //    If it doesn't exist, we show an error. We NEVER skip the exam step.
-        const { data: examRow, error: e3 } = await supabase
-          .from("exams")
-          .select("id, title")
-          .eq("id", ENTRANCE_EXAM_ID)
-          .maybeSingle();
-
-        if (e3) throw new Error(`Could not verify exam: ${e3.message}`);
-
-        if (!examRow) {
-          // Exam not configured in the database — block and inform the user.
-          // Do NOT skip to recitation. Admin must set up the exam first.
-          clearTimeout(timeoutId);
-          setStatus("error");
-          setMessage(
-            "The entrance exam has not been set up yet. Please contact Tahleem Academy support so they can configure it for you."
-          );
-          return;
-        }
-
-        // 4. Exam exists — create a fresh attempt
+        // ── Step 4: Create a fresh attempt ──────────────────────────────────
         setMessage("Preparing your exam…");
-        const { data: newAttempt, error: e4 } = await supabase
+        const { data: newAttempt, error: e2 } = await supabase
           .from("exam_attempts")
           .insert({
-            exam_id:    ENTRANCE_EXAM_ID,
+            exam_id:    EXAM_ID,
             user_id:    user.id,
             status:     "in_progress",
             started_at: new Date().toISOString(),
@@ -127,10 +125,8 @@ const EntranceExamResume = () => {
           .select("id")
           .single();
 
-        if (e4 || !newAttempt) {
-          throw new Error(
-            e4?.message || "Could not start the exam. Please try again."
-          );
+        if (e2 || !newAttempt) {
+          throw new Error(e2?.message || "Could not start the exam. Please try again.");
         }
 
         clearTimeout(timeoutId);
