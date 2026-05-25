@@ -19,7 +19,7 @@ const GM = "#075E54";
 const EntranceExamResume = () => {
   const { user }  = useAuth();
   const navigate  = useNavigate();
-  const { currentStep, loading: stepLoading } = useTasjeel();
+  const { currentStep, loading: stepLoading, advanceStep } = useTasjeel();
 
   const [status,     setStatus]     = useState<"loading" | "error">("loading");
   const [message,    setMessage]    = useState("Finding your exam…");
@@ -101,12 +101,13 @@ const EntranceExamResume = () => {
           .maybeSingle();
 
         if (submitted) {
-          // Exam was already completed but tasjeel step wasn't advanced — fix it
+          // Exam was already completed but tasjeel step wasn't advanced — fix it.
+          // CRITICAL: use advanceStep (not a raw supabase PATCH) so that local
+          // currentStep state is immediately set to "recitation", even if the
+          // DB call fails with 400. Without this, RecitationTest's step guard
+          // sees currentStep="exam" and bounces back here → infinite PATCH loop.
           clearTimeout(timeoutId);
-          await (supabase as any).from("tasjeel_progress").update({
-            current_step: "recitation",
-            updated_at:   new Date().toISOString(),
-          }).eq("user_id", user.id);
+          await advanceStep("recitation");   // updates local state regardless of DB result
           didNavigate.current = true;
           navigate("/student/recitation-test", { replace: true });
           return;
