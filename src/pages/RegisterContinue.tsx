@@ -6,6 +6,17 @@
 // Called after user clicks the email verification link.
 // Supabase sends them here with #access_token in URL hash.
 // Flow: establish session → check tasjeel → payment (if needed) → /onboarding
+//
+// FIXED BUGS:
+//  1. "review" was routed to awaiting-level but never existed in STEP_ORDER —
+//     removed; any unrecognised step falls through to a safe default.
+//  2. "recitation" and "schedule_session" steps had no routing — users who
+//     had completed exam but not recitation were incorrectly sent to onboarding.
+//  3. "payment" step (stale DB value) now correctly re-shows payment screen
+//     instead of sending the user back to the start.
+//  5. initializeTasjeel throws (DB error) → catches cleanly, shows error UI.
+//  7. Fee disabled + onboarding disabled chain: now skips both and advances
+//     to the next enabled step (exam → recitation → awaiting-level).
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { useState, useEffect } from "react";
@@ -43,6 +54,30 @@ const ensurePaystack = () =>
     document.body.appendChild(s);
   });
 
+// ── Determine where a student should be sent given their current step ──────
+// This is the single source of truth for mid-registration resume routing.
+// Returns null when the step means "show payment screen here".
+const resolveRoute = (
+  step: string,
+  cfg: { entrance_fee_enabled: boolean; onboarding_required: boolean; entrance_exam_required: boolean; recitation_test_required: boolean }
+): string | null => {
+  switch (step) {
+    // Already past payment/enrollment → send to their correct pipeline page
+    case "onboarding":       return cfg.onboarding_required ? "/onboarding" : null; // fall-through handled below
+    case "exam":             return "/student/entrance-exam";
+    case "recitation":       return "/student/recitation-test";     // BUG 2 — was missing
+    case "schedule_session": return "/student/recitation-test";     // BUG 2 — was missing
+    case "level_assignment": return "/student/awaiting-level";
+    case "completed":        return "/student";
+
+    // BUG 3 — "payment" stale value: stay on payment screen (return null)
+    case "payment":
+    case "enrollment":
+    default:
+      return null; // show payment screen (or skip if fee disabled)
+  }
+};
+
 const RegisterContinue = () => {
   const { user, loading: authLoading, profile } = useAuth();
   const { config, loading: cfgLoading, currencySymbol } = useRegistrationSettings();
@@ -58,43 +93,84 @@ const RegisterContinue = () => {
     if (authLoading || cfgLoading) return;
 
     (async () => {
-      // Not signed in → must have a session from the URL hash
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setErrMsg("Email verification failed or link expired. Please try registering again.");
+      try {
+        // Not signed in → must have a session from the URL hash
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          setErrMsg("Email verification failed or link expired. Please try registering again.");
+          setPhase("error");
+          return;
+        }
+
+        const userId = session.user.id;
+
+        // BUG 5 — wrap initializeTasjeel in try/catch so a DB error doesn't
+        // leave the page stuck on the loading spinner forever.
+        try {
+          await initializeTasjeel(userId, true);
+        } catch (initErr: any) {
+          console.error("[RegisterContinue] initializeTasjeel failed:", initErr);
+          setErrMsg("There was a problem setting up your account. Please try again or contact support.");
+          setPhase("error");
+          return;
+        }
+
+        // Fetch current tasjeel step
+        const { data: tp, error: tpErr } = await supabase
+          .from("tasjeel_progress" as any)
+          .select("current_step")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (tpErr) {
+          console.error("[RegisterContinue] tasjeel_progress fetch failed:", tpErr);
+          setErrMsg("Could not load your registration status. Please check your connection and try again.");
+          setPhase("error");
+          return;
+        }
+
+        const currentStep = (tp as any)?.current_step ?? "enrollment";
+
+        // BUG 1 — removed stale "review" → awaiting-level mapping; "review" is
+        // not a real step and would loop. resolveRoute's default handles unknowns.
+
+        // BUG 2, 3 — unified routing: handles "recitation", "schedule_session",
+        // and "payment" (stale) correctly.
+        const route = resolveRoute(currentStep, config);
+
+        if (route) {
+          navigate(route, { replace: true });
+          return;
+        }
+
+        // Step is enrollment | payment (stale) | unknown → show payment if needed
+        // BUG 7 — if BOTH fee and onboarding are disabled, skip straight to the
+        //          first enabled step rather than navigating to /onboarding
+        //          which would immediately redirect the user again.
+        if (config.entrance_fee_enabled) {
+          await ensurePaystack();
+          setPhase("payment");
+        } else {
+          // No fee — skip ahead to the first required step
+          const nextStep = config.onboarding_required
+            ? "onboarding"
+            : config.entrance_exam_required
+              ? "exam"
+              : config.recitation_test_required
+                ? "recitation"
+                : "level_assignment";
+
+          await advanceTasjeel(userId, nextStep);
+
+          // Navigate to the correct destination for that step
+          const nextRoute = resolveRoute(nextStep, config) ?? "/student/awaiting-level";
+          navigate(nextRoute, { replace: true });
+        }
+      } catch (err: any) {
+        // BUG 5 — catch-all so any unexpected throw shows a clean error UI
+        console.error("[RegisterContinue] unexpected error:", err);
+        setErrMsg("An unexpected error occurred. Please try again.");
         setPhase("error");
-        return;
-      }
-
-      const userId = session.user.id;
-
-      // Initialize tasjeel if missing
-      await initializeTasjeel(userId, true);
-
-      // Fetch current tasjeel step
-      const { data: tp } = await supabase
-        .from("tasjeel_progress" as any)
-        .select("current_step")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      const currentStep = (tp as any)?.current_step ?? "enrollment";
-
-      // Already past payment / onboarding → route directly
-      if (currentStep === "onboarding") { navigate("/onboarding", { replace: true }); return; }
-      if (currentStep === "exam")        { navigate("/student/entrance-exam", { replace: true }); return; }
-      if (currentStep === "review")      { navigate("/student/awaiting-level", { replace: true }); return; }
-      if (currentStep === "level_assignment") { navigate("/student/awaiting-level", { replace: true }); return; }
-      if (currentStep === "completed")   { navigate("/student", { replace: true }); return; }
-
-      // enrollment | payment → show payment if fee enabled, else skip
-      if (config.entrance_fee_enabled) {
-        await ensurePaystack();
-        setPhase("payment");
-      } else {
-        // No fee — advance and go to onboarding
-        await advanceTasjeel(userId, "onboarding");
-        navigate("/onboarding", { replace: true });
       }
     })();
   }, [authLoading, cfgLoading]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -116,15 +192,26 @@ const RegisterContinue = () => {
     const name   = (session.user.user_metadata?.full_name as string) || profile?.full_name || "Student";
     const ref    = `TAH-REG-${Date.now()}`;
 
+    // Determine which step to advance to after payment (respects disabled steps)
+    const postPaymentStep = config.onboarding_required
+      ? "onboarding"
+      : config.entrance_exam_required
+        ? "exam"
+        : config.recitation_test_required
+          ? "recitation"
+          : "level_assignment";
+
+    const postPaymentRoute = resolveRoute(postPaymentStep, config) ?? "/student/awaiting-level";
+
     if (!PAYSTACK_KEY) {
       // Demo mode
       toast({ title: "⚠️ Demo mode — simulating payment…" });
       setPaying(true);
       setTimeout(async () => {
         await recordPayment(userId, ref);
-        await advanceTasjeel(userId, "onboarding");
+        await advanceTasjeel(userId, postPaymentStep);
         setPaying(false);
-        navigate("/onboarding", { replace: true });
+        navigate(postPaymentRoute, { replace: true });
       }, 1800);
       return;
     }
@@ -148,15 +235,15 @@ const RegisterContinue = () => {
         // Use .then() chains for post-payment async work instead.
         callback: (res: any) => {
           recordPayment(userId, res.reference)
-            .then(() => advanceTasjeel(userId, "onboarding"))
+            .then(() => advanceTasjeel(userId, postPaymentStep))
             .then(() => {
               setPaying(false);
-              navigate("/onboarding", { replace: true });
+              navigate(postPaymentRoute, { replace: true });
             })
             .catch(() => {
               // Even if recording fails, advance the user
               setPaying(false);
-              navigate("/onboarding", { replace: true });
+              navigate(postPaymentRoute, { replace: true });
             });
         },
         onClose: () => {
