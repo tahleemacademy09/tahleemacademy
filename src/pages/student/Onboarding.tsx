@@ -191,84 +191,15 @@ const Onboarding = () => {
 
       clear(user.id);
 
-      // ── BUG 6 FIX ─────────────────────────────────────────────────────────
-      // The entrance exam step: check whether the exam actually exists in the DB
-      // before hardcoding a navigation. If it's missing or the exam step is
-      // disabled, fall through to recitation-test (or awaiting-level).
-      const ENTRANCE_EXAM_ID = "36ef6492-2515-44ea-b086-67c9cee02475";
-
-      // First verify the exam itself exists — if not, skip exam step entirely
-      const { data: examRow } = await supabase
-        .from("exams")
-        .select("id")
-        .eq("id", ENTRANCE_EXAM_ID)
-        .maybeSingle();
-
-      if (!examRow) {
-        // Exam is not configured — advance straight to recitation or level_assignment
-        console.warn("[Onboarding] Entrance exam not found in DB — skipping exam step");
-        await supabase.from("tasjeel_progress" as any)
-          .update({ current_step: "recitation", updated_at: new Date().toISOString() } as any)
-          .eq("user_id", user.id);
-        toast({ title: "✅ Onboarding complete!", description: "Proceeding to recitation test…" });
-        navigate("/student/recitation-test", { replace: true });
-        return;
-      }
-
-      // Exam exists — advance tasjeel and start/resume it
+      // Advance tasjeel to exam step — always, no step is ever skipped.
+      // EntranceExamResume handles finding/creating the attempt and shows
+      // its own error UI if the exam is not yet configured by admin.
       await supabase.from("tasjeel_progress" as any)
         .update({ current_step: "exam", updated_at: new Date().toISOString() } as any)
         .eq("user_id", user.id);
 
       toast({ title: "✅ Onboarding complete!", description: "Preparing your entrance exam…" });
-
-      try {
-        // Resume existing in-progress attempt if one exists
-        const { data: existing } = await supabase
-          .from("exam_attempts")
-          .select("id, status")
-          .eq("exam_id", ENTRANCE_EXAM_ID)
-          .eq("user_id", user.id)
-          .eq("status", "in_progress")
-          .maybeSingle();
-
-        if (existing) {
-          navigate(`/student/entrance-exam/${existing.id}`, { replace: true });
-          return;
-        }
-
-        // Create a new attempt
-        const { data: newAttempt, error: err } = await supabase
-          .from("exam_attempts")
-          .insert({ exam_id: ENTRANCE_EXAM_ID, user_id: user.id, status: "in_progress", started_at: new Date().toISOString() })
-          .select("id")
-          .single();
-
-        if (err || !newAttempt) {
-          // BUG 6 — was silently navigating to /student/exams with no feedback.
-          // Now shows a toast and goes to the entrance exam hub so the student
-          // knows what happened and can retry.
-          console.error("[Onboarding] Failed to create exam attempt:", err);
-          toast({
-            title: "Could not start exam",
-            description: "Your onboarding was saved. Please go to your exams page to begin the entrance exam.",
-            variant: "destructive",
-          });
-          navigate("/student/entrance-exam", { replace: true });
-          return;
-        }
-
-        await new Promise(r => setTimeout(r, 500));
-        navigate(`/student/entrance-exam/${newAttempt.id}`, { replace: true });
-      } catch (examErr: any) {
-        console.error("[Onboarding] exam attempt error:", examErr);
-        toast({
-          title: "Could not start exam",
-          description: "Your onboarding was saved. Please go to your exams page to begin the entrance exam.",
-          variant: "destructive",
-        });
-        navigate("/student/entrance-exam", { replace: true });
-      }
+      navigate("/student/entrance-exam", { replace: true });
     } catch (e: any) {
       toast({ title: "Error saving form", description: e.message, variant: "destructive" });
     } finally { setSaving(false); }
