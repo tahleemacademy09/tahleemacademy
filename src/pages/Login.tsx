@@ -65,10 +65,14 @@ const Login = () => {
 
         const step = (tp as any)?.current_step;
 
-        // Route map matching TASJEEL_ROUTES in useTasjeel.ts
+        // Route map matching TASJEEL_ROUTES in useTasjeel.ts.
+        // IMPORTANT: enrollment/payment must go to /auth/register-continue,
+        // NOT /register — the register page starts the form from scratch.
+        // RegisterContinue detects the session, reads the current step,
+        // and shows the payment screen or skips ahead if fee is disabled.
         const pipelineRoute: Record<string, string> = {
-          enrollment:       "/register",
-          payment:          "/register",
+          enrollment:       "/auth/register-continue",
+          payment:          "/auth/register-continue",
           onboarding:       "/onboarding",
           exam:             "/student/entrance-exam",
           recitation:       "/student/recitation-test",
@@ -78,6 +82,11 @@ const Login = () => {
 
         if (step && step !== "completed" && pipelineRoute[step]) {
           navigate(pipelineRoute[step], { replace: true });
+        } else if (!step) {
+          // No tasjeel_progress row yet — email was verified but RegisterContinue
+          // never ran (e.g. link opened in a different browser). Send them there
+          // now so it can initialise their pipeline and route them correctly.
+          navigate("/auth/register-continue", { replace: true });
         } else {
           // completed or unknown — go to dashboard as normal
           navigate("/student", { replace: true });
