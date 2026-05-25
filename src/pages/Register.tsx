@@ -4,7 +4,7 @@
 // via /auth/register-continue → /onboarding → /student/entrance-exam → /student/recitation-test → /registration-complete
 
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -101,9 +101,20 @@ const Shell = ({ children, language, setLanguage, config, currencySymbol }: Shel
 
 const Register = () => {
   const { t, language, setLanguage } = useLanguage() as any;
-  const { signUp }                   = useAuth();
+  const { signUp, user, loading: authLoading } = useAuth();
   const { toast }                    = useToast();
   const { config, loading: configLoading, currencySymbol } = useRegistrationSettings();
+  const navigate = useNavigate();
+
+  // ── Guard: already signed in + email verified → skip register form ─────────
+  // A user who verified their email and logs back in should land at
+  // /auth/register-continue (which reads their pipeline step and routes
+  // them forward) — NOT the register form, which would force them to
+  // re-enter details for an email that already exists.
+  useEffect(() => {
+    if (authLoading || !user) return;
+    navigate("/auth/register-continue", { replace: true });
+  }, [user, authLoading, navigate]);
 
   const isRTL = language === "ar";
 
@@ -165,61 +176,15 @@ const Register = () => {
     if (!pwValid)         { toast({ title: "Weak password", description: "Meet all requirements.", variant: "destructive" }); return; }
 
     setCreating(true);
-    const { data, error } = await signUp(email, password, fullName) as any;
+    const { error } = await signUp(email, password, fullName) as any;
     setCreating(false);
 
-    // ── Helper: resend verification for this email ───────────────────────────
-    const resendVerification = async () => {
-      const { supabase } = await import("@/integrations/supabase/client");
-      try {
-        await supabase.auth.resend({
-          type: "signup",
-          email,
-          options: { emailRedirectTo: `${window.location.origin}/auth/register-continue` },
-        });
-      } catch (_) {
-        // Resend may fail for already-confirmed accounts — that's fine,
-        // we still show the verify screen so they can try the Sign In link.
-      }
-    };
-
     if (error) {
-      // Supabase returns an explicit error for some duplicate-email scenarios.
-      // Instead of showing a confusing error, resend verification and move forward.
-      const isDuplicate =
-        error.message?.toLowerCase().includes("already registered") ||
-        error.message?.toLowerCase().includes("user already exists") ||
-        error.message?.toLowerCase().includes("email already") ||
-        error.status === 400;
-
-      if (isDuplicate) {
-        await resendVerification();
-        setPhase("verify");
-        toast({
-          title: "Verification email resent",
-          description: "This email was already registered. We've sent a fresh verification link — check your inbox (and spam folder).",
-        });
-        return;
-      }
-
       toast({ title: "Sign-up error", description: error.message, variant: "destructive" });
       return;
     }
 
-    // ── Silent duplicate: Supabase returns no error but user is null ─────────
-    // This happens when the email already exists in auth.users. signUp() does
-    // nothing but won't tell us why — we must call resend() ourselves.
-    if (!data?.user) {
-      await resendVerification();
-      setPhase("verify");
-      toast({
-        title: "Verification email resent",
-        description: "This email was previously registered. We've resent the verification link. If you're already verified, use Sign In instead.",
-      });
-      return;
-    }
-
-    // Normal new registration — show the verify screen
+    // Show the "check your email" screen
     setPhase("verify");
   };
 
@@ -228,25 +193,14 @@ const Register = () => {
     setResending(true);
     try {
       const { supabase } = await import("@/integrations/supabase/client");
-      const { error } = await supabase.auth.resend({
+      await supabase.auth.resend({
         type: "signup",
         email,
         options: { emailRedirectTo: `${window.location.origin}/auth/register-continue` },
       });
-      if (error) {
-        // "Email link is invalid or has expired" / rate-limit / already confirmed
-        toast({
-          title: "Could not resend",
-          description: error.message?.includes("rate")
-            ? "Too many attempts — wait a minute then try again."
-            : "If your email is already verified, please Sign In instead.",
-          variant: "destructive",
-        });
-      } else {
-        toast({ title: "Email resent ✓", description: "Check your inbox and spam folder." });
-      }
+      toast({ title: "Email resent", description: "Check your inbox again." });
     } catch {
-      toast({ title: "Network error — please try again", variant: "destructive" });
+      toast({ title: "Could not resend email", variant: "destructive" });
     } finally {
       setResending(false);
     }
