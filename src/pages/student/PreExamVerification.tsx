@@ -186,8 +186,26 @@ const PreExamVerification = () => {
   };
 
   const hasCriticalFailure = checks.some(c => c.status === "failed");
+  const cameraFailed = checks.find(c => c.id === "camera")?.status === "failed";
+  // Block proceed if camera is required and failed
+  const cameraBlocksStart = cameraFailed && (exam?.webcam_required ?? false);
   const passedCount = checks.filter(c => c.status === "passed").length;
   const progressPct = (passedCount / checks.length) * 100;
+
+  const retryCamera = async () => {
+    updateCheck("camera", "running");
+    webcamStream?.getTracks().forEach(t => t.stop());
+    setWebcamStream(null);
+    setFaceSnapshot(null);
+    setFaceCaptured(false);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+      setWebcamStream(stream);
+      updateCheck("camera", "passed", "Ready");
+    } catch (e: any) {
+      updateCheck("camera", "failed", e.name === "NotAllowedError" ? "Permission denied" : "Not available");
+    }
+  };
 
   const STEPS = ["info","checks","checklist","ready"];
   const stepIdx = STEPS.indexOf(step);
@@ -220,7 +238,7 @@ const PreExamVerification = () => {
     <div style={{ background:CREAM,minHeight:"100vh",fontFamily:"'Cairo',sans-serif" }}>
       <style>{"@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Playfair+Display:wght@700&display=swap'); @keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}"}</style>
       <canvas ref={canvasRef} style={{ display:"none" }}/>
-      {/* Hidden video for snapshots only — never shown to user */}
+      {/* Video element — hidden by default, shown as live preview during checks step */}
       <video ref={videoRef} autoPlay muted playsInline style={{ display:"none" }}/>
 
       {/* ── Top header bar ── */}
@@ -380,30 +398,65 @@ const PreExamVerification = () => {
                 ))}
               </div>
 
-              {/* Camera status */}
-              {webcamStream && (
+              {/* Camera live preview + retry */}
+              {(webcamStream || cameraFailed) && (
                 <div style={{ padding:"14px 18px",borderTop:"1px solid #f0f4f8" }}>
-                  <div style={{ display:"flex",alignItems:"center",gap:10,padding:"12px 14px",background: faceCaptured ? "#f0fff4" : "#f0f9ff",borderRadius:12,border:`1px solid ${faceCaptured ? "#86efac" : "#bae6fd"}` }}>
-                    <div style={{ fontSize:22,flexShrink:0 }}>{faceCaptured ? "✅" : "📷"}</div>
-                    <div style={{ flex:1 }}>
-                      <div style={{ fontSize:13,fontWeight:700,color: faceCaptured ? "#065f46" : "#0369a1" }}>
-                        {faceCaptured ? t("Verification photo captured","تم التقاط صورة التحقق") : t("Camera active — tap Capture for verification","الكاميرا نشطة — اضغط التقاط للتحقق")}
-                      </div>
-                      <div style={{ fontSize:11,color:TL,marginTop:2 }}>
-                        {faceCaptured ? t("Your identity is recorded for this session.","تم تسجيل هويتك لهذه الجلسة.") : t("A photo will be taken automatically on exam start.","سيتم التقاط صورة تلقائياً عند البدء.")}
+                  {/* Live camera preview */}
+                  {webcamStream && (
+                    <div style={{ marginBottom:10,borderRadius:12,overflow:"hidden",border:"2px solid #86efac",background:"#000",aspectRatio:"4/3",position:"relative" }}>
+                      <video
+                        autoPlay muted playsInline
+                        ref={el => { if (el && webcamStream) { el.srcObject = webcamStream; el.play().catch(()=>{}); } }}
+                        style={{ width:"100%",height:"100%",objectFit:"cover",transform:"scaleX(-1)",display:"block" }}
+                      />
+                      <div style={{ position:"absolute",top:8,right:8,background:"rgba(34,197,94,.9)",borderRadius:20,padding:"3px 9px",fontSize:10,fontWeight:700,color:"#fff" }}>
+                        ✓ {t("Live","مباشر")}
                       </div>
                     </div>
-                    {!faceCaptured ? (
-                      <button onClick={captureSnapshot} style={{ padding:"8px 14px",borderRadius:10,background:G,border:"none",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0 }}>
-                        {t("Capture","التقاط")}
+                  )}
+
+                  {/* Camera failed — show retry */}
+                  {cameraFailed && (
+                    <div style={{ background:"#fff5f5",borderRadius:12,padding:"12px 14px",border:"1px solid #fca5a5",marginBottom:10 }}>
+                      <div style={{ fontSize:13,fontWeight:700,color:"#dc2626",marginBottom:6 }}>
+                        📷 {t("Camera not available","الكاميرا غير متاحة")}
+                      </div>
+                      <div style={{ fontSize:12,color:"#7f1d1d",marginBottom:10,lineHeight:1.5 }}>
+                        {exam?.webcam_required
+                          ? t("This exam requires a working camera. Allow camera access and tap Retry.","هذا الامتحان يتطلب كاميرا. السماح بالوصول إليها واضغط إعادة المحاولة.")
+                          : t("Camera access was denied. You can still proceed, but identity may not be verified.","تم رفض الوصول للكاميرا. يمكنك المتابعة لكن الهوية لن تُتحقق منها.")}
+                      </div>
+                      <button onClick={retryCamera} style={{ padding:"9px 18px",borderRadius:10,background:G,border:"none",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer" }}>
+                        🔄 {t("Retry Camera","إعادة محاولة الكاميرا")}
                       </button>
-                    ) : (
-                      <button onClick={() => { setFaceSnapshot(null); setFaceCaptured(false); }} style={{ padding:"6px 12px",borderRadius:10,background:"none",border:"1px solid #86efac",color:"#065f46",fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0 }}>
-                        {t("Redo","إعادة")}
-                      </button>
-                    )}
-                  </div>
-                  {/* Snapshot preview */}
+                    </div>
+                  )}
+
+                  {/* Capture button (only when camera is working) */}
+                  {webcamStream && !cameraFailed && (
+                    <div style={{ display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background: faceCaptured ? "#f0fff4" : "#f0f9ff",borderRadius:10,border:`1px solid ${faceCaptured ? "#86efac" : "#bae6fd"}` }}>
+                      <div style={{ fontSize:20,flexShrink:0 }}>{faceCaptured ? "✅" : "📷"}</div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:13,fontWeight:700,color: faceCaptured ? "#065f46" : "#0369a1" }}>
+                          {faceCaptured ? t("Verification photo captured","تم التقاط صورة التحقق") : t("Tap Capture for identity verification","اضغط التقاط للتحقق من الهوية")}
+                        </div>
+                        <div style={{ fontSize:11,color:TL,marginTop:2 }}>
+                          {faceCaptured ? t("Your identity is recorded.","تم تسجيل هويتك.") : t("A snapshot will be taken on exam start.","سيتم التقاط صورة عند البدء.")}
+                        </div>
+                      </div>
+                      {!faceCaptured ? (
+                        <button onClick={captureSnapshot} style={{ padding:"8px 14px",borderRadius:10,background:G,border:"none",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0 }}>
+                          {t("Capture","التقاط")}
+                        </button>
+                      ) : (
+                        <button onClick={() => { setFaceSnapshot(null); setFaceCaptured(false); }} style={{ padding:"6px 12px",borderRadius:10,background:"none",border:"1px solid #86efac",color:"#065f46",fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0 }}>
+                          {t("Redo","إعادة")}
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Snapshot preview / confirm */}
                   {faceSnapshot && !faceCaptured && (
                     <div style={{ marginTop:10,borderRadius:12,overflow:"hidden",border:"2px solid #fbbf24" }}>
                       <div style={{ background:"#fffbeb",padding:"7px 12px",fontSize:11,fontWeight:700,color:"#92400e" }}>
@@ -438,15 +491,48 @@ const PreExamVerification = () => {
             </div>
 
             {checksComplete && (
-              <button onClick={() => setStep("checklist")} style={{
-                width:"100%",padding:"16px",borderRadius:16,border:"none",color:"#fff",fontSize:15,fontWeight:800,cursor:"pointer",
-                display:"flex",alignItems:"center",justifyContent:"center",gap:8,
-                background: hasCriticalFailure ? "linear-gradient(135deg,#dc2626,#b91c1c)" : `linear-gradient(135deg,${G},${GM})`,
-                boxShadow:"0 4px 16px rgba(15,45,31,.3)",
-              }}>
-                {hasCriticalFailure ? t("Some checks failed — proceed anyway?","فشل بعض الفحوصات — متابعة؟") : t("Continue to Checklist","المتابعة إلى القائمة")}
-                <ChevronRight style={{width:18,height:18}}/>
-              </button>
+              <>
+                {/* Camera required and failed — hard block */}
+                {cameraBlocksStart && (
+                  <div style={{ background:"#fff5f5",borderRadius:14,padding:"14px 16px",marginBottom:10,border:"2px solid #fca5a5",display:"flex",gap:10,alignItems:"flex-start" }}>
+                    <XCircle style={{width:18,height:18,color:"#dc2626",flexShrink:0,marginTop:1}}/>
+                    <div>
+                      <div style={{ fontSize:13,fontWeight:800,color:"#991b1b",marginBottom:4 }}>
+                        {t("Camera required","الكاميرا مطلوبة")}
+                      </div>
+                      <div style={{ fontSize:12,color:"#7f1d1d",lineHeight:1.5,marginBottom:10 }}>
+                        {t("This exam requires a working camera. Please enable your camera and tap Retry Camera above, then continue.","يتطلب هذا الامتحان كاميرا. يرجى تمكين الكاميرا والضغط على إعادة المحاولة أعلاه ثم المتابعة.")}
+                      </div>
+                      <button onClick={retryCamera} style={{ padding:"9px 18px",borderRadius:10,background:"#dc2626",border:"none",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer" }}>
+                        🔄 {t("Retry Camera","إعادة محاولة الكاميرا")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <button
+                  onClick={() => setStep("checklist")}
+                  disabled={cameraBlocksStart}
+                  style={{
+                    width:"100%",padding:"16px",borderRadius:16,border:"none",color:"#fff",fontSize:15,fontWeight:800,
+                    cursor: cameraBlocksStart ? "not-allowed" : "pointer",
+                    display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+                    background: cameraBlocksStart
+                      ? "#9ca3af"
+                      : hasCriticalFailure
+                        ? "linear-gradient(135deg,#dc2626,#b91c1c)"
+                        : `linear-gradient(135deg,${G},${GM})`,
+                    boxShadow: cameraBlocksStart ? "none" : "0 4px 16px rgba(15,45,31,.3)",
+                    opacity: cameraBlocksStart ? 0.7 : 1,
+                  }}
+                >
+                  {cameraBlocksStart
+                    ? t("Enable camera to continue","تمكين الكاميرا للمتابعة")
+                    : hasCriticalFailure
+                      ? t("Some checks failed — proceed anyway?","فشل بعض الفحوصات — متابعة؟")
+                      : t("Continue to Checklist","المتابعة إلى القائمة")}
+                  {!cameraBlocksStart && <ChevronRight style={{width:18,height:18}}/>}
+                </button>
+              </>
             )}
           </div>
         )}
