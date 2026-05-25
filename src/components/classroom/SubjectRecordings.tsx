@@ -46,16 +46,45 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   const { data: recordings, isLoading } = useQuery({
     queryKey: ["recordings", subjectId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      // Primary query: by subject_id (covers normally-saved recordings)
+      const { data: bySubject, error: e1 } = await supabase
         .from("session_recordings").select("*").eq("subject_id", subjectId)
         .order("created_at", { ascending: false });
-      if (error) throw error;
+      if (e1) throw e1;
+
+      // Secondary query: find sessions for this subject, then get recordings by session_id
+      // This catches recordings where subject_id was null at save time (emergency saves)
+      const { data: sessions } = await supabase
+        .from("live_sessions").select("id").eq("subject_id", subjectId);
+      const sessionIds = (sessions || []).map((s: any) => s.id);
+
+      let bySession: any[] = [];
+      if (sessionIds.length > 0) {
+        const { data: sr } = await supabase
+          .from("session_recordings").select("*")
+          .in("session_id", sessionIds)
+          .is("subject_id", null)          // only orphaned rows (subject_id not set)
+          .order("created_at", { ascending: false });
+        bySession = sr || [];
+      }
+
+      // Merge + deduplicate by id, sort newest first
+      const all = [...(bySubject || []), ...bySession];
+      const seen = new Set<string>();
+      const merged = all.filter((r: any) => {
+        if (seen.has(r.id)) return false;
+        seen.add(r.id);
+        return true;
+      }).sort((a: any, b: any) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
       // Filter by visibility for students (admins/teachers see everything)
-      if (isPrivileged) return data;
-      return (data || []).filter((r: any) => {
+      if (isPrivileged) return merged;
+      return merged.filter((r: any) => {
         if (r.visibility === "private") return isPrivateStudent;
         if (r.visibility === "general") return !isPrivateStudent;
-        return true; // 'all' or null
+        return true; // "all" or null
       });
     },
   });
