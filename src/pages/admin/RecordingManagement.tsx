@@ -38,12 +38,26 @@ const RecordingManagement = () => {
   const fetchData = async () => {
     const [{ data: subs }, { data: recs }] = await Promise.all([
       supabase.from("subjects").select("id, title, title_ar"),
+      // Select all recordings; LEFT JOIN subjects so orphaned rows (null subject_id) still appear.
+      // Also join live_sessions to recover subject info for session-linked recordings.
       supabase.from("session_recordings")
-        .select("*, subjects(title, title_ar)")
+        .select("*, subjects(title, title_ar), live_sessions(subject_id, subjects(title, title_ar))")
         .order("created_at", { ascending: false }),
     ]);
     setSubjects(subs || []);
-    setRecordings(recs || []);
+
+    // Normalise: if subject_id is null but we have session data, backfill from session
+    const normalised = (recs || []).map((r: any) => {
+      if (!r.subject_id && r.live_sessions?.subject_id) {
+        return {
+          ...r,
+          subject_id: r.live_sessions.subject_id,
+          subjects:   r.live_sessions.subjects ?? r.subjects,
+        };
+      }
+      return r;
+    });
+    setRecordings(normalised);
     setLoading(false);
   };
 
