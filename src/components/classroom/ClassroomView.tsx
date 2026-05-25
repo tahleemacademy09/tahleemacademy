@@ -3031,6 +3031,9 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           <button className="gm-more-item" onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{color:canStudentWriteProp?"#34d399":"#e8eaed"}}>
             <PenTool style={{width:16,height:16}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
           </button>
+          <button className="gm-more-item" onClick={()=>{onPermChange?.("rec",!canStudentRecProp,room);setMoreOpen(false);}} style={{color:canStudentRecProp?"#f87171":"#e8eaed"}}>
+            <Circle style={{width:13,height:13,fill:canStudentRecProp?"#ef4444":"none",color:canStudentRecProp?"#ef4444":"#e8eaed"}}/> {canStudentRecProp?"Revoke Recording":"Allow Students to Record"}
+          </button>
           <button className="gm-more-item" onClick={async()=>{
             await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
             try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
@@ -3611,42 +3614,33 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             padding:"0 14px 0 16px",flexShrink:0,
             borderBottom:"1px solid rgba(255,255,255,.05)",gap:8,
           }}>
-            {/* LEFT — meeting info */}
-            <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
-              {/* Live dot + subject */}
-              <div className="gm-badge" style={{background:"rgba(234,67,53,.12)",border:"1px solid rgba(234,67,53,.25)",color:"#fff",flexShrink:0}}>
-                <span style={{width:7,height:7,borderRadius:"50%",background:"#ea4335",display:"inline-block",animation:"pip-pulse 1.8s ease-in-out infinite"}}/>
-                <span style={{fontSize:13,fontWeight:500,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{subject.title}</span>
+            {/* LEFT — LIVE badge + subject title only (keeps mobile header uncluttered) */}
+            <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0,overflow:"hidden"}}>
+              <div className="gm-badge" style={{background:"rgba(234,67,53,.12)",border:"1px solid rgba(234,67,53,.25)",color:"#fff",flexShrink:0,maxWidth:isMobile?"52vw":"none"}}>
+                <span style={{width:7,height:7,borderRadius:"50%",background:"#ea4335",display:"inline-block",flexShrink:0,animation:"pip-pulse 1.8s ease-in-out infinite"}}/>
+                <span style={{fontSize:13,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{subject.title}</span>
               </div>
+              {/* Raised-hand count — admin only, compact dot badge */}
+              {isPrivileged&&raisedHands.length>0&&(
+                <div className="gm-badge" style={{background:"rgba(251,191,36,.12)",border:"1px solid rgba(251,191,36,.3)",color:"#fbbf24",flexShrink:0,padding:"3px 8px"}}>
+                  <span style={{fontSize:12,animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>
+                  <span style={{fontSize:11,fontWeight:600,fontFamily:"'Google Sans',sans-serif"}}>{raisedHands.length}</span>
+                </div>
+              )}
+            </div>
+
+            {/* RIGHT — timer · participants · [layout desktop] · [rec admin] */}
+            <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
               {/* Timer */}
-              <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0}}>
-                <Circle style={{width:6,height:6,fill:"#ea4335",color:"#ea4335",animation:"rec-pulse 1.4s ease-in-out infinite"}}/>
+              <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",padding:"3px 8px"}}>
+                <Circle style={{width:6,height:6,fill:"#ea4335",color:"#ea4335",animation:"rec-pulse 1.4s ease-in-out infinite",flexShrink:0}}/>
                 <span style={{fontSize:12,fontWeight:500,fontVariantNumeric:"tabular-nums",fontFamily:"'Google Sans',sans-serif"}}>{fmtT(duration)}</span>
               </div>
               {/* Participant count */}
               <ParticipantCountBadge/>
-              {/* Permission badges */}
-              {!isPrivileged&&canStudentWrite&&(
-                <div className="gm-badge" title="You can write on the board" style={{background:"rgba(52,211,153,.1)",border:"1px solid rgba(52,211,153,.25)",color:"#34d399",cursor:"pointer",flexShrink:0}} onClick={()=>setWbOpen(v=>!v)}>
-                  <PenTool style={{width:11,height:11}}/><span style={{fontSize:11,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{isMobile?"Board":"Write"}</span>
-                </div>
-              )}
-              {!isPrivileged&&canStudentRec&&(
-                <div className="gm-badge" style={{background:"rgba(234,67,53,.1)",border:"1px solid rgba(234,67,53,.25)",color:"#fca5a5",flexShrink:0}}>
-                  <Circle style={{width:8,height:8,fill:"#ea4335",color:"#ea4335",animation:"rec-pulse 1.4s ease-in-out infinite"}}/>
-                  <span style={{fontSize:11,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>Record</span>
-                </div>
-              )}
-              {isPrivileged&&raisedHands.length>0&&(
-                <div className="gm-badge" style={{background:"rgba(251,191,36,.12)",border:"1px solid rgba(251,191,36,.3)",color:"#fbbf24",flexShrink:0}}>
-                  <span style={{fontSize:13,animation:"hand-bounce 1.2s ease-in-out infinite"}}>✋</span>
-                  <span style={{fontSize:12,fontWeight:600,fontFamily:"'Google Sans',sans-serif"}}>{raisedHands.length}</span>
-                </div>
-              )}
-            </div>
-            {/* RIGHT — layout switcher (desktop only) + record */}
-            <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+              {/* Layout switcher — desktop only */}
               {!isMobile&&<LayoutSwitcher layout={layout} onChange={setLayout}/>}
+              {/* RecController — admin only */}
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
             </div>
           </div>
