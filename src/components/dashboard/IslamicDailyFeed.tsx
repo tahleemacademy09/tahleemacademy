@@ -1,16 +1,13 @@
 /*  src/components/dashboard/IslamicDailyFeed.tsx
-    Islamic Daily Feed — Hadith · Seerah · Events · News
-    Tabs rotate daily; news fetched live from RSS.
+    Islamic Daily Feed — Live Hadith · Rich Seerah · Events · Multi-source News
 */
 import { useState, useEffect } from "react";
-import { Star, BookMarked, ScrollText, CalendarDays, Newspaper, ExternalLink, RefreshCw, ChevronLeft, ChevronRight } from "lucide-react";
+import { BookMarked, ScrollText, CalendarDays, Newspaper, ExternalLink, RefreshCw, Star, ChevronDown, ChevronUp } from "lucide-react";
 
-// ── Color palette (matches StudentDashboard) ──────────────────────────────
 const DARK_GREEN = "#0f2d1f";
 const MID_GREEN  = "#1a4731";
 const GOLD       = "#c9a84c";
 const GOLD_LIGHT = "#e4c36a";
-const CREAM      = "#faf6ee";
 const TEXT_DARK  = "#0f2d1f";
 const TEXT_MED   = "#4a7c59";
 const TEXT_LIGHT = "#7a9e88";
@@ -18,7 +15,6 @@ const BORDER     = "rgba(15,45,31,0.1)";
 const AMBER      = "#92400e";
 const AMBER_BG   = "#fffbeb";
 
-// ── Helpers ───────────────────────────────────────────────────────────────
 const dayOfYear = () =>
   Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
 
@@ -34,110 +30,336 @@ const getHijriNumeric = (date: Date): { day: number; month: number } => {
   } catch { return { day: 0, month: 0 }; }
 };
 
-// ── Hadith Data ───────────────────────────────────────────────────────────
-const HADITHS = [
-  { ar: "إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ، وَإِنَّمَا لِكُلِّ امْرِئٍ مَا نَوَى", en: "Actions are only by intentions, and every person will have only what they intended.", source: "Sahih al-Bukhari 1", narrator: "Umar ibn al-Khattab رضي الله عنه" },
-  { ar: "الْمُسْلِمُ مَنْ سَلِمَ الْمُسْلِمُونَ مِنْ لِسَانِهِ وَيَدِهِ", en: "A Muslim is one from whose tongue and hand other Muslims are safe.", source: "Sahih al-Bukhari 10", narrator: "Abdullah ibn Amr رضي الله عنه" },
-  { ar: "لاَ يُؤْمِنُ أَحَدُكُمْ حَتَّى يُحِبَّ لأَخِيهِ مَا يُحِبُّ لِنَفْسِهِ", en: "None of you truly believes until he loves for his brother what he loves for himself.", source: "Sahih al-Bukhari 13", narrator: "Anas ibn Malik رضي الله عنه" },
-  { ar: "مَنْ كَانَ يُؤْمِنُ بِاللَّهِ وَالْيَوْمِ الآخِرِ فَلْيَقُلْ خَيْرًا أَوْ لِيَصْمُتْ", en: "Whoever believes in Allah and the Last Day should speak good or remain silent.", source: "Sahih al-Bukhari 6018", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "إِنَّ اللَّهَ لاَ يَنْظُرُ إِلَى صُوَرِكُمْ وَأَمْوَالِكُمْ، وَلَكِنْ يَنْظُرُ إِلَى قُلُوبِكُمْ وَأَعْمَالِكُمْ", en: "Allah does not look at your forms and wealth, but He looks at your hearts and deeds.", source: "Sahih Muslim 2564", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "خَيْرُكُمْ مَنْ تَعَلَّمَ الْقُرْآنَ وَعَلَّمَهُ", en: "The best of you are those who learn the Quran and teach it.", source: "Sahih al-Bukhari 5027", narrator: "Uthman ibn Affan رضي الله عنه" },
-  { ar: "أَحَبُّ الأَعْمَالِ إِلَى اللَّهِ أَدْوَمُهَا وَإِنْ قَلَّ", en: "The most beloved deeds to Allah are those done consistently, even if they are few.", source: "Sahih al-Bukhari 6465", narrator: "Aishah رضي الله عنها" },
-  { ar: "الدِّينُ النَّصِيحَةُ", en: "The religion is sincere advice and well-wishing.", source: "Sahih Muslim 55", narrator: "Tamim al-Dari رضي الله عنه" },
-  { ar: "اتَّقِ اللَّهَ حَيْثُمَا كُنْتَ، وَأَتْبِعِ السَّيِّئَةَ الْحَسَنَةَ تَمْحُهَا، وَخَالِقِ النَّاسَ بِخُلُقٍ حَسَنٍ", en: "Fear Allah wherever you are. Follow a bad deed with a good one to erase it, and treat people with excellent character.", source: "Tirmidhi 1987", narrator: "Muadh ibn Jabal رضي الله عنه" },
-  { ar: "مَا نَقَصَتْ صَدَقَةٌ مِنْ مَالٍ", en: "Charity does not decrease wealth.", source: "Sahih Muslim 2588", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "طَلَبُ الْعِلْمِ فَرِيضَةٌ عَلَى كُلِّ مُسْلِمٍ", en: "Seeking knowledge is an obligation upon every Muslim.", source: "Ibn Majah 224", narrator: "Anas ibn Malik رضي الله عنه" },
-  { ar: "مَنْ سَلَكَ طَرِيقًا يَلْتَمِسُ فِيهِ عِلْمًا سَهَّلَ اللَّهُ لَهُ طَرِيقًا إِلَى الْجَنَّةِ", en: "Whoever treads a path in search of knowledge, Allah will ease for him a path to Paradise.", source: "Sahih Muslim 2699", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "أَكْمَلُ الْمُؤْمِنِينَ إِيمَانًا أَحْسَنُهُمْ خُلُقًا", en: "The most complete of the believers in faith is the best of them in character.", source: "Abu Dawud 4682", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "مَنْ لاَ يَرْحَمُ النَّاسَ لاَ يَرْحَمُهُ اللَّهُ", en: "He who does not show mercy to people will not be shown mercy by Allah.", source: "Sahih al-Bukhari 7376", narrator: "Jarir ibn Abdillah رضي الله عنه" },
-  { ar: "الْمُؤْمِنُ لِلْمُؤْمِنِ كَالْبُنْيَانِ يَشُدُّ بَعْضُهُ بَعْضًا", en: "The believer to the believer is like a building, each part strengthening the other.", source: "Sahih al-Bukhari 481", narrator: "Abu Musa al-Ashari رضي الله عنه" },
-  { ar: "تَبَسُّمُكَ فِي وَجْهِ أَخِيكَ صَدَقَةٌ", en: "Your smile in the face of your brother is an act of charity.", source: "Tirmidhi 1956", narrator: "Abu Dharr رضي الله عنه" },
-  { ar: "لَيْسَ الشَّدِيدُ بِالصُّرَعَةِ، إِنَّمَا الشَّدِيدُ الَّذِي يَمْلِكُ نَفْسَهُ عِنْدَ الْغَضَبِ", en: "The strong person is not the one who can wrestle; the truly strong person is the one who controls himself when angry.", source: "Sahih al-Bukhari 6114", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "حُفَّتِ الْجَنَّةُ بِالْمَكَارِهِ وَحُفَّتِ النَّارُ بِالشَّهَوَاتِ", en: "Paradise is surrounded by hardships, and Hellfire is surrounded by desires.", source: "Sahih Muslim 2822", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "كُنْ فِي الدُّنْيَا كَأَنَّكَ غَرِيبٌ أَوْ عَابِرُ سَبِيلٍ", en: "Be in this world as if you were a stranger or a wayfarer.", source: "Sahih al-Bukhari 6416", narrator: "Ibn Umar رضي الله عنه" },
-  { ar: "مَنْ حَسُنَ إِسْلاَمُ الْمَرْءِ تَرْكُهُ مَا لاَ يَعْنِيهِ", en: "A sign of a person's good Islam is his leaving what does not concern him.", source: "Tirmidhi 2317", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "إِذَا مَاتَ الإِنْسَانُ انْقَطَعَ عَنْهُ عَمَلُهُ إِلاَّ مِنْ ثَلاَثَةٍ: إِلاَّ مِنْ صَدَقَةٍ جَارِيَةٍ، أَوْ عِلْمٍ يُنْتَفَعُ بِهِ، أَوْ وَلَدٍ صَالِحٍ يَدْعُو لَهُ", en: "When a person dies, his deeds come to an end except for three: ongoing charity, knowledge that benefits others, or a righteous child who prays for him.", source: "Sahih Muslim 1631", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "اسْتَعِنْ بِاللَّهِ وَلاَ تَعْجَزْ", en: "Seek the help of Allah and do not lose heart.", source: "Sahih Muslim 2664", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "الْيَدُ الْعُلْيَا خَيْرٌ مِنَ الْيَدِ السُّفْلَى", en: "The upper hand is better than the lower hand — the giving hand is better than the receiving.", source: "Sahih al-Bukhari 1427", narrator: "Ibn Umar رضي الله عنه" },
-  { ar: "لاَ يَشْكُرُ اللَّهَ مَنْ لاَ يَشْكُرُ النَّاسَ", en: "He who is not grateful to people is not grateful to Allah.", source: "Abu Dawud 4811", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "مَنْ أَحَبَّ لِقَاءَ اللَّهِ أَحَبَّ اللَّهُ لِقَاءَهُ", en: "Whoever loves to meet Allah, Allah loves to meet him.", source: "Sahih al-Bukhari 6507", narrator: "Aishah رضي الله عنها" },
-  { ar: "خَيْرُ الصَّدَقَةِ مَا كَانَ عَنْ ظَهْرِ غِنًى", en: "The best charity is that given when you yourself are in need.", source: "Sahih al-Bukhari 1426", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "مَنْ صَامَ رَمَضَانَ إِيمَانًا وَاحْتِسَابًا غُفِرَ لَهُ مَا تَقَدَّمَ مِنْ ذَنْبِهِ", en: "Whoever fasts Ramadan with faith and hoping for reward, his previous sins will be forgiven.", source: "Sahih al-Bukhari 38", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "أَحَبُّ النَّاسِ إِلَى اللَّهِ أَنْفَعُهُمْ لِلنَّاسِ", en: "The most beloved of people to Allah are those most beneficial to people.", source: "Al-Mu'jam al-Awsat 5787", narrator: "Ibn Umar رضي الله عنه" },
-  { ar: "إِنَّ مِنْ أَحَبِّكُمْ إِلَيَّ أَحَاسِنَكُمْ أَخْلاَقًا", en: "The most beloved of you to me are those with the finest character.", source: "Sahih al-Bukhari 3759", narrator: "Jabir رضي الله عنه" },
-  { ar: "رَأْسُ الأَمْرِ الإِسْلاَمُ، وَعَمُودُهُ الصَّلاَةُ، وَذِرْوَةُ سَنَامِهِ الْجِهَادُ", en: "The head of the matter is Islam, its pillar is the prayer, and its highest point is striving in the path of Allah.", source: "Tirmidhi 2616", narrator: "Muadh ibn Jabal رضي الله عنه" },
-  { ar: "مَا مَلأَ ابْنُ آدَمَ وِعَاءً شَرًّا مِنْ بَطْنٍ", en: "No person has filled a vessel worse than their stomach. A few mouthfuls to keep the back straight are sufficient.", source: "Tirmidhi 2380", narrator: "Miqdam ibn Madikarib رضي الله عنه" },
-  { ar: "إِنَّ الصِّدْقَ يَهْدِي إِلَى الْبِرِّ وَإِنَّ الْبِرَّ يَهْدِي إِلَى الْجَنَّةِ", en: "Truthfulness leads to righteousness, and righteousness leads to Paradise.", source: "Sahih al-Bukhari 6094", narrator: "Ibn Masud رضي الله عنه" },
-  { ar: "مَنْ غَشَّنَا فَلَيْسَ مِنَّا", en: "Whoever deceives us is not of us.", source: "Sahih Muslim 101", narrator: "Abu Hurayrah رضي الله عنه" },
-  { ar: "الطُّهُورُ شَطْرُ الإِيمَانِ", en: "Purity is half of faith.", source: "Sahih Muslim 223", narrator: "Abu Malik al-Ashari رضي الله عنه" },
-  { ar: "خَيْرُكُمْ خَيْرُكُمْ لأَهْلِهِ وَأَنَا خَيْرُكُمْ لأَهْلِي", en: "The best of you is the best to his family, and I am the best of you to my family.", source: "Tirmidhi 3895", narrator: "Aishah رضي الله عنها" },
+// ── Fallback Hadiths (used if API fails) ─────────────────────────────────
+const FALLBACK_HADITHS = [
+  { ar: "إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ وَإِنَّمَا لِكُلِّ امْرِئٍ مَا نَوَى", en: "Actions are only by intentions, and every person will have only what they intended.", source: "Sahih al-Bukhari 1", narrator: "Umar ibn al-Khattab رضي الله عنه", grade: "Sahih", explanation: "This is one of the foundational hadiths of Islam. Imam al-Nawawi considered it one of the hadiths upon which Islamic jurisprudence revolves. It means that the validity and reward of every deed depends entirely on the intention behind it. A person who fasts with sincerity for Allah receives full reward, while one who fasts to be seen by people receives nothing. The Prophet ﷺ himself said: 'Verily Allah does not look at your bodies or your appearances, but He looks at your hearts and your deeds.' (Muslim 2564)" },
+  { ar: "خَيْرُكُمْ مَنْ تَعَلَّمَ الْقُرْآنَ وَعَلَّمَهُ", en: "The best of you are those who learn the Quran and teach it.", source: "Sahih al-Bukhari 5027", narrator: "Uthman ibn Affan رضي الله عنه", grade: "Sahih", explanation: "This hadith elevates those who dedicate themselves to the Quran — both learning it and passing it on. Allah says: 'Indeed, it is We who sent down the Quran and indeed, We will be its guardian.' (15:9). The scholars explain that 'learning' includes memorisation, understanding tafseer and tajweed, while 'teaching' encompasses all forms of transmission — formal classes, corrections, or simply reciting to one's child. Imam al-Bukhari placed this hadith in Kitab Fadha'il al-Quran. The Prophet ﷺ also said: 'The one who recites the Quran skillfully will be with the noble, dutiful angels, and the one who recites with difficulty will have a double reward.' (Muslim 798)" },
+  { ar: "لاَ يُؤْمِنُ أَحَدُكُمْ حَتَّى يُحِبَّ لأَخِيهِ مَا يُحِبُّ لِنَفْسِهِ", en: "None of you truly believes until he loves for his brother what he loves for himself.", source: "Sahih al-Bukhari 13", narrator: "Anas ibn Malik رضي الله عنه", grade: "Sahih", explanation: "This hadith defines a cornerstone of Islamic brotherhood. The word 'brother' here includes all Muslims — men and women. Ibn Rajab al-Hanbali explains that this love should extend beyond Muslims to all of humanity in terms of wishing guidance and goodness for them. The Quran says: 'The believers are but brothers.' (49:10). This principle prevents jealousy, schadenfreude, and competitive meanness. The Prophet ﷺ also said: 'Do not envy one another, do not inflate prices against one another, do not hate one another, do not turn away from one another... be servants of Allah and brothers.' (Muslim 2564)" },
+  { ar: "مَنْ كَانَ يُؤْمِنُ بِاللَّهِ وَالْيَوْمِ الآخِرِ فَلْيَقُلْ خَيْرًا أَوْ لِيَصْمُتْ", en: "Whoever believes in Allah and the Last Day should speak good or remain silent.", source: "Sahih al-Bukhari 6018", narrator: "Abu Hurayrah رضي الله عنه", grade: "Sahih", explanation: "Imam al-Nawawi called this one of the most comprehensive hadiths, saying it is sufficient for the disciplining of the tongue. Allah says: 'Not a word does he utter but there is a watcher by him ready to record it.' (50:18). The Prophet ﷺ also warned: 'A man might say a word pleasing to Allah without considering it significant, yet Allah will raise him many degrees. A man might say a word displeasing to Allah without considering it significant, yet it will cast him into Hellfire.' (Bukhari 6478). Silence is ibadah when speech would bring sin." },
+  { ar: "أَحَبُّ الأَعْمَالِ إِلَى اللَّهِ أَدْوَمُهَا وَإِنْ قَلَّ", en: "The most beloved deeds to Allah are those done consistently, even if they are few.", source: "Sahih al-Bukhari 6465", narrator: "Aishah رضي الله عنها", grade: "Sahih", explanation: "This hadith establishes the Islamic principle of consistency over quantity. The Prophet ﷺ himself had consistent daily practices (rawatib, morning/evening adhkar, night prayer) that he never abandoned even while travelling. Aishah (RA) said: 'His deeds were continuous.' (Muslim 746). Ibn Hajar explains that consistent deeds, even if small, keep the heart connected to Allah, while bursts of intense worship followed by complete abandonment do not. Allah says: 'So worship Him and be steadfast in His worship.' (19:65). Start small — one page of Quran daily is better than ten pages once a week." },
+  { ar: "إِنَّ اللَّهَ لاَ يَنْظُرُ إِلَى صُوَرِكُمْ وَأَمْوَالِكُمْ وَلَكِنْ يَنْظُرُ إِلَى قُلُوبِكُمْ وَأَعْمَالِكُمْ", en: "Allah does not look at your forms and wealth, but He looks at your hearts and deeds.", source: "Sahih Muslim 2564", narrator: "Abu Hurayrah رضي الله عنه", grade: "Sahih", explanation: "This hadith is a tremendous equaliser. Wealth, beauty, social status, and race are irrelevant to Allah. What matters is taqwa and sincerity. The Quran confirms: 'Indeed, the most noble of you in the sight of Allah is the most righteous.' (49:13). The Prophet ﷺ demonstrated this by elevating Bilal (a freed slave), Salman al-Farisi (a Persian), and Suhayb al-Rumi (a Roman) to positions of honour. Ibn al-Qayyim wrote extensively that the condition of the heart directly shapes the quality of deeds — a sound heart produces sound actions, and a corrupt heart corrupts even outwardly good deeds." },
+  { ar: "طَلَبُ الْعِلْمِ فَرِيضَةٌ عَلَى كُلِّ مُسْلِمٍ", en: "Seeking knowledge is an obligation upon every Muslim.", source: "Ibn Majah 224", narrator: "Anas ibn Malik رضي الله عنه", grade: "Sahih (authenticated by al-Albani)", explanation: "The obligation applies to the religious knowledge every Muslim needs for their own practice (fard 'ayn) — knowing how to pray, fast, deal honestly, etc. Beyond that, collective knowledge obligations (fard kifayah) include scholarship, medicine, and other disciplines the Ummah needs. The Quran begins with 'Iqra' (Read!) and contains the word 'ilm (knowledge) and its derivatives over 750 times. Allah says: 'Are those who know equal to those who do not know?' (39:9). The Prophet ﷺ also said: 'Whoever travels a path seeking knowledge, Allah will ease for him a path to Paradise.' (Muslim 2699). Knowledge is the foundation upon which all worship is built correctly." },
+  { ar: "حُفَّتِ الْجَنَّةُ بِالْمَكَارِهِ وَحُفَّتِ النَّارُ بِالشَّهَوَاتِ", en: "Paradise is surrounded by hardships, and Hellfire is surrounded by desires.", source: "Sahih Muslim 2822", narrator: "Abu Hurayrah رضي الله عنه", grade: "Sahih", explanation: "Ibn al-Qayyim commented extensively on this hadith in his masterpiece Madarij al-Salikin. The meaning is that the path to Paradise requires pushing through discomfort — waking for Fajr, controlling desires, being patient in adversity, spending in charity. The path to Hellfire, by contrast, is lined with pleasures that feel easy and natural to the nafs. Allah says: 'Indeed, man was created anxious — when evil touches him, impatient, and when good touches him, withholding.' (70:19-21). The antidote is salah: 'Except the performers of prayer.' (70:22). Every act of worship is a small battle against the nafs — and each victory draws you closer to Paradise." },
+  { ar: "كُنْ فِي الدُّنْيَا كَأَنَّكَ غَرِيبٌ أَوْ عَابِرُ سَبِيلٍ", en: "Be in this world as though you were a stranger or a wayfarer.", source: "Sahih al-Bukhari 6416", narrator: "Ibn Umar رضي الله عنه", grade: "Sahih", explanation: "This hadith is the foundation of the Islamic philosophy of zuhd (detachment from the dunya). Ibn Umar (RA) would add: 'When evening comes, do not expect to live until morning. When morning comes, do not expect to live until evening. Take from your health for your illness, and from your life for your death.' Allah says: 'Know that the life of this world is only play and amusement, pomp and mutual boasting among you.' (57:20). A traveller packs only what they need for the journey — they don't build mansions at rest stops. The Prophet ﷺ himself left this world owning almost nothing. True wealth, the Quran tells us, is wealth of the heart (taqwa)." },
+  { ar: "إِذَا مَاتَ الإِنْسَانُ انْقَطَعَ عَنْهُ عَمَلُهُ إِلاَّ مِنْ ثَلاَثَةٍ: صَدَقَةٍ جَارِيَةٍ، أَوْ عِلْمٍ يُنْتَفَعُ بِهِ، أَوْ وَلَدٍ صَالِحٍ يَدْعُو لَهُ", en: "When a person dies, all their deeds come to an end except three: ongoing charity, knowledge that benefits, or a righteous child who prays for them.", source: "Sahih Muslim 1631", narrator: "Abu Hurayrah رضي الله عنه", grade: "Sahih", explanation: "This hadith reveals the three investments whose returns extend beyond the grave. Sadaqah jariyah (ongoing charity) includes building a masjid, digging a well, planting a tree under whose shade others rest, or funding an orphan's education. Knowledge that benefits includes a book written, a student taught, or a Quran class established. A righteous child who prays for their parents is the most personal of these gifts. The scholars note that this doesn't mean other deeds stop earning reward — rather, the deeds of the living that were initiated or caused by the deceased continue to carry reward back to them. Plant seeds whose fruits others will harvest — and you will share in every fruit." },
+  { ar: "مَنْ سَلَكَ طَرِيقًا يَلْتَمِسُ فِيهِ عِلْمًا سَهَّلَ اللَّهُ لَهُ طَرِيقًا إِلَى الْجَنَّةِ", en: "Whoever travels a path seeking knowledge, Allah will make easy for him a path to Paradise.", source: "Sahih Muslim 2699", narrator: "Abu Hurayrah رضي الله عنه", grade: "Sahih", explanation: "The word 'path' (tareeq) is understood both literally and metaphorically — physical travel to a scholar and the mental journey of studying. The angels lower their wings for the seeker of knowledge in approval. Allah says: 'Allah will raise the rank of those who believe and those given knowledge.' (58:11). Ibn Abd al-Barr compiled an entire book (Jami' Bayan al-Ilm) on the virtues of knowledge. The early Muslims would travel for months to verify a single hadith. Imam al-Bukhari made 16 journeys across the Islamic world for his collection. For us: reading, attending classes, listening to scholars — all of this is this path." },
 ];
 
-// ── Seerah Data ───────────────────────────────────────────────────────────
+// ── Rich Seerah Entries with Quranic & Hadith Evidence ──────────────────
 const SEERAH = [
-  { title: "The Year of the Elephant 🐘", titleAr: "عام الفيل", year: "570 CE", content: "The year the Prophet ﷺ was born, Abraha — the Abyssinian ruler of Yemen — marched on the Kaabah with a mighty army and war elephants to destroy it. As they neared Makkah, Allah sent flocks of birds (Ababeel) raining stones of baked clay, devastating the entire army. This miracle, immortalized in Surah Al-Fil, declared to the world that the House of Allah is under divine protection — and set the stage for the arrival of the final Prophet ﷺ within the same year." },
-  { title: "Birth of the Prophet ﷺ", titleAr: "مولد النبي ﷺ", year: "570 CE", content: "Muhammad ibn Abdullah ﷺ was born in Makkah on Monday, 12 Rabi al-Awwal. His father Abdullah had passed away before his birth. He was born into the noble Hashimite clan of Quraysh. His mother Aminah reported seeing a great light at his birth that illuminated the palaces of Syria. The Prophet ﷺ himself said: 'I am the supplication of my father Ibrahim, and the glad tidings foretold by Isa (AS).'" },
-  { title: "Raised in the Desert 🏜️", titleAr: "النشأة في البادية", year: "570–575 CE", content: "Following Arabian custom, baby Muhammad ﷺ was entrusted to a Bedouin foster mother, Halimah al-Sa'diyyah, of the Banu Sa'd tribe. The desert upbringing strengthened children and preserved pure Arabic. While with Halimah, remarkable blessings followed — their livestock flourished beyond all expectation. This barakah was a sign of the extraordinary soul in their care. At age five, he ﷺ was returned to his mother." },
-  { title: "The Opening of the Chest ✨", titleAr: "شق الصدر", year: "Around 574 CE", content: "While still a child with Halimah, two angels appeared to Muhammad ﷺ, opened his chest, removed his heart, cleansed it of a dark clot (the portion of Shaytan) with Zamzam water, and restored it. This spiritual purification — referenced in Surah Ash-Sharh ('Did We not expand your chest for you?') — was Allah's preparation of His Messenger's soul for the immense weight of prophethood that lay ahead." },
-  { title: "Loss of His Mother 🌙", titleAr: "وفاة أمه آمنة", year: "576 CE", content: "At around six years old, Muhammad ﷺ traveled with his mother Aminah to Madinah to visit his father's grave. On the return journey she fell ill and passed away at Al-Abwa, leaving him a double orphan. His grandfather Abd al-Muttalib then embraced and raised him. The Quran would later comfort him: 'Did He not find you an orphan and give you shelter?' (93:6) — every loss was part of Allah's perfect shaping of His Messenger." },
-  { title: "Al-Amin — The Trustworthy 🌟", titleAr: "الأمين", year: "Youth", content: "Before any revelation, the people of Makkah unanimously called Muhammad ﷺ 'Al-Amin' — the Trustworthy. Merchants left their goods in his care; people sought his counsel in disputes. Not a single enemy could accuse him of dishonesty. When he later stood on Mount Safa and said 'If I told you an army was coming over this hill, would you believe me?' — they all said yes. His character was his first credential." },
-  { title: "Khadijah رضي الله عنها", titleAr: "السيدة خديجة", year: "595 CE", content: "Khadijah bint Khuwaylid was a respected businesswoman who hired Muhammad ﷺ to lead her trade caravans. Deeply impressed by his honesty and noble dealings, she proposed marriage. He was 25; she was 40. Their marriage was one of profound love and partnership. She was the first to believe in him, the first to console him at the cave, and she spent her entire wealth supporting Islam. The Prophet ﷺ never stopped praising her, even long after her passing." },
-  { title: "Rebuilding of the Kaabah 🏛️", titleAr: "إعادة بناء الكعبة", year: "605 CE", content: "Floods damaged the Kaabah and the Quraysh rebuilt it. When the sacred Black Stone needed replacing, every tribe wanted the honour — nearly causing bloodshed. They agreed: let the next man to enter judge. Muhammad ﷺ walked in. His solution: he laid the stone on a cloak and invited each tribal chief to hold one edge, then placed the stone himself. A war was averted through wisdom. He was 35 — and five years away from prophethood." },
-  { title: "The First Revelation 📖", titleAr: "نزول الوحي", year: "610 CE", content: "At forty, during spiritual retreat in the Cave of Hira, Jibreel (AS) appeared and embraced Muhammad ﷺ three times, commanding: 'Iqra!' (Read!). The Prophet ﷺ said he could not read. Then came the first words of the Quran: 'Read in the name of your Lord who created...' (96:1–5). Trembling, he returned to Khadijah who wrapped him and said: 'By Allah, He will never humiliate you.' The mission of the final Prophet had begun." },
-  { title: "The First Muslims 🤲", titleAr: "أوائل المسلمين", year: "610 CE", content: "The first to believe: Khadijah (wife), Ali ibn Abi Talib (youth/family), Abu Bakr al-Siddiq (friend), and Zayd ibn Harithah (freed slave). These four — from every stratum of society — embodied Islam's universal reach from its very first hours. Through Abu Bakr came Uthman, Abdurrahman ibn Awf, Zubair, and many others. A community of faith was taking its first breath." },
-  { title: "Dar al-Arqam — Secret Dawah 🏠", titleAr: "دار الأرقم", year: "610–613 CE", content: "For three years the call to Islam was quiet. Dar al-Arqam, near Mount Safa, became the first Islamic gathering place — where early Muslims memorized Quran, learned salah, and built brotherhood, away from Quraysh's eyes. Here the first generation was formed: in secret, in sincerity, in community. The most beautiful movements often begin quietly, before the storm of opposition forces them into the open." },
-  { title: "Public Dawah Begins 📣", titleAr: "الجهر بالدعوة", year: "613 CE", content: "Allah commanded: 'So proclaim what you are commanded, and turn away from the polytheists.' (15:94). The Prophet ﷺ climbed Mount Safa, gathered the Quraysh, and warned them plainly. His uncle Abu Lahab dismissed him angrily — and Surah Al-Masad was revealed, condemning him by name. From this day, persecution intensified — but the message of Tawhid could no longer be contained." },
-  { title: "Bilal and the Desert of Steadfastness 🔥", titleAr: "بلال والتعذيب", year: "613–615 CE", content: "Bilal ibn Rabah (RA) — an Abyssinian slave — accepted Islam and was dragged into the desert by his master Umayyah. A boulder was placed on his chest in the scorching heat. His only words: 'Ahad! Ahad!' (One! One!). Abu Bakr (RA) purchased and freed him. Bilal became the first muezzin of Islam — the same voice that cried in the desert would one day call the Adhan atop the Kaabah. Allah does not waste the steadfastness of the sincere." },
-  { title: "First Hijrah — to Abyssinia 🌍", titleAr: "الهجرة الأولى", year: "615 CE", content: "Unable to bear the torture, the Prophet ﷺ advised companions to migrate to Abyssinia, whose Christian king (the Negus) was just. About 80 companions made this journey. When Quraysh envoys demanded their return, Jafar ibn Abi Talib (RA) recited from Surah Maryam. The Negus wept, drew a line on the ground and said: 'The difference between what you say about Isa and what I believe is no more than this line.' He refused to return the refugees. The first asylum in Islamic history." },
-  { title: "Umar's Conversion ⚡", titleAr: "إسلام عمر رضي الله عنه", year: "615 CE", content: "Umar ibn al-Khattab — fearsome, powerful, fiercely opposed to Islam — set out one day to kill the Prophet ﷺ. He was told en route that his own sister had embraced Islam. Enraged, he went to her home and struck her. But seeing her blood moved something in him. When he read the opening verses of Surah Ta-Ha she had been memorizing, his heart broke open completely. He went directly to the Prophet ﷺ and declared his shahada. Ibn Masud said: 'Umar's Islam was a conquest.'" },
-  { title: "The Boycott — Three Years of Hunger 📜", titleAr: "الحصار الاقتصادي", year: "616–619 CE", content: "The Quraysh imposed a three-year written boycott on the Prophet ﷺ and Banu Hashim — no trade, no marriage, no contact. They were confined to a narrow valley and nearly starved. Mothers cried with no food for their children. After three years, Allah caused the boycott scroll to be eaten by termites — leaving only 'Bismik Allahumma.' Moved by this miracle, the blockade was lifted. Sabr — patient endurance — was the only weapon that mattered." },
-  { title: "The Year of Grief 💔", titleAr: "عام الحزن", year: "619 CE", content: "Within weeks of each other, the Prophet ﷺ lost his beloved wife Khadijah (RA) and his protecting uncle Abu Talib. He was now exposed — no tribal protection, no personal sanctuary. He traveled to Taif seeking support but was driven out by mobs who threw stones until his feet bled. Even then, when angels offered to crush Taif, he ﷺ refused: 'Perhaps from their descendants will come those who worship Allah alone.' His mercy never had a limit." },
-  { title: "Al-Isra wal-Miraj 🌌", titleAr: "الإسراء والمعراج", year: "620 CE", content: "Allah comforted His Prophet ﷺ with the greatest journey in human history. In one night, he traveled from Makkah to Jerusalem on the Buraq, led all the prophets in prayer at Masjid al-Aqsa, then ascended through the seven heavens — meeting Adam, Yahya, Isa, Idris, Harun, Musa, and Ibrahim (peace be upon them all) — to the Divine Presence. The five daily prayers were gifted to the Ummah here. Not a burden — but the greatest gift: a direct connection to Allah, five times every day." },
-  { title: "The Pledge of Aqabah 🤝", titleAr: "بيعة العقبة", year: "621–622 CE", content: "During Hajj seasons, the Prophet ﷺ met pilgrims from Yathrib (Madinah). In 622 CE, 73 men and 2 women pledged to protect him as they would protect their own families. He ﷺ told them: 'You are guaranteeing me what you guarantee your women and children. If you fulfil this, you will have Paradise.' They replied as one: 'We accept!' The political foundations of the first Islamic state were laid on a hillside in the dark, under the stars." },
-  { title: "The Great Hijrah 🌙", titleAr: "الهجرة العظمى", year: "622 CE", content: "The Quraysh plotted to assassinate the Prophet ﷺ simultaneously. Informed by revelation, he left his house at night with Ali (RA) sleeping in his bed, reciting Surah Ya-Sin. He and Abu Bakr (RA) hid in the Cave of Thawr for three days — a spider's web and bird's nest covering the entrance. When they finally reached Madinah, the entire city came out singing 'Tala al-badru alayna.' The Islamic calendar begins with this migration — for it was the moment a community became a civilization." },
-  { title: "The Charter of Madinah 📋", titleAr: "صحيفة المدينة", year: "622 CE", content: "One of the Prophet's ﷺ first acts was drafting a political document — the Constitution of Madinah. It defined rights of Muslims and Jewish tribes alike: freedom of religion, mutual defense, and justice for all. This may be the world's first written constitution. It proved that Islam's vision was never only spiritual — it was a complete civilization, built on justice, pluralism, and the rule of divine principles." },
-  { title: "Battle of Badr ⚔️", titleAr: "غزوة بدر الكبرى", year: "624 CE", content: "On 17 Ramadan, 2 AH, 313 ill-equipped Muslims faced 1,000 well-armed Qurayshi warriors at the wells of Badr. The Prophet ﷺ prayed through the night: 'O Allah, if this group is destroyed, You will not be worshipped on earth.' Angels descended. The Muslims achieved a decisive victory. The Quran named this day 'Yawm al-Furqan' — the Day of Distinction. Islam had proven it could not be extinguished by force. The entire Arabian peninsula took notice." },
-  { title: "Battle of Uhud — The Lesson 🏔️", titleAr: "غزوة أُحُد", year: "625 CE", content: "Three thousand Qurayshi soldiers came to avenge Badr. Early Muslim victory turned when 40 archers abandoned their hill to collect spoils — directly disobeying the Prophet's ﷺ orders. Khalid ibn al-Walid (then an enemy) swept around the exposed flank, reversing the battle. Seventy Muslims were martyred, including Hamzah (RA). The Prophet ﷺ was wounded. Allah comforted them: 'Do not weaken or grieve — you are superior if you are believers.' (3:139) Obedience to the Prophet ﷺ is never optional." },
-  { title: "Battle of the Trench 🛡️", titleAr: "غزوة الأحزاب", year: "627 CE", content: "An allied force of 10,000 marched on Madinah. The Persian companion Salman al-Farisi (RA) suggested digging a trench — a tactic unknown in Arabia. The Prophet ﷺ worked alongside the companions digging in cold and hunger. When they found a rock too hard to break, he ﷺ struck it three times, and with each blow saw visions of the future conquests of Persia, Rome, and Yemen. The coalition besieged Madinah for weeks but never crossed the trench. Allah sent a devastating windstorm that routed them. The coalition never threatened Madinah again." },
-  { title: "Treaty of Hudaybiyyah 🕊️", titleAr: "صلح الحديبية", year: "628 CE", content: "The Prophet ﷺ set out for Umrah with 1,400 companions but was blocked at Hudaybiyyah. Negotiations led to a ten-year peace treaty with terms that seemed unfavorable — they could not enter Makkah that year, and any Makkan Muslim who came to Madinah must be returned. Companions were distressed. But Allah called it 'a manifest victory' (Surah Al-Fath). The peace allowed Islam to spread freely, and within two years more people accepted Islam than in all previous years combined. Wisdom often looks like compromise." },
-  { title: "Conquest of Makkah 🌟", titleAr: "فتح مكة المكرمة", year: "630 CE", content: "With 10,000 companions, the Prophet ﷺ entered Makkah — the city that had expelled, tortured, and killed his followers. He entered with his head bowed in humility. The Kaabah was cleansed of 360 idols. Then came the moment of truth: what would he do to his enemies? He asked: 'What do you think I will do with you?' They replied: 'You are a noble brother, son of a noble brother.' He said: 'Go — you are all free.' History has never seen such magnanimity in victory." },
-  { title: "The Farewell Hajj 📣", titleAr: "حجة الوداع", year: "632 CE", content: "In the Prophet's ﷺ only Hajj, over 100,000 companions gathered on Arafat. He delivered the Farewell Sermon: life, property, and honour are sacred; all debts of pre-Islamic times are abolished; racial superiority is abolished — 'an Arab has no superiority over a non-Arab except in taqwa.' He asked: 'Have I delivered the message?' A hundred thousand voices replied: 'Yes!' Then came revelation: 'Today I have perfected your religion for you.' (5:3). Three months later, he returned to his Lord." },
-  { title: "The Passing of the Prophet ﷺ 🌿", titleAr: "وفاة المصطفى ﷺ", year: "632 CE", content: "On Monday, 12 Rabi al-Awwal, 11 AH, the Prophet ﷺ peacefully departed. His last words were: 'The highest companion.' Umar (RA) could not accept it. Abu Bakr (RA) went to the mosque and said: 'Whoever worshipped Muhammad — Muhammad has died. Whoever worships Allah — Allah is Ever-Living and never dies.' He recited 3:144. A silence fell over the Ummah. Then, across generations, his message continued — carried by the Book he left, the Sunnah he embodied, and the community he built: us." },
-  { title: "Abu Bakr al-Siddiq — The Closest Friend 🌕", titleAr: "أبو بكر الصديق رضي الله عنه", year: "Companion Era", content: "Abu Bakr (RA) was the Prophet's ﷺ closest companion — the only one to accompany him in the Hijrah cave. When the Prophet ﷺ first spoke of the Night Journey, and people called it impossible, Abu Bakr said: 'If he said it, I believe it.' This is why he was given the title 'al-Siddiq' — the Most Truthful. He spent his entire fortune on Islam, freed enslaved Muslims like Bilal, and became the first Caliph. His love for the Prophet ﷺ was total — the gold standard of companionship." },
-  { title: "Umar ibn al-Khattab — Justice Personified ⚖️", titleAr: "عمر بن الخطاب رضي الله عنه", year: "Companion Era", content: "Umar (RA) was so feared in Makkah that Shaytan would take another street to avoid his path. After embracing Islam, that same fearlessness was turned entirely toward justice. He was the first to walk openly after his conversion. As Caliph, he would walk the streets of Madinah at night in disguise to check on citizens. He said: 'If a mule stumbles in Iraq, I fear Allah will ask me why I didn't pave the road.' He wore patched clothes while governing an empire — because power to him was a trust, not a privilege." },
-  { title: "Aishah — Mother of the Believers 💛", titleAr: "السيدة عائشة رضي الله عنها", year: "Companion Era", content: "Aishah (RA) was the Prophet's ﷺ most learned wife and one of the greatest scholars Islam has known. She transmitted over 2,000 hadiths and was the first reference point for companions who wanted to know how the Prophet ﷺ prayed, fasted, and conducted himself in his home. After his ﷺ passing, she became a teacher to the entire Ummah — men and women would come to her curtained tent to learn. Abu Musa al-Ashari said: 'We companions never encountered a hadith we were unclear about and asked Aishah, except that we found knowledge about it with her.'" },
-  { title: "The Spread of Islam — First Century 🌍", titleAr: "انتشار الإسلام", year: "632–732 CE", content: "Within one century of the Prophet's ﷺ passing, Islam had spread from Spain in the west to the borders of China in the east — not primarily by force, but by the justice, equality, and mercy of Islamic civilization. Whole peoples converted upon seeing Muslim merchants and governors. The speed was unprecedented in history. As Jafar ibn Abi Talib told the Negus: 'We were a people of ignorance — we wronged one another, oppressed the weak, ate what was forbidden. Then Allah sent a messenger and transformed us.' That transformation continued outward, changing the world." },
+  {
+    title: "The Year of the Elephant — Divine Protection 🐘",
+    titleAr: "عام الفيل",
+    year: "570 CE | Before Prophethood",
+    content: `In the year the Prophet ﷺ was born, a remarkable event established the divine sanctity of the Kaabah before the world. Abraha ibn al-Sabbah, the Christian viceroy of Yemen under Abyssinian rule, built an enormous church in Sana'a called al-Qullays and ordered Arabs to perform pilgrimage there instead of Makkah. When this failed, he mobilised a massive army — including war elephants — to destroy the Kaabah itself.
+
+As Abraha's army approached Makkah, Abd al-Muttalib (the Prophet's grandfather) calmly said: "As for this House [the Kaabah], it has its own Lord Who will protect it." He took his family and the Makkans to the hills. What followed was among the most miraculous events in pre-Islamic Arabia.
+
+QURANIC EVIDENCE:
+Allah preserved the memory of this event in the Quran: "Have you not seen what your Lord did to the companions of the elephant? Did He not make their plan go astray? And He sent against them birds in flocks, striking them with stones of hard clay — and He made them like eaten straw." (Surah Al-Fil 105:1-5)
+
+The Ababeel birds dropped sijjeel stones (baked clay or hardened lava) upon the army, causing a devastating plague-like destruction. The entire army collapsed. Abraha himself died on the retreat — his body reportedly deteriorating piece by piece.
+
+HISTORICAL SIGNIFICANCE:
+The Quraysh used this event as proof of their special status as guardians of the Kaabah. Allah honoured them with "the security of this House" (Surah Quraysh 106:3-4). It was also in this same year — approximately April or May — that Muhammad ﷺ was born. The timing was not coincidental. The earth was being prepared for its greatest inhabitant. As Ibn Kathir wrote: "Allah honoured the Kaabah by protecting it, just as He was about to honour the earth with His final Messenger."
+
+LESSON:
+When Allah wills to protect something, no army of any size can prevail against it. The same divine protection surrounds the Quran: "Indeed, it is We who sent down the Reminder, and indeed We will be its guardian." (Quran 15:9).`,
+  },
+  {
+    title: "Birth of the Prophet ﷺ — Light Upon the World",
+    titleAr: "مولد النبي ﷺ",
+    year: "570 CE | 12 Rabi al-Awwal",
+    content: `Muhammad ibn Abdullah ibn Abd al-Muttalib ﷺ was born on a Monday in Makkah, in the neighbourhood of Banu Hashim, in the Year of the Elephant. His father Abdullah had passed away before his birth, leaving him an orphan from his first breath — a fact the Quran later addressed as a divine arrangement: "Did He not find you an orphan and give you shelter?" (93:6).
+
+WHAT THE PROPHET ﷺ SAID ABOUT HIS BIRTH:
+When asked why he fasted on Mondays, the Prophet ﷺ replied: "That is the day I was born and the day revelation came to me." (Sahih Muslim 1162). He was born circumcised according to some narrations, and his mother Aminah reported that at his birth she saw a light that illuminated the palaces of Syria. This light is referenced in the hadith: "I was the last of the prophets with Allah, while Adam was still clay." (Ahmad — Sahih).
+
+HIS LINEAGE:
+The Prophet ﷺ himself said: "Allah chose Kinanah from the sons of Ismail, and He chose Quraysh from Kinanah, and He chose Banu Hashim from Quraysh, and He chose me from Banu Hashim." (Muslim 2276). His lineage traces back to Ibrahim (AS) through his son Ismail (AS) — making him the fulfilment of Ibrahim's famous supplication: "Our Lord, send among them a messenger from themselves who will recite to them Your verses and teach them the Book and wisdom." (Quran 2:129).
+
+THE GLAD TIDINGS BEFORE HIM:
+Both the Torah and Injeel contained prophecies about his coming. Allah says: "Those who follow the messenger, the unlettered prophet, whom they find written in what they have of the Torah and the Gospel." (Quran 7:157). And in Surah as-Saf, Allah quotes Isa (AS): "And [mention] when Jesus, the son of Mary, said: 'O children of Israel, indeed I am the messenger of Allah to you... and bringing glad tidings of a messenger to come after me whose name is Ahmad.'" (61:6).
+
+THE NAME MUHAMMAD:
+The name Muhammad — meaning "the one who is excessively praised" — was rare among Arabs at the time. His grandfather Abd al-Muttalib chose it, saying he hoped his grandson would be praised in the heavens and on earth. Indeed, he ﷺ is praised by Allah Himself: "Indeed, Allah and His angels send blessings upon the Prophet. O you who have believed, ask [Allah to confer] blessing upon him and ask [Allah to grant him] peace." (Quran 33:56).`,
+  },
+  {
+    title: "The Chest Opening — Purification of the Chosen ✨",
+    titleAr: "شق الصدر",
+    year: "~574 CE | Childhood",
+    content: `While the young Muhammad ﷺ was living with his foster family in the Banu Sa'd tribe, one of the most profound spiritual events in human history occurred in the hills of the Arabian desert. Two angels appeared in the form of men wearing white garments, and they opened the chest of the Prophet ﷺ — an event that occurred not once but twice in his lifetime.
+
+THE FIRST OPENING:
+Anas ibn Malik (RA) reported: "Jibreel came to the Messenger of Allah ﷺ while he was playing with the other boys. He took hold of him and threw him down, then he opened his chest and took out his heart. Then he took out a black clot from it and said: 'This is the portion of Shaytan from you.' Then he washed it in a golden vessel with Zamzam water, put it back together, and returned it to its place." (Sahih Muslim 162).
+
+THE SECOND OPENING — ON THE NIGHT OF MIRAJ:
+Ibn Hajar records in Fath al-Bari that the chest was opened again on the night of al-Isra wal-Miraj before the Prophet ﷺ ascended through the heavens, as a further spiritual preparation for meeting Allah.
+
+QURANIC REFERENCE:
+Allah refers to this spiritual expansion in Surah ash-Sharh: "Did We not expand for you your chest? And We removed from you your burden which had weighed upon your back. And raised high for you your repute." (94:1-4). While the scholars differ on whether this refers to the physical chest-opening or a metaphorical spiritual expansion — or both — there is consensus that Allah specially prepared the Prophet's ﷺ heart for prophethood in ways beyond ordinary human experience.
+
+WHAT DOES "CLOT OF SHAYTAN" MEAN?
+The scholars explain this is not suggesting the Prophet ﷺ was sinful — prophets are protected (ma'sum) from major sins. Rather, it refers to the natural inclination toward the dunya and desires that exists in all humans. Allah removed even this subtle trace from the Prophet ﷺ to make his heart a perfect vessel for divine revelation. Ibn al-Qayyim wrote: "The heart of the Prophet ﷺ was the most perfect of vessels — transparent, pure, a mirror for divine light."
+
+LESSON:
+Every human carries impurities in the heart — the Prophet ﷺ had his miraculously cleansed; we are expected to do ours through tawbah, dhikr, and following his Sunnah. "Verily, in the remembrance of Allah do hearts find rest." (Quran 13:28).`,
+  },
+  {
+    title: "Al-Amin — A Character Before Prophethood 🌟",
+    titleAr: "الأمين — أمانة قبل النبوة",
+    year: "Before 610 CE | Youth to Age 40",
+    content: `Before a single verse was revealed, before any claim to prophethood, before Islam was even named — the people of Makkah called Muhammad ﷺ by a title: AL-AMIN (the Trustworthy). This was not a formal designation — it was the organic, unanimous recognition of an entire society. Both friends and enemies, the poor and the wealthy, the noble and the enslaved — all agreed that Muhammad ibn Abdullah was a man of absolute integrity.
+
+HADITH EVIDENCE:
+When the Prophet ﷺ stood on Mount Safa in 613 CE to first publicly preach Islam, he called out: "O people of Quraysh! If I were to tell you that behind this hill there is an army coming to attack you — would you believe me?" Every person in the crowd replied: "Yes — for we have never known you to lie." (Bukhari 4770). This was remarkable: he was speaking to people who would later become his fiercest enemies — yet not even they could deny his truthfulness.
+
+JABIR IBN ABDILLAH (RA) NARRATED:
+"The Messenger of Allah ﷺ never said 'no' to anyone who asked him for something." (Bukhari 6034). His generosity was an extension of his truthfulness — he meant what he said and gave what he promised.
+
+KHADIJAH'S TESTIMONY:
+When he returned from the cave trembling, it was his character — not miracles — that Khadijah (RA) first cited: "By Allah, Allah will never disgrace you. You maintain family ties, you speak truthfully, you carry the burdens of the weak, you help the poor, you honour your guests, and you assist those who suffer calamities." (Bukhari 3). She knew his character so deeply that she could predict divine favour with certainty.
+
+QURANIC AFFIRMATION:
+Allah Himself certified his character: "And indeed, you are of a great moral character." (Quran 68:4). This verse was revealed early in the Makkan period — and it was affirming something the people already knew. Aishah (RA) summarised it perfectly: when asked about his character, she said: "His character was the Quran." (Muslim 746).
+
+THE LESSON FOR US:
+The Prophet ﷺ built his credibility over 40 years before making his greatest claim — prophethood. Integrity is not built in a moment; it is the accumulation of ten thousand small choices to tell the truth, keep a promise, and treat others fairly. In a world of instant credentials, Islam teaches that character is built slowly and tested constantly.`,
+  },
+  {
+    title: "Khadijah رضي الله عنها — The First Believer 💛",
+    titleAr: "أم المؤمنين السيدة خديجة رضي الله عنها",
+    year: "595 CE | Marriage | 610 CE | First Revelation",
+    content: `Khadijah bint Khuwaylid (RA) was, in the words of the Prophet ﷺ himself, "the best of the women of her time." She was a wealthy, independent businesswoman of Makkah — twice widowed, deeply respected, known for her intelligence and moral standing. When she hired the young Muhammad ﷺ to lead her trade caravan to Syria, she was immediately struck by his character, his integrity, and his results. Her servant Maysarah reported back the extraordinary signs he had witnessed on the journey.
+
+THE MARRIAGE:
+Khadijah sent word through her friend Nafisah proposing marriage. The Prophet ﷺ was 25; she was 40. Every measure of worldly convention was reversed — she was older, wealthier, and she proposed to him. Yet this was among the most blessed marriages in human history. They had six children together: al-Qasim, Zaynab, Ruqayyah, Umm Kulthum, Fatimah, and Abdullah. All sons died in infancy — a grief Allah addressed in Surah al-Kawthar.
+
+WHEN REVELATION CAME:
+The Prophet ﷺ returned from the Cave of Hira trembling, saying: "Cover me! Cover me!" Khadijah's response was not panic or doubt — it was the response of a woman who knew her husband's character with absolute certainty. She said: "By Allah, Allah will never disgrace you." Then she listed his qualities — his truthfulness, his care for family, his generosity, his hospitality. She took him to her cousin Waraqah ibn Nawfal, a Christian scholar, who confirmed: "This is the same Namus [Angel Jibreel] that came to Musa." (Bukhari 3).
+
+HER SACRIFICE:
+When the Quraysh imposed their three-year boycott, it was Khadijah's wealth that had previously sustained the early Muslim community. She gave everything — and the Prophet ﷺ never forgot. Years after her death, he would send food to her old friends. When a woman came to him who reminded him of Khadijah's time, he ﷺ honoured her warmly. Aishah (RA) said she never felt jealousy toward any of the Prophet's wives except Khadijah — though she had died before Aishah even met the Prophet ﷺ — "because he mentioned her so frequently." (Bukhari 3816).
+
+THE PROPHET'S ﷺ WORDS ABOUT HER:
+"She believed in me when no one else did. She accepted Islam when people rejected me. She helped me with her wealth when people deprived me. And Allah blessed me with children through her." (Ahmad — Sahih). When Jibreel came down and said: "O Messenger of Allah, Khadijah is coming to you with food. When she arrives, convey to her the salaam of her Lord and of me, and give her the glad tidings of a house in Paradise made of hollowed pearl, in which there is no noise and no hardship." (Bukhari 3820).
+
+QURANIC REFERENCE:
+It was Khadijah's wealth that funded much of the early dawah. She embodied the Quranic ideal: "And those who strive in Our cause — We will surely guide them to Our ways." (29:69). She strove with everything she had.`,
+  },
+  {
+    title: "The First Revelation — Iqra! 📖",
+    titleAr: "نزول الوحي — إقرأ",
+    year: "610 CE | 27 Ramadan | Jabal al-Nur, Makkah",
+    content: `For several years before revelation, the Prophet Muhammad ﷺ had been drawn to solitude and spiritual reflection. He would retreat to the Cave of Hira on Jabal al-Nur (Mountain of Light) — sometimes for days at a time — engaging in tahannuth (spiritual worship, the form of which was inspired by what remained of Ibrahim's religion). He was 40 years old. The month was Ramadan. The date was the 27th.
+
+THE MOMENT:
+Aishah (RA) narrated the full account: "The beginning of the Divine Inspiration to Allah's Messenger was in the form of true righteous visions in his sleep. Every vision he had came like the breaking of dawn. Then he was made to love seclusion. He would go to the Cave of Hira and engage in tahannuth — worship for a number of nights. He would take provisions for this and return to Khadijah to take more, until the Truth came to him suddenly while he was in the Cave of Hira." (Bukhari 3).
+
+JIBREEL'S APPEARANCE:
+"The Angel came to him and commanded: 'Read!' The Prophet ﷺ said: 'I cannot read.' He took hold of me and squeezed me with so much force that it was unbearable. Then he released me and again commanded: 'Read!' I replied: 'I cannot read.' He squeezed me again a second time — then a third time. Then he said: 'Read in the name of your Lord who created — created man from a clinging substance. Read, and your Lord is the Most Generous — who taught by the pen — taught man that which he knew not.'" (96:1-5). (Bukhari 3).
+
+WHY IQRA FIRST?
+The scholars of tafseer note the profound wisdom in the first word being "Iqra" (Read/Recite). Islam is a religion of knowledge, of revelation communicated through language, of a Book. The first command was not "pray" or "fast" but "Read." Ibn Kathir wrote: "Allah began with 'Read' because knowledge is the foundation of all worship."
+
+THE PROPHET'S ﷺ REACTION:
+He returned to Khadijah trembling: "Cover me! Cover me!" (Bukhari 3). When the shivering subsided, he said: "What has happened to me?" and told her what he had experienced. His fear was not of the angel per se — but of the enormity of what had been placed upon him. This is the mark of true prophethood — not eagerness for status, but the weight of divine responsibility.
+
+AFTER HIRA — THE PAUSE:
+Following the first revelation, there was a pause in revelation (called al-fatrah). The Prophet ﷺ was deeply distressed by this silence. According to some narrations, this pause lasted months. Then the second revelation came: "O you who is wrapped in garments! Arise and warn!" (74:1-2). The pause was a further preparation — allowing the first words to settle deeply into the Prophet's heart before the mission was formally declared.
+
+QURAN ON THIS NIGHT:
+"Indeed, We sent it [the Quran] down on the Night of Decree. And what can make you know what is the Night of Decree? The Night of Decree is better than a thousand months. The angels and the Spirit [Jibreel] descend therein by permission of their Lord for every matter. Peace it is until the emergence of dawn." (97:1-5).`,
+  },
+  {
+    title: "Persecution in Makkah — Steadfastness Under Fire 🔥",
+    titleAr: "الأذى في سبيل الله",
+    year: "613–622 CE | Makkah",
+    content: `When the Prophet ﷺ went public with his message in 613 CE, the Quraysh's response was swift and brutal. They could not kill him — he had the tribal protection of Banu Hashim and Abu Talib. So they targeted those with no protection: the poor, the enslaved, the foreigners.
+
+BILAL IBN RABAH (RA):
+Bilal was an Abyssinian slave owned by Umayyah ibn Khalaf. When he accepted Islam, his master dragged him into the burning Makkan desert at midday, placed a heavy boulder on his chest, and demanded he renounce Islam and praise al-Lat and al-Uzza. Bilal's only response: "AHAD! AHAD!" (One! One!) — referring to Allah's oneness. Abu Bakr (RA) purchased him and freed him. Bilal became the first muezzin of Islam — that same voice that cried in the desert called the Adhan from atop the Kaabah when Makkah was conquered.
+
+THE FAMILY OF YASIR:
+Yasir, his wife Sumayyah, and their son Ammar were tortured relentlessly. The Prophet ﷺ would pass by them and could only say: "Be patient, O family of Yasir! Your promised meeting is Paradise." (Hakim — Sahih). Sumayyah was killed by Abu Jahl — becoming the first martyr in Islam. Her husband Yasir died shortly after from torture. Their son Ammar was eventually forced to utter words of disbelief under torture — and came to the Prophet ﷺ crying. The verse was revealed: "Except for one who is compelled [to disbelief] while his heart is secure in faith." (16:106).
+
+KHABBAB IBN AL-ARAT (RA):
+He came to the Prophet ﷺ while he was resting in the shade of the Kaabah and said: "O Messenger of Allah, will you not pray to Allah for us?" The Prophet ﷺ sat up, his face becoming red, and said: "Among those who came before you, a man would be seized and have a trench dug for him, then a saw placed on his head and split in two — yet this would not cause him to leave his religion. By Allah, Allah will complete this matter [Islam] until a rider can travel from Sana'a to Hadramawt fearing no one except Allah." (Bukhari 3612).
+
+QURANIC SOLACE:
+Allah repeatedly consoled the believers: "And We will surely test you with something of fear and hunger and a loss of wealth and lives and fruits, but give good tidings to the patient — who, when disaster strikes them, say: Indeed we belong to Allah, and indeed to Him we will return." (2:155-156). And: "Do the people think that they will be left to say 'We believe' and they will not be tried?" (29:2).
+
+THE PROPHET'S ﷺ OWN SUFFERING:
+He was pelted with dirt and thorns. His prostrations were interrupted when Abu Jahl placed camel intestines on his back while he prayed. He was called a madman (majnun), a soothsayer (kahin), a poet (sha'ir) — all attempts to discredit the Quran. Allah responded to each claim: "And it is not the word of a poet — little do you believe. Nor the word of a soothsayer — little do you remember. [It is] a revelation from the Lord of the worlds." (69:41-43).
+
+THE LESSON:
+The persecution of the early Muslims was not incidental — it was the sieve that purified the faith of those who remained. Every era of Islam's spread was accompanied by trial. Allah promises: "After hardship comes ease." (94:5-6). The question is always: what is our "Ahad!" in the face of pressure?`,
+  },
+  {
+    title: "Al-Isra wal-Miraj — The Night That Changed Everything 🌌",
+    titleAr: "الإسراء والمعراج",
+    year: "620 CE | 27 Rajab",
+    content: `The Year of Grief (619 CE) had devastated the Prophet ﷺ. Within weeks, he had lost his beloved wife Khadijah and his uncle and protector Abu Talib. He had been driven out of Taif with bleeding feet. He was at his most vulnerable. It was in this darkness that Allah sent the greatest honour ever given to any human being.
+
+THE ISRA — THE NIGHT JOURNEY:
+"Exalted is He who took His Servant [on] a journey by night from al-Masjid al-Haram to al-Masjid al-Aqsa, whose surroundings We have blessed, to show him of Our signs." (Quran 17:1). The Prophet ﷺ was taken from Makkah to Jerusalem on the Buraq — a white animal smaller than a mule, larger than a donkey, which placed each step at the limit of its sight. At Masjid al-Aqsa, he led all the prophets in salah — confirming his station as their leader and the seal of prophethood.
+
+THE MIRAJ — THE ASCENSION:
+From Jerusalem, the Prophet ﷺ ascended through all seven heavens. In each, he met prophets:
+• First heaven: Adam (AS)
+• Second heaven: Yahya (AS) and Isa (AS)
+• Third heaven: Yusuf (AS)
+• Fourth heaven: Idris (AS)
+• Fifth heaven: Harun (AS)
+• Sixth heaven: Musa (AS)
+• Seventh heaven: Ibrahim (AS), leaning against al-Bayt al-Ma'mur (the Celestial House visited by 70,000 angels daily)
+(Bukhari 3207, Muslim 162)
+
+THE GIFT OF SALAH:
+Allah originally prescribed 50 daily prayers. As the Prophet ﷺ descended, Musa (AS) — who had experience with his people — urged him to return and request a reduction. The Prophet ﷺ made multiple returns until the prayers were reduced to five. Allah then said: "These five prayers are [counted as] fifty in reward, for My Word does not change." (Bukhari 349). The five prayers are thus both the easiest obligation and the greatest gift — a direct audience with Allah five times daily.
+
+BEYOND SIDRAT AL-MUNTAHA:
+The Prophet ﷺ reached Sidrat al-Muntaha (the Lote Tree of the Utmost Boundary), which is described in the Quran: "When there covered the lote tree that which covered it, the sight [of the Prophet] did not deviate, nor did it transgress [its limit]. He certainly saw of the greatest signs of his Lord." (53:16-18). What the Prophet ﷺ saw beyond this point was never fully described — it was between him and his Lord.
+
+THE REACTION OF THE QURAYSH:
+When the Prophet ﷺ reported this journey the next morning, the Quraysh erupted in mockery. Some who had previously been wavering toward Islam now apostatised, saying this was impossible. Abu Bakr (RA) was told about it and immediately said: "If he said it, I believe it" — earning him the title al-Siddiq (the Most Truthful). The Quraysh then tested the Prophet ﷺ by asking him to describe Jerusalem — and he described it perfectly, having never been there before.
+
+SIGNIFICANCE:
+The Miraj demonstrates that time and space are no barrier to Allah's will. It confirmed the Prophet's ﷺ unique station. It linked the Ummah eternally to Jerusalem. And it gave us the greatest gift: direct, repeated access to Allah through salah — five times every day. Guard this gift with your life.`,
+  },
+  {
+    title: "The Great Hijrah — Birth of the Islamic State 🌙",
+    titleAr: "الهجرة العظمى إلى المدينة المنورة",
+    year: "622 CE | Safar | Makkah to Madinah",
+    content: `The Hijrah was not merely a physical journey of 450 kilometres. It was the turning point in Islamic history — the moment a persecuted community became a state, a faith became a civilisation, and a prophet became also a statesman. The Islamic calendar (Hijri calendar) begins with this event — a choice made by Umar ibn al-Khattab (RA) during the caliphate of Umar — because it was the moment Islam moved from survival to establishment.
+
+THE ASSASSINATION PLOT:
+The Quraysh convened in Dar al-Nadwa (their council house) to decide what to do about the Prophet ﷺ. They settled on having one young man from each tribe simultaneously stab him — so blood guilt would be shared across all tribes and Banu Hashim could not retaliate. Allah informed His Prophet ﷺ: "And [remember, O Muhammad], when those who disbelieved plotted against you to restrain you or kill you or evict you [from Makkah]. But they plan, and Allah plans. And Allah is the best of planners." (Quran 8:30).
+
+THE DEPARTURE:
+The Prophet ﷺ asked Ali (RA) to sleep in his bed — wrapped in the Prophet's green Hadhrami cloak — to make the house appear occupied. Ali (RA) agreed without hesitation. The Prophet ﷺ then walked out past the armed men surrounding his house — reciting the opening verses of Surah Ya-Sin: "And We have put before them a barrier and behind them a barrier and covered them, so they do not see." (36:9). None of the assassins saw him. He met Abu Bakr (RA) and they departed south — in the opposite direction of Madinah, to confuse pursuit.
+
+THE CAVE OF THAWR:
+They sheltered for three days in a cave on Mount Thawr. The Quraysh offered 100 camels reward for their capture. Search parties came within metres of the cave entrance. Abu Bakr (RA) whispered, trembling: "O Messenger of Allah, if one of them looks down at his feet he will see us." The Prophet ﷺ replied — and this reply became one of the most famous words in Islamic history: "O Abu Bakr, what do you think of two when Allah is their third?" Allah recorded this moment in the Quran: "If you do not aid him, Allah has already aided him when those who disbelieved had driven him out [of Makkah] as one of two, when they were in the cave and he said to his companion: Do not grieve; indeed Allah is with us." (9:40). A spider had woven its web across the cave entrance. A pair of pigeons had nested there. The search party concluded no one had entered recently.
+
+THE ARRIVAL IN MADINAH:
+When news spread that the Prophet ﷺ was approaching, the people of Madinah — men, women, children — came out singing: "Tala'al badru alayna min thaniyyatil wada' — The full moon has risen over us from the valley of farewell." Children climbed rooftops. Tears flowed. Every household wanted the honour of hosting him. He let his camel (Qaswa) walk freely and built his mosque wherever she sat.
+
+QURANIC REASSURANCE FOR THE EXILED:
+"Those who have been evicted from their homes without right — only because they say: Our Lord is Allah." (22:40). And: "And whoever emigrates for the cause of Allah will find on the earth many [alternative] locations and abundance." (4:100). And perhaps most powerfully: "Indeed, with hardship will be ease." (94:6).
+
+THE LESSON:
+The Hijrah teaches that when you give up something for Allah, Allah replaces it with better. The Muhajirin left homes, wealth, and family. They gained the brotherhood of the Ansar, the establishment of the first Islamic community, and the eternal honour of being among the Prophet's ﷺ closest generation. What are you willing to leave behind for the sake of Allah?`,
+  },
+  {
+    title: "Battle of Badr — Truth Against Falsehood ⚔️",
+    titleAr: "غزوة بدر الكبرى — يوم الفرقان",
+    year: "624 CE | 17 Ramadan, 2 AH | Wells of Badr",
+    content: `Badr was not just a battle — it was the moment the world was forced to take Islam seriously. The Quran itself named it Yawm al-Furqan — the Day of Distinction between truth and falsehood. 313 poorly-armed Muslims stood against 1,000 experienced Qurayshi warriors with full armour, cavalry, and supplies. By every calculation of power, the Muslims should have been annihilated.
+
+THE NUMBERS:
+• Muslims: 313 men, 70 camels (shared for travel — not cavalry), 8 swords. The majority were on foot.
+• Quraysh: approximately 1,000 warriors, 100 cavalry on horses, full armour and weapons.
+
+THE PROPHET'S ﷺ PRAYER:
+The night before Badr, the Prophet ﷺ stood in prayer crying and making dua until dawn. He raised his hands and said: "O Allah, if this group [of believers] is destroyed today, You will not be worshipped on earth." (Muslim 1763). Abu Bakr (RA) eventually took his arm and said: "O Messenger of Allah, Allah will fulfil His promise to you." The Prophet ﷺ then slept briefly — a sign of absolute trust (tawakkul) in Allah — and woke with the news that Allah had sent reinforcements.
+
+DIVINE REINFORCEMENT:
+"[Remember] when you asked help of your Lord, and He answered you: Indeed, I will reinforce you with a thousand from the angels, following one another." (Quran 8:9). And: "And Allah did not make it except as [a sign of] good tidings and so that your hearts would be assured thereby. And victory is not except from Allah. Indeed, Allah is Exalted in Might and Wise." (8:10).
+
+THE BATTLE:
+Single combat began with Ali (RA), Hamzah (RA), and Ubaydah ibn al-Harith (RA) defeating the Qurayshi champions. Then full combat broke out. The Prophet ﷺ picked up a handful of pebbles and threw them toward the enemy saying: "Shahat al-wujuh!" (May the faces be disfigured!). Allah says about this: "And you did not throw when you threw, but it was Allah who threw." (8:17). The Qurayshi lines broke. Abu Jahl — one of the Prophet's most vicious persecutors — was found dying and killed by two young Ansar boys, Muadh and Muawwidh.
+
+THE OUTCOME:
+70 Qurayshi leaders killed. 70 captured. Major figures of opposition — Abu Jahl, Umayyah ibn Khalaf, Utbah ibn Rabi'a — all dead. The Muslims lost 14 men, all of whom were granted the status of shuhadaa (martyrs) and Paradise.
+
+THE PRISONERS OF BADR:
+The Prophet ﷺ treated the prisoners with remarkable dignity. The Ansar gave their prisoners their own food and ate dates themselves. Those among the prisoners who knew how to read and write were offered their freedom in exchange for teaching ten Muslim children to read — an extraordinary civilisational decision. The Quran encouraged ransom but left the door open for grace: "Thereafter [is] either a gracious release or ransom until the war lays down its burdens." (47:4).
+
+QURANIC CHAPTER:
+An entire surah — Surah al-Anfal (Chapter 8) — was revealed largely in the context of Badr, addressing divine help, the ethics of war, the distribution of spoils, and the character required of the believing community.
+
+THE LESSON:
+Badr teaches that victory belongs not to the larger army, but to the army that has Allah. Numbers, weapons, and resources matter — but tawakkul (reliance on Allah) combined with proper preparation is the true formula. The Prophet ﷺ prepared: he scouted, he strategised, he consulted companions like al-Hubab ibn al-Mundhir about water positioning. Then he prayed and trusted. Preparation + Prayer + Tawakkul = the Badr formula.`,
+  },
+  {
+    title: "The Conquest of Makkah — Mercy Over Victory 🌟",
+    titleAr: "فتح مكة المكرمة — العفو عند المقدرة",
+    year: "630 CE | 20 Ramadan, 8 AH",
+    content: `The Conquest of Makkah stands as one of the most remarkable events in human history — not for the military triumph, but for what the victor chose to do with his power. The Prophet ﷺ had been expelled from Makkah 8 years earlier with a price on his head. His companions had been tortured, killed, and stripped of their wealth and homes. Now, with 10,000 warriors, he returned victorious. What would history record?
+
+THE BREACH OF HUDAYBIYYAH:
+The Quraysh's allies (Banu Bakr) attacked the Prophet's ﷺ allies (Banu Khuza'ah) — a direct violation of the Treaty of Hudaybiyyah. The Khuza'ah sent messengers to Madinah. The Prophet ﷺ set out with the largest army yet assembled — 10,000 companions. So secretly did he march that Abu Sufyan (the Qurayshi leader) learned of it only when he was already near Makkah. Abu Sufyan sought the Prophet's ﷺ uncle Abbas (RA), who escorted him to the Prophet's camp.
+
+ABU SUFYAN'S CONVERSION:
+Standing before the Prophet ﷺ, Abbas said: "O Messenger of Allah, Abu Sufyan loves honour — give him something." The Prophet ﷺ said: "Whoever enters the house of Abu Sufyan is safe. Whoever enters the Masjid al-Haram is safe. Whoever closes his door is safe." (Muslim 1780). Abu Sufyan accepted Islam.
+
+THE ENTRY INTO MAKKAH:
+On the morning of 20 Ramadan, 8 AH, the Prophet ﷺ entered Makkah on his she-camel al-Qaswa, his head bowed in humility — not in the posture of a conqueror but of a servant of Allah. He was reciting Surah al-Fath. He wore no crown, no special garments of conquest. The army entered in four columns. Almost no blood was shed.
+
+THE KAABAH — CLEANSED:
+360 idols surrounded the Kaabah. The Prophet ﷺ began toppling them with his staff, reciting: "Truth has come, and falsehood has departed. Indeed, falsehood is [by nature] ever bound to depart." (Quran 17:81). Bilal (RA) climbed to the top of the Kaabah — the same man who had been dragged through the sand crying "Ahad!" — and called the Adhan. Former slave now calls from the highest point of the holiest house.
+
+THE MOMENT OF JUDGMENT:
+The Quraysh gathered in the Masjid al-Haram, terrified. They knew what they had done. The Prophet ﷺ addressed them: "O Quraysh! What do you think I am going to do with you?" They replied: "We think [you will treat us] well. You are a noble brother, son of a noble brother." He ﷺ said: "Go — you are free." (Ibn Hisham, authenticated chain). This was not weakness — it was the calculated mercy of a Prophet who was sent as "a mercy to the worlds" (Quran 21:107).
+
+QURANIC PROMISE FULFILLED:
+"Indeed, He who imposed upon you the Quran [i.e., its recitation and its rulings] will take you back to a place of return." (28:85). When this verse was revealed during the Hijrah, the scholars of tafseer say it promised the Prophet ﷺ he would return to Makkah. And so he did.
+
+THE LESSON:
+The Prophet ﷺ had the power to destroy his enemies. He chose forgiveness. This is not naivety — it is the highest form of wisdom and strength. As he ﷺ himself taught: "The strong person is not the one who can wrestle; the truly strong person is the one who controls himself when angry." (Bukhari 6114). The Conquest of Makkah is not a story of military victory. It is a story of moral victory — of proving that Islam came not to conquer lands, but to conquer hearts.`,
+  },
+  {
+    title: "The Farewell Sermon — Last Words of the Last Prophet ﷺ 📣",
+    titleAr: "خطبة الوداع — الرسالة الأخيرة",
+    year: "632 CE | 9 Dhul Hijjah, 10 AH | Arafat",
+    content: `The Prophet ﷺ performed only one Hajj in his lifetime — 10 AH, just three months before his death. Standing on the plain of Arafat on the Day of Arafah, before over 100,000 companions, he delivered what would become known as the Farewell Sermon (Khutbat al-Wada'). Those who heard it knew they were hearing something they would carry for the rest of their lives.
+
+THE UNIVERSAL DECLARATION OF HUMAN RIGHTS — 1,400 YEARS BEFORE THE UN:
+"O People! Your blood, your property, and your honour are sacred to one another, as sacred as this day, this month, and this city." (Bukhari 1739). He abolished all pre-Islamic blood feuds: "Every claim of blood from the pre-Islamic period is under my feet — abolished and cancelled." He abolished all usurious interest: "All riba [interest] from the pre-Islamic period is abolished."
+
+ON THE RIGHTS OF WOMEN:
+"O people, you have rights over your women, and your women have rights over you." He commanded kind treatment of women: "Fear Allah regarding women — for you have taken them as a trust from Allah." This was revolutionary in a society where women had limited legal standing.
+
+ON RACIAL EQUALITY — 1,300 YEARS BEFORE THE CIVIL RIGHTS MOVEMENT:
+"O people! Your Lord is One, and your father [Adam] is one. An Arab has no superiority over a non-Arab, nor does a non-Arab have superiority over an Arab. A white person has no superiority over a black person, nor does a black person have superiority over a white person — except through taqwa (God-consciousness)." (Ahmad — Sahih). This was not merely a proclamation — it was a demolition of the entire tribal hierarchy of Arabia.
+
+ON THE PRESERVATION OF THE MESSAGE:
+"I am leaving among you two things. You will never go astray as long as you hold onto them: the Book of Allah and my Sunnah." (Muwatta Malik, authenticated). He then asked: "Have I delivered the message?" The crowd of over 100,000 people replied as one: "Yes!" He raised his finger to the sky three times and said: "O Allah, be witness! O Allah, be witness! O Allah, be witness!"
+
+THE FINAL REVELATION:
+On this day, or shortly before it, came the final complete verse: "This day I have perfected for you your religion and completed My favour upon you and have approved for you Islam as religion." (Quran 5:3). When Abu Bakr (RA) heard this verse, he wept. People asked why. He said: "When a thing is perfected, it can only decrease." He understood that this completeness meant the Prophet ﷺ would soon leave them.
+
+THE LESSON:
+The Farewell Sermon is the Prophet's ﷺ gift to humanity — a manifesto of justice, equality, dignity, and faith. It speaks across centuries with the same urgency. Read it. Memorise it. Teach it to your children. It is the last will and testament of the Final Prophet. And the most solemn obligation it places on us is this: to carry the message forward exactly as he delivered it, until the Day it is presented back to Allah.`,
+  },
 ];
 
 // ── Islamic Events (Hijri-based) ──────────────────────────────────────────
 const ISLAMIC_EVENTS = [
-  { hijriMonth: 1,  hijriDay: 1,  name: "Islamic New Year",          nameAr: "رأس السنة الهجرية", emoji: "🌙", daysWindow: 4,
-    writeup: "The Islamic New Year marks the beginning of Muharram and commemorates the Hijrah — the Prophet's ﷺ migration from Makkah to Madinah in 622 CE. This migration was so pivotal that Umar ibn al-Khattab (RA) chose it as the starting point of the entire Islamic calendar. It is a time for deep reflection: just as the Prophet ﷺ left comfort and homeland for the sake of Allah, we renew our intention to prioritize our deen above all else. Begin this year with sincere tawbah, renewed goals for learning and worship, and a heart turned completely toward Allah." },
-  { hijriMonth: 1,  hijriDay: 10, name: "Day of Ashura",             nameAr: "يوم عاشوراء",        emoji: "🤲", daysWindow: 4,
-    writeup: "The 10th of Muharram — Ashura — is a day of great blessing. The Prophet ﷺ found the Jews of Madinah fasting and was told it commemorates Allah saving Musa (AS) and his people from Pharaoh. He said: 'We have more right to Musa than you,' and ordered fasting. Fasting Ashura expiates the sins of the previous year (Muslim). Combine it with the 9th to distinguish from Jewish practice. The Prophet ﷺ said he intended this. It is also a day of increased generosity — Ibn Abbas reported that being generous to one's family on this day brings divine generosity throughout the year." },
-  { hijriMonth: 3,  hijriDay: 12, name: "Mawlid al-Nabawi ﷺ",        nameAr: "المولد النبوي الشريف", emoji: "💛", daysWindow: 7,
-    writeup: "The 12th of Rabi al-Awwal marks the birth of the Prophet Muhammad ﷺ — the greatest mercy Allah ever bestowed on humanity: 'We sent you only as a mercy to the worlds.' (21:107). This is the most beautiful time to study his ﷺ life and character, increase salawat upon him, and renew our pledge to follow his Sunnah. Learn one new thing about him today. Send abundant durood: 'Allahumma salli ala Muhammad wa ala ali Muhammad.' The best celebration of his birthday is to live by his example — in prayer, in honesty, in mercy toward all creation." },
-  { hijriMonth: 7,  hijriDay: 27, name: "Isra' and Mi'raj",           nameAr: "الإسراء والمعراج",    emoji: "🌌", daysWindow: 5,
-    writeup: "The Night Journey and Ascension is among the greatest miracles in history. In a single night, the Prophet ﷺ traveled from Makkah to Jerusalem, led all the prophets in prayer, then ascended through the seven heavens to the Divine Presence — meeting Adam, Ibrahim, Musa, and Isa (peace be upon them). Most significantly: the five daily prayers were gifted to this Ummah on this night — reduced from fifty through Musa's counsel. The five prayers are the pillar of our connection to Allah, five times every day. How are you guarding this gift tonight?" },
-  { hijriMonth: 8,  hijriDay: 15, name: "Laylat al-Bara'ah",          nameAr: "ليلة النصف من شعبان", emoji: "✨", daysWindow: 4,
-    writeup: "The 15th night of Sha'ban holds special significance in the tradition of many scholars — a night of divine mercy and attention. The Prophet ﷺ said Sha'ban is a month people neglect between Rajab and Ramadan: 'It is a month in which deeds are raised to the Lord of the worlds, and I love my deeds to be raised while I am fasting.' (Nasa'i). This is the ideal time to prepare your heart for Ramadan — increase ibadah, seek forgiveness for any grievances, and set your intentions for the blessed month ahead." },
-  { hijriMonth: 9,  hijriDay: 1,  name: "Ramadan Begins",             nameAr: "بداية رمضان المبارك",  emoji: "🌙", daysWindow: 4,
-    writeup: "Ramadan — the month the Quran descended — has arrived! Allah says: 'The month of Ramadan in which the Quran was revealed as guidance for humanity.' (2:185). In a Hadith Qudsi, Allah says: 'Every deed of the son of Adam is for him, except fasting — it is for Me and I will reward it.' The gates of Paradise are opened, Hellfire's gates closed, and the shayateen chained. This is your month. Set your Quran completion goal. Protect each fast. Increase your night prayer. Give generously. Seek Laylat al-Qadr in the odd nights of the last ten. Marhaban ya Ramadan! 🌙" },
-  { hijriMonth: 9,  hijriDay: 21, name: "Last Ten Nights of Ramadan", nameAr: "العشر الأواخر من رمضان", emoji: "⭐", daysWindow: 10,
-    writeup: "The last ten nights of Ramadan are the most precious nights of the entire year. The Prophet ﷺ would 'tighten his belt' — a metaphor for extreme devotion — staying awake in worship, waking his family, and increasing every act of worship. Among these ten nights lies Laylat al-Qadr — better than a thousand months of worship (97:3). Scholars recommend seeking it in the odd nights: 21st, 23rd, 25th, 27th, 29th. The best dua: 'Allahumma innaka afuwwun tuhibbul afwa fa'fu anni' — O Allah, You love to pardon, so pardon me. Do not waste a single moment of these nights." },
-  { hijriMonth: 9,  hijriDay: 27, name: "Laylat al-Qadr",             nameAr: "ليلة القدر المباركة",  emoji: "🌟", daysWindow: 3,
-    writeup: "The Night of Power — Laylat al-Qadr — is the most blessed night in all of creation. On this night the Quran descended. Angels fill the earth, and Allah's mercy envelops all who stand in prayer. One night of worship equals 83+ years of continuous devotion. Aishah (RA) asked: 'If I witness this night, what shall I say?' The Prophet ﷺ taught her: 'Allahumma innaka afuwwun tuhibbul afwa fa'fu anni.' Stand in prayer tonight. Cry. Ask for everything — your parents, your family, the Ummah, the oppressed. This night can change your eternity. Do not let it slip." },
-  { hijriMonth: 10, hijriDay: 1,  name: "Eid al-Fitr",               nameAr: "عيد الفطر المبارك",   emoji: "🎉", daysWindow: 3,
-    writeup: "Eid al-Fitr — the Festival of Breaking the Fast — is Allah's gift to believers after a month of sincere worship. Today, the takbir fills the air: 'Allahu Akbar, Allahu Akbar, la ilaha illAllah, Allahu Akbar, Allahu Akbar wa lillahil hamd.' Before the prayer, give Zakat al-Fitr so every Muslim can celebrate. Wear your best. Greet your family and neighbours. The Prophet ﷺ would change his route on the way to and from Eid prayer, following a different path each way. To preserve the spirit of Ramadan, fast six days of Shawwal — together with Ramadan, it equals a full year of fasting. Eid Mubarak! 🌙" },
-  { hijriMonth: 12, hijriDay: 1,  name: "First Days of Dhul Hijjah",  nameAr: "أيام ذي الحجة المباركة", emoji: "🕋", daysWindow: 10,
-    writeup: "The first ten days of Dhul Hijjah are the most beloved days to Allah — even more than the final ten nights of Ramadan in their daytime deeds. The Prophet ﷺ said: 'There are no days in which righteous deeds are more beloved to Allah than these ten.' (Bukhari). If you are not making Hajj, maximize: fast as many days as possible (especially the 9th — Day of Arafah), give sadaqah, increase dhikr (subhanAllah, alhamdulillah, Allahu Akbar, la ilaha illAllah), recite Quran, and maintain family ties. These days are the Ramadan of the righteous who missed Ramadan's full reward." },
-  { hijriMonth: 12, hijriDay: 9,  name: "Day of Arafah",              nameAr: "يوم عرفة الأعظم",     emoji: "🕋", daysWindow: 2,
-    writeup: "The Day of Arafah is the greatest day of the year and the pinnacle of Hajj — 'Hajj is Arafah.' Over two million pilgrims stand on the plain of Arafat raising their hands, and Allah boasts to His angels: 'Look at My servants — they came to Me disheveled and dusty from every distant land.' Fasting today expiates two years of sins (Muslim). For non-pilgrims: fast this day, make abundant dua from Dhuhr to Maghrib, recite 'La ilaha illAllah wahdahu la sharika lah, lahul mulku wa lahul hamdu wa huwa ala kulli shay'in qadir' 100 times. What will you ask Allah for today?" },
-  { hijriMonth: 12, hijriDay: 10, name: "Eid al-Adha",               nameAr: "عيد الأضحى المبارك",  emoji: "🐑", daysWindow: 4,
-    writeup: "Eid al-Adha commemorates the supreme test of Ibrahim (AS) — his willingness to sacrifice his son Ismail (AS) at Allah's command. When Ibrahim demonstrated absolute submission, Allah replaced the sacrifice with a ram and declared: 'Indeed, this was the clear triumph.' (37:106). The Udhiyah (sacrifice) we make honors this legacy — but remember: 'It is not their meat nor their blood that reaches Allah, but it is the piety from you that reaches Him.' (22:37). Share generously — one-third for family, one-third for neighbors, one-third for the poor. Eid Adha Mubarak! 🕋" },
+  { hijriMonth: 1,  hijriDay: 1,  name: "Islamic New Year",           nameAr: "رأس السنة الهجرية",     emoji: "🌙", daysWindow: 4, writeup: "The Islamic New Year marks the beginning of Muharram and commemorates the Hijrah — the Prophet's ﷺ migration from Makkah to Madinah in 622 CE. Umar ibn al-Khattab (RA) chose this event as the start of the Islamic calendar, because it represents the moment faith became a state and conviction became a civilisation. The Prophet ﷺ said about Muharram: 'The best fasts after Ramadan are in the month of Allah, which you call Muharram.' (Muslim 1163). Use this new year to make sincere tawbah, set learning goals for the year, increase fasting, and renew your covenant with Allah. 'Indeed, the number of months with Allah is twelve months in the register of Allah [from] the day He created the heavens and the earth; of these, four are sacred.' (9:36)" },
+  { hijriMonth: 1,  hijriDay: 10, name: "Day of Ashura",              nameAr: "يوم عاشوراء",            emoji: "🤲", daysWindow: 4, writeup: "The 10th of Muharram — Ashura — is among the most blessed individual days in the Islamic calendar. When the Prophet ﷺ arrived in Madinah and found the Jews fasting, he was told: 'This is the day Allah saved Musa (AS) and the Israelites from Pharaoh, and drowned Pharaoh and his army.' He ﷺ said: 'We have more right to Musa than you,' and he fasted and ordered fasting. (Bukhari 2004). The reward: 'I hope Allah will expiate the sins of the previous year.' (Muslim 1162). Ibn Abbas (RA) narrated the Prophet's ﷺ intention to also fast the 9th: 'If I live until next year, I will certainly fast the 9th as well.' (Muslim 1134) — combining both days distinguishes Islamic practice. It is also a day of generosity toward family, based on narrations of Ibn Masud (RA) compiled by Ibn Rajab al-Hanbali. This Ashura, fast the 9th and 10th, give sadaqah, and remember the story of Musa (AS) — it is your story too: Allah saves those who trust in Him, no matter the power of Pharaoh." },
+  { hijriMonth: 3,  hijriDay: 12, name: "Mawlid al-Nabawi ﷺ",         nameAr: "المولد النبوي الشريف",   emoji: "💛", daysWindow: 7, writeup: "The 12th of Rabi al-Awwal is the birth date of the Prophet Muhammad ﷺ according to the majority of scholars. Allah describes him: 'There has certainly come to you a Messenger from among yourselves. Grievous to him is what you suffer; [he is] concerned over you and to the believers is kind and merciful.' (9:128). And: 'We have not sent you except as a mercy to the worlds.' (21:107). This is the most beautiful time to study his ﷺ life, read Seerah, send abundant salawat upon him ('Allahumma salli ala Muhammad wa ala ali Muhammad, kama sallayta ala Ibrahim...'), and gather to remember his virtues. The Prophet ﷺ himself honoured the day of his birth by fasting on Mondays, saying: 'That is the day I was born.' (Muslim 1162). The best celebration of his ﷺ birthday is to follow him — in salah, in honesty, in mercy to all creation, in knowledge, and in character." },
+  { hijriMonth: 7,  hijriDay: 27, name: "Isra' and Mi'raj",            nameAr: "الإسراء والمعراج",       emoji: "🌌", daysWindow: 5, writeup: "On this night, Allah took His Prophet ﷺ on the greatest journey in human history — from Makkah to Jerusalem and then through all seven heavens to the Divine Presence. Allah says: 'Exalted is He who took His Servant by night from al-Masjid al-Haram to al-Masjid al-Aqsa, whose surroundings We have blessed, to show him of Our signs.' (17:1). The five daily prayers were gifted to this Ummah on this night — reduced from fifty through Musa's counsel. Allah said: 'These five are [counted as] fifty in reward, for My Word does not change.' (Bukhari 349). Reflect tonight: the five prayers are not a burden but the most precious gift — a direct audience with Allah five times every single day. The Prophet ﷺ confirmed their centrality: 'The first matter that the slave will be brought to account for on the Day of Judgement is the prayer. If it is sound, all his deeds will be sound. And if it is corrupt, all his deeds will be corrupt.' (Tabarani — Sahih). Guard your salah this blessed night." },
+  { hijriMonth: 8,  hijriDay: 15, name: "Laylat al-Bara'ah",           nameAr: "ليلة النصف من شعبان",   emoji: "✨", daysWindow: 4, writeup: "The 15th night of Sha'ban is the night some scholars identify as one of special divine mercy, based on narrations that Allah looks upon His creation with special attention. Whether one holds this specific view or not, Sha'ban is unambiguously a month of spiritual opportunity. The Prophet ﷺ said: 'It is a month between Rajab and Ramadan that people neglect. It is a month in which deeds are raised to the Lord of the worlds, and I love my deeds to be raised while I am fasting.' (Nasa'i — Hasan). The Prophet ﷺ would fast most of Sha'ban (Bukhari 1969). Use this month to: complete any missed Ramadan fasts (before the next Ramadan), increase optional fasting (especially Mondays and Thursdays), resolve any grievances with fellow Muslims, perform a full Quran khatm, and set your Ramadan goals and schedule now — so you enter Ramadan prepared, not scrambling." },
+  { hijriMonth: 9,  hijriDay: 1,  name: "Ramadan Begins",              nameAr: "بداية رمضان المبارك",   emoji: "🌙", daysWindow: 4, writeup: "Ramadan — the month of the Quran — has arrived. 'The month of Ramadan in which was revealed the Quran, a guidance for the people and clear proofs of guidance and criterion.' (2:185). In a Hadith Qudsi, Allah says: 'Every deed of the son of Adam is for him except fasting — it is for Me and I will give the reward for it.' (Bukhari 7492). The gates of Paradise are opened, the gates of Hellfire closed, and the shayateen chained. (Bukhari 1899). The Prophet ﷺ said: 'Whoever fasts Ramadan with faith and seeking reward, his previous sins will be forgiven.' (Bukhari 38). Set your goals NOW: How many pages of Quran daily? Which nights will you pray tahajjud? How much will you give in sadaqah? Remember: Ramadan is not the month of food — it is the month of the Quran. 'And recite the Quran with measured recitation.' (73:4). Marhaban ya Ramadan! 🌙" },
+  { hijriMonth: 9,  hijriDay: 21, name: "Last Ten Nights of Ramadan",  nameAr: "العشر الأواخر من رمضان", emoji: "⭐", daysWindow: 10, writeup: "The last ten nights of Ramadan contain the most precious time of the entire year. Aishah (RA) reported: 'When the last ten nights of Ramadan would come, the Prophet ﷺ would tighten his waist-wrapper, stay awake through the night, and wake his family.' (Bukhari 2024). He ﷺ said: 'Seek Laylat al-Qadr in the odd nights of the last ten of Ramadan.' (Bukhari 2017). Laylat al-Qadr is 'better than a thousand months.' (97:3) — that is over 83 years of worship in a single night. The best dua for this night is what the Prophet ﷺ himself taught Aishah (RA): 'Allahumma innaka afuwwun tuhibbul afwa fa'fu anni' — O Allah, You are the Pardoner, You love to pardon, so pardon me. (Tirmidhi 3513 — Sahih). In these nights: stand in prayer. Cry. Ask for everything — your parents, your children, the Ummah, the oppressed, your deepest needs. Do not let these nights pass in sleep." },
+  { hijriMonth: 9,  hijriDay: 27, name: "Laylat al-Qadr",              nameAr: "ليلة القدر المباركة",    emoji: "🌟", daysWindow: 3, writeup: "Laylat al-Qadr — the Night of Power — is the most blessed night in the history of creation. On this night the Quran descended from the Lawh al-Mahfudh (Preserved Tablet) to Bayt al-Izzah in the lowest heaven. 'The Night of Decree is better than a thousand months. The angels and the Spirit [Jibreel] descend therein by permission of their Lord for every matter.' (97:3-4). The Prophet ﷺ said: 'Whoever stands in prayer on Laylat al-Qadr with faith and seeking reward, his previous sins will be forgiven.' (Bukhari 35). Ibn Abbas (RA) said the meaning of 'for every matter' is that the angels bring down the decrees for the coming year — rizq (provision), life, death, marriages, children. Your dua tonight could shape the next year of your life. Pray Isha and Fajr in jamaat (the reward of the whole night). Stand in tahajjud. Give sadaqah. Read Quran. Cry. Make dua for your parents, your family, the Muslims worldwide. Tonight could change your eternity." },
+  { hijriMonth: 10, hijriDay: 1,  name: "Eid al-Fitr",                nameAr: "عيد الفطر المبارك",      emoji: "🎉", daysWindow: 3, writeup: "Eid al-Fitr is Allah's gift to the believers as a celebration after a month of sincere worship. The Prophet ﷺ said: 'The fasting person has two moments of joy: when he breaks his fast and when he meets his Lord.' (Bukhari 7492). Before Eid prayer, give Zakat al-Fitr — the Prophet ﷺ made this obligatory: 'Zakat al-Fitr purifies the fasting person from idle talk and obscenities, and provides food for the poor.' (Abu Dawud 1609 — Sahih). The takbir begins from Eid eve: 'Allahu Akbar, Allahu Akbar, la ilaha illAllah, Allahu Akbar, Allahu Akbar wa lillahil hamd.' Wear your best, take different routes to and from Eid prayer (Sunnah), greet every Muslim with warmth, visit family, give gifts to children. And to preserve Ramadan's spirit: fast six days of Shawwal — the Prophet ﷺ said: 'Whoever fasts Ramadan and then follows it with six days of Shawwal, it will be as though he fasted the entire year.' (Muslim 1164). Eid Mubarak!" },
+  { hijriMonth: 12, hijriDay: 1,  name: "First Days of Dhul Hijjah",   nameAr: "أيام ذي الحجة المباركة", emoji: "🕋", daysWindow: 10, writeup: "The first ten days of Dhul Hijjah are the most beloved days to Allah. The Prophet ﷺ said: 'There are no days in which righteous deeds are more beloved to Allah than these ten days.' The companions asked: 'Not even jihad in the path of Allah?' He replied: 'Not even jihad in the path of Allah — except a man who goes out with his life and his wealth and does not return with either.' (Bukhari 969). The deeds to multiply: fasting (especially the 9th — Day of Arafah), sadaqah, Quran recitation, dhikr ('La ilaha illAllah, Allahu Akbar, Alhamdulillah, Subhanallah'), salat al-duha, maintaining ties of kinship, and for those with the means — Udhiyah (sacrifice). 'That [is so], and whoever honours the symbols of Allah — indeed it is from the piety of hearts.' (22:32). These days are a Ramadan for those who did not fully benefit from Ramadan. Do not let them pass." },
+  { hijriMonth: 12, hijriDay: 9,  name: "Day of Arafah",               nameAr: "يوم عرفة الأعظم",        emoji: "🕋", daysWindow: 2, writeup: "The Day of Arafah is the greatest day of the year and the very heart of Hajj — 'Al-Hajju Arafah' (Hajj is Arafah). (Abu Dawud 1949 — Sahih). Over two million pilgrims stand on the plain of Arafat from after Dhuhr to sunset, making dua, weeping, and seeking forgiveness. The Prophet ﷺ said: 'There is no day on which Allah frees more servants from the Fire than the Day of Arafah. He comes close and then boasts to the angels, saying: What do these people want?' (Muslim 1348). For non-pilgrims: fasting this day expiates two years of sins — the previous year and the coming year. (Muslim 1162). Make abundant dua between Dhuhr and Maghrib — these are among the most accepted hours in the year. Recite frequently: 'La ilaha illAllah wahdahu la sharika lah, lahul mulku wa lahul hamdu wa huwa ala kulli shay'in qadir.' The Prophet ﷺ said the best dua is the dua of Arafah. (Tirmidhi 3585 — Hasan)." },
+  { hijriMonth: 12, hijriDay: 10, name: "Eid al-Adha",                nameAr: "عيد الأضحى المبارك",     emoji: "🐑", daysWindow: 4, writeup: "Eid al-Adha commemorates the supreme test of Ibrahim (AS) — commanded by Allah in a dream to sacrifice his son Ismail (AS). Ibrahim and Ismail both submitted completely: 'And when they had both submitted and he put him down upon his forehead, We called to him: O Ibrahim! You have fulfilled the vision.' (37:103-104). Allah replaced the sacrifice with a ram: 'And We ransomed him with a great sacrifice.' (37:107). The Udhiyah (sacrifice) we perform carries this spirit of complete submission. Remember: 'Their meat will not reach Allah, nor will their blood, but what reaches Him is piety from you.' (22:37). The sacrifice should be shared: one-third for family, one-third for neighbours, one-third for the poor. The Prophet ﷺ sacrificed with his own hand and said: 'O Allah, this is from Muhammad and the family of Muhammad and the Ummah of Muhammad.' (Muslim 1967). May our lives be a complete sacrifice — of our time, ego, desires, and wealth — for the sake of Allah. Eid Adha Mubarak! 🕋" },
 ];
 
-// ── News item type ─────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────
+interface LiveHadith {
+  ar?: string;
+  en: string;
+  source: string;
+  narrator: string;
+  grade: string;
+  explanation: string;
+}
 interface NewsItem {
   title: string;
   link: string;
@@ -145,81 +367,124 @@ interface NewsItem {
   thumbnail: string;
   pubDate: string;
 }
-
-// ── Tab type ──────────────────────────────────────────────────────────────
 type TabId = "hadith" | "seerah" | "event" | "news";
-
 interface Props { language?: string; }
+
+// ── News feeds to try in order ────────────────────────────────────────────
+const NEWS_FEEDS = [
+  "https://muslimmatters.org/feed/",
+  "https://www.5pillarsuk.com/feed/",
+  "https://productivemuslim.com/feed/",
+  "https://aboutislam.net/feed/",
+];
 
 // ═══════════════════════════════════════════════════════════════════════════
 const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
-  const doy    = dayOfYear();
-  const today  = new Date();
+  const doy   = dayOfYear();
+  const today = new Date();
 
-  // Daily rotating content
-  const dailyHadith = HADITHS[doy % HADITHS.length];
-  const dailySeerah = SEERAH[doy  % SEERAH.length];
+  const fallbackHadith = FALLBACK_HADITHS[doy % FALLBACK_HADITHS.length];
+  const dailySeerah    = SEERAH[doy % SEERAH.length];
 
-  // Find upcoming / active Islamic event (look 14 days ahead)
   const upcomingEvent = (() => {
     for (let i = 0; i < 14; i++) {
-      const check  = new Date(today.getTime() + i * 86_400_000);
+      const check       = new Date(today.getTime() + i * 86_400_000);
       const { day, month } = getHijriNumeric(check);
-      const ev = ISLAMIC_EVENTS.find(e => {
-        const diff = Math.abs(e.hijriDay - day);
-        return e.hijriMonth === month && diff <= (e.daysWindow ?? 3);
-      });
+      const ev = ISLAMIC_EVENTS.find(e =>
+        e.hijriMonth === month && Math.abs(e.hijriDay - day) <= (e.daysWindow ?? 3)
+      );
       if (ev) return { event: ev, daysAway: i };
     }
-    // Fallback: rotate through events daily so tab is never empty
     return { event: ISLAMIC_EVENTS[doy % ISLAMIC_EVENTS.length], daysAway: -1 };
   })();
 
-  const [activeTab, setActiveTab] = useState<TabId>("hadith");
-  const [news, setNews]           = useState<NewsItem[]>([]);
-  const [newsLoading, setNL]      = useState(false);
-  const [newsError,   setNE]      = useState(false);
-  const [expanded,    setExp]     = useState(false); // seerah / event read-more
+  const [activeTab,  setActiveTab]  = useState<TabId>("hadith");
+  const [liveHadith, setLiveHadith] = useState<LiveHadith | null>(null);
+  const [hadithLoad, setHadithLoad] = useState(true);
+  const [news,       setNews]       = useState<NewsItem[]>([]);
+  const [newsLoad,   setNewsLoad]   = useState(false);
+  const [newsError,  setNewsError]  = useState(false);
+  const [expanded,   setExpanded]   = useState(false);
 
-  // If an event is imminent, spotlight it first
+  // Spotlight imminent events
   useEffect(() => {
-    if (upcomingEvent.daysAway >= 0 && upcomingEvent.daysAway <= 2) setActiveTab("event");
+    if (upcomingEvent.daysAway === 0 || upcomingEvent.daysAway === 1) setActiveTab("event");
   }, []);
 
-  // Reset expanded state when tab changes
-  useEffect(() => { setExp(false); }, [activeTab]);
+  useEffect(() => { setExpanded(false); }, [activeTab]);
 
-  // Fetch Islamic news when tab is selected
+  // Fetch live hadith from HadeethEnc (free Islamic API)
   useEffect(() => {
-    if (activeTab !== "news" || news.length > 0 || newsLoading) return;
-    setNL(true); setNE(false);
-    fetch("https://api.rss2json.com/v1/api.json?rss_url=https%3A%2F%2Faboutislam.net%2Ffeed%2F&count=5")
+    setHadithLoad(true);
+    fetch("https://hadeethenc.com/api/v1/hadeeths/random/?language=en")
       .then(r => r.json())
       .then(d => {
-        if (d.status === "ok" && d.items?.length) {
-          setNews(d.items.map((it: any) => ({
-            title:       it.title?.replace(/&#\d+;/g, "").trim() || "",
-            link:        it.link  || "#",
-            description: (it.description || "").replace(/<[^>]*>/g, "").slice(0, 110).trim() + "…",
-            thumbnail:   it.thumbnail || it.enclosure?.link || "",
-            pubDate:     it.pubDate || "",
-          })));
-        } else setNE(true);
+        if (d && d.hadeeth) {
+          setLiveHadith({
+            ar:          d.arabic    || fallbackHadith.ar,
+            en:          d.hadeeth,
+            source:      d.attribution || fallbackHadith.source,
+            narrator:    d.attribution || fallbackHadith.narrator,
+            grade:       d.grade       || "Authenticated",
+            explanation: d.explanation || fallbackHadith.explanation,
+          });
+        }
       })
-      .catch(() => setNE(true))
-      .finally(() => setNL(false));
+      .catch(() => {})
+      .finally(() => setHadithLoad(false));
+  }, []);
+
+  // Fetch Islamic news — try multiple feeds in sequence
+  useEffect(() => {
+    if (activeTab !== "news" || news.length > 0 || newsLoad) return;
+    setNewsLoad(true);
+    setNewsError(false);
+
+    (async () => {
+      for (const feed of NEWS_FEEDS) {
+        try {
+          const url = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(feed)}&count=5`;
+          const r   = await fetch(url);
+          const d   = await r.json();
+          if (d.status === "ok" && d.items?.length > 0) {
+            setNews(d.items.map((it: any) => ({
+              title:       (it.title  || "").replace(/&#\d+;/g, "").replace(/&amp;/g, "&").trim(),
+              link:        it.link    || "#",
+              description: (it.description || "").replace(/<[^>]*>/g, "").slice(0, 120).trim() + "…",
+              thumbnail:   it.thumbnail || it.enclosure?.link || "",
+              pubDate:     it.pubDate || "",
+            })));
+            setNewsLoad(false);
+            return;
+          }
+        } catch {}
+      }
+      setNewsError(true);
+      setNewsLoad(false);
+    })();
   }, [activeTab]);
 
   const t = (en: string, ar: string) => language === "ar" ? ar : en;
 
-  const tabs: { id: TabId; label: string; labelAr: string; icon: any; color: string }[] = [
-    { id: "hadith", label: "Hadith",  labelAr: "حديث",   icon: BookMarked,   color: DARK_GREEN },
-    { id: "seerah", label: "Seerah",  labelAr: "سيرة",   icon: ScrollText,   color: AMBER },
-    { id: "event",  label: "Events",  labelAr: "مناسبة", icon: CalendarDays, color: MID_GREEN },
-    { id: "news",   label: "News",    labelAr: "أخبار",  icon: Newspaper,    color: "#1e3a5f" },
+  const relDate = (s: string) => {
+    try {
+      const diff = Math.floor((Date.now() - new Date(s).getTime()) / 86400000);
+      if (diff === 0) return "Today";
+      if (diff === 1) return "Yesterday";
+      return `${diff}d ago`;
+    } catch { return ""; }
+  };
+
+  const hadith = liveHadith ?? fallbackHadith;
+
+  const TABS: { id: TabId; en: string; ar: string; Icon: any; color: string }[] = [
+    { id: "hadith", en: "Hadith",  ar: "حديث",   Icon: BookMarked,   color: DARK_GREEN },
+    { id: "seerah", en: "Seerah",  ar: "سيرة",   Icon: ScrollText,   color: AMBER },
+    { id: "event",  en: "Events",  ar: "مناسبة", Icon: CalendarDays, color: MID_GREEN },
+    { id: "news",   en: "News",    ar: "أخبار",  Icon: Newspaper,    color: "#1e3a5f" },
   ];
 
-  const card: React.CSSProperties = {
+  const outerCard: React.CSSProperties = {
     background: "#fff",
     border: `1px solid ${BORDER}`,
     borderRadius: 20,
@@ -227,21 +492,9 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
     overflow: "hidden",
   };
 
-  // ── Format relative news date ───────────────────────────────────────────
-  const relDate = (dateStr: string) => {
-    try {
-      const d = new Date(dateStr);
-      const diff = Math.floor((Date.now() - d.getTime()) / 86400000);
-      if (diff === 0) return "Today";
-      if (diff === 1) return "Yesterday";
-      return `${diff}d ago`;
-    } catch { return ""; }
-  };
-
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-
-      {/* ── Section header ──────────────────────────────────────────────── */}
+    <div>
+      {/* Section label */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <Star style={{ width: 14, height: 14, color: GOLD, fill: GOLD }} />
         <span style={{ fontSize: 15, fontWeight: 900, color: TEXT_DARK, fontFamily: "'Playfair Display', serif" }}>
@@ -250,164 +503,212 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
         <Star style={{ width: 14, height: 14, color: GOLD, fill: GOLD }} />
       </div>
 
-      {/* ── Main card ───────────────────────────────────────────────────── */}
-      <div style={card}>
+      <div style={outerCard}>
 
         {/* Tab strip */}
         <div style={{ display: "flex", borderBottom: `1px solid ${BORDER}`, background: "#fafafa" }}>
-          {tabs.map(tab => {
-            const active = activeTab === tab.id;
+          {TABS.map(({ id, en, ar, Icon, color }) => {
+            const active = activeTab === id;
             return (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+              <button key={id} onClick={() => setActiveTab(id)} style={{
                 flex: 1, padding: "12px 4px", border: "none", cursor: "pointer",
                 background: active ? "#fff" : "transparent",
-                borderBottom: active ? `2.5px solid ${tab.color}` : "2.5px solid transparent",
+                borderBottom: active ? `2.5px solid ${color}` : "2.5px solid transparent",
                 display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
                 transition: "all .15s",
               }}>
-                <tab.icon style={{ width: 16, height: 16, color: active ? tab.color : TEXT_LIGHT }} />
-                <span style={{ fontSize: 10, fontWeight: active ? 800 : 500, color: active ? tab.color : TEXT_LIGHT }}>
-                  {t(tab.label, tab.labelAr)}
+                <Icon style={{ width: 16, height: 16, color: active ? color : TEXT_LIGHT }} />
+                <span style={{ fontSize: 10, fontWeight: active ? 800 : 500, color: active ? color : TEXT_LIGHT }}>
+                  {t(en, ar)}
                 </span>
               </button>
             );
           })}
         </div>
 
-        {/* ── HADITH TAB ─────────────────────────────────────────────────── */}
+        {/* ══ HADITH TAB ══════════════════════════════════════════════════ */}
         {activeTab === "hadith" && (
-          <div style={{ background: `linear-gradient(160deg, ${DARK_GREEN} 0%, ${MID_GREEN} 100%)`, padding: "22px 20px" }}>
-
-            {/* Badge */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <BookMarked style={{ width: 13, height: 13, color: GOLD }} />
-                <span style={{ fontSize: 11, fontWeight: 800, color: GOLD, letterSpacing: "0.06em", fontFamily: "'Playfair Display', serif" }}>
-                  {t("Hadith of the Day", "حديث اليوم")}
+          <div>
+            <div style={{ background: `linear-gradient(160deg, ${DARK_GREEN} 0%, ${MID_GREEN} 100%)`, padding: "22px 20px 20px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <BookMarked style={{ width: 13, height: 13, color: GOLD }} />
+                  <span style={{ fontSize: 11, fontWeight: 800, color: GOLD, letterSpacing: "0.06em", fontFamily: "'Playfair Display', serif" }}>
+                    {t("Hadith of the Day", "حديث اليوم")}
+                  </span>
+                </div>
+                <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.55)", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 20, padding: "3px 9px" }}>
+                  {hadith.grade}
                 </span>
               </div>
-              <span style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.5)", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 20, padding: "3px 9px" }}>
-                {t("Authenticated", "صحيح")}
-              </span>
+
+              {hadithLoad ? (
+                <div style={{ textAlign: "center", padding: "20px 0" }}>
+                  <div style={{ width: 24, height: 24, borderRadius: "50%", border: "2.5px solid rgba(255,255,255,0.4)", borderTopColor: GOLD, animation: "idf-spin .7s linear infinite", margin: "0 auto 8px" }} />
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>{t("Loading hadith…", "جاري التحميل…")}</span>
+                  <style>{`@keyframes idf-spin{to{transform:rotate(360deg)}}`}</style>
+                </div>
+              ) : (
+                <>
+                  {hadith.ar && (
+                    <p style={{ fontFamily: "'Scheherazade New','Amiri Quran','Amiri',serif", fontSize: 21, lineHeight: 2.0, color: "#fff", textAlign: "center", direction: "rtl", margin: "0 0 14px", textShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>
+                      {hadith.ar}
+                    </p>
+                  )}
+                  <div style={{ width: 40, height: 1.5, background: GOLD, margin: "0 auto 14px", borderRadius: 2, opacity: 0.8 }} />
+                  <p style={{ fontSize: 13, lineHeight: 1.75, fontStyle: "italic", color: "rgba(255,255,255,0.9)", textAlign: "center", margin: "0 0 14px" }}>
+                    "{hadith.en}"
+                  </p>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: GOLD_LIGHT }}>{hadith.source}</span>
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.45)" }}>
+                      {t("Narrated by", "عن")} {hadith.narrator}
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
 
-            {/* Arabic text */}
-            <p style={{ fontFamily: "'Scheherazade New','Amiri Quran','Amiri',serif", fontSize: 22, lineHeight: 2.0, color: "#fff", textAlign: "center", direction: "rtl", margin: "0 0 14px", textShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>
-              {dailyHadith.ar}
-            </p>
-
-            {/* Gold divider */}
-            <div style={{ width: 40, height: 1.5, background: GOLD, margin: "0 auto 14px", borderRadius: 2 }} />
-
-            {/* Translation */}
-            <p style={{ fontSize: 13, lineHeight: 1.7, fontStyle: "italic", color: "rgba(255,255,255,0.88)", textAlign: "center", margin: "0 0 14px" }}>
-              "{dailyHadith.en}"
-            </p>
-
-            {/* Attribution */}
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-              <span style={{ fontSize: 11, fontWeight: 700, color: GOLD }}>{dailyHadith.source}</span>
-              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>{t("Narrated by", "عن")} {dailyHadith.narrator}</span>
-            </div>
+            {/* Explanation */}
+            {!hadithLoad && hadith.explanation && (
+              <div style={{ padding: "16px 20px 18px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+                  <div style={{ width: 3, height: 16, background: GOLD, borderRadius: 2 }} />
+                  <span style={{ fontSize: 11, fontWeight: 800, color: TEXT_MED, fontFamily: "'Playfair Display', serif" }}>
+                    {t("Explanation & Evidence", "الشرح والأدلة")}
+                  </span>
+                </div>
+                <p style={{
+                  fontSize: 12.5, lineHeight: 1.85, color: TEXT_DARK, margin: "0 0 8px",
+                  display: "-webkit-box", WebkitLineClamp: expanded ? 999 : 4,
+                  WebkitBoxOrient: "vertical", overflow: "hidden",
+                } as React.CSSProperties}>
+                  {hadith.explanation}
+                </p>
+                {hadith.explanation.length > 200 && (
+                  <button onClick={() => setExpanded(v => !v)} style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    fontSize: 11, fontWeight: 700, color: MID_GREEN, padding: 0,
+                    display: "flex", alignItems: "center", gap: 4,
+                  }}>
+                    {expanded
+                      ? <><ChevronUp style={{ width: 13, height: 13 }} />{t("Show less", "أقل")}</>
+                      : <><ChevronDown style={{ width: 13, height: 13 }} />{t("Read full explanation", "اقرأ الشرح كاملاً")}</>
+                    }
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {/* ── SEERAH TAB ─────────────────────────────────────────────────── */}
+        {/* ══ SEERAH TAB ══════════════════════════════════════════════════ */}
         {activeTab === "seerah" && (
-          <div style={{ background: AMBER_BG, padding: "20px 20px" }}>
+          <div style={{ background: AMBER_BG }}>
             {/* Header */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <ScrollText style={{ width: 14, height: 14, color: AMBER }} />
-              <span style={{ fontSize: 11, fontWeight: 800, color: AMBER, letterSpacing: "0.06em", fontFamily: "'Playfair Display', serif" }}>
-                {t("Daily Seerah", "السيرة النبوية")}
-              </span>
-              <div style={{ marginLeft: "auto", background: `${AMBER}18`, border: `1px solid ${AMBER}44`, borderRadius: 20, padding: "3px 9px" }}>
-                <span style={{ fontSize: 9, fontWeight: 700, color: AMBER }}>{dailySeerah.year}</span>
+            <div style={{ padding: "18px 20px 0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <ScrollText style={{ width: 14, height: 14, color: AMBER }} />
+                <span style={{ fontSize: 11, fontWeight: 800, color: AMBER, letterSpacing: "0.06em", fontFamily: "'Playfair Display', serif" }}>
+                  {t("Daily Seerah", "السيرة النبوية")}
+                </span>
+                <div style={{ marginLeft: "auto", background: `${AMBER}18`, border: `1px solid ${AMBER}40`, borderRadius: 20, padding: "3px 10px" }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: AMBER }}>{dailySeerah.year}</span>
+                </div>
               </div>
-            </div>
 
-            {/* Timeline dot + title */}
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
-              <div style={{ flexShrink: 0, marginTop: 3 }}>
-                <div style={{ width: 12, height: 12, borderRadius: "50%", background: AMBER, boxShadow: `0 0 0 3px ${AMBER}33` }} />
-              </div>
-              <div>
-                <h3 style={{ fontSize: 16, fontWeight: 900, color: TEXT_DARK, margin: "0 0 2px", fontFamily: "'Playfair Display', serif", lineHeight: 1.3 }}>
-                  {dailySeerah.title}
-                </h3>
-                <p style={{ fontSize: 11, color: AMBER, margin: 0, fontFamily: "'Amiri', serif" }} dir="rtl">
-                  {dailySeerah.titleAr}
-                </p>
+              {/* Title */}
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 14 }}>
+                <div style={{ flexShrink: 0, marginTop: 6 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: AMBER, boxShadow: `0 0 0 3px ${AMBER}33` }} />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: 15, fontWeight: 900, color: TEXT_DARK, margin: "0 0 3px", fontFamily: "'Playfair Display', serif", lineHeight: 1.3 }}>
+                    {dailySeerah.title}
+                  </h3>
+                  <p style={{ fontSize: 12, color: AMBER, margin: 0, fontFamily: "'Scheherazade New','Amiri',serif", direction: "rtl" }}>
+                    {dailySeerah.titleAr}
+                  </p>
+                </div>
               </div>
             </div>
 
             {/* Content */}
-            <div style={{ marginLeft: 24, borderLeft: `2px solid ${AMBER}33`, paddingLeft: 14 }}>
-              <p style={{ fontSize: 13, lineHeight: 1.8, color: "#44200a", margin: 0, display: "-webkit-box", WebkitLineClamp: expanded ? 999 : 4, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+            <div style={{ marginLeft: 20, marginRight: 20, borderLeft: `2px solid ${AMBER}30`, paddingLeft: 14, paddingBottom: 20 }}>
+              <p style={{
+                fontSize: 12.5, lineHeight: 1.9, color: "#44200a", margin: "0 0 10px",
+                whiteSpace: "pre-line",
+                display: expanded ? "block" : "-webkit-box",
+                WebkitLineClamp: expanded ? undefined : 6,
+                WebkitBoxOrient: "vertical", overflow: expanded ? "visible" : "hidden",
+              } as React.CSSProperties}>
                 {dailySeerah.content}
               </p>
-              {dailySeerah.content.length > 200 && (
-                <button onClick={() => setExp(v => !v)} style={{ marginTop: 8, background: "none", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700, color: AMBER, padding: 0, display: "flex", alignItems: "center", gap: 4 }}>
-                  {expanded ? t("Show less ↑", "أقل ↑") : t("Read more ↓", "اقرأ أكثر ↓")}
-                </button>
-              )}
+              <button onClick={() => setExpanded(v => !v)} style={{
+                background: "none", border: "none", cursor: "pointer",
+                fontSize: 11, fontWeight: 700, color: AMBER, padding: 0,
+                display: "flex", alignItems: "center", gap: 4,
+              }}>
+                {expanded
+                  ? <><ChevronUp style={{ width: 13, height: 13 }} />{t("Show less", "أقل")}</>
+                  : <><ChevronDown style={{ width: 13, height: 13 }} />{t("Read full story", "اقرأ القصة كاملة")}</>
+                }
+              </button>
             </div>
           </div>
         )}
 
-        {/* ── EVENTS TAB ─────────────────────────────────────────────────── */}
+        {/* ══ EVENTS TAB ══════════════════════════════════════════════════ */}
         {activeTab === "event" && (() => {
           const { event, daysAway } = upcomingEvent;
           return (
             <div>
-              {/* Event banner */}
-              <div style={{ background: `linear-gradient(135deg, ${DARK_GREEN} 0%, #1a5c35 100%)`, padding: "18px 20px" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+              <div style={{ background: `linear-gradient(135deg, ${DARK_GREEN} 0%, #1a5c35 100%)`, padding: "18px 20px 20px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <CalendarDays style={{ width: 13, height: 13, color: GOLD }} />
                     <span style={{ fontSize: 11, fontWeight: 800, color: GOLD, letterSpacing: "0.05em", fontFamily: "'Playfair Display', serif" }}>
-                      {t("Islamic Event", "مناسبة إسلامية")}
+                      {t("Islamic Events", "مناسبة إسلامية")}
                     </span>
                   </div>
-                  {daysAway === 0 && (
-                    <span style={{ fontSize: 9, fontWeight: 800, color: "#fff", background: GOLD, borderRadius: 20, padding: "3px 9px" }}>
-                      {t("TODAY ✨", "اليوم ✨")}
-                    </span>
-                  )}
-                  {daysAway > 0 && (
-                    <span style={{ fontSize: 9, fontWeight: 700, color: GOLD, background: "rgba(201,168,76,0.15)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: 20, padding: "3px 9px" }}>
-                      {t(`In ${daysAway} day${daysAway > 1 ? "s" : ""}`, `خلال ${daysAway} يوم`)}
-                    </span>
-                  )}
+                  {daysAway === 0 && <span style={{ fontSize: 9, fontWeight: 800, color: DARK_GREEN, background: GOLD, borderRadius: 20, padding: "3px 10px" }}>{t("TODAY ✨", "اليوم ✨")}</span>}
+                  {daysAway === 1 && <span style={{ fontSize: 9, fontWeight: 700, color: GOLD, background: "rgba(201,168,76,0.18)", border: "1px solid rgba(201,168,76,0.35)", borderRadius: 20, padding: "3px 10px" }}>{t("Tomorrow", "غداً")}</span>}
+                  {daysAway > 1 && daysAway < 14 && <span style={{ fontSize: 9, fontWeight: 700, color: GOLD, background: "rgba(201,168,76,0.14)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: 20, padding: "3px 10px" }}>{t(`In ${daysAway} days`, `خلال ${daysAway} أيام`)}</span>}
                 </div>
-
                 <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 32, marginBottom: 6 }}>{event.emoji}</div>
-                  <h3 style={{ fontSize: 17, fontWeight: 900, color: "#fff", margin: "0 0 4px", fontFamily: "'Playfair Display', serif" }}>
-                    {event.name}
-                  </h3>
-                  <p style={{ fontFamily: "'Scheherazade New','Amiri',serif", fontSize: 18, color: GOLD_LIGHT, margin: 0, direction: "rtl" }}>
-                    {event.nameAr}
-                  </p>
+                  <div style={{ fontSize: 34, marginBottom: 8 }}>{event.emoji}</div>
+                  <h3 style={{ fontSize: 17, fontWeight: 900, color: "#fff", margin: "0 0 6px", fontFamily: "'Playfair Display', serif" }}>{event.name}</h3>
+                  <p style={{ fontFamily: "'Scheherazade New','Amiri',serif", fontSize: 20, color: GOLD_LIGHT, margin: 0, direction: "rtl", lineHeight: 1.6 }}>{event.nameAr}</p>
                 </div>
               </div>
-
-              {/* Writeup */}
-              <div style={{ padding: "18px 20px" }}>
-                <p style={{ fontSize: 13, lineHeight: 1.85, color: TEXT_DARK, margin: 0, display: "-webkit-box", WebkitLineClamp: expanded ? 999 : 5, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+              <div style={{ padding: "18px 20px 20px" }}>
+                <p style={{
+                  fontSize: 12.5, lineHeight: 1.9, color: TEXT_DARK, margin: "0 0 10px",
+                  whiteSpace: "pre-line",
+                  display: expanded ? "block" : "-webkit-box",
+                  WebkitLineClamp: expanded ? undefined : 5,
+                  WebkitBoxOrient: "vertical", overflow: expanded ? "visible" : "hidden",
+                } as React.CSSProperties}>
                   {event.writeup}
                 </p>
-                <button onClick={() => setExp(v => !v)} style={{ marginTop: 10, background: "none", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700, color: MID_GREEN, padding: 0 }}>
-                  {expanded ? t("Show less ↑", "أقل ↑") : t("Read more ↓", "اقرأ أكثر ↓")}
+                <button onClick={() => setExpanded(v => !v)} style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  fontSize: 11, fontWeight: 700, color: MID_GREEN, padding: 0,
+                  display: "flex", alignItems: "center", gap: 4,
+                }}>
+                  {expanded
+                    ? <><ChevronUp style={{ width: 13, height: 13 }} />{t("Show less", "أقل")}</>
+                    : <><ChevronDown style={{ width: 13, height: 13 }} />{t("Read full writeup", "اقرأ أكثر")}</>
+                  }
                 </button>
               </div>
             </div>
           );
         })()}
 
-        {/* ── NEWS TAB ───────────────────────────────────────────────────── */}
+        {/* ══ NEWS TAB ════════════════════════════════════════════════════ */}
         {activeTab === "news" && (
-          <div style={{ padding: "16px 16px" }}>
+          <div style={{ padding: "16px 16px 18px" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <Newspaper style={{ width: 13, height: 13, color: "#1e3a5f" }} />
@@ -415,48 +716,52 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
                   {t("Islamic News", "أخبار إسلامية")}
                 </span>
               </div>
-              {newsError && (
-                <button onClick={() => { setNE(false); setNL(false); setNews([]); setTimeout(() => setActiveTab("news"), 10); }}
-                  style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: TEXT_MED }}>
-                  <RefreshCw style={{ width: 11, height: 11 }} /> {t("Retry", "إعادة")}
-                </button>
-              )}
+              <button onClick={() => { setNewsError(false); setNews([]); }}
+                style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: TEXT_MED, padding: 0 }}>
+                <RefreshCw style={{ width: 11, height: 11 }} />{t("Refresh", "تحديث")}
+              </button>
             </div>
 
-            {newsLoading && (
-              <div style={{ padding: "24px 0", textAlign: "center" }}>
-                <div style={{ width: 28, height: 28, borderRadius: "50%", border: `3px solid ${DARK_GREEN}`, borderTopColor: "transparent", animation: "spin .7s linear infinite", margin: "0 auto 8px" }} />
-                <span style={{ fontSize: 11, color: TEXT_LIGHT }}>{t("Loading news…", "جاري التحميل…")}</span>
-                <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+            {newsLoad && (
+              <div style={{ padding: "28px 0", textAlign: "center" }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%", border: `3px solid ${DARK_GREEN}`, borderTopColor: "transparent", animation: "idf-spin .7s linear infinite", margin: "0 auto 10px" }} />
+                <span style={{ fontSize: 11, color: TEXT_LIGHT }}>{t("Loading latest Islamic news…", "جاري تحميل الأخبار…")}</span>
               </div>
             )}
 
-            {newsError && !newsLoading && (
+            {newsError && !newsLoad && (
               <div style={{ padding: "20px 0", textAlign: "center" }}>
-                <p style={{ fontSize: 13, color: TEXT_LIGHT }}>{t("Unable to load news. Check your connection.", "تعذّر تحميل الأخبار. تحقق من اتصالك.")}</p>
+                <p style={{ fontSize: 13, color: TEXT_LIGHT, margin: "0 0 12px" }}>
+                  {t("Could not load news. Please check your internet connection.", "تعذّر تحميل الأخبار. يُرجى التحقق من الاتصال.")}
+                </p>
+                <button onClick={() => { setNewsError(false); setNews([]); }}
+                  style={{ fontSize: 12, fontWeight: 700, color: MID_GREEN, background: "none", border: `1px solid ${BORDER}`, borderRadius: 10, padding: "8px 18px", cursor: "pointer" }}>
+                  {t("Try again", "حاول مجدداً")}
+                </button>
               </div>
             )}
 
-            {!newsLoading && !newsError && news.length > 0 && (
+            {!newsLoad && !newsError && news.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {news.map((item, i) => (
                   <a key={i} href={item.link} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>
                     <div style={{ display: "flex", gap: 12, padding: "11px 12px", borderRadius: 12, background: "#f8fafc", border: `1px solid ${BORDER}`, alignItems: "flex-start" }}>
                       {item.thumbnail ? (
-                        <img src={item.thumbnail} alt="" style={{ width: 58, height: 58, borderRadius: 9, objectFit: "cover", flexShrink: 0, background: "#e5e7eb" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                        <img src={item.thumbnail} alt="" style={{ width: 60, height: 60, borderRadius: 9, objectFit: "cover", flexShrink: 0 }}
+                          onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
                       ) : (
-                        <div style={{ width: 58, height: 58, borderRadius: 9, background: `${DARK_GREEN}12`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                          <Newspaper style={{ width: 20, height: 20, color: TEXT_LIGHT }} />
+                        <div style={{ width: 60, height: 60, borderRadius: 9, background: `${DARK_GREEN}10`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <Newspaper style={{ width: 22, height: 22, color: TEXT_LIGHT }} />
                         </div>
                       )}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ fontSize: 13, fontWeight: 700, color: TEXT_DARK, margin: "0 0 4px", lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                        <p style={{ fontSize: 13, fontWeight: 700, color: TEXT_DARK, margin: "0 0 4px", lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } as React.CSSProperties}>
                           {item.title}
                         </p>
-                        <p style={{ fontSize: 11, color: TEXT_LIGHT, margin: "0 0 5px", lineHeight: 1.45, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                        <p style={{ fontSize: 11, color: TEXT_LIGHT, margin: "0 0 6px", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } as React.CSSProperties}>
                           {item.description}
                         </p>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                           <span style={{ fontSize: 10, color: TEXT_LIGHT }}>{relDate(item.pubDate)}</span>
                           <ExternalLink style={{ width: 9, height: 9, color: TEXT_LIGHT }} />
                         </div>
@@ -464,13 +769,11 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
                     </div>
                   </a>
                 ))}
-                <p style={{ textAlign: "center", fontSize: 10, color: TEXT_LIGHT, margin: "4px 0 0" }}>
-                  Source: AboutIslam.net
-                </p>
               </div>
             )}
           </div>
         )}
+
       </div>
     </div>
   );
