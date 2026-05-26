@@ -1,19 +1,22 @@
 /*
   src/components/AppNotifications.tsx — Tahleem Academy
   ──────────────────────────────────────────────────────
-  Renders nothing — mounts notification hooks globally so EVERY
-  authenticated user gets reminders regardless of which page they view.
+  Mounts global hooks and UI for every authenticated user regardless
+  of which page they are on.
 
-  Hooks mounted here:
-  • useTimetableNotifications  — 15-min & 5-min class alerts (all roles)
-  • useHifdhAssignmentNotifications — morning / afternoon / evening Hifdh
-    revision reminders (students only, fires only when daily log incomplete)
+  • useTimetableNotifications       — 15-min & 5-min class push alerts
+  • useHifdhAssignmentNotifications — Hifdh revision reminders
+  • InstallPWAPrompt                — "Add to Home Screen" bottom sheet
+                                      (Android: native prompt after 20s,
+                                       iOS: step-by-step guide after 25s,
+                                       already installed: hidden)
 */
 import { useTimetableNotifications } from "@/hooks/useTimetableNotifications";
 import { useHifdhAssignmentNotifications } from "@/hooks/useHifdhAssignmentNotifications";
+import InstallPWAPrompt from "@/components/InstallPWAPrompt";
 
 export default function AppNotifications() {
   useTimetableNotifications();
   useHifdhAssignmentNotifications();
-  return null;
+  return <InstallPWAPrompt />;
 }
