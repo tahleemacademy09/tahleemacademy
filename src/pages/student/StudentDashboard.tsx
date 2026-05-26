@@ -5,6 +5,7 @@ import { useImpersonation } from "@/hooks/useImpersonation";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import QuranPhrasesWidget from "@/components/dashboard/QuranPhrasesWidget";
+import IslamicDailyFeed from "@/components/dashboard/IslamicDailyFeed";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -486,6 +487,8 @@ const StudentDashboard = () => {
             <p style={{ fontSize:12, fontWeight:800, color:GOLD, margin:0, letterSpacing:"0.05em" }}>{dailyVerse.ref}</p>
           </div>
         </div>
+
+        <IslamicDailyFeed language={language} />
 
         {/* ── Academic Snapshot ── */}
         <div style={card}>
