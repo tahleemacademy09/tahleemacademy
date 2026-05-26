@@ -79,10 +79,11 @@ async function savePushSubscription(
   if (!("PushManager" in window)) return;
   if (typeof Notification === "undefined") return;
 
-  let permission = Notification.permission;
-  if (permission === "default") {
-    permission = await Notification.requestPermission();
-  }
+  // Only subscribe if permission is ALREADY granted.
+  // We no longer call requestPermission() here — browsers block/suppress it
+  // when called without a user gesture. The NotificationPermissionBanner
+  // component handles the visible opt-in prompt instead.
+  const permission = Notification.permission;
   if (permission !== "granted") return;
 
   const vapidKey = await fetchVapidPublicKey();
@@ -104,17 +105,23 @@ async function savePushSubscription(
     const auth   = sub.getKey("auth");
     if (!p256dh || !auth) return;
 
-    // Upsert so re-registrations after browser clears subscriptions still work
-    await supabase.from("push_subscriptions").upsert(
-      {
-        user_id:    userId,
-        endpoint:   sub.endpoint,
-        p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
-        auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" }
+    const payload = {
+      user_id:    userId,
+      endpoint:   sub.endpoint,
+      p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
+      auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Try multi-device upsert first (requires SQL fix to be run)
+    const { error } = await supabase.from("push_subscriptions").upsert(
+      payload,
+      { onConflict: "user_id,endpoint" }
     );
+    if (error) {
+      // Fall back to single-device upsert (original schema without the SQL fix)
+      await supabase.from("push_subscriptions").upsert(payload, { onConflict: "user_id" });
+    }
   } catch (err) {
     console.warn("[useTimetableNotifications] Push subscription failed:", err);
   }
