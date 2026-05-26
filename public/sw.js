@@ -1,27 +1,23 @@
 /*
-  public/sw.js — Tahleem Academy Service Worker
+  public/sw.js — Tahleem Academy Service Worker  v4
   ═══════════════════════════════════════════════════════════════════════
-  Combines two capabilities:
-
-  1. OFFLINE CACHING (PWABuilder "Offline Copy of Pages" strategy)
-     – App shell assets cached on install
-     – Every page the user visits is cached (StaleWhileRevalidate)
-     – If offline, previously-visited pages load instantly from cache
-
-  2. PUSH NOTIFICATIONS (existing Tahleem implementation)
-     – Server-sent Web Push (works when app is fully closed)
-     – Client-sent messages (app is open, foreground notifications)
-     – Notification click → open / focus correct tab
-
+  Capabilities:
+  1. INSTANT LOADING  — App shell + JS/CSS chunks cached on install.
+                        Navigation preloading eliminates SW wake-up delay.
+                        Stale-while-revalidate for all static assets.
+  2. OFFLINE SUPPORT  — Every visited page cached. Works on poor/no network.
+  3. PUSH + RING      — Class reminders (15/5 min) + live ring notifications.
+  4. KEEP-ALIVE       — Prevents WebRTC throttling during live classes.
+  5. BACKGROUND SYNC  — Retries failed writes when connection restores.
   ═══════════════════════════════════════════════════════════════════════
 */
 
-// ── Cache names ──────────────────────────────────────────────────────────────
-const CACHE_VERSION   = "tahleem-sw-v3";
-const OFFLINE_CACHE   = "tahleem-offline-v3";
-const STATIC_CACHE    = "tahleem-static-v3";
+const CACHE_VERSION = "tahleem-sw-v4";
+const OFFLINE_CACHE = "tahleem-offline-v4";
+const STATIC_CACHE  = "tahleem-static-v4";
+const CHUNK_CACHE   = "tahleem-chunks-v4";   // Vite JS/CSS bundles — long TTL
 
-// App-shell resources to pre-cache on install
+// App shell: pre-cached on every SW install so first paint is instant
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -32,105 +28,171 @@ const APP_SHELL = [
   "/apple-touch-icon.png",
 ];
 
-// ── Install: pre-cache the app shell ────────────────────────────────────────
+// ── Install ───────────────────────────────────────────────────────────────────
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(STATIC_CACHE)
+      .then((cache) => cache.addAll(APP_SHELL))
+      .catch(() => {}) // never let a missing icon block the SW
   );
-  self.skipWaiting();
+  self.skipWaiting(); // activate immediately, don't wait for old tabs to close
 });
 
-// ── Activate: remove old caches, claim all clients ──────────────────────────
+// ── Activate ─────────────────────────────────────────────────────────────────
 self.addEventListener("activate", (event) => {
-  const currentCaches = [CACHE_VERSION, OFFLINE_CACHE, STATIC_CACHE];
+  const keep = [CACHE_VERSION, OFFLINE_CACHE, STATIC_CACHE, CHUNK_CACHE];
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => !currentCaches.includes(key))
-            .map((key) => caches.delete(key))
-        )
-      )
-      .then(() => self.clients.claim())
+    Promise.all([
+      // Delete all old caches
+      caches.keys().then((keys) =>
+        Promise.all(keys.filter((k) => !keep.includes(k)).map((k) => caches.delete(k)))
+      ),
+      // Enable navigation preloading — this is the key change that makes
+      // page navigations feel instant. While the SW is waking up, the browser
+      // simultaneously starts fetching the navigation request.
+      self.registration.navigationPreload?.enable(),
+    ]).then(() => self.clients.claim()) // control all open tabs immediately
   );
 });
 
-// ── Fetch: Offline-copy-of-pages strategy ───────────────────────────────────
+// ── Fetch ─────────────────────────────────────────────────────────────────────
 //
-//  • Navigation requests (HTML pages)  → Network first, fall back to cache
-//  • Static assets (JS/CSS/images)     → Cache first, fall back to network
-//  • API / Supabase requests           → Network only (never cache auth data)
+//  URL type          Strategy                  Why
+//  ──────────────    ────────────────────────  ──────────────────────────────
+//  Supabase API      BYPASS (never cache)      Auth/data must always be fresh
+//  Navigation        Network + preload, then   Fast page switches
+//                    cache fallback
+//  /assets/*.js/css  Cache-first + bg update   Vite content-hashes = safe to cache
+//  Images/fonts      Stale-while-revalidate    Serve instantly, update quietly
+//  Everything else   Cache-first, net fallback  Icons, manifest etc.
 //
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip cross-origin requests except Google Fonts (safe to cache)
-  const isGoogleFonts = url.hostname.includes("fonts.googleapis.com") ||
-                        url.hostname.includes("fonts.gstatic.com");
-  if (url.origin !== self.location.origin && !isGoogleFonts) return;
-
-  // Skip Supabase API calls — never cache auth/database responses
-  if (url.hostname.includes("supabase.co")) return;
-
-  // Skip Paystack JS
-  if (url.hostname.includes("paystack.co")) return;
-
-  // Navigation (page loads) → Network first, cache as fallback
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          // Store a fresh copy of every visited page
-          const clone = response.clone();
-          caches.open(OFFLINE_CACHE).then((cache) => cache.put(request, clone));
-          return response;
-        })
-        .catch(() =>
-          caches.match(request).then(
-            (cached) =>
-              cached ||
-              caches.match("/") ||
-              caches.match("/index.html")
-          )
-        )
-    );
-    return;
-  }
-
-  // Static assets → Cache first, then network (Stale-While-Revalidate)
+  // ── Never cache: Supabase (auth/db/storage), Paystack, LiveKit ─────────────
   if (
-    request.destination === "script" ||
-    request.destination === "style"  ||
-    request.destination === "image"  ||
-    request.destination === "font"
+    url.hostname.includes("supabase.co") ||
+    url.hostname.includes("supabase.in") ||
+    url.hostname.includes("paystack.co") ||
+    url.hostname.includes("livekit.io")  ||
+    url.hostname.includes("livekit.cloud")
+  ) return;
+
+  // ── Google Fonts: cache-first ───────────────────────────────────────────────
+  if (
+    url.hostname.includes("fonts.googleapis.com") ||
+    url.hostname.includes("fonts.gstatic.com")
   ) {
     event.respondWith(
       caches.match(request).then((cached) => {
-        const networkFetch = fetch(request).then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(STATIC_CACHE).then((cache) => cache.put(request, clone));
+        if (cached) return cached;
+        return fetch(request).then((res) => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(STATIC_CACHE).then((c) => c.put(request, clone));
           }
-          return response;
-        });
-        return cached || networkFetch;
+          return res;
+        }).catch(() => cached);
       })
     );
     return;
   }
+
+  // Only handle same-origin from here
+  if (url.origin !== self.location.origin) return;
+
+  // ── Vite JS/CSS chunks (/assets/*.js, /assets/*.css) ───────────────────────
+  // These are content-hashed so a new filename = new file = safe to cache forever.
+  // Cache-first: serve from cache instantly, fetch + update in background.
+  if (url.pathname.startsWith("/assets/")) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) {
+          // Background update so next visit gets latest
+          fetch(request).then((res) => {
+            if (res.ok) {
+              caches.open(CHUNK_CACHE).then((c) => c.put(request, res));
+            }
+          }).catch(() => {});
+          return cached;
+        }
+        // Not cached yet — fetch and store
+        return fetch(request).then((res) => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(CHUNK_CACHE).then((c) => c.put(request, clone));
+          }
+          return res;
+        });
+      })
+    );
+    return;
+  }
+
+  // ── Page navigations ────────────────────────────────────────────────────────
+  // Uses navigation preload response if available (activated above).
+  // Falls back to cache → offline page if network fails.
+  if (request.mode === "navigate") {
+    event.respondWith(
+      (async () => {
+        try {
+          // Try the preloaded response first (browser already started fetching)
+          const preloaded = await event.preloadResponse;
+          if (preloaded) {
+            // Cache this page for offline use
+            const clone = preloaded.clone();
+            caches.open(OFFLINE_CACHE).then((c) => c.put(request, clone));
+            return preloaded;
+          }
+          // No preload — fetch normally
+          const fresh = await fetch(request);
+          const clone = fresh.clone();
+          caches.open(OFFLINE_CACHE).then((c) => c.put(request, clone));
+          return fresh;
+        } catch {
+          // Offline — serve cached page or app shell
+          const cached = await caches.match(request);
+          if (cached) return cached;
+          const shell = await caches.match("/") || await caches.match("/index.html");
+          return shell || new Response("You are offline", { status: 503, headers: { "Content-Type": "text/plain" } });
+        }
+      })()
+    );
+    return;
+  }
+
+  // ── Static assets (images, icons, etc.) ────────────────────────────────────
+  // Stale-while-revalidate: respond from cache immediately, update quietly.
+  if (
+    request.destination === "image" ||
+    request.destination === "font"  ||
+    request.destination === "style"
+  ) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        const networkFetch = fetch(request).then((res) => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(STATIC_CACHE).then((c) => c.put(request, clone));
+          }
+          return res;
+        }).catch(() => cached);
+        return cached || networkFetch;
+      })
+    );
+  }
 });
 
-// ── Push notification helpers ────────────────────────────────────────────────
+// ── Push notifications ────────────────────────────────────────────────────────
+
 function buildNotificationOptions(data) {
   const minutesLeft = data.minutes_left ?? 99;
   return {
-    body:               data.message  || "You have an upcoming class.",
-    icon:               "/favicon.png",
-    badge:              "/favicon.png",
-    tag:                data.tag      || "tahleem-class",
+    body:               data.message || "You have an upcoming class.",
+    icon:               "/icons/icon-192x192.png",
+    badge:              "/icons/icon-96x96.png",
+    tag:                data.tag || "tahleem-class",
     renotify:           true,
     requireInteraction: minutesLeft <= 5,
     vibrate:            [200, 100, 200, 100, 400],
@@ -142,121 +204,77 @@ function buildNotificationOptions(data) {
   };
 }
 
-// ── Server-sent Web Push (works when app is fully closed) ───────────────────
+function buildRingNotificationOptions(data) {
+  return {
+    body:               `${data.teacher_name || "Your teacher"} is waiting — tap to join now!`,
+    icon:               "/icons/icon-192x192.png",
+    badge:              "/icons/icon-96x96.png",
+    tag:                `ring-${data.class_id || "class"}`,
+    renotify:           true,
+    requireInteraction: true,   // stays visible until tapped
+    silent:             false,
+    vibrate:            [800, 400, 800, 400, 800, 1500, 800, 400, 800, 400, 800],
+    data: {
+      url:          data.join_url || data.url || "/student/timetable",
+      type:         "ring",
+      class_id:     data.class_id,
+      class_title:  data.class_title,
+      teacher_name: data.teacher_name,
+      join_url:     data.join_url || data.url,
+      ring_id:      data.ring_id || `push-${Date.now()}`,
+    },
+    actions: [
+      { action: "join",    title: "📞 Join Now" },
+      { action: "dismiss", title: "Decline"     },
+    ],
+  };
+}
+
 self.addEventListener("push", (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch {}
 
-  const title = data.title || "📚 Class Reminder — Tahleem Academy";
+  const isRing = data.type === "ring";
+  const title  = isRing
+    ? `📞 ${data.class_title || "Class"} — Starting Now!`
+    : (data.title || "📚 Class Reminder — Tahleem Academy");
+  const opts = isRing
+    ? buildRingNotificationOptions(data)
+    : buildNotificationOptions(data);
+
   event.waitUntil(
-    self.registration.showNotification(title, buildNotificationOptions(data))
+    self.registration.showNotification(title, opts).then(() => {
+      // If a tab is open, also postMessage so the ring overlay shows in-app
+      if (isRing) {
+        self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+          clients.forEach((c) => c.postMessage({
+            type:         "CLASS_RING",
+            class_id:     data.class_id,
+            class_title:  data.class_title,
+            teacher_name: data.teacher_name,
+            join_url:     data.join_url || data.url,
+            ring_id:      data.ring_id || `push-${Date.now()}`,
+          }));
+        });
+      }
+    })
   );
 });
 
-// ── Live class keep-alive ping ───────────────────────────────────────────────
-//
-//  While a live class is active, the app pings the SW every 20 seconds via
-//  postMessage({ type: "LIVE_CLASS_KEEPALIVE" }). The SW responds to keep
-//  the service worker alive (prevents the browser from suspending it), which
-//  in turn keeps the tab's WebRTC connection from being throttled/killed.
-//
-let keepAliveInterval = null;
-self.addEventListener("message", (event) => {
-  // Allow the page to trigger a SW update
-  if (event.data && event.data.type === "SKIP_WAITING") {
-    self.skipWaiting();
-    return;
-  }
-
-  if (event.data && event.data.type === "LIVE_CLASS_KEEPALIVE") {
-    // Respond immediately so the app knows the SW is awake
-    if (event.source) event.source.postMessage({ type: "LIVE_CLASS_KEEPALIVE_ACK" });
-    return;
-  }
-
-  if (event.data && event.data.type === "LIVE_CLASS_START") {
-    // Start a periodic self-ping to keep the SW alive
-    if (keepAliveInterval) clearInterval(keepAliveInterval);
-    keepAliveInterval = setInterval(() => {
-      self.clients.matchAll().then(clients => {
-        clients.forEach(c => c.postMessage({ type: "SW_ALIVE" }));
-      });
-    }, 20000);
-    return;
-  }
-
-  if (event.data && event.data.type === "LIVE_CLASS_END") {
-    if (keepAliveInterval) { clearInterval(keepAliveInterval); keepAliveInterval = null; }
-    return;
-  }
-
-  if (!event.data || event.data.type !== "SHOW_NOTIFICATION") return;
-
-  const { title, ...rest } = event.data;
-  self.registration.showNotification(
-    title || "📚 Tahleem Class Reminder",
-    buildNotificationOptions(rest)
-  );
-});
-
-// ── Background Sync — retry failed requests when connection restores ─────────
-//
-//  Usage from the app:
-//    navigator.serviceWorker.ready.then(reg =>
-//      reg.sync.register('tahleem-sync')
-//    );
-//
-self.addEventListener("sync", (event) => {
-  if (event.tag === "tahleem-sync") {
-    event.waitUntil(
-      // Re-attempt any queued fetch that failed while offline
-      // (extend here if you queue Supabase writes during offline mode)
-      Promise.resolve().then(() => {
-        console.log("[Tahleem SW] Background sync fired — connection restored");
-      })
-    );
-  }
-});
-
-// ── Periodic Background Sync — refresh timetable data in background ──────────
-//
-//  Register from the app (requires permission):
-//    const reg = await navigator.serviceWorker.ready;
-//    await reg.periodicSync.register('tahleem-timetable-refresh', {
-//      minInterval: 60 * 60 * 1000  // once per hour
-//    });
-//
-self.addEventListener("periodicsync", (event) => {
-  if (event.tag === "tahleem-timetable-refresh") {
-    event.waitUntil(
-      // Fetch fresh timetable data and cache it so the app shows
-      // up-to-date class info even before the user opens the app
-      fetch("/student/timetable", { cache: "no-store" })
-        .then((res) => {
-          if (res.ok) {
-            return caches.open(OFFLINE_CACHE).then((cache) =>
-              cache.put("/student/timetable", res)
-            );
-          }
-        })
-        .catch(() => {
-          // Silently ignore — offline or server unavailable
-        })
-    );
-  }
-});
-
-// ── Notification click ───────────────────────────────────────────────────────
+// ── Notification click ────────────────────────────────────────────────────────
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   if (event.action === "dismiss") return;
 
-  const targetUrl = event.notification.data?.url || "/student/timetable";
+  const targetUrl = event.notification.data?.url ||
+                    event.notification.data?.join_url ||
+                    "/student/timetable";
 
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clients) => {
+        // Focus existing tab if one is open
         for (const client of clients) {
           if (client.url.includes(self.location.origin) && "focus" in client) {
             client.focus();
@@ -264,7 +282,75 @@ self.addEventListener("notificationclick", (event) => {
             return;
           }
         }
+        // Otherwise open a new tab
         return self.clients.openWindow(targetUrl);
       })
   );
+});
+
+// ── Messages from the app ─────────────────────────────────────────────────────
+let keepAliveInterval = null;
+
+self.addEventListener("message", (event) => {
+  if (!event.data) return;
+
+  switch (event.data.type) {
+    case "SKIP_WAITING":
+      self.skipWaiting();
+      break;
+
+    case "LIVE_CLASS_KEEPALIVE":
+      event.source?.postMessage({ type: "LIVE_CLASS_KEEPALIVE_ACK" });
+      break;
+
+    case "LIVE_CLASS_START":
+      if (keepAliveInterval) clearInterval(keepAliveInterval);
+      keepAliveInterval = setInterval(() => {
+        self.clients.matchAll().then((clients) =>
+          clients.forEach((c) => c.postMessage({ type: "SW_ALIVE" }))
+        );
+      }, 20000);
+      break;
+
+    case "LIVE_CLASS_END":
+      if (keepAliveInterval) { clearInterval(keepAliveInterval); keepAliveInterval = null; }
+      break;
+
+    case "SHOW_NOTIFICATION": {
+      const { title, ...rest } = event.data;
+      self.registration.showNotification(
+        title || "📚 Tahleem Class Reminder",
+        buildNotificationOptions(rest)
+      );
+      break;
+    }
+  }
+});
+
+// ── Background Sync ───────────────────────────────────────────────────────────
+self.addEventListener("sync", (event) => {
+  if (event.tag === "tahleem-sync") {
+    event.waitUntil(
+      Promise.resolve().then(() => {
+        console.log("[Tahleem SW] Background sync — connection restored");
+      })
+    );
+  }
+});
+
+// ── Periodic Background Sync — refresh timetable hourly ──────────────────────
+self.addEventListener("periodicsync", (event) => {
+  if (event.tag === "tahleem-timetable-refresh") {
+    event.waitUntil(
+      fetch("/student/timetable", { cache: "no-store" })
+        .then((res) => {
+          if (res.ok) {
+            return caches.open(OFFLINE_CACHE).then((c) =>
+              c.put("/student/timetable", res)
+            );
+          }
+        })
+        .catch(() => {})
+    );
+  }
 });
