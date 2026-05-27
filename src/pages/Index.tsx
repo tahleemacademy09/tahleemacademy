@@ -6,26 +6,21 @@ import { supabase } from "@/integrations/supabase/client";
 const dayOfYear = () =>
   Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
 
-// ── Gregorian dates for Islamic events 2026-2028 ─────────────────────────
-// Using actual Gregorian dates avoids the unreliable browser Hijri API.
-// Dates are based on Saudi/astronomical calculations; window absorbs 1-2 day
-// moon-sighting differences.
-const ISLAMIC_EVENTS_GR = [
-  // 1447 AH
-  { name: "First Days of Dhul Hijjah", emoji: "🕋", from: "2026-05-28", to: "2026-06-03" },
-  { name: "Day of Arafah",             emoji: "🕋", from: "2026-06-04", to: "2026-06-06" },
-  { name: "Eid al-Adha",               emoji: "🐑", from: "2026-06-05", to: "2026-06-09" },
-  { name: "Islamic New Year 1448",      emoji: "🌙", from: "2026-06-25", to: "2026-06-28" },
-  { name: "Day of Ashura",             emoji: "🤲", from: "2026-07-03", to: "2026-07-07" },
-  { name: "Mawlid al-Nabawi ﷺ",        emoji: "💛", from: "2026-09-01", to: "2026-09-08" },
-  // 1448 AH
-  { name: "Isra' & Mi'raj",            emoji: "🌌", from: "2027-01-25", to: "2027-01-29" },
-  { name: "Ramadan 1448 Begins",       emoji: "🌙", from: "2027-02-16", to: "2027-02-20" },
-  { name: "Laylat al-Qadr",            emoji: "⭐", from: "2027-03-12", to: "2027-03-15" },
-  { name: "Eid al-Fitr 1448",          emoji: "🎉", from: "2027-03-17", to: "2027-03-20" },
-  { name: "Day of Arafah 1448",        emoji: "🕋", from: "2027-05-23", to: "2027-05-26" },
-  { name: "Eid al-Adha 1448",          emoji: "🐑", from: "2027-05-24", to: "2027-05-28" },
-  { name: "Islamic New Year 1449",      emoji: "🌙", from: "2027-06-14", to: "2027-06-17" },
+// ── Islamic Events — matched by live Hijri date ───────────────────────────
+// Ordered most-specific first so Eid overrides "First Days of Dhul Hijjah".
+// daysWindow: how many days AFTER hijriDay the event is still shown.
+const ISLAMIC_EVENTS = [
+  { hijriMonth: 12, hijriDay: 10, name: "Eid al-Adha",                nameAr: "عيد الأضحى المبارك",    emoji: "🐑", daysWindow: 3 },
+  { hijriMonth: 12, hijriDay: 9,  name: "Day of Arafah",              nameAr: "يوم عرفة",               emoji: "🕋", daysWindow: 0 },
+  { hijriMonth: 12, hijriDay: 1,  name: "First Days of Dhul Hijjah",  nameAr: "أيام ذي الحجة المباركة", emoji: "🕋", daysWindow: 7 },
+  { hijriMonth: 10, hijriDay: 1,  name: "Eid al-Fitr",                nameAr: "عيد الفطر المبارك",      emoji: "🎉", daysWindow: 3 },
+  { hijriMonth: 9,  hijriDay: 27, name: "Laylat al-Qadr",             nameAr: "ليلة القدر",              emoji: "⭐", daysWindow: 2 },
+  { hijriMonth: 9,  hijriDay: 21, name: "Last Ten Nights of Ramadan", nameAr: "العشر الأواخر",           emoji: "✨", daysWindow: 9 },
+  { hijriMonth: 9,  hijriDay: 1,  name: "Ramadan Begins",             nameAr: "بداية رمضان",             emoji: "🌙", daysWindow: 3 },
+  { hijriMonth: 7,  hijriDay: 27, name: "Isra' & Mi'raj",             nameAr: "الإسراء والمعراج",        emoji: "🌌", daysWindow: 2 },
+  { hijriMonth: 3,  hijriDay: 12, name: "Mawlid al-Nabawi ﷺ",        nameAr: "المولد النبوي الشريف",    emoji: "💛", daysWindow: 4 },
+  { hijriMonth: 1,  hijriDay: 10, name: "Day of Ashura",              nameAr: "يوم عاشوراء",             emoji: "🤲", daysWindow: 2 },
+  { hijriMonth: 1,  hijriDay: 1,  name: "Islamic New Year",           nameAr: "رأس السنة الهجرية",      emoji: "🌙", daysWindow: 3 },
 ];
 
 // ── Rotating Quran verses ─────────────────────────────────────────────────
@@ -81,33 +76,77 @@ const SEERAH = [
 
 const Index = () => {
   const navigate = useNavigate();
-  const [liveClass, setLiveClass]       = useState<{ title: string; room_code: string } | null>(null);
+  const [liveClass, setLiveClass]             = useState<{ title: string; room_code: string } | null>(null);
   const [showEnrollGuide, setShowEnrollGuide] = useState(false);
   const [activeReflection, setActiveReflection] = useState<"verse"|"hadith"|"seerah">("verse");
+  const [upcomingEvent, setUpcomingEvent]     = useState<{ event: typeof ISLAMIC_EVENTS[0]; daysAway: number } | null>(null);
 
   const doy         = dayOfYear();
   const dailyVerse  = VERSES[doy % VERSES.length];
   const dailyHadith = HADITHS[doy % HADITHS.length];
   const dailySeerah = SEERAH[doy % SEERAH.length];
 
-  // Find upcoming Islamic event using Gregorian dates (reliable cross-browser)
-  const upcomingEvent = (() => {
-    const todayMs = new Date().setHours(0, 0, 0, 0);
-    for (const ev of ISLAMIC_EVENTS_GR) {
-      const from = new Date(ev.from).setHours(0, 0, 0, 0);
-      const to   = new Date(ev.to  ).setHours(0, 0, 0, 0);
-      if (todayMs >= from && todayMs <= to) {
-        const daysAway = Math.round((from - todayMs) / 86_400_000);
-        return { event: ev, daysAway: Math.max(0, daysAway) };
+  // ── Live Hijri calendar via AlAdhan API (free, no key needed) ────────────
+  useEffect(() => {
+    const fetchHijriEvents = async () => {
+      try {
+        const today = new Date();
+        const mm    = String(today.getMonth() + 1).padStart(2, "0");
+        const yyyy  = today.getFullYear();
+
+        // One call fetches the whole Gregorian month as Hijri
+        const res  = await fetch(`https://api.aladhan.com/v1/gToHCalendar/${mm}/${yyyy}`);
+        const json = await res.json();
+        const cal: any[] = json?.data ?? [];
+
+        // gDay → { hijriDay, hijriMonth }
+        const hijriMap: Record<number, { day: number; month: number }> = {};
+        for (const entry of cal) {
+          const gDay = parseInt(entry.gregorian.date.split("-")[0]);
+          hijriMap[gDay] = {
+            day:   parseInt(entry.hijri.day),
+            month: entry.hijri.month.number,
+          };
+        }
+
+        // Near end of month? Also fetch next Gregorian month
+        let nextMap: Record<number, { day: number; month: number }> = {};
+        if (today.getDate() >= 22) {
+          const nextDate = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+          const nr = await fetch(
+            `https://api.aladhan.com/v1/gToHCalendar/${String(nextDate.getMonth()+1).padStart(2,"0")}/${nextDate.getFullYear()}`
+          );
+          const nd = await nr.json();
+          for (const entry of nd?.data ?? []) {
+            const gDay = parseInt(entry.gregorian.date.split("-")[0]);
+            nextMap[gDay] = { day: parseInt(entry.hijri.day), month: entry.hijri.month.number };
+          }
+        }
+
+        // Scan today + next 10 days, most-specific event wins
+        for (let i = 0; i <= 10; i++) {
+          const check  = new Date(today.getTime() + i * 86_400_000);
+          const gDay   = check.getDate();
+          const isNext = check.getMonth() !== today.getMonth();
+          const hijri  = isNext ? nextMap[gDay] : hijriMap[gDay];
+          if (!hijri) continue;
+
+          for (const ev of ISLAMIC_EVENTS) {          // ordered most-specific first
+            const diff = hijri.day - ev.hijriDay;
+            if (hijri.month === ev.hijriMonth && diff >= 0 && diff <= ev.daysWindow) {
+              setUpcomingEvent({ event: ev, daysAway: i });
+              return;
+            }
+          }
+        }
+        setUpcomingEvent(null);
+      } catch {
+        setUpcomingEvent(null);  // silently hide banner on network error
       }
-      // Also show banner up to 5 days before the event starts
-      const daysUntilStart = Math.round((from - todayMs) / 86_400_000);
-      if (daysUntilStart > 0 && daysUntilStart <= 5) {
-        return { event: ev, daysAway: daysUntilStart };
-      }
-    }
-    return null;
-  })();
+    };
+
+    fetchHijriEvents();
+  }, []);
 
   useEffect(() => {
     supabase.from("public_classes").select("title, room_code").eq("status", "live").eq("is_featured", true).limit(1).then(({ data }) => {
