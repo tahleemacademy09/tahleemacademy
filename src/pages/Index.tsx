@@ -6,17 +6,27 @@ import { supabase } from "@/integrations/supabase/client";
 const dayOfYear = () =>
   Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
 
-const getHijriNumeric = (date: Date): { day: number; month: number } => {
-  try {
-    const parts = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura", {
-      day: "numeric", month: "numeric", year: "numeric",
-    }).formatToParts(date);
-    return {
-      day:   parseInt(parts.find(p => p.type === "day")?.value   ?? "0"),
-      month: parseInt(parts.find(p => p.type === "month")?.value ?? "0"),
-    };
-  } catch { return { day: 0, month: 0 }; }
-};
+// ── Gregorian dates for Islamic events 2026-2028 ─────────────────────────
+// Using actual Gregorian dates avoids the unreliable browser Hijri API.
+// Dates are based on Saudi/astronomical calculations; window absorbs 1-2 day
+// moon-sighting differences.
+const ISLAMIC_EVENTS_GR = [
+  // 1447 AH
+  { name: "First Days of Dhul Hijjah", emoji: "🕋", from: "2026-05-28", to: "2026-06-03" },
+  { name: "Day of Arafah",             emoji: "🕋", from: "2026-06-04", to: "2026-06-06" },
+  { name: "Eid al-Adha",               emoji: "🐑", from: "2026-06-05", to: "2026-06-09" },
+  { name: "Islamic New Year 1448",      emoji: "🌙", from: "2026-06-25", to: "2026-06-28" },
+  { name: "Day of Ashura",             emoji: "🤲", from: "2026-07-03", to: "2026-07-07" },
+  { name: "Mawlid al-Nabawi ﷺ",        emoji: "💛", from: "2026-09-01", to: "2026-09-08" },
+  // 1448 AH
+  { name: "Isra' & Mi'raj",            emoji: "🌌", from: "2027-01-25", to: "2027-01-29" },
+  { name: "Ramadan 1448 Begins",       emoji: "🌙", from: "2027-02-16", to: "2027-02-20" },
+  { name: "Laylat al-Qadr",            emoji: "⭐", from: "2027-03-12", to: "2027-03-15" },
+  { name: "Eid al-Fitr 1448",          emoji: "🎉", from: "2027-03-17", to: "2027-03-20" },
+  { name: "Day of Arafah 1448",        emoji: "🕋", from: "2027-05-23", to: "2027-05-26" },
+  { name: "Eid al-Adha 1448",          emoji: "🐑", from: "2027-05-24", to: "2027-05-28" },
+  { name: "Islamic New Year 1449",      emoji: "🌙", from: "2027-06-14", to: "2027-06-17" },
+];
 
 // ── Rotating Quran verses ─────────────────────────────────────────────────
 const VERSES = [
@@ -67,18 +77,7 @@ const SEERAH = [
   { title: "Battle of Badr — Allah's Promise", year: "624 CE", text: "313 ill-equipped Muslims faced 1,000 Qurayshi warriors. The Prophet ﷺ prayed through the night: 'O Allah, if this group is destroyed, You will not be worshipped on earth.' Allah sent angels and the Muslims triumphed decisively. The Quran named it 'Yawm al-Furqan' — the Day of Distinction. It proved to all of Arabia that this faith would not be extinguished by force." },
 ];
 
-// ── Islamic Events ────────────────────────────────────────────────────────
-const ISLAMIC_EVENTS = [
-  { hijriMonth: 1,  hijriDay: 1,  name: "Islamic New Year",    emoji: "🌙", daysWindow: 5  },
-  { hijriMonth: 1,  hijriDay: 10, name: "Day of Ashura",        emoji: "🤲", daysWindow: 4  },
-  { hijriMonth: 3,  hijriDay: 12, name: "Mawlid al-Nabawi ﷺ",  emoji: "💛", daysWindow: 7  },
-  { hijriMonth: 7,  hijriDay: 27, name: "Isra' & Mi'raj",       emoji: "🌌", daysWindow: 5  },
-  { hijriMonth: 9,  hijriDay: 1,  name: "Ramadan Begins",       emoji: "🌙", daysWindow: 5  },
-  { hijriMonth: 9,  hijriDay: 27, name: "Laylat al-Qadr",       emoji: "⭐", daysWindow: 3  },
-  { hijriMonth: 10, hijriDay: 1,  name: "Eid al-Fitr",          emoji: "🎉", daysWindow: 3  },
-  { hijriMonth: 12, hijriDay: 9,  name: "Day of Arafah",        emoji: "🕋", daysWindow: 3  },
-  { hijriMonth: 12, hijriDay: 10, name: "Eid al-Adha",          emoji: "🐑", daysWindow: 4  },
-];
+
 
 const Index = () => {
   const navigate = useNavigate();
@@ -91,16 +90,21 @@ const Index = () => {
   const dailyHadith = HADITHS[doy % HADITHS.length];
   const dailySeerah = SEERAH[doy % SEERAH.length];
 
-  // Find upcoming Islamic event
+  // Find upcoming Islamic event using Gregorian dates (reliable cross-browser)
   const upcomingEvent = (() => {
-    const today = new Date();
-    for (let i = 0; i < 10; i++) {
-      const check = new Date(today.getTime() + i * 86_400_000);
-      const { day, month } = getHijriNumeric(check);
-      const ev = ISLAMIC_EVENTS.find(e =>
-        e.hijriMonth === month && Math.abs(e.hijriDay - day) <= (e.daysWindow ?? 3)
-      );
-      if (ev) return { event: ev, daysAway: i };
+    const todayMs = new Date().setHours(0, 0, 0, 0);
+    for (const ev of ISLAMIC_EVENTS_GR) {
+      const from = new Date(ev.from).setHours(0, 0, 0, 0);
+      const to   = new Date(ev.to  ).setHours(0, 0, 0, 0);
+      if (todayMs >= from && todayMs <= to) {
+        const daysAway = Math.round((from - todayMs) / 86_400_000);
+        return { event: ev, daysAway: Math.max(0, daysAway) };
+      }
+      // Also show banner up to 5 days before the event starts
+      const daysUntilStart = Math.round((from - todayMs) / 86_400_000);
+      if (daysUntilStart > 0 && daysUntilStart <= 5) {
+        return { event: ev, daysAway: daysUntilStart };
+      }
     }
     return null;
   })();
