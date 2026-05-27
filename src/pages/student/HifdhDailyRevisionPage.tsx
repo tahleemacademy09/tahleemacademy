@@ -114,9 +114,11 @@ interface DailyLog {
     pages_done?: number[];
   };
 }
+interface AyahWord { text: string; line_number: number; }
 interface Ayah {
   number: number; numberInSurah: number; text: string;
   surah: { number: number; name: string; englishName: string };
+  words?: AyahWord[];
 }
 interface PageResult {
   pageNum: number; score: number; errorWords: string[]; ayahs: Ayah[];
@@ -269,6 +271,35 @@ function getTodayPages(a: Assignment): number[] {
 
 /* ── Quran fetcher ──────────────────────────────────────────────── */
 async function fetchPageAyahs(page: number): Promise<Ayah[]> {
+  // Primary: qurancdn (quran.com) API — includes per-word line_number for authentic mushaf layout
+  try {
+    const r = await fetch(
+      `https://api.qurancdn.com/api/qdc/verses/by_page/${page}?words=true&per_page=50&fields=text_uthmani`,
+    );
+    if (r.ok) {
+      const j = await r.json();
+      const verses: any[] = j?.verses ?? [];
+      if (verses.length > 0) {
+        return verses.map((v: any) => ({
+          number: v.verse_number ?? 0,
+          numberInSurah: v.verse_number ?? 0,
+          text: v.text_uthmani ?? v.words?.map((w: any) => w.text_uthmani ?? w.text).join(" ") ?? "",
+          surah: {
+            number: v.chapter_id ?? 0,
+            name: "",
+            englishName: v.chapter_id ? "" : "",
+          },
+          words: (v.words ?? [])
+            .filter((w: any) => w.char_type_name !== "end")
+            .map((w: any) => ({
+              text: w.text_uthmani ?? w.text ?? "",
+              line_number: w.line_number ?? 0,
+            })),
+        }));
+      }
+    }
+  } catch { /* fall through */ }
+  // Fallback: alquran.cloud (no line data, layout will still work)
   const r = await fetch(`https://api.alquran.cloud/v1/page/${page}/quran-uthmani`);
   if (!r.ok) return [];
   const j = await r.json();
@@ -1456,7 +1487,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
+          autoGainControl: false,   // off: avoids pumping during quiet tajweed pauses
           sampleRate: 44100,
           channelCount: 1,
         }
@@ -1604,7 +1635,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           // How many spoken words we have already processed from accumulated transcript
           let lastSpokenCount = 0;
           // Lookahead: how many tokens ahead of matchPos we allow a match
-          const LOOKAHEAD = 3;
+          const LOOKAHEAD = 5; // wider window handles fast reciters
 
           const startRec = () => {
             if (!recognitionRef.current && matchPos >= pageTokens.length) return; // page done
@@ -1612,13 +1643,22 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             rec.lang = "ar-SA";
             rec.continuous = true;
             rec.interimResults = true;   // essential on Android Chrome
-            rec.maxAlternatives = 1;
+            rec.maxAlternatives = 3;     // more alternatives → better Quran recognition
 
             rec.onresult = (event: any) => {
-              // Build full transcript from all results (interim + final)
+              // Build full transcript — prefer highest-confidence Arabic alternative
               let fullText = "";
               for (let i = 0; i < event.results.length; i++) {
-                fullText += " " + (event.results[i][0]?.transcript ?? "");
+                const result = event.results[i];
+                // Pick the alternative with most Arabic characters (best Quran transcription)
+                let bestAlt = result[0]?.transcript ?? "";
+                let bestArabicScore = (bestAlt.match(/[؀-ۿ]/g) || []).length;
+                for (let k = 1; k < result.length; k++) {
+                  const alt = result[k]?.transcript ?? "";
+                  const arabicScore = (alt.match(/[؀-ۿ]/g) || []).length;
+                  if (arabicScore > bestArabicScore) { bestAlt = alt; bestArabicScore = arabicScore; }
+                }
+                fullText += " " + bestAlt;
               }
               const allSpoken = normalizeArabic(fullText.trim()).split(/\s+/).filter(Boolean);
 
@@ -2096,122 +2136,206 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // BISMILLAH: rendered centred on its own line, separated from body.
   // LAYOUT: direction rtl, textAlign right (not justify), lineHeight 3.2.
   const QuranPage = () => {
-    // Only show underlines once transcription is done and score is set
+    // Word statuses — only after final evaluation
     const evaluationReady = phase === "page_result" && score !== null && lastTranscript.length > 0;
+
+    // ── Build flat token list, each token knows its mushaf line_number ──────
+    type WordToken = {
+      word: string; globalIdx: number; isLast: boolean;
+      numberInSurah: number; isBismWord: boolean; line: number;
+    };
+    const tokens: WordToken[] = [];
 
     // Detect Bismillah opening
     const firstAyahNorm = pageAyahs.length > 0 ? normalizeArabic(pageAyahs[0].text) : "";
     const isBism = firstAyahNorm.length > 5 && firstAyahNorm.startsWith(normalizeArabic("بسم الله"));
 
-    // Flatten to word tokens
-    type WordToken = { word: string; globalIdx: number; isLast: boolean; numberInSurah: number; isBismWord: boolean; };
-    const tokens: WordToken[] = [];
+    // Track global line progression from qurancdn word data
+    let globalLine = 1;
     pageAyahs.forEach((a, ai) => {
-      a.text.split(/\s+/).filter(Boolean).forEach((w, wi, arr) => {
-        tokens.push({ word: w, globalIdx: tokens.length, isLast: wi === arr.length - 1, numberInSurah: a.numberInSurah, isBismWord: isBism && ai === 0 });
+      const rawWords = a.text.split(/\s+/).filter(Boolean);
+      rawWords.forEach((w, wi) => {
+        // Use qurancdn line_number when available; fallback to tracked global line
+        const apiWord = a.words?.[wi];
+        const lineNum = apiWord?.line_number ?? globalLine;
+        globalLine = lineNum; // keep tracking for fallback
+        tokens.push({
+          word: w,
+          globalIdx: tokens.length,
+          isLast: wi === rawWords.length - 1,
+          numberInSurah: a.numberInSurah,
+          isBismWord: isBism && ai === 0,
+          line: lineNum,
+        });
       });
     });
 
-    // Word statuses — only populated after evaluation
-    const wordStatuses: ("correct" | "missing" | "none")[] = tokens.map(() => "none");
+    // ── Word statuses ────────────────────────────────────────────────────────
+    // During recording: green=revealed(correct), amber=just-revealed, blurred=not-yet
+    // After evaluation: green=correct, red=missing
+    type WordStatus = "correct" | "partial" | "missing" | "pending" | "none";
+    const wordStatuses: WordStatus[] = tokens.map((tok) => {
+      if (evaluationReady) return "none"; // will be overwritten below
+      if (!isRecording) return "none";
+      if (tok.globalIdx < revealedWordCount) return "correct";
+      if (tok.globalIdx === revealedWordCount) return "partial"; // leading edge
+      return "pending";
+    });
     if (evaluationReady) {
       const ref = pageAyahs.map(a => a.text).join(" ");
-      compareWords(ref, lastTranscript).forEach((r, i) => { if (i < wordStatuses.length) wordStatuses[i] = r.status; });
+      compareWords(ref, lastTranscript).forEach((r, i) => {
+        if (i < wordStatuses.length) wordStatuses[i] = r.status === "correct" ? "correct" : "missing";
+      });
     }
 
+    // ── Group tokens into mushaf lines ───────────────────────────────────────
+    const lineMap = new Map<number, WordToken[]>();
+    tokens.forEach(tok => {
+      if (!lineMap.has(tok.line)) lineMap.set(tok.line, []);
+      lineMap.get(tok.line)!.push(tok);
+    });
+    const sortedLines = Array.from(lineMap.entries()).sort(([a], [b]) => a - b);
+
+    // Bismillah lives on its own line — keep separate
+    const bismTokens = tokens.filter(t => t.isBismWord);
+    const hasBism = bismTokens.length > 0;
+
     const renderWord = (tok: WordToken) => {
-      const revealed = !isRecording || tok.globalIdx < revealedWordCount;
-      const justRevealed = isRecording && revealed && tok.globalIdx === revealedWordCount - 1;
       const st = wordStatuses[tok.globalIdx];
-      const underline = evaluationReady && st !== "none"
-        ? (st === "correct" ? "2.5px solid #16a34a" : "2.5px solid #dc2626")
-        : "none";
+      // Color logic
+      let color = "#1a0a00";
+      let bg = "transparent";
+      let blur = "none";
+      let opacity = 1;
+      let border = "none";
+
+      if (evaluationReady) {
+        if (st === "correct") { color = "#15803d"; bg = "#dcfce733"; border = "2px solid #16a34a"; }
+        else if (st === "missing") { color = "#b91c1c"; bg = "#fee2e233"; border = "2px solid #dc2626"; }
+      } else if (isRecording) {
+        if (st === "correct") { color = "#15803d"; bg = "#dcfce744"; }
+        else if (st === "partial") { color = "#d97706"; bg = `${GOLD}33`; }
+        else { blur = "blur(7px)"; opacity = 0.18; }
+      }
+
       return (
         <span key={tok.globalIdx} style={{
           display: "inline-block",
-          transition: "filter 0.4s ease, opacity 0.4s ease",
-          filter: revealed ? "none" : "blur(6px)",
-          opacity: revealed ? 1 : 0.2,
-          borderBottom: underline,
-          paddingBottom: evaluationReady && st !== "none" ? 2 : 0,
-          background: justRevealed ? `${GOLD}22` : "transparent",
+          color,
+          background: bg,
+          filter: blur,
+          opacity,
+          borderBottom: border,
+          paddingBottom: border !== "none" ? 2 : 0,
           borderRadius: 3,
-          margin: "0 2px",
+          margin: "0 1px",
+          transition: "color 0.35s ease, background 0.35s ease, filter 0.4s ease, opacity 0.4s ease",
         }}>{tok.word}</span>
       );
     };
 
     const renderAyahNum = (tok: WordToken) => {
-      const revealed = !isRecording || tok.globalIdx < revealedWordCount;
+      const isRevealed = !isRecording || tok.globalIdx < revealedWordCount;
       return (
         <span key={`n${tok.globalIdx}`} style={{
-          fontSize: 14, color: GOLD, margin: "0 4px", fontFamily: "'Amiri',serif",
-          filter: revealed ? "none" : "blur(6px)", opacity: revealed ? 1 : 0.2,
-          transition: "filter 0.4s ease, opacity 0.4s ease", display: "inline-block",
-        }}>۝{tok.numberInSurah}</span>
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          width: 24, height: 24, borderRadius: "50%",
+          border: `1.5px solid ${GOLD}`, background: "#fffdf6",
+          fontSize: 10, color: GOLD, fontFamily: "'Amiri',serif",
+          margin: "0 4px", verticalAlign: "middle", lineHeight: 1,
+          filter: isRevealed || !isRecording ? "none" : "blur(6px)",
+          opacity: isRevealed || !isRecording ? 1 : 0.2,
+          transition: "filter 0.4s ease, opacity 0.4s ease",
+          flexShrink: 0,
+        }}>{tok.numberInSurah}</span>
       );
     };
 
-    const bismTokens = tokens.filter(t => t.isBismWord);
-    const bodyTokens = tokens.filter(t => !t.isBismWord);
+    if (fetchingPage) return (
+      <div style={{display:"flex",justifyContent:"center",padding:40}}>
+        <Loader2 size={28} color={GOLD} style={{animation:"spin .9s linear infinite"}}/>
+      </div>
+    );
+    if (!pageAyahs.length) return (
+      <div style={{padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13}}>
+        Could not load page — check internet connection.
+      </div>
+    );
 
-    if (fetchingPage) return <div style={{display:"flex",justifyContent:"center",padding:40}}><Loader2 size={28} color={GOLD} style={{animation:"spin .9s linear infinite"}}/></div>;
-    if (!pageAyahs.length) return <div style={{padding:24,textAlign:"center",color:"#9CA3AF",fontSize:13}}>Could not load page — check internet connection.</div>;
+    const totalToks = tokens.filter(t => !t.isBismWord).length;
 
     return (
-      <div style={{ background:"#fffdf6", borderRadius:8, border:`2px solid ${GOLD}88`, boxShadow:"0 4px 20px rgba(0,0,0,.1)", overflow:"hidden" }}>
+      <div style={{ background:"#fffdf6", borderRadius:10, border:`2px solid ${GOLD}88`,
+        boxShadow:"0 4px 20px rgba(0,0,0,.10), inset 0 0 0 8px #fffdf6",
+        outline:`1px solid ${GOLD}22`, outlineOffset:6, overflow:"hidden" }}>
+
+        {/* Decorative inner border */}
+        <div style={{ position:"relative" }}>
+          <div style={{ position:"absolute", inset:8, border:`1px solid ${GOLD}33`,
+            borderRadius:4, pointerEvents:"none", zIndex:1 }}/>
+        </div>
 
         {/* Page header */}
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"8px 16px", background:`linear-gradient(to bottom,${GOLD}18,transparent)`, borderBottom:`1px solid ${GOLD}44` }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+          padding:"8px 16px", background:`linear-gradient(to bottom,${GOLD}18,transparent)`,
+          borderBottom:`1px solid ${GOLD}44` }}>
           <span style={{fontFamily:"'Amiri',serif",fontSize:11,fontWeight:700,color:G1}}>
             {pageAyahs[0]?.surah?.englishName}
-            {pageAyahs[pageAyahs.length-1]?.surah?.number!==pageAyahs[0]?.surah?.number && ` — ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
+            {pageAyahs[pageAyahs.length-1]?.surah?.number !== pageAyahs[0]?.surah?.number &&
+              ` — ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
           </span>
           <span style={{fontFamily:"'Amiri',serif",fontSize:11,color:GOLD}}>صفحة {todayPages[pageIdx]}</span>
         </div>
 
-        {/* Recording progress hint */}
+        {/* Live progress hint while recording */}
         {isRecording && (
-          <div style={{ padding:"5px 14px", background:`linear-gradient(to right,${GOLD}08,${GOLD}18,${GOLD}08)`, borderBottom:`1px solid ${GOLD}22`, textAlign:"center" }}>
+          <div style={{ padding:"4px 14px", background:`linear-gradient(to right,${GOLD}08,${GOLD}18,${GOLD}08)`,
+            borderBottom:`1px solid ${GOLD}22`, textAlign:"center" }}>
             <span style={{fontSize:10,fontWeight:700,color:GOLD,fontFamily:"'Cairo',sans-serif",letterSpacing:.4}}>
-              {revealedWordCount >= tokens.length ? "✓ Full page revealed — keep reciting!" : `Recite aloud — words reveal as you speak (${Math.min(revealedWordCount,tokens.length)}/${tokens.length})`}
+              {revealedWordCount >= totalToks
+                ? "✓ Full page revealed — keep reciting!"
+                : `${Math.min(revealedWordCount, totalToks)}/${totalToks} words revealed`}
             </span>
           </div>
         )}
 
-        {/* Underline legend — ONLY when evaluation is done */}
-        {evaluationReady && (
-          <div style={{ padding:"5px 12px", background:"#f9fafb", borderBottom:`1px solid ${GOLD}22`, display:"flex", alignItems:"center", justifyContent:"center", gap:16 }}>
-            <span style={{fontSize:10,color:"#16a34a",fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
-              <span style={{display:"inline-block",width:18,height:2.5,background:"#16a34a",borderRadius:1}}/>Correct
-            </span>
-            <span style={{fontSize:10,color:"#dc2626",fontWeight:700,display:"flex",alignItems:"center",gap:4}}>
-              <span style={{display:"inline-block",width:18,height:2.5,background:"#dc2626",borderRadius:1}}/>Missed
-            </span>
+        {/* Legend */}
+        {(isRecording || evaluationReady) && (
+          <div style={{ padding:"4px 12px", background:"#f9fafb", borderBottom:`1px solid ${GOLD}22`,
+            display:"flex", alignItems:"center", justifyContent:"center", gap:14 }}>
+            {isRecording && !evaluationReady && (
+              <>
+                <span style={{fontSize:10,color:"#15803d",fontWeight:700}}>🟢 Correct</span>
+                <span style={{fontSize:10,color:GOLD,fontWeight:700}}>🟡 Close</span>
+                <span style={{fontSize:10,color:"#9CA3AF",fontWeight:700}}>○ Not yet</span>
+              </>
+            )}
+            {evaluationReady && (
+              <>
+                <span style={{fontSize:10,color:"#15803d",fontWeight:700,display:"flex",alignItems:"center",gap:3}}>
+                  <span style={{display:"inline-block",width:16,height:2.5,background:"#16a34a",borderRadius:1}}/>Correct
+                </span>
+                <span style={{fontSize:10,color:"#dc2626",fontWeight:700,display:"flex",alignItems:"center",gap:3}}>
+                  <span style={{display:"inline-block",width:16,height:2.5,background:"#dc2626",borderRadius:1}}/>Missed
+                </span>
+              </>
+            )}
           </div>
         )}
 
         <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
 
-        <div style={{padding:"14px 16px 12px"}}>
+        <div style={{padding:"16px 14px 14px", fontFamily:"'Amiri Quran','Amiri',serif", fontSize:22, color:"#1a0a00"}}>
 
-          {/* Bismillah — centred, isolated on its own line */}
-          {bismTokens.length > 0 && (
+          {/* Bismillah — centred on own line */}
+          {hasBism && (
             <div style={{
-              display: "block",
-              width: "100%",
-              direction: "rtl",
-              textAlign: "center",
-              fontFamily: "'Amiri Quran','Amiri',serif",
-              fontSize: 24,
-              color: INK,
-              lineHeight: 2.8,
-              marginBottom: 16,
-              paddingBottom: 12,
-              borderBottom: `1px dashed ${GOLD}55`,
+              direction:"rtl", textAlign:"center", lineHeight:2.8,
+              marginBottom:14, paddingBottom:12,
+              borderBottom:`1px dashed ${GOLD}55`,
             }}>
               {bismTokens.map(tok => (
-                <span key={tok.globalIdx} style={{display:"inline-block", margin:"0 3px"}}>
+                <span key={tok.globalIdx} style={{display:"inline-block", margin:"0 2px"}}>
                   {renderWord(tok)}
                   {tok.isLast && renderAyahNum(tok)}
                 </span>
@@ -2219,17 +2343,45 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             </div>
           )}
 
-          {/* Body — RTL right-aligned Mus'haf style */}
-          <div style={{ direction:"rtl", fontFamily:"'Amiri Quran','Amiri',serif", fontSize:22, color:INK, lineHeight:3.2, textAlign:"right" }}>
-            {bodyTokens.map(tok => <span key={tok.globalIdx}>{renderWord(tok)}{tok.isLast && renderAyahNum(tok)}</span>)}
-          </div>
+          {/* ── Mushaf body: one <div> per mushaf line ── */}
+          {sortedLines
+            .filter(([, toks]) => !toks.every(t => t.isBismWord))
+            .map(([lineNum, lineToks]) => {
+              const bodyToks = lineToks.filter(t => !t.isBismWord);
+              if (!bodyToks.length) return null;
+              return (
+                <div key={lineNum} style={{
+                  direction: "rtl",
+                  textAlign: "justify",
+                  lineHeight: 2.8,
+                  wordSpacing: 4,
+                  marginBottom: 2,
+                  // Mushaf pages are typically centred per line
+                  display: "flex",
+                  flexWrap: "wrap",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  gap: "0 0",
+                }}>
+                  {bodyToks.map(tok => (
+                    <span key={tok.globalIdx} style={{display:"inline-flex", alignItems:"center"}}>
+                      {renderWord(tok)}
+                      {tok.isLast && renderAyahNum(tok)}
+                    </span>
+                  ))}
+                </div>
+              );
+            })}
         </div>
 
         <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
-        <div style={{padding:"6px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>─── {todayPages[pageIdx]} ───</div>
+        <div style={{padding:"6px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>
+          ─── {todayPages[pageIdx]} ───
+        </div>
       </div>
     );
   };
+
 
   /* ════ RENDER PHASES ════ */
   return (
