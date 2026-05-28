@@ -1,26 +1,17 @@
 /*
   supabase/functions/schedule-class-reminders/index.ts
   ──────────────────────────────────────────────────────
-  Runs every minute via pg_cron.
+  Called every minute by pg_cron.
 
-  For every timetable slot or private session starting in ~15 min or ~5 min:
+  For every timetable slot or private session starting in ~15 or ~5 min:
     1. Inserts a notification row  →  bell icon in the app
-    2. Sends Web Push              →  works even when browser is closed
-    3. Sends Telegram              →  directly via gateway (no trigger dependency)
+    2. Sends Web Push              →  works even when app is closed
+    3. Sends Telegram              →  direct gateway call, no trigger dependency
 
-  Telegram is sent with the SAME pattern used in hifdh-reminder which
-  already works. The old approach (relying on trg_dispatch_notification
-  pg_net trigger) is completely removed — that trigger silently swallows
-  all errors and cannot be debugged.
-
-  Required secrets (Supabase dashboard → Edge Functions → Secrets):
-    SUPABASE_URL               – auto-provided
-    SUPABASE_SERVICE_ROLE_KEY  – auto-provided
-    VAPID_PRIVATE_KEY          – your VAPID private key (base64url)
-    VAPID_PUBLIC_KEY           – your VAPID public key  (base64url)
-    VAPID_SUBJECT              – mailto:admin@tahleemacademy.com
-    LOVABLE_API_KEY            – Lovable gateway bearer token
-    TELEGRAM_API_KEY           – your Telegram bot token
+  KEY FIX: The DB notification insert no longer throws on failure.
+  This means Telegram is ALWAYS attempted even if the bell-icon insert
+  fails (e.g. due to a constraint issue). Each delivery channel is
+  independently guarded with its own try/catch.
 */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -33,16 +24,13 @@ const corsHeaders = {
 const THRESHOLDS       = [15, 5] as const;
 const APP_BASE_URL     = "https://tahleemacademy.vercel.app";
 const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram/sendMessage";
-const WAT_OFFSET_MS    = 60 * 60 * 1000; // UTC+1
+const WAT_OFFSET_MS    = 60 * 60 * 1000; // UTC+1 (WAT)
 
-// ── Time helpers ─────────────────────────────────────────────────────────────
+// ── Time helpers ──────────────────────────────────────────────────────────────
 
-function nowWAT(): { day: number; dateStr: string } {
+function nowWAT() {
   const d = new Date(Date.now() + WAT_OFFSET_MS);
-  return {
-    day:     d.getUTCDay(),
-    dateStr: d.toISOString().split("T")[0],
-  };
+  return { day: d.getUTCDay(), dateStr: d.toISOString().split("T")[0] };
 }
 
 function nowMinutesWAT(): number {
@@ -60,8 +48,7 @@ function minutesUntil(timeStr: string): number {
 }
 
 function minutesUntilDateTime(dateStr: string, timeStr: string): number {
-  const target = new Date(`${dateStr}T${timeStr.slice(0, 5)}+01:00`);
-  return (target.getTime() - Date.now()) / 60_000;
+  return (new Date(`${dateStr}T${timeStr.slice(0, 5)}+01:00`).getTime() - Date.now()) / 60_000;
 }
 
 function to12hr(t: string): string {
@@ -73,7 +60,7 @@ function dedupKey(slotId: string, threshold: number): string {
   return `slot=${slotId}:${threshold}`;
 }
 
-// ── DB helpers ────────────────────────────────────────────────────────────────
+// ── Dedup check ───────────────────────────────────────────────────────────────
 
 async function alreadyNotified(
   sb: ReturnType<typeof createClient>,
@@ -94,6 +81,9 @@ async function alreadyNotified(
   return (data?.length ?? 0) > 0;
 }
 
+// ── Bell notification (DB) ────────────────────────────────────────────────────
+// NOTE: Does NOT throw — Telegram must still fire even if bell insert fails.
+
 async function insertNotification(
   sb: ReturnType<typeof createClient>,
   opts: { userId: string; title: string; message: string; link: string }
@@ -102,11 +92,17 @@ async function insertNotification(
     user_id: opts.userId,
     title:   opts.title,
     message: opts.message,
-    type:    "class_reminder",
+    type:    "class_reminder",   // allowed after fix_telegram_reminders.sql
     link:    opts.link,
     is_read: false,
   });
-  if (error) throw new Error(`DB insert failed: ${error.message}`);
+  if (error) {
+    // Log but do NOT throw — Web Push and Telegram must still be attempted
+    console.warn(
+      `[schedule-class-reminders] bell insert failed for ${opts.userId}:`,
+      error.message
+    );
+  }
 }
 
 // ── Web Push ──────────────────────────────────────────────────────────────────
@@ -115,34 +111,32 @@ async function sendWebPush(
   sub: { endpoint: string; p256dh: string; auth: string },
   payload: { title: string; message: string; url: string; tag: string }
 ): Promise<void> {
-  const pvt = Deno.env.get("VAPID_PRIVATE_KEY");
+  const pvt  = Deno.env.get("VAPID_PRIVATE_KEY");
   const pub  = Deno.env.get("VAPID_PUBLIC_KEY");
-  const sub_ = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@tahleemacademy.com";
+  const subj = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@tahleemacademy.com";
   if (!pvt || !pub) return;
-
-  const webpush: any = await import("https://esm.sh/web-push@3.6.7");
-  webpush.setVapidDetails(sub_, pub, pvt);
-  await webpush.sendNotification(
+  const wp: any = await import("https://esm.sh/web-push@3.6.7");
+  wp.setVapidDetails(subj, pub, pvt);
+  await wp.sendNotification(
     { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
     JSON.stringify(payload),
     { TTL: 60 * 20 }
   );
 }
 
-// ── Telegram — copied verbatim from hifdh-reminder which already works ────────
+// ── Telegram — exact same pattern as hifdh-reminder (proven to work) ─────────
 
 async function sendTelegram(
   chatId: string,
   title: string,
   message: string,
-  joinUrl: string
+  fullUrl: string
 ): Promise<void> {
   const LOVABLE_API_KEY  = Deno.env.get("LOVABLE_API_KEY");
   const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
 
-  // Silently skip rather than throw — missing secrets shouldn't crash the run
   if (!LOVABLE_API_KEY || !TELEGRAM_API_KEY) {
-    console.warn("[schedule-class-reminders] Telegram secrets not set — skipping");
+    console.warn("[schedule-class-reminders] Telegram secrets missing — check Edge Function secrets");
     return;
   }
 
@@ -150,7 +144,7 @@ async function sendTelegram(
     `🕌 <b>Tahleem Academy</b>\n` +
     `<b>${title}</b>\n\n` +
     `${message}\n\n` +
-    `🔗 <a href="${joinUrl}">Open Academy</a>`;
+    `🔗 <a href="${fullUrl}">Open Academy</a>`;
 
   const res = await fetch(TELEGRAM_GATEWAY, {
     method: "POST",
@@ -169,11 +163,11 @@ async function sendTelegram(
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Telegram gateway ${res.status}: ${body}`);
+    throw new Error(`gateway ${res.status}: ${body}`);
   }
 }
 
-// ── Core per-user notification ────────────────────────────────────────────────
+// ── Core per-user notify ──────────────────────────────────────────────────────
 
 async function maybeNotify(
   sb: ReturnType<typeof createClient>,
@@ -184,19 +178,19 @@ async function maybeNotify(
     startTime:    string;
     minsLeft:     number;
     threshold:    number;
-    joinPath:     string; // e.g. "/student/timetable" or "/teacher/classes"
-    label:        string; // "Class" | "Your class" | "Private class"
+    joinPath:     string;
+    label:        string;
   }
 ): Promise<"sent" | "dedup" | "error"> {
   try {
-    // ── 1. Dedup — don't double-send within the same day ───────────────────
+    // ── Dedup ──────────────────────────────────────────────────────────────
     if (await alreadyNotified(sb, opts.userId, opts.slotId, opts.threshold)) {
       return "dedup";
     }
 
-    const minsDisp = Math.round(opts.minsLeft);
-    const time12   = to12hr(opts.startTime);
     const key      = dedupKey(opts.slotId, opts.threshold);
+    const time12   = to12hr(opts.startTime);
+    const minsDisp = Math.round(opts.minsLeft);
 
     const title   = opts.threshold === 5
       ? `📚 ${opts.label} starts in 5 min — join now!`
@@ -204,18 +198,15 @@ async function maybeNotify(
     const message = `${opts.subjectTitle} starts at ${time12}. ${
       opts.threshold === 5 ? "Tap to join!" : "Get ready!"
     }`;
-    const link     = `${opts.joinPath}?${key}`;
-    const fullUrl  = `${APP_BASE_URL}${link}`;
+    const link    = `${opts.joinPath}?${key}`;
+    const fullUrl = `${APP_BASE_URL}${link}`;
 
-    // ── 2. Bell notification (DB insert) ───────────────────────────────────
-    await insertNotification(sb, {
-      userId:  opts.userId,
-      title,
-      message,
-      link,
-    });
+    // ── 1. Bell notification ───────────────────────────────────────────────
+    // insertNotification warns on error but does NOT throw, so we always
+    // continue to Web Push and Telegram regardless.
+    await insertNotification(sb, { userId: opts.userId, title, message, link });
 
-    // ── 3. Web Push ─────────────────────────────────────────────────────────
+    // ── 2. Web Push ────────────────────────────────────────────────────────
     const { data: pushSub } = await sb
       .from("push_subscriptions")
       .select("endpoint, p256dh, auth")
@@ -225,30 +216,32 @@ async function maybeNotify(
     if (pushSub) {
       try {
         await sendWebPush(pushSub as any, {
-          title,
-          message,
-          url: fullUrl,
+          title, message, url: fullUrl,
           tag: `${opts.slotId}:${opts.threshold}`,
         });
       } catch (e: any) {
         console.warn(
-          `[schedule-class-reminders] web push failed for ${opts.userId}:`,
-          e.message
+          `[schedule-class-reminders] web push failed for ${opts.userId}:`, e.message
         );
-        // Remove expired subscription so it stops failing on every run
         if (e.statusCode === 410 || e.statusCode === 404) {
           await sb.from("push_subscriptions").delete().eq("user_id", opts.userId);
         }
       }
     }
 
-    // ── 4. Telegram — direct send, same pattern as hifdh-reminder ──────────
-    //    Look up telegram_chat_id by user_id (not by profiles.id)
-    const { data: prof } = await sb
+    // ── 3. Telegram ────────────────────────────────────────────────────────
+    // Look up telegram_chat_id by user_id — same query as hifdh-reminder
+    const { data: prof, error: profErr } = await sb
       .from("profiles")
       .select("telegram_chat_id")
       .eq("user_id", opts.userId)
       .maybeSingle();
+
+    if (profErr) {
+      console.warn(
+        `[schedule-class-reminders] profile lookup failed for ${opts.userId}:`, profErr.message
+      );
+    }
 
     const chatId = (prof as any)?.telegram_chat_id;
 
@@ -256,18 +249,16 @@ async function maybeNotify(
       try {
         await sendTelegram(String(chatId), title, message, fullUrl);
         console.log(
-          `[schedule-class-reminders] telegram sent → user=${opts.userId} chat=${chatId}`
+          `[schedule-class-reminders] ✅ telegram sent → user=${opts.userId} chat=${chatId}`
         );
       } catch (e: any) {
-        // Log but never let a Telegram failure block the rest of the run
         console.warn(
-          `[schedule-class-reminders] telegram failed for ${opts.userId}:`,
-          e.message
+          `[schedule-class-reminders] ❌ telegram failed for ${opts.userId}:`, e.message
         );
       }
     } else {
       console.log(
-        `[schedule-class-reminders] no telegram_chat_id for user=${opts.userId} — skipped`
+        `[schedule-class-reminders] ℹ️  no telegram_chat_id for user=${opts.userId}`
       );
     }
 
@@ -281,9 +272,7 @@ async function maybeNotify(
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -294,7 +283,7 @@ Deno.serve(async (req) => {
   const stats = { checked: 0, sent: 0, dedup: 0, errors: 0 };
 
   try {
-    // ── 1. Recurring timetable slots ─────────────────────────────────────────
+    // ── Recurring timetable slots ─────────────────────────────────────────
     const { data: slots, error: slotsErr } = await sb
       .from("subject_timetable")
       .select("id, start_time, levels, live_url, subjects(id, title, title_ar, teacher_id)")
@@ -310,35 +299,28 @@ Deno.serve(async (req) => {
         if (minsLeft < threshold - 1 || minsLeft > threshold + 1) continue;
 
         stats.checked++;
-
-        const subjectTitle  = slot.subjects?.title_ar || slot.subjects?.title || "Class";
+        const subjectTitle = slot.subjects?.title_ar || slot.subjects?.title || "Class";
         const slotLevels: string[] = slot.levels ?? [];
 
-        // a. Teacher
+        // Teacher
         if (slot.subjects?.teacher_id) {
           const r = await maybeNotify(sb, {
-            userId:       slot.subjects.teacher_id,
-            slotId:       slot.id,
-            subjectTitle,
-            startTime:    slot.start_time,
-            minsLeft,
-            threshold,
-            joinPath:     slot.live_url ?? "/teacher/classes",
-            label:        "Your class",
+            userId: slot.subjects.teacher_id, slotId: slot.id,
+            subjectTitle, startTime: slot.start_time, minsLeft, threshold,
+            joinPath: slot.live_url ?? "/teacher/classes", label: "Your class",
           });
           stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
         }
 
-        // b. Group students — filter by level
+        // Students (group) filtered by level
         const { data: students } = await sb
           .from("profiles")
           .select("user_id, level, student_type")
           .eq("role", "student");
 
-        for (const student of (students ?? []) as any[]) {
-          if (student.student_type === "private") continue;
-
-          const level   = student.level ?? "beginner";
+        for (const s of (students ?? []) as any[]) {
+          if (s.student_type === "private") continue;
+          const level   = s.level ?? "beginner";
           const visible =
             slotLevels.length === 0 ||
             slotLevels.includes("all") ||
@@ -346,21 +328,16 @@ Deno.serve(async (req) => {
           if (!visible) continue;
 
           const r = await maybeNotify(sb, {
-            userId:       student.user_id,
-            slotId:       slot.id,
-            subjectTitle,
-            startTime:    slot.start_time,
-            minsLeft,
-            threshold,
-            joinPath:     slot.live_url ?? "/student/timetable",
-            label:        "Class",
+            userId: s.user_id, slotId: slot.id,
+            subjectTitle, startTime: slot.start_time, minsLeft, threshold,
+            joinPath: slot.live_url ?? "/student/timetable", label: "Class",
           });
           stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
         }
       }
     }
 
-    // ── 2. Private sessions ───────────────────────────────────────────────────
+    // ── Private sessions ──────────────────────────────────────────────────
     const { data: sessions, error: sessErr } = await sb
       .from("private_sessions")
       .select("id, student_id, session_date, start_time, subjects(title, title_ar)")
@@ -370,36 +347,27 @@ Deno.serve(async (req) => {
 
     for (const s of (sessions ?? []) as any[]) {
       const minsLeft = minutesUntilDateTime(s.session_date, s.start_time);
-
       for (const threshold of THRESHOLDS) {
         if (minsLeft < threshold - 1 || minsLeft > threshold + 1) continue;
-
         stats.checked++;
-
         const r = await maybeNotify(sb, {
-          userId:       s.student_id,
-          slotId:       s.id,
+          userId: s.student_id, slotId: s.id,
           subjectTitle: s.subjects?.title_ar || s.subjects?.title || "Private Session",
-          startTime:    s.start_time,
-          minsLeft,
-          threshold,
-          joinPath:     "/student/timetable",
-          label:        "Private class",
+          startTime: s.start_time, minsLeft, threshold,
+          joinPath: "/student/timetable", label: "Private class",
         });
         stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
       }
     }
 
     console.log("[schedule-class-reminders] done", stats);
-
     return new Response(JSON.stringify({ ok: true, stats }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {
     console.error("[schedule-class-reminders] fatal:", err.message);
     return new Response(JSON.stringify({ error: err.message }), {
-      status:  500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
