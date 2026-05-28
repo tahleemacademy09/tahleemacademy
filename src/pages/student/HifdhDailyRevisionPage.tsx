@@ -1599,58 +1599,70 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       }, 1000);
 
       // ── SPEECH-BASED reveal — sequential sliding-window match ─────────────
-      // Design goals:
-      //   • Each word reveals only when it (or a close neighbour) is spoken.
-      //   • Random noise / unrelated speech does NOT advance the reveal.
-      //   • Works on Android Chrome where continuous+no-interim = silent.
+      // FIX: pageTokens are built LAZILY inside onresult (not at SR start time)
+      // so they always read from the live pageAyahsRef even if ayahs hadn't
+      // loaded yet when startRecording() was called.
       //
       // Algorithm:
-      //   - interimResults: true — we get fast word-by-word feedback.
-      //   - Each onresult call gives us the FULL transcript so far (all results
-      //     concatenated). We track lastSpokenCount so we only look at NEW words.
-      //   - For each new spoken word, we try to match it at matchPos OR within
-      //     a small lookahead window (±3 tokens). This handles the case where
-      //     recognition catches the student mid-word or slightly ahead.
-      //   - If a spoken word matches anywhere in the window, matchPos jumps to
-      //     just after that hit. This is safe because matchPos only moves forward.
-      //   - If a spoken word matches NOTHING in the window, it is silently
-      //     discarded (noise). matchPos never moves backward.
-      //   - Auto-restarts on onend so 60s Chrome limit doesn't stop reveals.
+      //   - interimResults: true — fast word-by-word feedback on Android Chrome.
+      //   - Each onresult gives the FULL accumulated transcript. We track
+      //     lastSpokenCount to process only NEW words each call.
+      //   - For each new word, we search within a LOOKAHEAD window ahead of
+      //     matchPos. Hit → matchPos jumps past it. Miss → silently discarded.
+      //   - matchPos only ever moves forward (noise never resets it).
+      //   - Auto-restarts on onend (Chrome's 60 s limit).
+      //   - Time-based fallback: if SR is unavailable OR the page loaded very
+      //     late, a gentle auto-reveal (1 word / 3 s) ensures the student never
+      //     sees a completely frozen page.
       try {
         const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (SR) {
-          // Flat normalised token list for this page — built once
-          const buildTokens = (): string[] => {
+          // matchPos and lastSpokenCount persist across onend restarts via closure.
+          let matchPos = 0;
+          let lastSpokenCount = 0;
+          const LOOKAHEAD = 6; // wider window handles fast reciters & skipped words
+
+          // ── Lazy token builder — reads pageAyahsRef at call time ──────────
+          // Called inside onresult so ayahs are guaranteed to be populated by
+          // the time the student has spoken at least one word.
+          const getPageTokens = (): string[] => {
             const toks: string[] = [];
             pageAyahsRef.current.forEach(a => {
               a.text.split(/\s+/).filter(Boolean).forEach(w => toks.push(normalizeArabic(w)));
             });
             return toks;
           };
-          const pageTokens = buildTokens();
-
-          // matchPos: how many page tokens have been confirmed spoken.
-          // Persists across onend restarts via closure.
-          let matchPos = 0;
-          // How many spoken words we have already processed from accumulated transcript
-          let lastSpokenCount = 0;
-          // Lookahead: how many tokens ahead of matchPos we allow a match
-          const LOOKAHEAD = 5; // wider window handles fast reciters
+          // Cache once populated to avoid rebuilding on every onresult call
+          let cachedTokens: string[] | null = null;
+          const pageTokens = () => {
+            if (!cachedTokens || cachedTokens.length === 0) {
+              const built = getPageTokens();
+              if (built.length > 0) cachedTokens = built;
+              return built;
+            }
+            return cachedTokens;
+          };
 
           const startRec = () => {
-            if (!recognitionRef.current && matchPos >= pageTokens.length) return; // page done
+            // Don't start a new instance if one is already running
+            if (recognitionRef.current) return;
+            const toks = pageTokens();
+            if (toks.length > 0 && matchPos >= toks.length) return; // page done
+
             const rec = new SR();
             rec.lang = "ar-SA";
             rec.continuous = true;
             rec.interimResults = true;   // essential on Android Chrome
-            rec.maxAlternatives = 3;     // more alternatives → better Quran recognition
+            rec.maxAlternatives = 3;
 
             rec.onresult = (event: any) => {
-              // Build full transcript — prefer highest-confidence Arabic alternative
+              const toks = pageTokens();
+              if (!toks.length) return; // ayahs not yet loaded — skip
+
+              // Build full transcript from all results — prefer most-Arabic alternative
               let fullText = "";
               for (let i = 0; i < event.results.length; i++) {
                 const result = event.results[i];
-                // Pick the alternative with most Arabic characters (best Quran transcription)
                 let bestAlt = result[0]?.transcript ?? "";
                 let bestArabicScore = (bestAlt.match(/[؀-ۿ]/g) || []).length;
                 for (let k = 1; k < result.length; k++) {
@@ -1662,31 +1674,22 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               }
               const allSpoken = normalizeArabic(fullText.trim()).split(/\s+/).filter(Boolean);
 
-              // Only process words we haven't seen before
+              // Only process NEW words since last call
               const newWords = allSpoken.slice(lastSpokenCount);
               if (!newWords.length) return;
               lastSpokenCount = allSpoken.length;
 
               let changed = false;
               for (const spokenWord of newWords) {
-                if (matchPos >= pageTokens.length) break;
-
-                // Try to find this spoken word in the lookahead window
+                if (matchPos >= toks.length) break;
+                // Sliding lookahead window
+                const windowEnd = Math.min(matchPos + LOOKAHEAD + 1, toks.length);
                 let hitAt = -1;
-                const windowEnd = Math.min(matchPos + LOOKAHEAD + 1, pageTokens.length);
                 for (let wi = matchPos; wi < windowEnd; wi++) {
-                  if (wordsMatch(pageTokens[wi], spokenWord)) {
-                    hitAt = wi;
-                    break;
-                  }
+                  if (wordsMatch(toks[wi], spokenWord)) { hitAt = wi; break; }
                 }
-
-                if (hitAt >= 0) {
-                  // Advance matchPos to just after the hit
-                  matchPos = hitAt + 1;
-                  changed = true;
-                }
-                // No match in window → discard this spoken word (noise/wrong verse)
+                if (hitAt >= 0) { matchPos = hitAt + 1; changed = true; }
+                // No match → noise, discard silently
               }
 
               if (changed) {
@@ -1696,24 +1699,25 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
             rec.onerror = (e: any) => {
               if (e.error === "no-speech") {
-                // no-speech fires then onend fires → onend handles the restart
+                // no-speech → onend fires → auto-restart handled there
               } else if (e.error !== "aborted") {
                 console.warn("SpeechRecognition error:", e.error);
               }
             };
 
             rec.onend = () => {
-              // handleStop nulls recognitionRef BEFORE calling .stop(), so
-              // by the time onend fires the ref is null → we skip restart.
-              // If ref still points to THIS rec, it ended naturally → restart.
+              // handleStop nulls recognitionRef BEFORE stopping, so if ref is
+              // null here the stop was intentional — do NOT restart.
               if (recognitionRef.current === rec) {
                 recognitionRef.current = null;
-                setTimeout(startRec, 100);
+                setTimeout(startRec, 150);
               }
             };
 
-            rec.start();
             recognitionRef.current = rec;
+            try { rec.start(); } catch {
+              recognitionRef.current = null;
+            }
           };
 
           startRec();
@@ -2264,78 +2268,154 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
     const totalToks = tokens.filter(t => !t.isBismWord).length;
 
+    // ── Authentic Mushaf border pattern ──────────────────────────────────
+    // A physical Mushaf has: thick outer gold border → gap → thin inner border
+    // The page number sits centred at the top inside a medallion ornament.
+    // Each line of text is fully justified (space-between) to fill the width,
+    // matching the Madani Mushaf column layout exactly.
     return (
-      <div style={{ background:"#fffdf6", borderRadius:10, border:`2px solid ${GOLD}88`,
-        boxShadow:"0 4px 20px rgba(0,0,0,.10), inset 0 0 0 8px #fffdf6",
-        outline:`1px solid ${GOLD}22`, outlineOffset:6, overflow:"hidden" }}>
+      <div style={{
+        background: "#fdf8ee",
+        borderRadius: 4,
+        // Layered border: thick outer gold, narrow cream gap, thin inner gold
+        border: `3px solid ${GOLD}cc`,
+        boxShadow: `0 0 0 6px #fdf8ee, 0 0 0 7px ${GOLD}66, 0 6px 28px rgba(0,0,0,.18)`,
+        overflow: "hidden",
+        position: "relative",
+        fontFamily: "'Amiri Quran','Amiri',serif",
+      }}>
+        {/* ── Corner rosettes (decorative) ── */}
+        {["topLeft","topRight","bottomLeft","bottomRight"].map(corner => (
+          <div key={corner} style={{
+            position:"absolute",
+            top: corner.startsWith("top") ? -1 : undefined,
+            bottom: corner.startsWith("bottom") ? -1 : undefined,
+            left: corner.endsWith("Left") ? -1 : undefined,
+            right: corner.endsWith("Right") ? -1 : undefined,
+            width: 18, height: 18,
+            background: GOLD,
+            clipPath: "polygon(50% 0%,100% 50%,50% 100%,0% 50%)",
+            zIndex: 2,
+          }}/>
+        ))}
 
-        {/* Decorative inner border */}
-        <div style={{ position:"relative" }}>
-          <div style={{ position:"absolute", inset:8, border:`1px solid ${GOLD}33`,
-            borderRadius:4, pointerEvents:"none", zIndex:1 }}/>
-        </div>
-
-        {/* Page header */}
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-          padding:"8px 16px", background:`linear-gradient(to bottom,${GOLD}18,transparent)`,
-          borderBottom:`1px solid ${GOLD}44` }}>
-          <span style={{fontFamily:"'Amiri',serif",fontSize:11,fontWeight:700,color:G1}}>
-            {pageAyahs[0]?.surah?.englishName}
-            {pageAyahs[pageAyahs.length-1]?.surah?.number !== pageAyahs[0]?.surah?.number &&
-              ` — ${pageAyahs[pageAyahs.length-1]?.surah?.englishName}`}
+        {/* ── Page number medallion (top centre) ── */}
+        <div style={{
+          display:"flex", alignItems:"center", justifyContent:"center",
+          padding:"8px 0 4px",
+          background: `linear-gradient(to bottom,${GOLD}28,${GOLD}08)`,
+          borderBottom: `1px solid ${GOLD}55`,
+          gap: 10,
+        }}>
+          <span style={{color:`${GOLD}99`,fontSize:14}}>❧</span>
+          <span style={{fontFamily:"'Amiri',serif",fontSize:12,fontWeight:700,color:GOLD,letterSpacing:2}}>
+            {todayPages[pageIdx]}
           </span>
-          <span style={{fontFamily:"'Amiri',serif",fontSize:11,color:GOLD}}>صفحة {todayPages[pageIdx]}</span>
+          <span style={{color:`${GOLD}99`,fontSize:14}}>❧</span>
         </div>
 
-        {/* Live progress hint while recording */}
+        {/* ── Surah name banner (when page starts a new surah) ── */}
+        {pageAyahs[0]?.surah?.englishName && (
+          <div style={{
+            textAlign:"center",
+            padding:"3px 10px",
+            fontSize:10,
+            fontWeight:700,
+            color:`${GOLD}bb`,
+            letterSpacing:1,
+            fontFamily:"'Cairo',sans-serif",
+            background: `linear-gradient(to right,transparent,${GOLD}10,transparent)`,
+          }}>
+            {pageAyahs[0].surah.englishName.toUpperCase()}
+            {pageAyahs[pageAyahs.length-1]?.surah?.number !== pageAyahs[0]?.surah?.number &&
+              ` — ${pageAyahs[pageAyahs.length-1].surah.englishName.toUpperCase()}`}
+          </div>
+        )}
+
+        {/* ── Live progress bar (speech reveal) ── */}
         {isRecording && (
-          <div style={{ padding:"4px 14px", background:`linear-gradient(to right,${GOLD}08,${GOLD}18,${GOLD}08)`,
-            borderBottom:`1px solid ${GOLD}22`, textAlign:"center" }}>
-            <span style={{fontSize:10,fontWeight:700,color:GOLD,fontFamily:"'Cairo',sans-serif",letterSpacing:.4}}>
-              {revealedWordCount >= totalToks
-                ? "✓ Full page revealed — keep reciting!"
-                : `${Math.min(revealedWordCount, totalToks)}/${totalToks} words revealed`}
+          <div style={{
+            margin: "0 14px",
+            padding: "4px 0",
+            borderBottom: `1px solid ${GOLD}22`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}>
+            <div style={{flex:1,height:4,borderRadius:2,background:`${GOLD}22`,overflow:"hidden"}}>
+              <div style={{
+                height:"100%", borderRadius:2,
+                background:`linear-gradient(to right,#16a34a,${GOLD})`,
+                width:`${totalToks > 0 ? Math.min(100,(revealedWordCount/totalToks)*100) : 0}%`,
+                transition:"width .4s ease",
+              }}/>
+            </div>
+            <span style={{fontSize:9,fontWeight:800,color:GOLD,whiteSpace:"nowrap",fontFamily:"'Cairo',sans-serif"}}>
+              {Math.min(revealedWordCount,totalToks)}/{totalToks}
             </span>
           </div>
         )}
 
-        {/* Legend */}
+        {/* ── Legend row ── */}
         {(isRecording || evaluationReady) && (
-          <div style={{ padding:"4px 12px", background:"#f9fafb", borderBottom:`1px solid ${GOLD}22`,
-            display:"flex", alignItems:"center", justifyContent:"center", gap:14 }}>
+          <div style={{
+            padding:"3px 14px",
+            background:"#faf6ea",
+            borderBottom:`1px solid ${GOLD}22`,
+            display:"flex", alignItems:"center", justifyContent:"center", gap:16,
+          }}>
             {isRecording && !evaluationReady && (
               <>
-                <span style={{fontSize:10,color:"#15803d",fontWeight:700}}>🟢 Correct</span>
-                <span style={{fontSize:10,color:GOLD,fontWeight:700}}>🟡 Close</span>
-                <span style={{fontSize:10,color:"#9CA3AF",fontWeight:700}}>○ Not yet</span>
+                <span style={{fontSize:9,color:"#15803d",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
+                  <span style={{width:8,height:8,borderRadius:"50%",background:"#16a34a",display:"inline-block"}}/>
+                  Correct
+                </span>
+                <span style={{fontSize:9,color:"#b45309",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
+                  <span style={{width:8,height:8,borderRadius:"50%",background:GOLD,display:"inline-block"}}/>
+                  Close
+                </span>
+                <span style={{fontSize:9,color:"#9CA3AF",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
+                  <span style={{width:8,height:8,borderRadius:"50%",background:"#D1D5DB",display:"inline-block"}}/>
+                  Not yet
+                </span>
               </>
             )}
             {evaluationReady && (
               <>
-                <span style={{fontSize:10,color:"#15803d",fontWeight:700,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{display:"inline-block",width:16,height:2.5,background:"#16a34a",borderRadius:1}}/>Correct
+                <span style={{fontSize:9,color:"#15803d",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
+                  <span style={{width:14,height:2.5,background:"#16a34a",borderRadius:1,display:"inline-block"}}/>
+                  Correct
                 </span>
-                <span style={{fontSize:10,color:"#dc2626",fontWeight:700,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{display:"inline-block",width:16,height:2.5,background:"#dc2626",borderRadius:1}}/>Missed
+                <span style={{fontSize:9,color:"#dc2626",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
+                  <span style={{width:14,height:2.5,background:"#dc2626",borderRadius:1,display:"inline-block"}}/>
+                  Missed
                 </span>
               </>
             )}
           </div>
         )}
 
-        <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
+        {/* ── Inner gold rule ── */}
+        <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}88,transparent)`,margin:"0 14px"}}/>
 
-        <div style={{padding:"16px 14px 14px", fontFamily:"'Amiri Quran','Amiri',serif", fontSize:22, color:"#1a0a00"}}>
+        {/* ── Quran text body ── */}
+        <div style={{padding:"14px 16px 10px"}}>
 
-          {/* Bismillah — centred on own line */}
+          {/* Bismillah — centred, visually distinct */}
           {hasBism && (
             <div style={{
-              direction:"rtl", textAlign:"center", lineHeight:2.8,
-              marginBottom:14, paddingBottom:12,
-              borderBottom:`1px dashed ${GOLD}55`,
+              direction:"rtl",
+              textAlign:"center",
+              fontSize: 26,
+              lineHeight: 3.0,
+              marginBottom: 10,
+              paddingBottom: 10,
+              borderBottom: `1px solid ${GOLD}44`,
+              letterSpacing: 1,
             }}>
               {bismTokens.map(tok => (
-                <span key={tok.globalIdx} style={{display:"inline-block", margin:"0 2px"}}>
+                <span key={tok.globalIdx} style={{display:"inline-block", margin:"0 1px"}}>
                   {renderWord(tok)}
                   {tok.isLast && renderAyahNum(tok)}
                 </span>
@@ -2343,28 +2423,34 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             </div>
           )}
 
-          {/* ── Mushaf body: one <div> per mushaf line ── */}
+          {/* ── Mushaf body: one div per mushaf line, fully justified ── */}
           {sortedLines
             .filter(([, toks]) => !toks.every(t => t.isBismWord))
             .map(([lineNum, lineToks]) => {
               const bodyToks = lineToks.filter(t => !t.isBismWord);
               if (!bodyToks.length) return null;
+              // Detect if this line has end-of-ayah markers — use center for short lines
+              const hasAyahEnd = bodyToks.some(t => t.isLast);
               return (
                 <div key={lineNum} style={{
                   direction: "rtl",
-                  textAlign: "justify",
-                  lineHeight: 2.8,
-                  wordSpacing: 4,
-                  marginBottom: 2,
-                  // Mushaf pages are typically centred per line
                   display: "flex",
-                  flexWrap: "wrap",
-                  justifyContent: "center",
+                  flexWrap: "nowrap",
+                  // Full justify = space-between so each line fills the column width
+                  // exactly like a physical Mushaf. Short lines (with ayah end) → center.
+                  justifyContent: hasAyahEnd && bodyToks.length <= 4 ? "center" : "space-between",
                   alignItems: "center",
-                  gap: "0 0",
+                  lineHeight: 3.2,
+                  fontSize: 23,
+                  marginBottom: 0,
+                  minHeight: "3.2em",
+                  letterSpacing: 0.5,
                 }}>
                   {bodyToks.map(tok => (
-                    <span key={tok.globalIdx} style={{display:"inline-flex", alignItems:"center"}}>
+                    <span key={tok.globalIdx} style={{
+                      display:"inline-flex", alignItems:"center",
+                      flexShrink: hasAyahEnd && bodyToks.length <= 4 ? 0 : 1,
+                    }}>
                       {renderWord(tok)}
                       {tok.isLast && renderAyahNum(tok)}
                     </span>
@@ -2374,9 +2460,18 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             })}
         </div>
 
-        <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}66,transparent)`,margin:"0 12px"}}/>
-        <div style={{padding:"6px",textAlign:"center",fontFamily:"'Amiri',serif",color:GOLD,fontSize:12}}>
-          ─── {todayPages[pageIdx]} ───
+        {/* ── Inner gold rule (bottom) ── */}
+        <div style={{height:1,background:`linear-gradient(to right,transparent,${GOLD}88,transparent)`,margin:"0 14px"}}/>
+
+        {/* ── Page footer ornament ── */}
+        <div style={{
+          padding:"5px 0",
+          textAlign:"center",
+          color:`${GOLD}99`,
+          fontSize:12,
+          letterSpacing:6,
+        }}>
+          ❦
         </div>
       </div>
     );
