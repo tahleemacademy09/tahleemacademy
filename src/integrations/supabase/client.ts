@@ -2,9 +2,22 @@ import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
 const SUPABASE_URL = "https://wvqeubhupkddtkcdwqcm.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY 
-  || import.meta.env.VITE_SUPABASE_ANON_KEY
-  || "";
+
+// Supports both env var names. VITE_SUPABASE_ANON_KEY is the standard name;
+// VITE_SUPABASE_PUBLISHABLE_KEY is an alias some setups use.
+// If both are missing, throw early so the problem is obvious in the console.
+const SUPABASE_ANON_KEY =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  "";
+
+if (!SUPABASE_ANON_KEY) {
+  console.error(
+    "[Supabase] VITE_SUPABASE_ANON_KEY is not set. " +
+    "Add it to your Vercel environment variables. " +
+    "All edge function calls will fail with 401/403 until this is fixed."
+  );
+}
 
 // ── iOS-safe storage adapter ──────────────────────────────────────────────
 // iOS Safari in Private/Incognito mode throws QuotaExceededError on any
@@ -41,7 +54,7 @@ const safeStorage = {
 
 export const supabase = createClient<Database>(
   SUPABASE_URL,
-  SUPABASE_PUBLISHABLE_KEY,
+  SUPABASE_ANON_KEY,
   {
     auth: {
       storage: safeStorage,   // ← was: localStorage (crashes iOS Private mode)
