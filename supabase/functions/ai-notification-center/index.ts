@@ -58,18 +58,22 @@ serve(async (req) => {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
 
+    // Verify the user's JWT using the anon client
     const anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const { data: { user: caller } } = await anonClient.auth.getUser(authHeader.replace("Bearer ", ""));
     if (!caller) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
 
-    // Check admin or teacher
-    const { data: roleRow } = await anonClient.from("user_roles").select("role")
-      .eq("user_id", caller.id).in("role", ["admin", "teacher"]).maybeSingle();
-    if (!roleRow) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsHeaders });
-
+    // Use service role to bypass RLS when checking the user's role.
+    // The anon client cannot read user_roles due to RLS policies that only
+    // allow admins to see roles — which creates a chicken-and-egg problem.
     const adminClient = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
+
+    // Check admin or teacher
+    const { data: roleRow } = await adminClient.from("user_roles").select("role")
+      .eq("user_id", caller.id).in("role", ["admin", "teacher"]).maybeSingle();
+    if (!roleRow) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsHeaders });
 
     const body = await req.json();
     const { action } = body;
