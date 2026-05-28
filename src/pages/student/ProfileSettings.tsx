@@ -1,16 +1,19 @@
 /* src/pages/student/ProfileSettings.tsx
    ────────────────────────────────────────────────────────────────────
    FIXES in this version
-   1. student_preferences schema-cache error → tries RPC first,
-      falls back to direct upsert. Both work once the migration runs.
-   2. WhatsApp toggle shows the phone number it will message, and
-      warns if no number is saved in the Profile tab.
-   3. Push notification permission banner shown when browser has
-      blocked notifications, with an "Allow" button to prompt again.
-   4. date_of_birth "" → null, all nullable fields sanitised.
+   1. KEYBOARD BUG FIX — inputs now use individual useRef values +
+      uncontrolled defaultValue pattern, so React never unmounts the
+      input on each keystroke. The keyboard stays open the entire time.
+   2. DARK MODE — fully implemented with a context-free localStorage
+      approach. Toggles instantly, persists across page reloads.
+   3. student_preferences schema-cache error → tries RPC first,
+      falls back to direct upsert.
+   4. WhatsApp toggle shows the phone number it will message.
+   5. Push notification permission banner.
+   6. date_of_birth "" → null, all nullable fields sanitised.
    ────────────────────────────────────────────────────────────────────
 */
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -21,16 +24,60 @@ import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import {
   Camera, Save, Lock, LogOut, Trash2,
-  Eye, EyeOff, Loader2, AlertTriangle,
+  Eye, EyeOff, Loader2, AlertTriangle, Moon, Sun,
 } from "lucide-react";
 
-const G = "#064E3B";
+// ─── Dark mode helpers ────────────────────────────────────────────────────────
+// We drive dark mode by toggling a `data-theme="dark"` attribute on <html>.
+// CSS variables in index.css (or injected here) handle the rest.
+// This is completely independent of React state so it's instant.
+const DM_KEY = "tahleem_dark_mode";
 
-const inp: React.CSSProperties = {
-  width: "100%", padding: "9px 12px", borderRadius: 10,
-  border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none",
-  background: "#FAFAFA", boxSizing: "border-box" as const,
-};
+function applyDark(enabled: boolean) {
+  if (enabled) {
+    document.documentElement.setAttribute("data-theme", "dark");
+    document.documentElement.style.colorScheme = "dark";
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+    document.documentElement.style.colorScheme = "light";
+  }
+}
+
+// Apply persisted preference immediately on module load (no flash)
+applyDark(localStorage.getItem(DM_KEY) === "true");
+
+function useDarkMode(): [boolean, (v: boolean) => void] {
+  const [dark, setDark] = useState(() => localStorage.getItem(DM_KEY) === "true");
+  const toggle = useCallback((v: boolean) => {
+    setDark(v);
+    localStorage.setItem(DM_KEY, String(v));
+    applyDark(v);
+  }, []);
+  return [dark, toggle];
+}
+
+// ─── Theme-aware colour tokens ────────────────────────────────────────────────
+// These are used inline. When dark mode is on, the <html data-theme="dark">
+// attribute is set so any CSS-var based components also switch automatically.
+function useTheme(dark: boolean) {
+  return {
+    bg:       dark ? "#0f172a" : "#F3F4F6",
+    surface:  dark ? "#1e293b" : "#ffffff",
+    surface2: dark ? "#273548" : "#F9FAFB",
+    border:   dark ? "#334155" : "#E5E7EB",
+    text:     dark ? "#f1f5f9" : "#111827",
+    text2:    dark ? "#94a3b8" : "#6B7280",
+    text3:    dark ? "#cbd5e1" : "#374151",
+    inputBg:  dark ? "#1e293b" : "#FAFAFA",
+    inputBdr: dark ? "#334155" : "#E5E7EB",
+    headerBg: dark ? "#0a1628" : "#064E3B",
+    tabActive:dark ? "#1e293b" : "#F3F4F6",
+    tabActiveText: dark ? "#34d399" : "#064E3B",
+    accent:   "#064E3B",
+  };
+}
+
+const G = "#064E3B";
 
 const TABS = [
   { id: "profile",       icon: "👤", label: "Profile" },
@@ -39,12 +86,81 @@ const TABS = [
   { id: "security",      icon: "🔒", label: "Security" },
 ];
 
+// ─── Stable input component ───────────────────────────────────────────────────
+// KEY FIX: This component never re-mounts because it has a stable identity.
+// We use a local ref + onBlur-to-sync pattern so the parent form state is
+// updated (for saving) but React does NOT re-render the input on every
+// keystroke, which is what caused the keyboard to dismiss.
+interface StableInputProps {
+  value: string;
+  onCommit: (val: string) => void;
+  type?: string;
+  placeholder?: string;
+  dir?: "rtl" | "ltr";
+  style?: React.CSSProperties;
+}
+function StableInput({ value, onCommit, type = "text", placeholder, dir, style }: StableInputProps) {
+  const ref = useRef<HTMLInputElement>(null);
+
+  // Sync external value into the input ONLY when it changes from outside
+  // (e.g. initial load). While the user is typing, the input controls itself.
+  const lastExternalValue = useRef(value);
+  useEffect(() => {
+    if (ref.current && value !== lastExternalValue.current) {
+      // Only push if the input isn't focused (user isn't mid-type)
+      if (document.activeElement !== ref.current) {
+        ref.current.value = value;
+      }
+      lastExternalValue.current = value;
+    }
+  }, [value]);
+
+  // Set initial value once on mount
+  useEffect(() => {
+    if (ref.current) ref.current.value = value;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <input
+      ref={ref}
+      type={type}
+      defaultValue={value}
+      placeholder={placeholder}
+      dir={dir}
+      // Commit to parent state on blur (when user leaves field) and on Enter
+      onBlur={e => onCommit(e.target.value)}
+      onKeyDown={e => { if (e.key === "Enter") onCommit((e.target as HTMLInputElement).value); }}
+      style={style}
+    />
+  );
+}
+
+// ─── Stable select component ──────────────────────────────────────────────────
+// Selects don't dismiss the keyboard so onChange is fine, but we wrap for
+// consistent styling and dark-mode style passing.
+interface StableSelectProps {
+  value: string;
+  onChange: (val: string) => void;
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+}
+function StableSelect({ value, onChange, children, style }: StableSelectProps) {
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} style={style}>
+      {children}
+    </select>
+  );
+}
+
 export default function ProfileSettings() {
   const { language, setLanguage } = useLanguage();
   const { user, signOut }          = useAuth();
   const { toast }                  = useToast();
   const navigate                   = useNavigate();
   const avatarRef                  = useRef<HTMLInputElement>(null);
+  const [dark, setDark]            = useDarkMode();
+  const T                          = useTheme(dark);
 
   const [tab,             setTab]             = useState("profile");
   const [saving,          setSaving]          = useState(false);
@@ -59,11 +175,17 @@ export default function ProfileSettings() {
   const [tgCode,          setTgCode]          = useState<string | null>(null);
   const [tgPolling,       setTgPolling]       = useState(false);
 
+  // Form state — only updated on blur, NOT on every keystroke
   const [form, setForm] = useState({
     full_name: "", full_name_ar: "", phone: "", whatsapp: "",
     parent_name: "", parent_phone: "", date_of_birth: "",
     bio: "", gender: "", nationality: "", country: "", city: "", avatar_url: "",
   });
+
+  // Stable field updater — memoised so identity never changes between renders
+  const updateField = useCallback((field: keyof typeof form) => (val: string) => {
+    setForm(f => ({ ...f, [field]: val }));
+  }, []);
 
   const [notifs, setNotifs] = useState({
     email_notifications:        true,
@@ -76,11 +198,15 @@ export default function ProfileSettings() {
   });
 
   const [prefs, setPrefs] = useState({
-    language: "en", dark_mode: false, autoplay_recordings: true,
+    language: "en", dark_mode: dark, autoplay_recordings: true,
     playback_speed: "1x", show_subtitles: false, default_subject_view: "grid",
   });
 
-  // Check browser push permission state
+  // Sync dark_mode into prefs when toggled so it saves to DB correctly
+  useEffect(() => {
+    setPrefs(p => ({ ...p, dark_mode: dark }));
+  }, [dark]);
+
   useEffect(() => {
     if (typeof Notification !== "undefined") {
       setPushBlocked(Notification.permission === "denied");
@@ -122,14 +248,19 @@ export default function ProfileSettings() {
           new_recording_alert:        d.new_recording_alert        ?? n.new_recording_alert,
           announcement_notifications: d.announcement_notifications ?? n.announcement_notifications,
         }));
-        setPrefs(p => ({
-          language:             d.language             ?? p.language,
-          dark_mode:            d.dark_mode            ?? p.dark_mode,
-          autoplay_recordings:  d.autoplay_recordings  ?? p.autoplay_recordings,
-          playback_speed:       d.playback_speed        ?? p.playback_speed,
-          show_subtitles:       d.show_subtitles        ?? p.show_subtitles,
-          default_subject_view: d.default_subject_view ?? p.default_subject_view,
+        const savedDark = d.dark_mode ?? dark;
+        setPrefs(pr => ({
+          language:             d.language             ?? pr.language,
+          dark_mode:            savedDark,
+          autoplay_recordings:  d.autoplay_recordings  ?? pr.autoplay_recordings,
+          playback_speed:       d.playback_speed        ?? pr.playback_speed,
+          show_subtitles:       d.show_subtitles        ?? pr.show_subtitles,
+          default_subject_view: d.default_subject_view ?? pr.default_subject_view,
         }));
+        // Apply saved dark mode preference from DB
+        if (d.dark_mode !== undefined && d.dark_mode !== dark) {
+          setDark(d.dark_mode);
+        }
       }
 
       // Telegram link state
@@ -143,9 +274,9 @@ export default function ProfileSettings() {
         setTgCode((tg as any).telegram_link_code ?? null);
       }
     })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  // Sanitise — empty string → null for all nullable DB columns
   const sanitise = (f: typeof form) => ({
     ...f,
     date_of_birth: f.date_of_birth || null,
@@ -161,8 +292,7 @@ export default function ProfileSettings() {
     city:          f.city          || null,
   });
 
-  // ── Save profile ──────────────────────────────────────────────────
-  // ── Telegram link ────────────────────────────────────────────────
+  // ── Telegram link ─────────────────────────────────────────────────
   const generateTgCode = async () => {
     if (!user) return;
     const code = `${user.id.slice(0, 6)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -170,18 +300,13 @@ export default function ProfileSettings() {
       .from("profiles")
       .update({ telegram_link_code: code })
       .eq("user_id", user.id);
-    if (error) {
-      toast({ title: "Could not generate code", description: error.message, variant: "destructive" });
-      return;
-    }
-    setTgCode(code);
-    setTgPolling(true);
+    if (error) { toast({ title: "Could not generate code", description: error.message, variant: "destructive" }); return; }
+    setTgCode(code); setTgPolling(true);
   };
 
   const unlinkTelegram = async () => {
     if (!user) return;
-    const { error } = await supabase
-      .from("profiles")
+    const { error } = await supabase.from("profiles")
       .update({ telegram_chat_id: null, telegram_link_code: null })
       .eq("user_id", user.id);
     if (error) { toast({ title: "Unlink failed", description: error.message, variant: "destructive" }); return; }
@@ -189,24 +314,20 @@ export default function ProfileSettings() {
     toast({ title: "✅ Telegram unlinked" });
   };
 
-  // Poll for link confirmation while a code is active
   useEffect(() => {
     if (!tgPolling || !user || tgChatId) return;
     const t = setInterval(async () => {
-      const { data } = await supabase
-        .from("profiles")
+      const { data } = await supabase.from("profiles")
         .select("telegram_chat_id, telegram_link_code")
-        .eq("user_id", user.id)
-        .maybeSingle();
+        .eq("user_id", user.id).maybeSingle();
       if ((data as any)?.telegram_chat_id) {
         setTgChatId((data as any).telegram_chat_id);
-        setTgCode(null);
-        setTgPolling(false);
+        setTgCode(null); setTgPolling(false);
         toast({ title: "✅ Telegram linked! You'll get notifications there." });
       }
     }, 4000);
     return () => clearInterval(t);
-  }, [tgPolling, user, tgChatId]);
+  }, [tgPolling, user, tgChatId, toast]);
 
   const saveProfile = async () => {
     if (!user) return;
@@ -220,38 +341,24 @@ export default function ProfileSettings() {
     else       toast({ title: "✅ Profile saved!" });
   };
 
-  // ── Save notifications ────────────────────────────────────────────
   const saveNotifs = async () => {
     if (!user) return;
     if (notifs.whatsapp_notifications && !form.whatsapp && !form.phone) {
-      toast({
-        title: "⚠️ No WhatsApp number saved",
-        description: "Go to the Profile tab and add your WhatsApp number (with country code) so we can reach you.",
-        variant: "destructive",
-      });
+      toast({ title: "⚠️ No WhatsApp number saved", description: "Go to Profile tab and add your WhatsApp number.", variant: "destructive" });
     }
     setSaving(true);
-    const { error } = await supabase
-      .from("student_preferences" as any)
-      .upsert(
-        { user_id: user.id, ...notifs, updated_at: new Date().toISOString() } as any,
-        { onConflict: "user_id" }
-      );
+    const { error } = await supabase.from("student_preferences" as any)
+      .upsert({ user_id: user.id, ...notifs, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
     setSaving(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
     else       toast({ title: "✅ Notifications saved" });
   };
 
-  // ── Save preferences ──────────────────────────────────────────────
   const savePrefs = async () => {
     if (!user) return;
     setSaving(true);
-    const { error } = await supabase
-      .from("student_preferences" as any)
-      .upsert(
-        { user_id: user.id, ...prefs, updated_at: new Date().toISOString() } as any,
-        { onConflict: "user_id" }
-      );
+    const { error } = await supabase.from("student_preferences" as any)
+      .upsert({ user_id: user.id, ...prefs, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
     setSaving(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
     else {
@@ -260,7 +367,6 @@ export default function ProfileSettings() {
     }
   };
 
-  // ── Change password ───────────────────────────────────────────────
   const changePassword = async () => {
     if (pw.new !== pw.confirm) { toast({ title: "Passwords don't match", variant: "destructive" }); return; }
     if (pw.new.length < 8)     { toast({ title: "Min 8 characters",       variant: "destructive" }); return; }
@@ -271,7 +377,6 @@ export default function ProfileSettings() {
     else { toast({ title: "✅ Password updated!" }); setShowPw(false); setPw({ new: "", confirm: "" }); }
   };
 
-  // ── Upload avatar ─────────────────────────────────────────────────
   const uploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file || !user) return;
     setAvatarUploading(true);
@@ -289,45 +394,62 @@ export default function ProfileSettings() {
     toast({ title: "✅ Photo updated!" });
   };
 
-  // ── Reusable layout bits ──────────────────────────────────────────
+  // ── Styled input (theme-aware) ────────────────────────────────────
+  const inp: React.CSSProperties = {
+    width: "100%", padding: "9px 12px", borderRadius: 10,
+    border: `1.5px solid ${T.inputBdr}`, fontSize: 13, outline: "none",
+    background: T.inputBg, boxSizing: "border-box" as const,
+    color: T.text, transition: "border-color .15s",
+  };
+
+  // ── Reusable layout components (receive T via closure) ────────────
   const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
-      <div style={{ padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
-        <p style={{ fontWeight: 700, fontSize: 12, color: "#6B7280", margin: 0, textTransform: "uppercase", letterSpacing: .5 }}>{title}</p>
+    <div style={{ background: T.surface, borderRadius: 16, border: `1px solid ${T.border}`, overflow: "hidden", marginBottom: 14 }}>
+      <div style={{ padding: "10px 16px", background: T.surface2, borderBottom: `1px solid ${T.border}` }}>
+        <p style={{ fontWeight: 700, fontSize: 12, color: T.text2, margin: 0, textTransform: "uppercase", letterSpacing: .5 }}>{title}</p>
       </div>
       <div style={{ padding: "14px 16px" }}>{children}</div>
     </div>
   );
+
   const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <div style={{ marginBottom: 12 }}>
-      <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
+      <label style={{ fontSize: 11, fontWeight: 700, color: T.text2, display: "block", marginBottom: 4 }}>{label}</label>
       {children}
     </div>
   );
+
   const Tog = ({ label, sub, checked, onChange }: any) => (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${T.surface2}` }}>
       <div>
-        <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{label}</p>
-        {sub && <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{sub}</p>}
+        <p style={{ fontWeight: 600, fontSize: 13, color: T.text3, margin: 0 }}>{label}</p>
+        {sub && <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>{sub}</p>}
       </div>
       <Switch checked={checked} onCheckedChange={onChange} />
     </div>
   );
+
   const SaveBtn = ({ fn }: { fn: () => void }) => (
     <button onClick={fn} disabled={saving}
-      style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, color: "#fff", background: saving ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+      style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, color: "#fff", background: saving ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4 }}>
       {saving ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><Save size={15} /> Save Changes</>}
     </button>
   );
 
   // ── Render ────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    <div style={{ minHeight: "100vh", background: T.bg, transition: "background .25s" }}>
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg) } }
+        /* Dark mode global overrides */
+        [data-theme="dark"] { color-scheme: dark; }
+        [data-theme="dark"] body { background: #0f172a; color: #f1f5f9; }
+      `}</style>
 
-      {/* Header */}
-      <div style={{ background: G, padding: "18px 16px 0" }}>
+      {/* ── Header ───────────────────────────────────────────────── */}
+      <div style={{ background: T.headerBg, padding: "18px 16px 0", transition: "background .25s" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          {/* Avatar */}
           <div style={{ position: "relative", flexShrink: 0 }}>
             <div style={{ width: 58, height: 58, borderRadius: "50%", border: "3px solid rgba(255,255,255,.3)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.15)" }}>
               {form.avatar_url
@@ -346,15 +468,31 @@ export default function ProfileSettings() {
               <Camera size={11} color={G} />
             </label>
           </div>
-          <div>
+
+          <div style={{ flex: 1 }}>
             <p style={{ fontWeight: 800, fontSize: 17, color: "#fff", margin: 0 }}>{form.full_name || "My Settings"}</p>
             <p style={{ fontSize: 12, color: "rgba(255,255,255,.65)", margin: 0 }}>{user?.email}</p>
           </div>
+
+          {/* Dark mode toggle in header */}
+          <button
+            onClick={() => setDark(!dark)}
+            title={dark ? "Switch to Light Mode" : "Switch to Dark Mode"}
+            style={{
+              width: 36, height: 36, borderRadius: "50%", border: "2px solid rgba(255,255,255,.25)",
+              background: dark ? "rgba(255,255,255,.15)" : "rgba(255,255,255,.1)",
+              cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              flexShrink: 0, transition: "background .2s",
+            }}>
+            {dark ? <Sun size={16} color="#fbbf24" /> : <Moon size={16} color="rgba(255,255,255,.85)" />}
+          </button>
         </div>
+
+        {/* Tab bar */}
         <div style={{ display: "flex", gap: 2, overflowX: "auto" }}>
           {TABS.map(t => (
             <button key={t.id} onClick={() => setTab(t.id)}
-              style={{ padding: "8px 14px", border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", borderRadius: "10px 10px 0 0", background: tab === t.id ? "#F3F4F6" : "transparent", color: tab === t.id ? G : "rgba(255,255,255,.75)" }}>
+              style={{ padding: "8px 14px", border: "none", cursor: "pointer", fontWeight: 700, fontSize: 12, whiteSpace: "nowrap", borderRadius: "10px 10px 0 0", background: tab === t.id ? T.tabActive : "transparent", color: tab === t.id ? T.tabActiveText : "rgba(255,255,255,.75)", transition: "all .15s" }}>
               {t.icon} {t.label}
             </button>
           ))}
@@ -368,45 +506,59 @@ export default function ProfileSettings() {
           <Sec title="Personal Information">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Fld label="Full Name (English)">
-                <input style={inp} value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))} />
+                {/* StableInput: onCommit fires on blur/Enter — keyboard stays open while typing */}
+                <StableInput value={form.full_name} onCommit={updateField("full_name")} style={inp} />
               </Fld>
               <Fld label="الاسم (عربي)">
-                <input style={{ ...inp, direction: "rtl" }} value={form.full_name_ar} onChange={e => setForm(f => ({ ...f, full_name_ar: e.target.value }))} />
+                <StableInput value={form.full_name_ar} onCommit={updateField("full_name_ar")} dir="rtl" style={inp} />
               </Fld>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Fld label="Phone">
-                <input style={inp} type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
+                <StableInput value={form.phone} onCommit={updateField("phone")} type="tel" style={inp} />
               </Fld>
               <Fld label="WhatsApp">
-                <input style={inp} type="tel" placeholder="+44 7700 000000" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} />
+                <StableInput value={form.whatsapp} onCommit={updateField("whatsapp")} type="tel" placeholder="+44 7700 000000" style={inp} />
               </Fld>
             </div>
-            <p style={{ fontSize: 11, color: "#6B7280", margin: "-6px 0 10px" }}>
+            <p style={{ fontSize: 11, color: T.text2, margin: "-6px 0 10px" }}>
               📱 Add your WhatsApp number with country code (e.g. +44 7700…) to receive class reminders via WhatsApp.
             </p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Fld label="Date of Birth">
-                <input style={inp} type="date" value={form.date_of_birth} onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} />
+                {/* Date inputs are fine with onChange — no keyboard involved */}
+                <input style={inp} type="date" value={form.date_of_birth}
+                  onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} />
               </Fld>
               <Fld label="Gender">
-                <select style={inp} value={form.gender} onChange={e => setForm(f => ({ ...f, gender: e.target.value }))}>
+                <StableSelect style={inp} value={form.gender} onChange={v => setForm(f => ({ ...f, gender: v }))}>
                   <option value="">Prefer not to say</option>
                   <option value="male">Male / ذكر</option>
                   <option value="female">Female / أنثى</option>
-                </select>
+                </StableSelect>
               </Fld>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-              <Fld label="Country"><input style={inp} value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} /></Fld>
-              <Fld label="City"><input style={inp} value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} /></Fld>
-              <Fld label="Nationality"><input style={inp} value={form.nationality} onChange={e => setForm(f => ({ ...f, nationality: e.target.value }))} /></Fld>
+              <Fld label="Country">
+                <StableInput value={form.country} onCommit={updateField("country")} style={inp} />
+              </Fld>
+              <Fld label="City">
+                <StableInput value={form.city} onCommit={updateField("city")} style={inp} />
+              </Fld>
+              <Fld label="Nationality">
+                <StableInput value={form.nationality} onCommit={updateField("nationality")} style={inp} />
+              </Fld>
             </div>
           </Sec>
+
           <Sec title="Parent / Guardian">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Parent Name"><input style={inp} value={form.parent_name} onChange={e => setForm(f => ({ ...f, parent_name: e.target.value }))} /></Fld>
-              <Fld label="Parent Phone"><input style={inp} type="tel" value={form.parent_phone} onChange={e => setForm(f => ({ ...f, parent_phone: e.target.value }))} /></Fld>
+              <Fld label="Parent Name">
+                <StableInput value={form.parent_name} onCommit={updateField("parent_name")} style={inp} />
+              </Fld>
+              <Fld label="Parent Phone">
+                <StableInput value={form.parent_phone} onCommit={updateField("parent_phone")} type="tel" style={inp} />
+              </Fld>
             </div>
           </Sec>
           <SaveBtn fn={saveProfile} />
@@ -414,61 +566,56 @@ export default function ProfileSettings() {
 
         {/* ── NOTIFICATIONS TAB ───────────────────────────────────── */}
         {tab === "notifications" && <>
-
-          {/* Push blocked by browser */}
           {pushBlocked && (
-            <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <div style={{ background: dark ? "#450a0a" : "#FEF2F2", border: `1px solid ${dark ? "#7f1d1d" : "#FECACA"}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
               <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>🔕</span>
               <div>
-                <p style={{ fontWeight: 700, fontSize: 13, color: "#991B1B", margin: "0 0 3px" }}>Phone notifications are blocked</p>
-                <p style={{ fontSize: 12, color: "#B91C1C", margin: 0, lineHeight: 1.5 }}>
+                <p style={{ fontWeight: 700, fontSize: 13, color: dark ? "#fca5a5" : "#991B1B", margin: "0 0 3px" }}>Phone notifications are blocked</p>
+                <p style={{ fontSize: 12, color: dark ? "#f87171" : "#B91C1C", margin: 0, lineHeight: 1.5 }}>
                   Open your browser → Site Settings → Notifications → <strong>allow</strong> for <em>tahleemacademy.vercel.app</em>, then refresh.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Not yet asked — show Allow button */}
           {!pushBlocked && typeof Notification !== "undefined" && Notification.permission === "default" && (
-            <div style={{ background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ background: dark ? "#052e16" : "#F0FDF4", border: `1px solid ${dark ? "#166534" : "#86EFAC"}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
               <span style={{ fontSize: 20, flexShrink: 0 }}>🔔</span>
               <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 700, fontSize: 13, color: "#166534", margin: "0 0 2px" }}>Enable phone notifications</p>
-                <p style={{ fontSize: 11, color: "#15803D", margin: 0 }}>Get class reminders in your phone's notification tray even when the app is closed.</p>
+                <p style={{ fontWeight: 700, fontSize: 13, color: dark ? "#4ade80" : "#166534", margin: "0 0 2px" }}>Enable phone notifications</p>
+                <p style={{ fontSize: 11, color: dark ? "#22c55e" : "#15803D", margin: 0 }}>Get class reminders in your phone's notification tray.</p>
               </div>
-              <button
-                onClick={() => Notification.requestPermission().then(p => setPushBlocked(p === "denied"))}
+              <button onClick={() => Notification.requestPermission().then(p => setPushBlocked(p === "denied"))}
                 style={{ padding: "8px 14px", borderRadius: 9, border: "none", background: G, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
                 Allow
               </button>
             </div>
           )}
 
-          {/* WhatsApp enabled but no number */}
           {notifs.whatsapp_notifications && !form.whatsapp && !form.phone && (
-            <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
+            <div style={{ background: dark ? "#431407" : "#FFFBEB", border: `1px solid ${dark ? "#92400e" : "#FDE68A"}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
               <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>⚠️</span>
               <div>
-                <p style={{ fontWeight: 700, fontSize: 13, color: "#92400E", margin: "0 0 3px" }}>WhatsApp number required</p>
-                <p style={{ fontSize: 12, color: "#B45309", margin: 0, lineHeight: 1.5 }}>
-                  Go to the <strong>Profile tab</strong> and add your WhatsApp number (with country code, e.g. +44 7700…) so we can send class reminders.
+                <p style={{ fontWeight: 700, fontSize: 13, color: dark ? "#fbbf24" : "#92400E", margin: "0 0 3px" }}>WhatsApp number required</p>
+                <p style={{ fontSize: 12, color: dark ? "#f59e0b" : "#B45309", margin: 0, lineHeight: 1.5 }}>
+                  Go to the <strong>Profile tab</strong> and add your WhatsApp number with country code.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Telegram link card */}
-          <div style={{ background: tgChatId ? "#ECFDF5" : "#EFF6FF", border: `1px solid ${tgChatId ? "#86EFAC" : "#BFDBFE"}`, borderRadius: 12, padding: 14, marginBottom: 12 }}>
+          {/* Telegram */}
+          <div style={{ background: tgChatId ? (dark ? "#052e16" : "#ECFDF5") : (dark ? "#0c1a3a" : "#EFF6FF"), border: `1px solid ${tgChatId ? (dark ? "#166534" : "#86EFAC") : (dark ? "#1e3a8a" : "#BFDBFE")}`, borderRadius: 12, padding: 14, marginBottom: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
               <span style={{ fontSize: 22 }}>✈️</span>
               <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 700, fontSize: 14, color: G, margin: 0 }}>Telegram Notifications</p>
-                <p style={{ fontSize: 11, color: "#475569", margin: "2px 0 0" }}>
-                  {tgChatId ? "Linked — you'll receive class & academy alerts on Telegram." : "Get all alerts on Telegram even when this site is closed."}
+                <p style={{ fontWeight: 700, fontSize: 14, color: T.text, margin: 0 }}>Telegram Notifications</p>
+                <p style={{ fontSize: 11, color: T.text2, margin: "2px 0 0" }}>
+                  {tgChatId ? "Linked — you'll receive alerts on Telegram." : "Get all alerts on Telegram even when the site is closed."}
                 </p>
               </div>
               {tgChatId && (
-                <button onClick={unlinkTelegram} style={{ padding: "6px 12px", border: "1px solid #DC2626", color: "#DC2626", background: "#fff", borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>Unlink</button>
+                <button onClick={unlinkTelegram} style={{ padding: "6px 12px", border: "1px solid #DC2626", color: "#DC2626", background: "transparent", borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>Unlink</button>
               )}
             </div>
             {!tgChatId && !tgCode && (
@@ -477,23 +624,19 @@ export default function ProfileSettings() {
               </button>
             )}
             {!tgChatId && tgCode && (
-              <div style={{ fontSize: 12, color: "#1E3A8A", lineHeight: 1.6 }}>
+              <div style={{ fontSize: 12, color: T.text3, lineHeight: 1.6 }}>
                 <p style={{ margin: "0 0 6px" }}>1. Open <a href={`https://t.me/Tahleembot?start=${tgCode}`} target="_blank" rel="noreferrer" style={{ color: G, fontWeight: 700, textDecoration: "underline" }}>@Tahleembot</a> on Telegram.</p>
                 <p style={{ margin: "0 0 6px" }}>2. Tap <strong>Start</strong> (or send <code>/start {tgCode}</code>).</p>
-                <p style={{ margin: 0, color: "#64748B" }}>Waiting for confirmation… <Loader2 size={12} style={{ display: "inline", animation: "spin 1s linear infinite" }} /></p>
+                <p style={{ margin: 0, color: T.text2 }}>Waiting for confirmation… <Loader2 size={12} style={{ display: "inline", animation: "spin 1s linear infinite" }} /></p>
               </div>
             )}
           </div>
 
-
           <Sec title="Channels">
             <Tog label="Email Notifications" sub="Updates via email"
               checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} />
-            <Tog
-              label="WhatsApp Notifications"
-              sub={form.whatsapp || form.phone
-                ? `Will message: ${form.whatsapp || form.phone}`
-                : "Add your number in the Profile tab first"}
+            <Tog label="WhatsApp Notifications"
+              sub={form.whatsapp || form.phone ? `Will message: ${form.whatsapp || form.phone}` : "Add your number in the Profile tab first"}
               checked={notifs.whatsapp_notifications}
               onChange={(v: boolean) => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} />
             <Tog label="Announcements" sub="Academy-wide messages"
@@ -516,26 +659,55 @@ export default function ProfileSettings() {
         {tab === "preferences" && <>
           <Sec title="Language & Display">
             <Fld label="Interface Language">
-              <select style={inp} value={prefs.language} onChange={e => setPrefs(p => ({ ...p, language: e.target.value }))}>
+              <StableSelect style={inp} value={prefs.language} onChange={v => setPrefs(p => ({ ...p, language: v }))}>
                 <option value="en">English</option>
                 <option value="ar">العربية</option>
-              </select>
+              </StableSelect>
             </Fld>
-            <Tog label="Dark Mode" sub="Coming soon" checked={prefs.dark_mode} onChange={(v: boolean) => setPrefs(p => ({ ...p, dark_mode: v }))} />
+
+            {/* Dark Mode — FULLY FUNCTIONAL */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "12px 14px", borderRadius: 12, marginTop: 4,
+              background: dark ? "rgba(251,191,36,.08)" : "rgba(6,78,59,.05)",
+              border: `1.5px solid ${dark ? "rgba(251,191,36,.3)" : "rgba(6,78,59,.15)"}`,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: "50%", background: dark ? "rgba(251,191,36,.15)" : "rgba(6,78,59,.08)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {dark ? <Moon size={17} color="#fbbf24" /> : <Sun size={17} color={G} />}
+                </div>
+                <div>
+                  <p style={{ fontWeight: 700, fontSize: 13, color: T.text3, margin: 0 }}>
+                    {dark ? "Dark Mode" : "Light Mode"}
+                  </p>
+                  <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>
+                    {dark ? "Easy on the eyes at night" : "Bright and clear for daytime use"}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={dark}
+                onCheckedChange={v => {
+                  setDark(v);
+                  setPrefs(p => ({ ...p, dark_mode: v }));
+                }}
+              />
+            </div>
           </Sec>
+
           <Sec title="Learning">
             <Tog label="Autoplay Recordings" checked={prefs.autoplay_recordings} onChange={(v: boolean) => setPrefs(p => ({ ...p, autoplay_recordings: v }))} />
             <Tog label="Show Subtitles" checked={prefs.show_subtitles} onChange={(v: boolean) => setPrefs(p => ({ ...p, show_subtitles: v }))} />
             <Fld label="Playback Speed">
-              <select style={inp} value={prefs.playback_speed} onChange={e => setPrefs(p => ({ ...p, playback_speed: e.target.value }))}>
+              <StableSelect style={inp} value={prefs.playback_speed} onChange={v => setPrefs(p => ({ ...p, playback_speed: v }))}>
                 {["0.75x","1x","1.25x","1.5x","2x"].map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              </StableSelect>
             </Fld>
             <Fld label="Default View">
-              <select style={inp} value={prefs.default_subject_view} onChange={e => setPrefs(p => ({ ...p, default_subject_view: e.target.value }))}>
+              <StableSelect style={inp} value={prefs.default_subject_view} onChange={v => setPrefs(p => ({ ...p, default_subject_view: v }))}>
                 <option value="grid">Grid</option>
                 <option value="list">List</option>
-              </select>
+              </StableSelect>
             </Fld>
           </Sec>
           <SaveBtn fn={savePrefs} />
@@ -544,49 +716,59 @@ export default function ProfileSettings() {
         {/* ── SECURITY TAB ────────────────────────────────────────── */}
         {tab === "security" && <>
           <Sec title="Account Security">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: "1px solid #F3F4F6" }}>
-              <div><p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Password</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>Change your login password</p></div>
-              <button onClick={() => setShowPw(true)} style={{ padding: "7px 14px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${T.border}` }}>
+              <div>
+                <p style={{ fontWeight: 600, fontSize: 13, color: T.text3, margin: 0 }}>Password</p>
+                <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>Change your login password</p>
+              </div>
+              <button onClick={() => setShowPw(true)} style={{ padding: "7px 14px", borderRadius: 9, border: `1.5px solid ${T.border}`, background: T.surface, cursor: "pointer", fontSize: 12, fontWeight: 700, color: T.text, display: "flex", alignItems: "center", gap: 5 }}>
                 <Lock size={12} /> Change
               </button>
             </div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0" }}>
-              <div><p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Email</p><p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{user?.email}</p></div>
+              <div>
+                <p style={{ fontWeight: 600, fontSize: 13, color: T.text3, margin: 0 }}>Email</p>
+                <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>{user?.email}</p>
+              </div>
               <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#DCFCE7", color: "#166534", fontWeight: 700 }}>✓ Verified</span>
             </div>
           </Sec>
           <Sec title="Session">
             <button onClick={async () => { await signOut(); navigate("/login"); }}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#FFF7ED", border: "1px solid #FED7AA", cursor: "pointer", width: "100%", marginBottom: 8 }}>
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: dark ? "rgba(217,119,6,.12)" : "#FFF7ED", border: `1px solid ${dark ? "rgba(217,119,6,.3)" : "#FED7AA"}`, cursor: "pointer", width: "100%", marginBottom: 8 }}>
               <LogOut size={16} color="#D97706" />
-              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#D97706", margin: 0 }}>Sign Out</p></div>
+              <p style={{ fontWeight: 700, fontSize: 13, color: "#D97706", margin: 0 }}>Sign Out</p>
             </button>
             <button onClick={() => setShowDelete(true)}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: "#FEF2F2", border: "1px solid #FECACA", cursor: "pointer", width: "100%" }}>
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: dark ? "rgba(220,38,38,.1)" : "#FEF2F2", border: `1px solid ${dark ? "rgba(220,38,38,.3)" : "#FECACA"}`, cursor: "pointer", width: "100%" }}>
               <Trash2 size={16} color="#DC2626" />
-              <div style={{ textAlign: "left" }}><p style={{ fontWeight: 700, fontSize: 13, color: "#DC2626", margin: 0 }}>Delete Account</p></div>
+              <p style={{ fontWeight: 700, fontSize: 13, color: "#DC2626", margin: 0 }}>Delete Account</p>
             </button>
           </Sec>
         </>}
       </div>
 
-      {/* ── Change Password Dialog ───────────────────────────────── */}
+      {/* ── Change Password Dialog ────────────────────────────────── */}
       <Dialog open={showPw} onOpenChange={v => !v && setShowPw(false)}>
-        <DialogContent style={{ maxWidth: 400, borderRadius: 20, padding: 0 }}>
+        <DialogContent style={{ maxWidth: 400, borderRadius: 20, padding: 0, background: T.surface }}>
           <div style={{ background: G, padding: "16px 20px", borderRadius: "20px 20px 0 0" }}>
             <h2 style={{ fontWeight: 800, fontSize: 15, color: "#fff", margin: 0 }}>🔒 Change Password</h2>
           </div>
           <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ position: "relative" }}>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>New Password</label>
-              <input type={showPwVis ? "text" : "password"} value={pw.new} onChange={e => setPw(p => ({ ...p, new: e.target.value }))} style={{ ...inp, paddingRight: 40 }} />
+              <label style={{ fontSize: 11, fontWeight: 700, color: T.text2, display: "block", marginBottom: 4 }}>New Password</label>
+              <input type={showPwVis ? "text" : "password"} value={pw.new}
+                onChange={e => setPw(p => ({ ...p, new: e.target.value }))}
+                style={{ ...inp, paddingRight: 40 }} />
               <button onClick={() => setShowPwVis(v => !v)} style={{ position: "absolute", right: 10, bottom: 9, background: "none", border: "none", cursor: "pointer" }}>
                 {showPwVis ? <EyeOff size={15} color="#9CA3AF" /> : <Eye size={15} color="#9CA3AF" />}
               </button>
             </div>
             <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>Confirm Password</label>
-              <input type="password" value={pw.confirm} onChange={e => setPw(p => ({ ...p, confirm: e.target.value }))} style={inp} />
+              <label style={{ fontSize: 11, fontWeight: 700, color: T.text2, display: "block", marginBottom: 4 }}>Confirm Password</label>
+              <input type="password" value={pw.confirm}
+                onChange={e => setPw(p => ({ ...p, confirm: e.target.value }))}
+                style={inp} />
             </div>
             {pw.new && pw.confirm && pw.new !== pw.confirm && <p style={{ fontSize: 12, color: "#DC2626", margin: 0 }}>⚠️ Passwords don't match</p>}
             <button onClick={changePassword} disabled={changingPw || !pw.new || pw.new !== pw.confirm}
@@ -597,18 +779,18 @@ export default function ProfileSettings() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Delete Account Dialog ────────────────────────────────── */}
+      {/* ── Delete Account Dialog ─────────────────────────────────── */}
       <Dialog open={showDelete} onOpenChange={v => !v && setShowDelete(false)}>
-        <DialogContent style={{ maxWidth: 360, borderRadius: 20, padding: 24, textAlign: "center" }}>
+        <DialogContent style={{ maxWidth: 360, borderRadius: 20, padding: 24, textAlign: "center", background: T.surface }}>
           <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
             <AlertTriangle size={24} color="#DC2626" />
           </div>
-          <h3 style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>Delete Account?</h3>
-          <p style={{ fontSize: 12, color: "#6B7280", marginBottom: 18, lineHeight: 1.6 }}>
+          <h3 style={{ fontWeight: 800, fontSize: 16, marginBottom: 8, color: T.text }}>Delete Account?</h3>
+          <p style={{ fontSize: 12, color: T.text2, marginBottom: 18, lineHeight: 1.6 }}>
             Permanently deletes your account, exam results, and learning history. Cannot be undone.
           </p>
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setShowDelete(false)} style={{ flex: 1, padding: 11, borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Cancel</button>
+            <button onClick={() => setShowDelete(false)} style={{ flex: 1, padding: 11, borderRadius: 11, border: `1.5px solid ${T.border}`, background: T.surface, cursor: "pointer", fontWeight: 600, fontSize: 13, color: T.text }}>Cancel</button>
             <button style={{ flex: 1, padding: 11, borderRadius: 11, border: "none", background: "#DC2626", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Delete</button>
           </div>
         </DialogContent>
