@@ -84,10 +84,31 @@ const Login = () => {
         if (step && step !== "completed" && pipelineRoute[step]) {
           navigate(pipelineRoute[step], { replace: true });
         } else if (!step) {
-          // No tasjeel_progress row yet — email was verified but RegisterContinue
-          // never ran (e.g. link opened in a different browser). Send them there
-          // now so it can initialise their pipeline and route them correctly.
-          navigate("/auth/register-continue", { replace: true });
+          // No tasjeel_progress row yet.
+          // If the user's email is already confirmed, they're an existing/returning
+          // user whose pipeline record is missing. Sending them to register-continue
+          // causes a "Verification Error" because that page expects a fresh email
+          // verification session (URL hash/code), not a regular login session.
+          // Instead: create a completed tasjeel row for them and go to /student.
+          // Only send genuinely new users (email not yet confirmed) to register-continue.
+          const emailConfirmed = !!user.email_confirmed_at;
+          if (emailConfirmed) {
+            // Backfill a completed tasjeel record so this path isn't hit again
+            try {
+              const now = new Date().toISOString();
+              await supabase.from("tasjeel_progress" as any).insert({
+                user_id:      user.id,
+                current_step: "completed",
+                created_at:   now,
+                updated_at:   now,
+                completed_at: now,
+              });
+            } catch { /* non-fatal — row may have been created by a race */ }
+            navigate("/student", { replace: true });
+          } else {
+            // New user whose email hasn't been verified yet — let register-continue handle it
+            navigate("/auth/register-continue", { replace: true });
+          }
         } else {
           // completed or unknown — go to dashboard as normal
           navigate("/student", { replace: true });
