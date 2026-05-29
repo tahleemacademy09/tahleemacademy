@@ -7,11 +7,18 @@
 //   Teacher redirect was: navigate("/teacher/dashboard")  ← 404, route doesn't exist
 //   Teacher redirect now: navigate("/teacher")            ← correct route
 //
+// PKCE FIX APPLIED:
+//   Supabase v2 PKCE flow delivers a ?code= query param that must be manually
+//   exchanged for a session via exchangeCodeForSession(). The old code only
+//   waited 500 ms then called getSession(), which always returned null for
+//   PKCE logins, causing the "Verification Error" screen on every login.
+//
 // How this page works:
-//   1. Supabase SDK auto-exchanges the OAuth code from the URL for a session.
-//   2. onAuthStateChange in AuthContext fires SIGNED_IN → onUserAuthenticated
+//   1. If ?code= is present (PKCE / Google OAuth), exchange it for a session.
+//   2. Otherwise fall back to the legacy hash-based implicit flow (500 ms wait).
+//   3. onAuthStateChange in AuthContext fires SIGNED_IN → onUserAuthenticated
 //      → initializeTasjeel runs in the background.
-//   3. This page polls for the Tasjeel record (up to 5 seconds), then
+//   4. This page polls for the Tasjeel record (up to 5 seconds), then
 //      redirects the user to the correct route for their role / pipeline step.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -29,23 +36,39 @@ const STEP_ROUTES: Record<string, string> = {
   payment:          "/register",
   onboarding:       "/onboarding",
   exam:             "/student/entrance-exam",
-  recitation:       "/student/recitation-test",    // was missing
-  schedule_session: "/student/recitation-test",    // was missing
+  recitation:       "/student/recitation-test",
+  schedule_session: "/student/recitation-test",
   level_assignment: "/student/awaiting-level",
   completed:        "/student",
-  // Note: "review" was previously listed here but is not a real tasjeel step
 };
 
 const AuthCallback = () => {
   const navigate = useNavigate();
-  const [status, setStatus]   = useState<"loading" | "error">("loading");
+  const [status, setStatus]     = useState<"loading" | "error">("loading");
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
     const processCallback = async () => {
-      // Yield briefly so Supabase SDK can finish processing the URL hash/code
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      // ── Step 1: exchange the PKCE code if present ────────────────────────
+      // Supabase v2 PKCE flow: the auth code arrives as ?code= in the URL.
+      // We MUST call exchangeCodeForSession() — getSession() alone returns
+      // null until the exchange has happened, causing the Verification Error.
+      const params = new URLSearchParams(window.location.search);
+      const code   = params.get("code");
 
+      if (code) {
+        const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+        if (exchangeError) {
+          setStatus("error");
+          setErrorMsg(exchangeError.message || "Authentication failed. Please try again.");
+          return;
+        }
+      } else {
+        // Legacy implicit flow: give the SDK a moment to process the hash
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+
+      // ── Step 2: confirm session exists ───────────────────────────────────
       const { data: { session }, error } = await supabase.auth.getSession();
 
       if (error || !session) {
@@ -56,7 +79,7 @@ const AuthCallback = () => {
 
       const userId = session.user.id;
 
-      // ── Check role first — admins and teachers bypass Tasjeel entirely ──
+      // ── Step 3: check role — admins and teachers bypass Tasjeel ─────────
       const { data: rolesData } = await supabase
         .from("user_roles")
         .select("role")
@@ -70,14 +93,11 @@ const AuthCallback = () => {
       }
 
       if (roles.includes("teacher")) {
-        // C-3 FIX: was "/teacher/dashboard" which does not exist as a route.
-        // The teacher dashboard is registered at "/teacher" in App.tsx.
         navigate("/teacher", { replace: true });
         return;
       }
 
-      // ── Student: wait for Tasjeel to be initialized then redirect ────────
-      // onUserAuthenticated → initializeTasjeel runs async in AuthContext.
+      // ── Step 4: student — wait for Tasjeel to initialise ────────────────
       // Poll up to 5 seconds (10 × 500 ms) for the record to appear.
       let tasjeel = null;
       for (let attempt = 0; attempt < 10; attempt++) {
@@ -95,7 +115,7 @@ const AuthCallback = () => {
       }
 
       // If Tasjeel never initialised (edge case), fall back to student home
-      const step = (tasjeel as any)?.current_step ?? "completed";
+      const step  = (tasjeel as any)?.current_step ?? "completed";
       const route = STEP_ROUTES[step] ?? "/student";
 
       navigate(route, { replace: true });
