@@ -31,6 +31,33 @@ const roleColor: Record<string, { bg: string; text: string; border: string }> = 
   admin:   { bg: "#FDF4FF", text: "#7C3AED", border: "#D8B4FE" },
 };
 
+// ── Time formatting helpers ───────────────────────────────────────────────
+// Always shows times in 12-hour format with relative "X ago" for recent times.
+// "Just now" < 1 min | "X mins ago" < 1 hr | "X hrs ago" < 24 hrs |
+// "Yesterday at H:MM AM/PM" < 48 hrs | Full date + 12hr time beyond that.
+const fmt12 = (date: Date): string =>
+  date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+
+const fmt12Date = (date: Date): string =>
+  date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) +
+  " at " + fmt12(date);
+
+const formatLastSeen = (iso: string | null | undefined): string => {
+  if (!iso) return "Never";
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return "Unknown";
+  const diffMs   = Date.now() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60_000);
+  const diffHrs  = Math.floor(diffMs / 3_600_000);
+  const diffDays = Math.floor(diffMs / 86_400_000);
+  if (diffMins < 1)   return "Just now";
+  if (diffMins < 60)  return `${diffMins} min${diffMins === 1 ? "" : "s"} ago`;
+  if (diffHrs  < 24)  return `${diffHrs} hr${diffHrs === 1 ? "" : "s"} ago  (${fmt12(date)})`;
+  if (diffDays === 1) return `Yesterday at ${fmt12(date)}`;
+  if (diffDays < 7)   return `${diffDays} days ago at ${fmt12(date)}`;
+  return fmt12Date(date);
+};
+
 const inp: React.CSSProperties = {
   width: "100%", padding: "10px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB",
   fontSize: 13, outline: "none", background: "#FAFAFA", boxSizing: "border-box" as const, fontFamily: "inherit",
@@ -473,11 +500,18 @@ export default function StudentManagement() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <p style={{ fontWeight: 800, fontSize: 13, color: "#111", margin: "0 0 2px" }}>{u.full_name || "—"}</p>
                   <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email} · ID: {u.student_id || "—"}</p>
-                  {u.last_sign_in_at && (
-                    <p style={{ fontSize: 10, color: "#059669", margin: "0 0 5px", display:"flex", alignItems:"center", gap:3 }}>
-                      <Activity size={9} /> Last login: {new Date(u.last_sign_in_at).toLocaleString()}
-                    </p>
-                  )}
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 5 }}>
+                    {u.last_sign_in_at && (
+                      <p style={{ fontSize: 10, color: "#059669", margin: 0, display: "flex", alignItems: "center", gap: 3 }}>
+                        <Activity size={9} /> Last seen: {formatLastSeen(u.last_sign_in_at)}
+                      </p>
+                    )}
+                    {u.created_at && (
+                      <p style={{ fontSize: 10, color: "#6B7280", margin: 0, display: "flex", alignItems: "center", gap: 3 }}>
+                        <Clock size={9} /> Joined: {fmt12Date(new Date(u.created_at))}
+                      </p>
+                    )}
+                  </div>
                   <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                     {(u.roles || ["student"]).map((r: string) => {
                       const rc = roleColor[r] || { bg: "#F3F4F6", text: "#374151", border: "#D1D5DB" };
