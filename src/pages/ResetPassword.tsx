@@ -18,16 +18,43 @@ const ResetPassword = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [success, setSuccess] = useState(false);
 
+  const [sessionReady, setSessionReady] = useState(false);
+  const [tokenError, setTokenError] = useState(false);
+
   useEffect(() => {
-    // Check for recovery token in hash
-    const hash = window.location.hash;
-    if (!hash.includes("type=recovery")) {
-      navigate("/login", { replace: true });
-    }
+    const init = async () => {
+      // Modern Supabase PKCE flow: token arrives as ?code= query param
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+
+      // Legacy implicit flow: token arrives as #type=recovery in hash
+      const hash = window.location.hash;
+      const isLegacyRecovery = hash.includes("type=recovery");
+
+      if (code) {
+        // Exchange the one-time code for a session
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          setTokenError(true);
+          setTimeout(() => navigate("/login", { replace: true }), 3000);
+        } else {
+          setSessionReady(true);
+        }
+      } else if (isLegacyRecovery) {
+        // Legacy hash-based flow — session is set automatically by Supabase
+        setSessionReady(true);
+      } else {
+        // No valid recovery token at all — redirect to login
+        navigate("/login", { replace: true });
+      }
+    };
+
+    init();
   }, [navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!sessionReady) return;
     if (password !== confirm) {
       toast({
         title: t("Error", "خطأ"),
@@ -88,7 +115,26 @@ const ResetPassword = () => {
         className="flex w-full flex-col items-center justify-center bg-background px-4 py-8 lg:w-1/2"
       >
         <div className="w-full max-w-md">
-          {success ? (
+          {tokenError ? (
+            <div className="text-center">
+              <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-100">
+                <Lock className="h-8 w-8 text-red-600" />
+              </div>
+              <h2 className="mb-2 font-display text-2xl font-bold text-foreground">
+                {t("Invalid or Expired Link", "الرابط غير صالح أو منتهي الصلاحية")}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {t("Redirecting to login...", "جاري التوجيه لصفحة الدخول...")}
+              </p>
+            </div>
+          ) : !sessionReady ? (
+            <div className="text-center">
+              <Loader2 className="mx-auto mb-4 h-10 w-10 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">
+                {t("Verifying reset link…", "جارٍ التحقق من رابط إعادة التعيين…")}
+              </p>
+            </div>
+          ) : success ? (
             <div className="text-center">
               <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
                 <Check className="h-8 w-8 text-green-600" />
