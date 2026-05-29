@@ -40,31 +40,47 @@ export function useRegistrationSettings() {
 
   const fetch = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("academy_settings" as any)
-      .select("key, value");
 
-    if (data) {
-      const map: Record<string, string> = {};
-      (data as any[]).forEach((r: any) => {
-        if (r.value !== null) map[r.key] = r.value;      });
+    try {
+      // Race the Supabase query against a 6s timeout.
+      // Without this, a slow/failed network request keeps loading=true forever,
+      // blocking RegisterContinue (which waits on cfgLoading) and showing an
+      // infinite "Verifying your email…" spinner to all users.
+      const timeoutPromise = new Promise<{ data: null }>((resolve) =>
+        setTimeout(() => resolve({ data: null }), 6000)
+      );
+      const queryPromise = supabase
+        .from("academy_settings" as any)
+        .select("key, value");
 
-      setConfig({
-        registration_open:        map.registration_open !== "false",
-        entrance_fee_enabled:     map.entrance_fee_enabled !== "false",
-        entrance_fee_amount:      Number(map.entrance_fee_amount) || 5000,
-        entrance_fee_currency:    map.entrance_fee_currency || "NGN",
-        entrance_exam_required:   map.entrance_exam_required !== "false",
-        recitation_test_required: map.recitation_test_required !== "false",
-        onboarding_required:      map.onboarding_required !== "false",
-        max_daily_registrations:  Number(map.max_daily_registrations) || 0,
-        registration_message:     map.registration_message || DEFAULTS.registration_message,
-        registration_message_ar:  map.registration_message_ar || DEFAULTS.registration_message_ar,
-        closed_message:           map.closed_message || DEFAULTS.closed_message,
-        closed_message_ar:        map.closed_message_ar || DEFAULTS.closed_message_ar,
-      });
+      const { data } = await Promise.race([queryPromise, timeoutPromise]);
+
+      if (data) {
+        const map: Record<string, string> = {};
+        (data as any[]).forEach((r: any) => {
+          if (r.value !== null) map[r.key] = r.value;        });
+
+        setConfig({
+          registration_open:        map.registration_open !== "false",
+          entrance_fee_enabled:     map.entrance_fee_enabled !== "false",
+          entrance_fee_amount:      Number(map.entrance_fee_amount) || 5000,
+          entrance_fee_currency:    map.entrance_fee_currency || "NGN",
+          entrance_exam_required:   map.entrance_exam_required !== "false",
+          recitation_test_required: map.recitation_test_required !== "false",
+          onboarding_required:      map.onboarding_required !== "false",
+          max_daily_registrations:  Number(map.max_daily_registrations) || 0,
+          registration_message:     map.registration_message || DEFAULTS.registration_message,
+          registration_message_ar:  map.registration_message_ar || DEFAULTS.registration_message_ar,
+          closed_message:           map.closed_message || DEFAULTS.closed_message,
+          closed_message_ar:        map.closed_message_ar || DEFAULTS.closed_message_ar,
+        });
+      }
+      // If data is null (timeout or error), DEFAULTS are already set — just unblock loading
+    } catch {
+      // Network error — DEFAULTS are already set, unblock loading
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => { fetch(); }, [fetch]);
