@@ -25,6 +25,22 @@ const G  = "#0f2d1f";
 const GM = "#1a4731";
 const AU = "#c9a84c";
 
+// ── Activity log time formatter — always 12hr, relative for recent ────────
+const formatActivityTime = (iso: string): string => {
+  const date    = new Date(iso);
+  if (isNaN(date.getTime())) return "";
+  const diffMs  = Date.now() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60_000);
+  const diffHr  = Math.floor(diffMs / 3_600_000);
+  const time12  = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  if (diffMin < 1)  return "Just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr  < 24) return `${diffHr}h ago · ${time12}`;
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return `Yesterday · ${time12}`;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + ` · ${time12}`;
+};
+
 // ─── Section colour map ───────────────────────────────────────────
 const SC: Record<string,{bg:string;border:string;dot:string}> = {
   pipeline:    {bg:"#f0fdf4",border:"#bbf7d0",dot:"#16a34a"},
@@ -389,7 +405,7 @@ export default function AdminDashboard() {
                     {log.entity_type && <span className="text-[10px] text-gray-400 ms-1.5">({log.entity_type})</span>}
                   </div>
                   <span className="text-[10px] text-gray-400 shrink-0 tabular-nums">
-                    {new Date(log.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}
+                    {formatActivityTime(log.created_at)}
                   </span>
                 </div>
               ))}
