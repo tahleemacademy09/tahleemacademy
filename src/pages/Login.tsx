@@ -58,11 +58,19 @@ const Login = () => {
     // Student: check their registration step before navigating
     (async () => {
       try {
-        const { data: tp } = await supabase
+        // Race the tasjeel query against a 5s timeout.
+        // If Supabase is slow (common on mobile/iOS), we fall through to /student
+        // and let TasjeelGuard handle routing rather than hanging on the login page.
+        const timeoutPromise = new Promise<{ data: null }>((resolve) =>
+          setTimeout(() => resolve({ data: null }), 5000)
+        );
+        const queryPromise = supabase
           .from("tasjeel_progress" as any)
           .select("current_step")
           .eq("user_id", user.id)
           .maybeSingle();
+
+        const { data: tp } = await Promise.race([queryPromise, timeoutPromise]);
 
         const step = (tp as any)?.current_step;
 
