@@ -4,7 +4,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-
+import { lovable } from "@/integrations/lovable";
 
 import { Loader2, Mail, Lock, Eye, EyeOff, Check, Globe, BookOpen } from "lucide-react";
 import { motion } from "framer-motion";
@@ -33,6 +33,7 @@ const Login = () => {
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
   const [resetSent, setResetSent]   = useState(false);
+  const [resetCooldown, setResetCooldown] = useState(0);
   const [focusedField, setFocusedField] = useState<string | null>(null);
 
   // ── Single navigation effect ─────────────────────────────────────────────
@@ -143,20 +144,19 @@ const Login = () => {
 
   const handleGoogleSignIn = async () => {
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback`,
-        },
+      const result: any = await lovable.auth.signInWithOAuth("google", {
+        redirect_uri: `${window.location.origin}/auth/callback`,
       });
-      if (error) {
+      if (result?.error) {
         toast({
           title: t("Sign-in failed", "فشل تسجيل الدخول"),
-          description: error.message || "Google sign-in could not start.",
+          description: result.error.message || "Google sign-in could not start.",
           variant: "destructive",
         });
+        return;
       }
-      // On success: browser redirects to Google automatically
+      // If redirected: browser navigates to Google — nothing else to do
+      // If tokens received: AuthContext picks up the session automatically
     } catch (err: any) {
       toast({
         title: t("Sign-in failed", "فشل تسجيل الدخول"),
@@ -167,16 +167,36 @@ const Login = () => {
   };
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (resetCooldown > 0) return;
+
+    // Basic email format check
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail)) {
+      toast({
+        title: t("Invalid email", "بريد إلكتروني غير صالح"),
+        description: t("Please enter a valid email address.", "أدخل بريداً إلكترونياً صحيحاً."),
+        variant: "destructive",
+      });
+      return;
+    }
+
     setResetLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+    // We intentionally ignore the error to prevent email enumeration:
+    // showing different responses for registered vs unregistered emails
+    // lets attackers discover which accounts exist. Always show success.
+    await supabase.auth.resetPasswordForEmail(resetEmail, {
       redirectTo: `${window.location.origin}/reset-password`,
     });
     setResetLoading(false);
-    if (error) {
-      toast({ title: t("Error", "خطأ"), description: error.message, variant: "destructive" });
-    } else {
-      setResetSent(true);
-    }
+    setResetSent(true);
+
+    // Rate-limit: 60-second cooldown before another request can be sent
+    setResetCooldown(60);
+    const interval = setInterval(() => {
+      setResetCooldown(prev => {
+        if (prev <= 1) { clearInterval(interval); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
   };
 
   return (
@@ -563,10 +583,13 @@ const Login = () => {
                   required
                 />
               </div>
-              <button className="sign-btn" type="submit" disabled={resetLoading}>
+              <button className="sign-btn" type="submit" disabled={resetLoading || resetCooldown > 0}>
                 {resetLoading
                   ? <><Loader2 size={16} style={{ animation:"spin .7s linear infinite" }} /> {t("Sending…", "جارٍ الإرسال…")}</>
-                  : t("Send Reset Link", "إرسال رابط إعادة التعيين")
+                  : resetCooldown > 0
+                    ? t(`Resend in ${resetCooldown}s`, `إعادة الإرسال بعد ${resetCooldown}ث`)
+                    : t("Send Reset Link", "إرسال رابط إعادة التعيين")
+                }
                 }
               </button>
             </form>
