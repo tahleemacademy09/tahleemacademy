@@ -590,7 +590,6 @@ const Login = () => {
                     ? t(`Resend in ${resetCooldown}s`, `إعادة الإرسال بعد ${resetCooldown}ث`)
                     : t("Send Reset Link", "إرسال رابط إعادة التعيين")
                 }
-                }
               </button>
             </form>
           )}
