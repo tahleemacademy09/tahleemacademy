@@ -90,12 +90,23 @@ const RegisterContinue = () => {
 
   // ── On auth ready, decide what to do ─────────────────────────────────────
   useEffect(() => {
-    if (authLoading || cfgLoading) return;
+    // Only wait for authLoading — NOT cfgLoading.
+    // cfgLoading can hang if academy_settings is slow; we only need config
+    // for the payment screen, and useRegistrationSettings now has its own
+    // 6s timeout. We'll check cfgLoading again inside only when needed.
+    if (authLoading) return;
 
     (async () => {
       try {
-        // Not signed in → must have a session from the URL hash
-        const { data: { session } } = await supabase.auth.getSession();
+        // ── Get session with timeout ────────────────────────────────────────
+        const sessionTimeout = new Promise<{ data: { session: null } }>((resolve) =>
+          setTimeout(() => resolve({ data: { session: null } }), 8000)
+        );
+        const { data: { session } } = await Promise.race([
+          supabase.auth.getSession(),
+          sessionTimeout,
+        ]);
+
         if (!session) {
           setErrMsg("Email verification failed or link expired. Please try signing in again.");
           setPhase("error");
@@ -104,16 +115,20 @@ const RegisterContinue = () => {
 
         const userId = session.user.id;
 
-        // ── Guard: existing user arrived here via normal login (not a verification link) ──
-        // If they already have a tasjeel_progress row, skip initializeTasjeel
-        // and route them directly. This prevents the "Verification Error" that
-        // occurs when initializeTasjeel or the subsequent logic fails for users
-        // who logged in normally and were mis-routed here by Login.tsx.
-        const { data: existingTp } = await supabase
-          .from("tasjeel_progress" as any)
-          .select("current_step")
-          .eq("user_id", userId)
-          .maybeSingle();
+        // ── Check for existing tasjeel row (with timeout) ──────────────────
+        // If this user already has a row they're either mid-pipeline or done.
+        // Route them directly without calling initializeTasjeel.
+        const tpTimeout = new Promise<{ data: null }>((resolve) =>
+          setTimeout(() => resolve({ data: null }), 6000)
+        );
+        const { data: existingTp } = await Promise.race([
+          supabase
+            .from("tasjeel_progress" as any)
+            .select("current_step")
+            .eq("user_id", userId)
+            .maybeSingle(),
+          tpTimeout,
+        ]);
 
         if (existingTp) {
           const existingStep = (existingTp as any).current_step;
@@ -122,7 +137,7 @@ const RegisterContinue = () => {
             navigate(existingRoute, { replace: true });
             return;
           }
-          // If no route (enrollment/payment), fall through to show payment screen
+          // Step is enrollment/payment → show payment screen (or skip if fee off)
           if (config.entrance_fee_enabled) {
             await ensurePaystack();
             setPhase("payment");
@@ -201,7 +216,7 @@ const RegisterContinue = () => {
         setPhase("error");
       }
     })();
-  }, [authLoading, cfgLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const advanceTasjeel = async (userId: string, nextStep: string) => {
     await supabase
