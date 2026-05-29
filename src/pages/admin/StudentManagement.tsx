@@ -487,92 +487,145 @@ export default function StudentManagement() {
             <p>No users found</p>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filtered.map(u => (
-              <div key={u.user_id} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E5E7EB", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-                {u.avatar_url ? (
-                  <img src={u.avatar_url} style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
-                ) : (
-                  <div style={{ width: 44, height: 44, borderRadius: "50%", background: G, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <span style={{ fontSize: 18, fontWeight: 900, color: "#fff" }}>{(u.full_name || u.email || "U")[0].toUpperCase()}</span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {filtered.map(u => {
+              const isSuspended = u.payment_status === "suspended";
+              const st = u.student_type || "general";
+              const sc = studentTypeColor[st] || studentTypeColor.general;
+              return (
+              <div key={u.user_id} style={{
+                background: "#fff", borderRadius: 16,
+                border: `1px solid ${isSuspended ? "#FEE2E2" : "#E5E7EB"}`,
+                overflow: "hidden",
+                boxShadow: "0 1px 4px rgba(0,0,0,.04)",
+              }}>
+                {/* ── TOP: avatar + info ── */}
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 14px 10px" }}>
+                  {/* Avatar */}
+                  <div style={{ flexShrink: 0, position: "relative" }}>
+                    {u.avatar_url ? (
+                      <img src={u.avatar_url} style={{ width: 46, height: 46, borderRadius: 12, objectFit: "cover" }} />
+                    ) : (
+                      <div style={{ width: 46, height: 46, borderRadius: 12, background: `linear-gradient(135deg,${G},#075E54)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <span style={{ fontSize: 19, fontWeight: 900, color: "#fff" }}>{(u.full_name || u.email || "U")[0].toUpperCase()}</span>
+                      </div>
+                    )}
+                    {isSuspended && (
+                      <div style={{ position: "absolute", bottom: -3, right: -3, width: 14, height: 14, borderRadius: "50%", background: "#DC2626", border: "2px solid #fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Ban size={7} color="#fff" />
+                      </div>
+                    )}
                   </div>
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontWeight: 800, fontSize: 13, color: "#111", margin: "0 0 2px" }}>{u.full_name || "—"}</p>
-                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email} · ID: {u.student_id || "—"}</p>
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 5 }}>
-                    {u.last_sign_in_at && (
-                      <p style={{ fontSize: 10, color: "#059669", margin: 0, display: "flex", alignItems: "center", gap: 3 }}>
-                        <Activity size={9} /> Last seen: {formatLastSeen(u.last_sign_in_at)}
-                      </p>
-                    )}
-                    {u.created_at && (
-                      <p style={{ fontSize: 10, color: "#6B7280", margin: 0, display: "flex", alignItems: "center", gap: 3 }}>
-                        <Clock size={9} /> Joined: {fmt12Date(new Date(u.created_at))}
-                      </p>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                    {(u.roles || ["student"]).map((r: string) => {
-                      const rc = roleColor[r] || { bg: "#F3F4F6", text: "#374151", border: "#D1D5DB" };
-                      return <span key={r} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: rc.bg, color: rc.text, border: `1px solid ${rc.border}`, fontWeight: 700 }}>{r}</span>;
-                    })}
-                    {(u.level || u.course_level) && (
-                      <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: "#FFFBEB", color: "#92400E", border: "1px solid #FDE68A", fontWeight: 700 }}>
-                        {u.level || u.course_level}
-                      </span>
-                    )}
-                    {u.roles.includes("student") && (() => {
-                      const st = u.student_type || "general";
-                      const sc = studentTypeColor[st] || studentTypeColor.general;
-                      return (
+
+                  {/* Info */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {/* Name + suspension badge */}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: 800, fontSize: 14, color: "#111", lineHeight: 1.2 }}>{u.full_name || "—"}</span>
+                      {isSuspended && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 20, background: "#FEE2E2", color: "#DC2626", border: "1px solid #FECACA", fontWeight: 800 }}>SUSPENDED</span>}
+                    </div>
+
+                    {/* Email — truncated */}
+                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {u.email}
+                      {u.student_id ? <span style={{ color: "#C4B5FD", fontWeight: 700 }}> · #{u.student_id}</span> : null}
+                    </p>
+
+                    {/* Last seen + Joined — each on own line, no wrapping issues */}
+                    <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+                      {u.last_sign_in_at && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <Activity size={9} color="#059669" />
+                          <span style={{ fontSize: 10, color: "#059669", fontWeight: 600, whiteSpace: "nowrap" }}>
+                            Last seen: {formatLastSeen(u.last_sign_in_at)}
+                          </span>
+                        </div>
+                      )}
+                      {!u.last_sign_in_at && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <Activity size={9} color="#D1D5DB" />
+                          <span style={{ fontSize: 10, color: "#D1D5DB", fontWeight: 600 }}>Never logged in</span>
+                        </div>
+                      )}
+                      {u.created_at && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <Clock size={9} color="#9CA3AF" />
+                          <span style={{ fontSize: 10, color: "#9CA3AF", whiteSpace: "nowrap" }}>
+                            Joined: {fmt12Date(new Date(u.created_at))}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Badges row */}
+                    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
+                      {(u.roles || ["student"]).map((r: string) => {
+                        const rc = roleColor[r] || { bg: "#F3F4F6", text: "#374151", border: "#D1D5DB" };
+                        return <span key={r} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: rc.bg, color: rc.text, border: `1px solid ${rc.border}`, fontWeight: 700 }}>{r}</span>;
+                      })}
+                      {(u.level || u.course_level) && (
+                        <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFFBEB", color: "#92400E", border: "1px solid #FDE68A", fontWeight: 700 }}>
+                          {u.level || u.course_level}
+                        </span>
+                      )}
+                      {u.roles.includes("student") && (
                         <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: sc.bg, color: sc.text, border: `1px solid ${sc.border}`, fontWeight: 700 }}>
                           {sc.icon} {st.charAt(0).toUpperCase() + st.slice(1)}
                         </span>
-                      );
-                    })()}
-                    {u.country && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: "#F3F4F6", color: "#6B7280" }}>{u.country}</span>}
+                      )}
+                      {u.country && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#F3F4F6", color: "#6B7280", border: "1px solid #E5E7EB" }}>🌍 {u.country}</span>}
+                    </div>
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <button onClick={() => navigate(`/admin/students/${u.user_id}/view`)} title="View as student" style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
-                    <Eye size={13} color="#6B7280" />
-                  </button>
-                  <button onClick={() => openEdit(u)} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
-                    <Edit2 size={13} color={G} />
-                  </button>
-                  <button onClick={() => { setNotifTarget([u.user_id]); setNotifDialog(true); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
-                    <Bell size={13} color="#6B7280" />
-                  </button>
+
+                {/* ── BOTTOM: action buttons full-width strip ── */}
+                <div style={{ display: "flex", borderTop: "1px solid #F3F4F6" }}>
+                  {[
+                    { icon: <Eye size={13} color="#6B7280" />, label: "View", onClick: () => navigate(`/admin/students/${u.user_id}/view`), style: {} },
+                    { icon: <Edit2 size={13} color={G} />, label: "Edit", onClick: () => openEdit(u), style: {} },
+                    { icon: <Bell size={13} color="#6B7280" />, label: "Notify", onClick: () => { setNotifTarget([u.user_id]); setNotifDialog(true); }, style: {} },
+                  ].map((btn, i) => (
+                    <button key={i} onClick={btn.onClick} style={{
+                      flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                      gap: 3, padding: "9px 4px", background: "#fff", border: "none",
+                      borderRight: "1px solid #F3F4F6", cursor: "pointer",
+                    }}>
+                      {btn.icon}
+                      <span style={{ fontSize: 9, color: "#9CA3AF", fontWeight: 600 }}>{btn.label}</span>
+                    </button>
+                  ))}
                   {u.user_id !== currentUser?.id && (
                     <>
                       <button
                         onClick={() => toggleSuspend(u)}
                         disabled={suspending === u.user_id}
-                        title={u.payment_status === "suspended" ? "Reactivate account" : "Suspend account (reversible)"}
                         style={{
-                          padding: "7px 9px",
-                          borderRadius: 8,
-                          border: u.payment_status === "suspended" ? "1px solid #BBF7D0" : "1px solid #FEF3C7",
-                          background: u.payment_status === "suspended" ? "#F0FDF4" : "#FFFBEB",
-                          cursor: suspending === u.user_id ? "wait" : "pointer",
-                          opacity: suspending === u.user_id ? 0.5 : 1,
+                          flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                          gap: 3, padding: "9px 4px", cursor: suspending === u.user_id ? "wait" : "pointer",
+                          background: isSuspended ? "#F0FDF4" : "#FFFBEB", border: "none",
+                          borderRight: "1px solid #F3F4F6", opacity: suspending === u.user_id ? 0.5 : 1,
                         }}
                       >
                         {suspending === u.user_id
                           ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite", color: "#92400E" }} />
-                          : u.payment_status === "suspended"
-                            ? <CheckCircle2 size={13} color="#16A34A" />
-                            : <Ban size={13} color="#D97706" />}
+                          : isSuspended ? <CheckCircle2 size={13} color="#16A34A" /> : <Ban size={13} color="#D97706" />}
+                        <span style={{ fontSize: 9, color: isSuspended ? "#16A34A" : "#D97706", fontWeight: 600 }}>
+                          {isSuspended ? "Unsuspend" : "Suspend"}
+                        </span>
                       </button>
-                      <button onClick={() => setDeleteDialog(u)} title="Delete permanently" style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer" }}>
+                      <button onClick={() => setDeleteDialog(u)} style={{
+                        flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                        gap: 3, padding: "9px 4px", background: "#FEF2F2", border: "none", cursor: "pointer",
+                      }}>
                         <Trash2 size={13} color="#DC2626" />
+                        <span style={{ fontSize: 9, color: "#DC2626", fontWeight: 600 }}>Delete</span>
                       </button>
                     </>
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
