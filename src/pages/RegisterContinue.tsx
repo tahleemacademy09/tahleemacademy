@@ -97,12 +97,40 @@ const RegisterContinue = () => {
         // Not signed in → must have a session from the URL hash
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
-          setErrMsg("Email verification failed or link expired. Please try registering again.");
+          setErrMsg("Email verification failed or link expired. Please try signing in again.");
           setPhase("error");
           return;
         }
 
         const userId = session.user.id;
+
+        // ── Guard: existing user arrived here via normal login (not a verification link) ──
+        // If they already have a tasjeel_progress row, skip initializeTasjeel
+        // and route them directly. This prevents the "Verification Error" that
+        // occurs when initializeTasjeel or the subsequent logic fails for users
+        // who logged in normally and were mis-routed here by Login.tsx.
+        const { data: existingTp } = await supabase
+          .from("tasjeel_progress" as any)
+          .select("current_step")
+          .eq("user_id", userId)
+          .maybeSingle();
+
+        if (existingTp) {
+          const existingStep = (existingTp as any).current_step;
+          const existingRoute = resolveRoute(existingStep, config);
+          if (existingRoute) {
+            navigate(existingRoute, { replace: true });
+            return;
+          }
+          // If no route (enrollment/payment), fall through to show payment screen
+          if (config.entrance_fee_enabled) {
+            await ensurePaystack();
+            setPhase("payment");
+          } else {
+            navigate("/student", { replace: true });
+          }
+          return;
+        }
 
         // BUG 5 — wrap initializeTasjeel in try/catch so a DB error doesn't
         // leave the page stuck on the loading spinner forever.
