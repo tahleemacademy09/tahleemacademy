@@ -1,23 +1,20 @@
 /*
-  public/sw.js — Tahleem Academy Service Worker  v4
+  public/sw.js — Tahleem Academy Service Worker  v5
   ═══════════════════════════════════════════════════════════════════════
-  Capabilities:
-  1. INSTANT LOADING  — App shell + JS/CSS chunks cached on install.
-                        Navigation preloading eliminates SW wake-up delay.
-                        Stale-while-revalidate for all static assets.
-  2. OFFLINE SUPPORT  — Every visited page cached. Works on poor/no network.
-  3. PUSH + RING      — Class reminders (15/5 min) + live ring notifications.
-  4. KEEP-ALIVE       — Prevents WebRTC throttling during live classes.
-  5. BACKGROUND SYNC  — Retries failed writes when connection restores.
+  v5 additions vs v4:
+  • Daily content push: Quran verse / Hadith / Seerah / Hifdh — rich cards
+  • Class RING: persistent ringing notification, posts CLASS_RING to app
+  • Class reminder: 15 min / 5 min with Join action
+  • All notifications show in phone notification bar when app is closed
+  • Notification grouping by type (tag) so they don't stack up
   ═══════════════════════════════════════════════════════════════════════
 */
 
-const CACHE_VERSION = "tahleem-sw-v4";
-const OFFLINE_CACHE = "tahleem-offline-v4";
-const STATIC_CACHE  = "tahleem-static-v4";
-const CHUNK_CACHE   = "tahleem-chunks-v4";   // Vite JS/CSS bundles — long TTL
+const CACHE_VERSION = "tahleem-sw-v5";
+const OFFLINE_CACHE = "tahleem-offline-v5";
+const STATIC_CACHE  = "tahleem-static-v5";
+const CHUNK_CACHE   = "tahleem-chunks-v5";
 
-// App shell: pre-cached on every SW install so first paint is instant
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -33,9 +30,9 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE)
       .then((cache) => cache.addAll(APP_SHELL))
-      .catch(() => {}) // never let a missing icon block the SW
+      .catch(() => {})
   );
-  self.skipWaiting(); // activate immediately, don't wait for old tabs to close
+  self.skipWaiting();
 });
 
 // ── Activate ─────────────────────────────────────────────────────────────────
@@ -43,34 +40,19 @@ self.addEventListener("activate", (event) => {
   const keep = [CACHE_VERSION, OFFLINE_CACHE, STATIC_CACHE, CHUNK_CACHE];
   event.waitUntil(
     Promise.all([
-      // Delete all old caches
       caches.keys().then((keys) =>
         Promise.all(keys.filter((k) => !keep.includes(k)).map((k) => caches.delete(k)))
       ),
-      // Enable navigation preloading — this is the key change that makes
-      // page navigations feel instant. While the SW is waking up, the browser
-      // simultaneously starts fetching the navigation request.
       self.registration.navigationPreload?.enable(),
-    ]).then(() => self.clients.claim()) // control all open tabs immediately
+    ]).then(() => self.clients.claim())
   );
 });
 
 // ── Fetch ─────────────────────────────────────────────────────────────────────
-//
-//  URL type          Strategy                  Why
-//  ──────────────    ────────────────────────  ──────────────────────────────
-//  Supabase API      BYPASS (never cache)      Auth/data must always be fresh
-//  Navigation        Network + preload, then   Fast page switches
-//                    cache fallback
-//  /assets/*.js/css  Cache-first + bg update   Vite content-hashes = safe to cache
-//  Images/fonts      Stale-while-revalidate    Serve instantly, update quietly
-//  Everything else   Cache-first, net fallback  Icons, manifest etc.
-//
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // ── Never cache: Supabase (auth/db/storage), Paystack, LiveKit ─────────────
   if (
     url.hostname.includes("supabase.co") ||
     url.hostname.includes("supabase.in") ||
@@ -79,19 +61,12 @@ self.addEventListener("fetch", (event) => {
     url.hostname.includes("livekit.cloud")
   ) return;
 
-  // ── Google Fonts: cache-first ───────────────────────────────────────────────
-  if (
-    url.hostname.includes("fonts.googleapis.com") ||
-    url.hostname.includes("fonts.gstatic.com")
-  ) {
+  if (url.hostname.includes("fonts.googleapis.com") || url.hostname.includes("fonts.gstatic.com")) {
     event.respondWith(
       caches.match(request).then((cached) => {
         if (cached) return cached;
         return fetch(request).then((res) => {
-          if (res.ok) {
-            const clone = res.clone();
-            caches.open(STATIC_CACHE).then((c) => c.put(request, clone));
-          }
+          if (res.ok) caches.open(STATIC_CACHE).then((c) => c.put(request, res.clone()));
           return res;
         }).catch(() => cached);
       })
@@ -99,30 +74,19 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Only handle same-origin from here
   if (url.origin !== self.location.origin) return;
 
-  // ── Vite JS/CSS chunks (/assets/*.js, /assets/*.css) ───────────────────────
-  // These are content-hashed so a new filename = new file = safe to cache forever.
-  // Cache-first: serve from cache instantly, fetch + update in background.
   if (url.pathname.startsWith("/assets/")) {
     event.respondWith(
       caches.match(request).then((cached) => {
         if (cached) {
-          // Background update so next visit gets latest
           fetch(request).then((res) => {
-            if (res.ok) {
-              caches.open(CHUNK_CACHE).then((c) => c.put(request, res));
-            }
+            if (res.ok) caches.open(CHUNK_CACHE).then((c) => c.put(request, res));
           }).catch(() => {});
           return cached;
         }
-        // Not cached yet — fetch and store
         return fetch(request).then((res) => {
-          if (res.ok) {
-            const clone = res.clone();
-            caches.open(CHUNK_CACHE).then((c) => c.put(request, clone));
-          }
+          if (res.ok) caches.open(CHUNK_CACHE).then((c) => c.put(request, res.clone()));
           return res;
         });
       })
@@ -130,28 +94,19 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // ── Page navigations ────────────────────────────────────────────────────────
-  // Uses navigation preload response if available (activated above).
-  // Falls back to cache → offline page if network fails.
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
         try {
-          // Try the preloaded response first (browser already started fetching)
           const preloaded = await event.preloadResponse;
           if (preloaded) {
-            // Cache this page for offline use
-            const clone = preloaded.clone();
-            caches.open(OFFLINE_CACHE).then((c) => c.put(request, clone));
+            caches.open(OFFLINE_CACHE).then((c) => c.put(request, preloaded.clone()));
             return preloaded;
           }
-          // No preload — fetch normally
           const fresh = await fetch(request);
-          const clone = fresh.clone();
-          caches.open(OFFLINE_CACHE).then((c) => c.put(request, clone));
+          caches.open(OFFLINE_CACHE).then((c) => c.put(request, fresh.clone()));
           return fresh;
         } catch {
-          // Offline — serve cached page or app shell
           const cached = await caches.match(request);
           if (cached) return cached;
           const shell = await caches.match("/") || await caches.match("/index.html");
@@ -162,20 +117,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // ── Static assets (images, icons, etc.) ────────────────────────────────────
-  // Stale-while-revalidate: respond from cache immediately, update quietly.
-  if (
-    request.destination === "image" ||
-    request.destination === "font"  ||
-    request.destination === "style"
-  ) {
+  if (request.destination === "image" || request.destination === "font" || request.destination === "style") {
     event.respondWith(
       caches.match(request).then((cached) => {
         const networkFetch = fetch(request).then((res) => {
-          if (res.ok) {
-            const clone = res.clone();
-            caches.open(STATIC_CACHE).then((c) => c.put(request, clone));
-          }
+          if (res.ok) caches.open(STATIC_CACHE).then((c) => c.put(request, res.clone()));
           return res;
         }).catch(() => cached);
         return cached || networkFetch;
@@ -186,8 +132,105 @@ self.addEventListener("fetch", (event) => {
 
 // ── Push notifications ────────────────────────────────────────────────────────
 
-function buildNotificationOptions(data) {
+function buildNotificationOpts(data) {
+  const type       = data.type || "reminder";
   const minutesLeft = data.minutes_left ?? 99;
+
+  // ── CLASS RING ─────────────────────────────────────────────────────────────
+  if (type === "ring") {
+    return {
+      body:               `${data.teacher_name || "Your teacher"} is waiting — tap to join now!`,
+      icon:               "/icons/icon-192x192.png",
+      badge:              "/icons/icon-96x96.png",
+      tag:                `ring-${data.class_id || "class"}`,
+      renotify:           true,
+      requireInteraction: true,
+      silent:             false,
+      vibrate:            [800, 400, 800, 400, 800, 1500, 800, 400, 800, 400, 800],
+      data: {
+        url:          data.join_url || data.url || "/student/timetable",
+        type:         "ring",
+        class_id:     data.class_id,
+        class_title:  data.class_title,
+        teacher_name: data.teacher_name,
+        join_url:     data.join_url || data.url,
+        ring_id:      data.ring_id || `push-${Date.now()}`,
+      },
+      actions: [
+        { action: "join",    title: "📹 Join Now" },
+        { action: "dismiss", title: "Decline" },
+      ],
+    };
+  }
+
+  // ── DAILY QURANIC VERSE ────────────────────────────────────────────────────
+  if (type === "daily_content" && data.tag === "daily-verse") {
+    return {
+      body:               data.message || data.body || "",
+      icon:               "/icons/icon-192x192.png",
+      badge:              "/icons/icon-96x96.png",
+      tag:                "daily-verse",
+      renotify:           false,
+      requireInteraction: false,
+      silent:             false,
+      vibrate:            [200, 100, 200],
+      data:               { url: data.url || "/student/dashboard" },
+      actions:            [{ action: "open", title: "📖 Open Dashboard" }],
+    };
+  }
+
+  // ── DAILY HADITH ───────────────────────────────────────────────────────────
+  if (type === "daily_content" && data.tag === "daily-hadith") {
+    return {
+      body:               data.message || "",
+      icon:               "/icons/icon-192x192.png",
+      badge:              "/icons/icon-96x96.png",
+      tag:                "daily-hadith",
+      renotify:           false,
+      requireInteraction: false,
+      silent:             false,
+      vibrate:            [200, 100, 200],
+      data:               { url: data.url || "/student/dashboard" },
+      actions:            [{ action: "open", title: "🌙 Read More" }],
+    };
+  }
+
+  // ── HIFDH REMINDER ─────────────────────────────────────────────────────────
+  if (type === "daily_content" && data.tag === "daily-hifdh") {
+    return {
+      body:               data.message || "",
+      icon:               "/icons/icon-192x192.png",
+      badge:              "/icons/icon-96x96.png",
+      tag:                "daily-hifdh",
+      renotify:           false,
+      requireInteraction: false,
+      silent:             false,
+      vibrate:            [300, 150, 300, 150, 600],
+      data:               { url: data.url || "/student/hifdh" },
+      actions: [
+        { action: "open_hifdh", title: "📗 Open Hifdh" },
+        { action: "dismiss",    title: "Later" },
+      ],
+    };
+  }
+
+  // ── SEERAH / OTHER DAILY CONTENT ───────────────────────────────────────────
+  if (type === "daily_content") {
+    return {
+      body:               data.message || "",
+      icon:               "/icons/icon-192x192.png",
+      badge:              "/icons/icon-96x96.png",
+      tag:                data.tag || "daily-content",
+      renotify:           false,
+      requireInteraction: false,
+      silent:             false,
+      vibrate:            [200, 100, 200],
+      data:               { url: data.url || "/student/dashboard" },
+      actions:            [{ action: "open", title: "📚 Open" }],
+    };
+  }
+
+  // ── CLASS REMINDER (default) ───────────────────────────────────────────────
   return {
     body:               data.message || "You have an upcoming class.",
     icon:               "/icons/icon-192x192.png",
@@ -195,37 +238,12 @@ function buildNotificationOptions(data) {
     tag:                data.tag || "tahleem-class",
     renotify:           true,
     requireInteraction: minutesLeft <= 5,
-    vibrate:            [200, 100, 200, 100, 400],
+    vibrate:            minutesLeft <= 5 ? [400, 200, 400, 200, 800] : [200, 100, 200],
+    silent:             false,
     data:               { url: data.url || "/student/timetable" },
     actions: [
-      { action: "join",    title: "Join Class 📹" },
-      { action: "dismiss", title: "Dismiss"        },
-    ],
-  };
-}
-
-function buildRingNotificationOptions(data) {
-  return {
-    body:               `${data.teacher_name || "Your teacher"} is waiting — tap to join now!`,
-    icon:               "/icons/icon-192x192.png",
-    badge:              "/icons/icon-96x96.png",
-    tag:                `ring-${data.class_id || "class"}`,
-    renotify:           true,
-    requireInteraction: true,   // stays visible until tapped
-    silent:             false,
-    vibrate:            [800, 400, 800, 400, 800, 1500, 800, 400, 800, 400, 800],
-    data: {
-      url:          data.join_url || data.url || "/student/timetable",
-      type:         "ring",
-      class_id:     data.class_id,
-      class_title:  data.class_title,
-      teacher_name: data.teacher_name,
-      join_url:     data.join_url || data.url,
-      ring_id:      data.ring_id || `push-${Date.now()}`,
-    },
-    actions: [
-      { action: "join",    title: "📞 Join Now" },
-      { action: "dismiss", title: "Decline"     },
+      { action: "join",    title: "📹 Join Class" },
+      { action: "dismiss", title: "Dismiss" },
     ],
   };
 }
@@ -234,17 +252,23 @@ self.addEventListener("push", (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch {}
 
-  const isRing = data.type === "ring";
-  const title  = isRing
-    ? `📞 ${data.class_title || "Class"} — Starting Now!`
-    : (data.title || "📚 Class Reminder — Tahleem Academy");
-  const opts = isRing
-    ? buildRingNotificationOptions(data)
-    : buildNotificationOptions(data);
+  const isRing  = data.type === "ring";
+  const isDaily = data.type === "daily_content";
+
+  let title;
+  if (isRing) {
+    title = `📞 ${data.class_title || "Class"} — Starting Now!`;
+  } else if (isDaily) {
+    title = data.title || "📚 Tahleem Academy";
+  } else {
+    title = data.title || "📚 Class Reminder — Tahleem Academy";
+  }
+
+  const opts = buildNotificationOpts(data);
 
   event.waitUntil(
     self.registration.showNotification(title, opts).then(() => {
-      // If a tab is open, also postMessage so the ring overlay shows in-app
+      // For ring notifications, also postMessage to open app tabs
       if (isRing) {
         self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
           clients.forEach((c) => c.postMessage({
@@ -264,17 +288,30 @@ self.addEventListener("push", (event) => {
 // ── Notification click ────────────────────────────────────────────────────────
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+
   if (event.action === "dismiss") return;
 
-  const targetUrl = event.notification.data?.url ||
-                    event.notification.data?.join_url ||
-                    "/student/timetable";
+  // Map action → URL
+  let targetUrl = event.notification.data?.url ||
+                  event.notification.data?.join_url ||
+                  "/student/dashboard";
+
+  if (event.action === "join") {
+    targetUrl = event.notification.data?.join_url ||
+                event.notification.data?.url ||
+                "/student/live-classes";
+  }
+  if (event.action === "open_hifdh") {
+    targetUrl = "/student/hifdh";
+  }
+  if (event.action === "open") {
+    targetUrl = event.notification.data?.url || "/student/dashboard";
+  }
 
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clients) => {
-        // Focus existing tab if one is open
         for (const client of clients) {
           if (client.url.includes(self.location.origin) && "focus" in client) {
             client.focus();
@@ -282,7 +319,6 @@ self.addEventListener("notificationclick", (event) => {
             return;
           }
         }
-        // Otherwise open a new tab
         return self.clients.openWindow(targetUrl);
       })
   );
@@ -299,17 +335,13 @@ self.addEventListener("message", (event) => {
       self.skipWaiting();
       break;
 
-    case "LIVE_CLASS_KEEPALIVE":
-      event.source?.postMessage({ type: "LIVE_CLASS_KEEPALIVE_ACK" });
-      break;
-
     case "LIVE_CLASS_START":
       if (keepAliveInterval) clearInterval(keepAliveInterval);
       keepAliveInterval = setInterval(() => {
         self.clients.matchAll().then((clients) =>
           clients.forEach((c) => c.postMessage({ type: "SW_ALIVE" }))
         );
-      }, 20000);
+      }, 20_000);
       break;
 
     case "LIVE_CLASS_END":
@@ -319,8 +351,8 @@ self.addEventListener("message", (event) => {
     case "SHOW_NOTIFICATION": {
       const { title, ...rest } = event.data;
       self.registration.showNotification(
-        title || "📚 Tahleem Class Reminder",
-        buildNotificationOptions(rest)
+        title || "📚 Tahleem Academy",
+        buildNotificationOpts(rest)
       );
       break;
     }
@@ -330,25 +362,17 @@ self.addEventListener("message", (event) => {
 // ── Background Sync ───────────────────────────────────────────────────────────
 self.addEventListener("sync", (event) => {
   if (event.tag === "tahleem-sync") {
-    event.waitUntil(
-      Promise.resolve().then(() => {
-        console.log("[Tahleem SW] Background sync — connection restored");
-      })
-    );
+    event.waitUntil(Promise.resolve());
   }
 });
 
-// ── Periodic Background Sync — refresh timetable hourly ──────────────────────
+// ── Periodic Background Sync ──────────────────────────────────────────────────
 self.addEventListener("periodicsync", (event) => {
   if (event.tag === "tahleem-timetable-refresh") {
     event.waitUntil(
       fetch("/student/timetable", { cache: "no-store" })
         .then((res) => {
-          if (res.ok) {
-            return caches.open(OFFLINE_CACHE).then((c) =>
-              c.put("/student/timetable", res)
-            );
-          }
+          if (res.ok) caches.open(OFFLINE_CACHE).then((c) => c.put("/student/timetable", res));
         })
         .catch(() => {})
     );
