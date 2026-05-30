@@ -247,7 +247,7 @@ const StudentDashboard = () => {
           supabase.from("subjects").select("*").eq("is_active", true).limit(4),
           supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
           supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar)"),
-          supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
+          supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar, levels, level, visibility)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
           (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", uid).eq("active", true).maybeSingle(),
           (supabase as any).from("hifdh_daily_logs").select("*").eq("student_id", uid).eq("log_date", new Date().toISOString().split("T")[0]).maybeSingle(),
           (supabase as any).from("private_student_subjects").select("subject_id").eq("student_id", uid),
@@ -266,10 +266,48 @@ const StudentDashboard = () => {
       setLiveSubjects(subjectsRes.data || []);
       setAllExamsForCalendar(calendarExamsRes.data || []);
       setSubjectAssignments(subAssignmentsRes.data || []);
-      setTodayClasses((ttRes.data || []) as any[]);
+
+      // ── Filter timetable slots to only what this student should see ────
+      // Get student's level and private subject IDs first
+      const privateIds = new Set((privateSubjectsRes?.data || []).map((r: any) => r.subject_id));
+      setPrivateSubjectIds(privateIds);
+
+      // Fetch student profile level (may differ from auth profile during impersonation)
+      const { data: studentProfileData } = await supabase
+        .from("profiles").select("level, student_type, assigned_teacher_id")
+        .eq("user_id", uid).maybeSingle();
+      const studentLevel     = (studentProfileData as any)?.level || (displayProfile as any)?.level || null;
+      const studentType      = (studentProfileData as any)?.student_type || "group";
+
+      const allTtSlots: any[] = ttRes.data || [];
+      const filteredSlots = allTtSlots.filter(slot => {
+        const subj = slot.subjects as any;
+
+        // Private student: show only their assigned private subjects
+        // (plus general-access subjects if allowGeneralAccess is true)
+        if (studentType === "private") {
+          const isPrivateSubject = privateIds.has(slot.subject_id);
+          if (isPrivateSubject) return true;
+          // If private student doesn't have general access, hide all group slots
+          if (!allowGeneralAccess) return false;
+        }
+
+        // Slot has explicit level restrictions — check student's level matches
+        const slotLevels: string[] = slot.levels || [];
+        const subjLevels: string[] = subj?.levels || (subj?.level ? [subj.level] : []);
+        const allLevels = [...new Set([...slotLevels, ...subjLevels])];
+
+        if (allLevels.length > 0 && studentLevel) {
+          return allLevels.includes(studentLevel);
+        }
+
+        // No level restriction → visible to all group students
+        return true;
+      });
+
+      setTodayClasses(filteredSlots);
       setHifdhAssignment((hifdhAssignRes as any)?.data ?? null);
       setHifdhTodayLog((hifdhLogRes as any)?.data ?? null);
-      setPrivateSubjectIds(new Set((privateSubjectsRes?.data || []).map((r: any) => r.subject_id)));
         setLoading(false);
       } catch (err) {
         console.error("Dashboard data fetch error:", err);
