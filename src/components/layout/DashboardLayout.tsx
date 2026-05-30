@@ -23,6 +23,7 @@ import PaymentBanner from "./PaymentBanner";
 import HolidayBanner from "./HolidayBanner";
 import AdminPaymentIndicator from "./AdminPaymentIndicator";
 import ImpersonationBanner from "./ImpersonationBanner";
+import { useClassRing } from "@/hooks/useClassRing";
 
 interface DashboardLayoutProps { role: "student" | "admin"; }
 
@@ -104,6 +105,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  // ── Class ring overlay — fires automatically at timetable class time ──────
+  const { ringOverlay } = useClassRing();
 
   // ── Level-pending: lock most features until admin assigns a level ─────────
   const levelPending = role === "student" && currentStep !== null && currentStep !== "completed";
@@ -432,6 +436,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ height: "100dvh" }}>
+      {/* Ring overlay — full-screen when class starts, null otherwise */}
+      {ringOverlay}
       <aside className="hidden w-60 flex-col bg-sidebar md:flex flex-shrink-0 border-r border-sidebar-border">
         <SidebarContent />
       </aside>
@@ -569,9 +575,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                           <p className="text-[10px] text-gray-400">
                             {new Date(n.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
                           </p>
-                          {n.type === "class_reminder" && n.link && (
+                          {(n.type === "class_reminder" || n.type === "class_ring") && n.link && (
                             <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#0f2d1f", color:"#c9a84c", fontWeight:700 }}>
-                              Join →
+                              {n.type === "class_ring" ? "📞 Join Now →" : "Join →"}
                             </span>
                           )}
                           {n.type === "payment" && n.link && (
