@@ -36,7 +36,7 @@ function errorKey(err: Error | null): string {
 }
 
 export class ErrorBoundary extends React.Component<
-  { children: React.ReactNode },
+  { children: React.ReactNode; fallback?: React.ReactNode },
   State
 > {
   state: State = { hasError: false, error: null, didAutoReload: false };
@@ -48,27 +48,23 @@ export class ErrorBoundary extends React.Component<
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("[ErrorBoundary] caught:", error.name, error.message, info.componentStack);
 
+    // If caller supplied a fallback (e.g. null for the classroom overlay),
+    // don't auto-reload — just render the fallback silently.
+    if (this.props.fallback !== undefined) return;
+
     const key = errorKey(error);
     const alreadyReloaded = sessionStorage.getItem(key);
 
     if (!alreadyReloaded) {
-      // Mark so we don't loop, then auto-reload silently
       sessionStorage.setItem(key, Date.now().toString());
-
-      // Clean up the key after 60 s so a future genuine reload is possible
       setTimeout(() => sessionStorage.removeItem(key), 60_000);
-
-      // Small delay so React's render cycle settles before reload
       setTimeout(() => window.location.reload(), 400);
       this.setState({ didAutoReload: true });
       return;
     }
-
-    // Already tried reloading for this exact error — show the UI
   }
 
   handleReload = () => {
-    // Clear all eb_ keys so user gets a clean slate
     Object.keys(sessionStorage)
       .filter(k => k.startsWith("eb_"))
       .forEach(k => sessionStorage.removeItem(k));
@@ -79,6 +75,9 @@ export class ErrorBoundary extends React.Component<
     const { hasError, error, didAutoReload } = this.state;
 
     if (!hasError) return this.props.children;
+
+    // If a fallback was supplied, render it silently (no crash screen, no reload)
+    if (this.props.fallback !== undefined) return this.props.fallback;
 
     // Show spinner while auto-reload is in progress
     if (didAutoReload || !sessionStorage.getItem(errorKey(error))) {
