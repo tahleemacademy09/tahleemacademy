@@ -311,7 +311,7 @@ const App = () => (
                 </Routes>
               </Suspense>
             </ErrorBoundary>
-            <ErrorBoundary>
+            <ErrorBoundary fallback={null}>
             <Suspense fallback={null}>
               <GlobalClassroomOverlay />
             </Suspense>
