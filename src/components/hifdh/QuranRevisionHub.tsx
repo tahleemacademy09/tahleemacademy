@@ -2113,4 +2113,353 @@ export default function QuranRevisionHub({ userId }: Props) {
               {/* Record / Stop pill */}
               {remEvaluating ? (
                 <div className="flex flex-col items-center justify-center gap-1 rounded-2xl"
-                  style={{ flex: 1, padding: "12px 8px", backgro
+                  style={{ flex: 1, padding: "12px 8px", background: "#1a3025",
+                    border: "1.5px solid #c9a84c22" }}>
+                  <Loader2 size={18} className="qr-spin" style={{ color: GOLD }} />
+                  <span style={{ fontSize: 9, color: "#7aad90", fontWeight: 700 }}>Checking…</span>
+                </div>
+              ) : (
+                <button
+                  onClick={remRecording ? stopRemRecording : () => startRemRecording(errAyah.ayah.number)}
+                  className={cn("qr-btn flex flex-col items-center justify-center gap-1 rounded-2xl font-bold",
+                    remRecording && "qr-recordpulse")}
+                  style={{ flex: 1, padding: "12px 8px", fontSize: 10,
+                    background: remRecording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                    color: remRecording ? "#fff" : DG,
+                    border: remRecording ? "1.5px solid #dc262688" : "none",
+                    boxShadow: remRecording ? "0 0 12px rgba(220,38,38,.4)" : `0 2px 8px rgba(201,168,76,.35)` }}>
+                  {remRecording
+                    ? <><MicOff size={18} />{fmtTime(remRecTime)}</>
+                    : <><Mic size={18} />Record</>}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Footer nav */}
+        <div className="flex-none px-4 py-3 border-t space-y-2" style={{ borderColor: GOLD + "33", background: DG }}>
+          <div className="flex gap-2">
+            <button onClick={() => { setRemediationIdx(i => Math.max(0, i - 1)); setRemResult(null); setRevealVerse(false); }}
+              disabled={remediationIdx === 0}
+              className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold qr-btn"
+              style={{ background: "#1a3025", color: GOLD, opacity: remediationIdx === 0 ? 0.4 : 1 }}>
+              <ChevronLeft size={14} /> Prev
+            </button>
+            {remediationIdx < ayahErrors.length - 1 ? (
+              <button onClick={() => { setRemediationIdx(i => i + 1); setRemResult(null); setRevealVerse(false); }}
+                className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold qr-btn"
+                style={{ background: "#1a3025", color: GOLD }}>
+                Next <ChevronRight size={14} />
+              </button>
+            ) : (
+              <button onClick={() => { buildExercise(); setStage("exercise"); }}
+                className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-black qr-btn"
+                style={{
+                  background: allMastered ? `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})` : GOLD + "44",
+                  color: allMastered ? DG : GOLD,
+                }}>
+                {allMastered ? "Exercise →" : "Skip to Exercise →"}
+              </button>
+            )}
+          </div>
+          <button onClick={() => setStage("evaluating")}
+            className="w-full text-xs text-center py-1" style={{ color: "#4a6d58" }}>
+            ← Back to Results
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  EXERCISE — Voice-based recitation completion
+  // ════════════════════════════════════════════════════════
+  if (stage === "exercise") {
+    const q        = exercises[exIdx];
+    const progress = Math.round((exAnswered / Math.max(1, exercises.length)) * 100);
+    const exSc     = exResult ? scoreColor(exResult.score) : null;
+
+    return (
+      <div className="h-full flex flex-col overflow-hidden"
+        style={{ background: `linear-gradient(160deg,#0a0f18 0%,#0a0e0b 100%)` }}>
+        <style>{globalCSS}</style>
+        <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
+
+        {/* Header */}
+        <div className="flex-none px-4 py-3 border-b" style={{ borderColor: GOLD + "33", background: "#0a0f18" }}>
+          <div className="flex items-center gap-2 mb-2">
+            <Target size={14} style={{ color: GOLD }} />
+            <span className="font-black text-sm" style={{ color: GOLD }}>Recitation Exercise</span>
+            <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full"
+              style={{ background: GOLD + "22", color: GOLD }}>
+              {exAnswered}/{exercises.length}
+            </span>
+          </div>
+          <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "#1a1a2e" }}>
+            <div className="h-full rounded-full transition-all" style={{
+              width: `${progress}%`,
+              background: `linear-gradient(to right,#6366f1,${GOLD})`,
+            }} />
+          </div>
+        </div>
+
+        {q ? (
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 qr-fadein">
+
+            {/* Question label */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black px-2.5 py-1 rounded-full"
+                style={{
+                  background: q.isPrevPage ? "#6366f122" : GOLD + "22",
+                  color: q.isPrevPage ? "#a78bfa" : GOLD,
+                }}>
+                {q.isPrevPage ? "📎 Previous Page Review" : "📖 Complete the Verse"}
+              </span>
+              <span className="text-xs" style={{ color: "#4a6d58" }}>Q{exIdx + 1}</span>
+            </div>
+
+            {/* Verse beginning */}
+            <div className="rounded-2xl overflow-hidden" style={{ border: `2px solid ${GOLD}44` }}>
+              <div className="px-4 py-2 border-b" style={{ background: GOLD + "15", borderColor: GOLD + "33" }}>
+                <p className="text-[10px] font-bold" style={{ color: GOLD }}>
+                  {q.ayah.surah?.nameAr} · آية {toAr(q.ayah.numberInSurah)}
+                </p>
+              </div>
+              <div className="px-5 py-4" style={{ background: PARCHMENT }}>
+                <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
+                  {q.displayText}{" "}
+                  <span className="inline-block px-3 py-0.5 rounded-lg border-b-2 mx-1"
+                    style={{
+                      borderColor: GOLD,
+                      background: GOLD + "20",
+                      color: GOLD,
+                      fontFamily: "'Amiri Quran','Amiri',serif",
+                      minWidth: 60,
+                    }}>
+                    {q.answered && exResult?.transcript
+                      ? <span style={{ color: exResult.score >= 60 ? "#16a34a" : "#dc2626" }}>
+                          {exResult.transcript.split(" ").slice(0, 5).join(" ")}…
+                        </span>
+                      : "…؟؟؟…"
+                    }
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            {/* Instruction */}
+            {!q.answered && !exRecording && !exEvaluating && (
+              <div className="rounded-xl px-4 py-3 text-center" style={{ background: "#1a3025", border: `1px solid ${GOLD}22` }}>
+                <p className="text-sm font-bold" style={{ color: GOLD }}>Complete the verse above</p>
+                <p className="text-xs mt-1" style={{ color: "#5a8a6a" }}>
+                  Listen to the beginning, then tap the mic to recite what comes next from memory
+                </p>
+              </div>
+            )}
+
+            {/* Listen */}
+            {!q.answered && (
+              <button onClick={() => playAyah(q.ayah)}
+                className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold qr-btn"
+                style={{ background: GOLD + "18", color: GOLD, border: `1px solid ${GOLD}33` }}>
+                <Headphones size={13} /> Listen to Full Verse (reference)
+              </button>
+            )}
+
+            {/* Recording / evaluating */}
+            {!q.answered && (
+              exEvaluating ? (
+                <div className="flex flex-col items-center gap-2 py-4">
+                  <Loader2 size={22} className="qr-spin" style={{ color: GOLD }} />
+                  <span className="text-xs" style={{ color: "#7aad90" }}>Evaluating your recitation…</span>
+                </div>
+              ) : (
+                <button
+                  onClick={exRecording ? stopExRecording : startExRecording}
+                  className={cn(
+                    "w-full py-4 rounded-2xl flex items-center justify-center gap-2 font-black text-sm qr-btn",
+                    exRecording && "qr-recordpulse"
+                  )}
+                  style={{
+                    background: exRecording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                    color: exRecording ? "#fff" : DG,
+                  }}>
+                  {exRecording
+                    ? <><MicOff size={18} /> Stop · {fmtTime(exRecTime)}</>
+                    : <><Mic size={18} /> Recite the Continuation</>
+                  }
+                </button>
+              )
+            )}
+
+            {/* Result */}
+            {q.answered && exResult && (
+              <div className="rounded-2xl p-4 qr-fadein"
+                style={{ background: exSc!.bg, border: `2px solid ${exSc!.border}` }}>
+                <div className="flex items-center gap-2 mb-3">
+                  {exResult.score >= 60
+                    ? <CheckCircle2 size={18} color={exSc!.text} />
+                    : <XCircle size={18} color={exSc!.text} />}
+                  <span className="font-black text-sm" style={{ color: exSc!.text }}>
+                    {exResult.score}% — {exResult.score >= 60 ? "Correct! ما شاء الله 🌟" : "Needs review"}
+                  </span>
+                </div>
+
+                <div className="rounded-xl p-3 mt-2" style={{ background: PARCHMENT, border: `1px solid ${GOLD}33` }}>
+                  <p className="text-[10px] font-bold mb-1.5" style={{ color: "#8a6030" }}>Correct continuation:</p>
+                  <p className="qr-mushaf text-center" style={{ fontSize: fontSize - 4 }}>
+                    <span style={{ color: "#aaa" }}>{q.displayText}</span>{" "}
+                    <span style={{ color: "#16a34a", fontWeight: "bold" }}>{q.missingText}</span>
+                  </p>
+                </div>
+
+                {exResult.transcript && (
+                  <div className="mt-2">
+                    <p className="text-[10px] font-bold mb-1" style={{ color: exSc!.text + "99" }}>You said:</p>
+                    <p className="text-xs qr-arabic" style={{ fontFamily: "'Amiri',serif", direction: "rtl", color: exSc!.text }}>
+                      {exResult.transcript}
+                    </p>
+                  </div>
+                )}
+                {!exResult.transcript && (
+                  <p className="text-xs mt-2" style={{ color: exSc!.text + "99" }}>
+                    Transcription unclear — try again next time.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        ) : null}
+
+        {/* Next button */}
+        {q?.answered && (
+          <div className="flex-none px-4 py-3 border-t" style={{ borderColor: GOLD + "33" }}>
+            <button onClick={nextExercise}
+              className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
+              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
+              {exIdx + 1 < exercises.length
+                ? `Next Question (${exIdx + 2}/${exercises.length}) →`
+                : "Finish Exercise ✓"}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════
+  //  COMPLETE
+  // ════════════════════════════════════════════════════════
+  if (stage === "complete") {
+    const stats      = finalStats;
+    const sc         = stats ? scoreColor(stats.score) : scoreColor(0);
+    const excSc      = stats ? scoreColor(stats.exerciseScore) : scoreColor(0);
+    const isPlanDone = plan ? plan.currentIdx >= plan.allPages.length - 1 : false;
+
+    return (
+      <div className="h-full overflow-y-auto qr-geo" style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
+        <style>{globalCSS}</style>
+
+        <div className="px-4 pt-10 pb-10 space-y-4 qr-fadein">
+
+          <div className="text-center space-y-2">
+            <div className="text-5xl qr-bounce">{isPlanDone ? "🏆" : "⭐"}</div>
+            <h2 className="font-black text-lg" style={{ color: GOLD }}>
+              {isPlanDone ? "Plan Complete! أحسنت 🎉" : `Page ${currentPage} Complete!`}
+            </h2>
+            <p className="text-xs" style={{ color: "#7aad90" }}>
+              {isPlanDone
+                ? "You have completed the entire revision plan. بارك الله فيك!"
+                : "Page signed ✓ — ready for the next page"}
+            </p>
+          </div>
+
+          <div className="rounded-2xl p-4 text-center" style={{ background: GOLD + "15", border: `1px solid ${GOLD}33` }}>
+            <div className="text-2xl font-black" style={{ color: GOLD }}>+{earnedXP} XP</div>
+            <p className="text-xs" style={{ color: "#d4c08a" }}>Revision Points Earned</p>
+          </div>
+
+          {stats && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-2xl p-4 text-center" style={{ background: sc.bg, border: `1.5px solid ${sc.border}` }}>
+                <div className="text-2xl font-black" style={{ color: sc.text }}>{stats.score}%</div>
+                <p className="text-xs font-bold" style={{ color: sc.text + "aa" }}>Recitation</p>
+              </div>
+              <div className="rounded-2xl p-4 text-center" style={{ background: excSc.bg, border: `1.5px solid ${excSc.border}` }}>
+                <div className="text-2xl font-black" style={{ color: excSc.text }}>{stats.exerciseScore}%</div>
+                <p className="text-xs font-bold" style={{ color: excSc.text + "aa" }}>Exercise</p>
+              </div>
+              <div className="rounded-2xl p-4 text-center" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <div className="text-2xl font-black" style={{ color: GOLD }}>{stats.attempts}</div>
+                <p className="text-xs font-bold" style={{ color: "#7aad90" }}>Attempts</p>
+              </div>
+              <div className="rounded-2xl p-4 text-center" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <div className="text-2xl font-black" style={{ color: GOLD }}>{fmtTime(stats.timeSeconds)}</div>
+                <p className="text-xs font-bold" style={{ color: "#7aad90" }}>Time</p>
+              </div>
+            </div>
+          )}
+
+          {!isPlanDone ? (
+            <>
+              <div style={{ borderRadius: 14, padding: "12px 14px",
+                background: recitationAttempts >= 3 ? "#16a34a18" : "#ffffff08",
+                border: `1px solid ${recitationAttempts >= 3 ? "#16a34a44" : GOLD + "22"}` }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: recitationAttempts >= 3 ? "#16a34a" : GOLD }}>
+                    {recitationAttempts >= 3
+                      ? "✅ 3 attempts complete — ready!"
+                      : `Attempt ${recitationAttempts}/3 — revise ${3 - recitationAttempts} more time${3 - recitationAttempts !== 1 ? "s" : ""}`}
+                  </span>
+                  <span style={{ fontSize: 10, color: "#7aad90" }}>{recitationAttempts}/3</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 3, background: "#1a3025", overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 3, transition: "width .4s",
+                    width: `${Math.min(100, (recitationAttempts / 3) * 100)}%`,
+                    background: recitationAttempts >= 3
+                      ? "linear-gradient(to right,#16a34a,#22c55e)"
+                      : `linear-gradient(to right,${GOLD},${GOLD_LIGHT})` }} />
+                </div>
+              </div>
+              {recitationAttempts < 3 ? (
+                <button onClick={() => { setStage("reciting"); setEvalResult(null); setAyahErrors([]); setPageVisible(true); }}
+                  className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
+                  style={{ background: `linear-gradient(135deg,${DG},${DG2})`,
+                    color: GOLD, border: `2px solid ${GOLD}44` }}>
+                  🔄 Revise Again ({recitationAttempts}/3)
+                </button>
+              ) : (
+                <button onClick={nextPage}
+                  className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
+                  style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
+                  Next Page →
+                </button>
+              )}
+            </>
+          ) : (
+            <button onClick={() => {
+              setPlan(null); setSelected([]); setCompletedPages(new Set());
+              if (userId) {
+                localStorage.removeItem(`revision_plan_${userId}`);
+                localStorage.removeItem(`revision_done_${userId}`);
+              }
+              setStage("setup");
+            }}
+              className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
+              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
+              🔄 Start New Revision Plan
+            </button>
+          )}
+
+          <button onClick={() => setStage("setup")}
+            className="w-full text-xs py-2" style={{ color: "#4a6d58" }}>
+            ← Back to Setup
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
