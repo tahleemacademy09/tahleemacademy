@@ -738,7 +738,7 @@ export default function QuranRevisionHub({ userId }: Props) {
   // green for correct words, red for missing. Mirrors Tarteel.
   const startLiveRecording = async () => {
     const ayahs: any[] = pageDataRef.current?.ayahs ?? [];
-    if (!ayahs.length) return startPageRecording(); // fallback
+    if (!ayahs.length) return startPageRecording();
     try {
       // Reset live state
       liveAccumRef.current = "";
@@ -751,31 +751,30 @@ export default function QuranRevisionHub({ userId }: Props) {
       stopAudio();
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"]
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
         .find(t => MediaRecorder.isTypeSupported(t));
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       recChunksRef.current = [];
 
+      // We accumulate ALL chunks so each Groq call gets the full audio so far.
+      // This gives Whisper more context and avoids losing words between chunks.
+      const allChunks: Blob[] = [];
+
       mr.ondataavailable = async (e) => {
         if (!e.data?.size) return;
-        recChunksRef.current.push(e.data); // keep for final eval
+        recChunksRef.current.push(e.data); // for final evaluation
+        allChunks.push(e.data);
 
-        // Build streamable blob: init chunk + current chunk (webm needs header)
-        const ext = (mime ?? "").includes("mp4") ? "mp4" : (mime ?? "").includes("ogg") ? "ogg" : "webm";
-        let streamBlob: Blob;
-        if (!liveChunkRef.current) {
-          liveChunkRef.current = e.data; // first chunk = header
-          streamBlob = new Blob([e.data], { type: mime || "audio/webm" });
-        } else {
-          streamBlob = new Blob([liveChunkRef.current, e.data], { type: mime || "audio/webm" });
-        }
-
-        // Transcribe incrementally
         const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
         if (!groqKey) return;
+
+        // Send cumulative audio (all chunks so far) so Whisper sees full context
+        const ext = (mime ?? "").includes("mp4") ? "mp4" : (mime ?? "").includes("ogg") ? "ogg" : "webm";
+        const cumulBlob = new Blob(allChunks, { type: mime || "audio/webm" });
+
         try {
           const fd = new FormData();
-          fd.append("file", new File([streamBlob], `live.${ext}`, { type: mime || "audio/webm" }));
+          fd.append("file", new File([cumulBlob], `live.${ext}`, { type: mime || "audio/webm" }));
           fd.append("model", "whisper-large-v3");
           fd.append("language", "ar");
           fd.append("response_format", "verbose_json");
@@ -788,30 +787,34 @@ export default function QuranRevisionHub({ userId }: Props) {
           });
           if (!r.ok) return;
           const json = await r.json();
-          const noSpeech = json.segments?.[0]?.no_speech_prob ?? 0;
-          const chunkText = (json.text ?? "").trim();
-          if (noSpeech >= 0.6 || chunkText.length < 2) return;
 
-          // Accumulate — deduplicate overlap by taking the longer of old vs new
-          const prev = liveAccumRef.current;
-          liveAccumRef.current = chunkText.length > prev.length ? chunkText : prev;
-          const accumulated = liveAccumRef.current;
+          // Average no_speech across all segments for better silence detection
+          const segs: any[] = json.segments ?? [];
+          const avgNoSpeech = segs.length
+            ? segs.reduce((s: number, g: any) => s + (g.no_speech_prob ?? 0), 0) / segs.length
+            : 0;
+          const newText = (json.text ?? "").trim();
+          if (avgNoSpeech >= 0.7 || newText.length < 2) return;
 
-          // Score each ayah against accumulated transcript so far
-          setLiveVerseResults(() => {
-            return ayahs.map((ayah: any, idx: number) => {
-              const result = compareWords(ayah.text, accumulated);
-              const correctCount = result.filter(w => w.status === "correct").length;
-              // Only reveal a verse if at least 40% of its words are found in transcript
-              if (correctCount / Math.max(1, result.length) >= 0.4) {
-                // Update current verse pointer to latest revealed
-                setLiveCurrentVerseIdx(i => Math.max(i, idx));
-                return result;
-              }
-              return null; // not yet revealed
-            });
+          // Always take the latest cumulative transcript (it's always the longest/best)
+          liveAccumRef.current = newText;
+          const accumulated = newText;
+
+          // Score every ayah against the full accumulated transcript.
+          // Reveal threshold = 15% — very low so verses appear quickly.
+          // The word colouring (green/red) handles accuracy display.
+          const newResults = ayahs.map((ayah: any, idx: number) => {
+            const result = compareWords(ayah.text, accumulated);
+            const correctCount = result.filter((w: WordResult) => w.status === "correct").length;
+            const pct = correctCount / Math.max(1, result.length);
+            if (pct >= 0.15) {
+              setLiveCurrentVerseIdx(i => Math.max(i, idx));
+              return result;
+            }
+            return null;
           });
-        } catch { /* silent */ }
+          setLiveVerseResults(newResults);
+        } catch { /* silent — next chunk will retry */ }
       };
 
       mr.onstop = () => {
@@ -821,7 +824,7 @@ export default function QuranRevisionHub({ userId }: Props) {
         if (blob.size > 500) runPageEvaluation(blob);
       };
 
-      mr.start(3000); // 3-second chunks for good Whisper accuracy
+      mr.start(2000); // 2-second chunks — fast enough to feel live
       mediaRecRef.current = mr;
       liveMediaRef.current = mr;
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
@@ -1550,16 +1553,16 @@ export default function QuranRevisionHub({ userId }: Props) {
                     if (!isRevealed && !isNext) {
                       // Show placeholder for verses not yet reached
                       return (
-                        <div key={ayah.number} className="rounded-xl px-4 py-3 flex items-center gap-2"
-                          style={{ background: "#0e1e14", border: `1px solid ${GOLD}15` }}>
-                          <span className="text-[10px] font-bold flex-shrink-0"
-                            style={{ color: GOLD + "44", fontFamily: "'Amiri',serif" }}>
+                        <div key={ayah.number} className="rounded-xl px-4 py-3 flex items-center gap-3"
+                          style={{ background: "#0e1e14", border: `1px solid ${GOLD}22` }}>
+                          <span className="text-xs font-black flex-shrink-0"
+                            style={{ color: GOLD + "55", fontFamily: "'Amiri',serif", minWidth: 24 }}>
                             {toAr(ayah.numberInSurah)}
                           </span>
-                          <div className="flex gap-1 flex-wrap" style={{ direction: "rtl" }}>
+                          <div className="flex-1 flex gap-1.5 flex-wrap justify-end" style={{ direction: "rtl" }}>
                             {ayah.text.replace(/﴿[^﴾]*﴾/g,"").split(/\s+/).filter(Boolean).map((_: string, wi: number) => (
-                              <span key={wi} className="inline-block rounded"
-                                style={{ width: `${Math.min(5 + Math.random() * 4, 8)}ch`, height: "1em", background: "#1a3025", opacity: 0.5 }} />
+                              <span key={wi} className="inline-block rounded-md"
+                                style={{ width: "3ch", height: "0.9em", background: "#2a4a35", opacity: 0.7 }} />
                             ))}
                           </div>
                         </div>
@@ -2172,9 +2175,6 @@ export default function QuranRevisionHub({ userId }: Props) {
     );
   }
 
-  // ════════════════════════════════════════════════════════
-  //  EXERCISE — Voice-based recitation completion
-  // ════════════════════════════════════════════════════════
   if (stage === "exercise") {
     const q        = exercises[exIdx];
     const progress = Math.round((exAnswered / Math.max(1, exercises.length)) * 100);
@@ -2186,7 +2186,6 @@ export default function QuranRevisionHub({ userId }: Props) {
         <style>{globalCSS}</style>
         <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
-        {/* Header */}
         <div className="flex-none px-4 py-3 border-b" style={{ borderColor: GOLD + "33", background: "#0a0f18" }}>
           <div className="flex items-center gap-2 mb-2">
             <Target size={14} style={{ color: GOLD }} />
@@ -2206,8 +2205,6 @@ export default function QuranRevisionHub({ userId }: Props) {
 
         {q ? (
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 qr-fadein">
-
-            {/* Question label */}
             <div className="flex items-center gap-2">
               <span className="text-xs font-black px-2.5 py-1 rounded-full"
                 style={{
@@ -2219,7 +2216,6 @@ export default function QuranRevisionHub({ userId }: Props) {
               <span className="text-xs" style={{ color: "#4a6d58" }}>Q{exIdx + 1}</span>
             </div>
 
-            {/* Verse beginning */}
             <div className="rounded-2xl overflow-hidden" style={{ border: `2px solid ${GOLD}44` }}>
               <div className="px-4 py-2 border-b" style={{ background: GOLD + "15", borderColor: GOLD + "33" }}>
                 <p className="text-[10px] font-bold" style={{ color: GOLD }}>
@@ -2248,7 +2244,6 @@ export default function QuranRevisionHub({ userId }: Props) {
               </div>
             </div>
 
-            {/* Instruction */}
             {!q.answered && !exRecording && !exEvaluating && (
               <div className="rounded-xl px-4 py-3 text-center" style={{ background: "#1a3025", border: `1px solid ${GOLD}22` }}>
                 <p className="text-sm font-bold" style={{ color: GOLD }}>Complete the verse above</p>
@@ -2258,7 +2253,6 @@ export default function QuranRevisionHub({ userId }: Props) {
               </div>
             )}
 
-            {/* Listen */}
             {!q.answered && (
               <button onClick={() => playAyah(q.ayah)}
                 className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold qr-btn"
@@ -2267,7 +2261,6 @@ export default function QuranRevisionHub({ userId }: Props) {
               </button>
             )}
 
-            {/* Recording / evaluating */}
             {!q.answered && (
               exEvaluating ? (
                 <div className="flex flex-col items-center gap-2 py-4">
@@ -2293,7 +2286,6 @@ export default function QuranRevisionHub({ userId }: Props) {
               )
             )}
 
-            {/* Result */}
             {q.answered && exResult && (
               <div className="rounded-2xl p-4 qr-fadein"
                 style={{ background: exSc!.bg, border: `2px solid ${exSc!.border}` }}>
@@ -2305,7 +2297,6 @@ export default function QuranRevisionHub({ userId }: Props) {
                     {exResult.score}% — {exResult.score >= 60 ? "Correct! ما شاء الله 🌟" : "Needs review"}
                   </span>
                 </div>
-
                 <div className="rounded-xl p-3 mt-2" style={{ background: PARCHMENT, border: `1px solid ${GOLD}33` }}>
                   <p className="text-[10px] font-bold mb-1.5" style={{ color: "#8a6030" }}>Correct continuation:</p>
                   <p className="qr-mushaf text-center" style={{ fontSize: fontSize - 4 }}>
@@ -2313,7 +2304,6 @@ export default function QuranRevisionHub({ userId }: Props) {
                     <span style={{ color: "#16a34a", fontWeight: "bold" }}>{q.missingText}</span>
                   </p>
                 </div>
-
                 {exResult.transcript && (
                   <div className="mt-2">
                     <p className="text-[10px] font-bold mb-1" style={{ color: exSc!.text + "99" }}>You said:</p>
@@ -2332,7 +2322,6 @@ export default function QuranRevisionHub({ userId }: Props) {
           </div>
         ) : null}
 
-        {/* Next button */}
         {q?.answered && (
           <div className="flex-none px-4 py-3 border-t" style={{ borderColor: GOLD + "33" }}>
             <button onClick={nextExercise}
@@ -2348,9 +2337,6 @@ export default function QuranRevisionHub({ userId }: Props) {
     );
   }
 
-  // ════════════════════════════════════════════════════════
-  //  COMPLETE
-  // ════════════════════════════════════════════════════════
   if (stage === "complete") {
     const stats      = finalStats;
     const sc         = stats ? scoreColor(stats.score) : scoreColor(0);
@@ -2360,9 +2346,7 @@ export default function QuranRevisionHub({ userId }: Props) {
     return (
       <div className="h-full overflow-y-auto qr-geo" style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
         <style>{globalCSS}</style>
-
         <div className="px-4 pt-10 pb-10 space-y-4 qr-fadein">
-
           <div className="text-center space-y-2">
             <div className="text-5xl qr-bounce">{isPlanDone ? "🏆" : "⭐"}</div>
             <h2 className="font-black text-lg" style={{ color: GOLD }}>
