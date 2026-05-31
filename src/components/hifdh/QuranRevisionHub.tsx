@@ -2137,39 +2137,36 @@ export default function QuranRevisionHub({ userId }: Props) {
                 style={{ background: remSc!.bg, border: `2px solid ${remSc!.border}` }}>
                 <div className="flex items-center gap-2 mb-2">
                   {remResult.score >= 70
-                    ? <CheckCircle2 size={16} color={remResult.score >= 70
-                      ? <CheckCircle2 size={16} color={remSc!.text} />
-                      : <XCircle size={16} color={remSc!.text} />}
-                    <span className="font-black text-xs" style={{ color: remSc!.text }}>
-                      {remResult.score}% — {remResult.score >= 70 ? "Mastered! ما شاء الله" : "Keep practising"}
-                    </span>
-                  </div>
-                  {remResult.words && (
-                    <div className="mt-2 flex flex-wrap gap-1 justify-end" style={{ direction: "rtl" }}>
-                      {remResult.words.map((w, wi) => (
-                        <span key={wi} className="text-xs px-1 rounded"
-                          style={{
-                            fontFamily: "'Amiri Quran','Amiri',serif",
-                            color: w.status === "correct" ? "#16a34a" : "#dc2626",
-                            background: w.status === "correct" ? "#16a34a15" : "#dc262615",
-                          }}>
-                          {w.word}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                    ? <CheckCircle2 size={16} color={remSc!.text} />
+                    : <AlertTriangle size={16} color={remSc!.text} />}
+                  <span className="text-sm font-black" style={{ color: remSc!.text }}>
+                    {remResult.score}% —{" "}
+                    {remResult.score >= 70 ? "Mastered! 🌟" : remResult.score >= 50 ? "Getting there 💪" : "Try again 🔄"}
+                  </span>
                 </div>
-              )}
+                {remResult.transcript && (
+                  <p className="text-xs qr-arabic leading-relaxed mt-1"
+                    style={{ fontFamily: "'Amiri',serif", direction: "rtl", color: remSc!.text + "cc", lineHeight: 2 }}>
+                    {remResult.transcript}
+                  </p>
+                )}
+                {!remResult.transcript && (
+                  <p className="text-xs" style={{ color: remSc!.text + "aa" }}>
+                    Transcription failed — please speak clearly and try again.
+                  </p>
+                )}
+              </div>
+            )}
 
-            </div>
+            {/* Compact action row: Reveal toggle · Listen · Record */}
+            <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
 
-            {/* Action pills */}
-            <div className="flex gap-2 mt-2">
               {/* Reveal / Hide pill */}
               <button onClick={() => setRevealVerse(v => !v)}
                 className="qr-btn flex flex-col items-center justify-center gap-1 rounded-2xl font-bold"
                 style={{ flex: 1, padding: "12px 8px", fontSize: 10,
-                  background: "#1a3d24", color: "#c9a84c",
+                  background: revealVerse ? "#f59e0b22" : "#f59e0b",
+                  color: revealVerse ? "#92400e" : "#78350f",
                   border: "1.5px solid #f59e0b66" }}>
                 {revealVerse ? <EyeOff size={18} /> : <Eye size={18} />}
                 {revealVerse ? "Hide" : "Reveal"}
@@ -2247,6 +2244,9 @@ export default function QuranRevisionHub({ userId }: Props) {
     );
   }
 
+  // ════════════════════════════════════════════════════════
+  //  EXERCISE — Voice-based recitation completion
+  // ════════════════════════════════════════════════════════
   if (stage === "exercise") {
     const q        = exercises[exIdx];
     const progress = Math.round((exAnswered / Math.max(1, exercises.length)) * 100);
@@ -2258,6 +2258,7 @@ export default function QuranRevisionHub({ userId }: Props) {
         <style>{globalCSS}</style>
         <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
+        {/* Header */}
         <div className="flex-none px-4 py-3 border-b" style={{ borderColor: GOLD + "33", background: "#0a0f18" }}>
           <div className="flex items-center gap-2 mb-2">
             <Target size={14} style={{ color: GOLD }} />
@@ -2277,6 +2278,8 @@ export default function QuranRevisionHub({ userId }: Props) {
 
         {q ? (
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 qr-fadein">
+
+            {/* Question label */}
             <div className="flex items-center gap-2">
               <span className="text-xs font-black px-2.5 py-1 rounded-full"
                 style={{
@@ -2288,6 +2291,7 @@ export default function QuranRevisionHub({ userId }: Props) {
               <span className="text-xs" style={{ color: "#4a6d58" }}>Q{exIdx + 1}</span>
             </div>
 
+            {/* Verse beginning */}
             <div className="rounded-2xl overflow-hidden" style={{ border: `2px solid ${GOLD}44` }}>
               <div className="px-4 py-2 border-b" style={{ background: GOLD + "15", borderColor: GOLD + "33" }}>
                 <p className="text-[10px] font-bold" style={{ color: GOLD }}>
@@ -2316,6 +2320,7 @@ export default function QuranRevisionHub({ userId }: Props) {
               </div>
             </div>
 
+            {/* Instruction */}
             {!q.answered && !exRecording && !exEvaluating && (
               <div className="rounded-xl px-4 py-3 text-center" style={{ background: "#1a3025", border: `1px solid ${GOLD}22` }}>
                 <p className="text-sm font-bold" style={{ color: GOLD }}>Complete the verse above</p>
@@ -2325,6 +2330,7 @@ export default function QuranRevisionHub({ userId }: Props) {
               </div>
             )}
 
+            {/* Listen to the verse beginning */}
             {!q.answered && (
               <button onClick={() => playAyah(q.ayah)}
                 className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold qr-btn"
@@ -2333,6 +2339,7 @@ export default function QuranRevisionHub({ userId }: Props) {
               </button>
             )}
 
+            {/* Recording / evaluating */}
             {!q.answered && (
               exEvaluating ? (
                 <div className="flex flex-col items-center gap-2 py-4">
@@ -2358,6 +2365,7 @@ export default function QuranRevisionHub({ userId }: Props) {
               )
             )}
 
+            {/* Result */}
             {q.answered && exResult && (
               <div className="rounded-2xl p-4 qr-fadein"
                 style={{ background: exSc!.bg, border: `2px solid ${exSc!.border}` }}>
@@ -2369,6 +2377,8 @@ export default function QuranRevisionHub({ userId }: Props) {
                     {exResult.score}% — {exResult.score >= 60 ? "Correct! ما شاء الله 🌟" : "Needs review"}
                   </span>
                 </div>
+
+                {/* Correct answer reveal */}
                 <div className="rounded-xl p-3 mt-2" style={{ background: PARCHMENT, border: `1px solid ${GOLD}33` }}>
                   <p className="text-[10px] font-bold mb-1.5" style={{ color: "#8a6030" }}>Correct continuation:</p>
                   <p className="qr-mushaf text-center" style={{ fontSize: fontSize - 4 }}>
@@ -2376,6 +2386,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                     <span style={{ color: "#16a34a", fontWeight: "bold" }}>{q.missingText}</span>
                   </p>
                 </div>
+
                 {exResult.transcript && (
                   <div className="mt-2">
                     <p className="text-[10px] font-bold mb-1" style={{ color: exSc!.text + "99" }}>You said:</p>
@@ -2394,6 +2405,7 @@ export default function QuranRevisionHub({ userId }: Props) {
           </div>
         ) : null}
 
+        {/* Next button */}
         {q?.answered && (
           <div className="flex-none px-4 py-3 border-t" style={{ borderColor: GOLD + "33" }}>
             <button onClick={nextExercise}
@@ -2409,16 +2421,21 @@ export default function QuranRevisionHub({ userId }: Props) {
     );
   }
 
+  // ════════════════════════════════════════════════════════
+  //  COMPLETE
+  // ════════════════════════════════════════════════════════
   if (stage === "complete") {
-    const stats      = finalStats;
-    const sc         = stats ? scoreColor(stats.score) : scoreColor(0);
-    const excSc      = stats ? scoreColor(stats.exerciseScore) : scoreColor(0);
+    const stats     = finalStats;
+    const sc        = stats ? scoreColor(stats.score) : scoreColor(0);
+    const excSc     = stats ? scoreColor(stats.exerciseScore) : scoreColor(0);
     const isPlanDone = plan ? plan.currentIdx >= plan.allPages.length - 1 : false;
 
     return (
       <div className="h-full overflow-y-auto qr-geo" style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
         <style>{globalCSS}</style>
+
         <div className="px-4 pt-10 pb-10 space-y-4 qr-fadein">
+
           <div className="text-center space-y-2">
             <div className="text-5xl qr-bounce">{isPlanDone ? "🏆" : "⭐"}</div>
             <h2 className="font-black text-lg" style={{ color: GOLD }}>
@@ -2459,14 +2476,13 @@ export default function QuranRevisionHub({ userId }: Props) {
 
           {!isPlanDone ? (
             <>
+              {/* Attempts progress — 3 required */}
               <div style={{ borderRadius: 14, padding: "12px 14px",
                 background: recitationAttempts >= 3 ? "#16a34a18" : "#ffffff08",
                 border: `1px solid ${recitationAttempts >= 3 ? "#16a34a44" : GOLD + "22"}` }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
                   <span style={{ fontSize: 11, fontWeight: 800, color: recitationAttempts >= 3 ? "#16a34a" : GOLD }}>
-                    {recitationAttempts >= 3
-                      ? "✅ 3 attempts complete — ready!"
-                      : `Attempt ${recitationAttempts}/3 — revise ${3 - recitationAttempts} more time${3 - recitationAttempts !== 1 ? "s" : ""}`}
+                    {recitationAttempts >= 3 ? "✅ 3 attempts complete — ready!" : `Attempt ${recitationAttempts}/3 — revise ${3 - recitationAttempts} more time${3 - recitationAttempts !== 1 ? "s" : ""}`}
                   </span>
                   <span style={{ fontSize: 10, color: "#7aad90" }}>{recitationAttempts}/3</span>
                 </div>
