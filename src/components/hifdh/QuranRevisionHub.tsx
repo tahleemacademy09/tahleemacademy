@@ -740,10 +740,15 @@ export default function QuranRevisionHub({ userId }: Props) {
     const ayahs: any[] = pageDataRef.current?.ayahs ?? [];
     if (!ayahs.length) return startPageRecording();
     try {
-      // Reset live state
       liveAccumRef.current = "";
       liveChunkRef.current = null;
-      setLiveVerseResults(new Array(ayahs.length).fill(null));
+      // Start with all verses in "unrevealed" state — each word hidden
+      const initial = ayahs.map((ayah: any) => ({
+        words: ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean)
+          .map((w: string) => ({ word: w, status: "hidden" as const })),
+        pct: 0,
+      }));
+      setLiveVerseResults(initial as any);
       setLiveCurrentVerseIdx(0);
       setRecording(true);
       setPageVisible(false);
@@ -755,20 +760,20 @@ export default function QuranRevisionHub({ userId }: Props) {
         .find(t => MediaRecorder.isTypeSupported(t));
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       recChunksRef.current = [];
-
-      // We accumulate ALL chunks so each Groq call gets the full audio so far.
-      // This gives Whisper more context and avoids losing words between chunks.
       const allChunks: Blob[] = [];
+      // Track which verse we expect next — enforces sequential reveal
+      let currentVersePtr = 0;
+      // Track consumed transcript position to avoid re-matching old words
+      let consumedWords = 0;
 
       mr.ondataavailable = async (e) => {
         if (!e.data?.size) return;
-        recChunksRef.current.push(e.data); // for final evaluation
+        recChunksRef.current.push(e.data);
         allChunks.push(e.data);
 
         const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
         if (!groqKey) return;
 
-        // Send cumulative audio (all chunks so far) so Whisper sees full context
         const ext = (mime ?? "").includes("mp4") ? "mp4" : (mime ?? "").includes("ogg") ? "ogg" : "webm";
         const cumulBlob = new Blob(allChunks, { type: mime || "audio/webm" });
 
@@ -787,34 +792,95 @@ export default function QuranRevisionHub({ userId }: Props) {
           });
           if (!r.ok) return;
           const json = await r.json();
-
-          // Average no_speech across all segments for better silence detection
-          const segs: any[] = json.segments ?? [];
-          const avgNoSpeech = segs.length
-            ? segs.reduce((s: number, g: any) => s + (g.no_speech_prob ?? 0), 0) / segs.length
-            : 0;
           const newText = (json.text ?? "").trim();
-          if (avgNoSpeech >= 0.7 || newText.length < 2) return;
+          if (newText.length < 2) return;
 
-          // Always take the latest cumulative transcript (it's always the longest/best)
-          liveAccumRef.current = newText;
-          const accumulated = newText;
+          // Split full transcript into normalised words
+          const allTransWords = normalizeArabic(newText).split(/\s+/).filter(Boolean);
+          // Only look at words we haven't consumed yet
+          const freshWords = allTransWords.slice(consumedWords);
+          if (!freshWords.length) return;
 
-          // Score every ayah against the full accumulated transcript.
-          // Reveal threshold = 15% — very low so verses appear quickly.
-          // The word colouring (green/red) handles accuracy display.
-          const newResults = ayahs.map((ayah: any, idx: number) => {
-            const result = compareWords(ayah.text, accumulated);
-            const correctCount = result.filter((w: WordResult) => w.status === "correct").length;
-            const pct = correctCount / Math.max(1, result.length);
-            if (pct >= 0.15) {
-              setLiveCurrentVerseIdx(i => Math.max(i, idx));
-              return result;
+          // Work through verses sequentially from currentVersePtr
+          setLiveVerseResults((prev: any) => {
+            const next = [...prev];
+            let freshPtr = 0;
+
+            for (let vi = currentVersePtr; vi < ayahs.length; vi++) {
+              const ayah = ayahs[vi];
+              const refWords = ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean);
+              const normRef = refWords.map((w: string) => normalizeArabic(w));
+
+              // Get current state for this verse
+              const cur = next[vi] as any;
+              const alreadyCorrect = cur.words.filter((w: any) => w.status === "correct").length;
+
+              // Try to match fresh transcript words against this verse's words
+              // using LCS on just the remaining ref words
+              const remainingRefIdxs = normRef
+                .map((w: string, i: number) => ({ w, i }))
+                .filter(({ i }: { w: string; i: number }) => cur.words[i].status !== "correct");
+
+              if (!remainingRefIdxs.length) {
+                // Verse fully matched — advance pointer and consume those words
+                if (vi === currentVersePtr) {
+                  consumedWords += freshPtr;
+                  currentVersePtr++;
+                }
+                continue;
+              }
+
+              // Match fresh words against remaining ref words
+              const freshSlice = freshWords.slice(freshPtr);
+              let matched = 0;
+              const newlyMatched = new Set<number>();
+
+              // Simple sequential scan: for each remaining ref word, find it in fresh slice
+              let fp = 0;
+              for (const { w: rw, i: ri } of remainingRefIdxs) {
+                for (let fi = fp; fi < Math.min(freshSlice.length, fp + 12); fi++) {
+                  if (wordsMatch(rw, freshSlice[fi])) {
+                    newlyMatched.add(ri);
+                    fp = fi + 1;
+                    matched++;
+                    break;
+                  }
+                }
+              }
+
+              if (matched > 0) {
+                // Reveal matched words
+                const updatedWords = cur.words.map((w: any, i: number) =>
+                  newlyMatched.has(i) ? { ...w, status: "correct" }
+                  : w.status === "correct" ? w
+                  : w
+                );
+                const correctCount = updatedWords.filter((w: any) => w.status === "correct").length;
+                const pct = Math.round(correctCount / Math.max(1, refWords.length) * 100);
+                next[vi] = { words: updatedWords, pct };
+
+                // Advance fresh pointer
+                freshPtr = fp;
+
+                // If verse is >= 70% done, advance to next verse
+                if (pct >= 70 && vi === currentVersePtr) {
+                  // Mark remaining words as "missed" then move on
+                  const finalWords = updatedWords.map((w: any) =>
+                    w.status === "hidden" ? { ...w, status: "missing" } : w
+                  );
+                  next[vi] = { words: finalWords, pct };
+                  consumedWords += freshPtr;
+                  currentVersePtr++;
+                  setLiveCurrentVerseIdx(currentVersePtr);
+                }
+              }
+
+              // Only process one verse at a time per chunk
+              break;
             }
-            return null;
+            return next;
           });
-          setLiveVerseResults(newResults);
-        } catch { /* silent — next chunk will retry */ }
+        } catch { /* silent */ }
       };
 
       mr.onstop = () => {
@@ -824,7 +890,7 @@ export default function QuranRevisionHub({ userId }: Props) {
         if (blob.size > 500) runPageEvaluation(blob);
       };
 
-      mr.start(2000); // 2-second chunks — fast enough to feel live
+      mr.start(2000);
       mediaRecRef.current = mr;
       liveMediaRef.current = mr;
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
@@ -1503,7 +1569,7 @@ export default function QuranRevisionHub({ userId }: Props) {
           {/* ── FIX 3: LIVE TARTEEL-STYLE RECORDING SCREEN ── */}
           {recording && (() => {
             const ayahs: any[] = pageDataRef.current?.ayahs ?? [];
-            const revealedCount = liveVerseResults.filter(r => r !== null).length;
+            const revealedCount = (liveVerseResults as any[]).filter((r: any) => r?.pct > 0).length;
             return (
               <div className="absolute inset-0 z-20 flex flex-col overflow-hidden"
                 style={{ background: "linear-gradient(160deg,#050f08 0%,#0a0e0b 100%)" }}>
@@ -1546,82 +1612,85 @@ export default function QuranRevisionHub({ userId }: Props) {
                   )}
 
                   {ayahs.map((ayah: any, idx: number) => {
-                    const result = liveVerseResults[idx];
-                    const isRevealed = result !== null;
-                    const isNext = !isRevealed && idx === liveCurrentVerseIdx + 1;
+                    const verseState = liveVerseResults[idx] as any;
+                    const words: { word: string; status: string }[] = verseState?.words ?? [];
+                    const pct: number = verseState?.pct ?? 0;
+                    const isActive = idx === liveCurrentVerseIdx;
+                    const isPast = idx < liveCurrentVerseIdx;
+                    const isFuture = idx > liveCurrentVerseIdx;
+                    const hasAnyRevealed = words.some(w => w.status === "correct" || w.status === "missing");
 
-                    if (!isRevealed && !isNext) {
-                      // Show placeholder for verses not yet reached
-                      return (
-                        <div key={ayah.number} className="rounded-xl px-4 py-3 flex items-center gap-3"
-                          style={{ background: "#0e1e14", border: `1px solid ${GOLD}22` }}>
-                          <span className="text-xs font-black flex-shrink-0"
-                            style={{ color: GOLD + "55", fontFamily: "'Amiri',serif", minWidth: 24 }}>
-                            {toAr(ayah.numberInSurah)}
-                          </span>
-                          <div className="flex-1 flex gap-1.5 flex-wrap justify-end" style={{ direction: "rtl" }}>
-                            {ayah.text.replace(/﴿[^﴾]*﴾/g,"").split(/\s+/).filter(Boolean).map((_: string, wi: number) => (
-                              <span key={wi} className="inline-block rounded-md"
-                                style={{ width: "3ch", height: "0.9em", background: "#2a4a35", opacity: 0.7 }} />
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    }
+                    // Border colour only for past/completed verses
+                    const borderCol = isPast
+                      ? (pct >= 80 ? "#16a34a" : pct >= 50 ? "#ca8a04" : "#dc2626")
+                      : isActive ? GOLD : GOLD + "22";
 
-                    if (isNext) {
-                      // Highlight the upcoming verse dimly to guide the student
-                      return (
-                        <div key={ayah.number} className="rounded-xl px-4 py-3"
-                          style={{ background: "#0e1e14", border: `1px dashed ${GOLD}44` }}>
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-[9px] font-bold" style={{ color: GOLD + "77" }}>
-                              ↓ Recite next آية {toAr(ayah.numberInSurah)}
-                            </span>
-                          </div>
-                          <p className="text-right leading-loose"
-                            style={{ fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 18, color: GOLD + "55", direction: "rtl", filter: "blur(3px)" }}>
-                            {ayah.text.replace(/﴿[^﴾]*﴾/g,"")}
-                          </p>
-                        </div>
-                      );
-                    }
-
-                    // Revealed — show word-by-word green/red
-                    const correctCount = result!.filter(w => w.status === "correct").length;
-                    const pct = Math.round(correctCount / Math.max(1, result!.length) * 100);
-                    const borderCol = pct >= 80 ? "#16a34a" : pct >= 50 ? "#ca8a04" : "#dc2626";
                     return (
-                      <div key={ayah.number} className="rounded-xl overflow-hidden qr-fadein"
-                        style={{ border: `2px solid ${borderCol}`, boxShadow: `0 2px 12px ${borderCol}22` }}>
-                        <div className="flex items-center justify-between px-3 py-1.5"
-                          style={{ background: borderCol + "22" }}>
-                          <span className="text-[10px] font-black" style={{ color: borderCol }}>
-                            آية {toAr(ayah.numberInSurah)}
-                          </span>
-                          <span className="text-[10px] font-black" style={{ color: borderCol }}>
-                            {pct}%
-                          </span>
-                        </div>
+                      <div key={ayah.number}
+                        className={hasAnyRevealed ? "qr-fadein" : ""}
+                        style={{
+                          borderRadius: 14,
+                          overflow: "hidden",
+                          border: `2px solid ${borderCol}`,
+                          boxShadow: isActive ? `0 0 16px ${GOLD}33` : "none",
+                          transition: "border-color 0.4s, box-shadow 0.4s",
+                        }}>
+                        {/* Verse header — only show score on past verses */}
+                        {(isPast || isActive) && (
+                          <div className="flex items-center justify-between px-3 py-1"
+                            style={{ background: borderCol + "22" }}>
+                            <span className="text-[10px] font-black" style={{ color: borderCol }}>
+                              آية {toAr(ayah.numberInSurah)}
+                            </span>
+                            {isPast && (
+                              <span className="text-[10px] font-black" style={{ color: borderCol }}>
+                                {pct}%
+                              </span>
+                            )}
+                            {isActive && (
+                              <span className="text-[9px] font-bold animate-pulse" style={{ color: GOLD }}>
+                                ● reciting
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Verse body */}
                         <div className="px-4 py-3" style={{ background: PARCHMENT }}>
                           <p className="text-right leading-loose"
                             style={{ fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 20, direction: "rtl" }}>
-                            {result!.map((w, wi) => (
-                              <span key={wi}
-                                style={{
-                                  color: w.status === "correct" ? "#16a34a" : "#dc2626",
-                                  background: w.status === "correct" ? "transparent" : "#fef2f2",
-                                  borderRadius: w.status === "correct" ? 0 : 3,
-                                  padding: w.status === "correct" ? 0 : "0 2px",
-                                  borderBottom: w.status === "correct" ? "none" : "2px solid #dc262655",
-                                  marginRight: "0.2em",
-                                }}>
-                                {w.word}
+                            {isFuture ? (
+                              // Future verses: blurred/hidden
+                              <span style={{ filter: "blur(4px)", opacity: 0.3, userSelect: "none" }}>
+                                {ayah.text.replace(/﴿[^﴾]*﴾/g, "")}
                               </span>
-                            ))}{" "}
-                            <span style={{ color: GOLD, fontSize: "0.6em", fontFamily: "'Amiri',serif" }}>
-                              ۝{toAr(ayah.numberInSurah)}
-                            </span>
+                            ) : words.length === 0 ? (
+                              // Active but no words matched yet — show blurred
+                              <span style={{ filter: "blur(4px)", opacity: 0.4, userSelect: "none" }}>
+                                {ayah.text.replace(/﴿[^﴾]*﴾/g, "")}
+                              </span>
+                            ) : (
+                              // Active or past: show word by word
+                              <>
+                                {words.map((w, wi) => (
+                                  <span key={wi} style={{
+                                    color: w.status === "correct"
+                                      ? "#16a34a"
+                                      : w.status === "missing"
+                                      ? "#dc2626"
+                                      : "#1a1a1a", // hidden = normal colour, not blurred
+                                    borderBottom: w.status === "missing" ? "2px solid #dc262666" : "none",
+                                    marginRight: "0.15em",
+                                    transition: "color 0.3s",
+                                  }}>
+                                    {w.word}{" "}
+                                  </span>
+                                ))}
+                                <span style={{ color: GOLD, fontSize: "0.6em", fontFamily: "'Amiri',serif" }}>
+                                  ۝{toAr(ayah.numberInSurah)}
+                                </span>
+                              </>
+                            )}
                           </p>
                         </div>
                       </div>
@@ -2068,36 +2137,39 @@ export default function QuranRevisionHub({ userId }: Props) {
                 style={{ background: remSc!.bg, border: `2px solid ${remSc!.border}` }}>
                 <div className="flex items-center gap-2 mb-2">
                   {remResult.score >= 70
-                    ? <CheckCircle2 size={16} color={remSc!.text} />
-                    : <AlertTriangle size={16} color={remSc!.text} />}
-                  <span className="text-sm font-black" style={{ color: remSc!.text }}>
-                    {remResult.score}% —{" "}
-                    {remResult.score >= 70 ? "Mastered! 🌟" : remResult.score >= 50 ? "Getting there 💪" : "Try again 🔄"}
-                  </span>
+                    ? <CheckCircle2 size={16} color={remResult.score >= 70
+                      ? <CheckCircle2 size={16} color={remSc!.text} />
+                      : <XCircle size={16} color={remSc!.text} />}
+                    <span className="font-black text-xs" style={{ color: remSc!.text }}>
+                      {remResult.score}% — {remResult.score >= 70 ? "Mastered! ما شاء الله" : "Keep practising"}
+                    </span>
+                  </div>
+                  {remResult.words && (
+                    <div className="mt-2 flex flex-wrap gap-1 justify-end" style={{ direction: "rtl" }}>
+                      {remResult.words.map((w, wi) => (
+                        <span key={wi} className="text-xs px-1 rounded"
+                          style={{
+                            fontFamily: "'Amiri Quran','Amiri',serif",
+                            color: w.status === "correct" ? "#16a34a" : "#dc2626",
+                            background: w.status === "correct" ? "#16a34a15" : "#dc262615",
+                          }}>
+                          {w.word}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                {remResult.transcript && (
-                  <p className="text-xs qr-arabic leading-relaxed mt-1"
-                    style={{ fontFamily: "'Amiri',serif", direction: "rtl", color: remSc!.text + "cc", lineHeight: 2 }}>
-                    {remResult.transcript}
-                  </p>
-                )}
-                {!remResult.transcript && (
-                  <p className="text-xs" style={{ color: remSc!.text + "aa" }}>
-                    Transcription failed — please speak clearly and try again.
-                  </p>
-                )}
-              </div>
-            )}
+              )}
 
-            {/* Compact action row: Reveal toggle · Listen · Record */}
-            <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+            </div>
 
+            {/* Action pills */}
+            <div className="flex gap-2 mt-2">
               {/* Reveal / Hide pill */}
               <button onClick={() => setRevealVerse(v => !v)}
                 className="qr-btn flex flex-col items-center justify-center gap-1 rounded-2xl font-bold"
                 style={{ flex: 1, padding: "12px 8px", fontSize: 10,
-                  background: revealVerse ? "#f59e0b22" : "#f59e0b",
-                  color: revealVerse ? "#92400e" : "#78350f",
+                  background: "#1a3d24", color: "#c9a84c",
                   border: "1.5px solid #f59e0b66" }}>
                 {revealVerse ? <EyeOff size={18} /> : <Eye size={18} />}
                 {revealVerse ? "Hide" : "Reveal"}
