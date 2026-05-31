@@ -248,21 +248,29 @@ function PrivateTimetable({ profile, navigate }: any) {
 
       if (!slots?.length) return [];
 
-      // Attach teacher names
-      const teacherIds = [...new Set(slots.map((s: any) => s.teacher_id).filter(Boolean))];
+      // Attach teacher names — support both teacher_ids[] and legacy teacher_id
+      const allTeacherIds = [...new Set(slots.flatMap((s: any) => {
+        const ids: string[] = [];
+        if (Array.isArray(s.teacher_ids) && s.teacher_ids.length) ids.push(...s.teacher_ids);
+        else if (s.teacher_id) ids.push(s.teacher_id);
+        return ids;
+      }).filter(Boolean))];
       let teacherMap: Record<string, string> = {};
-      if (teacherIds.length) {
+      if (allTeacherIds.length) {
         const { data: teachers } = await supabase
           .from("profiles")
           .select("user_id, full_name")
-          .in("user_id", teacherIds as string[]);
+          .in("user_id", allTeacherIds as string[]);
         (teachers || []).forEach((t: any) => { teacherMap[t.user_id] = t.full_name; });
       }
 
-      return slots.map((s: any) => ({
-        ...s,
-        teacher: s.teacher_id ? { full_name: teacherMap[s.teacher_id] || null } : null,
-      }));
+      return slots.map((s: any) => {
+        const ids: string[] = Array.isArray(s.teacher_ids) && s.teacher_ids.length
+          ? s.teacher_ids
+          : s.teacher_id ? [s.teacher_id] : [];
+        const names = ids.map((id: string) => teacherMap[id]).filter(Boolean);
+        return { ...s, teacher: names.length ? { full_name: names.join(", ") } : null };
+      });
     },
     enabled: !!profile?.user_id,
   });
@@ -408,20 +416,28 @@ function GeneralTimetable({ profile, hasRole, t, language, navigate, showBanner 
         .eq("is_active", true).order("day_of_week").order("start_time");
       if (error || !slots?.length) return [];
 
-      const teacherIds = [...new Set(slots.map((s: any) => s.teacher_id).filter(Boolean))];
+      const allTIds = [...new Set(slots.flatMap((s: any) => {
+        const ids: string[] = [];
+        if (Array.isArray(s.teacher_ids) && s.teacher_ids.length) ids.push(...s.teacher_ids);
+        else if (s.teacher_id) ids.push(s.teacher_id);
+        return ids;
+      }).filter(Boolean))];
       let teacherMap: Record<string, string> = {};
-      if (teacherIds.length) {
+      if (allTIds.length) {
         const { data: teachers } = await supabase
           .from("profiles")
           .select("user_id, full_name")
-          .in("user_id", teacherIds as string[]);
+          .in("user_id", allTIds as string[]);
         (teachers || []).forEach((t: any) => { teacherMap[t.user_id] = t.full_name; });
       }
 
-      return slots.map((s: any) => ({
-        ...s,
-        teacher: s.teacher_id ? { full_name: teacherMap[s.teacher_id] || null } : null,
-      }));
+      return slots.map((s: any) => {
+        const ids: string[] = Array.isArray(s.teacher_ids) && s.teacher_ids.length
+          ? s.teacher_ids
+          : s.teacher_id ? [s.teacher_id] : [];
+        const names = ids.map((id: string) => teacherMap[id]).filter(Boolean);
+        return { ...s, teacher: names.length ? { full_name: names.join(", ") } : null };
+      });
     },
   });
 
