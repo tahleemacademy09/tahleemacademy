@@ -827,35 +827,41 @@ export default function QuranRevisionHub({ userId }: Props) {
       recChunksRef.current = [];
       mediaRecRef.current = mr;
 
-      // ── Groq polling — every 800ms on a setInterval ──────────────────
-      // We keep the FULL cumulative audio and send it each time.
-      // Groq returns the full transcript; we only process words beyond
-      // what we've already matched (tracked by groqWordsDone).
+      // ── Strategy: send CUMULATIVE audio on every chunk ─────────────
+      // Each time MediaRecorder fires (every 800ms), we send the FULL
+      // audio so far to Groq. Groq transcribes from the start each time,
+      // so we only process words BEYOND what we already matched.
+      // whisper-large-v3-turbo: same accuracy, ~2x faster latency.
+      // Multiple in-flight calls are fine — we deduplicate by word count.
       const allAudioChunks: Blob[] = [];
-      let groqWordsDone = 0;
-      let groqRunning = false;
+      let groqWordsDone = 0;           // words already fed into matchWords
+      let inFlight = 0;                // concurrent Groq calls allowed (max 2)
 
-      const runGroq = async () => {
-        if (groqRunning || allAudioChunks.length === 0) return;
+      const sendToGroq = async (audioBlob: Blob) => {
         const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
-        if (!groqKey) return;
-        groqRunning = true;
+        if (!groqKey || inFlight >= 2) return;
+        inFlight++;
         const ext = (mime??"").includes("mp4")?"mp4":(mime??"").includes("ogg")?"ogg":"webm";
-        const blob = new Blob(allAudioChunks, { type: mime||"audio/webm" });
         try {
           const fd = new FormData();
-          fd.append("file", new File([blob], `q.${ext}`, { type: mime||"audio/webm" }));
-          fd.append("model", "whisper-large-v3");
+          fd.append("file", new File([audioBlob], `q.${ext}`, { type: mime||"audio/webm" }));
+          // turbo: 216M params, ~2x faster than large-v3, same WER on Arabic
+          fd.append("model", "whisper-large-v3-turbo");
           fd.append("language", "ar");
           fd.append("response_format", "json");
           fd.append("temperature", "0");
-          fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ");
+          // DO NOT use the verse text as prompt — Whisper will hallucinate it.
+          // Use bismillah to set Arabic Quranic script style only.
+          fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ");
           const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-            method:"POST", headers:{ Authorization:`Bearer ${groqKey}` }, body:fd
+            method: "POST",
+            headers: { Authorization: `Bearer ${groqKey}` },
+            body: fd,
           });
           if (r.ok) {
             const { text } = await r.json();
             const words = (text||"").trim().split(/\s+/).filter(Boolean);
+            // Only process words we haven't matched yet
             const fresh = words.slice(groqWordsDone);
             if (fresh.length > 0) {
               matchWords(fresh);
@@ -863,30 +869,29 @@ export default function QuranRevisionHub({ userId }: Props) {
             }
           }
         } catch {}
-        groqRunning = false;
+        inFlight--;
       };
 
-      // Collect audio chunks from MediaRecorder
+      // Collect chunks and fire Groq immediately on each one
       mr.ondataavailable = (e) => {
-        if (e.data?.size) {
-          recChunksRef.current.push(e.data);
-          allAudioChunks.push(e.data);
-        }
+        if (!e.data?.size) return;
+        recChunksRef.current.push(e.data);
+        allAudioChunks.push(e.data);
+        // Send cumulative blob — grows by ~800ms of audio each call
+        const cumul = new Blob(allAudioChunks, { type: mime||"audio/webm" });
+        sendToGroq(cumul); // fire and forget — inFlight cap prevents pile-up
       };
-
-      // Poll Groq every 800ms — fast enough to feel responsive
-      const groqInterval = setInterval(runGroq, 800);
 
       mr.onstop = () => {
-        clearInterval(groqInterval);
         stream.getTracks().forEach(t => t.stop());
         clearInterval(recTimerRef.current);
         const blob = new Blob(recChunksRef.current, { type: mime||"audio/webm" });
         if (blob.size > 500) runPageEvaluation(blob);
       };
 
-      mr.start(400); // 400ms chunks → allAudioChunks grows quickly
-      liveMediaRef.current = { stop: () => { clearInterval(groqInterval); mr.stop(); } };
+      // 800ms chunks: short enough for near-real-time, long enough for Whisper accuracy
+      mr.start(800);
+      liveMediaRef.current = { stop: () => mr.stop() };
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
 
     } catch {
@@ -913,6 +918,36 @@ export default function QuranRevisionHub({ userId }: Props) {
       const transcript = await transcribeAudio(blob, refText);
 
       if (!transcript || transcript.trim().length < 3) {
+        // Fallback: use the live word-match results we already have
+        const liveWs = liveWordStatesRef.current;
+        const ayahsLocal = pageDataRef.current?.ayahs ?? [];
+        const hasliveData = liveWs.length > 0 && liveWs.some(ws => ws.some(s => s === "correct"));
+        if (hasliveData) {
+          // Reconstruct score from live matching
+          const allWords: WordResult[] = [];
+          ayahsLocal.forEach((ayah: any, ai: number) => {
+            const ws = ayah.text.replace(/﴿[^﴾]*﴾/g,"").split(/\s+/).filter(Boolean);
+            ws.forEach((word: string, wi: number) => {
+              allWords.push({ word, status: (liveWs[ai]?.[wi] === "correct" ? "correct" : "missing") as any });
+            });
+          });
+          const correct = allWords.filter(w => w.status === "correct").length;
+          const score = Math.round(correct / Math.max(1, allWords.length) * 100);
+          const fakeTranscript = allWords.filter(w => w.status === "correct").map(w => w.word).join(" ");
+          setEvalResult({ score, words: allWords, transcript: fakeTranscript, feedback: "" });
+          setEvaluating(false);
+          // Still detect errors per ayah
+          const errors: AyahError[] = [];
+          for (const ayah of ayahsLocal) {
+            const ai = ayahsLocal.indexOf(ayah);
+            const ws2 = ayah.text.replace(/﴿[^﴾]*﴾/g,"").split(/\s+/).filter(Boolean);
+            const missing = ws2.filter((_: string, wi: number) => liveWs[ai]?.[wi] !== "correct");
+            if (missing.length >= 2) errors.push({ ayah, missing, mastered: false, remediationScore: 0 });
+          }
+          setAyahErrors(errors);
+          setStage("evaluating");
+          return;
+        }
         setEvalResult({
           score: -1,
           words: [],
@@ -1643,9 +1678,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                                   : "none",
                                 WebkitTextStroke: w.status === "hidden" ? "0px" : "0px",
                                 filter: w.status === "hidden" ? "blur(3.5px)" : "none",
-                                textDecoration: w.status === "missing" ? "underline" : "none",
-                                textDecorationStyle: "wavy" as any,
-                                textDecorationColor: "#dc262677",
+                                textDecoration: "none",
                                 transition: "color 0.12s, filter 0.12s",
                                 display: "inline",
                               }}>
