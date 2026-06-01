@@ -746,113 +746,142 @@ export default function QuranRevisionHub({ userId }: Props) {
     const ayahs: any[] = pageDataRef.current?.ayahs ?? [];
     if (!ayahs.length) return startPageRecording();
     try {
-      // ── Build flat word list ─────────────────────────────────────────
-      const flat: {ai:number; wi:number; norm:string}[] = [];
+      // ── Build flat reference word list for entire page ──────────────
+      const flat: { ai: number; wi: number; norm: string }[] = [];
       const displayWords: string[][] = [];
       ayahs.forEach((ayah: any, ai: number) => {
-        const ws = ayah.text.replace(/﴿[^﴾]*﴾/g,"").split(/\s+/).filter(Boolean);
+        const ws = ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean);
         displayWords.push(ws);
-        ws.forEach((w:string, wi:number) => flat.push({ai, wi, norm: normalizeArabic(w)}));
+        ws.forEach((w: string, wi: number) =>
+          flat.push({ ai, wi, norm: normalizeArabic(w) })
+        );
       });
 
-      // ── Initialise state — all hidden ────────────────────────────────
+      // ── Mutable word status array ───────────────────────────────────
+      // "hidden" | "correct" | "missing"
       const states: string[][] = displayWords.map(ws => ws.map(() => "hidden"));
       liveWordStatesRef.current = states;
       livePageWordsRef.current = flat;
       livePtrRef.current = 0;
       liveAccumRef.current = "";
 
-      // Build initial display
-      const buildDisplay = () =>
-        displayWords.map((ws, ai) => ws.map((word, wi) => ({ word, status: states[ai][wi] })));
+      const pushDisplay = () => {
+        const next = displayWords.map((ws, ai) =>
+          ws.map((word, wi) => ({ word, status: states[ai][wi] }))
+        );
+        setLiveWords(next);
+        const lastActive = next.reduce(
+          (acc: number, ws, i) => ws.some(w => w.status !== "hidden") ? i : acc, 0
+        );
+        setLiveCurrentVerseIdx(lastActive);
+      };
 
-      setLiveWords(buildDisplay());
+      setLiveWords(displayWords.map(ws => ws.map(word => ({ word, status: "hidden" }))));
       setLiveCurrentVerseIdx(0);
       setRecording(true);
       setPageVisible(false);
       setRecTime(0);
       stopAudio();
 
-      // ── Core matching function ───────────────────────────────────────
-      // Takes NEW transcript words (not already processed), matches sequentially
-      const matchWords = (newWords: string[]) => {
-        let changed = false;
-        let tp = 0;
-        let ptr = livePtrRef.current;
+      // ── LCS-based matching against FULL cumulative transcript ────────
+      // Every Groq response gives us the full transcript from t=0.
+      // We run LCS between ALL reference words and ALL transcript words,
+      // mark matched ref words as "correct", unmatched as "missing" only
+      // if the transcript has passed that point (pointer-based safety).
+      // This is the same algorithm as compareWords() but updates live state.
+      let lastTranscript = "";
 
-        while (tp < newWords.length && ptr < flat.length) {
-          const tw = normalizeArabic(newWords[tp]);
-          if (wordsMatch(tw, flat[ptr].norm)) {
-            // Direct match
-            states[flat[ptr].ai][flat[ptr].wi] = "correct";
-            ptr++; tp++; changed = true;
-          } else {
-            // Lookahead: maybe skipped/mispronounced up to 4 words
-            let found = false;
-            for (let look = 1; look <= 4 && ptr + look < flat.length; look++) {
-              if (wordsMatch(tw, flat[ptr + look].norm)) {
-                // Mark skipped as missing
-                for (let s = 0; s < look; s++) {
-                  if (states[flat[ptr+s].ai][flat[ptr+s].wi] === "hidden")
-                    states[flat[ptr+s].ai][flat[ptr+s].wi] = "missing";
-                }
-                states[flat[ptr+look].ai][flat[ptr+look].wi] = "correct";
-                ptr += look + 1; tp++; found = true; changed = true;
-                break;
-              }
-            }
-            if (!found) tp++; // transcript word not matched — skip it
+      const applyTranscript = (fullText: string) => {
+        if (fullText === lastTranscript) return;
+        lastTranscript = fullText;
+
+        const tWords = normalizeArabic(fullText).split(/\s+/).filter(Boolean);
+        if (!tWords.length) return;
+
+        const R = flat.length;
+        const T = tWords.length;
+
+        // Build LCS dp table
+        const dp: number[][] = Array.from({ length: R + 1 }, () =>
+          new Array(T + 1).fill(0)
+        );
+        for (let r = 1; r <= R; r++) {
+          for (let t = 1; t <= T; t++) {
+            dp[r][t] = wordsMatch(flat[r-1].norm, tWords[t-1])
+              ? dp[r-1][t-1] + 1
+              : Math.max(dp[r-1][t], dp[r][t-1]);
           }
         }
 
-        livePtrRef.current = ptr;
-        if (changed) {
-          // Deep-clone so React detects the change
-          const next = displayWords.map((ws, ai) =>
-            ws.map((word, wi) => ({ word, status: states[ai][wi] }))
-          );
-          setLiveWords(next);
-          // Update current verse indicator
-          const lastActive = next.reduce((acc, ws, i) =>
-            ws.some(w => w.status !== "hidden") ? i : acc, 0);
-          setLiveCurrentVerseIdx(lastActive);
+        // Backtrack — find which ref indices are in LCS
+        const matched = new Set<number>();
+        let r = R, t = T;
+        while (r > 0 && t > 0) {
+          if (wordsMatch(flat[r-1].norm, tWords[t-1])) {
+            matched.add(r - 1);
+            r--; t--;
+          } else if (dp[r-1][t] >= dp[r][t-1]) {
+            r--;
+          } else {
+            t--;
+          }
         }
+
+        // Find how far through the page the transcript reaches
+        // = index of the last matched ref word
+        const lastMatchedRef = matched.size
+          ? Math.max(...Array.from(matched))
+          : -1;
+
+        // Update states
+        let changed = false;
+        for (let i = 0; i < R; i++) {
+          const { ai, wi } = flat[i];
+          if (matched.has(i)) {
+            if (states[ai][wi] !== "correct") {
+              states[ai][wi] = "correct";
+              changed = true;
+            }
+          } else if (i <= lastMatchedRef && states[ai][wi] === "hidden") {
+            // Behind the frontier and not matched = missing
+            states[ai][wi] = "missing";
+            changed = true;
+          }
+          // Words ahead of frontier stay hidden
+        }
+
+        if (changed) pushDisplay();
       };
 
-      // ── MediaRecorder — always running for audio capture ────────────
+      // ── MediaRecorder ───────────────────────────────────────────────
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"]
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
         .find(t => MediaRecorder.isTypeSupported(t));
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       recChunksRef.current = [];
       mediaRecRef.current = mr;
 
-      // ── Strategy: send CUMULATIVE audio on every chunk ─────────────
-      // Each time MediaRecorder fires (every 800ms), we send the FULL
-      // audio so far to Groq. Groq transcribes from the start each time,
-      // so we only process words BEYOND what we already matched.
-      // whisper-large-v3-turbo: same accuracy, ~2x faster latency.
-      // Multiple in-flight calls are fine — we deduplicate by word count.
       const allAudioChunks: Blob[] = [];
-      let groqWordsDone = 0;           // words already fed into matchWords
-      let inFlight = 0;                // concurrent Groq calls allowed (max 2)
+      let inFlight = 0;
 
-      const sendToGroq = async (audioBlob: Blob) => {
+      const sendToGroq = async () => {
+        if (inFlight >= 2 || allAudioChunks.length === 0) return;
         const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
-        if (!groqKey || inFlight >= 2) return;
+        if (!groqKey) return;
         inFlight++;
-        const ext = (mime??"").includes("mp4")?"mp4":(mime??"").includes("ogg")?"ogg":"webm";
+        const ext = (mime ?? "").includes("mp4") ? "mp4"
+          : (mime ?? "").includes("ogg") ? "ogg" : "webm";
+        // Snapshot current audio — safe to send while recording continues
+        const snap = new Blob([...allAudioChunks], { type: mime || "audio/webm" });
         try {
           const fd = new FormData();
-          fd.append("file", new File([audioBlob], `q.${ext}`, { type: mime||"audio/webm" }));
-          // turbo: 216M params, ~2x faster than large-v3, same WER on Arabic
+          fd.append("file", new File([snap], `q.${ext}`, { type: mime || "audio/webm" }));
           fd.append("model", "whisper-large-v3-turbo");
           fd.append("language", "ar");
           fd.append("response_format", "json");
           fd.append("temperature", "0");
-          // DO NOT use the verse text as prompt — Whisper will hallucinate it.
-          // Use bismillah to set Arabic Quranic script style only.
-          fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ");
+          // Style prompt only — NEVER use the verse text or Whisper hallucinates it
+          fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ");
           const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
             method: "POST",
             headers: { Authorization: `Bearer ${groqKey}` },
@@ -860,42 +889,35 @@ export default function QuranRevisionHub({ userId }: Props) {
           });
           if (r.ok) {
             const { text } = await r.json();
-            const words = (text||"").trim().split(/\s+/).filter(Boolean);
-            // Only process words we haven't matched yet
-            const fresh = words.slice(groqWordsDone);
-            if (fresh.length > 0) {
-              matchWords(fresh);
-              groqWordsDone = words.length;
-            }
+            const clean = (text || "").trim();
+            if (clean.length > 1) applyTranscript(clean);
           }
         } catch {}
         inFlight--;
       };
 
-      // Collect chunks and fire Groq immediately on each one
       mr.ondataavailable = (e) => {
         if (!e.data?.size) return;
         recChunksRef.current.push(e.data);
         allAudioChunks.push(e.data);
-        // Send cumulative blob — grows by ~800ms of audio each call
-        const cumul = new Blob(allAudioChunks, { type: mime||"audio/webm" });
-        sendToGroq(cumul); // fire and forget — inFlight cap prevents pile-up
+        sendToGroq(); // fire immediately on every chunk
       };
 
       mr.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
         clearInterval(recTimerRef.current);
-        const blob = new Blob(recChunksRef.current, { type: mime||"audio/webm" });
+        const blob = new Blob(recChunksRef.current, { type: mime || "audio/webm" });
         if (blob.size > 500) runPageEvaluation(blob);
       };
 
-      // 800ms chunks: short enough for near-real-time, long enough for Whisper accuracy
-      mr.start(800);
+      // 500ms chunks = Groq gets new audio every 500ms, responds in ~600-900ms
+      // Net lag: ~100-400ms behind the speaker — fast enough to feel live
+      mr.start(500);
       liveMediaRef.current = { stop: () => mr.stop() };
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
 
     } catch {
-      alert("Microphone access denied.");
+      alert("Microphone access denied. Please allow microphone access and try again.");
     }
   };
   const stopLiveRecording = () => {
