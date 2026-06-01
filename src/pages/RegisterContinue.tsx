@@ -114,6 +114,7 @@ const RegisterContinue = () => {
         }
 
         const userId = session.user.id;
+        const emailAlreadyConfirmed = !!session.user.email_confirmed_at;
 
         // ── Check for existing tasjeel row (with timeout) ──────────────────
         // If this user already has a row they're either mid-pipeline or done.
@@ -144,6 +145,27 @@ const RegisterContinue = () => {
           } else {
             navigate("/student", { replace: true });
           }
+          return;
+        }
+
+        // ── Existing confirmed user with no tasjeel row ────────────────────
+        // This happens when an existing user is sent here by Login.tsx via
+        // the enrollment/payment pipeline route, but they've already confirmed
+        // their email. They should go straight to /student, not get stuck on
+        // the verification error screen.
+        if (emailAlreadyConfirmed) {
+          // Backfill a completed tasjeel row so this doesn't happen again
+          try {
+            const now = new Date().toISOString();
+            await supabase.from("tasjeel_progress" as any).insert({
+              user_id: userId,
+              current_step: "completed",
+              created_at: now,
+              updated_at: now,
+              completed_at: now,
+            });
+          } catch { /* non-fatal — row may already exist from a race */ }
+          navigate("/student", { replace: true });
           return;
         }
 
