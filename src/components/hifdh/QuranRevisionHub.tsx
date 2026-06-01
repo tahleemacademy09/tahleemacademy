@@ -743,8 +743,7 @@ export default function QuranRevisionHub({ userId }: Props) {
       liveAccumRef.current = "";
       liveChunkRef.current = null;
 
-      // Build flat word list across ALL verses for mushaf-style single-page tracking
-      // Each entry: { ayahIdx, wordIdx, word, normWord }
+      // Build flat word list across ALL verses
       const allPageWords: { ayahIdx: number; wordIdx: number; word: string; norm: string }[] = [];
       ayahs.forEach((ayah: any, ai: number) => {
         ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean)
@@ -753,7 +752,11 @@ export default function QuranRevisionHub({ userId }: Props) {
           });
       });
 
-      // Initial state: every word hidden, build per-ayah structure
+      // Initial state — every word hidden
+      const wordStates: { status: string }[][] = ayahs.map((ayah: any) =>
+        ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean).map(() => ({ status: "hidden" }))
+      );
+
       const initial = ayahs.map((ayah: any) => ({
         words: ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean)
           .map((w: string) => ({ word: w, status: "hidden" as const })),
@@ -766,56 +769,44 @@ export default function QuranRevisionHub({ userId }: Props) {
       setRecTime(0);
       stopAudio();
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-      // ── Web Speech API for near-instant word feedback ───────────────────
-      // Falls back to Groq chunked if SpeechRecognition unavailable
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-      // Pointer into allPageWords — next word we expect to hear
-      let pageWordPtr = 0;
-      // Track per-ayah word states for display
-      // We clone initial into a mutable array and push to React state
-      const wordStates: { status: string }[][] = ayahs.map((ayah: any) =>
-        ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean)
-          .map(() => ({ status: "hidden" }))
-      );
+      let pageWordPtr = 0;  // next expected word index in allPageWords
+      let isProcessing = false; // prevent concurrent Groq calls
 
       const flushStates = () => {
         const next = ayahs.map((ayah: any, ai: number) => {
           const refWords = ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean);
           const ws = wordStates[ai].map((s, wi) => ({ word: refWords[wi], status: s.status }));
-          const correct = ws.filter(w => w.status === "correct").length;
+          const correct = ws.filter((w: any) => w.status === "correct").length;
           return { words: ws, pct: Math.round(correct / Math.max(1, refWords.length) * 100) };
         });
         setLiveVerseResults(next as any);
-        // Update current verse pointer to last ayah with any activity
-        const lastActive = next.reduce((acc, v, i) => v.pct > 0 ? i : acc, 0);
+        // Advance current verse display pointer
+        const lastActive = next.reduce((acc: number, v: any, i: number) =>
+          (v.words.some((w: any) => w.status === "correct") ? i : acc), 0);
         setLiveCurrentVerseIdx(lastActive);
       };
 
+      // Core matching: given transcript words, match against page sequentially
       const processTranscriptWords = (transWords: string[]) => {
-        // Match transcript words sequentially against page words from current pointer
         let tp = 0;
         while (tp < transWords.length && pageWordPtr < allPageWords.length) {
           const tw = normalizeArabic(transWords[tp]);
           const pw = allPageWords[pageWordPtr];
-
           if (wordsMatch(tw, pw.norm)) {
-            // Correct — reveal green
             wordStates[pw.ayahIdx][pw.wordIdx] = { status: "correct" };
             pageWordPtr++;
             tp++;
           } else {
-            // Try lookahead: maybe student skipped or substituted a word
+            // Look ahead up to 5 positions for the word
             let found = false;
-            for (let look = 1; look <= 4 && pageWordPtr + look < allPageWords.length; look++) {
+            for (let look = 1; look <= 5 && pageWordPtr + look < allPageWords.length; look++) {
               const lpw = allPageWords[pageWordPtr + look];
               if (wordsMatch(tw, lpw.norm)) {
-                // Mark skipped words as missing
+                // Mark skipped as missing
                 for (let s = 0; s < look; s++) {
                   const spw = allPageWords[pageWordPtr + s];
-                  wordStates[spw.ayahIdx][spw.wordIdx] = { status: "missing" };
+                  if (wordStates[spw.ayahIdx][spw.wordIdx].status === "hidden")
+                    wordStates[spw.ayahIdx][spw.wordIdx] = { status: "missing" };
                 }
                 wordStates[lpw.ayahIdx][lpw.wordIdx] = { status: "correct" };
                 pageWordPtr += look + 1;
@@ -824,105 +815,89 @@ export default function QuranRevisionHub({ userId }: Props) {
                 break;
               }
             }
-            if (!found) {
-              // Word not found ahead — mark transcript word as extra, try next transcript word
-              tp++;
-            }
+            if (!found) tp++; // unrecognised word — skip
           }
         }
         flushStates();
       };
 
-      if (SpeechRecognition) {
-        // ── FAST PATH: Web Speech API (real-time, no network delay) ────────
-        const recog = new SpeechRecognition();
-        recog.lang = "ar-SA";
-        recog.continuous = true;
-        recog.interimResults = true;
-        recog.maxAlternatives = 1;
-
-        let lastFinalIdx = 0;
-        const finalWords: string[] = [];
-
-        recog.onresult = (ev: any) => {
-          for (let i = ev.resultIndex; i < ev.results.length; i++) {
-            const res = ev.results[i];
-            if (res.isFinal) {
-              const words = res[0].transcript.trim().split(/\s+/).filter(Boolean);
-              finalWords.push(...words);
-              // Process only newly finalised words
-              processTranscriptWords(finalWords.slice(lastFinalIdx));
-              lastFinalIdx = finalWords.length;
-            } else {
-              // Interim: show tentative green without advancing pointer
-              const interimWords = res[0].transcript.trim().split(/\s+/).filter(Boolean);
-              // Peek-ahead: temporarily colour next few words if they match
-              let pp = pageWordPtr;
-              for (const iw of interimWords) {
-                if (pp >= allPageWords.length) break;
-                const norm = normalizeArabic(iw);
-                if (wordsMatch(norm, allPageWords[pp].norm)) {
-                  // Show tentative (don't advance pointer yet)
-                  const pw = allPageWords[pp];
-                  if (wordStates[pw.ayahIdx][pw.wordIdx].status === "hidden") {
-                    wordStates[pw.ayahIdx][pw.wordIdx] = { status: "interim" };
-                  }
-                  pp++;
-                }
-              }
-              flushStates();
-            }
-          }
-        };
-
-        recog.onerror = () => { /* ignore — MediaRecorder fallback still running */ };
-        recog.start();
-        (liveMediaRef as any).current = { stop: () => { recog.stop(); } };
-      }
-
-      // ── ALWAYS run MediaRecorder in parallel for final Groq evaluation ──
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
         .find(t => MediaRecorder.isTypeSupported(t));
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       recChunksRef.current = [];
 
-      if (!SpeechRecognition) {
-        // SLOW PATH: no Web Speech — use Groq chunks as fallback
-        const allChunks: Blob[] = [];
-        let groqWordPtr = 0;
+      // Track cumulative chunks for Groq — send growing audio each time
+      const allChunks: Blob[] = [];
+      // Track how many transcript words we've already processed from Groq
+      let processedWordCount = 0;
 
-        mr.ondataavailable = async (e) => {
-          if (!e.data?.size) return;
-          recChunksRef.current.push(e.data);
-          allChunks.push(e.data);
-          const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
-          if (!groqKey) return;
-          const ext = (mime ?? "").includes("mp4") ? "mp4" : (mime ?? "").includes("ogg") ? "ogg" : "webm";
-          const blob = new Blob(allChunks, { type: mime || "audio/webm" });
-          try {
-            const fd = new FormData();
-            fd.append("file", new File([blob], `live.${ext}`, { type: mime || "audio/webm" }));
-            fd.append("model", "whisper-large-v3");
-            fd.append("language", "ar");
-            fd.append("response_format", "json");
-            fd.append("temperature", "0");
-            fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ");
-            const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-              method: "POST", headers: { Authorization: `Bearer ${groqKey}` }, body: fd,
-            });
-            if (!r.ok) return;
+      mr.ondataavailable = async (e) => {
+        if (!e.data?.size) return;
+        recChunksRef.current.push(e.data);
+        allChunks.push(e.data);
+        if (isProcessing) return; // skip if previous call still in flight
+        const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
+        if (!groqKey) return;
+        isProcessing = true;
+        const ext = (mime ?? "").includes("mp4") ? "mp4" : (mime ?? "").includes("ogg") ? "ogg" : "webm";
+        const blob = new Blob(allChunks, { type: mime || "audio/webm" });
+        try {
+          const fd = new FormData();
+          fd.append("file", new File([blob], `live.${ext}`, { type: mime || "audio/webm" }));
+          fd.append("model", "whisper-large-v3");
+          fd.append("language", "ar");
+          fd.append("response_format", "json");
+          fd.append("temperature", "0");
+          fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ");
+          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+            method: "POST", headers: { Authorization: `Bearer ${groqKey}` }, body: fd,
+          });
+          if (r.ok) {
             const json = await r.json();
             const text = (json.text ?? "").trim();
-            if (text.length < 2) return;
-            const words = text.split(/\s+/).filter(Boolean);
-            processTranscriptWords(words.slice(groqWordPtr));
-            groqWordPtr = words.length;
-          } catch { /* silent */ }
-        };
-        mr.start(1500);
-      } else {
-        mr.ondataavailable = (e) => { if (e.data?.size) recChunksRef.current.push(e.data); };
-        mr.start(1000);
+            if (text.length > 1) {
+              const words = text.split(/\s+/).filter(Boolean);
+              // Only process NEW words since last call
+              const newWords = words.slice(processedWordCount);
+              if (newWords.length > 0) {
+                processTranscriptWords(newWords);
+                processedWordCount = words.length;
+              }
+            }
+          }
+        } catch { /* silent */ } finally {
+          isProcessing = false;
+        }
+      };
+
+      // Also try Web Speech in parallel for instant interim feedback
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SR) {
+        try {
+          const recog = new SR();
+          recog.lang = "ar-SA";
+          recog.continuous = true;
+          recog.interimResults = true;
+          recog.maxAlternatives = 1;
+          let srFinalWords: string[] = [];
+          let srFinalPtr = 0;
+          recog.onresult = (ev: any) => {
+            for (let i = ev.resultIndex; i < ev.results.length; i++) {
+              const res = ev.results[i];
+              if (res.isFinal) {
+                const w = res[0].transcript.trim().split(/\s+/).filter(Boolean);
+                srFinalWords.push(...w);
+                processTranscriptWords(srFinalWords.slice(srFinalPtr));
+                srFinalPtr = srFinalWords.length;
+                processedWordCount = Math.max(processedWordCount, srFinalPtr);
+              }
+            }
+          };
+          recog.onerror = () => {};
+          recog.start();
+          (liveMediaRef as any).current = { stop: () => { try { recog.stop(); } catch {} } };
+        } catch {}
       }
 
       mr.onstop = () => {
@@ -932,6 +907,8 @@ export default function QuranRevisionHub({ userId }: Props) {
         if (blob.size > 500) runPageEvaluation(blob);
       };
 
+      // 1.5s chunks — fast enough for near-real-time feedback
+      mr.start(1500);
       mediaRecRef.current = mr;
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
     } catch {
@@ -1644,22 +1621,27 @@ export default function QuranRevisionHub({ userId }: Props) {
 
                 {/* Single mushaf page — all verses continuous */}
                 <div className="flex-1 overflow-y-auto" style={{ background: PARCHMENT }}>
-                  <div className="px-5 py-6" style={{ direction: "rtl" }}>
+                  <div className="px-4 py-5" style={{ direction: "rtl" }}>
                     {/* Surah header */}
                     {ayahs[0]?.surah && (
-                      <div className="text-center mb-4">
-                        <p className="font-black text-sm" style={{ color: "#5a3e1b", fontFamily: "'Amiri',serif" }}>
+                      <div className="text-center mb-5">
+                        <p className="font-black" style={{ color: "#5a3e1b", fontFamily: "'Amiri',serif", fontSize: 16 }}>
                           سورة {ayahs[0].surah.nameAr}
                         </p>
-                        <p className="text-xs mt-1" style={{ color: "#8a6030", fontFamily: "'Amiri',serif" }}>
-                          بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
+                        <p style={{ color: "#8a6030", fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 15, marginTop: 4 }}>
+                          بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
                         </p>
                       </div>
                     )}
 
-                    {/* All words continuous — no verse cards */}
-                    <p className="text-right leading-[2.8]"
-                      style={{ fontFamily: "'Amiri Quran','Amiri',serif", fontSize: fontSize, lineHeight: 2.8 }}>
+                    {/* All words continuous — mushaf style */}
+                    <div style={{
+                      fontFamily: "'Amiri Quran','Amiri',serif",
+                      fontSize: fontSize,
+                      lineHeight: 2.6,
+                      textAlign: "justify",
+                      wordSpacing: "0.05em",
+                    }}>
                       {(liveVerseResults as any[]).map((verseState: any, ai: number) => {
                         const ayah = ayahs[ai];
                         if (!ayah || !verseState?.words) return null;
@@ -1670,24 +1652,30 @@ export default function QuranRevisionHub({ userId }: Props) {
                                 color: w.status === "correct"
                                   ? "#16a34a"
                                   : w.status === "interim"
-                                  ? "#ca8a04"
+                                  ? "#b45309"
                                   : w.status === "missing"
                                   ? "#dc2626"
-                                  : "#1a1a1a",
-                                borderBottom: w.status === "missing" ? "2px solid #dc262666" : "none",
-                                transition: "color 0.15s",
-                                marginLeft: "0.25em",
+                                  : "#1c1c1c",
+                                textDecoration: w.status === "missing" ? "underline" : "none",
+                                textDecorationColor: "#dc262666",
+                                transition: "color 0.15s ease",
                               }}>
-                                {w.word}
+                                {w.word}{" "}
                               </span>
                             ))}
-                            {/* Verse number marker */}
+                            {/* Circular verse number */}
                             <span style={{
-                              display: "inline-flex", alignItems: "center", justifyContent: "center",
-                              width: "1.6em", height: "1.6em", marginLeft: "0.3em",
-                              borderRadius: "50%", border: `1px solid ${GOLD}88`,
-                              fontSize: "0.55em", color: GOLD,
-                              fontFamily: "'Amiri',serif", verticalAlign: "middle",
+                              display: "inline-block",
+                              width: "1.5em", height: "1.5em",
+                              lineHeight: "1.5em",
+                              textAlign: "center",
+                              borderRadius: "50%",
+                              border: `1.5px solid ${GOLD}`,
+                              color: GOLD,
+                              fontSize: "0.5em",
+                              fontFamily: "'Amiri',serif",
+                              verticalAlign: "middle",
+                              margin: "0 0.2em",
                             }}>
                               {toAr(ayah.numberInSurah)}
                             </span>
@@ -1695,7 +1683,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                           </span>
                         );
                       })}
-                    </p>
+                    </div>
                   </div>
                 </div>
               </div>
