@@ -948,6 +948,51 @@ export type Database = {
           },
         ]
       }
+      email_reminder_logs: {
+        Row: {
+          class_id: string | null
+          created_at: string
+          email: string
+          id: string
+          registration_id: string | null
+          sent_at: string
+          subject: string | null
+        }
+        Insert: {
+          class_id?: string | null
+          created_at?: string
+          email: string
+          id?: string
+          registration_id?: string | null
+          sent_at?: string
+          subject?: string | null
+        }
+        Update: {
+          class_id?: string | null
+          created_at?: string
+          email?: string
+          id?: string
+          registration_id?: string | null
+          sent_at?: string
+          subject?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "email_reminder_logs_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "public_classes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "email_reminder_logs_registration_id_fkey"
+            columns: ["registration_id"]
+            isOneToOne: false
+            referencedRelation: "public_class_registrations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       enrollments: {
         Row: {
           course_id: string
@@ -1703,8 +1748,12 @@ export type Database = {
           mode: string
           notes: string | null
           program_days: number | null
+          program_duration_days: number | null
+          program_start_date: string | null
           reciter_id: string
+          rest_days: number[] | null
           selected_items: number[]
+          start_page: number | null
           starts_on: string
           student_id: string
           target_scope: string | null
@@ -1725,8 +1774,12 @@ export type Database = {
           mode: string
           notes?: string | null
           program_days?: number | null
+          program_duration_days?: number | null
+          program_start_date?: string | null
           reciter_id?: string
+          rest_days?: number[] | null
           selected_items?: number[]
+          start_page?: number | null
           starts_on?: string
           student_id: string
           target_scope?: string | null
@@ -1747,8 +1800,12 @@ export type Database = {
           mode?: string
           notes?: string | null
           program_days?: number | null
+          program_duration_days?: number | null
+          program_start_date?: string | null
           reciter_id?: string
+          rest_days?: number[] | null
           selected_items?: number[]
+          start_page?: number | null
           starts_on?: string
           student_id?: string
           target_scope?: string | null
@@ -2335,6 +2392,7 @@ export type Database = {
           fluency_score: number | null
           id: string
           plan_id: string | null
+          proctoring_session_id: string | null
           recitation_transcript: string | null
           reviewed_at: string | null
           session_date: string | null
@@ -2361,6 +2419,7 @@ export type Database = {
           fluency_score?: number | null
           id?: string
           plan_id?: string | null
+          proctoring_session_id?: string | null
           recitation_transcript?: string | null
           reviewed_at?: string | null
           session_date?: string | null
@@ -2387,6 +2446,7 @@ export type Database = {
           fluency_score?: number | null
           id?: string
           plan_id?: string | null
+          proctoring_session_id?: string | null
           recitation_transcript?: string | null
           reviewed_at?: string | null
           session_date?: string | null
@@ -2722,6 +2782,7 @@ export type Database = {
           materials_url: string | null
           participant_count: number | null
           peak_participants: number | null
+          quiz_code: string | null
           recording_auto_saved: boolean | null
           recording_enabled: boolean | null
           recording_status: string | null
@@ -2755,6 +2816,7 @@ export type Database = {
           materials_url?: string | null
           participant_count?: number | null
           peak_participants?: number | null
+          quiz_code?: string | null
           recording_auto_saved?: boolean | null
           recording_enabled?: boolean | null
           recording_status?: string | null
@@ -2788,6 +2850,7 @@ export type Database = {
           materials_url?: string | null
           participant_count?: number | null
           peak_participants?: number | null
+          quiz_code?: string | null
           recording_auto_saved?: boolean | null
           recording_enabled?: boolean | null
           recording_status?: string | null
@@ -4189,26 +4252,21 @@ export type Database = {
           id?: string
           metadata?: Json | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "proctoring_media_attempt_id_fkey"
-            columns: ["attempt_id"]
-            isOneToOne: false
-            referencedRelation: "exam_attempts"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       proctoring_sessions: {
         Row: {
           attempt_id: string
+          context_label: string | null
           ended_at: string | null
           fullscreen_active: boolean | null
           id: string
           integrity_score: number | null
           max_warnings: number | null
           microphone_enabled: boolean | null
+          session_type: string
           started_at: string
+          student_id: string | null
           suspicion_level: string | null
           total_violations: number | null
           updated_at: string
@@ -4217,13 +4275,16 @@ export type Database = {
         }
         Insert: {
           attempt_id: string
+          context_label?: string | null
           ended_at?: string | null
           fullscreen_active?: boolean | null
           id?: string
           integrity_score?: number | null
           max_warnings?: number | null
           microphone_enabled?: boolean | null
+          session_type?: string
           started_at?: string
+          student_id?: string | null
           suspicion_level?: string | null
           total_violations?: number | null
           updated_at?: string
@@ -4232,28 +4293,23 @@ export type Database = {
         }
         Update: {
           attempt_id?: string
+          context_label?: string | null
           ended_at?: string | null
           fullscreen_active?: boolean | null
           id?: string
           integrity_score?: number | null
           max_warnings?: number | null
           microphone_enabled?: boolean | null
+          session_type?: string
           started_at?: string
+          student_id?: string | null
           suspicion_level?: string | null
           total_violations?: number | null
           updated_at?: string
           warnings_issued?: number | null
           webcam_enabled?: boolean | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "proctoring_sessions_attempt_id_fkey"
-            columns: ["attempt_id"]
-            isOneToOne: true
-            referencedRelation: "exam_attempts"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       profiles: {
         Row: {
@@ -4614,7 +4670,7 @@ export type Database = {
           {
             foreignKeyName: "push_subscriptions_user_id_fkey"
             columns: ["user_id"]
-            isOneToOne: true
+            isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
           },
@@ -6147,15 +6203,7 @@ export type Database = {
           timestamp?: string
           violation_type?: string
         }
-        Relationships: [
-          {
-            foreignKeyName: "violations_attempt_id_fkey"
-            columns: ["attempt_id"]
-            isOneToOne: false
-            referencedRelation: "exam_attempts"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
     }
     Views: {
@@ -6194,6 +6242,21 @@ export type Database = {
           _total: number
         }
         Returns: Json
+      }
+      bulk_save_hifdh_assignment: {
+        Args: {
+          p_daily_pages: number
+          p_mode: string
+          p_notes?: string
+          p_program_duration_days?: number
+          p_program_start_date?: string
+          p_reciter_id: string
+          p_rest_days?: number[]
+          p_selected_items: number[]
+          p_start_page?: number
+          p_student_ids: string[]
+        }
+        Returns: number
       }
       extract_arabic_part: { Args: { txt: string }; Returns: string }
       extract_english_part: { Args: { txt: string }; Returns: string }
@@ -6251,13 +6314,21 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: undefined
       }
+      review_hifdh_daily_log: {
+        Args: { p_avg_score: number; p_log_id: string; p_session_data: Json }
+        Returns: Json
+      }
       save_hifdh_assignment: {
         Args: {
           p_daily_pages: number
           p_mode: string
           p_notes?: string
-          p_reciter_id?: string
+          p_program_duration_days?: number
+          p_program_start_date?: string
+          p_reciter_id: string
+          p_rest_days?: number[]
           p_selected_items: number[]
+          p_start_page?: number
           p_student_id: string
         }
         Returns: string
