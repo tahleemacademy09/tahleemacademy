@@ -75,10 +75,6 @@ const Login = () => {
         const step = (tp as any)?.current_step;
 
         // Route map matching TASJEEL_ROUTES in useTasjeel.ts.
-        // IMPORTANT: enrollment/payment must go to /auth/register-continue,
-        // NOT /register — the register page starts the form from scratch.
-        // RegisterContinue detects the session, reads the current step,
-        // and shows the payment screen or skips ahead if fee is disabled.
         const pipelineRoute: Record<string, string> = {
           enrollment:       "/auth/register-continue",
           payment:          "/auth/register-continue",
@@ -90,7 +86,18 @@ const Login = () => {
         };
 
         if (step && step !== "completed" && pipelineRoute[step]) {
-          navigate(pipelineRoute[step], { replace: true });
+          // For enrollment/payment steps: only send to register-continue if the
+          // user's email is NOT yet confirmed (genuinely new user who needs to
+          // complete verification). Existing confirmed users sent there get the
+          // "Verification Error" screen because register-continue expects a fresh
+          // email-link session. Instead, send confirmed users straight to /student.
+          const destination = pipelineRoute[step];
+          if ((destination === "/auth/register-continue") && !!user.email_confirmed_at) {
+            // Existing confirmed user stuck in enrollment/payment — just go to dashboard
+            navigate("/student", { replace: true });
+          } else {
+            navigate(destination, { replace: true });
+          }
         } else if (!step) {
           // No tasjeel_progress row yet.
           // If the user's email is already confirmed, they're an existing/returning
