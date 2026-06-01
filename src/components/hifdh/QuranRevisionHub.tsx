@@ -388,12 +388,18 @@ export default function QuranRevisionHub({ userId }: Props) {
   const recChunksRef  = useRef<Blob[]>([]);
   const recTimerRef   = useRef<any>(null);
 
-  // FIX 3: Tarteel-style live verse-by-verse reveal
-  const [liveVerseResults, setLiveVerseResults] = useState<(WordResult[] | null)[]>([]);
+  // Live recitation state — each entry is an array of {word, status} for one ayah
+  // status: "hidden" | "correct" | "missing"
+  const [liveWords, setLiveWords] = useState<{word:string; status:string}[][]>([]);
+  const liveWordStatesRef = useRef<string[][]>([]); // mutable copy for callbacks
+  const livePageWordsRef = useRef<{ai:number;wi:number;norm:string}[]>([]);
+  const livePtrRef = useRef(0); // next expected word index in flat list
+  const liveMediaRef = useRef<any>(null);
+  const liveAccumRef = useRef("");
+  const liveChunkRef = useRef<Blob | null>(null);
+  // keep liveVerseResults/liveCurrentVerseIdx for backward compat with other code
+  const [liveVerseResults, setLiveVerseResults] = useState<any[]>([]);
   const [liveCurrentVerseIdx, setLiveCurrentVerseIdx] = useState(0);
-  const liveAccumRef = useRef(""); // running accumulated transcript
-  const liveChunkRef = useRef<Blob | null>(null); // webm init chunk
-  const liveMediaRef = useRef<MediaRecorder | null>(null);
 
   // Evaluation
   const [evaluating, setEvaluating]         = useState(false);
@@ -740,190 +746,156 @@ export default function QuranRevisionHub({ userId }: Props) {
     const ayahs: any[] = pageDataRef.current?.ayahs ?? [];
     if (!ayahs.length) return startPageRecording();
     try {
-      liveAccumRef.current = "";
-      liveChunkRef.current = null;
-
-      // Build flat word list across ALL verses
-      const allPageWords: { ayahIdx: number; wordIdx: number; norm: string }[] = [];
+      // ── Build flat word list ─────────────────────────────────────────
+      const flat: {ai:number; wi:number; norm:string}[] = [];
+      const displayWords: string[][] = [];
       ayahs.forEach((ayah: any, ai: number) => {
-        ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean)
-          .forEach((w: string, wi: number) => {
-            allPageWords.push({ ayahIdx: ai, wordIdx: wi, norm: normalizeArabic(w) });
-          });
+        const ws = ayah.text.replace(/﴿[^﴾]*﴾/g,"").split(/\s+/).filter(Boolean);
+        displayWords.push(ws);
+        ws.forEach((w:string, wi:number) => flat.push({ai, wi, norm: normalizeArabic(w)}));
       });
 
-      // word status per ayah per word — "hidden" | "correct" | "missing"
-      const wordStates: string[][] = ayahs.map((ayah: any) =>
-        ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean).map(() => "hidden")
-      );
+      // ── Initialise state — all hidden ────────────────────────────────
+      const states: string[][] = displayWords.map(ws => ws.map(() => "hidden"));
+      liveWordStatesRef.current = states;
+      livePageWordsRef.current = flat;
+      livePtrRef.current = 0;
+      liveAccumRef.current = "";
 
-      const initial = ayahs.map((ayah: any) => ({
-        words: ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean)
-          .map((w: string) => ({ word: w, status: "hidden" })),
-        pct: 0,
-      }));
-      setLiveVerseResults(initial as any);
+      // Build initial display
+      const buildDisplay = () =>
+        displayWords.map((ws, ai) => ws.map((word, wi) => ({ word, status: states[ai][wi] })));
+
+      setLiveWords(buildDisplay());
       setLiveCurrentVerseIdx(0);
       setRecording(true);
       setPageVisible(false);
       setRecTime(0);
       stopAudio();
 
-      let pageWordPtr = 0;
-
-      const flushStates = () => {
-        const next = ayahs.map((ayah: any, ai: number) => {
-          const refWords = ayah.text.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean);
-          const ws = refWords.map((word: string, wi: number) => ({ word, status: wordStates[ai][wi] }));
-          const correct = ws.filter((w: any) => w.status === "correct").length;
-          return { words: ws, pct: Math.round(correct / Math.max(1, refWords.length) * 100) };
-        });
-        setLiveVerseResults(next as any);
-      };
-
-      const processWords = (transWords: string[]) => {
+      // ── Core matching function ───────────────────────────────────────
+      // Takes NEW transcript words (not already processed), matches sequentially
+      const matchWords = (newWords: string[]) => {
         let changed = false;
         let tp = 0;
-        while (tp < transWords.length && pageWordPtr < allPageWords.length) {
-          const tw = normalizeArabic(transWords[tp]);
-          const pw = allPageWords[pageWordPtr];
-          if (wordsMatch(tw, pw.norm)) {
-            wordStates[pw.ayahIdx][pw.wordIdx] = "correct";
-            pageWordPtr++; tp++; changed = true;
+        let ptr = livePtrRef.current;
+
+        while (tp < newWords.length && ptr < flat.length) {
+          const tw = normalizeArabic(newWords[tp]);
+          if (wordsMatch(tw, flat[ptr].norm)) {
+            // Direct match
+            states[flat[ptr].ai][flat[ptr].wi] = "correct";
+            ptr++; tp++; changed = true;
           } else {
-            // lookahead up to 4
+            // Lookahead: maybe skipped/mispronounced up to 4 words
             let found = false;
-            for (let look = 1; look <= 4 && pageWordPtr + look < allPageWords.length; look++) {
-              const lpw = allPageWords[pageWordPtr + look];
-              if (wordsMatch(tw, lpw.norm)) {
+            for (let look = 1; look <= 4 && ptr + look < flat.length; look++) {
+              if (wordsMatch(tw, flat[ptr + look].norm)) {
+                // Mark skipped as missing
                 for (let s = 0; s < look; s++) {
-                  const spw = allPageWords[pageWordPtr + s];
-                  if (wordStates[spw.ayahIdx][spw.wordIdx] === "hidden")
-                    wordStates[spw.ayahIdx][spw.wordIdx] = "missing";
+                  if (states[flat[ptr+s].ai][flat[ptr+s].wi] === "hidden")
+                    states[flat[ptr+s].ai][flat[ptr+s].wi] = "missing";
                 }
-                wordStates[lpw.ayahIdx][lpw.wordIdx] = "correct";
-                pageWordPtr += look + 1; tp++; found = true; changed = true;
+                states[flat[ptr+look].ai][flat[ptr+look].wi] = "correct";
+                ptr += look + 1; tp++; found = true; changed = true;
                 break;
               }
             }
-            if (!found) tp++;
+            if (!found) tp++; // transcript word not matched — skip it
           }
         }
-        if (changed) flushStates();
+
+        livePtrRef.current = ptr;
+        if (changed) {
+          // Deep-clone so React detects the change
+          const next = displayWords.map((ws, ai) =>
+            ws.map((word, wi) => ({ word, status: states[ai][wi] }))
+          );
+          setLiveWords(next);
+          // Update current verse indicator
+          const lastActive = next.reduce((acc, ws, i) =>
+            ws.some(w => w.status !== "hidden") ? i : acc, 0);
+          setLiveCurrentVerseIdx(lastActive);
+        }
       };
 
+      // ── MediaRecorder — always running for audio capture ────────────
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mime = ["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"]
         .find(t => MediaRecorder.isTypeSupported(t));
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       recChunksRef.current = [];
+      mediaRecRef.current = mr;
 
-      // ── Web Speech: PRIMARY for instant colour ────────────────────────
-      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      let usingSpeech = false;
+      // ── Groq polling — every 800ms on a setInterval ──────────────────
+      // We keep the FULL cumulative audio and send it each time.
+      // Groq returns the full transcript; we only process words beyond
+      // what we've already matched (tracked by groqWordsDone).
+      const allAudioChunks: Blob[] = [];
+      let groqWordsDone = 0;
+      let groqRunning = false;
 
-      if (SR) {
-        try {
-          const recog = new SR();
-          recog.lang = "ar-SA";
-          recog.continuous = true;
-          recog.interimResults = true;
-          recog.maxAlternatives = 3;
-
-          recog.onresult = (ev: any) => {
-            for (let i = ev.resultIndex; i < ev.results.length; i++) {
-              const res = ev.results[i];
-              // Use best alternative
-              const text = res[0].transcript.trim();
-              const words = text.split(/\s+/).filter(Boolean);
-              if (res.isFinal) {
-                processWords(words);
-              } else {
-                // Interim: colour immediately without advancing pointer permanently
-                // just peek at next word
-                if (words.length > 0 && pageWordPtr < allPageWords.length) {
-                  const tw = normalizeArabic(words[words.length - 1]);
-                  const pw = allPageWords[pageWordPtr];
-                  if (wordsMatch(tw, pw.norm)) {
-                    wordStates[pw.ayahIdx][pw.wordIdx] = "correct";
-                    pageWordPtr++;
-                    flushStates();
-                  }
-                }
-              }
-            }
-          };
-
-          recog.onerror = (e: any) => {
-            if (e.error === "not-allowed" || e.error === "service-not-allowed") usingSpeech = false;
-          };
-
-          recog.onend = () => {
-            // Auto-restart if still recording (speech recog stops after silence)
-            if (mediaRecRef.current?.state === "recording") {
-              try { recog.start(); } catch {}
-            }
-          };
-
-          recog.start();
-          usingSpeech = true;
-          (liveMediaRef as any).current = { stop: () => { try { recog.abort(); } catch {} } };
-        } catch { usingSpeech = false; }
-      }
-
-      // ── Groq: runs in background — only used if no Web Speech ─────────
-      const allChunks: Blob[] = [];
-      let isProcessing = false;
-      let groqWordCount = 0;
-
-      mr.ondataavailable = async (e) => {
-        if (!e.data?.size) return;
-        recChunksRef.current.push(e.data);
-        if (usingSpeech) return; // Web Speech handles it
-        allChunks.push(e.data);
-        if (isProcessing) return;
+      const runGroq = async () => {
+        if (groqRunning || allAudioChunks.length === 0) return;
         const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
         if (!groqKey) return;
-        isProcessing = true;
-        const ext = (mime ?? "").includes("mp4") ? "mp4" : (mime ?? "").includes("ogg") ? "ogg" : "webm";
+        groqRunning = true;
+        const ext = (mime??"").includes("mp4")?"mp4":(mime??"").includes("ogg")?"ogg":"webm";
+        const blob = new Blob(allAudioChunks, { type: mime||"audio/webm" });
         try {
           const fd = new FormData();
-          fd.append("file", new File([new Blob(allChunks, { type: mime||"audio/webm" })], `live.${ext}`, { type: mime||"audio/webm" }));
+          fd.append("file", new File([blob], `q.${ext}`, { type: mime||"audio/webm" }));
           fd.append("model", "whisper-large-v3");
           fd.append("language", "ar");
           fd.append("response_format", "json");
           fd.append("temperature", "0");
           fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ");
           const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-            method: "POST", headers: { Authorization: `Bearer ${groqKey}` }, body: fd,
+            method:"POST", headers:{ Authorization:`Bearer ${groqKey}` }, body:fd
           });
           if (r.ok) {
-            const json = await r.json();
-            const words = (json.text ?? "").trim().split(/\s+/).filter(Boolean);
-            const newWords = words.slice(groqWordCount);
-            if (newWords.length) { processWords(newWords); groqWordCount = words.length; }
+            const { text } = await r.json();
+            const words = (text||"").trim().split(/\s+/).filter(Boolean);
+            const fresh = words.slice(groqWordsDone);
+            if (fresh.length > 0) {
+              matchWords(fresh);
+              groqWordsDone = words.length;
+            }
           }
-        } catch {} finally { isProcessing = false; }
+        } catch {}
+        groqRunning = false;
       };
 
+      // Collect audio chunks from MediaRecorder
+      mr.ondataavailable = (e) => {
+        if (e.data?.size) {
+          recChunksRef.current.push(e.data);
+          allAudioChunks.push(e.data);
+        }
+      };
+
+      // Poll Groq every 800ms — fast enough to feel responsive
+      const groqInterval = setInterval(runGroq, 800);
+
       mr.onstop = () => {
+        clearInterval(groqInterval);
         stream.getTracks().forEach(t => t.stop());
         clearInterval(recTimerRef.current);
         const blob = new Blob(recChunksRef.current, { type: mime||"audio/webm" });
         if (blob.size > 500) runPageEvaluation(blob);
       };
 
-      mr.start(1500);
-      mediaRecRef.current = mr;
+      mr.start(400); // 400ms chunks → allAudioChunks grows quickly
+      liveMediaRef.current = { stop: () => { clearInterval(groqInterval); mr.stop(); } };
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
+
     } catch {
-      alert("Microphone access denied. Please allow microphone access and try again.");
+      alert("Microphone access denied.");
     }
   };
   const stopLiveRecording = () => {
     clearInterval(recTimerRef.current);
-    try { (liveMediaRef as any).current?.stop(); } catch { /* speech recog may throw */ }
-    try { mediaRecRef.current?.stop(); } catch { /* mr may already be stopped */ }
+    try { liveMediaRef.current?.stop(); } catch {}
     setRecording(false);
   };
 
@@ -1590,100 +1562,109 @@ export default function QuranRevisionHub({ userId }: Props) {
           {/* ── LIVE MUSHAF RECITATION SCREEN ── */}
           {recording && (() => {
             const ayahs: any[] = pageDataRef.current?.ayahs ?? [];
-            const totalWords = (liveVerseResults as any[]).reduce((s: number, v: any) => s + (v?.words?.length ?? 0), 0);
-            const correctWords = (liveVerseResults as any[]).reduce((s: number, v: any) =>
-              s + (v?.words?.filter((w: any) => w.status === "correct" || w.status === "interim").length ?? 0), 0);
+            const total   = liveWords.reduce((s,ws) => s + ws.length, 0);
+            const correct = liveWords.reduce((s,ws) => s + ws.filter(w=>w.status==="correct").length, 0);
+            const pct = total ? Math.round(correct/total*100) : 0;
 
             return (
-              <div className="absolute inset-0 z-20 flex flex-col overflow-hidden"
-                style={{ background: "#050f08" }}>
+              <div className="absolute inset-0 z-20 flex flex-col" style={{ background: "#050f08" }}>
 
-                {/* Top bar */}
-                <div className="flex-none flex items-center gap-2 px-3 py-2 border-b"
-                  style={{ borderColor: GOLD + "33", background: DG }}>
-                  <div className="w-7 h-7 rounded-full flex items-center justify-center qr-recordpulse flex-shrink-0"
-                    style={{ background: "#dc262620", border: "2px solid #dc2626" }}>
-                    <Mic size={12} color="#ef4444" />
+                {/* ── Top bar ── */}
+                <div className="flex-none flex items-center gap-2 px-3 py-2"
+                  style={{ background: DG, borderBottom: `1px solid ${GOLD}33` }}>
+                  {/* Pulse mic */}
+                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 qr-recordpulse"
+                    style={{ background:"#dc262618", border:"2px solid #dc2626" }}>
+                    <Mic size={14} color="#ef4444" />
                   </div>
-                  <span className="font-black text-sm tabular-nums" style={{ color: "#ef4444" }}>
+                  <span className="font-black text-sm tabular-nums" style={{ color:"#ef4444" }}>
                     {fmtTime(recTime)}
                   </span>
-                  <div className="flex-1 h-1.5 rounded-full overflow-hidden mx-2" style={{ background: "#1a3025" }}>
-                    <div className="h-full rounded-full transition-all duration-300"
-                      style={{ width: `${totalWords ? Math.round(correctWords / totalWords * 100) : 0}%`,
-                        background: `linear-gradient(to right,${GOLD},#22c55e)` }} />
+                  {/* Progress bar */}
+                  <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background:"#1a3025" }}>
+                    <div className="h-full rounded-full transition-all duration-500"
+                      style={{ width:`${pct}%`, background:`linear-gradient(to right,${GOLD},#22c55e)` }} />
                   </div>
+                  <span className="text-xs font-bold tabular-nums" style={{ color: GOLD }}>{pct}%</span>
+                  {/* Done */}
                   <button onClick={() => {
                       setStage("evaluating"); setEvaluating(true);
                       setEvalResult(null); setPageVisible(true);
                       stopLiveRecording();
                     }}
                     className="px-3 py-1.5 rounded-xl font-black text-xs qr-btn flex-shrink-0"
-                    style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
+                    style={{ background:`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color:DG }}>
                     ✓ Done
                   </button>
                 </div>
 
-                {/* Single mushaf page — all verses continuous */}
+                {/* ── Mushaf page ── */}
                 <div className="flex-1 overflow-y-auto" style={{ background: PARCHMENT }}>
-                  <div className="px-4 py-5" style={{ direction: "rtl" }}>
-                    {/* Surah header */}
+                  <div className="px-4 py-5">
+
+                    {/* Surah name */}
                     {ayahs[0]?.surah && (
-                      <div className="text-center mb-5">
-                        <p className="font-black" style={{ color: "#5a3e1b", fontFamily: "'Amiri',serif", fontSize: 16 }}>
+                      <div className="text-center mb-4">
+                        <p style={{ fontFamily:"'Amiri',serif", fontSize:15, fontWeight:800, color:"#5a3e1b" }}>
                           سورة {ayahs[0].surah.nameAr}
                         </p>
-                        <p style={{ color: "#8a6030", fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 15, marginTop: 4 }}>
+                        <p style={{ fontFamily:"'Amiri Quran','Amiri',serif", fontSize:14, color:"#8a6030", marginTop:2 }}>
                           بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
                         </p>
                       </div>
                     )}
 
-                    {/* All words continuous — mushaf style */}
+                    {/* All words in one continuous flow — no cards */}
                     <div style={{
                       fontFamily: "'Amiri Quran','Amiri',serif",
                       fontSize: fontSize,
-                      lineHeight: 2.8,
+                      lineHeight: 2.7,
                       direction: "rtl",
+                      textAlign: "justify",
                     }}>
-                      {(liveVerseResults as any[]).map((verseState: any, ai: number) => {
+                      {liveWords.length === 0 && (
+                        <p className="text-center text-xs" style={{ color:"#4a6d58" }}>Loading…</p>
+                      )}
+
+                      {liveWords.map((ws, ai) => {
                         const ayah = ayahs[ai];
-                        if (!ayah || !verseState?.words) return null;
+                        if (!ayah) return null;
                         return (
                           <span key={ai}>
-                            {verseState.words.map((w: any, wi: number) => {
-                              const isHidden = w.status === "hidden";
-                              const isCorrect = w.status === "correct";
-                              const isMissing = w.status === "missing";
-                              return (
-                                <span key={wi} style={{
-                                  // Hidden words: blurred so text is not readable
-                                  filter: isHidden ? "blur(5px)" : "none",
-                                  color: isCorrect ? "#16a34a"
-                                       : isMissing ? "#dc2626"
-                                       : "#1c1c1c",
-                                  textDecoration: isMissing ? "underline wavy #dc262688" : "none",
-                                  transition: "filter 0.1s ease, color 0.1s ease",
-                                  display: "inline",
-                                }}>
-                                  {w.word}{" "}
-                                </span>
-                              );
-                            })}
-                            {/* Circular verse number ۝ */}
+                            {ws.map((w, wi) => (
+                              <span key={wi} style={{
+                                color: w.status === "correct" ? "#16a34a"
+                                     : w.status === "missing"  ? "#dc2626"
+                                     : "transparent",
+                                // Hidden: show the glyph shape as a blurred silhouette
+                                // so the page looks like a real mushaf but unreadable
+                                textShadow: w.status === "hidden"
+                                  ? "0 0 8px #1c1c1c"
+                                  : "none",
+                                WebkitTextStroke: w.status === "hidden" ? "0px" : "0px",
+                                filter: w.status === "hidden" ? "blur(3.5px)" : "none",
+                                textDecoration: w.status === "missing" ? "underline" : "none",
+                                textDecorationStyle: "wavy" as any,
+                                textDecorationColor: "#dc262677",
+                                transition: "color 0.12s, filter 0.12s",
+                                display: "inline",
+                              }}>
+                                {w.word}{" "}
+                              </span>
+                            ))}
+                            {/* Verse number circle */}
                             <span style={{
                               display: "inline-block",
-                              width: "1.6em", height: "1.6em",
-                              lineHeight: "1.6em",
+                              width: "1.5em", height: "1.5em",
+                              lineHeight: "1.5em",
                               textAlign: "center",
                               borderRadius: "50%",
                               border: `1.5px solid ${GOLD}`,
                               color: GOLD,
-                              fontSize: "0.52em",
+                              fontSize: "0.5em",
                               fontFamily: "'Amiri',serif",
                               verticalAlign: "middle",
-                              margin: "0 0.25em",
-                              flexShrink: 0,
+                              margin: "0 0.2em",
                             }}>
                               {toAr(ayah.numberInSurah)}
                             </span>
