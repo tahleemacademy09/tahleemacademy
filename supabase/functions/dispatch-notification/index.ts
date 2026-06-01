@@ -102,23 +102,28 @@ Deno.serve(async (req) => {
     const fullUrl = absUrl(link);
     const results: Record<string, string> = {};
 
-    // ── 1. Web Push ──
-    const { data: sub } = await supabase
+    // ── 1. Web Push — fan out to ALL of the user's devices ──
+    const { data: subs } = await supabase
       .from("push_subscriptions")
       .select("endpoint, p256dh, auth")
-      .eq("user_id", user_id)
-      .maybeSingle();
+      .eq("user_id", user_id);
 
-    if (sub) {
-      try {
-        await sendWebPush(sub as any, {
-          title, message, url: fullUrl,
-          tag: `${type ?? "notif"}-${user_id}-${Date.now()}`,
-        });
-        results.web_push = "sent";
-      } catch (e: any) {
-        results.web_push = `failed: ${e.message}`;
-      }
+    if (subs && subs.length > 0) {
+      let sent = 0, failed = 0;
+      await Promise.all(
+        subs.map(async (sub: any) => {
+          try {
+            await sendWebPush(sub, {
+              title, message, url: fullUrl,
+              tag: `${type ?? "notif"}-${user_id}-${Date.now()}`,
+            });
+            sent++;
+          } catch {
+            failed++;
+          }
+        })
+      );
+      results.web_push = `sent ${sent}/${subs.length}${failed ? ` (${failed} failed)` : ""}`;
     } else {
       results.web_push = "no_subscription";
     }
