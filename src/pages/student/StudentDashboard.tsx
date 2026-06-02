@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import QuranPhrasesWidget from "@/components/dashboard/QuranPhrasesWidget";
 import IslamicDailyFeed from "@/components/dashboard/IslamicDailyFeed";
-import TawheedWidget from "@/components/dashboard/TawheedWidget";
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -728,8 +728,7 @@ const StudentDashboard = () => {
         {/* ── Quran Phrases Widget ── */}
         <QuranPhrasesWidget language={language} />
 
-        {/* ── Tawheed — Correct Creed Widget ── */}
-        <TawheedWidget language={language} />
+
 
         <div style={card}>
           <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
