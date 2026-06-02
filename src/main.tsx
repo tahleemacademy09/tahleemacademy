@@ -12,6 +12,10 @@ import { createRoot } from "react-dom/client";
 import { HelmetProvider } from "react-helmet-async";
 import App from "./App.tsx";
 import "./index.css";
+import { initNativeApp } from "./lib/nativeApp";
+
+// Native (Capacitor) bootstrap — no-op on web
+initNativeApp();
 
 // ── PWA Service Worker Registration ──────────────────────────────────────────
 // Registers /sw.js which handles:
