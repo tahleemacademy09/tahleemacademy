@@ -796,7 +796,7 @@ export default function QuranRevisionHub({ userId }: Props) {
       // This prevents Groq's transcript from "jumping ahead" and revealing
       // words the reciter hasn't reached yet.
       let frontier = 0;
-      const REVEAL_BUFFER = 6; // reveal up to 6 words past last match
+      const REVEAL_BUFFER = 0; // never reveal ahead — only words Groq has confirmed
 
       const applyTranscript = (fullText: string) => {
         if (fullText === lastTranscript) return;
@@ -808,9 +808,10 @@ export default function QuranRevisionHub({ userId }: Props) {
         const R = flat.length;
         const T = tWords.length;
 
-        // Only run LCS up to frontier + generous window, not the whole page.
-        // Cap at frontier + 40 words ahead so LCS can't jump to later verses.
-        const rLimit = Math.min(R, frontier + 40);
+        // Only run LCS up to frontier + tight window to prevent jumping ahead.
+        // 12 words gives enough room for Groq's occasional word reorder without
+        // letting it skip to a later verse entirely.
+        const rLimit = Math.min(R, frontier + 12);
 
         // Build LCS dp table for flat[0..rLimit-1] vs tWords[0..T-1]
         const dp: number[][] = Array.from({ length: rLimit + 1 }, () =>
@@ -886,18 +887,29 @@ export default function QuranRevisionHub({ userId }: Props) {
 
       const allAudioChunks: Blob[] = [];
       let inFlight = 0;
+      // Rolling window: send only the last ~3 s of audio to Groq on each request.
+      // This keeps payload size constant so Groq latency stays ~600-800ms even
+      // after many minutes of recording. Full audio is still kept in recChunksRef
+      // for the final Groq evaluation blob.
+      // Each chunk is 250ms → 12 chunks ≈ 3 s of audio.
+      const WINDOW_CHUNKS = 12;
 
       const sendToGroq = async () => {
-        if (inFlight >= 2 || allAudioChunks.length === 0) return;
+        if (inFlight >= 1 || allAudioChunks.length === 0) return;
         inFlight++;
         const ext = (mime ?? "").includes("mp4") ? "mp4"
           : (mime ?? "").includes("ogg") ? "ogg" : "webm";
-        // Snapshot current audio — safe to send while recording continues
-        const snap = new Blob([...allAudioChunks], { type: mime || "audio/webm" });
+        // Snapshot a rolling window of recent chunks — constant payload size
+        const windowChunks = allAudioChunks.slice(-WINDOW_CHUNKS);
+        const snap = new Blob(windowChunks, { type: mime || "audio/webm" });
         try {
           const fd = new FormData();
           fd.append("file", new File([snap], `q.${ext}`, { type: mime || "audio/webm" }));
-          fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ");
+          // Dynamic prompt: reference words near the current frontier so Groq
+          // recognises exactly which ayah the student is reciting right now.
+          const promptStart = Math.max(0, frontier - 5);
+          const promptWords = flat.slice(promptStart, promptStart + 20).map(f => f.norm).join(" ");
+          fd.append("prompt", promptWords || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ");
           const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/groq-transcribe`;
           const r = await fetch(url, {
             method: "POST",
@@ -920,8 +932,15 @@ export default function QuranRevisionHub({ userId }: Props) {
         if (!e.data?.size) return;
         recChunksRef.current.push(e.data);
         allAudioChunks.push(e.data);
-        sendToGroq(); // fire immediately on every chunk
+        // Keep allAudioChunks bounded — we only ever need the last WINDOW_CHUNKS.
+        // recChunksRef keeps everything for the final evaluation blob.
+        if (allAudioChunks.length > WINDOW_CHUNKS * 2) allAudioChunks.splice(0, allAudioChunks.length - WINDOW_CHUNKS * 2);
       };
+
+      // Poll Groq every 1500ms — fast enough to feel live, slow enough that
+      // each request completes before the next one starts (Groq p50 ~600ms).
+      const groqInterval = setInterval(sendToGroq, 1500);
+      liveMediaRef.current = { stop: () => { clearInterval(groqInterval); mr.stop(); } };
 
       mr.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
@@ -930,10 +949,8 @@ export default function QuranRevisionHub({ userId }: Props) {
         if (blob.size > 500) runPageEvaluation(blob);
       };
 
-      // 500ms chunks = Groq gets new audio every 500ms, responds in ~600-900ms
-      // Net lag: ~100-400ms behind the speaker — fast enough to feel live
-      mr.start(500);
-      liveMediaRef.current = { stop: () => mr.stop() };
+      // 250ms chunks — fine-grained audio so the rolling window is precise
+      mr.start(250);
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
 
     } catch {
