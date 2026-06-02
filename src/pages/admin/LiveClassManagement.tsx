@@ -247,24 +247,36 @@ const LiveClassManagement = () => {
   const startInstantClass = async (sub: any) => {
     try {
       const now = new Date().toISOString();
-      const { data: sess, error } = await supabase
+      // Check for an existing live session first to avoid duplicate inserts
+      // (the livekit-token edge function also inserts a session on start_session,
+      // so we upsert here only if none exists yet — prevents the race condition
+      // that was producing "Quote command returned error" from duplicate state).
+      const { data: existing } = await supabase
         .from("live_sessions")
-        .insert({
-          subject_id: sub.id,
-          host_id: user?.id,
-          status: "live",
-          scheduled_at: now,
-          actual_start_time: now,
-          started_at: now,
-          duration_minutes: 60,
-          recording_enabled: true,
-          chat_enabled: true,
-          hand_raise_enabled: true,
-          waiting_room_enabled: false,
-        } as any)
-        .select()
-        .single();
-      if (error) throw error;
+        .select("id")
+        .eq("subject_id", sub.id)
+        .eq("status", "live")
+        .maybeSingle();
+
+      if (!existing) {
+        const { error } = await supabase
+          .from("live_sessions")
+          .insert({
+            subject_id: sub.id,
+            host_id: user?.id,
+            status: "live",
+            scheduled_at: now,
+            actual_start_time: now,
+            started_at: now,
+            duration_minutes: 60,
+            recording_enabled: true,
+            chat_enabled: true,
+            hand_raise_enabled: true,
+            waiting_room_enabled: false,
+          } as any);
+        if (error) throw error;
+      }
+
       joinClass({ id: sub.id, title: sub.title, title_ar: sub.title_ar || "", livekit_room_name: sub.livekit_room_name }, { autoJoin: true });
       fetchData();
     } catch (e: any) {
