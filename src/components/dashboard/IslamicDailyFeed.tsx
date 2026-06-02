@@ -1,25 +1,24 @@
-/*  src/components/dashboard/IslamicDailyFeed.data.ts
-    Islamic Daily Feed — All data constants, types, and pure helpers
-    Split from IslamicDailyFeed.tsx to keep each file pasteable on GitHub.
+/*  src/components/dashboard/IslamicDailyFeed.tsx
+    Islamic Daily Feed — Live Hadith · Rich Seerah · Events · Multi-source News
 */
+import { useState, useEffect } from "react";
+import { BookMarked, ScrollText, CalendarDays, Newspaper, ExternalLink, RefreshCw, Star, ChevronDown, ChevronUp, Shield } from "lucide-react";
 
-// ── Colour tokens ─────────────────────────────────────────────────────────
-export const DARK_GREEN = "#0f2d1f";
-export const MID_GREEN  = "#1a4731";
-export const GOLD       = "#c9a84c";
-export const GOLD_LIGHT = "#e4c36a";
-export const TEXT_DARK  = "#0f2d1f";
-export const TEXT_MED   = "#4a7c59";
-export const TEXT_LIGHT = "#7a9e88";
-export const BORDER     = "rgba(15,45,31,0.1)";
-export const AMBER      = "#92400e";
-export const AMBER_BG   = "#fffbeb";
+const DARK_GREEN = "#0f2d1f";
+const MID_GREEN  = "#1a4731";
+const GOLD       = "#c9a84c";
+const GOLD_LIGHT = "#e4c36a";
+const TEXT_DARK  = "#0f2d1f";
+const TEXT_MED   = "#4a7c59";
+const TEXT_LIGHT = "#7a9e88";
+const BORDER     = "rgba(15,45,31,0.1)";
+const AMBER      = "#92400e";
+const AMBER_BG   = "#fffbeb";
 
-// ── Pure helpers ──────────────────────────────────────────────────────────
-export const dayOfYear = () =>
+const dayOfYear = () =>
   Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
 
-export const getHijriNumeric = (date: Date): { day: number; month: number } => {
+const getHijriNumeric = (date: Date): { day: number; month: number } => {
   try {
     const parts = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura", {
       day: "numeric", month: "numeric", year: "numeric",
@@ -31,34 +30,8 @@ export const getHijriNumeric = (date: Date): { day: number; month: number } => {
   } catch { return { day: 0, month: 0 }; }
 };
 
-// ── Types ─────────────────────────────────────────────────────────────────
-export interface LiveHadith {
-  ar?: string;
-  en: string;
-  source: string;
-  narrator: string;
-  grade: string;
-  explanation: string;
-}
-export interface NewsItem {
-  title: string;
-  link: string;
-  description: string;
-  thumbnail: string;
-  pubDate: string;
-}
-export type TabId = "hadith" | "seerah" | "event" | "news" | "tawheed";
-
-export interface TawheedLesson {
-  module: string;
-  moduleBg: string; moduleBadge: string; moduleBorder: string;
-  titleEn: string; titleAr: string; subtitleEn: string;
-  quranicProof: { ar: string; en: string; ref: string };
-  hadith: { ar: string; en: string; source: string };
-  explanation: string;
-}
-
-export const FALLBACK_HADITHS = [
+// ── Fallback Hadiths (used if API fails) ─────────────────────────────────
+const FALLBACK_HADITHS = [
   { ar: "إِنَّمَا الأَعْمَالُ بِالنِّيَّاتِ وَإِنَّمَا لِكُلِّ امْرِئٍ مَا نَوَى", en: "Actions are only by intentions, and every person will have only what they intended.", source: "Sahih al-Bukhari 1", narrator: "Umar ibn al-Khattab رضي الله عنه", grade: "Sahih", explanation: "This is one of the foundational hadiths of Islam. Imam al-Nawawi considered it one of the hadiths upon which Islamic jurisprudence revolves. It means that the validity and reward of every deed depends entirely on the intention behind it. A person who fasts with sincerity for Allah receives full reward, while one who fasts to be seen by people receives nothing. The Prophet ﷺ himself said: 'Verily Allah does not look at your bodies or your appearances, but He looks at your hearts and your deeds.' (Muslim 2564)" },
   { ar: "خَيْرُكُمْ مَنْ تَعَلَّمَ الْقُرْآنَ وَعَلَّمَهُ", en: "The best of you are those who learn the Quran and teach it.", source: "Sahih al-Bukhari 5027", narrator: "Uthman ibn Affan رضي الله عنه", grade: "Sahih", explanation: "This hadith elevates those who dedicate themselves to the Quran — both learning it and passing it on. Allah says: 'Indeed, it is We who sent down the Quran and indeed, We will be its guardian.' (15:9). The scholars explain that 'learning' includes memorisation, understanding tafseer and tajweed, while 'teaching' encompasses all forms of transmission — formal classes, corrections, or simply reciting to one's child. Imam al-Bukhari placed this hadith in Kitab Fadha'il al-Quran. The Prophet ﷺ also said: 'The one who recites the Quran skillfully will be with the noble, dutiful angels, and the one who recites with difficulty will have a double reward.' (Muslim 798)" },
   { ar: "لاَ يُؤْمِنُ أَحَدُكُمْ حَتَّى يُحِبَّ لأَخِيهِ مَا يُحِبُّ لِنَفْسِهِ", en: "None of you truly believes until he loves for his brother what he loves for himself.", source: "Sahih al-Bukhari 13", narrator: "Anas ibn Malik رضي الله عنه", grade: "Sahih", explanation: "This hadith defines a cornerstone of Islamic brotherhood. The word 'brother' here includes all Muslims — men and women. Ibn Rajab al-Hanbali explains that this love should extend beyond Muslims to all of humanity in terms of wishing guidance and goodness for them. The Quran says: 'The believers are but brothers.' (49:10). This principle prevents jealousy, schadenfreude, and competitive meanness. The Prophet ﷺ also said: 'Do not envy one another, do not inflate prices against one another, do not hate one another, do not turn away from one another... be servants of Allah and brothers.' (Muslim 2564)" },
@@ -73,7 +46,7 @@ export const FALLBACK_HADITHS = [
 ];
 
 // ── Rich Seerah Entries with Quranic & Hadith Evidence ──────────────────
-export const SEERAH = [
+const SEERAH = [
   {
     title: "The Year of the Elephant — Divine Protection 🐘",
     titleAr: "عام الفيل",
@@ -363,7 +336,7 @@ The Farewell Sermon is the Prophet's ﷺ gift to humanity — a manifesto of jus
 ];
 
 // ── Islamic Events (Hijri-based) ──────────────────────────────────────────
-export const ISLAMIC_EVENTS = [
+const ISLAMIC_EVENTS = [
   { hijriMonth: 1,  hijriDay: 1,  name: "Islamic New Year",           nameAr: "رأس السنة الهجرية",     emoji: "🌙", daysWindow: 4, writeup: "The Islamic New Year marks the beginning of Muharram and commemorates the Hijrah — the Prophet's ﷺ migration from Makkah to Madinah in 622 CE. Umar ibn al-Khattab (RA) chose this event as the start of the Islamic calendar, because it represents the moment faith became a state and conviction became a civilisation. The Prophet ﷺ said about Muharram: 'The best fasts after Ramadan are in the month of Allah, which you call Muharram.' (Muslim 1163). Use this new year to make sincere tawbah, set learning goals for the year, increase fasting, and renew your covenant with Allah. 'Indeed, the number of months with Allah is twelve months in the register of Allah [from] the day He created the heavens and the earth; of these, four are sacred.' (9:36)" },
   { hijriMonth: 1,  hijriDay: 10, name: "Day of Ashura",              nameAr: "يوم عاشوراء",            emoji: "🤲", daysWindow: 4, writeup: "The 10th of Muharram — Ashura — is among the most blessed individual days in the Islamic calendar. When the Prophet ﷺ arrived in Madinah and found the Jews fasting, he was told: 'This is the day Allah saved Musa (AS) and the Israelites from Pharaoh, and drowned Pharaoh and his army.' He ﷺ said: 'We have more right to Musa than you,' and he fasted and ordered fasting. (Bukhari 2004). The reward: 'I hope Allah will expiate the sins of the previous year.' (Muslim 1162). Ibn Abbas (RA) narrated the Prophet's ﷺ intention to also fast the 9th: 'If I live until next year, I will certainly fast the 9th as well.' (Muslim 1134) — combining both days distinguishes Islamic practice. It is also a day of generosity toward family, based on narrations of Ibn Masud (RA) compiled by Ibn Rajab al-Hanbali. This Ashura, fast the 9th and 10th, give sadaqah, and remember the story of Musa (AS) — it is your story too: Allah saves those who trust in Him, no matter the power of Pharaoh." },
   { hijriMonth: 3,  hijriDay: 12, name: "Mawlid al-Nabawi ﷺ",         nameAr: "المولد النبوي الشريف",   emoji: "💛", daysWindow: 7, writeup: "The 12th of Rabi al-Awwal is the birth date of the Prophet Muhammad ﷺ according to the majority of scholars. Allah describes him: 'There has certainly come to you a Messenger from among yourselves. Grievous to him is what you suffer; [he is] concerned over you and to the believers is kind and merciful.' (9:128). And: 'We have not sent you except as a mercy to the worlds.' (21:107). This is the most beautiful time to study his ﷺ life, read Seerah, send abundant salawat upon him ('Allahumma salli ala Muhammad wa ala ali Muhammad, kama sallayta ala Ibrahim...'), and gather to remember his virtues. The Prophet ﷺ himself honoured the day of his birth by fasting on Mondays, saying: 'That is the day I was born.' (Muslim 1162). The best celebration of his ﷺ birthday is to follow him — in salah, in honesty, in mercy to all creation, in knowledge, and in character." },
@@ -406,7 +379,7 @@ interface TawheedLesson {
   explanation: string;
 }
 
-export const TAWHEED_LESSONS: TawheedLesson[] = [
+const TAWHEED_LESSONS: TawheedLesson[] = [
   {
     module: "Tawheed al-Rububiyyah",
     moduleBg: "#e8f5e9", moduleBadge: "#2e7d32", moduleBorder: "#a5d6a7",
@@ -581,7 +554,7 @@ export const TAWHEED_LESSONS: TawheedLesson[] = [
 interface Props { language?: string; }
 
 // ── Static curated Islamic news — shown when live fetch fails (CORS/mobile) ──
-export const STATIC_NEWS: NewsItem[] = [
+const STATIC_NEWS: NewsItem[] = [
   {
     title: "The Importance of Seeking Knowledge in Islam",
     link: "https://islamqa.info/en/answers/10471/the-importance-of-seeking-knowledge",
@@ -618,23 +591,8 @@ export const STATIC_NEWS: NewsItem[] = [
     pubDate: new Date(Date.now() - 345600000).toISOString(),
   },
 ];
-/*  src/components/dashboard/IslamicDailyFeed.tsx
-    Islamic Daily Feed — Component (UI only)
-    Data constants and types live in IslamicDailyFeed.data.ts
-*/
-import { useState, useEffect } from "react";
-import { BookMarked, ScrollText, CalendarDays, Newspaper, ExternalLink, RefreshCw, Star, ChevronDown, ChevronUp, Shield } from "lucide-react";
-import {
-  DARK_GREEN, MID_GREEN, GOLD, GOLD_LIGHT,
-  TEXT_DARK, TEXT_MED, TEXT_LIGHT, BORDER,
-  AMBER, AMBER_BG,
-  dayOfYear, getHijriNumeric,
-  FALLBACK_HADITHS, SEERAH, ISLAMIC_EVENTS, TAWHEED_LESSONS, STATIC_NEWS,
-  type LiveHadith, type NewsItem, type TabId, type TawheedLesson,
-} from "./IslamicDailyFeed.data";
 
-interface Props { language?: string; }
-
+// ═══════════════════════════════════════════════════════════════════════════
 const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
   const doy   = dayOfYear();
   const today = new Date();
