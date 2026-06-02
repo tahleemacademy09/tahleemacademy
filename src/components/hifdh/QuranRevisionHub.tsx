@@ -889,8 +889,6 @@ export default function QuranRevisionHub({ userId }: Props) {
 
       const sendToGroq = async () => {
         if (inFlight >= 2 || allAudioChunks.length === 0) return;
-        const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
-        if (!groqKey) return;
         inFlight++;
         const ext = (mime ?? "").includes("mp4") ? "mp4"
           : (mime ?? "").includes("ogg") ? "ogg" : "webm";
@@ -899,15 +897,14 @@ export default function QuranRevisionHub({ userId }: Props) {
         try {
           const fd = new FormData();
           fd.append("file", new File([snap], `q.${ext}`, { type: mime || "audio/webm" }));
-          fd.append("model", "whisper-large-v3-turbo");
-          fd.append("language", "ar");
-          fd.append("response_format", "json");
-          fd.append("temperature", "0");
-          // Style prompt only — NEVER use the verse text or Whisper hallucinates it
           fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ");
-          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/groq-transcribe`;
+          const r = await fetch(url, {
             method: "POST",
-            headers: { Authorization: `Bearer ${groqKey}` },
+            headers: {
+              Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+              apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+            },
             body: fd,
           });
           if (r.ok) {
