@@ -635,7 +635,6 @@ import {
 
 interface Props { language?: string; }
 
-// ═══════════════════════════════════════════════════════════════════════════
 const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
   const doy   = dayOfYear();
   const today = new Date();
