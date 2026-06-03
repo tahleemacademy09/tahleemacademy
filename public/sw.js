@@ -81,7 +81,7 @@ self.addEventListener("fetch", (event) => {
       caches.match(request).then((cached) => {
         if (cached) {
           fetch(request).then((res) => {
-            if (res.ok) caches.open(CHUNK_CACHE).then((c) => c.put(request, res));
+            if (res.ok) caches.open(CHUNK_CACHE).then((c) => c.put(request, res.clone()));
           }).catch(() => {});
           return cached;
         }
