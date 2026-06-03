@@ -240,7 +240,7 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
           title_ar:   composed.title_ar,
           message_en: composed.message_en,
           message_ar: composed.message_ar,
-          target:     composed.suggested_target || target,
+          target:     target,                          // always use the admin's explicit selection
           type:       composed.suggested_type   || "announcement",
         },
       });
@@ -295,7 +295,7 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <p style={{ fontWeight: 800, fontSize: 14, color: G, margin: 0 }}>✨ AI Generated</p>
             <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 8px", borderRadius: 20, background: "#F0FDF4", color: G }}>
-            {targets.find(t => t.value === (composed.suggested_target || target))?.label}
+            {targets.find(t => t.value === target)?.label || (target.startsWith("user:") ? "Individual" : target)}
             </span>
           </div>
 
