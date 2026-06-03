@@ -85,8 +85,9 @@ serve(async (req) => {
     if (action === "compose") {
       const { idea, target_hint } = body;
       const result = await callAI(
-        `You are a notification composer for Tahleem Academy, an Islamic online learning platform.
+        `You are a notification composer for Tahleem Academy (أكاديمية التعليم), an Islamic online learning platform.
 Given a rough idea from an admin, write a professional notification in BOTH English and Arabic.
+IMPORTANT: The academy name in Arabic is always "أكاديمية التعليم" — never invent another Arabic translation.
 Return JSON:
 {
   "title_en": "short title (max 60 chars)",
@@ -125,8 +126,9 @@ Use بسم الله style greetings only when genuinely appropriate. Keep it con
 
       const description = eventDescriptions[event_type] || event_type;
       const result = await callAI(
-        `You are an automatic notification generator for Tahleem Academy, an Islamic learning platform.
+        `You are an automatic notification generator for Tahleem Academy (أكاديمية التعليم), an Islamic learning platform.
 Generate a warm, encouraging notification for this platform event.
+IMPORTANT: The academy name in Arabic is always "أكاديمية التعليم" — never invent another Arabic translation.
 Return JSON:
 {
   "title_en": "short engaging title (max 60 chars)",
@@ -224,10 +226,20 @@ Return JSON:
       }));
 
       // Batch insert 100 at a time
+      // Tries bilingual insert first; if columns don't exist yet (migration pending),
+      // falls back to English-only so the send never hard-fails.
       let sent = 0;
       for (let i = 0; i < records.length; i += 100) {
-        const { error } = await adminClient.from("notifications").insert(records.slice(i, i + 100));
-        if (!error) sent += Math.min(100, records.length - i);
+        const chunk = records.slice(i, i + 100);
+        const { error } = await adminClient.from("notifications").insert(chunk);
+        if (!error) {
+          sent += chunk.length;
+        } else if (error.message?.includes("title_ar") || error.message?.includes("message_ar")) {
+          // Migration not yet applied — strip Arabic columns and retry
+          const fallback = chunk.map(({ title_ar: _ta, message_ar: _ma, ...rest }: any) => rest);
+          const { error: e2 } = await adminClient.from("notifications").insert(fallback);
+          if (!e2) sent += chunk.length;
+        }
       }
 
       // Log to ai_query_logs
