@@ -207,11 +207,13 @@ Return JSON:
         return new Response(JSON.stringify({ error: "No target users found", sent: 0 }), { status: 400, headers: corsHeaders });
       }
 
-      // Build records — use Arabic title/message if available
+      // Build records — store both languages so the client can show bilingual content
       const records = userIds.map((uid: string) => ({
         user_id:      uid,
-        title:        title_ar || title_en,  // default to Arabic for Arabic-speaking platform
-        message:      message_ar || message_en,
+        title:        title_en,                // primary title (English, always present)
+        message:      message_en,              // primary message (English, always present)
+        title_ar:     title_ar   || null,      // Arabic title (shown alongside English)
+        message_ar:   message_ar || null,      // Arabic message (shown alongside English)
         type:         type || "announcement",
         sent_by:      caller.id,
         reference_id: reference_id || null,
