@@ -19,7 +19,7 @@ const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram";
 
 async function sendWebPush(
   sub: { endpoint: string; p256dh: string; auth: string },
-  payload: { title: string; message: string; url: string; tag: string }
+  payload: { title: string; message: string; title_ar?: string; message_ar?: string; url: string; tag: string }
 ): Promise<void> {
   const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY");
   const VAPID_PUBLIC_KEY  = Deno.env.get("VAPID_PUBLIC_KEY");
@@ -84,14 +84,19 @@ Deno.serve(async (req) => {
     if (body.notification_id) {
       const { data: n } = await supabase
         .from("notifications")
-        .select("user_id, title, message, link, type")
+        .select("user_id, title, message, title_ar, message_ar, link, type")
         .eq("id", body.notification_id)
         .maybeSingle();
       if (n) {
         user_id = n.user_id; title = n.title; message = n.message;
         link = n.link ?? undefined; type = n.type ?? undefined;
+        if ((n as any).title_ar)   body.title_ar   = (n as any).title_ar;
+        if ((n as any).message_ar) body.message_ar = (n as any).message_ar;
       }
     }
+
+    let title_ar: string | undefined  = body.title_ar;
+    let message_ar: string | undefined = body.message_ar;
 
     if (!user_id || !title || !message) {
       return new Response(JSON.stringify({ error: "user_id, title, message required" }), {
@@ -114,7 +119,10 @@ Deno.serve(async (req) => {
         subs.map(async (sub: any) => {
           try {
             await sendWebPush(sub, {
-              title, message, url: fullUrl,
+              title, message,
+              title_ar,
+              message_ar,
+              url: fullUrl,
               tag: `${type ?? "notif"}-${user_id}-${Date.now()}`,
             });
             sent++;
