@@ -306,6 +306,25 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     setUnreadNotifs(0);
   };
 
+  // ── Detect whether a string is predominantly Arabic ──────────
+  const isArabicText = (s: string) => /[\u0600-\u06FF]/.test(s ?? "");
+
+  // ── Resolve bilingual fields for a notification row ───────────
+  // Handles both new rows (title=EN, title_ar=AR) and legacy rows (title=AR only)
+  const resolveLangs = (n: any) => {
+    const hasArabicCol = !!(n.title_ar || n.message_ar);
+    if (hasArabicCol) {
+      // New bilingual row
+      return { en: { title: n.title, message: n.message }, ar: { title: n.title_ar, message: n.message_ar } };
+    }
+    if (isArabicText(n.title)) {
+      // Legacy row — Arabic stored in title/message, no English
+      return { en: null, ar: { title: n.title, message: n.message } };
+    }
+    // English-only row
+    return { en: { title: n.title, message: n.message }, ar: null };
+  };
+
   // ── Shared sidebar content ────────────────────────────────────
   const SidebarContent = ({ onNavigate }: { onNavigate?: () => void }) => {
     const nav = role === "student" ? studentNav : adminNav;
@@ -547,7 +566,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
               <div className="overflow-y-auto flex-1">
                 {notifList.length === 0 ? (
                   <div className="text-center py-10 text-muted-foreground text-sm">No notifications yet</div>
-                ) : notifList.map((n: any) => (
+                ) : notifList.map((n: any) => {
+                    const langs = resolveLangs(n);
+                    return (
                     <div key={n.id} onClick={() => {
                         if (!n.is_read) markRead(n.id);
                         setSelectedNotif(n);
@@ -568,14 +589,22 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <p className={`text-sm leading-tight ${n.is_read ? "font-medium" : "font-bold"} text-gray-900`}>{n.title}</p>
+                          {/* Show English title if available, else Arabic */}
+                          <p className={`text-sm leading-tight ${n.is_read ? "font-medium" : "font-bold"} text-gray-900 truncate`}
+                            dir={langs.en ? "ltr" : "rtl"}>
+                            {langs.en ? langs.en.title : langs.ar?.title}
+                          </p>
                           {!n.is_read && <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"/>}
                         </div>
-                        {/* Show English message preview */}
-                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.message}</p>
-                        {/* Show Arabic title preview if present */}
-                        {n.title_ar && (
-                          <p className="text-xs text-gray-400 mt-0.5 text-right font-arabic line-clamp-1" dir="rtl">{n.title_ar}</p>
+                        {/* English message preview */}
+                        {langs.en && (
+                          <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{langs.en.message}</p>
+                        )}
+                        {/* Arabic title/message preview */}
+                        {langs.ar && (
+                          <p className="text-xs text-gray-400 mt-0.5 line-clamp-2 font-arabic text-right" dir="rtl">
+                            {langs.en ? langs.ar.title : langs.ar.message}
+                          </p>
                         )}
                         <div className="flex items-center justify-between mt-1">
                           <p className="text-[10px] text-gray-400">
@@ -585,14 +614,17 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                         </div>
                       </div>
                     </div>
-                ))}
+                    );
+                  })}
               </div>
             </div>
           </div>
         )}
 
         {/* ── Full Notification Detail Modal ─────────────────────────────── */}
-        {selectedNotif && (
+        {selectedNotif && (() => {
+          const langs = resolveLangs(selectedNotif);
+          return (
           <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end justify-center"
             onClick={() => setSelectedNotif(null)}>
             <div className="w-full max-w-lg bg-white rounded-t-3xl shadow-2xl flex flex-col overflow-hidden max-h-[85vh]"
@@ -621,23 +653,21 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
               {/* Body */}
               <div className="flex-1 overflow-y-auto p-5 space-y-4">
 
-                {/* English section */}
-                <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 space-y-2">
-                  <p className="text-[10px] font-black uppercase tracking-wider text-gray-400">🇬🇧 English</p>
-                  <p className="font-bold text-gray-900 text-base leading-snug">{selectedNotif.title}</p>
-                  <p className="text-sm text-gray-600 leading-relaxed">{selectedNotif.message}</p>
-                </div>
+                {/* English block — only when English text exists */}
+                {langs.en && (
+                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 space-y-2">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-gray-400">🇬🇧 English</p>
+                    <p className="font-bold text-gray-900 text-base leading-snug">{langs.en.title}</p>
+                    <p className="text-sm text-gray-600 leading-relaxed">{langs.en.message}</p>
+                  </div>
+                )}
 
-                {/* Arabic section — shown only when bilingual data exists */}
-                {(selectedNotif.title_ar || selectedNotif.message_ar) && (
+                {/* Arabic block — only when Arabic text exists */}
+                {langs.ar && (
                   <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 space-y-2" dir="rtl">
-                    <p className="text-[10px] font-black uppercase tracking-wider text-amber-500" dir="ltr">🇸🇦 Arabic</p>
-                    <p className="font-bold text-gray-900 text-base leading-snug font-arabic">
-                      {selectedNotif.title_ar || selectedNotif.title}
-                    </p>
-                    <p className="text-sm text-gray-600 leading-relaxed font-arabic" style={{ lineHeight:1.9 }}>
-                      {selectedNotif.message_ar || selectedNotif.message}
-                    </p>
+                    <p className="text-[10px] font-black uppercase tracking-wider text-amber-500" dir="ltr">🇸🇦 عربي</p>
+                    <p className="font-bold text-gray-900 text-base leading-snug font-arabic">{langs.ar.title}</p>
+                    <p className="text-sm text-gray-600 font-arabic" style={{ lineHeight:1.9 }}>{langs.ar.message}</p>
                   </div>
                 )}
 
@@ -669,7 +699,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
               </div>
             </div>
           </div>
-        )}
+          );
+        })()}
 
         <main className="flex-1 overflow-auto">
           {/* ── Payment lock screen for gated routes ── */}
