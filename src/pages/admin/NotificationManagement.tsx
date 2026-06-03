@@ -2,7 +2,7 @@
 // AI-powered Notification Center for Tahleem Academy
 // Tabs: AI Compose | Auto Events | Moderation | History
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
@@ -64,24 +64,137 @@ function Spin({ size = 18 }: { size?: number }) {
 
 // ── Target Selector ───────────────────────────────────────────────────────────
 type TargetOption = { value: string; label: string; icon: string };
+type UserProfile  = { user_id: string; full_name: string | null; email: string | null; role: string };
+
 function TargetSelector({ value, onChange, targets }: { value: string; onChange: (v: string) => void; targets: TargetOption[] }) {
-  const [open, setOpen] = useState(false);
-  const sel = targets.find(t => t.value === value) || targets[0];
-  if (!sel) return null;
+  const [open,    setOpen]    = useState(false);
+  const [search,  setSearch]  = useState("");
+  const [users,   setUsers]   = useState<UserProfile[]>([]);
+  const [loading, setLoading] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  // Load users once when dropdown opens
+  useEffect(() => {
+    if (!open || users.length > 0) return;
+    setLoading(true);
+    supabase
+      .from("profiles")
+      .select("user_id, full_name, email")
+      .order("full_name", { ascending: true })
+      .limit(200)
+      .then(async ({ data: profiles }) => {
+        const { data: roles } = await supabase.from("user_roles").select("user_id, role");
+        const roleMap = new Map((roles || []).map((r: any) => [r.user_id, r.role]));
+        setUsers((profiles || []).map((p: any) => ({
+          user_id:   p.user_id,
+          full_name: p.full_name,
+          email:     p.email,
+          role:      roleMap.get(p.user_id) || "student",
+        })));
+        setLoading(false);
+      });
+  }, [open]);
+
+  // Resolve display label for current value
+  const groupSel = targets.find(t => t.value === value);
+  const userSel  = value.startsWith("user:") ? users.find(u => `user:${u.user_id}` === value) : null;
+  const displayLabel = groupSel
+    ? `${groupSel.icon} ${groupSel.label}`
+    : userSel
+    ? `👤 ${userSel.full_name || userSel.email}`
+    : value;
+
+  const q = search.toLowerCase();
+  const filteredUsers = users.filter(u =>
+    !q ||
+    u.full_name?.toLowerCase().includes(q) ||
+    u.email?.toLowerCase().includes(q)
+  );
+  const filteredGroups = targets.filter(t =>
+    !q || t.label.toLowerCase().includes(q)
+  );
+
   return (
-    <div style={{ position: "relative" }}>
-      <button onClick={() => setOpen(v => !v)} style={{ ...inp, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", background: "#fff" }}>
-        <span>{sel.icon} {sel.label}</span>
-        <ChevronDown size={14} color="#9CA3AF" />
+    <div style={{ position: "relative" }} ref={ref}>
+      <button
+        onClick={() => { setOpen(v => !v); setSearch(""); }}
+        style={{ ...inp, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", background: "#fff" }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{displayLabel}</span>
+        <ChevronDown size={14} color="#9CA3AF" style={{ flexShrink: 0 }} />
       </button>
+
       {open && (
-        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, background: "#fff", border: "1.5px solid #E5E7EB", borderRadius: 10, overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,.12)", marginTop: 4 }}>
-          {targets.map(t => (
-            <button key={t.value} onClick={() => { onChange(t.value); setOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 14px", border: "none", background: t.value === value ? "#F0FDF4" : "#fff", cursor: "pointer", fontSize: 13, color: t.value === value ? G : "#374151", fontWeight: t.value === value ? 700 : 400 }}>
-              <span>{t.icon}</span> {t.label}
-              {t.value === value && <Check size={13} color={G} style={{ marginLeft: "auto" }} />}
-            </button>
-          ))}
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: "#fff", border: "1.5px solid #E5E7EB", borderRadius: 12, boxShadow: "0 12px 32px rgba(0,0,0,.15)", marginTop: 4, overflow: "hidden" }}>
+
+          {/* Search box */}
+          <div style={{ padding: "10px 10px 8px", borderBottom: "1px solid #F3F4F6" }}>
+            <input
+              autoFocus
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search group or person…"
+              style={{ ...inp, padding: "8px 10px", fontSize: 12, background: "#F9FAFB" }}
+            />
+          </div>
+
+          <div style={{ maxHeight: 320, overflowY: "auto" }}>
+            {/* Group targets */}
+            {filteredGroups.length > 0 && (
+              <>
+                <p style={{ fontSize: 10, fontWeight: 800, color: "#9CA3AF", padding: "8px 14px 4px", textTransform: "uppercase", letterSpacing: ".06em", margin: 0 }}>Groups</p>
+                {filteredGroups.map(t => (
+                  <button key={t.value} onClick={() => { onChange(t.value); setOpen(false); setSearch(""); }}
+                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 14px", border: "none", background: t.value === value ? "#F0FDF4" : "#fff", cursor: "pointer", fontSize: 13, color: t.value === value ? G : "#374151", fontWeight: t.value === value ? 700 : 400, textAlign: "left" }}>
+                    <span>{t.icon}</span>
+                    <span style={{ flex: 1 }}>{t.label}</span>
+                    {t.value === value && <Check size={13} color={G} />}
+                  </button>
+                ))}
+              </>
+            )}
+
+            {/* Individual users */}
+            {loading ? (
+              <div style={{ padding: "14px", textAlign: "center" }}><Spin size={16} /></div>
+            ) : filteredUsers.length > 0 ? (
+              <>
+                <p style={{ fontSize: 10, fontWeight: 800, color: "#9CA3AF", padding: "8px 14px 4px", textTransform: "uppercase", letterSpacing: ".06em", margin: 0, borderTop: filteredGroups.length ? "1px solid #F3F4F6" : "none" }}>Individuals</p>
+                {filteredUsers.map(u => {
+                  const uid = `user:${u.user_id}`;
+                  const selected = value === uid;
+                  return (
+                    <button key={u.user_id} onClick={() => { onChange(uid); setOpen(false); setSearch(""); }}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "9px 14px", border: "none", background: selected ? "#F0FDF4" : "#fff", cursor: "pointer", fontSize: 13, color: selected ? G : "#374151", fontWeight: selected ? 700 : 400, textAlign: "left" }}>
+                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: u.role === "teacher" ? "#EFF6FF" : "#F0FDF4", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 13 }}>
+                        {u.role === "teacher" ? "👨‍🏫" : "🎓"}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ margin: 0, fontWeight: selected ? 700 : 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {u.full_name || u.email || u.user_id.slice(0, 8)}
+                        </p>
+                        {u.full_name && u.email && (
+                          <p style={{ margin: 0, fontSize: 11, color: "#9CA3AF", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email}</p>
+                        )}
+                      </div>
+                      <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 20, background: u.role === "teacher" ? "#EFF6FF" : "#F0FDF4", color: u.role === "teacher" ? "#1D4ED8" : G, fontWeight: 700, flexShrink: 0 }}>
+                        {u.role}
+                      </span>
+                      {selected && <Check size={13} color={G} />}
+                    </button>
+                  );
+                })}
+              </>
+            ) : search ? (
+              <p style={{ padding: "14px", textAlign: "center", fontSize: 12, color: "#9CA3AF", margin: 0 }}>No results for "{search}"</p>
+            ) : null}
+          </div>
         </div>
       )}
     </div>
