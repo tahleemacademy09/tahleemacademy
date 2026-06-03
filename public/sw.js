@@ -53,6 +53,7 @@ self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
+  // Never intercept API / realtime calls
   if (
     url.hostname.includes("supabase.co") ||
     url.hostname.includes("supabase.in") ||
@@ -61,12 +62,16 @@ self.addEventListener("fetch", (event) => {
     url.hostname.includes("livekit.cloud")
   ) return;
 
+  // ── Google Fonts — cache-first ──────────────────────────────────────────────
   if (url.hostname.includes("fonts.googleapis.com") || url.hostname.includes("fonts.gstatic.com")) {
     event.respondWith(
       caches.match(request).then((cached) => {
         if (cached) return cached;
         return fetch(request).then((res) => {
-          if (res.ok) caches.open(STATIC_CACHE).then((c) => c.put(request, res.clone()));
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(STATIC_CACHE).then((c) => c.put(request, clone));
+          }
           return res;
         }).catch(() => cached);
       })
@@ -76,35 +81,41 @@ self.addEventListener("fetch", (event) => {
 
   if (url.origin !== self.location.origin) return;
 
+  // ── JS/CSS chunks — stale-while-revalidate ──────────────────────────────────
   if (url.pathname.startsWith("/assets/")) {
     event.respondWith(
       caches.match(request).then((cached) => {
-        if (cached) {
-          fetch(request).then((res) => {
-            if (res.ok) caches.open(CHUNK_CACHE).then((c) => c.put(request, res.clone()));
-          }).catch(() => {});
-          return cached;
-        }
-        return fetch(request).then((res) => {
-          if (res.ok) caches.open(CHUNK_CACHE).then((c) => c.put(request, res.clone()));
+        const networkFetch = fetch(request).then((res) => {
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(CHUNK_CACHE).then((c) => c.put(request, clone));
+          }
           return res;
-        });
+        }).catch(() => cached);
+
+        // Return cached immediately, update cache in background
+        return cached || networkFetch;
       })
     );
     return;
   }
 
+  // ── Navigation — network-first with offline fallback ───────────────────────
   if (request.mode === "navigate") {
     event.respondWith(
       (async () => {
         try {
           const preloaded = await event.preloadResponse;
           if (preloaded) {
-            caches.open(OFFLINE_CACHE).then((c) => c.put(request, preloaded.clone()));
+            const clone = preloaded.clone();
+            caches.open(OFFLINE_CACHE).then((c) => c.put(request, clone));
             return preloaded;
           }
           const fresh = await fetch(request);
-          caches.open(OFFLINE_CACHE).then((c) => c.put(request, fresh.clone()));
+          if (fresh.ok) {
+            const clone = fresh.clone();
+            caches.open(OFFLINE_CACHE).then((c) => c.put(request, clone));
+          }
           return fresh;
         } catch {
           const cached = await caches.match(request);
@@ -117,11 +128,15 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // ── Images / fonts / styles — cache-first ──────────────────────────────────
   if (request.destination === "image" || request.destination === "font" || request.destination === "style") {
     event.respondWith(
       caches.match(request).then((cached) => {
         const networkFetch = fetch(request).then((res) => {
-          if (res.ok) caches.open(STATIC_CACHE).then((c) => c.put(request, res.clone()));
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(STATIC_CACHE).then((c) => c.put(request, clone));
+          }
           return res;
         }).catch(() => cached);
         return cached || networkFetch;
@@ -136,7 +151,6 @@ function buildNotificationOpts(data) {
   const type       = data.type || "reminder";
   const minutesLeft = data.minutes_left ?? 99;
 
-  // ── CLASS RING ─────────────────────────────────────────────────────────────
   if (type === "ring") {
     return {
       body:               `${data.teacher_name || "Your teacher"} is waiting — tap to join now!`,
@@ -163,7 +177,6 @@ function buildNotificationOpts(data) {
     };
   }
 
-  // ── DAILY QURANIC VERSE ────────────────────────────────────────────────────
   if (type === "daily_content" && data.tag === "daily-verse") {
     return {
       body:               data.message || data.body || "",
@@ -179,7 +192,6 @@ function buildNotificationOpts(data) {
     };
   }
 
-  // ── DAILY HADITH ───────────────────────────────────────────────────────────
   if (type === "daily_content" && data.tag === "daily-hadith") {
     return {
       body:               data.message || "",
@@ -195,7 +207,6 @@ function buildNotificationOpts(data) {
     };
   }
 
-  // ── HIFDH REMINDER ─────────────────────────────────────────────────────────
   if (type === "daily_content" && data.tag === "daily-hifdh") {
     return {
       body:               data.message || "",
@@ -214,7 +225,6 @@ function buildNotificationOpts(data) {
     };
   }
 
-  // ── SEERAH / OTHER DAILY CONTENT ───────────────────────────────────────────
   if (type === "daily_content") {
     return {
       body:               data.message || "",
@@ -230,7 +240,6 @@ function buildNotificationOpts(data) {
     };
   }
 
-  // ── CLASS REMINDER (default) ───────────────────────────────────────────────
   return {
     body:               data.message || "You have an upcoming class.",
     icon:               "/icons/icon-192x192.png",
@@ -268,7 +277,6 @@ self.addEventListener("push", (event) => {
 
   event.waitUntil(
     self.registration.showNotification(title, opts).then(() => {
-      // For ring notifications, also postMessage to open app tabs
       if (isRing) {
         self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
           clients.forEach((c) => c.postMessage({
@@ -291,7 +299,6 @@ self.addEventListener("notificationclick", (event) => {
 
   if (event.action === "dismiss") return;
 
-  // Map action → URL
   let targetUrl = event.notification.data?.url ||
                   event.notification.data?.join_url ||
                   "/student/dashboard";
@@ -301,12 +308,8 @@ self.addEventListener("notificationclick", (event) => {
                 event.notification.data?.url ||
                 "/student/live-classes";
   }
-  if (event.action === "open_hifdh") {
-    targetUrl = "/student/hifdh";
-  }
-  if (event.action === "open") {
-    targetUrl = event.notification.data?.url || "/student/dashboard";
-  }
+  if (event.action === "open_hifdh") targetUrl = "/student/hifdh";
+  if (event.action === "open") targetUrl = event.notification.data?.url || "/student/dashboard";
 
   event.waitUntil(
     self.clients
@@ -372,7 +375,10 @@ self.addEventListener("periodicsync", (event) => {
     event.waitUntil(
       fetch("/student/timetable", { cache: "no-store" })
         .then((res) => {
-          if (res.ok) caches.open(OFFLINE_CACHE).then((c) => c.put("/student/timetable", res));
+          if (res.ok) {
+            const clone = res.clone();
+            caches.open(OFFLINE_CACHE).then((c) => c.put("/student/timetable", clone));
+          }
         })
         .catch(() => {})
     );
