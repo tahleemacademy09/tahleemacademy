@@ -13,6 +13,9 @@
   Each type is sent as a separate notification so students get them
   as individual cards in their phone notification bar.
 
+  FIX (Bug 3): Changed .maybeSingle() to fetch ALL push subscriptions
+  per user so every device the user has subscribed from gets the push.
+
   pg_cron setup (run in Supabase SQL editor):
     select cron.schedule(
       'daily-content-push',
@@ -129,6 +132,24 @@ async function sendTelegram(chatId: string, text: string): Promise<void> {
   });
 }
 
+// ── Send all push payloads to a single subscription object ───────────────────
+
+async function pushAllPayloads(
+  sub: { endpoint: string; p256dh: string; auth: string },
+  payloads: object[]
+): Promise<void> {
+  for (const payload of payloads) {
+    await sendWebPush(sub, payload).catch((e: any) => {
+      // 410 Gone = subscription expired/unsubscribed — caller handles cleanup
+      if (e?.statusCode === 410) throw e;
+      // Other errors (network, etc.) — log and continue to next payload
+      console.warn("[daily-content-push] sendWebPush error:", e?.message ?? e);
+    });
+    // Small stagger so notifications arrive as separate cards on the phone
+    await new Promise(r => setTimeout(r, 800));
+  }
+}
+
 // ── Send all daily content to one user ───────────────────────────────────────
 
 async function sendDailyContentToUser(
@@ -142,117 +163,117 @@ async function sendDailyContentToUser(
   const seerah = SEERAH_HIGHLIGHTS[doy % SEERAH_HIGHLIGHTS.length];
   const hifdh  = HIFDH_REMINDERS[doy % HIFDH_REMINDERS.length];
 
-  const { data: pushSub } = await sb
+  // ── FIX (Bug 3): Fetch ALL subscriptions for this user, not just one.
+  //    Previously .maybeSingle() silently dropped every device except the first.
+  const { data: pushSubs, error: subsError } = await sb
     .from("push_subscriptions")
-    .select("endpoint, p256dh, auth")
-    .eq("user_id", userId)
-    .maybeSingle();
+    .select("id, endpoint, p256dh, auth")
+    .eq("user_id", userId);
 
-  // ── 1. Daily Quranic Verse ───────────────────────────────────────────────
-  const versePayload = {
-    type:    "daily_content",
-    title:   "📖 Daily Quranic Verse",
-    message: `${verse.en} — ${verse.ref}`,
-    body:    `${verse.ar}\n"${verse.en}"\n${verse.ref}`,
-    url:     `${APP_BASE_URL}/student/dashboard`,
-    tag:     "daily-verse",
-    icon:    "/icons/icon-192x192.png",
-    badge:   "/icons/icon-96x96.png",
-  };
-
-  if (pushSub) {
-    await sendWebPush(pushSub as any, versePayload).catch(() => {});
+  if (subsError) {
+    console.warn(`[daily-content-push] could not fetch push subs for ${userId}:`, subsError.message);
   }
 
-  await sb.from("notifications").insert({
-    user_id: userId,
-    title:   "📖 Daily Quranic Verse",
-    message: `${verse.en} — ${verse.ref}`,
-    type:    "daily_content",
-    is_read: false,
-  }).catch(() => {});
+  const activeSubs = (pushSubs ?? []) as Array<{ id: string; endpoint: string; p256dh: string; auth: string }>;
 
-  // Small stagger so notifications arrive separately on phone
-  await new Promise(r => setTimeout(r, 800));
+  // Build all push payloads up front
+  const payloads = [
+    {
+      type:    "daily_content",
+      title:   "📖 Daily Quranic Verse",
+      message: `${verse.en} — ${verse.ref}`,
+      body:    `${verse.ar}\n"${verse.en}"\n${verse.ref}`,
+      url:     `${APP_BASE_URL}/student/dashboard`,
+      tag:     "daily-verse",
+      icon:    "/icons/icon-192x192.png",
+      badge:   "/icons/icon-96x96.png",
+    },
+    {
+      type:    "daily_content",
+      title:   "🌙 Daily Hadith",
+      message: `"${hadith.en}" — ${hadith.source}`,
+      url:     `${APP_BASE_URL}/student/dashboard`,
+      tag:     "daily-hadith",
+      icon:    "/icons/icon-192x192.png",
+      badge:   "/icons/icon-96x96.png",
+    },
+    {
+      type:    "daily_content",
+      title:   "📗 Hifdh Reminder",
+      message: hifdh.replace(/^📖\s*/, ""),
+      url:     `${APP_BASE_URL}/student/hifdh`,
+      tag:     "daily-hifdh",
+      icon:    "/icons/icon-192x192.png",
+      badge:   "/icons/icon-96x96.png",
+      actions: [{ action: "open_hifdh", title: "Open Hifdh" }],
+    },
+    {
+      type:    "daily_content",
+      title:   `🕌 Seerah: ${seerah.title}`,
+      message: seerah.body.slice(0, 120) + "…",
+      url:     `${APP_BASE_URL}/student/dashboard`,
+      tag:     "daily-seerah",
+      icon:    "/icons/icon-192x192.png",
+      badge:   "/icons/icon-96x96.png",
+    },
+  ];
 
-  // ── 2. Daily Hadith ──────────────────────────────────────────────────────
-  const hadithPayload = {
-    type:    "daily_content",
-    title:   "🌙 Daily Hadith",
-    message: `"${hadith.en}" — ${hadith.source}`,
-    url:     `${APP_BASE_URL}/student/dashboard`,
-    tag:     "daily-hadith",
-    icon:    "/icons/icon-192x192.png",
-    badge:   "/icons/icon-96x96.png",
-  };
+  // ── Web Push — send to every subscribed device ───────────────────────────
+  const expiredSubIds: string[] = [];
 
-  if (pushSub) {
-    await sendWebPush(pushSub as any, hadithPayload).catch(() => {});
+  for (const sub of activeSubs) {
+    try {
+      await pushAllPayloads(sub, payloads);
+    } catch (e: any) {
+      if (e?.statusCode === 410) {
+        // Subscription expired — mark for cleanup
+        expiredSubIds.push(sub.id);
+      } else {
+        console.warn(`[daily-content-push] push failed for sub ${sub.id}:`, e?.message ?? e);
+      }
+    }
   }
 
-  await sb.from("notifications").insert({
-    user_id: userId,
-    title:   "🌙 Daily Hadith",
-    message: `"${hadith.en}" — ${hadith.source}`,
-    type:    "daily_content",
-    is_read: false,
-  }).catch(() => {});
-
-  await new Promise(r => setTimeout(r, 800));
-
-  // ── 3. Hifdh Reminder ───────────────────────────────────────────────────
-  const hifdhPayload = {
-    type:    "daily_content",
-    title:   "📗 Hifdh Reminder",
-    message: hifdh.replace(/^📖\s*/, ""),
-    url:     `${APP_BASE_URL}/student/hifdh`,
-    tag:     "daily-hifdh",
-    icon:    "/icons/icon-192x192.png",
-    badge:   "/icons/icon-96x96.png",
-    actions: [
-      { action: "open_hifdh", title: "Open Hifdh" },
-    ],
-  };
-
-  if (pushSub) {
-    await sendWebPush(pushSub as any, hifdhPayload).catch(() => {});
+  // Clean up expired subscriptions
+  if (expiredSubIds.length > 0) {
+    await sb.from("push_subscriptions").delete().in("id", expiredSubIds).catch(() => {});
+    console.log(`[daily-content-push] cleaned up ${expiredSubIds.length} expired sub(s) for ${userId}`);
   }
 
-  await sb.from("notifications").insert({
-    user_id: userId,
-    title:   "📗 Daily Hifdh Reminder",
-    message: hifdh.replace(/^📖\s*/, ""),
-    type:    "daily_content",
-    link:    "/student/hifdh",
-    is_read: false,
-  }).catch(() => {});
+  // ── In-app notifications (notifications table) ────────────────────────────
+  await sb.from("notifications").insert([
+    {
+      user_id: userId,
+      title:   "📖 Daily Quranic Verse",
+      message: `${verse.en} — ${verse.ref}`,
+      type:    "daily_content",
+      is_read: false,
+    },
+    {
+      user_id: userId,
+      title:   "🌙 Daily Hadith",
+      message: `"${hadith.en}" — ${hadith.source}`,
+      type:    "daily_content",
+      is_read: false,
+    },
+    {
+      user_id: userId,
+      title:   "📗 Daily Hifdh Reminder",
+      message: hifdh.replace(/^📖\s*/, ""),
+      type:    "daily_content",
+      link:    "/student/hifdh",
+      is_read: false,
+    },
+    {
+      user_id: userId,
+      title:   `🕌 Seerah: ${seerah.title}`,
+      message: seerah.body.slice(0, 200),
+      type:    "daily_content",
+      is_read: false,
+    },
+  ]).catch(() => {});
 
-  await new Promise(r => setTimeout(r, 800));
-
-  // ── 4. Seerah Highlight ──────────────────────────────────────────────────
-  const seerahPayload = {
-    type:    "daily_content",
-    title:   `🕌 Seerah: ${seerah.title}`,
-    message: seerah.body.slice(0, 120) + "…",
-    url:     `${APP_BASE_URL}/student/dashboard`,
-    tag:     "daily-seerah",
-    icon:    "/icons/icon-192x192.png",
-    badge:   "/icons/icon-96x96.png",
-  };
-
-  if (pushSub) {
-    await sendWebPush(pushSub as any, seerahPayload).catch(() => {});
-  }
-
-  await sb.from("notifications").insert({
-    user_id: userId,
-    title:   `🕌 Seerah: ${seerah.title}`,
-    message: seerah.body.slice(0, 200),
-    type:    "daily_content",
-    is_read: false,
-  }).catch(() => {});
-
-  // ── 5. Telegram — single rich morning message ─────────────────────────
+  // ── Telegram — single rich morning message ────────────────────────────────
   if (telegramChatId) {
     const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     const tgText =
