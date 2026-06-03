@@ -1,32 +1,39 @@
 /*  src/components/NotificationPermissionBanner.tsx
     ═══════════════════════════════════════════════════════════════════════
-    A visible, dismissable banner that asks students to enable push
-    notifications. This is the fix for the silent permission request
+    A visible, dismissable banner that asks students AND teachers to enable
+    push notifications. This is the fix for the silent permission request
     problem — browsers block Notification.requestPermission() when it's
     called programmatically without a user gesture.
 
-    Mount once in your student layout/dashboard:
+    Mount once in your student layout/dashboard AND teacher layout:
 
       import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
-      // Inside your student layout return:
+      // Inside your layout return:
       <NotificationPermissionBanner />
 
     The banner:
-      - Only shows to students (not admins/teachers)
+      - Shows to students AND teachers (not admins)
       - Only shows if permission is "default" (not yet asked) or "denied"
       - Disappears permanently once permission is granted
       - Has a "Not now" option that hides it for the session
+
+    FIX (Bug 4): Previously excluded teachers, so they never saw the opt-in
+    prompt and were never subscribed even though useTimetableNotifications
+    runs for them. Now teachers see the banner too.
+
+    FIX (Bug 2 hardening): ensureSubscribed now uses (user_id, endpoint)
+    upsert — if the multi-device constraint doesn't exist yet it falls back
+    to user_id only, same as before.
     ═══════════════════════════════════════════════════════════════════════
 */
 import { useState, useEffect } from "react";
-import { Bell, BellOff, X, CheckCircle2 } from "lucide-react";
+import { Bell, BellOff, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
 const SESSION_KEY = "tahleem_notif_banner_dismissed";
 const G    = "#064E3B";
 const GM   = "#075E54";
-const GOLD = "#C9A84C";
 
 type PermState = "unknown" | "default" | "granted" | "denied" | "unsupported";
 
@@ -43,22 +50,23 @@ export default function NotificationPermissionBanner() {
   const [subscribing, setSubscribing] = useState(false);
   const [success,     setSuccess]     = useState(false);
 
-  // Don't show for admins/teachers — they don't need class reminders
-  const isStudent = !hasRole("admin") && !hasRole("teacher");
+  // FIX (Bug 4): Show to students AND teachers — both receive class reminders.
+  // Only admins are excluded (they manage the platform, don't attend classes).
+  const shouldShow = !!user && !hasRole("admin");
 
   useEffect(() => {
-    if (!isStudent) return;
+    if (!shouldShow) return;
     setPerm(getPermState());
     setDismissed(!!sessionStorage.getItem(SESSION_KEY));
 
-    // If already granted, make sure the subscription is in the DB
+    // If already granted, silently re-save subscription in case DB row is missing
     if (getPermState() === "granted" && user) {
       ensureSubscribed(user.id).catch(() => {});
     }
-  }, [isStudent, user]);
+  }, [shouldShow, user]);
 
   // Hide if not relevant
-  if (!user || !isStudent) return null;
+  if (!shouldShow) return null;
   if (dismissed || success) return null;
   if (perm === "unknown" || perm === "unsupported" || perm === "granted") return null;
 
@@ -198,7 +206,7 @@ async function enablePushNotifications(userId: string): Promise<"granted" | "den
   try {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return "error";
 
-    // This runs from a button click — browser will show the permission prompt
+    // Runs from a button click — browser will show the native permission prompt
     const permission = await Notification.requestPermission();
     if (permission !== "granted") return "denied";
 
@@ -224,30 +232,25 @@ async function enablePushNotifications(userId: string): Promise<"granted" | "den
     const auth   = sub.getKey("auth");
     if (!p256dh || !auth) return "error";
 
-    // Save to DB — use (user_id, endpoint) upsert to support multiple devices
-    const { error } = await supabase.from("push_subscriptions").upsert(
-      {
-        user_id:    userId,
-        endpoint:   sub.endpoint,
-        p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
-        auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id,endpoint" }  // fixed: was "user_id" only
-    );
+    const row = {
+      user_id:    userId,
+      endpoint:   sub.endpoint,
+      p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
+      auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Try multi-device upsert first (requires unique(user_id, endpoint) constraint)
+    const { error } = await supabase
+      .from("push_subscriptions")
+      .upsert(row, { onConflict: "user_id,endpoint" });
 
     if (error) {
-      // Fall back to user_id only in case the multi-device constraint isn't added yet
-      await supabase.from("push_subscriptions").upsert(
-        {
-          user_id:    userId,
-          endpoint:   sub.endpoint,
-          p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
-          auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" }
-      );
+      // Constraint doesn't exist yet — fall back to single-device upsert
+      console.warn("[NotificationBanner] multi-device upsert failed, falling back:", error.message);
+      await supabase
+        .from("push_subscriptions")
+        .upsert(row, { onConflict: "user_id" });
     }
 
     return "granted";
@@ -258,14 +261,14 @@ async function enablePushNotifications(userId: string): Promise<"granted" | "den
 }
 
 async function ensureSubscribed(userId: string): Promise<void> {
-  // Called silently when permission is already granted — re-saves sub if missing
+  // Called silently when permission is already granted — re-saves sub if missing from DB
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
   try {
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription();
-    if (!sub) return; // no existing sub, user needs to click Enable
+    if (!sub) return; // no existing sub in browser — user needs to click Enable
 
-    // Check DB
+    // Check if this endpoint is already in DB
     const { data } = await supabase
       .from("push_subscriptions")
       .select("id")
@@ -274,21 +277,29 @@ async function ensureSubscribed(userId: string): Promise<void> {
       .maybeSingle();
 
     if (!data) {
-      // Sub exists in browser but not in DB — re-save silently
+      // Subscription exists in browser but not in DB — re-save silently
       const p256dh = sub.getKey("p256dh");
       const auth   = sub.getKey("auth");
       if (!p256dh || !auth) return;
 
-      await supabase.from("push_subscriptions").upsert(
-        {
-          user_id:    userId,
-          endpoint:   sub.endpoint,
-          p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
-          auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" }
-      );
+      const row = {
+        user_id:    userId,
+        endpoint:   sub.endpoint,
+        p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
+        auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
+        updated_at: new Date().toISOString(),
+      };
+
+      // FIX: Try multi-device upsert, fall back to single-device
+      const { error } = await supabase
+        .from("push_subscriptions")
+        .upsert(row, { onConflict: "user_id,endpoint" });
+
+      if (error) {
+        await supabase
+          .from("push_subscriptions")
+          .upsert(row, { onConflict: "user_id" });
+      }
     }
   } catch { /* silent */ }
 }
