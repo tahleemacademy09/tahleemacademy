@@ -1933,7 +1933,173 @@ const InClassQuranReader=({onClose}:any)=>{
                                   </span>
                                   {"\u00a0"}
                                   <span
-                const SubjectMaterialsPanel=({subjectId,subject,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
+                                    style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:"50%",
+                                      background:isPlaying?"#1a3d24":"rgba(183,121,31,.85)",
+                                      fontSize:9,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0,margin:"0 1px",cursor:"pointer",
+                                      boxShadow:isPlaying?"0 0 0 2px #c9a84c":"none",transition:"all .2s"}}
+                                    onClick={()=>playVerse(g.surah,a.numberInSurah)}>
+                                    {isPlaying?"▶":toAr(a.numberInSurah)}
+                                  </span>
+                                  {"\u00a0"}
+                                </span>
+                              );
+                            })}
+                          </p>
+                        </div>
+                      ));
+                    })()}
+                    <div style={{padding:"5px 16px",borderTop:"1px solid rgba(201,168,76,.4)",display:"flex",justifyContent:"center"}}>
+                      <span style={{fontSize:10,color:"#b7791f",fontFamily:"'Amiri',serif"}}>— {toAr(page)} —</span>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8,marginTop:10}}>
+                    <button onClick={()=>changePage(-1)} disabled={page<=1}
+                      style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid rgba(201,168,76,.5)",background:"#fdf6e3",color:"#1a3d24",fontSize:18,fontWeight:700,cursor:page<=1?"not-allowed":"pointer",opacity:page<=1?0.3:1}}>◀</button>
+                    <button onClick={()=>changePage(1)} disabled={page>=604}
+                      style={{flex:1,padding:"10px",borderRadius:8,border:"1px solid rgba(201,168,76,.5)",background:"#fdf6e3",color:"#1a3d24",fontSize:18,fontWeight:700,cursor:page>=604?"not-allowed":"pointer",opacity:page>=604?0.3:1}}>▶</button>
+                  </div>
+                </div>
+              )}
+
+              {!mushafLoading&&mushafLines.length===0&&mushafAyahs.length===0&&(
+                <div style={{padding:"40px 20px",textAlign:"center",fontFamily:"'Amiri',serif"}}>
+                  <div style={{fontSize:36,marginBottom:12}}>📖</div>
+                  <p style={{fontSize:13,color:"#7a9e88",margin:"0 0 16px"}}>تعذّر تحميل الصفحة</p>
+                  <button onClick={()=>fetchMushafPage(page)}
+                    style={{padding:"8px 20px",borderRadius:8,border:"none",background:"#1a3d24",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                    🔄 إعادة المحاولة
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* ══ MODE: TRANSLATION (page nav + Arabic + English per ayah, no image) ══ */}
+        {mode==="translation"&&(
+          <>
+            <PageNav/>
+            <div style={{flex:1,overflowY:"auto",background:"#fff"}}>
+              <div style={{padding:"6px 12px",background:"linear-gradient(90deg,rgba(26,61,36,.06),transparent)",borderBottom:"1px solid #f0e8d4",display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:10,fontWeight:800,color:"#1a3d24",letterSpacing:.5,textTransform:"uppercase"}}>🌐 Sahih International · Page {page}</span>
+              </div>
+              {transLoading&&(
+                <div style={{display:"flex",justifyContent:"center",padding:24}}>
+                  <div style={{width:22,height:22,border:"3px solid #1a3d24",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
+                </div>
+              )}
+              {!transLoading&&transAyahs.map((a:any,i:number)=>{
+                const sn=a.surah?.number;
+                const vKey=`${sn}:${a.numberInSurah}`;
+                return(
+                  <div key={i} style={{padding:"12px 14px",borderBottom:"1px solid #f5f0e4"}}>
+                    {/* Arabic ayah */}
+                    <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:20,color:"#1a3d24",lineHeight:2.1,textAlign:"right",direction:"rtl",wordBreak:"break-word",marginBottom:8}}>
+                      {a.arabicText}
+                      <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:22,height:22,borderRadius:"50%",background:"#b7791f",marginRight:5,fontSize:9,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0}}>
+                        {toAr(a.numberInSurah)}
+                      </span>
+                    </div>
+                    {/* English translation */}
+                    <p style={{margin:"0 0 6px",fontSize:12,color:"#2d3748",lineHeight:1.75}}>{a.text}</p>
+                    <button onClick={()=>playVerse(sn,a.numberInSurah)}
+                      style={{padding:"2px 8px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===vKey?"#fee2e2":"#f0fff4",color:playingVerse===vKey?"#c0392b":"#1a3d24",fontSize:9,fontWeight:700,cursor:"pointer"}}>
+                      {playingVerse===vKey?"⏹ Stop":"▶ Listen"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* ══ MODE: TAFSEER (surah header + ayah list, no image) ══ */}
+        {mode==="tafseer"&&(
+          <>
+            {/* Surah header */}
+            <div style={{display:"flex",alignItems:"center",gap:6,padding:"7px 10px",borderBottom:"1px solid #e8dfc8",background:"#fff",flexShrink:0}}>
+              <div style={{flex:1,textAlign:"center"}}>
+                <span style={{fontFamily:"'Amiri',serif",fontSize:15,color:"#1a3d24",fontWeight:700}}>{SURAHS_LIST[surahNum-1]?.ar}</span>
+                <span style={{fontSize:11,color:"#666",marginLeft:6}}>{SURAHS_LIST[surahNum-1]?.name}</span>
+              </div>
+              <button onClick={()=>setShowPicker(true)}
+                style={{padding:"4px 10px",borderRadius:6,border:"1px solid #b7791f",background:"#fffbf0",color:"#b7791f",cursor:"pointer",fontSize:11,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>
+                Surah ▾
+              </button>
+            </div>
+            {/* Tafseer list */}
+            <div style={{flex:1,overflowY:"auto",background:"#fffbf0"}}>
+              <div style={{padding:"6px 12px",background:"linear-gradient(90deg,rgba(183,121,31,.08),transparent)",borderBottom:"1px solid #f0dda0",display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:10,fontWeight:800,color:"#b7791f",letterSpacing:.5,textTransform:"uppercase"}}>📚 تفسير ابن كثير — Tafseer Ibn Katheer</span>
+              </div>
+              {surahLoading&&(
+                <div style={{display:"flex",justifyContent:"center",padding:24}}>
+                  <div style={{width:22,height:22,border:"3px solid #b7791f",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
+                </div>
+              )}
+              {!surahLoading&&(
+                <>
+                  {surahNum!==9&&(
+                    <div style={{fontFamily:"'Amiri',serif",fontSize:18,color:"#b7791f",textAlign:"center",direction:"rtl",padding:"10px 0 10px",borderBottom:"1px dashed #e8dfc8"}}>
+                      بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
+                    </div>
+                  )}
+                  {surahAyahs.map((a:any)=>{
+                    const key=`${surahNum}:${a.numberInSurah}`;
+                    const tafseerText=expandedTafseer[key];
+                    const isLoadingT=loadingTafseer[key];
+                    return(
+                      <div key={a.numberInSurah} style={{borderBottom:"1px solid #f0e8d4",background:"#fff"}}>
+                        {/* Arabic ayah */}
+                        <div style={{padding:"12px 12px 6px"}}>
+                          <div style={{fontFamily:"'Amiri Quran','Amiri',serif",fontSize:22,color:"#1a3d24",lineHeight:2.2,textAlign:"right",direction:"rtl",wordBreak:"break-word"}}>
+                            {a.text}
+                            <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:24,height:24,borderRadius:"50%",background:"#b7791f",marginRight:6,fontSize:9,fontWeight:700,color:"#fff",verticalAlign:"middle",flexShrink:0}}>
+                              {toAr(a.numberInSurah)}
+                            </span>
+                          </div>
+                          {/* Listen button only */}
+                          <button onClick={()=>playVerse(surahNum,a.numberInSurah)}
+                            style={{padding:"3px 10px",borderRadius:5,border:"1px solid #d4e8d4",background:playingVerse===key?"#fee2e2":"#f0fff4",color:playingVerse===key?"#c0392b":"#1a3d24",fontSize:10,fontWeight:700,cursor:"pointer",marginTop:4}}>
+                            {playingVerse===key?"⏹ Stop":"▶ Listen"}
+                          </button>
+                        </div>
+                        {/* Tafseer — always visible */}
+                        <div style={{padding:"8px 12px 12px",background:"#fffbf0",borderTop:"1px solid #f5edd8"}}>
+                          <div style={{fontSize:9,fontWeight:800,color:"#b7791f",letterSpacing:.7,textTransform:"uppercase",marginBottom:6}}>
+                            تفسير ابن كثير
+                          </div>
+                          {isLoadingT?(
+                            <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 0"}}>
+                              <div style={{width:12,height:12,border:"2px solid #b7791f",borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .6s linear infinite",flexShrink:0}}/>
+                              <span style={{fontSize:11,color:"#b7791f"}}>جارٍ تحميل التفسير…</span>
+                            </div>
+                          ):(
+                            <div style={{fontFamily:"'Amiri',serif",fontSize:14,color:"#3d3522",lineHeight:2,direction:"rtl",textAlign:"right",whiteSpace:"pre-wrap"}}>
+                              {tafseerText||"—"}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Surah picker overlay — shared */}
+        {SurahPicker()}
+
+        {/* Google Fonts */}
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');`}</style>
+      </div>
+    </div>
+  );
+};
+
+const SubjectMaterialsPanel=({subjectId,subject,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
   const[viewing,setViewing]=useState<any>(null);
@@ -2421,8 +2587,7 @@ const RoomSettingsModal = ({ onClose, room }: { onClose: () => void; room: any }
     })();
   }, [room]);
 
-  const switchDevice = async (kind: MediaDeviceKind, deviceId: string) => {
-    try {
+  const switchDevice = async (kind: MediaDeviceKind, deviceId: string) => {    try {
       await room.switchActiveDevice(kind, deviceId);
       if (kind === "audioinput")  setSelAudioIn(deviceId);
       if (kind === "audiooutput") setSelAudioOut(deviceId);
@@ -3651,7 +3816,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             </div>
             {chatOpen&&!isMobile&&(
               <div className="gm-sidebar">
-                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flex:1,display:"flex"}}>
+                <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0,background:"rgba(32,33,36,.97)"}}>
                   {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(
                     <button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{
                       flex:1,padding:"14px 4px",background:"none",border:"none",
@@ -3676,9 +3841,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
             />
           )}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}/>
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}/>{/* FIX BUG 2: quiz launcher */}
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
+          {/* FIX BUG 2: LiveQuizOverlay now controlled by quizOpen state — was permanently disabled with hardcoded isOpen={false} */}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>
         </LiveKitRoom>
       )}
@@ -3705,7 +3871,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
 };
 
 const MatPickerBridge=({subjectId,onShare,onClose}:any)=>{const room=useRoomContext();return<MaterialPicker subjectId={subjectId} onShare={(mat:any)=>onShare(mat,room)} onClose={onClose}/>;};
+// MatViewerBridge (legacy — kept for backwards compat, now delegates to InClassMaterialViewer)
 const MatViewerBridge=({material,isTeacher,onClose}:any)=>{const room=useRoomContext();return<InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={()=>onClose(room)}/>;};
+// MatViewerInlineBridge — renders INSIDE LiveKitRoom (has room context) so mat_close can be broadcast
 const MatViewerInlineBridge=({material,isPrivileged,onClose}:any)=>{
   const room=useRoomContext();
   return<InClassMaterialViewer material={material} isTeacher={isPrivileged} onClose={()=>{
@@ -3715,3 +3883,4 @@ const MatViewerInlineBridge=({material,isPrivileged,onClose}:any)=>{
 };
 
 export default ClassroomView;
+
