@@ -194,13 +194,14 @@ Return JSON:
       } else if (target === "teachers") {
         const { data } = await adminClient.from("user_roles").select("user_id").eq("role", "teacher");
         userIds = (data || []).map((r: any) => r.user_id);
-      } else if (["beginner", "intermediate", "advanced"].includes(target)) {
-        const { data } = await adminClient.from("profiles").select("user_id").eq("level", target);
-        userIds = (data || []).map((p: any) => p.user_id);
       } else if (target?.startsWith("user:")) {
         userIds = [target.replace("user:", "")];
       } else if (Array.isArray(body.user_ids)) {
         userIds = body.user_ids;
+      } else if (target) {
+        // Dynamic academic level slug (foundation, beginner, intermediate, advanced, etc.)
+        const { data } = await adminClient.from("profiles").select("user_id").eq("level", target);
+        userIds = (data || []).map((p: any) => p.user_id);
       }
 
       if (userIds.length === 0) {
