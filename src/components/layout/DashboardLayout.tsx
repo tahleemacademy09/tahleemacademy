@@ -591,8 +591,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           </div>
         )}
 
-        )}
-
         {/* ── Full Notification Detail Modal ─────────────────────────────── */}
         {selectedNotif && (
           <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end justify-center"
