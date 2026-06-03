@@ -264,16 +264,24 @@ self.addEventListener("push", (event) => {
   const isRing  = data.type === "ring";
   const isDaily = data.type === "daily_content";
 
+  // Build bilingual title: "English · عربي" when both exist
   let title;
   if (isRing) {
     title = `📞 ${data.class_title || "Class"} — Starting Now!`;
   } else if (isDaily) {
     title = data.title || "📚 Tahleem Academy";
+  } else if (data.title && data.title_ar) {
+    title = `${data.title} · ${data.title_ar}`;
   } else {
     title = data.title || "📚 Class Reminder — Tahleem Academy";
   }
 
   const opts = buildNotificationOpts(data);
+
+  // Append Arabic body beneath English body when both are available
+  if (!isRing && !isDaily && data.message && data.message_ar) {
+    opts.body = `${data.message}\n\n${data.message_ar}`;
+  }
 
   event.waitUntil(
     self.registration.showNotification(title, opts).then(() => {
