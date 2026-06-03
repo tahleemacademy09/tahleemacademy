@@ -248,6 +248,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const [unreadNotifs, setUnreadNotifs] = useState(0);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [notifList, setNotifList] = useState<any[]>([]);
+  const [selectedNotif, setSelectedNotif] = useState<any>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -549,7 +550,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 ) : notifList.map((n: any) => (
                     <div key={n.id} onClick={() => {
                         if (!n.is_read) markRead(n.id);
-                        if (n.link) { setShowNotifPanel(false); window.location.href = n.link; }
+                        setSelectedNotif(n);
                       }}
                       className="flex items-start gap-3 px-5 py-3.5 border-b cursor-pointer transition-colors"
                       style={{ background: n.is_read ? "#fafafa" : n.type === "class_reminder" ? "#f0fff4" : n.type === "payment" ? "#fff5f5" : "#fffbeb" }}>
@@ -570,25 +571,103 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                           <p className={`text-sm leading-tight ${n.is_read ? "font-medium" : "font-bold"} text-gray-900`}>{n.title}</p>
                           {!n.is_read && <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"/>}
                         </div>
-                        <p className="text-xs text-gray-500 mt-0.5">{n.message}</p>
+                        {/* Show English message preview */}
+                        <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{n.message}</p>
+                        {/* Show Arabic title preview if present */}
+                        {n.title_ar && (
+                          <p className="text-xs text-gray-400 mt-0.5 text-right font-arabic line-clamp-1" dir="rtl">{n.title_ar}</p>
+                        )}
                         <div className="flex items-center justify-between mt-1">
                           <p className="text-[10px] text-gray-400">
                             {new Date(n.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
                           </p>
-                          {(n.type === "class_reminder" || n.type === "class_ring") && n.link && (
-                            <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#0f2d1f", color:"#c9a84c", fontWeight:700 }}>
-                              {n.type === "class_ring" ? "📞 Join Now →" : "Join →"}
-                            </span>
-                          )}
-                          {n.type === "payment" && n.link && (
-                            <span style={{ fontSize:10, padding:"2px 8px", borderRadius:9, background:"#c62828", color:"#fff", fontWeight:700 }}>
-                              Pay Now →
-                            </span>
-                          )}
+                          <span style={{ fontSize:10, color:"#9CA3AF" }}>Tap to read →</span>
                         </div>
                       </div>
                     </div>
                 ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        )}
+
+        {/* ── Full Notification Detail Modal ─────────────────────────────── */}
+        {selectedNotif && (
+          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end justify-center"
+            onClick={() => setSelectedNotif(null)}>
+            <div className="w-full max-w-lg bg-white rounded-t-3xl shadow-2xl flex flex-col overflow-hidden max-h-[85vh]"
+              onClick={e => e.stopPropagation()}>
+
+              {/* Header */}
+              <div className="flex items-center justify-between px-5 py-4 border-b" style={{ background:"#0f2d1f" }}>
+                <div className="flex items-center gap-3">
+                  <span className="text-xl">
+                    {selectedNotif.type === "class_reminder" ? "📚"
+                      : selectedNotif.type === "warning"      ? "⚠️"
+                      : selectedNotif.type === "exam_assigned"? "📋"
+                      : selectedNotif.type === "payment"      ? "💳"
+                      : "🔔"}
+                  </span>
+                  <span className="font-bold text-white text-sm capitalize">
+                    {selectedNotif.type?.replace(/_/g, " ") || "Notification"}
+                  </span>
+                </div>
+                <button onClick={() => setSelectedNotif(null)}
+                  className="text-white/60 hover:text-white transition-colors p-1">
+                  <X className="h-5 w-5"/>
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto p-5 space-y-4">
+
+                {/* English section */}
+                <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 space-y-2">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-gray-400">🇬🇧 English</p>
+                  <p className="font-bold text-gray-900 text-base leading-snug">{selectedNotif.title}</p>
+                  <p className="text-sm text-gray-600 leading-relaxed">{selectedNotif.message}</p>
+                </div>
+
+                {/* Arabic section — shown only when bilingual data exists */}
+                {(selectedNotif.title_ar || selectedNotif.message_ar) && (
+                  <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 space-y-2" dir="rtl">
+                    <p className="text-[10px] font-black uppercase tracking-wider text-amber-500" dir="ltr">🇸🇦 Arabic</p>
+                    <p className="font-bold text-gray-900 text-base leading-snug font-arabic">
+                      {selectedNotif.title_ar || selectedNotif.title}
+                    </p>
+                    <p className="text-sm text-gray-600 leading-relaxed font-arabic" style={{ lineHeight:1.9 }}>
+                      {selectedNotif.message_ar || selectedNotif.message}
+                    </p>
+                  </div>
+                )}
+
+                {/* Timestamp */}
+                <p className="text-[11px] text-gray-400 text-center">
+                  {new Date(selectedNotif.created_at).toLocaleDateString("en-US", { weekday:"long", year:"numeric", month:"long", day:"numeric", hour:"2-digit", minute:"2-digit" })}
+                </p>
+              </div>
+
+              {/* Footer actions */}
+              <div className="px-5 pb-6 pt-3 border-t bg-white space-y-2">
+                {selectedNotif.link && (
+                  <button
+                    onClick={() => { setSelectedNotif(null); setShowNotifPanel(false); window.location.href = selectedNotif.link; }}
+                    className="w-full py-3 rounded-2xl font-bold text-sm text-white"
+                    style={{ background:"linear-gradient(135deg,#064E3B,#075E54)" }}>
+                    {selectedNotif.type === "class_reminder" || selectedNotif.type === "class_ring"
+                      ? "📚 Join Class →"
+                      : selectedNotif.type === "payment"
+                      ? "💳 Pay Now →"
+                      : "Open →"}
+                  </button>
+                )}
+                <button
+                  onClick={() => setSelectedNotif(null)}
+                  className="w-full py-3 rounded-2xl font-semibold text-sm text-gray-500 border border-gray-200 bg-gray-50">
+                  Close
+                </button>
               </div>
             </div>
           </div>
