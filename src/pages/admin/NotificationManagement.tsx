@@ -206,11 +206,18 @@ function TargetSelector({ value, onChange, targets }: { value: string; onChange:
 // ═══════════════════════════════════════════════════════════════════════════════
 function AICompose({ session, targets }: { session: any; targets: TargetOption[] }) {
   const { toast } = useToast();
-  const [idea,     setIdea]     = useState("");
-  const [target,   setTarget]   = useState("all");
-  const [composed, setComposed] = useState<any>(null);
-  const [composing, setComposing] = useState(false);
-  const [sending,   setSending]   = useState(false);
+  const [idea,          setIdea]          = useState("");
+  const [target,        setTarget]        = useState("all");
+  const [composed,      setComposed]      = useState<any>(null);
+  const [composing,     setComposing]     = useState(false);
+  const [sending,       setSending]       = useState(false);
+  const [bilingualReady, setBilingualReady] = useState<boolean | null>(null);
+
+  // Probe whether bilingual DB columns exist yet
+  useEffect(() => {
+    supabase.from("notifications").select("title_ar").limit(1)
+      .then(({ error }) => setBilingualReady(!error));
+  }, []);
 
   const compose = async () => {
     if (!idea.trim()) { toast({ title: "Enter your idea first", variant: "destructive" }); return; }
@@ -246,7 +253,11 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      toast({ title: `✅ Sent to ${data.sent} users` });
+      if (data?.bilingual_ready === false) {
+        toast({ title: `✅ Sent to ${data.sent} users (English only)`, description: "⚠️ Run the DB migration to enable bilingual storage.", variant: "destructive" });
+      } else {
+        toast({ title: `✅ Sent to ${data.sent} users — English & Arabic` });
+      }
       setIdea(""); setComposed(null);
     } catch (e: any) {
       toast({ title: "Send failed", description: e.message, variant: "destructive" });
@@ -256,6 +267,23 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+
+      {/* ── Migration warning — shown until title_ar column exists ── */}
+      {bilingualReady === false && (
+        <div style={{ background: "#FEF3C7", border: "1.5px solid #F59E0B", borderRadius: 12, padding: "12px 16px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
+          <div>
+            <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#92400E" }}>DB Migration Required</p>
+            <p style={{ margin: "4px 0 8px", fontSize: 12, color: "#78350F", lineHeight: 1.5 }}>
+              Arabic columns are missing from the notifications table. Notifications will send in English only until you run this SQL in Supabase:
+            </p>
+            <code style={{ display: "block", background: "#FDE68A", borderRadius: 6, padding: "8px 10px", fontSize: 11, color: "#451A03", fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+              {`ALTER TABLE public.notifications\n  ADD COLUMN IF NOT EXISTS title_ar   text,\n  ADD COLUMN IF NOT EXISTS message_ar text;`}
+            </code>
+          </div>
+        </div>
+      )}
+
       {/* Idea input */}
       <div style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #E5E7EB", padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -373,7 +401,11 @@ function AutoEvents({ targets }: { targets: TargetOption[] }) {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      toast({ title: `✅ Sent to ${data.sent} users` });
+      if (data?.bilingual_ready === false) {
+        toast({ title: `✅ Sent to ${data.sent} users (English only)`, description: "⚠️ Run the DB migration to enable bilingual storage.", variant: "destructive" });
+      } else {
+        toast({ title: `✅ Sent to ${data.sent} users — English & Arabic` });
+      }
       setPreview(null); setSelected(null); setContext("");
     } catch (e: any) {
       toast({ title: "Send failed", description: e.message, variant: "destructive" });
