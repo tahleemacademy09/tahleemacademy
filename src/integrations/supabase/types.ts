@@ -3267,4 +3267,3217 @@ export type Database = {
           ai_reason?: string | null
           ai_severity?: string | null
           ai_verdict?: string | null
-          author_id?: string 
+          author_id?: string | null
+          content: string
+          content_id?: string | null
+          content_type?: string
+          created_at?: string
+          flagged_by?: string | null
+          id?: string
+          reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+        }
+        Update: {
+          ai_reason?: string | null
+          ai_severity?: string | null
+          ai_verdict?: string | null
+          author_id?: string | null
+          content?: string
+          content_id?: string | null
+          content_type?: string
+          created_at?: string
+          flagged_by?: string | null
+          id?: string
+          reason?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      musabaqah_attempts: {
+        Row: {
+          bell_count: number
+          competition_id: string
+          created_at: string
+          duration_seconds: number | null
+          id: string
+          judge_comment: string | null
+          judge_score: number | null
+          participant_id: string
+          scope_label: string
+          scope_label_ar: string
+          score_breakdown: Json | null
+          stage_number: number
+          status: string
+        }
+        Insert: {
+          bell_count?: number
+          competition_id: string
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          judge_comment?: string | null
+          judge_score?: number | null
+          participant_id: string
+          scope_label?: string
+          scope_label_ar?: string
+          score_breakdown?: Json | null
+          stage_number?: number
+          status?: string
+        }
+        Update: {
+          bell_count?: number
+          competition_id?: string
+          created_at?: string
+          duration_seconds?: number | null
+          id?: string
+          judge_comment?: string | null
+          judge_score?: number | null
+          participant_id?: string
+          scope_label?: string
+          scope_label_ar?: string
+          score_breakdown?: Json | null
+          stage_number?: number
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_attempts_competition_id_fkey"
+            columns: ["competition_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_competitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "musabaqah_attempts_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_participants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      musabaqah_competitions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          current_participant_id: string | null
+          current_stage: number
+          description: string | null
+          id: string
+          room_code: string
+          scope_config: Json | null
+          scope_type: string
+          status: string
+          time_limit_seconds: number
+          title: string
+          total_stages: number
+          updated_at: string
+          use_criteria_scoring: boolean
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          current_participant_id?: string | null
+          current_stage?: number
+          description?: string | null
+          id?: string
+          room_code: string
+          scope_config?: Json | null
+          scope_type?: string
+          status?: string
+          time_limit_seconds?: number
+          title: string
+          total_stages?: number
+          updated_at?: string
+          use_criteria_scoring?: boolean
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          current_participant_id?: string | null
+          current_stage?: number
+          description?: string | null
+          id?: string
+          room_code?: string
+          scope_config?: Json | null
+          scope_type?: string
+          status?: string
+          time_limit_seconds?: number
+          title?: string
+          total_stages?: number
+          updated_at?: string
+          use_criteria_scoring?: boolean
+        }
+        Relationships: []
+      }
+      musabaqah_events: {
+        Row: {
+          created_at: string
+          event_type: string
+          id: number
+          payload: Json | null
+          room_id: string
+          sent_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          event_type: string
+          id?: number
+          payload?: Json | null
+          room_id: string
+          sent_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          event_type?: string
+          id?: number
+          payload?: Json | null
+          room_id?: string
+          sent_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_events_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      musabaqah_participants: {
+        Row: {
+          bell_counts: Json
+          camera_on: boolean
+          competition_id: string
+          created_at: string
+          id: string
+          participant_name: string
+          proctor_flagged: boolean
+          queue_position: number
+          school: string | null
+          stage_scores: Json
+          status: string
+          total_score: number
+          user_id: string | null
+        }
+        Insert: {
+          bell_counts?: Json
+          camera_on?: boolean
+          competition_id: string
+          created_at?: string
+          id?: string
+          participant_name: string
+          proctor_flagged?: boolean
+          queue_position?: number
+          school?: string | null
+          stage_scores?: Json
+          status?: string
+          total_score?: number
+          user_id?: string | null
+        }
+        Update: {
+          bell_counts?: Json
+          camera_on?: boolean
+          competition_id?: string
+          created_at?: string
+          id?: string
+          participant_name?: string
+          proctor_flagged?: boolean
+          queue_position?: number
+          school?: string | null
+          stage_scores?: Json
+          status?: string
+          total_score?: number
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_participants_competition_id_fkey"
+            columns: ["competition_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_competitions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      musabaqah_reactions: {
+        Row: {
+          created_at: string
+          emoji: string
+          id: number
+          room_id: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          emoji: string
+          id?: number
+          room_id: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          emoji?: string
+          id?: number
+          room_id?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_reactions_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      musabaqah_rooms: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          current_contestant_idx: number | null
+          current_phase: string | null
+          current_stage_idx: number | null
+          description: string | null
+          id: string
+          scope: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          current_contestant_idx?: number | null
+          current_phase?: string | null
+          current_stage_idx?: number | null
+          description?: string | null
+          id?: string
+          scope?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          current_contestant_idx?: number | null
+          current_phase?: string | null
+          current_stage_idx?: number | null
+          description?: string | null
+          id?: string
+          scope?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      musabaqah_scores: {
+        Row: {
+          bell_count: number | null
+          contestant_name: string
+          contestant_user_id: string | null
+          created_at: string
+          id: string
+          judged_by: string | null
+          notes: string | null
+          question_ayah: string | null
+          question_id: number | null
+          question_surah: string | null
+          room_id: string
+          score_adab: number | null
+          score_hifdh: number | null
+          score_tajweed: number | null
+          score_tarteel: number | null
+          score_total: number
+          stage_idx: number
+          stage_name: string | null
+        }
+        Insert: {
+          bell_count?: number | null
+          contestant_name: string
+          contestant_user_id?: string | null
+          created_at?: string
+          id?: string
+          judged_by?: string | null
+          notes?: string | null
+          question_ayah?: string | null
+          question_id?: number | null
+          question_surah?: string | null
+          room_id: string
+          score_adab?: number | null
+          score_hifdh?: number | null
+          score_tajweed?: number | null
+          score_tarteel?: number | null
+          score_total?: number
+          stage_idx: number
+          stage_name?: string | null
+        }
+        Update: {
+          bell_count?: number | null
+          contestant_name?: string
+          contestant_user_id?: string | null
+          created_at?: string
+          id?: string
+          judged_by?: string | null
+          notes?: string | null
+          question_ayah?: string | null
+          question_id?: number | null
+          question_surah?: string | null
+          room_id?: string
+          score_adab?: number | null
+          score_hifdh?: number | null
+          score_tajweed?: number | null
+          score_tarteel?: number | null
+          score_total?: number
+          stage_idx?: number
+          stage_name?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "musabaqah_scores_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "musabaqah_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notification_send_log: {
+        Row: {
+          ai_generated: boolean | null
+          created_at: string
+          event_type: string | null
+          id: string
+          message_ar: string | null
+          message_en: string | null
+          recipient_count: number | null
+          sent_by: string | null
+          target: string | null
+          title_ar: string | null
+          title_en: string | null
+          type: string | null
+        }
+        Insert: {
+          ai_generated?: boolean | null
+          created_at?: string
+          event_type?: string | null
+          id?: string
+          message_ar?: string | null
+          message_en?: string | null
+          recipient_count?: number | null
+          sent_by?: string | null
+          target?: string | null
+          title_ar?: string | null
+          title_en?: string | null
+          type?: string | null
+        }
+        Update: {
+          ai_generated?: boolean | null
+          created_at?: string
+          event_type?: string | null
+          id?: string
+          message_ar?: string | null
+          message_en?: string | null
+          recipient_count?: number | null
+          sent_by?: string | null
+          target?: string | null
+          title_ar?: string | null
+          title_en?: string | null
+          type?: string | null
+        }
+        Relationships: []
+      }
+      notifications: {
+        Row: {
+          created_at: string
+          id: string
+          is_read: boolean | null
+          link: string | null
+          message: string
+          message_ar: string | null
+          reference_id: string | null
+          sent_by: string | null
+          title: string
+          title_ar: string | null
+          type: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_read?: boolean | null
+          link?: string | null
+          message: string
+          message_ar?: string | null
+          reference_id?: string | null
+          sent_by?: string | null
+          title: string
+          title_ar?: string | null
+          type?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_read?: boolean | null
+          link?: string | null
+          message?: string
+          message_ar?: string | null
+          reference_id?: string | null
+          sent_by?: string | null
+          title?: string
+          title_ar?: string | null
+          type?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      onboarding_forms: {
+        Row: {
+          arabic_level: string | null
+          city: string | null
+          completed_at: string | null
+          country: string | null
+          created_at: string | null
+          dob: string | null
+          extra_notes: string | null
+          gender: string | null
+          heard_from: string | null
+          hours_per_day: string | null
+          id: string
+          islamic_knowledge: string | null
+          learning_goals: string[] | null
+          memorized_surahs: string[] | null
+          occupation: string | null
+          phone: string | null
+          preferred_device: string | null
+          preferred_subjects: string[] | null
+          preferred_time: string | null
+          previous_teacher: string | null
+          quran_level: string | null
+          review_comment: string | null
+          review_rating: number | null
+          tajweed_knowledge: string | null
+          user_id: string | null
+          years_studying: string | null
+        }
+        Insert: {
+          arabic_level?: string | null
+          city?: string | null
+          completed_at?: string | null
+          country?: string | null
+          created_at?: string | null
+          dob?: string | null
+          extra_notes?: string | null
+          gender?: string | null
+          heard_from?: string | null
+          hours_per_day?: string | null
+          id?: string
+          islamic_knowledge?: string | null
+          learning_goals?: string[] | null
+          memorized_surahs?: string[] | null
+          occupation?: string | null
+          phone?: string | null
+          preferred_device?: string | null
+          preferred_subjects?: string[] | null
+          preferred_time?: string | null
+          previous_teacher?: string | null
+          quran_level?: string | null
+          review_comment?: string | null
+          review_rating?: number | null
+          tajweed_knowledge?: string | null
+          user_id?: string | null
+          years_studying?: string | null
+        }
+        Update: {
+          arabic_level?: string | null
+          city?: string | null
+          completed_at?: string | null
+          country?: string | null
+          created_at?: string | null
+          dob?: string | null
+          extra_notes?: string | null
+          gender?: string | null
+          heard_from?: string | null
+          hours_per_day?: string | null
+          id?: string
+          islamic_knowledge?: string | null
+          learning_goals?: string[] | null
+          memorized_surahs?: string[] | null
+          occupation?: string | null
+          phone?: string | null
+          preferred_device?: string | null
+          preferred_subjects?: string[] | null
+          preferred_time?: string | null
+          previous_teacher?: string | null
+          quran_level?: string | null
+          review_comment?: string | null
+          review_rating?: number | null
+          tajweed_knowledge?: string | null
+          user_id?: string | null
+          years_studying?: string | null
+        }
+        Relationships: []
+      }
+      payment_history: {
+        Row: {
+          amount: number
+          created_at: string | null
+          enrollment_id: string | null
+          id: string
+          level: string | null
+          paid_at: string | null
+          payment_ref: string | null
+          payment_type: string | null
+          plan_type: string | null
+          receipt_id: string | null
+          status: string | null
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          enrollment_id?: string | null
+          id?: string
+          level?: string | null
+          paid_at?: string | null
+          payment_ref?: string | null
+          payment_type?: string | null
+          plan_type?: string | null
+          receipt_id?: string | null
+          status?: string | null
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          enrollment_id?: string | null
+          id?: string
+          level?: string | null
+          paid_at?: string | null
+          payment_ref?: string | null
+          payment_type?: string | null
+          plan_type?: string | null
+          receipt_id?: string | null
+          status?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_history_enrollment_id_fkey"
+            columns: ["enrollment_id"]
+            isOneToOne: false
+            referencedRelation: "enrollments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_plans: {
+        Row: {
+          amount: number
+          created_at: string | null
+          currency: string | null
+          description: string | null
+          description_ar: string | null
+          duration_months: number | null
+          id: string
+          is_active: boolean | null
+          level: string | null
+          name: string
+          name_ar: string | null
+          paystack_plan_code: string | null
+          type: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          currency?: string | null
+          description?: string | null
+          description_ar?: string | null
+          duration_months?: number | null
+          id?: string
+          is_active?: boolean | null
+          level?: string | null
+          name: string
+          name_ar?: string | null
+          paystack_plan_code?: string | null
+          type?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          currency?: string | null
+          description?: string | null
+          description_ar?: string | null
+          duration_months?: number | null
+          id?: string
+          is_active?: boolean | null
+          level?: string | null
+          name?: string
+          name_ar?: string | null
+          paystack_plan_code?: string | null
+          type?: string | null
+        }
+        Relationships: []
+      }
+      payment_switch_log: {
+        Row: {
+          action: string | null
+          affected_students: number | null
+          auto_on_date: string | null
+          created_at: string | null
+          done_by: string | null
+          id: string
+          reason: string | null
+          reason_ar: string | null
+        }
+        Insert: {
+          action?: string | null
+          affected_students?: number | null
+          auto_on_date?: string | null
+          created_at?: string | null
+          done_by?: string | null
+          id?: string
+          reason?: string | null
+          reason_ar?: string | null
+        }
+        Update: {
+          action?: string | null
+          affected_students?: number | null
+          auto_on_date?: string | null
+          created_at?: string | null
+          done_by?: string | null
+          id?: string
+          reason?: string | null
+          reason_ar?: string | null
+        }
+        Relationships: []
+      }
+      payments: {
+        Row: {
+          amount: number
+          created_at: string | null
+          currency: string | null
+          id: string
+          notes: string | null
+          paid_at: string | null
+          payment_method: string | null
+          paystack_reference: string | null
+          paystack_transaction_id: string | null
+          plan_id: string | null
+          receipt_sent: boolean | null
+          recorded_by: string | null
+          status: string | null
+          student_id: string
+          term: string | null
+          type: string | null
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          currency?: string | null
+          id?: string
+          notes?: string | null
+          paid_at?: string | null
+          payment_method?: string | null
+          paystack_reference?: string | null
+          paystack_transaction_id?: string | null
+          plan_id?: string | null
+          receipt_sent?: boolean | null
+          recorded_by?: string | null
+          status?: string | null
+          student_id: string
+          term?: string | null
+          type?: string | null
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          currency?: string | null
+          id?: string
+          notes?: string | null
+          paid_at?: string | null
+          payment_method?: string | null
+          paystack_reference?: string | null
+          paystack_transaction_id?: string | null
+          plan_id?: string | null
+          receipt_sent?: boolean | null
+          recorded_by?: string | null
+          status?: string | null
+          student_id?: string
+          term?: string | null
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "payment_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_recorded_by_fkey"
+            columns: ["recorded_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "payments_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      private_sessions: {
+        Row: {
+          created_at: string | null
+          end_time: string
+          id: string
+          notes: string | null
+          session_date: string
+          start_time: string
+          status: string | null
+          student_id: string
+          subject_id: string | null
+          teacher_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          end_time: string
+          id?: string
+          notes?: string | null
+          session_date: string
+          start_time: string
+          status?: string | null
+          student_id: string
+          subject_id?: string | null
+          teacher_id: string
+        }
+        Update: {
+          created_at?: string | null
+          end_time?: string
+          id?: string
+          notes?: string | null
+          session_date?: string
+          start_time?: string
+          status?: string | null
+          student_id?: string
+          subject_id?: string | null
+          teacher_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "private_sessions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      private_student_courses: {
+        Row: {
+          assigned_at: string | null
+          assigned_by: string | null
+          course_id: string
+          id: string
+          student_id: string
+        }
+        Insert: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          course_id: string
+          id?: string
+          student_id: string
+        }
+        Update: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          course_id?: string
+          id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "private_student_courses_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      private_student_subjects: {
+        Row: {
+          assigned_at: string | null
+          assigned_by: string | null
+          id: string
+          student_id: string
+          subject_id: string
+        }
+        Insert: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          id?: string
+          student_id: string
+          subject_id: string
+        }
+        Update: {
+          assigned_at?: string | null
+          assigned_by?: string | null
+          id?: string
+          student_id?: string
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "private_student_subjects_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      private_student_timetable: {
+        Row: {
+          assigned_by: string | null
+          created_at: string
+          id: string
+          slot_id: string
+          student_id: string
+        }
+        Insert: {
+          assigned_by?: string | null
+          created_at?: string
+          id?: string
+          slot_id: string
+          student_id: string
+        }
+        Update: {
+          assigned_by?: string | null
+          created_at?: string
+          id?: string
+          slot_id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "private_student_timetable_slot_id_fkey"
+            columns: ["slot_id"]
+            isOneToOne: false
+            referencedRelation: "subject_timetable"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proctoring_logs: {
+        Row: {
+          attempt_id: string
+          details: string | null
+          detected_at: string
+          id: string
+          points_deducted: number | null
+          severity: string | null
+          violation_type: string
+        }
+        Insert: {
+          attempt_id: string
+          details?: string | null
+          detected_at?: string
+          id?: string
+          points_deducted?: number | null
+          severity?: string | null
+          violation_type: string
+        }
+        Update: {
+          attempt_id?: string
+          details?: string | null
+          detected_at?: string
+          id?: string
+          points_deducted?: number | null
+          severity?: string | null
+          violation_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proctoring_logs_attempt_id_fkey"
+            columns: ["attempt_id"]
+            isOneToOne: false
+            referencedRelation: "exam_attempts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proctoring_media: {
+        Row: {
+          attempt_id: string
+          created_at: string
+          duration_seconds: number | null
+          file_name: string | null
+          file_size: number | null
+          file_type: string
+          file_url: string
+          id: string
+          metadata: Json | null
+        }
+        Insert: {
+          attempt_id: string
+          created_at?: string
+          duration_seconds?: number | null
+          file_name?: string | null
+          file_size?: number | null
+          file_type: string
+          file_url: string
+          id?: string
+          metadata?: Json | null
+        }
+        Update: {
+          attempt_id?: string
+          created_at?: string
+          duration_seconds?: number | null
+          file_name?: string | null
+          file_size?: number | null
+          file_type?: string
+          file_url?: string
+          id?: string
+          metadata?: Json | null
+        }
+        Relationships: []
+      }
+      proctoring_sessions: {
+        Row: {
+          attempt_id: string
+          context_label: string | null
+          ended_at: string | null
+          fullscreen_active: boolean | null
+          id: string
+          integrity_score: number | null
+          max_warnings: number | null
+          microphone_enabled: boolean | null
+          session_type: string
+          started_at: string
+          student_id: string | null
+          suspicion_level: string | null
+          total_violations: number | null
+          updated_at: string
+          warnings_issued: number | null
+          webcam_enabled: boolean | null
+        }
+        Insert: {
+          attempt_id: string
+          context_label?: string | null
+          ended_at?: string | null
+          fullscreen_active?: boolean | null
+          id?: string
+          integrity_score?: number | null
+          max_warnings?: number | null
+          microphone_enabled?: boolean | null
+          session_type?: string
+          started_at?: string
+          student_id?: string | null
+          suspicion_level?: string | null
+          total_violations?: number | null
+          updated_at?: string
+          warnings_issued?: number | null
+          webcam_enabled?: boolean | null
+        }
+        Update: {
+          attempt_id?: string
+          context_label?: string | null
+          ended_at?: string | null
+          fullscreen_active?: boolean | null
+          id?: string
+          integrity_score?: number | null
+          max_warnings?: number | null
+          microphone_enabled?: boolean | null
+          session_type?: string
+          started_at?: string
+          student_id?: string | null
+          suspicion_level?: string | null
+          total_violations?: number | null
+          updated_at?: string
+          warnings_issued?: number | null
+          webcam_enabled?: boolean | null
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          age_group: string | null
+          allow_entrance_retake: boolean | null
+          allow_general_access: boolean | null
+          assigned_teacher_id: string | null
+          auth_provider: string | null
+          avatar_url: string | null
+          bio: string | null
+          city: string | null
+          country: string | null
+          course_level: string | null
+          created_at: string
+          date_of_birth: string | null
+          email: string | null
+          enrollment_date: string | null
+          entrance_completed_at: string | null
+          full_name: string | null
+          full_name_ar: string | null
+          gender: string | null
+          has_taken_entrance_exam: boolean | null
+          id: string
+          is_founding_member: boolean | null
+          is_payment_exempt: boolean | null
+          learning_goal: string | null
+          level: string | null
+          nationality: string | null
+          onboarding_completed: boolean | null
+          parent_name: string | null
+          parent_phone: string | null
+          parent_relationship: string | null
+          parent_whatsapp: string | null
+          payment_grace_end: string | null
+          payment_status: string | null
+          phone: string | null
+          preferred_language: string | null
+          private_notes: string | null
+          private_session_rate: string | null
+          role: string | null
+          status: string | null
+          student_id: string | null
+          student_type: string | null
+          subscription_end_date: string | null
+          telegram_chat_id: string | null
+          telegram_link_code: string | null
+          updated_at: string
+          user_id: string
+          whatsapp: string | null
+        }
+        Insert: {
+          age_group?: string | null
+          allow_entrance_retake?: boolean | null
+          allow_general_access?: boolean | null
+          assigned_teacher_id?: string | null
+          auth_provider?: string | null
+          avatar_url?: string | null
+          bio?: string | null
+          city?: string | null
+          country?: string | null
+          course_level?: string | null
+          created_at?: string
+          date_of_birth?: string | null
+          email?: string | null
+          enrollment_date?: string | null
+          entrance_completed_at?: string | null
+          full_name?: string | null
+          full_name_ar?: string | null
+          gender?: string | null
+          has_taken_entrance_exam?: boolean | null
+          id?: string
+          is_founding_member?: boolean | null
+          is_payment_exempt?: boolean | null
+          learning_goal?: string | null
+          level?: string | null
+          nationality?: string | null
+          onboarding_completed?: boolean | null
+          parent_name?: string | null
+          parent_phone?: string | null
+          parent_relationship?: string | null
+          parent_whatsapp?: string | null
+          payment_grace_end?: string | null
+          payment_status?: string | null
+          phone?: string | null
+          preferred_language?: string | null
+          private_notes?: string | null
+          private_session_rate?: string | null
+          role?: string | null
+          status?: string | null
+          student_id?: string | null
+          student_type?: string | null
+          subscription_end_date?: string | null
+          telegram_chat_id?: string | null
+          telegram_link_code?: string | null
+          updated_at?: string
+          user_id: string
+          whatsapp?: string | null
+        }
+        Update: {
+          age_group?: string | null
+          allow_entrance_retake?: boolean | null
+          allow_general_access?: boolean | null
+          assigned_teacher_id?: string | null
+          auth_provider?: string | null
+          avatar_url?: string | null
+          bio?: string | null
+          city?: string | null
+          country?: string | null
+          course_level?: string | null
+          created_at?: string
+          date_of_birth?: string | null
+          email?: string | null
+          enrollment_date?: string | null
+          entrance_completed_at?: string | null
+          full_name?: string | null
+          full_name_ar?: string | null
+          gender?: string | null
+          has_taken_entrance_exam?: boolean | null
+          id?: string
+          is_founding_member?: boolean | null
+          is_payment_exempt?: boolean | null
+          learning_goal?: string | null
+          level?: string | null
+          nationality?: string | null
+          onboarding_completed?: boolean | null
+          parent_name?: string | null
+          parent_phone?: string | null
+          parent_relationship?: string | null
+          parent_whatsapp?: string | null
+          payment_grace_end?: string | null
+          payment_status?: string | null
+          phone?: string | null
+          preferred_language?: string | null
+          private_notes?: string | null
+          private_session_rate?: string | null
+          role?: string | null
+          status?: string | null
+          student_id?: string | null
+          student_type?: string | null
+          subscription_end_date?: string | null
+          telegram_chat_id?: string | null
+          telegram_link_code?: string | null
+          updated_at?: string
+          user_id?: string
+          whatsapp?: string | null
+        }
+        Relationships: []
+      }
+      public_class_guests: {
+        Row: {
+          class_id: string | null
+          device_info: string | null
+          duration_minutes: number | null
+          guest_email: string | null
+          guest_name: string
+          id: string
+          is_registered_user: boolean | null
+          joined_at: string | null
+          left_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          class_id?: string | null
+          device_info?: string | null
+          duration_minutes?: number | null
+          guest_email?: string | null
+          guest_name: string
+          id?: string
+          is_registered_user?: boolean | null
+          joined_at?: string | null
+          left_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          class_id?: string | null
+          device_info?: string | null
+          duration_minutes?: number | null
+          guest_email?: string | null
+          guest_name?: string
+          id?: string
+          is_registered_user?: boolean | null
+          joined_at?: string | null
+          left_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "public_class_guests_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "public_classes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      public_class_registrations: {
+        Row: {
+          class_id: string | null
+          email: string | null
+          id: string
+          name: string
+          phone: string | null
+          registered_at: string | null
+        }
+        Insert: {
+          class_id?: string | null
+          email?: string | null
+          id?: string
+          name: string
+          phone?: string | null
+          registered_at?: string | null
+        }
+        Update: {
+          class_id?: string | null
+          email?: string | null
+          id?: string
+          name?: string
+          phone?: string | null
+          registered_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "public_class_registrations_class_id_fkey"
+            columns: ["class_id"]
+            isOneToOne: false
+            referencedRelation: "public_classes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      public_classes: {
+        Row: {
+          actual_end_time: string | null
+          actual_start_time: string | null
+          allow_guest_camera: boolean | null
+          allow_guest_mic: boolean | null
+          allow_guests: boolean | null
+          chat_enabled: boolean | null
+          created_at: string | null
+          description: string | null
+          description_ar: string | null
+          guest_count: number | null
+          host_id: string
+          id: string
+          is_featured: boolean | null
+          join_url: string | null
+          livekit_room_name: string | null
+          max_guests: number | null
+          password: string | null
+          password_enabled: boolean | null
+          raise_hand_enabled: boolean | null
+          recording_enabled: boolean | null
+          require_name: boolean | null
+          room_code: string
+          scheduled_at: string | null
+          status: string | null
+          subject_id: string | null
+          title: string
+          title_ar: string | null
+        }
+        Insert: {
+          actual_end_time?: string | null
+          actual_start_time?: string | null
+          allow_guest_camera?: boolean | null
+          allow_guest_mic?: boolean | null
+          allow_guests?: boolean | null
+          chat_enabled?: boolean | null
+          created_at?: string | null
+          description?: string | null
+          description_ar?: string | null
+          guest_count?: number | null
+          host_id: string
+          id?: string
+          is_featured?: boolean | null
+          join_url?: string | null
+          livekit_room_name?: string | null
+          max_guests?: number | null
+          password?: string | null
+          password_enabled?: boolean | null
+          raise_hand_enabled?: boolean | null
+          recording_enabled?: boolean | null
+          require_name?: boolean | null
+          room_code: string
+          scheduled_at?: string | null
+          status?: string | null
+          subject_id?: string | null
+          title: string
+          title_ar?: string | null
+        }
+        Update: {
+          actual_end_time?: string | null
+          actual_start_time?: string | null
+          allow_guest_camera?: boolean | null
+          allow_guest_mic?: boolean | null
+          allow_guests?: boolean | null
+          chat_enabled?: boolean | null
+          created_at?: string | null
+          description?: string | null
+          description_ar?: string | null
+          guest_count?: number | null
+          host_id?: string
+          id?: string
+          is_featured?: boolean | null
+          join_url?: string | null
+          livekit_room_name?: string | null
+          max_guests?: number | null
+          password?: string | null
+          password_enabled?: boolean | null
+          raise_hand_enabled?: boolean | null
+          recording_enabled?: boolean | null
+          require_name?: boolean | null
+          room_code?: string
+          scheduled_at?: string | null
+          status?: string | null
+          subject_id?: string | null
+          title?: string
+          title_ar?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "public_classes_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      push_subscriptions: {
+        Row: {
+          auth: string
+          created_at: string
+          endpoint: string
+          id: string
+          p256dh: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          auth: string
+          created_at?: string
+          endpoint: string
+          id?: string
+          p256dh: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          auth?: string
+          created_at?: string
+          endpoint?: string
+          id?: string
+          p256dh?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      recitation_tests: {
+        Row: {
+          admin_approved: boolean | null
+          admin_approved_at: string | null
+          admin_notes: string | null
+          ai_score: number | null
+          ai_transcript: string | null
+          assigned_page: number | null
+          audio_path: string | null
+          created_at: string | null
+          final_level: string | null
+          id: string
+          stage: number | null
+          stage1_submitted_at: string | null
+          stage2_completed_at: string | null
+          stage3_completed_at: string | null
+          stage3_requested_at: string | null
+          stage3_session_date: string | null
+          status: string | null
+          teacher_notes: string | null
+          teacher_score: number | null
+          user_id: string | null
+          virtual_session_booked_at: string | null
+          virtual_session_date: string | null
+          virtual_session_notes: string | null
+          virtual_session_time: string | null
+        }
+        Insert: {
+          admin_approved?: boolean | null
+          admin_approved_at?: string | null
+          admin_notes?: string | null
+          ai_score?: number | null
+          ai_transcript?: string | null
+          assigned_page?: number | null
+          audio_path?: string | null
+          created_at?: string | null
+          final_level?: string | null
+          id?: string
+          stage?: number | null
+          stage1_submitted_at?: string | null
+          stage2_completed_at?: string | null
+          stage3_completed_at?: string | null
+          stage3_requested_at?: string | null
+          stage3_session_date?: string | null
+          status?: string | null
+          teacher_notes?: string | null
+          teacher_score?: number | null
+          user_id?: string | null
+          virtual_session_booked_at?: string | null
+          virtual_session_date?: string | null
+          virtual_session_notes?: string | null
+          virtual_session_time?: string | null
+        }
+        Update: {
+          admin_approved?: boolean | null
+          admin_approved_at?: string | null
+          admin_notes?: string | null
+          ai_score?: number | null
+          ai_transcript?: string | null
+          assigned_page?: number | null
+          audio_path?: string | null
+          created_at?: string | null
+          final_level?: string | null
+          id?: string
+          stage?: number | null
+          stage1_submitted_at?: string | null
+          stage2_completed_at?: string | null
+          stage3_completed_at?: string | null
+          stage3_requested_at?: string | null
+          stage3_session_date?: string | null
+          status?: string | null
+          teacher_notes?: string | null
+          teacher_score?: number | null
+          user_id?: string | null
+          virtual_session_booked_at?: string | null
+          virtual_session_date?: string | null
+          virtual_session_notes?: string | null
+          virtual_session_time?: string | null
+        }
+        Relationships: []
+      }
+      recording_bookmarks: {
+        Row: {
+          created_at: string | null
+          id: string
+          label: string | null
+          recording_id: string
+          student_id: string
+          timestamp_seconds: number
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          label?: string | null
+          recording_id: string
+          student_id: string
+          timestamp_seconds: number
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          label?: string | null
+          recording_id?: string
+          student_id?: string
+          timestamp_seconds?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_bookmarks_recording_id_fkey"
+            columns: ["recording_id"]
+            isOneToOne: false
+            referencedRelation: "session_recordings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recording_notes: {
+        Row: {
+          created_at: string | null
+          id: string
+          note_text: string
+          recording_id: string
+          student_id: string
+          timestamp_seconds: number
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          note_text: string
+          recording_id: string
+          student_id: string
+          timestamp_seconds: number
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          note_text?: string
+          recording_id?: string
+          student_id?: string
+          timestamp_seconds?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_notes_recording_id_fkey"
+            columns: ["recording_id"]
+            isOneToOne: false
+            referencedRelation: "session_recordings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recording_watch_progress: {
+        Row: {
+          completed: boolean | null
+          id: string
+          last_watched_at: string | null
+          progress_seconds: number | null
+          recording_id: string
+          student_id: string
+          watch_count: number | null
+        }
+        Insert: {
+          completed?: boolean | null
+          id?: string
+          last_watched_at?: string | null
+          progress_seconds?: number | null
+          recording_id: string
+          student_id: string
+          watch_count?: number | null
+        }
+        Update: {
+          completed?: boolean | null
+          id?: string
+          last_watched_at?: string | null
+          progress_seconds?: number | null
+          recording_id?: string
+          student_id?: string
+          watch_count?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_watch_progress_recording_id_fkey"
+            columns: ["recording_id"]
+            isOneToOne: false
+            referencedRelation: "session_recordings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_flashcard_progress: {
+        Row: {
+          flashcard_id: string | null
+          id: string
+          last_reviewed_at: string | null
+          status: string | null
+          student_id: string
+          times_reviewed: number | null
+        }
+        Insert: {
+          flashcard_id?: string | null
+          id?: string
+          last_reviewed_at?: string | null
+          status?: string | null
+          student_id: string
+          times_reviewed?: number | null
+        }
+        Update: {
+          flashcard_id?: string | null
+          id?: string
+          last_reviewed_at?: string | null
+          status?: string | null
+          student_id?: string
+          times_reviewed?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_flashcard_progress_flashcard_id_fkey"
+            columns: ["flashcard_id"]
+            isOneToOne: false
+            referencedRelation: "revision_flashcards"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_flashcards: {
+        Row: {
+          back_text: string
+          back_text_ar: string | null
+          created_at: string | null
+          created_by: string | null
+          front_text: string
+          front_text_ar: string | null
+          id: string
+          is_ai_generated: boolean | null
+          level: string | null
+          order_index: number | null
+          room_id: string | null
+          source_material_id: string | null
+          subject_id: string | null
+          topic: string | null
+        }
+        Insert: {
+          back_text: string
+          back_text_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          front_text: string
+          front_text_ar?: string | null
+          id?: string
+          is_ai_generated?: boolean | null
+          level?: string | null
+          order_index?: number | null
+          room_id?: string | null
+          source_material_id?: string | null
+          subject_id?: string | null
+          topic?: string | null
+        }
+        Update: {
+          back_text?: string
+          back_text_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          front_text?: string
+          front_text_ar?: string | null
+          id?: string
+          is_ai_generated?: boolean | null
+          level?: string | null
+          order_index?: number | null
+          room_id?: string | null
+          source_material_id?: string | null
+          subject_id?: string | null
+          topic?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_flashcards_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "revision_rooms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revision_flashcards_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_notes: {
+        Row: {
+          content: string | null
+          created_at: string | null
+          id: string
+          is_private: boolean | null
+          session_id: string | null
+          student_id: string
+          subject_id: string | null
+          title: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          content?: string | null
+          created_at?: string | null
+          id?: string
+          is_private?: boolean | null
+          session_id?: string | null
+          student_id: string
+          subject_id?: string | null
+          title?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          content?: string | null
+          created_at?: string | null
+          id?: string
+          is_private?: boolean | null
+          session_id?: string | null
+          student_id?: string
+          subject_id?: string | null
+          title?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_notes_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revision_notes_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_quiz_sessions: {
+        Row: {
+          answers: Json | null
+          completed_at: string | null
+          id: string
+          percentage: number | null
+          room_id: string | null
+          score: number | null
+          source: string | null
+          student_id: string
+          subject_id: string | null
+          total: number | null
+        }
+        Insert: {
+          answers?: Json | null
+          completed_at?: string | null
+          id?: string
+          percentage?: number | null
+          room_id?: string | null
+          score?: number | null
+          source?: string | null
+          student_id: string
+          subject_id?: string | null
+          total?: number | null
+        }
+        Update: {
+          answers?: Json | null
+          completed_at?: string | null
+          id?: string
+          percentage?: number | null
+          room_id?: string | null
+          score?: number | null
+          source?: string | null
+          student_id?: string
+          subject_id?: string | null
+          total?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_quiz_sessions_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "revision_rooms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revision_quiz_sessions_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_room_members: {
+        Row: {
+          id: string
+          joined_at: string | null
+          room_id: string | null
+          student_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string | null
+          room_id?: string | null
+          student_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string | null
+          room_id?: string | null
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_room_members_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "revision_rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_rooms: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          description_ar: string | null
+          duration_minutes: number | null
+          id: string
+          is_active: boolean | null
+          level: string | null
+          max_students: number | null
+          scheduled_at: string | null
+          subject_id: string | null
+          title: string
+          title_ar: string | null
+          type: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_active?: boolean | null
+          level?: string | null
+          max_students?: number | null
+          scheduled_at?: string | null
+          subject_id?: string | null
+          title: string
+          title_ar?: string | null
+          type?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_active?: boolean | null
+          level?: string | null
+          max_students?: number | null
+          scheduled_at?: string | null
+          subject_id?: string | null
+          title?: string
+          title_ar?: string | null
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_rooms_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_schedule: {
+        Row: {
+          created_at: string | null
+          duration_minutes: number | null
+          id: string
+          is_completed: boolean | null
+          reminder_sent: boolean | null
+          revision_type: string | null
+          scheduled_date: string | null
+          scheduled_time: string | null
+          student_id: string
+          subject_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_completed?: boolean | null
+          reminder_sent?: boolean | null
+          revision_type?: string | null
+          scheduled_date?: string | null
+          scheduled_time?: string | null
+          student_id: string
+          subject_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          duration_minutes?: number | null
+          id?: string
+          is_completed?: boolean | null
+          reminder_sent?: boolean | null
+          revision_type?: string | null
+          scheduled_date?: string | null
+          scheduled_time?: string | null
+          student_id?: string
+          subject_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_schedule_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      revision_summaries: {
+        Row: {
+          content: string
+          content_ar: string | null
+          created_at: string | null
+          created_by: string | null
+          id: string
+          is_ai_generated: boolean | null
+          level: string | null
+          session_id: string | null
+          subject_id: string | null
+          title: string
+          title_ar: string | null
+          topic: string | null
+          type: string | null
+        }
+        Insert: {
+          content: string
+          content_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_ai_generated?: boolean | null
+          level?: string | null
+          session_id?: string | null
+          subject_id?: string | null
+          title: string
+          title_ar?: string | null
+          topic?: string | null
+          type?: string | null
+        }
+        Update: {
+          content?: string
+          content_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          is_ai_generated?: boolean | null
+          level?: string | null
+          session_id?: string | null
+          subject_id?: string | null
+          title?: string
+          title_ar?: string | null
+          topic?: string | null
+          type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "revision_summaries_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "revision_summaries_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_chat: {
+        Row: {
+          created_at: string | null
+          id: string
+          is_teacher_only: boolean | null
+          message: string
+          session_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          is_teacher_only?: boolean | null
+          message: string
+          session_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          is_teacher_only?: boolean | null
+          message?: string
+          session_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_chat_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_homework: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          description_ar: string | null
+          due_date: string | null
+          grade: number | null
+          id: string
+          session_id: string | null
+          status: string | null
+          student_id: string
+          subject_id: string | null
+          submission_notes: string | null
+          submission_url: string | null
+          teacher_feedback: string | null
+          teacher_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          description_ar?: string | null
+          due_date?: string | null
+          grade?: number | null
+          id?: string
+          session_id?: string | null
+          status?: string | null
+          student_id: string
+          subject_id?: string | null
+          submission_notes?: string | null
+          submission_url?: string | null
+          teacher_feedback?: string | null
+          teacher_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          description_ar?: string | null
+          due_date?: string | null
+          grade?: number | null
+          id?: string
+          session_id?: string | null
+          status?: string | null
+          student_id?: string
+          subject_id?: string | null
+          submission_notes?: string | null
+          submission_url?: string | null
+          teacher_feedback?: string | null
+          teacher_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_homework_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_homework_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_recordings: {
+        Row: {
+          created_at: string | null
+          duration_seconds: number | null
+          file_size: number | null
+          file_url: string | null
+          id: string
+          session_id: string
+          subject_id: string
+          teacher_name: string | null
+          thumbnail_url: string | null
+          visibility: string
+        }
+        Insert: {
+          created_at?: string | null
+          duration_seconds?: number | null
+          file_size?: number | null
+          file_url?: string | null
+          id?: string
+          session_id: string
+          subject_id: string
+          teacher_name?: string | null
+          thumbnail_url?: string | null
+          visibility?: string
+        }
+        Update: {
+          created_at?: string | null
+          duration_seconds?: number | null
+          file_size?: number | null
+          file_url?: string | null
+          id?: string
+          session_id?: string
+          subject_id?: string
+          teacher_name?: string | null
+          thumbnail_url?: string | null
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_recordings_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_recordings_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      student_preferences: {
+        Row: {
+          announcement_notifications: boolean | null
+          autoplay_recordings: boolean | null
+          class_reminder: boolean | null
+          class_reminder_minutes: number | null
+          created_at: string | null
+          dark_mode: boolean | null
+          default_subject_view: string | null
+          email_notifications: boolean | null
+          exam_reminder: boolean | null
+          id: string
+          language: string | null
+          new_recording_alert: boolean | null
+          playback_speed: string | null
+          results_notification: boolean | null
+          show_profile_photo: boolean | null
+          show_subtitles: boolean | null
+          text_direction: string | null
+          updated_at: string | null
+          user_id: string
+          whatsapp_notifications: boolean | null
+        }
+        Insert: {
+          announcement_notifications?: boolean | null
+          autoplay_recordings?: boolean | null
+          class_reminder?: boolean | null
+          class_reminder_minutes?: number | null
+          created_at?: string | null
+          dark_mode?: boolean | null
+          default_subject_view?: string | null
+          email_notifications?: boolean | null
+          exam_reminder?: boolean | null
+          id?: string
+          language?: string | null
+          new_recording_alert?: boolean | null
+          playback_speed?: string | null
+          results_notification?: boolean | null
+          show_profile_photo?: boolean | null
+          show_subtitles?: boolean | null
+          text_direction?: string | null
+          updated_at?: string | null
+          user_id: string
+          whatsapp_notifications?: boolean | null
+        }
+        Update: {
+          announcement_notifications?: boolean | null
+          autoplay_recordings?: boolean | null
+          class_reminder?: boolean | null
+          class_reminder_minutes?: number | null
+          created_at?: string | null
+          dark_mode?: boolean | null
+          default_subject_view?: string | null
+          email_notifications?: boolean | null
+          exam_reminder?: boolean | null
+          id?: string
+          language?: string | null
+          new_recording_alert?: boolean | null
+          playback_speed?: string | null
+          results_notification?: boolean | null
+          show_profile_photo?: boolean | null
+          show_subtitles?: boolean | null
+          text_direction?: string | null
+          updated_at?: string | null
+          user_id?: string
+          whatsapp_notifications?: boolean | null
+        }
+        Relationships: []
+      }
+      student_subscriptions: {
+        Row: {
+          auto_renew: boolean | null
+          count_from_date: string | null
+          created_at: string | null
+          end_date: string | null
+          id: string
+          payment_id: string | null
+          paystack_subscription_code: string | null
+          plan_id: string | null
+          start_date: string | null
+          status: string | null
+          student_id: string
+        }
+        Insert: {
+          auto_renew?: boolean | null
+          count_from_date?: string | null
+          created_at?: string | null
+          end_date?: string | null
+          id?: string
+          payment_id?: string | null
+          paystack_subscription_code?: string | null
+          plan_id?: string | null
+          start_date?: string | null
+          status?: string | null
+          student_id: string
+        }
+        Update: {
+          auto_renew?: boolean | null
+          count_from_date?: string | null
+          created_at?: string | null
+          end_date?: string | null
+          id?: string
+          payment_id?: string | null
+          paystack_subscription_code?: string | null
+          plan_id?: string | null
+          start_date?: string | null
+          status?: string | null
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "student_subscriptions_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_subscriptions_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "payment_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "student_subscriptions_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      subject_announcements: {
+        Row: {
+          content: string
+          created_at: string | null
+          created_by: string
+          file_url: string | null
+          id: string
+          is_pinned: boolean | null
+          subject_id: string
+          title: string
+        }
+        Insert: {
+          content: string
+          created_at?: string | null
+          created_by: string
+          file_url?: string | null
+          id?: string
+          is_pinned?: boolean | null
+          subject_id: string
+          title: string
+        }
+        Update: {
+          content?: string
+          created_at?: string | null
+          created_by?: string
+          file_url?: string | null
+          id?: string
+          is_pinned?: boolean | null
+          subject_id?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_announcements_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_assignments: {
+        Row: {
+          created_at: string | null
+          created_by: string
+          deadline: string | null
+          description: string | null
+          file_url: string | null
+          id: string
+          subject_id: string
+          title: string
+        }
+        Insert: {
+          created_at?: string | null
+          created_by: string
+          deadline?: string | null
+          description?: string | null
+          file_url?: string | null
+          id?: string
+          subject_id: string
+          title: string
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string
+          deadline?: string | null
+          description?: string | null
+          file_url?: string | null
+          id?: string
+          subject_id?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_assignments_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_materials: {
+        Row: {
+          content: string | null
+          created_at: string | null
+          description: string | null
+          file_size: number | null
+          file_type: string | null
+          file_url: string | null
+          id: string
+          is_downloadable: boolean | null
+          level: string | null
+          material_type: string | null
+          session_id: string | null
+          sort_order: number | null
+          subject_id: string
+          title: string
+          title_ar: string | null
+          topic: string | null
+          uploaded_by: string
+          visibility: string
+        }
+        Insert: {
+          content?: string | null
+          created_at?: string | null
+          description?: string | null
+          file_size?: number | null
+          file_type?: string | null
+          file_url?: string | null
+          id?: string
+          is_downloadable?: boolean | null
+          level?: string | null
+          material_type?: string | null
+          session_id?: string | null
+          sort_order?: number | null
+          subject_id: string
+          title: string
+          title_ar?: string | null
+          topic?: string | null
+          uploaded_by: string
+          visibility?: string
+        }
+        Update: {
+          content?: string | null
+          created_at?: string | null
+          description?: string | null
+          file_size?: number | null
+          file_type?: string | null
+          file_url?: string | null
+          id?: string
+          is_downloadable?: boolean | null
+          level?: string | null
+          material_type?: string | null
+          session_id?: string | null
+          sort_order?: number | null
+          subject_id?: string
+          title?: string
+          title_ar?: string | null
+          topic?: string | null
+          uploaded_by?: string
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_materials_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "live_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subject_materials_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_syllabus: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          file_url: string | null
+          id: string
+          level: string | null
+          objectives: string[] | null
+          subject_id: string
+          title: string
+          week_number: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          file_url?: string | null
+          id?: string
+          level?: string | null
+          objectives?: string[] | null
+          subject_id: string
+          title: string
+          week_number?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          file_url?: string | null
+          id?: string
+          level?: string | null
+          objectives?: string[] | null
+          subject_id?: string
+          title?: string
+          week_number?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_syllabus_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_timetable: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          day_of_week: number
+          end_time: string
+          id: string
+          is_active: boolean | null
+          levels: string[] | null
+          live_url: string | null
+          notes: string | null
+          start_time: string
+          subject_id: string
+          teacher_id: string | null
+          teacher_ids: string[] | null
+          updated_at: string | null
+          visibility: string
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          day_of_week: number
+          end_time: string
+          id?: string
+          is_active?: boolean | null
+          levels?: string[] | null
+          live_url?: string | null
+          notes?: string | null
+          start_time: string
+          subject_id: string
+          teacher_id?: string | null
+          teacher_ids?: string[] | null
+          updated_at?: string | null
+          visibility?: string
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          day_of_week?: number
+          end_time?: string
+          id?: string
+          is_active?: boolean | null
+          levels?: string[] | null
+          live_url?: string | null
+          notes?: string | null
+          start_time?: string
+          subject_id?: string
+          teacher_id?: string | null
+          teacher_ids?: string[] | null
+          updated_at?: string | null
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_timetable_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_whiteboard: {
+        Row: {
+          strokes: Json | null
+          subject_id: string
+          updated_at: string | null
+        }
+        Insert: {
+          strokes?: Json | null
+          subject_id: string
+          updated_at?: string | null
+        }
+        Update: {
+          strokes?: Json | null
+          subject_id?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_whiteboard_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: true
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subjects: {
+        Row: {
+          course_id: string | null
+          course_syllabus: string | null
+          course_syllabus_ar: string | null
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          description_ar: string | null
+          icon: string | null
+          id: string
+          image_url: string | null
+          is_active: boolean | null
+          level: string | null
+          levels: string[] | null
+          livekit_room_name: string | null
+          next_session_at: string | null
+          session_day: string | null
+          session_duration: number | null
+          session_time: string | null
+          sessions_per_week: number | null
+          teacher_id: string | null
+          title: string
+          title_ar: string | null
+          total_sessions: number | null
+          updated_at: string | null
+          visibility: string
+        }
+        Insert: {
+          course_id?: string | null
+          course_syllabus?: string | null
+          course_syllabus_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          icon?: string | null
+          id?: string
+          image_url?: string | null
+          is_active?: boolean | null
+          level?: string | null
+          levels?: string[] | null
+          livekit_room_name?: string | null
+          next_session_at?: string | null
+          session_day?: string | null
+          session_duration?: number | null
+          session_time?: string | null
+          sessions_per_week?: number | null
+          teacher_id?: string | null
+          title: string
+          title_ar?: string | null
+          total_sessions?: number | null
+          updated_at?: string | null
+          visibility?: string
+        }
+        Update: {
+          course_id?: string | null
+          course_syllabus?: string | null
+          course_syllabus_ar?: string | null
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          description_ar?: string | null
+          icon?: string | null
+          id?: string
+          image_url?: string | null
+          is_active?: boolean | null
+          level?: string | null
+          levels?: string[] | null
+          livekit_room_name?: string | null
+          next_session_at?: string | null
+          session_day?: string | null
+          session_duration?: number | null
+          session_time?: string | null
+          sessions_per_week?: number | null
+          teacher_id?: string | null
+          title?: string
+          title_ar?: string | null
+          total_sessions?: number | null
+          updated_at?: string | null
+          visibility?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subjects_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasjeel_progress: {
+        Row: {
+          admin_approved_at: string | null
+          admin_notes: string | null
+          completed_at: string | null
+          created_at: string | null
+          current_step: string
+          exam_attempt_id: string | null
+          exam_completed_at: string | null
+          id: string
+          level_assigned: string | null
+          level_assigned_at: string | null
+          onboarding_completed_at: string | null
+          payment_amount: number | null
+          payment_currency: string | null
+          payment_paid_at: string | null
+          payment_ref: string | null
+          payment_status: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          admin_approved_at?: string | null
+          admin_notes?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          current_step?: string
+          exam_attempt_id?: string | null
+          exam_completed_at?: string | null
+          id?: string
+          level_assigned?: string | null
+          level_assigned_at?: string | null
+          onboarding_completed_at?: string | null
+          payment_amount?: number | null
+          payment_currency?: string | null
+          payment_paid_at?: string | null
+          payment_ref?: string | null
+          payment_status?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          admin_approved_at?: string | null
+          admin_notes?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          current_step?: string
+          exam_attempt_id?: string | null
+          exam_completed_at?: string | null
+          id?: string
+          level_assigned?: string | null
+          level_assigned_at?: string | null
+          onboarding_completed_at?: string | null
+          payment_amount?: number | null
+          payment_currency?: string | null
+          payment_paid_at?: string | null
+          payment_ref?: string | null
+          payment_status?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      teacher_announcements: {
+        Row: {
+          created_at: string | null
+          id: string
+          message: string
+          priority: string | null
+          target_id: string | null
+          target_type: string | null
+          teacher_id: string
+          title: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          message: string
+          priority?: string | null
+          target_id?: string | null
+          target_type?: string | null
+          teacher_id: string
+          title: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          message?: string
+          priority?: string | null
+          target_id?: string | null
+          target_type?: string | null
+          teacher_id?: string
+          title?: string
+        }
+        Relationships: []
+      }
+      teacher_course_assignments: {
+        Row: {
+          course_id: string | null
+          id: string
+          teacher_id: string | null
+        }
+        Insert: {
+          course_id?: string | null
+          id?: string
+          teacher_id?: string | null
+        }
+        Update: {
+          course_id?: string | null
+          id?: string
+          teacher_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "teacher_course_assignments_course_id_fkey"
+            columns: ["course_id"]
+            isOneToOne: false
+            referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "teacher_course_assignments_teacher_id_fkey"
+            columns: ["teacher_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      teacher_recitations: {
+        Row: {
+          audio_url: string | null
+          ayah_num: number | null
+          created_at: string | null
+          id: string
+          surah_name: string | null
+          surah_num: number | null
+          teacher_id: string | null
+          teacher_name: string | null
+        }
+        Insert: {
+          audio_url?: string | null
+          ayah_num?: number | null
+          created_at?: string | null
+          id?: string
+          surah_name?: string | null
+          surah_num?: number | null
+          teacher_id?: string | null
+          teacher_name?: string | null
+        }
+        Update: {
+          audio_url?: string | null
+          ayah_num?: number | null
+          created_at?: string | null
+          id?: string
+          surah_name?: string | null
+          surah_num?: number | null
+          teacher_id?: string | null
+          teacher_name?: string | null
+        }
+        Relationships: []
+      }
+      teacher_subject_assignments: {
+        Row: {
+          id: string
+          subject_id: string | null
+          teacher_id: string | null
+        }
+        Insert: {
+          id?: string
+          subject_id?: string | null
+          teacher_id?: string | null
+        }
+        Update: {
+          id?: string
+          subject_id?: string | null
+          teacher_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "teacher_subject_assignments_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "teacher_subject_assignments_teacher_id_fkey"
+            columns: ["teacher_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      telegram_bot_state: {
+        Row: {
+          id: number
+          update_offset: number
+          updated_at: string
+        }
+        Insert: {
+          id: number
+          update_offset?: number
+          updated_at?: string
+        }
+        Update: {
+          id?: number
+          update_offset?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      violations: {
+        Row: {
+          attempt_id: string
+          details: string | null
+          id: string
+          screenshot_url: string | null
+          severity_score: number
+          timestamp: string
+          violation_type: string
+        }
+        Insert: {
+          attempt_id: string
+          details?: string | null
+          id?: string
+          screenshot_url?: string | null
+          severity_score?: number
+          timestamp?: string
+          violation_type: string
+        }
+        Update: {
+          attempt_id?: string
+          details?: string | null
+          id?: string
+          screenshot_url?: string | null
+          severity_score?: number
+          timestamp?: string
+          violation_type?: string
+        }
+        Relationships: []
+      }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      acknowledge_hifdh_log: {
+        Args: { p_log_id: string; p_note?: string }
+        Returns: undefined
+      }
+      admin_advance_hifdh_revision_daily: { Args: never; Returns: number }
+      admin_bulk_assign_hifdh_revision: {
+        Args: {
+          p_auto_progress?: boolean
+          p_daily_pages: number
+          p_mode: string
+          p_notes?: string
+          p_program_days?: number
+          p_reciter_id?: string
+          p_selected_items: number[]
+          p_target_scope: string
+          p_target_value: string
+          p_weekend_off?: boolean
+        }
+        Returns: number
+      }
+      admin_delete_user_account: {
+        Args: { target_user_id: string }
+        Returns: undefined
+      }
+      admin_grade_attempt: {
+        Args: {
+          _attempt_id: string
+          _passing?: number
+          _score: number
+          _total: number
+        }
+        Returns: Json
+      }
+      bulk_save_hifdh_assignment: {
+        Args: {
+          p_daily_pages: number
+          p_mode: string
+          p_notes?: string
+          p_program_duration_days?: number
+          p_program_start_date?: string
+          p_reciter_id: string
+          p_rest_days?: number[]
+          p_selected_items: number[]
+          p_start_page?: number
+          p_student_ids: string[]
+        }
+        Returns: number
+      }
+      extract_arabic_part: { Args: { txt: string }; Returns: string }
+      extract_english_part: { Args: { txt: string }; Returns: string }
+      get_exam_questions_for_review: {
+        Args: { _attempt_id: string }
+        Returns: {
+          correct_answer: string
+          difficulty: string
+          exam_id: string
+          explanation: string
+          explanation_ar: string
+          id: string
+          media_url: string
+          options: Json
+          points: number
+          question_text: string
+          question_text_ar: string
+          question_type: string
+          sort_order: number
+        }[]
+      }
+      get_exam_questions_for_student: {
+        Args: { _exam_id: string }
+        Returns: {
+          difficulty: string
+          exam_id: string
+          explanation: string
+          explanation_ar: string
+          id: string
+          media_url: string
+          options: Json
+          points: number
+          question_text: string
+          question_text_ar: string
+          question_type: string
+          sort_order: number
+        }[]
+      }
+      get_users_last_login: {
+        Args: never
+        Returns: {
+          last_sign_in_at: string
+          user_id: string
+        }[]
+      }
+      grade_exam_attempt: { Args: { _attempt_id: string }; Returns: Json }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
+      mark_notifications_read: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
+      review_hifdh_daily_log: {
+        Args: { p_avg_score: number; p_log_id: string; p_session_data: Json }
+        Returns: Json
+      }
+      save_hifdh_assignment: {
+        Args: {
+          p_daily_pages: number
+          p_mode: string
+          p_notes?: string
+          p_program_duration_days?: number
+          p_program_start_date?: string
+          p_reciter_id: string
+          p_rest_days?: number[]
+          p_selected_items: number[]
+          p_start_page?: number
+          p_student_id: string
+        }
+        Returns: string
+      }
+      upsert_hifdh_daily_log: {
+        Args: {
+          p_assignment_id: string
+          p_completed: boolean
+          p_duration: number
+          p_pages: number
+          p_score: number
+          p_session_data: Json
+          p_student_id: string
+        }
+        Returns: string
+      }
+      upsert_student_notifications: {
+        Args: { p_notifications: Json; p_user_id: string }
+        Returns: undefined
+      }
+    }
+    Enums: {
+      app_role: "admin" | "teacher" | "student"
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
+}
+
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+
+export type Tables<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {
+      app_role: ["admin", "teacher", "student"],
+    },
+  },
+} as const
