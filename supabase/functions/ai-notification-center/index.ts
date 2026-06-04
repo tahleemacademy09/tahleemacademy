@@ -21,7 +21,28 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE_KEY       = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const LOVABLE_API_KEY   = Deno.env.get("LOVABLE_API_KEY")!;
 
-// ── AI call helper ────────────────────────────────────────────────────────────
+// ── Self-healing: detect whether bilingual columns exist ─────────────────────
+// PostgREST silently drops unknown columns on INSERT — no error is returned.
+// We probe information_schema once per cold start and cache the result.
+let bilingualColumnsExist: boolean | null = null;
+
+async function checkBilingualColumns(adminClient: any): Promise<boolean> {
+  if (bilingualColumnsExist !== null) return bilingualColumnsExist;
+  try {
+    // Try a lightweight select that includes title_ar — if the column doesn't
+    // exist PostgREST returns a 400 with "column ... does not exist"
+    const { error } = await adminClient
+      .from("notifications")
+      .select("title_ar")
+      .limit(1);
+    bilingualColumnsExist = !error;
+  } catch {
+    bilingualColumnsExist = false;
+  }
+  return bilingualColumnsExist!;
+}
+
+
 async function callAI(systemPrompt: string, userContent: string, json = true): Promise<any> {
   if (!LOVABLE_API_KEY) {
     throw new Error("LOVABLE_API_KEY is not configured");
@@ -211,12 +232,16 @@ Return JSON:
       }
 
       // Build records — store both languages so the client can show bilingual content
+      // Only include title_ar/message_ar if the migration has been applied.
+      const hasBilingualCols = await checkBilingualColumns(adminClient);
       const records = userIds.map((uid: string) => ({
         user_id:      uid,
-        title:        title_en,                // primary title (English, always present)
-        message:      message_en,              // primary message (English, always present)
-        title_ar:     title_ar   || null,      // Arabic title (shown alongside English)
-        message_ar:   message_ar || null,      // Arabic message (shown alongside English)
+        title:        title_en,          // always English (primary)
+        message:      message_en,        // always English (primary)
+        ...(hasBilingualCols ? {
+          title_ar:   title_ar   || null,
+          message_ar: message_ar || null,
+        } : {}),
         type:         type || "announcement",
         sent_by:      caller.id,
         reference_id: reference_id || null,
@@ -226,20 +251,11 @@ Return JSON:
       }));
 
       // Batch insert 100 at a time
-      // Tries bilingual insert first; if columns don't exist yet (migration pending),
-      // falls back to English-only so the send never hard-fails.
       let sent = 0;
       for (let i = 0; i < records.length; i += 100) {
         const chunk = records.slice(i, i + 100);
         const { error } = await adminClient.from("notifications").insert(chunk);
-        if (!error) {
-          sent += chunk.length;
-        } else if (error.message?.includes("title_ar") || error.message?.includes("message_ar")) {
-          // Migration not yet applied — strip Arabic columns and retry
-          const fallback = chunk.map(({ title_ar: _ta, message_ar: _ma, ...rest }: any) => rest);
-          const { error: e2 } = await adminClient.from("notifications").insert(fallback);
-          if (!e2) sent += chunk.length;
-        }
+        if (!error) sent += chunk.length;
       }
 
       // Log to ai_query_logs
@@ -249,7 +265,7 @@ Return JSON:
         created_at:  new Date().toISOString(),
       }).then(() => {});
 
-      return new Response(JSON.stringify({ success: true, sent }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ success: true, sent, bilingual_ready: hasBilingualCols }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // ── ACTION: flag ──────────────────────────────────────────────────────────
