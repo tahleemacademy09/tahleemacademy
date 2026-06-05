@@ -94,12 +94,14 @@ async function alreadyNotified(
 
 async function insertNotification(
   sb: ReturnType<typeof createClient>,
-  opts: { userId: string; title: string; message: string; link: string; type: string }
+  opts: { userId: string; title: string; message: string; title_ar?: string; message_ar?: string; link: string; type: string }
 ): Promise<void> {
   const { error } = await sb.from("notifications").insert({
     user_id: opts.userId,
     title:   opts.title,
     message: opts.message,
+    title_ar:   opts.title_ar   ?? null,
+    message_ar: opts.message_ar ?? null,
     type:    opts.type,
     link:    opts.link,
     is_read: false,
@@ -265,6 +267,17 @@ async function maybeNotify(
       ? `${teacherName} is waiting — tap to join now!`
       : `${opts.subjectTitle} starts at ${time12}. ${opts.threshold === 5 ? "Open the app now!" : "Get ready!"}`;
 
+    // ── Arabic counterparts ─────────────────────────────────────────────
+    const title_ar = isRing
+      ? `📞 ${opts.subjectTitle} — تبدأ الآن!`
+      : opts.threshold === 5
+        ? `📚 ${opts.label} بعد ٥ دقائق — استعد!`
+        : `📚 ${opts.label} بعد ${minsDisp} دقيقة`;
+
+    const message_ar = isRing
+      ? `${teacherName} في انتظارك — اضغط للانضمام الآن!`
+      : `تبدأ ${opts.subjectTitle} الساعة ${time12}. ${opts.threshold === 5 ? "افتح التطبيق الآن!" : "كن مستعداً!"}`;
+
     const link = `${opts.joinPath}?${key}`;
 
     // ── 1. Bell notification ─────────────────────────────────────────────
@@ -272,6 +285,8 @@ async function maybeNotify(
       userId: opts.userId,
       title,
       message,
+      title_ar,
+      message_ar,
       link,
       type: isRing ? "class_ring" : "class_reminder",
     });

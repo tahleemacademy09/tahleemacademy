@@ -170,6 +170,43 @@ const EnrollmentPayment = () => {
   useEffect(() => { loadData(); }, [loadData]);
   useEffect(() => { if (tab === "history") loadHistory(); }, [tab, loadHistory]);
 
+  // ── Receipt download ──────────────────────────────────────────
+  const downloadReceipt = (p: Payment, plan?: Plan) => {
+    const ref = p.paystack_reference || p.id;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Receipt ${ref}</title>
+      <style>
+        body{font-family:'Segoe UI',system-ui,sans-serif;padding:40px;color:#111;max-width:640px;margin:auto}
+        h1{color:#064E3B;margin:0 0 4px;font-size:22px}
+        .sub{color:#777;font-size:13px;margin-bottom:24px}
+        .box{border:1px solid #ddd;border-radius:12px;padding:20px;margin-bottom:18px}
+        .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px dashed #eee;font-size:14px}
+        .row:last-child{border-bottom:none}
+        .label{color:#888}
+        .total{font-size:18px;font-weight:800;color:#064E3B}
+        .stamp{margin-top:24px;text-align:center;color:#2E7D32;font-weight:800;border:2px dashed #2E7D32;padding:10px;border-radius:10px}
+        @media print{button{display:none}}
+      </style></head><body>
+      <h1>🕌 Tahleem Academy</h1>
+      <div class="sub">Official Payment Receipt</div>
+      <div class="box">
+        <div class="row"><span class="label">Receipt No.</span><span><b>RCPT-${ref}</b></span></div>
+        <div class="row"><span class="label">Date</span><span>${fmtDT(p.created_at)}</span></div>
+        <div class="row"><span class="label">Student</span><span>${profile?.full_name || ""}</span></div>
+        <div class="row"><span class="label">Student ID</span><span>${(profile as any)?.student_id || "—"}</span></div>
+        <div class="row"><span class="label">Plan</span><span>${plan?.name || "Subscription"}</span></div>
+        <div class="row"><span class="label">Payment Method</span><span>${p.payment_method || "Paystack"}</span></div>
+        <div class="row"><span class="label">Reference</span><span style="font-family:monospace;font-size:12px">${ref}</span></div>
+        <div class="row"><span class="label">Amount Paid</span><span class="total">${fmt(p.amount, plan?.currency || "NGN")}</span></div>
+      </div>
+      <div class="stamp">✓ PAID — Thank you. Jazakum Allahu khayran.</div>
+      <p style="text-align:center;color:#aaa;font-size:11px;margin-top:30px">tahleemacademy.com · This is a computer-generated receipt.</p>
+      <p style="text-align:center;margin-top:18px"><button onclick="window.print()" style="background:#064E3B;color:#fff;border:none;border-radius:8px;padding:10px 22px;font-weight:700;cursor:pointer">Print / Save as PDF</button></p>
+      </body></html>`;
+    const w = window.open("", "_blank");
+    if (!w) { toast({ title: "Pop-up blocked", description: "Allow pop-ups to download receipt", variant: "destructive" }); return; }
+    w.document.write(html); w.document.close();
+  };
+
   // ── Paystack payment ──────────────────────────────────────────
   const initiatePayment = async () => {
     if (!user || !selectedPlan) {
@@ -275,15 +312,32 @@ const EnrollmentPayment = () => {
           subscription_end_date: endStr,
         } as any).eq("user_id", user.id),
 
-        // Record payment
+        // Record payment (type must satisfy validate_payment_type trigger:
+        // enrollment | subscription | private_session | manual)
         supabase.from("payments" as any).insert({
           student_id: user.id,
           plan_id: plan.id,
           amount,
           status: "success",
-          type: "paystack",
+          type: "subscription",
           paystack_reference: ref,
+          paystack_transaction_id: ref,
           payment_method: "card",
+          paid_at: now.toISOString(),
+          currency: plan.currency || "NGN",
+        }),
+
+        // Mirror to payment_history for the admin "Payment Records" view
+        supabase.from("payment_history" as any).insert({
+          user_id: user.id,
+          amount,
+          status: "success",
+          payment_type: "subscription",
+          payment_ref: ref,
+          receipt_id: `RCPT-${ref}`,
+          plan_type: plan.name,
+          level: (profile as any)?.level || null,
+          paid_at: now.toISOString(),
         }),
 
         // Record subscription
@@ -676,6 +730,14 @@ const EnrollmentPayment = () => {
                       <span className="ep-bdg" style={{ background:p.status==="success"?"#E8F5E9":"#FFEBEE", color:p.status==="success"?"#2E7D32":"#C62828" }}>
                         {p.status}
                       </span>
+                      {p.status === "success" && (
+                        <button
+                          type="button"
+                          onClick={() => downloadReceipt(p, plan)}
+                          style={{ display:"block", marginTop:6, background:"none", border:"1px solid #075E54", color:"#075E54", borderRadius:8, padding:"3px 8px", fontSize:10, fontWeight:700, cursor:"pointer" }}>
+                          ⬇ Receipt
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
