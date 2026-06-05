@@ -73,11 +73,18 @@ function TargetSelector({ value, onChange, targets }: { value: string; onChange:
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Close on outside click
+  // Close on outside click OR touch (mobile fix)
   useEffect(() => {
-    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    const handler = (e: MouseEvent | TouchEvent) => {
+      const t = "touches" in e ? e.touches[0]?.target : (e as MouseEvent).target;
+      if (ref.current && !ref.current.contains(t as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler as any);
+    document.addEventListener("touchstart", handler as any, { passive: true });
+    return () => {
+      document.removeEventListener("mousedown", handler as any);
+      document.removeEventListener("touchstart", handler as any);
+    };
   }, []);
 
   // Load users once when dropdown opens
@@ -131,12 +138,18 @@ function TargetSelector({ value, onChange, targets }: { value: string; onChange:
       </button>
 
       {open && (
+        <>
+          {/* Backdrop — captures mobile taps outside the dropdown */}
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 49 }}
+            onMouseDown={() => setOpen(false)}
+            onTouchStart={() => setOpen(false)}
+          />
         <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: "#fff", border: "1.5px solid #E5E7EB", borderRadius: 12, boxShadow: "0 12px 32px rgba(0,0,0,.15)", marginTop: 4, overflow: "hidden" }}>
 
           {/* Search box */}
           <div style={{ padding: "10px 10px 8px", borderBottom: "1px solid #F3F4F6" }}>
             <input
-              autoFocus
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search group or person…"
@@ -196,6 +209,7 @@ function TargetSelector({ value, onChange, targets }: { value: string; onChange:
             ) : null}
           </div>
         </div>
+        </>
       )}
     </div>
   );
