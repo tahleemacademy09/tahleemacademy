@@ -202,7 +202,7 @@ async function getVapidKey(): Promise<string | null> {
   }
 }
 
-async function enablePushNotifications(userId: string): Promise<"granted" | "denied" | "error"> {
+export async function enablePushNotifications(userId: string): Promise<"granted" | "denied" | "error"> {
   try {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) return "error";
 
