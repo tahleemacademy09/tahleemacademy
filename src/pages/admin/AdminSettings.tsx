@@ -28,6 +28,7 @@ import {
   CreditCard, UserCog, Calendar, AlertTriangle, CheckCircle,
   Sun, Moon, Coffee,
 } from "lucide-react";
+import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
 
 /* ── Palette ────────────────────────────────────────────────────── */
 const G    = "#064E3B";
