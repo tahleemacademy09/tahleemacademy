@@ -394,8 +394,11 @@ export default function ProfileSettings() {
       toast({ title: "⚠️ No WhatsApp number saved", description: "Go to Profile tab and add your WhatsApp number.", variant: "destructive" });
     }
     setSaving(true);
+    // push_notifications is browser-state only (controlled by the OS permission),
+    // not a DB column — strip it before saving to student_preferences
+    const { push_notifications: _skip, ...notifsToSave } = notifs;
     const { error } = await supabase.from("student_preferences" as any)
-      .upsert({ user_id: user.id, ...notifs, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+      .upsert({ user_id: user.id, ...notifsToSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
     setSaving(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
     else       toast({ title: "✅ Notifications saved" });
