@@ -17,21 +17,29 @@ const corsHeaders = {
 
 const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram";
 
+// Returns "ok" | "expired" | "error"
 async function sendWebPush(
   sub: { endpoint: string; p256dh: string; auth: string },
-  payload: { title: string; message: string; title_ar?: string; message_ar?: string; url: string; tag: string }
-): Promise<void> {
+  payload: { title: string; message: string; title_ar?: string; message_ar?: string; url: string; tag: string; type?: string }
+): Promise<"ok" | "expired" | "error"> {
   const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY");
   const VAPID_PUBLIC_KEY  = Deno.env.get("VAPID_PUBLIC_KEY");
   const VAPID_SUBJECT     = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@tahleemacademy.com";
   if (!VAPID_PRIVATE_KEY || !VAPID_PUBLIC_KEY) throw new Error("VAPID not configured");
   const webpush: any = await import("https://esm.sh/web-push@3.6.7");
   webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-  await webpush.sendNotification(
-    { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-    JSON.stringify(payload),
-    { TTL: 60 * 30 }
-  );
+  try {
+    await webpush.sendNotification(
+      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+      JSON.stringify(payload),
+      { TTL: 60 * 30 }
+    );
+    return "ok";
+  } catch (err: any) {
+    const status = err?.statusCode ?? err?.status ?? 0;
+    if (status === 404 || status === 410) return "expired";
+    throw err;
+  }
 }
 
 async function sendTelegram(chatId: string, title: string, message: string, link?: string, title_ar?: string, message_ar?: string): Promise<void> {
@@ -118,26 +126,43 @@ Deno.serve(async (req) => {
       .eq("user_id", user_id);
 
     if (subs && subs.length > 0) {
-      let sent = 0, failed = 0;
+      let sent = 0, failed = 0, expired = 0;
+      const expiredEndpoints: string[] = [];
       await Promise.all(
         subs.map(async (sub: any) => {
           try {
-            await sendWebPush(sub, {
+            const result = await sendWebPush(sub, {
               title, message,
               title_ar,
               message_ar,
               url: fullUrl,
-              tag: `${type ?? "notif"}-${user_id}-${Date.now()}`,
+              tag:  `${type ?? "notif"}-${user_id}-${Date.now()}`,
+              type: type ?? "announcement",
             });
-            sent++;
-          } catch {
+            if (result === "expired") {
+              expired++;
+              expiredEndpoints.push(sub.endpoint);
+            } else {
+              sent++;
+            }
+          } catch (pushErr: any) {
+            console.error("[dispatch-notification] web_push failed:", pushErr?.message ?? pushErr);
             failed++;
           }
         })
       );
-      results.web_push = `sent ${sent}/${subs.length}${failed ? ` (${failed} failed)` : ""}`;
+      // Clean up expired/unregistered subscriptions so they don't waste future attempts
+      if (expiredEndpoints.length > 0) {
+        await supabase.from("push_subscriptions")
+          .delete()
+          .eq("user_id", user_id)
+          .in("endpoint", expiredEndpoints);
+        console.warn(`[dispatch-notification] deleted ${expiredEndpoints.length} expired sub(s) for user_id:`, user_id);
+      }
+      results.web_push = `sent ${sent}/${subs.length}${expired ? ` (${expired} expired/cleaned)` : ""}${failed ? ` (${failed} failed)` : ""}`;
     } else {
       results.web_push = "no_subscription";
+      console.warn("[dispatch-notification] no push subscription for user_id:", user_id);
     }
 
     // ── 2. Telegram ──
