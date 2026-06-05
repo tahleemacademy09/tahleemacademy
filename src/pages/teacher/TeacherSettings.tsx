@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
+import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
 import {
   Camera, Save, Lock, LogOut, Eye, EyeOff,
   Loader2, AlertTriangle, Trash2, Bell, BookOpen,
