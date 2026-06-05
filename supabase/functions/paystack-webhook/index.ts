@@ -109,7 +109,7 @@ Deno.serve(async (req) => {
             status:   "active",
             paid_at:  new Date().toISOString(),
           })
-          .eq("user_id", payment.user_id);
+          .eq("user_id", payment.student_id);
 
         // ── 1b. Update profiles.payment_status + subscription_end_date ────
         // Authoritative server-side update so usePaymentAccess always reflects
@@ -122,14 +122,14 @@ Deno.serve(async (req) => {
             payment_status:        "paid",
             subscription_end_date: subEnd.toISOString().split("T")[0],
           })
-          .eq("user_id", payment.user_id);
+          .eq("user_id", payment.student_id);
 
         // ── 2. Advance Tasjeel step (NEW — TASJEEL INTEGRATION) ──────────
         //
         // Idempotent: only advance if currently on 'payment' step.
         // This prevents double-processing from duplicate webhook calls.
         //
-        await advanceTasjeelAfterPayment(supabase, payment.user_id, {
+        await advanceTasjeelAfterPayment(supabase, payment.student_id, {
           payment_ref:      reference,
           payment_amount:   amountKobo / 100,   // convert to main currency unit
           payment_currency: currency,
@@ -152,11 +152,30 @@ Deno.serve(async (req) => {
       }
 
       // ── 3. Update payment_history table (EXISTING LOGIC — UNCHANGED) ───
-      if (payment?.user_id) {
-        await supabase
+      const historyUserId = payment?.student_id ?? null;
+      if (historyUserId) {
+        // Upsert: update existing row, or insert a new one so admin sees it
+        const { data: existing } = await supabase
           .from("payment_history" as any)
-          .update({ status: "success" })
-          .eq("payment_ref", reference);
+          .select("id")
+          .eq("payment_ref", reference)
+          .maybeSingle();
+        if (existing) {
+          await supabase
+            .from("payment_history" as any)
+            .update({ status: "success" })
+            .eq("payment_ref", reference);
+        } else {
+          await supabase.from("payment_history" as any).insert({
+            user_id:      historyUserId,
+            amount:       Math.round(amountKobo / 100),
+            status:       "success",
+            payment_type: "subscription",
+            payment_ref:  reference,
+            receipt_id:   `RCPT-${reference}`,
+            paid_at:      new Date().toISOString(),
+          });
+        }
       }
     }
 

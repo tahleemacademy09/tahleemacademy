@@ -275,15 +275,32 @@ const EnrollmentPayment = () => {
           subscription_end_date: endStr,
         } as any).eq("user_id", user.id),
 
-        // Record payment
+        // Record payment (type must satisfy validate_payment_type trigger:
+        // enrollment | subscription | private_session | manual)
         supabase.from("payments" as any).insert({
           student_id: user.id,
           plan_id: plan.id,
           amount,
           status: "success",
-          type: "paystack",
+          type: "subscription",
           paystack_reference: ref,
+          paystack_transaction_id: ref,
           payment_method: "card",
+          paid_at: now.toISOString(),
+          currency: plan.currency || "NGN",
+        }),
+
+        // Mirror to payment_history for the admin "Payment Records" view
+        supabase.from("payment_history" as any).insert({
+          user_id: user.id,
+          amount,
+          status: "success",
+          payment_type: "subscription",
+          payment_ref: ref,
+          receipt_id: `RCPT-${ref}`,
+          plan_type: plan.name,
+          level: (profile as any)?.level || null,
+          paid_at: now.toISOString(),
         }),
 
         // Record subscription
