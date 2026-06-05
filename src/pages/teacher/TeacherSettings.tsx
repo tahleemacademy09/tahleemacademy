@@ -265,8 +265,9 @@ export default function TeacherSettings() {
 
   const saveNotifs = async () => {
     if (!user) return; setSaving(true);
+    const { push_notifications: _skip, ...notifsToSave } = notifs;
     const { error } = await (supabase as any).from("student_preferences")
-      .upsert({ user_id: user.id, ...notifs, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+      .upsert({ user_id: user.id, ...notifsToSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
     setSaving(false);
     error ? toast({ title: "Save failed", description: error.message, variant: "destructive" })
            : toast({ title: "✅ Notifications saved!" });
