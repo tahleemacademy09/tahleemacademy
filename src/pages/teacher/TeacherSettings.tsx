@@ -87,6 +87,7 @@ export default function TeacherSettings() {
   });
 
   const [notifs, setNotifs] = useState({
+    push_notifications:         false,
     email_notifications:        true,
     whatsapp_notifications:     false,
     class_reminder:             true,
@@ -151,6 +152,9 @@ export default function TeacherSettings() {
       if (pd) {
         const d = pd as any;
         setNotifs(n => ({ ...n,
+          push_notifications:         (typeof Notification !== "undefined" && Notification.permission === "granted")
+                                        ? (d.push_notifications ?? n.push_notifications)
+                                        : false,
           email_notifications:        d.email_notifications        ?? n.email_notifications,
           whatsapp_notifications:     d.whatsapp_notifications     ?? n.whatsapp_notifications,
           class_reminder:             d.class_reminder             ?? n.class_reminder,
@@ -217,6 +221,46 @@ export default function TeacherSettings() {
     setSaving(false);
     error ? toast({ title: "Save failed", description: error.message, variant: "destructive" })
            : toast({ title: "✅ Teaching profile saved!" });
+  };
+
+  const handlePushToggle = async (enabled: boolean) => {
+    if (!user) return;
+    if (enabled) {
+      if (typeof Notification === "undefined" || !("serviceWorker" in navigator)) {
+        toast({ title: "Not supported", description: "Your browser doesn't support push notifications.", variant: "destructive" });
+        return;
+      }
+      const result = await enablePushNotifications(user.id);
+      if (result === "granted") {
+        setNotifs(n => ({ ...n, push_notifications: true }));
+        setPushBlocked(false);
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          reg.showNotification("🔔 Tahleem Academy", {
+            body: "You'll now receive student alerts and class reminders on this device — even when the app is closed.",
+            icon: "/icons/icon-192x192.png",
+            badge: "/icons/icon-96x96.png",
+            tag: "push-enabled-confirm",
+            vibrate: [200, 100, 200],
+          });
+        } catch {}
+        toast({ title: "✅ Push notifications enabled!" });
+      } else if (result === "denied") {
+        setPushBlocked(true);
+        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+      }
+    } else {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await sub.unsubscribe();
+          await (supabase as any).from("push_subscriptions").delete().eq("user_id", user.id).eq("endpoint", sub.endpoint);
+        }
+      } catch {}
+      setNotifs(n => ({ ...n, push_notifications: false }));
+      toast({ title: "Push notifications disabled" });
+    }
   };
 
   const saveNotifs = async () => {
@@ -515,24 +559,6 @@ export default function TeacherSettings() {
               </div>
             </div>
           )}
-          {!pushBlocked && typeof Notification !== "undefined" && Notification.permission === "default" && (
-            <div style={{ background: "#F0FDF4", border: "1px solid #86EFAC", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 20, flexShrink: 0 }}>🔔</span>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 700, fontSize: 13, color: "#166534", margin: "0 0 2px" }}>Enable push notifications</p>
-                <p style={{ fontSize: 11, color: "#15803D", margin: 0 }}>Get student submission & class alerts on your device.</p>
-              </div>
-              <button onClick={async () => {
-                  if (!user) return;
-                  const r = await enablePushNotifications(user.id);
-                  setPushBlocked(r === "denied");
-                  if (r === "granted") toast({ title: "Notifications enabled" });
-                }}
-                style={{ padding: "8px 14px", borderRadius: 9, border: "none", background: G, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
-                Allow
-              </button>
-            </div>
-          )}
 
           {/* Telegram */}
           <div style={{ background: tgChatId ? "#ECFDF5" : "#EFF6FF", border: `1px solid ${tgChatId ? "#86EFAC" : "#BFDBFE"}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
@@ -557,6 +583,26 @@ export default function TeacherSettings() {
           </div>
 
           <Sec title="Channels">
+            {/* ── Phone / Web Push toggle ── */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
+              <div>
+                <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Phone &amp; Web Notifications</p>
+                <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>
+                  {typeof Notification === "undefined"
+                    ? "Not supported on this browser"
+                    : Notification.permission === "denied"
+                    ? "Blocked — allow in browser site settings to enable"
+                    : notifs.push_notifications
+                    ? "On — alerts arrive even when the app is closed"
+                    : "Off — tap to receive student and class alerts on this device"}
+                </p>
+              </div>
+              <Switch
+                checked={notifs.push_notifications}
+                disabled={typeof Notification !== "undefined" && Notification.permission === "denied"}
+                onCheckedChange={handlePushToggle}
+              />
+            </div>
             <Tog label="Email Notifications" sub="Academy updates and messages"
               checked={notifs.email_notifications} onChange={v => setNotifs(n => ({ ...n, email_notifications: v }))} />
             <Tog label="WhatsApp Notifications"
