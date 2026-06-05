@@ -237,11 +237,14 @@ export default function AdminSettings() {
   /* ── Save notification preferences ──────────────────────────── */
   const saveNotifs = async () => {
     if (!user) return;
+  const saveNotifs = async () => {
+    if (!user) return;
     setSaving(true);
+    const { push_notifications: _skip, ...notifsToSave } = notifs;
     const { error } = await supabase
       .from("admin_preferences" as any)
       .upsert(
-        { user_id: user.id, ...notifs, updated_at: new Date().toISOString() } as any,
+        { user_id: user.id, ...notifsToSave, updated_at: new Date().toISOString() } as any,
         { onConflict: "user_id" }
       );
     setSaving(false);
