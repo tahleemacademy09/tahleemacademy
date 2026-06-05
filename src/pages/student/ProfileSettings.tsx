@@ -586,7 +586,12 @@ export default function ProfileSettings() {
                 <p style={{ fontWeight: 700, fontSize: 13, color: dark ? "#4ade80" : "#166534", margin: "0 0 2px" }}>Enable phone notifications</p>
                 <p style={{ fontSize: 11, color: dark ? "#22c55e" : "#15803D", margin: 0 }}>Get class reminders in your phone's notification tray.</p>
               </div>
-              <button onClick={() => Notification.requestPermission().then(p => setPushBlocked(p === "denied"))}
+              <button onClick={async () => {
+                  if (!user) return;
+                  const r = await enablePushNotifications(user.id);
+                  setPushBlocked(r === "denied");
+                  if (r === "granted") toast({ title: "Notifications enabled" });
+                }}
                 style={{ padding: "8px 14px", borderRadius: 9, border: "none", background: G, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
                 Allow
               </button>
