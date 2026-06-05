@@ -26,6 +26,7 @@ import {
   Camera, Save, Lock, LogOut, Trash2,
   Eye, EyeOff, Loader2, AlertTriangle, Moon, Sun,
 } from "lucide-react";
+import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
 
 // ─── Dark mode helpers ────────────────────────────────────────────────────────
 // We drive dark mode by toggling a `data-theme="dark"` attribute on <html>.
