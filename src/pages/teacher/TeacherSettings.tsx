@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
+import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
 import {
   Camera, Save, Lock, LogOut, Eye, EyeOff,
   Loader2, AlertTriangle, Trash2, Bell, BookOpen,
@@ -521,7 +522,12 @@ export default function TeacherSettings() {
                 <p style={{ fontWeight: 700, fontSize: 13, color: "#166534", margin: "0 0 2px" }}>Enable push notifications</p>
                 <p style={{ fontSize: 11, color: "#15803D", margin: 0 }}>Get student submission & class alerts on your device.</p>
               </div>
-              <button onClick={() => Notification.requestPermission().then(p => setPushBlocked(p === "denied"))}
+              <button onClick={async () => {
+                  if (!user) return;
+                  const r = await enablePushNotifications(user.id);
+                  setPushBlocked(r === "denied");
+                  if (r === "granted") toast({ title: "Notifications enabled" });
+                }}
                 style={{ padding: "8px 14px", borderRadius: 9, border: "none", background: G, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
                 Allow
               </button>

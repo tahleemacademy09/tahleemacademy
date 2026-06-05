@@ -28,6 +28,7 @@ import {
   CreditCard, UserCog, Calendar, AlertTriangle, CheckCircle,
   Sun, Moon, Coffee,
 } from "lucide-react";
+import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
 
 /* ── Palette ────────────────────────────────────────────────────── */
 const G    = "#064E3B";
@@ -450,6 +451,33 @@ export default function AdminSettings() {
 
         {/* ════════ NOTIFICATIONS TAB ════════ */}
         {tab === "notifications" && <>
+
+          {/* Push notification enable card */}
+          {typeof Notification !== "undefined" && Notification.permission !== "granted" && (
+            <div style={{ background: Notification.permission === "denied" ? "#FEF2F2" : "#F0FDF4", border: `1px solid ${Notification.permission === "denied" ? "#FECACA" : "#86EFAC"}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 20, flexShrink: 0 }}>{Notification.permission === "denied" ? "🔕" : "🔔"}</span>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 700, fontSize: 13, color: Notification.permission === "denied" ? "#991B1B" : "#166534", margin: "0 0 2px" }}>
+                  {Notification.permission === "denied" ? "Push notifications blocked" : "Enable push notifications"}
+                </p>
+                <p style={{ fontSize: 11, color: Notification.permission === "denied" ? "#B91C1C" : "#15803D", margin: 0 }}>
+                  {Notification.permission === "denied"
+                    ? "Unblock via browser → Site Settings → Notifications → Allow."
+                    : "Get platform alerts on this device even when the tab is closed."}
+                </p>
+              </div>
+              {Notification.permission !== "denied" && (
+                <button onClick={async () => {
+                    if (!user) return;
+                    const r = await enablePushNotifications(user.id);
+                    if (r === "granted") toast({ title: "Notifications enabled" });
+                  }}
+                  style={{ padding: "8px 14px", borderRadius: 9, border: "none", background: "#064E3B", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
+                  Allow
+                </button>
+              )}
+            </div>
+          )}
 
           {/* WhatsApp warning if enabled without number */}
           {notifs.whatsapp_notifications && !form.whatsapp && !form.phone && (

@@ -34,14 +34,18 @@ async function sendWebPush(
   );
 }
 
-async function sendTelegram(chatId: string, title: string, message: string, link?: string): Promise<void> {
+async function sendTelegram(chatId: string, title: string, message: string, link?: string, title_ar?: string, message_ar?: string): Promise<void> {
   const LOVABLE_API_KEY  = Deno.env.get("LOVABLE_API_KEY");
   const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
   if (!LOVABLE_API_KEY || !TELEGRAM_API_KEY) throw new Error("Telegram gateway not configured");
 
+  const enBlock = `<b>${title}</b>\n${message}`;
+  const arBlock = (title_ar || message_ar)
+    ? `\n\n— — —\n<b>${title_ar || title}</b>\n${message_ar || message}`
+    : "";
   const text =
-    `🕌 <b>Tahleem Academy</b>\n` +
-    `<b>${title}</b>\n\n${message}` +
+    `🕌 <b>Tahleem Academy</b>\n\n` +
+    enBlock + arBlock +
     (link ? `\n\n🔗 <a href="${link}">Open Academy</a>` : "");
 
   const res = await fetch(`${TELEGRAM_GATEWAY}/sendMessage`, {
@@ -147,7 +151,7 @@ Deno.serve(async (req) => {
     const chatId = (prof as any)?.telegram_chat_id;
     if (chatId) {
       try {
-        await sendTelegram(String(chatId), title, message, fullUrl);
+        await sendTelegram(String(chatId), title, message, fullUrl, title_ar, message_ar);
         results.telegram = "sent";
       } catch (e: any) {
         results.telegram = `failed: ${e.message}`;
