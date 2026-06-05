@@ -165,6 +165,7 @@ export default function ProfileSettings() {
 
   const [tab,             setTab]             = useState("profile");
   const [saving,          setSaving]          = useState(false);
+  const [notifsLoaded,    setNotifsLoaded]    = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [showDelete,      setShowDelete]      = useState(false);
   const [showPw,          setShowPw]          = useState(false);
@@ -253,6 +254,7 @@ export default function ProfileSettings() {
           new_recording_alert:        d.new_recording_alert        ?? n.new_recording_alert,
           announcement_notifications: d.announcement_notifications ?? n.announcement_notifications,
         }));
+        setNotifsLoaded(true);
         const savedDark = d.dark_mode ?? dark;
         setPrefs(pr => ({
           language:             d.language             ?? pr.language,
@@ -390,6 +392,7 @@ export default function ProfileSettings() {
 
   const saveNotifs = async () => {
     if (!user) return;
+    if (!notifsLoaded) return;  // don't save stale defaults before DB load completes
     if (notifs.whatsapp_notifications && !form.whatsapp && !form.phone) {
       toast({ title: "⚠️ No WhatsApp number saved", description: "Go to Profile tab and add your WhatsApp number.", variant: "destructive" });
     }
