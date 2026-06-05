@@ -237,8 +237,6 @@ export default function AdminSettings() {
   /* ── Save notification preferences ──────────────────────────── */
   const saveNotifs = async () => {
     if (!user) return;
-  const saveNotifs = async () => {
-    if (!user) return;
     setSaving(true);
     const { push_notifications: _skip, ...notifsToSave } = notifs;
     const { error } = await supabase
