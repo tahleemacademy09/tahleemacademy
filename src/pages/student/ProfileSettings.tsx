@@ -189,6 +189,7 @@ export default function ProfileSettings() {
   }, []);
 
   const [notifs, setNotifs] = useState({
+    push_notifications:         false,
     email_notifications:        true,
     whatsapp_notifications:     false,
     class_reminder:             true,
@@ -241,6 +242,9 @@ export default function ProfileSettings() {
       if (pd) {
         const d = pd as any;
         setNotifs(n => ({
+          push_notifications:         (typeof Notification !== "undefined" && Notification.permission === "granted")
+                                        ? (d.push_notifications ?? n.push_notifications)
+                                        : false,
           email_notifications:        d.email_notifications        ?? n.email_notifications,
           whatsapp_notifications:     d.whatsapp_notifications     ?? n.whatsapp_notifications,
           class_reminder:             d.class_reminder             ?? n.class_reminder,
@@ -340,6 +344,48 @@ export default function ProfileSettings() {
     setSaving(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
     else       toast({ title: "✅ Profile saved!" });
+  };
+
+  const handlePushToggle = async (enabled: boolean) => {
+    if (!user) return;
+    if (enabled) {
+      if (typeof Notification === "undefined" || !("serviceWorker" in navigator)) {
+        toast({ title: "Not supported", description: "Your browser doesn't support push notifications.", variant: "destructive" });
+        return;
+      }
+      const result = await enablePushNotifications(user.id);
+      if (result === "granted") {
+        setNotifs(n => ({ ...n, push_notifications: true }));
+        setPushBlocked(false);
+        // Fire a confirmation notification so the user sees it works immediately
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          reg.showNotification("🔔 Tahleem Academy", {
+            body: "You'll now receive class reminders and updates on this device — even when the app is closed.",
+            icon: "/icons/icon-192x192.png",
+            badge: "/icons/icon-96x96.png",
+            tag: "push-enabled-confirm",
+            vibrate: [200, 100, 200],
+          });
+        } catch {}
+        toast({ title: "✅ Push notifications enabled!" });
+      } else if (result === "denied") {
+        setPushBlocked(true);
+        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+      }
+    } else {
+      // Unsubscribe from push
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await sub.unsubscribe();
+          await supabase.from("push_subscriptions" as any).delete().eq("user_id", user.id).eq("endpoint", sub.endpoint);
+        }
+      } catch {}
+      setNotifs(n => ({ ...n, push_notifications: false }));
+      toast({ title: "Push notifications disabled" });
+    }
   };
 
   const saveNotifs = async () => {
@@ -579,24 +625,6 @@ export default function ProfileSettings() {
             </div>
           )}
 
-          {!pushBlocked && typeof Notification !== "undefined" && Notification.permission === "default" && (
-            <div style={{ background: dark ? "#052e16" : "#F0FDF4", border: `1px solid ${dark ? "#166534" : "#86EFAC"}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 20, flexShrink: 0 }}>🔔</span>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 700, fontSize: 13, color: dark ? "#4ade80" : "#166534", margin: "0 0 2px" }}>Enable phone notifications</p>
-                <p style={{ fontSize: 11, color: dark ? "#22c55e" : "#15803D", margin: 0 }}>Get class reminders in your phone's notification tray.</p>
-              </div>
-              <button onClick={async () => {
-                  if (!user) return;
-                  const r = await enablePushNotifications(user.id);
-                  setPushBlocked(r === "denied");
-                  if (r === "granted") toast({ title: "Notifications enabled" });
-                }}
-                style={{ padding: "8px 14px", borderRadius: 9, border: "none", background: G, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
-                Allow
-              </button>
-            </div>
-          )}
 
           {notifs.whatsapp_notifications && !form.whatsapp && !form.phone && (
             <div style={{ background: dark ? "#431407" : "#FFFBEB", border: `1px solid ${dark ? "#92400e" : "#FDE68A"}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
@@ -639,6 +667,26 @@ export default function ProfileSettings() {
           </div>
 
           <Sec title="Channels">
+            {/* ── Phone / Web Push toggle ── */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${T.surface2}` }}>
+              <div>
+                <p style={{ fontWeight: 600, fontSize: 13, color: T.text3, margin: 0 }}>Phone &amp; Web Notifications</p>
+                <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>
+                  {typeof Notification === "undefined"
+                    ? "Not supported on this browser"
+                    : Notification.permission === "denied"
+                    ? "Blocked — allow in browser site settings to enable"
+                    : notifs.push_notifications
+                    ? "On — you'll get alerts even when the app is closed"
+                    : "Off — tap to get class reminders on this device"}
+                </p>
+              </div>
+              <Switch
+                checked={notifs.push_notifications}
+                disabled={typeof Notification !== "undefined" && Notification.permission === "denied"}
+                onCheckedChange={handlePushToggle}
+              />
+            </div>
             <Tog label="Email Notifications" sub="Updates via email"
               checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} />
             <Tog label="WhatsApp Notifications"
