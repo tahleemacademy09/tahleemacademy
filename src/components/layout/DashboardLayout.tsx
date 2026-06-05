@@ -310,18 +310,29 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const isArabicText = (s: string) => /[\u0600-\u06FF]/.test(s ?? "");
 
   // ── Resolve bilingual fields for a notification row ───────────
-  // Handles both new rows (title=EN, title_ar=AR) and legacy rows (title=AR only)
+  // Cases:
+  //   1. New bilingual row: title=EN, title_ar=AR, message=EN, message_ar=AR
+  //   2. title_ar column exists but is null (bilingual columns exist, content is EN-only)
+  //   3. Legacy row: title=AR, message=AR (no title_ar column at all)
+  //   4. Legacy English-only row: title=EN, no title_ar column
   const resolveLangs = (n: any) => {
-    const hasArabicCol = !!(n.title_ar || n.message_ar);
-    if (hasArabicCol) {
-      // New bilingual row
-      return { en: { title: n.title, message: n.message }, ar: { title: n.title_ar, message: n.message_ar } };
+    // "title_ar" key present in the object = bilingual columns exist in DB
+    const bilingualColsExist = "title_ar" in n;
+    if (bilingualColsExist) {
+      const hasArContent = !!(n.title_ar || n.message_ar);
+      if (hasArContent) {
+        // Full bilingual — show both
+        return { en: { title: n.title, message: n.message }, ar: { title: n.title_ar, message: n.message_ar } };
+      }
+      // Column exists but empty — English only
+      return { en: { title: n.title, message: n.message }, ar: null };
     }
+    // No bilingual columns in DB yet — fall back to Arabic detection on title
     if (isArabicText(n.title)) {
-      // Legacy row — Arabic stored in title/message, no English
+      // Legacy: Arabic stored in title/message
       return { en: null, ar: { title: n.title, message: n.message } };
     }
-    // English-only row
+    // Legacy English-only
     return { en: { title: n.title, message: n.message }, ar: null };
   };
 
@@ -600,7 +611,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                         {langs.en && (
                           <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{langs.en.message}</p>
                         )}
-                        {/* Arabic title/message preview */}
+                        {/* Arabic subtitle — show title when bilingual, message when Arabic-only */}
                         {langs.ar && (
                           <p className="text-xs text-gray-400 mt-0.5 line-clamp-2 font-arabic text-right" dir="rtl">
                             {langs.en ? langs.ar.title : langs.ar.message}
