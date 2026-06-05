@@ -73,18 +73,11 @@ function TargetSelector({ value, onChange, targets }: { value: string; onChange:
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Close on outside click OR touch (mobile fix)
+  // Close on outside click
   useEffect(() => {
-    const handler = (e: MouseEvent | TouchEvent) => {
-      const t = "touches" in e ? e.touches[0]?.target : (e as MouseEvent).target;
-      if (ref.current && !ref.current.contains(t as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", handler as any);
-    document.addEventListener("touchstart", handler as any, { passive: true });
-    return () => {
-      document.removeEventListener("mousedown", handler as any);
-      document.removeEventListener("touchstart", handler as any);
-    };
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
   // Load users once when dropdown opens
@@ -138,18 +131,12 @@ function TargetSelector({ value, onChange, targets }: { value: string; onChange:
       </button>
 
       {open && (
-        <>
-          {/* Backdrop — captures mobile taps outside the dropdown */}
-          <div
-            style={{ position: "fixed", inset: 0, zIndex: 49 }}
-            onMouseDown={() => setOpen(false)}
-            onTouchStart={() => setOpen(false)}
-          />
         <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: "#fff", border: "1.5px solid #E5E7EB", borderRadius: 12, boxShadow: "0 12px 32px rgba(0,0,0,.15)", marginTop: 4, overflow: "hidden" }}>
 
           {/* Search box */}
           <div style={{ padding: "10px 10px 8px", borderBottom: "1px solid #F3F4F6" }}>
             <input
+              autoFocus
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search group or person…"
@@ -209,7 +196,6 @@ function TargetSelector({ value, onChange, targets }: { value: string; onChange:
             ) : null}
           </div>
         </div>
-        </>
       )}
     </div>
   );
@@ -341,18 +327,42 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
             </span>
           </div>
 
-          {/* English */}
+          {/* English — editable */}
           <div style={{ padding: "12px 14px", borderRadius: 12, background: "#F8FAFC", border: "1px solid #E2E8F0" }}>
-            <p style={{ fontSize: 10, fontWeight: 800, color: "#6B7280", margin: "0 0 4px", textTransform: "uppercase", letterSpacing: ".06em" }}>🇬🇧 English</p>
-            <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: "0 0 4px" }}>{composed.title_en}</p>
-            <p style={{ fontSize: 13, color: "#374151", margin: 0, lineHeight: 1.5 }}>{composed.message_en}</p>
+            <p style={{ fontSize: 10, fontWeight: 800, color: "#6B7280", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: ".06em" }}>🇬🇧 English</p>
+            <input
+              value={composed.title_en || ""}
+              onChange={e => setComposed((c: any) => ({ ...c, title_en: e.target.value }))}
+              placeholder="English title…"
+              style={{ ...inp, fontWeight: 800, fontSize: 14, marginBottom: 8 }}
+            />
+            <textarea
+              value={composed.message_en || ""}
+              onChange={e => setComposed((c: any) => ({ ...c, message_en: e.target.value }))}
+              placeholder="English message…"
+              rows={3}
+              style={{ ...inp, resize: "vertical" as const, fontSize: 13, lineHeight: 1.5 }}
+            />
           </div>
 
-          {/* Arabic */}
-          <div style={{ padding: "12px 14px", borderRadius: 12, background: "#FFFBF0", border: "1px solid #FDE68A", direction: "rtl" }}>
-            <p style={{ fontSize: 10, fontWeight: 800, color: "#6B7280", margin: "0 0 4px", textTransform: "uppercase", letterSpacing: ".06em", direction: "ltr" }}>🇸🇦 Arabic</p>
-            <p style={{ fontWeight: 800, fontSize: 15, color: "#111", margin: "0 0 4px", fontFamily: "'Amiri', serif" }}>{composed.title_ar}</p>
-            <p style={{ fontSize: 14, color: "#374151", margin: 0, lineHeight: 1.8, fontFamily: "'Amiri', serif" }}>{composed.message_ar}</p>
+          {/* Arabic — editable */}
+          <div style={{ padding: "12px 14px", borderRadius: 12, background: "#FFFBF0", border: "1px solid #FDE68A" }}>
+            <p style={{ fontSize: 10, fontWeight: 800, color: "#6B7280", margin: "0 0 8px", textTransform: "uppercase", letterSpacing: ".06em" }}>🇸🇦 Arabic</p>
+            <input
+              value={composed.title_ar || ""}
+              onChange={e => setComposed((c: any) => ({ ...c, title_ar: e.target.value }))}
+              placeholder="العنوان بالعربي…"
+              dir="rtl"
+              style={{ ...inp, fontWeight: 800, fontSize: 15, fontFamily: "'Amiri', serif", marginBottom: 8, direction: "rtl" }}
+            />
+            <textarea
+              value={composed.message_ar || ""}
+              onChange={e => setComposed((c: any) => ({ ...c, message_ar: e.target.value }))}
+              placeholder="نص الرسالة…"
+              dir="rtl"
+              rows={3}
+              style={{ ...inp, resize: "vertical" as const, fontSize: 14, fontFamily: "'Amiri', serif", lineHeight: 1.8, direction: "rtl" }}
+            />
           </div>
 
           <div style={{ display: "flex", gap: 10 }}>
