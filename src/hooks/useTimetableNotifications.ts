@@ -1,24 +1,18 @@
 /*
   src/hooks/useTimetableNotifications.ts — Tahleem Academy
   ─────────────────────────────────────────────────────────────────────
-  ARCHITECTURE CHANGE:
-  ───────────────────
-  Notifications are now fired SERVER-SIDE by the schedule-class-reminders
-  edge function (called every minute via pg_cron). This means:
+  ARCHITECTURE:
+  ─────────────
+  Notifications are fired SERVER-SIDE by the schedule-class-reminders
+  edge function called every minute via pg_cron.
 
-  ✅ Works even when the user is NOT on the website
-  ✅ Notifications appear in the bell icon immediately on login
-  ✅ No missed reminders if the browser tab was closed
-
-  This hook now does only two lightweight things:
-  1. Registers the service worker + saves the push subscription so the
-     server can send Web Push to the device even when browser is closed.
-  2. Listens to Supabase Realtime on the notifications table so the bell
-     icon updates instantly the moment the server fires a notification,
-     without needing a page refresh.
-
-  The heavy "what classes are coming up" logic lives entirely in:
-    supabase/functions/schedule-class-reminders/index.ts
+  This hook does three lightweight things:
+  1. Registers service worker + saves push subscription so the server
+     can send Web Push even when the browser is closed.
+  2. Listens to Supabase Realtime so the bell icon updates the instant
+     the server inserts a notification — no polling needed.
+  3. Handles PUSH_SUBSCRIPTION_CHANGED messages from the service worker
+     so new endpoints are automatically re-saved to the DB.
 */
 
 import { useEffect, useRef } from "react";
@@ -27,16 +21,7 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const SW_PATH = "/sw.js";
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-function urlBase64ToUint8Array(base64: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(b64);
-  return new Uint8Array([...raw].map(c => c.charCodeAt(0)));
-}
-
-// ── Service Worker + Push Subscription ───────────────────────────────────────
+// ── Service Worker ────────────────────────────────────────────────────────────
 
 let _swReg: ServiceWorkerRegistration | null = null;
 
@@ -52,24 +37,60 @@ async function ensureServiceWorker(): Promise<ServiceWorkerRegistration | null> 
   }
 }
 
+// ── VAPID key ─────────────────────────────────────────────────────────────────
+
 let _cachedVapid: string | null = null;
+
 async function fetchVapidPublicKey(): Promise<string | null> {
   if (_cachedVapid) return _cachedVapid;
-  // Prefer build-time env when present (for self-hosted), else hit the edge function
   const fromEnv = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-  if (fromEnv) { _cachedVapid = fromEnv; return _cachedVapid; }
+  if (fromEnv?.trim()) { _cachedVapid = fromEnv.trim(); return _cachedVapid; }
   try {
     const { data, error } = await supabase.functions.invoke("vapid-public-key");
     if (error) throw error;
     const key = (data as any)?.publicKey || (data as any)?.public_key;
-    if (typeof key === "string" && key.length > 0) {
-      _cachedVapid = key;
-      return key;
+    if (typeof key === "string" && key.length > 10) {
+      _cachedVapid = key.trim();
+      return _cachedVapid;
     }
   } catch (err) {
-    console.warn("[useTimetableNotifications] Could not fetch VAPID public key:", err);
+    console.warn("[useTimetableNotifications] VAPID key fetch failed:", err);
   }
   return null;
+}
+
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  return new Uint8Array([...raw].map(c => c.charCodeAt(0)));
+}
+
+// ── Save push subscription to DB ──────────────────────────────────────────────
+
+async function saveSubscription(
+  userId: string,
+  endpoint: string,
+  p256dh: ArrayBuffer,
+  auth: ArrayBuffer
+): Promise<void> {
+  const row = {
+    user_id:    userId,
+    endpoint,
+    p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
+    auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
+    updated_at: new Date().toISOString(),
+  };
+
+  // Multi-device: one row per (user, endpoint)
+  const { error } = await supabase.from("push_subscriptions")
+    .upsert(row, { onConflict: "user_id,endpoint" });
+
+  if (error) {
+    // Old schema fallback
+    await supabase.from("push_subscriptions")
+      .upsert(row, { onConflict: "user_id" });
+  }
 }
 
 async function savePushSubscription(
@@ -78,17 +99,11 @@ async function savePushSubscription(
 ): Promise<void> {
   if (!("PushManager" in window)) return;
   if (typeof Notification === "undefined") return;
-
-  // Only subscribe if permission is ALREADY granted.
-  // We no longer call requestPermission() here — browsers block/suppress it
-  // when called without a user gesture. The NotificationPermissionBanner
-  // component handles the visible opt-in prompt instead.
-  const permission = Notification.permission;
-  if (permission !== "granted") return;
+  if (Notification.permission !== "granted") return;
 
   const vapidKey = await fetchVapidPublicKey();
   if (!vapidKey) {
-    console.warn("[useTimetableNotifications] VAPID public key unavailable — push subscription skipped");
+    console.warn("[useTimetableNotifications] VAPID key unavailable");
     return;
   }
 
@@ -105,31 +120,14 @@ async function savePushSubscription(
     const auth   = sub.getKey("auth");
     if (!p256dh || !auth) return;
 
-    const payload = {
-      user_id:    userId,
-      endpoint:   sub.endpoint,
-      p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
-      auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
-      updated_at: new Date().toISOString(),
-    };
-
-    // Try multi-device upsert first (requires SQL fix to be run)
-    const { error } = await supabase.from("push_subscriptions").upsert(
-      payload,
-      { onConflict: "user_id,endpoint" }
-    );
-    if (error) {
-      // Fall back to single-device upsert (original schema without the SQL fix)
-      await supabase.from("push_subscriptions").upsert(payload, { onConflict: "user_id" });
-    }
+    await saveSubscription(userId, sub.endpoint, p256dh, auth);
+    console.log("[useTimetableNotifications] ✅ push subscription saved");
   } catch (err) {
     console.warn("[useTimetableNotifications] Push subscription failed:", err);
   }
 }
 
-// ── Show in-browser notification (for users who ARE on the site) ─────────────
-// The server has already written the row to the DB. This just shows the
-// browser popup immediately for users with the tab open.
+// ── Show in-browser popup (for users with the tab open) ───────────────────────
 
 async function showBrowserNotification(opts: {
   title:        string;
@@ -137,35 +135,35 @@ async function showBrowserNotification(opts: {
   url:          string;
   tag:          string;
   minutes_left: number;
+  type?:        string;
 }): Promise<void> {
+  const isRing = opts.type === "class_ring" || opts.type === "ring";
   const baseOpts: NotificationOptions = {
-    body:              opts.message,
-    icon:              "/favicon.ico",
-    badge:             "/favicon.ico",
-    tag:               opts.tag,
-    renotify:          true,
-    requireInteraction: opts.minutes_left <= 5,
-    vibrate:           [200, 100, 200, 100, 400],
-    data:              { url: opts.url },
-    actions: [
-      { action: "join",    title: "Join Class 📹" },
-      { action: "dismiss", title: "Dismiss" },
-    ],
+    body:               opts.message,
+    icon:               "/icons/icon-192x192.png",
+    badge:              "/icons/icon-96x96.png",
+    tag:                opts.tag,
+    renotify:           true,
+    requireInteraction: isRing || opts.minutes_left <= 5,
+    vibrate:            isRing
+      ? [800, 300, 800, 300, 800, 600, 800, 300, 800]
+      : [200, 100, 200, 100, 400],
+    data:               { url: opts.url, type: opts.type },
+    actions: isRing
+      ? [{ action: "join", title: "📹 Join Now" }, { action: "dismiss", title: "Dismiss" }]
+      : [{ action: "open", title: "View"         }, { action: "dismiss", title: "Dismiss" }],
   } as NotificationOptions;
 
   if (_swReg) {
     try { await _swReg.showNotification(opts.title, baseOpts); return; } catch {}
   }
   if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-    try { new Notification(opts.title, { body: opts.message, icon: "/favicon.ico", tag: opts.tag }); } catch {}
+    try { new Notification(opts.title, { body: opts.message, icon: "/icons/icon-192x192.png", tag: opts.tag }); } catch {}
   }
-  try { navigator.vibrate?.([200, 100, 200, 100, 400]); } catch {}
+  try { navigator.vibrate?.(isRing ? [800, 300, 800] : [200, 100, 200]); } catch {}
 }
 
 // ── Realtime listener ─────────────────────────────────────────────────────────
-// When the server inserts a class_reminder notification we immediately show
-// the browser popup for users who have the tab open. The notification is
-// already in the DB so the bell icon also updates.
 
 function subscribeToNotifications(userId: string): () => void {
   const channel = supabase
@@ -180,17 +178,20 @@ function subscribeToNotifications(userId: string): () => void {
       },
       async (payload) => {
         const row = payload.new as any;
-        if (row.type !== "class_reminder") return;
 
-        // Show browser popup for the current tab
-        const minsLeft = row.message?.includes("5 min") ? 5 : 15;
-        await showBrowserNotification({
-          title:        row.title   ?? "Class Reminder",
-          message:      row.message ?? "",
-          url:          row.link    ?? "/student/timetable",
-          tag:          row.link    ?? row.id,
-          minutes_left: minsLeft,
-        });
+        // Show browser popup for relevant types
+        if (row.type === "class_reminder" || row.type === "class_ring") {
+          const isRing      = row.type === "class_ring";
+          const minsLeft    = isRing ? 0 : (row.message?.includes("5 min") ? 5 : 15);
+          await showBrowserNotification({
+            title:        row.title   ?? "Class Reminder",
+            message:      row.message ?? "",
+            url:          row.link    ?? "/student/timetable",
+            tag:          row.id      ?? row.link,
+            minutes_left: minsLeft,
+            type:         row.type,
+          });
+        }
       }
     )
     .subscribe();
@@ -198,38 +199,69 @@ function subscribeToNotifications(userId: string): () => void {
   return () => { supabase.removeChannel(channel); };
 }
 
+// ── Handle SW messages (e.g. pushsubscriptionchange) ─────────────────────────
+
+function listenToSWMessages(userId: string): () => void {
+  if (!("serviceWorker" in navigator)) return () => {};
+
+  const handler = async (event: MessageEvent) => {
+    const msg = event.data;
+    if (!msg?.type) return;
+
+    if (msg.type === "PUSH_SUBSCRIPTION_CHANGED" && msg.subscription) {
+      // Service worker rotated our push keys — re-save to DB
+      try {
+        const sub = msg.subscription;
+        const p256dh = Uint8Array.from(atob(sub.keys.p256dh.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+        const auth   = Uint8Array.from(atob(sub.keys.auth.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
+        await saveSubscription(userId, sub.endpoint, p256dh.buffer, auth.buffer);
+        console.log("[useTimetableNotifications] re-saved rotated subscription");
+      } catch (e) {
+        console.warn("[useTimetableNotifications] failed to re-save rotated sub:", e);
+      }
+    }
+
+    if (msg.type === "NOTIFICATION_CLICK" && msg.url) {
+      window.location.href = msg.url;
+    }
+  };
+
+  navigator.serviceWorker.addEventListener("message", handler);
+  return () => navigator.serviceWorker.removeEventListener("message", handler);
+}
+
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useTimetableNotifications() {
   const { user, profile, hasRole } = useAuth();
-  const initRef  = useRef(false);
-  const unsubRef = useRef<(() => void) | null>(null);
+  const initRef    = useRef(false);
+  const unsubRef   = useRef<(() => void) | null>(null);
+  const swMsgUnsub = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!user || !profile) return;
     if (hasRole("admin")) return;
 
-    // One-time setup per session
     if (!initRef.current) {
       initRef.current = true;
 
-      // Register service worker and push subscription so the server-side
-      // cron function can deliver Web Push even when the browser is closed
+      // Register SW and save push subscription so server-side cron can reach device
       ensureServiceWorker().then(reg => {
         if (reg) savePushSubscription(user.id, reg);
       });
     }
 
-    // Subscribe to realtime so the bell icon + browser popup update immediately
-    // when the server writes a notification (no polling needed)
+    // Realtime bell icon + browser popup
     if (unsubRef.current) unsubRef.current();
     unsubRef.current = subscribeToNotifications(user.id);
 
+    // SW message listener (subscription changes, click routing)
+    if (swMsgUnsub.current) swMsgUnsub.current();
+    swMsgUnsub.current = listenToSWMessages(user.id);
+
     return () => {
-      if (unsubRef.current) {
-        unsubRef.current();
-        unsubRef.current = null;
-      }
+      if (unsubRef.current) { unsubRef.current(); unsubRef.current = null; }
+      if (swMsgUnsub.current) { swMsgUnsub.current(); swMsgUnsub.current = null; }
     };
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 }
