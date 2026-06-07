@@ -31,7 +31,7 @@ const corsHeaders = {
 const THRESHOLDS    = [0, 5, 15] as const;
 type Threshold      = typeof THRESHOLDS[number];
 
-const APP_BASE_URL     = "https://tahleemacademy.vercel.app";
+const APP_BASE_URL     = "https://tahleemacademy.lovable.app";
 const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram/sendMessage";
 const WAT_OFFSET_MS    = 60 * 60 * 1000; // UTC+1 (WAT)
 
@@ -193,6 +193,7 @@ function buildPushPayload(opts: {
       type:               "ring",
       title:              `📞 ${subjectTitle} — Starting Now!`,
       message:            `${teacherName} is waiting — tap to join now!`,
+      body:               `${teacherName} is waiting — tap to join now!`,
       class_id:           slotId,
       class_title:        subjectTitle,
       teacher_name:       teacherName,
@@ -214,6 +215,7 @@ function buildPushPayload(opts: {
       type:    "class_reminder",
       title:   `📚 ${label} in 5 min — get ready!`,
       message: `${subjectTitle} starts at ${time12}. Open the app now!`,
+      body:    `${subjectTitle} starts at ${time12}. Open the app now!`,
       url:     joinUrl,
       tag:     `${slotId}:5`,
       minutes_left: 5,
@@ -225,6 +227,7 @@ function buildPushPayload(opts: {
     type:    "class_reminder",
     title:   `📚 ${label} in 15 min`,
     message: `${subjectTitle} starts at ${time12}. Get ready!`,
+    body:    `${subjectTitle} starts at ${time12}. Get ready!`,
     url:     joinUrl,
     tag:     `${slotId}:15`,
     minutes_left: 15,
