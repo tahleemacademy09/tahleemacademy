@@ -4,14 +4,18 @@ self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 
 self.addEventListener('push', e => {
   const data = e.data?.json() ?? {};
+  const url = data.url || data.join_url || '/';
   e.waitUntil(
     self.registration.showNotification(data.title ?? 'Tahleem Academy', {
-      body:    data.body  ?? '',
+      body:    data.body ?? data.message ?? data.message_en ?? '',
       icon:    data.icon  ?? '/icons/icon-192x192.png',
       badge:   data.badge ?? '/icons/icon-96x96.png',
       tag:     data.tag   ?? 'tahleem-push',
-      vibrate: [200, 100, 200],
-      data:    data.url ? { url: data.url } : undefined,
+      renotify: true,
+      requireInteraction: !!data.requireInteraction,
+      vibrate: data.vibrate ?? [200, 100, 200],
+      actions: Array.isArray(data.actions) ? data.actions : undefined,
+      data:    { url },
     })
   );
 });

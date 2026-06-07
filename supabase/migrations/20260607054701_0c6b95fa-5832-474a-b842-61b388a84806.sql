@@ -1,0 +1,1 @@
+DROP TRIGGER IF EXISTS trg_dispatch_notification ON public.notifications;

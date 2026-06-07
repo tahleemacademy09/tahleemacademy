@@ -20,7 +20,7 @@ const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram";
 // Returns "ok" | "expired" | "error"
 async function sendWebPush(
   sub: { endpoint: string; p256dh: string; auth: string },
-  payload: { title: string; message: string; title_ar?: string; message_ar?: string; url: string; tag: string; type?: string }
+  payload: { title: string; message: string; body?: string; title_ar?: string; message_ar?: string; url: string; tag: string; type?: string }
 ): Promise<"ok" | "expired" | "error"> {
   const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY");
   const VAPID_PUBLIC_KEY  = Deno.env.get("VAPID_PUBLIC_KEY");
@@ -69,7 +69,7 @@ async function sendTelegram(chatId: string, title: string, message: string, link
 }
 
 function absUrl(link: string | null | undefined): string {
-  const base = "https://tahleemacademy.vercel.app";
+  const base = "https://tahleemacademy.lovable.app";
   if (!link) return base;
   if (link.startsWith("http")) return link;
   return `${base}${link.startsWith("/") ? "" : "/"}${link}`;
@@ -132,7 +132,9 @@ Deno.serve(async (req) => {
         subs.map(async (sub: any) => {
           try {
             const result = await sendWebPush(sub, {
-              title, message,
+              title,
+              message,
+              body: message_ar ? `${message}\n\n${message_ar}` : message,
               title_ar,
               message_ar,
               url: fullUrl,
