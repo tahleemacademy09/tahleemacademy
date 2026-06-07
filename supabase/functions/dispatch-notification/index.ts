@@ -69,7 +69,7 @@ async function sendTelegram(chatId: string, title: string, message: string, link
 }
 
 function absUrl(link: string | null | undefined): string {
-  const base = "https://tahleemacademy.vercel.app";
+  const base = "https://tahleemacademy.lovable.app";
   if (!link) return base;
   if (link.startsWith("http")) return link;
   return `${base}${link.startsWith("/") ? "" : "/"}${link}`;
@@ -132,7 +132,9 @@ Deno.serve(async (req) => {
         subs.map(async (sub: any) => {
           try {
             const result = await sendWebPush(sub, {
-              title, message,
+              title,
+              message,
+              body: message_ar ? `${message}\n\n${message_ar}` : message,
               title_ar,
               message_ar,
               url: fullUrl,
