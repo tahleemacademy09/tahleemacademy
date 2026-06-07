@@ -99,8 +99,9 @@ async function sendWebPush(
   try {
     const wp: any = await import("https://esm.sh/web-push@3.6.7");
     wp.setVapidDetails(subj, pub, pvt);
+    const toBase64url = (b64: string) => b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     await wp.sendNotification(
-      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+      { endpoint: sub.endpoint, keys: { p256dh: toBase64url(sub.p256dh), auth: toBase64url(sub.auth) } },
       JSON.stringify(payload),
       { TTL: ttl }
     );
