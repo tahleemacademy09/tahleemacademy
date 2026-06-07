@@ -7,13 +7,13 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
-import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
   LayoutDashboard, Users, UserCheck, Video, ClipboardList,
   LogOut, Globe, Menu, X, Settings, Trophy, MessageSquare,
   CheckSquare, Mic, BookOpen, GraduationCap, BarChart2,
   Megaphone, Calendar, Headphones, Radio, ChevronDown,
   ChevronRight, Bell, BookMarked, Clock,
 } from "lucide-react";
+import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
 
 const G    = "#064E3B";
 const GM   = "#0a5c3e";
