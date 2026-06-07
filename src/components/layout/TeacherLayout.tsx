@@ -7,6 +7,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import {
+import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
   LayoutDashboard, Users, UserCheck, Video, ClipboardList,
   LogOut, Globe, Menu, X, Settings, Trophy, MessageSquare,
   CheckSquare, Mic, BookOpen, GraduationCap, BarChart2,
@@ -465,6 +466,7 @@ const TeacherLayout = () => {
         )}
 
         <main style={{ flex: 1, overflow: "auto" }}>
+          <NotificationPermissionBanner />
           <Outlet />
         </main>
       </div>
