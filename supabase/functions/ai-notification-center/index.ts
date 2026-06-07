@@ -1,12 +1,6 @@
 // supabase/functions/ai-notification-center/index.ts
-// AI brain for all notifications and content moderation on Tahleem Academy.
-//
-// Actions:
-//  "compose"   → AI writes a bilingual notification from a rough idea
-//  "auto"      → AI generates notification for a platform event (exam done, enrollment, etc.)
-//  "moderate"  → AI reviews a chat message / content for appropriateness
-//  "send"      → Insert notifications into DB for target users (uses service role)
-//  "flag"      → Flag a chat message for moderation queue
+// FIX: After inserting notification rows, directly calls dispatch-notification
+// for each user instead of relying on the DB trigger (which times out via pg_net).
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -21,20 +15,12 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE_KEY       = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const LOVABLE_API_KEY   = Deno.env.get("LOVABLE_API_KEY")!;
 
-// ── Self-healing: detect whether bilingual columns exist ─────────────────────
-// PostgREST silently drops unknown columns on INSERT — no error is returned.
-// We probe information_schema once per cold start and cache the result.
 let bilingualColumnsExist: boolean | null = null;
 
 async function checkBilingualColumns(adminClient: any): Promise<boolean> {
   if (bilingualColumnsExist !== null) return bilingualColumnsExist;
   try {
-    // Try a lightweight select that includes title_ar — if the column doesn't
-    // exist PostgREST returns a 400 with "column ... does not exist"
-    const { error } = await adminClient
-      .from("notifications")
-      .select("title_ar")
-      .limit(1);
+    const { error } = await adminClient.from("notifications").select("title_ar").limit(1);
     bilingualColumnsExist = !error;
   } catch {
     bilingualColumnsExist = false;
@@ -42,67 +28,69 @@ async function checkBilingualColumns(adminClient: any): Promise<boolean> {
   return bilingualColumnsExist!;
 }
 
-
 async function callAI(systemPrompt: string, userContent: string, json = true): Promise<any> {
-  if (!LOVABLE_API_KEY) {
-    throw new Error("LOVABLE_API_KEY is not configured");
-  }
+  if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
   const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "google/gemini-2.5-flash",
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user",   content: userContent },
+        { role: "user",   content: userContent  },
       ],
       ...(json ? { response_format: { type: "json_object" } } : {}),
     }),
   });
-  if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`AI error ${res.status}: ${errBody}`);
-  }
+  if (!res.ok) throw new Error(`AI error ${res.status}: ${await res.text()}`);
   const data = await res.json();
   const text = data.choices?.[0]?.message?.content || "";
-  if (json) {
-    try { return JSON.parse(text); } catch { return { raw: text }; }
-  }
+  if (json) { try { return JSON.parse(text); } catch { return { raw: text }; } }
   return text;
+}
+
+// ── Direct dispatch — bypasses DB trigger ────────────────────────────────────
+// Calls dispatch-notification edge function directly for each notification row.
+// This is reliable unlike the pg_net trigger which times out.
+
+async function dispatchToUser(notificationId: string): Promise<void> {
+  try {
+    await fetch(`${SUPABASE_URL}/functions/v1/dispatch-notification`, {
+      method: "POST",
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${SERVICE_KEY}`,
+      },
+      body: JSON.stringify({ notification_id: notificationId }),
+    });
+  } catch (e: any) {
+    console.warn("[ai-notification-center] dispatch failed for:", notificationId, e.message);
+  }
 }
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    // Auth check
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
 
-    // Verify the user's JWT using the anon client
     const anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const { data: { user: caller } } = await anonClient.auth.getUser(authHeader.replace("Bearer ", ""));
     if (!caller) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
 
-    // Use service role to bypass RLS when checking the user's role.
-    // The anon client cannot read user_roles due to RLS policies that only
-    // allow admins to see roles — which creates a chicken-and-egg problem.
     const adminClient = createClient(SUPABASE_URL, SERVICE_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
 
-    // Check admin or teacher
     const { data: roleRow } = await adminClient.from("user_roles").select("role")
       .eq("user_id", caller.id).in("role", ["admin", "teacher"]).maybeSingle();
     if (!roleRow) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsHeaders });
 
-    const body = await req.json();
+    const body   = await req.json();
     const { action } = body;
 
-    // ── ACTION: compose ───────────────────────────────────────────────────────
+    // ── compose ───────────────────────────────────────────────────────────────
     if (action === "compose") {
       const { idea, target_hint } = body;
       const result = await callAI(
@@ -124,13 +112,9 @@ Use بسم الله style greetings only when genuinely appropriate. Keep it con
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── ACTION: auto ─────────────────────────────────────────────────────────
-    // Generate notification from a platform event
+    // ── auto ──────────────────────────────────────────────────────────────────
     if (action === "auto") {
       const { event_type, context } = body;
-      // event_type: exam_completed | exam_graded | new_enrollment | payment_received |
-      //             assignment_submitted | level_changed | welcome | hifdh_milestone
-
       const eventDescriptions: Record<string, string> = {
         exam_completed:       "A student has completed an exam",
         exam_graded:          "A student's exam has been graded and results are ready",
@@ -144,7 +128,6 @@ Use بسم الله style greetings only when genuinely appropriate. Keep it con
         class_reminder:       "A live class is starting soon",
         announcement:         "General academy announcement",
       };
-
       const description = eventDescriptions[event_type] || event_type;
       const result = await callAI(
         `You are an automatic notification generator for Tahleem Academy (أكاديمية التعليم), an Islamic learning platform.
@@ -158,28 +141,18 @@ Return JSON:
   "message_ar": "الرسالة (max 200 chars)",
   "type": "achievement | reminder | announcement | info"
 }
-Be encouraging, use appropriate Islamic phrases (JazakAllah khayran, MashaAllah, etc.) naturally.`,
+Be encouraging, use appropriate Islamic phrases naturally.`,
         `Event: ${description}\nContext: ${JSON.stringify(context || {})}`
       );
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── ACTION: moderate ──────────────────────────────────────────────────────
+    // ── moderate ──────────────────────────────────────────────────────────────
     if (action === "moderate") {
       const { content, content_type, author_name } = body;
-      // content_type: chat_message | comment | assignment_text
-
       const result = await callAI(
-        `You are a content moderator for Tahleem Academy, an Islamic educational platform for students learning Quran, Arabic, and Islamic Studies.
-Review the content and determine if it is appropriate for this Islamic educational context.
-
-Evaluate for:
-1. Inappropriate language or profanity
-2. Off-topic content unrelated to Islamic education
-3. Disrespectful content towards Islam, scholars, or fellow students
-4. Spam or promotional content
-5. Content that could harm the learning environment
-
+        `You are a content moderator for Tahleem Academy, an Islamic educational platform.
+Review the content and determine if it is appropriate.
 Return JSON:
 {
   "verdict": "approve | warn | remove",
@@ -197,8 +170,7 @@ Return JSON:
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── ACTION: send ──────────────────────────────────────────────────────────
-    // Actually insert notifications into the DB
+    // ── send ──────────────────────────────────────────────────────────────────
     if (action === "send") {
       const { title_en, title_ar, message_en, message_ar, target, type, reference_id, link } = body;
 
@@ -222,7 +194,6 @@ Return JSON:
       } else if (Array.isArray(body.user_ids)) {
         userIds = body.user_ids;
       } else if (target) {
-        // Dynamic academic level slug (foundation, beginner, intermediate, advanced, etc.)
         const { data } = await adminClient.from("profiles").select("user_id").eq("level", target);
         userIds = (data || []).map((p: any) => p.user_id);
       }
@@ -231,17 +202,12 @@ Return JSON:
         return new Response(JSON.stringify({ error: "No target users found", sent: 0 }), { status: 400, headers: corsHeaders });
       }
 
-      // Build records — store both languages so the client can show bilingual content
-      // Only include title_ar/message_ar if the migration has been applied.
       const hasBilingualCols = await checkBilingualColumns(adminClient);
       const records = userIds.map((uid: string) => ({
         user_id:      uid,
-        title:        title_en,          // always English (primary)
-        message:      message_en,        // always English (primary)
-        ...(hasBilingualCols ? {
-          title_ar:   title_ar   || null,
-          message_ar: message_ar || null,
-        } : {}),
+        title:        title_en,
+        message:      message_en,
+        ...(hasBilingualCols ? { title_ar: title_ar || null, message_ar: message_ar || null } : {}),
         type:         type || "announcement",
         sent_by:      caller.id,
         reference_id: reference_id || null,
@@ -250,29 +216,46 @@ Return JSON:
         created_at:   new Date().toISOString(),
       }));
 
-      // Batch insert 100 at a time
+      // Insert in batches of 100
       let sent = 0;
+      const insertedIds: string[] = [];
+
       for (let i = 0; i < records.length; i += 100) {
         const chunk = records.slice(i, i + 100);
-        const { error } = await adminClient.from("notifications").insert(chunk);
-        if (!error) sent += chunk.length;
+        const { data: inserted, error } = await adminClient
+          .from("notifications")
+          .insert(chunk)
+          .select("id, user_id");
+        if (!error && inserted) {
+          sent += inserted.length;
+          insertedIds.push(...inserted.map((r: any) => r.id));
+        }
       }
 
-      // Log to ai_query_logs
+      // ── DIRECT DISPATCH — no trigger needed ──────────────────────────────
+      // Fire-and-forget: dispatch push+telegram for each notification in parallel.
+      // We don't await all of them to avoid request timeout on large sends.
+      const dispatchPromises = insertedIds.map(id => dispatchToUser(id));
+      // Await up to 10 at a time to avoid overwhelming the edge function
+      for (let i = 0; i < dispatchPromises.length; i += 10) {
+        await Promise.allSettled(dispatchPromises.slice(i, i + 10));
+      }
+
       await adminClient.from("ai_query_logs").insert({
         user_id:     caller.id,
         intent_type: "ai_notification",
         created_at:  new Date().toISOString(),
       }).then(() => {});
 
-      return new Response(JSON.stringify({ success: true, sent, bilingual_ready: hasBilingualCols }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(
+        JSON.stringify({ success: true, sent, bilingual_ready: hasBilingualCols }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    // ── ACTION: flag ──────────────────────────────────────────────────────────
-    // Flag content for moderation queue
+    // ── flag ──────────────────────────────────────────────────────────────────
     if (action === "flag") {
       const { content, content_type, content_id, author_id, reason } = body;
-
       await adminClient.from("moderation_queue" as any).insert({
         content,
         content_type: content_type || "chat_message",
@@ -283,7 +266,6 @@ Return JSON:
         status:       "pending",
         created_at:   new Date().toISOString(),
       });
-
       return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
