@@ -73,16 +73,18 @@ const EntranceExamResume = () => {
         const EXAM_ID = examRow.id;
 
         // ── Step 2: Resume an existing in-progress attempt ──────────────────
-        const { data: existing, error: e1 } = await supabase
+        const { data: existingRows, error: e1 } = await supabase
           .from("exam_attempts")
           .select("id")
           .eq("exam_id", EXAM_ID)
           .eq("user_id", user.id)
           .eq("status", "in_progress")
-          .maybeSingle();
+          .order("started_at", { ascending: false })
+          .limit(1);
 
         if (e1) throw new Error(`Could not check existing attempt: ${e1.message}`);
 
+        const existing = existingRows?.[0];
         if (existing) {
           clearTimeout(timeoutId);
           setMessage("Resuming your exam…");
@@ -92,14 +94,16 @@ const EntranceExamResume = () => {
         }
 
         // ── Step 3: Check if already submitted — fix stuck tasjeel step ─────
-        const { data: submitted } = await supabase
+        const { data: submittedRows } = await supabase
           .from("exam_attempts")
           .select("id")
           .eq("exam_id", EXAM_ID)
           .eq("user_id", user.id)
           .in("status", ["submitted", "graded", "completed"])
-          .maybeSingle();
+          .order("submitted_at", { ascending: false, nullsFirst: false })
+          .limit(1);
 
+        const submitted = submittedRows?.[0];
         if (submitted) {
           // Exam was already completed but tasjeel step wasn't advanced — fix it.
           // CRITICAL: use advanceStep (not a raw supabase PATCH) so that local
