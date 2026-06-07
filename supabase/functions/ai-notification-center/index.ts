@@ -1,6 +1,6 @@
 // supabase/functions/ai-notification-center/index.ts
-// FIX: After inserting notification rows, directly calls dispatch-notification
-// for each user instead of relying on the DB trigger (which times out via pg_net).
+// FIX v3: Edge functions cannot call other edge functions via fetch() on free/pro plans.
+// Web Push and Telegram are now handled DIRECTLY inside this function — no dispatch hop.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -14,20 +14,112 @@ const SUPABASE_URL      = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SERVICE_KEY       = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const LOVABLE_API_KEY   = Deno.env.get("LOVABLE_API_KEY")!;
+const TELEGRAM_GATEWAY  = "https://connector-gateway.lovable.dev/telegram/sendMessage";
 
+// ── Base64 → Base64url (required by web-push) ────────────────────────────────
+const toBase64url = (b64: string) =>
+  b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+// ── Web Push ──────────────────────────────────────────────────────────────────
+async function sendWebPush(
+  sub: { endpoint: string; p256dh: string; auth: string },
+  payload: object
+): Promise<"ok" | "expired" | "error"> {
+  const pvt  = Deno.env.get("VAPID_PRIVATE_KEY");
+  const pub  = Deno.env.get("VAPID_PUBLIC_KEY");
+  const subj = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@tahleemacademy.com";
+  if (!pvt || !pub) { console.error("[push] VAPID keys missing"); return "error"; }
+  try {
+    const wp: any = await import("https://esm.sh/web-push@3.6.7");
+    wp.setVapidDetails(subj, pub, pvt);
+    await wp.sendNotification(
+      { endpoint: sub.endpoint, keys: { p256dh: toBase64url(sub.p256dh), auth: toBase64url(sub.auth) } },
+      JSON.stringify(payload),
+      { TTL: 60 * 30 }
+    );
+    return "ok";
+  } catch (e: any) {
+    if (e?.statusCode === 410 || e?.statusCode === 404) return "expired";
+    console.error("[push] error:", e?.statusCode, e?.message);
+    return "error";
+  }
+}
+
+// ── Telegram ──────────────────────────────────────────────────────────────────
+async function sendTelegram(chatId: string, title: string, message: string): Promise<void> {
+  const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
+  if (!LOVABLE_API_KEY || !TELEGRAM_API_KEY) return;
+  const text = `🕌 <b>Tahleem Academy</b>\n<b>${title}</b>\n\n${message}`;
+  const res = await fetch(TELEGRAM_GATEWAY, {
+    method: "POST",
+    headers: {
+      "Authorization":        `Bearer ${LOVABLE_API_KEY}`,
+      "X-Connection-Api-Key": TELEGRAM_API_KEY,
+      "Content-Type":         "application/json",
+    },
+    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+  });
+  if (!res.ok) throw new Error(`Telegram ${res.status}: ${await res.text()}`);
+}
+
+// ── Dispatch push + telegram for one user ────────────────────────────────────
+async function dispatchToUser(
+  adminClient: any,
+  userId: string,
+  title: string,
+  message: string
+): Promise<void> {
+  const pushPayload = {
+    title, body: message, message,
+    url: "https://tahleemacademy.vercel.app",
+    tag: `notif-${userId}-${Date.now()}`,
+    vibrate: [200, 100, 200],
+  };
+
+  // Web Push — all devices
+  const { data: subs } = await adminClient
+    .from("push_subscriptions")
+    .select("endpoint, p256dh, auth")
+    .eq("user_id", userId);
+
+  let pushSent = 0;
+  for (const sub of (subs ?? []) as any[]) {
+    const result = await sendWebPush(sub, pushPayload);
+    if (result === "ok") pushSent++;
+    if (result === "expired") {
+      await adminClient.from("push_subscriptions")
+        .delete().eq("user_id", userId).eq("endpoint", sub.endpoint);
+    }
+  }
+  console.log(`[dispatch] user=${userId} push=${pushSent}/${(subs??[]).length}`);
+
+  // Telegram
+  const { data: prof } = await adminClient
+    .from("profiles").select("telegram_chat_id")
+    .eq("user_id", userId).maybeSingle();
+  const chatId = (prof as any)?.telegram_chat_id;
+  if (chatId) {
+    try {
+      await sendTelegram(String(chatId), title, message);
+      console.log(`[dispatch] user=${userId} telegram=sent`);
+    } catch (e: any) {
+      console.warn(`[dispatch] user=${userId} telegram=failed:`, e.message);
+    }
+  }
+}
+
+// ── Bilingual columns check ───────────────────────────────────────────────────
 let bilingualColumnsExist: boolean | null = null;
-
 async function checkBilingualColumns(adminClient: any): Promise<boolean> {
   if (bilingualColumnsExist !== null) return bilingualColumnsExist;
   try {
     const { error } = await adminClient.from("notifications").select("title_ar").limit(1);
     bilingualColumnsExist = !error;
-  } catch {
-    bilingualColumnsExist = false;
-  }
+  } catch { bilingualColumnsExist = false; }
   return bilingualColumnsExist!;
 }
 
+// ── AI call ───────────────────────────────────────────────────────────────────
 async function callAI(systemPrompt: string, userContent: string, json = true): Promise<any> {
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
   const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -49,25 +141,7 @@ async function callAI(systemPrompt: string, userContent: string, json = true): P
   return text;
 }
 
-// ── Direct dispatch — bypasses DB trigger ────────────────────────────────────
-// Calls dispatch-notification edge function directly for each notification row.
-// This is reliable unlike the pg_net trigger which times out.
-
-async function dispatchToUser(notificationId: string): Promise<void> {
-  try {
-    await fetch(`${SUPABASE_URL}/functions/v1/dispatch-notification`, {
-      method: "POST",
-      headers: {
-        "Content-Type":  "application/json",
-        "Authorization": `Bearer ${SERVICE_KEY}`,
-      },
-      body: JSON.stringify({ notification_id: notificationId }),
-    });
-  } catch (e: any) {
-    console.warn("[ai-notification-center] dispatch failed for:", notificationId, e.message);
-  }
-}
-
+// ── Main ──────────────────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -87,7 +161,7 @@ serve(async (req) => {
       .eq("user_id", caller.id).in("role", ["admin", "teacher"]).maybeSingle();
     if (!roleRow) return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: corsHeaders });
 
-    const body   = await req.json();
+    const body = await req.json();
     const { action } = body;
 
     // ── compose ───────────────────────────────────────────────────────────────
@@ -96,17 +170,7 @@ serve(async (req) => {
       const result = await callAI(
         `You are a notification composer for Tahleem Academy (أكاديمية التعليم), an Islamic online learning platform.
 Given a rough idea from an admin, write a professional notification in BOTH English and Arabic.
-IMPORTANT: The academy name in Arabic is always "أكاديمية التعليم" — never invent another Arabic translation.
-Return JSON:
-{
-  "title_en": "short title (max 60 chars)",
-  "title_ar": "العنوان بالعربي (max 60 chars)",
-  "message_en": "body text (max 200 chars, warm Islamic tone)",
-  "message_ar": "نص الرسالة (max 200 chars)",
-  "suggested_target": "all | students | teachers | beginners | intermediate | advanced",
-  "suggested_type": "announcement | reminder | achievement | warning | info"
-}
-Use بسم الله style greetings only when genuinely appropriate. Keep it concise and actionable.`,
+Return JSON: { "title_en": "short title (max 60 chars)", "title_ar": "العنوان", "message_en": "body (max 200 chars)", "message_ar": "الرسالة", "suggested_target": "all | students | teachers", "suggested_type": "announcement | reminder | achievement | warning | info" }`,
         `Rough idea: "${idea}"\nTarget hint: "${target_hint || "all users"}"`
       );
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -115,34 +179,10 @@ Use بسم الله style greetings only when genuinely appropriate. Keep it con
     // ── auto ──────────────────────────────────────────────────────────────────
     if (action === "auto") {
       const { event_type, context } = body;
-      const eventDescriptions: Record<string, string> = {
-        exam_completed:       "A student has completed an exam",
-        exam_graded:          "A student's exam has been graded and results are ready",
-        new_enrollment:       "A student has enrolled in a new subject/course",
-        payment_received:     "A student's payment has been received and confirmed",
-        assignment_submitted: "A student has submitted an assignment",
-        level_changed:        "A student has been assigned a new learning level",
-        welcome:              "A new student has joined the academy",
-        hifdh_milestone:      "A student has reached a Quran memorization milestone",
-        exam_reminder:        "An exam is coming up soon for students",
-        class_reminder:       "A live class is starting soon",
-        announcement:         "General academy announcement",
-      };
-      const description = eventDescriptions[event_type] || event_type;
       const result = await callAI(
-        `You are an automatic notification generator for Tahleem Academy (أكاديمية التعليم), an Islamic learning platform.
-Generate a warm, encouraging notification for this platform event.
-IMPORTANT: The academy name in Arabic is always "أكاديمية التعليم" — never invent another Arabic translation.
-Return JSON:
-{
-  "title_en": "short engaging title (max 60 chars)",
-  "title_ar": "العنوان (max 60 chars)",
-  "message_en": "encouraging message (max 200 chars)",
-  "message_ar": "الرسالة (max 200 chars)",
-  "type": "achievement | reminder | announcement | info"
-}
-Be encouraging, use appropriate Islamic phrases naturally.`,
-        `Event: ${description}\nContext: ${JSON.stringify(context || {})}`
+        `You are an automatic notification generator for Tahleem Academy (أكاديمية التعليم).
+Generate a warm notification. Return JSON: { "title_en": "title", "title_ar": "العنوان", "message_en": "message", "message_ar": "الرسالة", "type": "achievement | reminder | announcement | info" }`,
+        `Event: ${event_type}\nContext: ${JSON.stringify(context || {})}`
       );
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -151,21 +191,9 @@ Be encouraging, use appropriate Islamic phrases naturally.`,
     if (action === "moderate") {
       const { content, content_type, author_name } = body;
       const result = await callAI(
-        `You are a content moderator for Tahleem Academy, an Islamic educational platform.
-Review the content and determine if it is appropriate.
-Return JSON:
-{
-  "verdict": "approve | warn | remove",
-  "confidence": 0.0-1.0,
-  "reason_en": "brief reason in English",
-  "reason_ar": "السبب بالعربي",
-  "suggested_warning_en": "polite warning message to send user if verdict is warn (null if approve/remove)",
-  "suggested_warning_ar": "رسالة التحذير بالعربي",
-  "is_spam": true/false,
-  "is_inappropriate": true/false,
-  "severity": "none | low | medium | high"
-}`,
-        `Content type: ${content_type || "chat_message"}\nAuthor: ${author_name || "Unknown"}\nContent: "${content}"`
+        `You are a content moderator for Tahleem Academy Islamic platform.
+Return JSON: { "verdict": "approve | warn | remove", "confidence": 0.0-1.0, "reason_en": "reason", "reason_ar": "السبب", "suggested_warning_en": "warning or null", "suggested_warning_ar": "التحذير", "is_spam": true/false, "is_inappropriate": true/false, "severity": "none | low | medium | high" }`,
+        `Content type: ${content_type}\nAuthor: ${author_name}\nContent: "${content}"`
       );
       return new Response(JSON.stringify(result), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -173,12 +201,11 @@ Return JSON:
     // ── send ──────────────────────────────────────────────────────────────────
     if (action === "send") {
       const { title_en, title_ar, message_en, message_ar, target, type, reference_id, link } = body;
-
       if (!title_en || !message_en) {
         return new Response(JSON.stringify({ error: "title_en and message_en required" }), { status: 400, headers: corsHeaders });
       }
 
-      // Resolve target users
+      // Resolve users
       let userIds: string[] = [];
       if (target === "all") {
         const { data } = await adminClient.from("profiles").select("user_id");
@@ -216,35 +243,22 @@ Return JSON:
         created_at:   new Date().toISOString(),
       }));
 
-      // Insert in batches of 100
+      // Insert notifications
       let sent = 0;
-      const insertedIds: string[] = [];
-
       for (let i = 0; i < records.length; i += 100) {
-        const chunk = records.slice(i, i + 100);
-        const { data: inserted, error } = await adminClient
-          .from("notifications")
-          .insert(chunk)
-          .select("id, user_id");
-        if (!error && inserted) {
-          sent += inserted.length;
-          insertedIds.push(...inserted.map((r: any) => r.id));
-        }
+        const { error } = await adminClient.from("notifications").insert(records.slice(i, i + 100));
+        if (!error) sent += Math.min(100, records.length - i);
       }
 
-      // ── DIRECT DISPATCH — no trigger needed ──────────────────────────────
-      // Fire-and-forget: dispatch push+telegram for each notification in parallel.
-      // We don't await all of them to avoid request timeout on large sends.
-      const dispatchPromises = insertedIds.map(id => dispatchToUser(id));
-      // Await up to 10 at a time to avoid overwhelming the edge function
-      for (let i = 0; i < dispatchPromises.length; i += 10) {
-        await Promise.allSettled(dispatchPromises.slice(i, i + 10));
+      // Dispatch push + telegram DIRECTLY (no HTTP hop to dispatch-notification)
+      for (const uid of userIds) {
+        await dispatchToUser(adminClient, uid, title_en, message_en);
       }
+
+      console.log(`[ai-notification-center] sent=${sent} to ${userIds.length} users`);
 
       await adminClient.from("ai_query_logs").insert({
-        user_id:     caller.id,
-        intent_type: "ai_notification",
-        created_at:  new Date().toISOString(),
+        user_id: caller.id, intent_type: "ai_notification", created_at: new Date().toISOString(),
       }).then(() => {});
 
       return new Response(
@@ -257,14 +271,10 @@ Return JSON:
     if (action === "flag") {
       const { content, content_type, content_id, author_id, reason } = body;
       await adminClient.from("moderation_queue" as any).insert({
-        content,
-        content_type: content_type || "chat_message",
-        content_id:   content_id || null,
-        author_id:    author_id || null,
-        flagged_by:   caller.id,
-        reason:       reason || "manual_flag",
-        status:       "pending",
-        created_at:   new Date().toISOString(),
+        content, content_type: content_type || "chat_message",
+        content_id: content_id || null, author_id: author_id || null,
+        flagged_by: caller.id, reason: reason || "manual_flag",
+        status: "pending", created_at: new Date().toISOString(),
       });
       return new Response(JSON.stringify({ success: true }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
