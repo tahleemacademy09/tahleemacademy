@@ -1,18 +1,10 @@
 /*
-  src/hooks/useTimetableNotifications.ts — Tahleem Academy
-  ─────────────────────────────────────────────────────────────────────
-  ARCHITECTURE:
-  ─────────────
-  Notifications are fired SERVER-SIDE by the schedule-class-reminders
-  edge function called every minute via pg_cron.
-
-  This hook does three lightweight things:
-  1. Registers service worker + saves push subscription so the server
-     can send Web Push even when the browser is closed.
-  2. Listens to Supabase Realtime so the bell icon updates the instant
-     the server inserts a notification — no polling needed.
-  3. Handles PUSH_SUBSCRIPTION_CHANGED messages from the service worker
-     so new endpoints are automatically re-saved to the DB.
+  src/hooks/useTimetableNotifications.ts — Tahleem Academy v4
+  
+  KEY FIX: Handles RESUBSCRIBE_REQUIRED message from service worker.
+  When VAPID keys change, the SW fires pushsubscriptionchange → sends
+  RESUBSCRIBE_REQUIRED to all open clients → this hook unsubscribes the
+  old browser subscription and re-subscribes with the new VAPID key.
 */
 
 import { useEffect, useRef } from "react";
@@ -66,7 +58,7 @@ function urlBase64ToUint8Array(base64: string): Uint8Array {
   return new Uint8Array([...raw].map(c => c.charCodeAt(0)));
 }
 
-// ── Save push subscription to DB ──────────────────────────────────────────────
+// ── Save subscription to DB ───────────────────────────────────────────────────
 
 async function saveSubscription(
   userId: string,
@@ -81,17 +73,58 @@ async function saveSubscription(
     auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
     updated_at: new Date().toISOString(),
   };
-
-  // Multi-device: one row per (user, endpoint)
   const { error } = await supabase.from("push_subscriptions")
     .upsert(row, { onConflict: "user_id,endpoint" });
-
   if (error) {
-    // Old schema fallback
     await supabase.from("push_subscriptions")
       .upsert(row, { onConflict: "user_id" });
   }
 }
+
+// ── Full re-subscribe (used after VAPID key change) ───────────────────────────
+
+export async function resubscribePush(userId: string): Promise<boolean> {
+  try {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return false;
+    if (typeof Notification === "undefined") return false;
+    if (Notification.permission !== "granted") return false;
+
+    const vapidKey = await fetchVapidPublicKey();
+    if (!vapidKey) return false;
+
+    const reg = await navigator.serviceWorker.ready;
+
+    // Unsubscribe old subscription first
+    const oldSub = await reg.pushManager.getSubscription();
+    if (oldSub) {
+      await oldSub.unsubscribe();
+      // Remove from DB
+      await supabase.from("push_subscriptions")
+        .delete()
+        .eq("user_id", userId)
+        .eq("endpoint", oldSub.endpoint);
+    }
+
+    // Subscribe fresh with new VAPID key
+    const newSub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(vapidKey).buffer as ArrayBuffer,
+    });
+
+    const p256dh = newSub.getKey("p256dh");
+    const auth   = newSub.getKey("auth");
+    if (!p256dh || !auth) return false;
+
+    await saveSubscription(userId, newSub.endpoint, p256dh, auth);
+    console.log("[useTimetableNotifications] ✅ re-subscribed with new VAPID key");
+    return true;
+  } catch (e: any) {
+    console.warn("[useTimetableNotifications] resubscribe failed:", e.message);
+    return false;
+  }
+}
+
+// ── Initial push subscription ─────────────────────────────────────────────────
 
 async function savePushSubscription(
   userId: string,
@@ -102,13 +135,29 @@ async function savePushSubscription(
   if (Notification.permission !== "granted") return;
 
   const vapidKey = await fetchVapidPublicKey();
-  if (!vapidKey) {
-    console.warn("[useTimetableNotifications] VAPID key unavailable");
-    return;
-  }
+  if (!vapidKey) return;
 
   try {
     let sub = await reg.pushManager.getSubscription();
+
+    // Check if existing subscription matches current VAPID key
+    // by trying to verify its application server key
+    if (sub) {
+      try {
+        const serverKey = sub.options?.applicationServerKey;
+        if (serverKey) {
+          const existing = btoa(String.fromCharCode(...new Uint8Array(serverKey)));
+          const current  = btoa(String.fromCharCode(...urlBase64ToUint8Array(vapidKey)));
+          if (existing !== current) {
+            // VAPID key mismatch — re-subscribe
+            console.log("[useTimetableNotifications] VAPID key mismatch, re-subscribing...");
+            await sub.unsubscribe();
+            sub = null;
+          }
+        }
+      } catch { /* ignore comparison errors */ }
+    }
+
     if (!sub) {
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
@@ -127,43 +176,7 @@ async function savePushSubscription(
   }
 }
 
-// ── Show in-browser popup (for users with the tab open) ───────────────────────
-
-async function showBrowserNotification(opts: {
-  title:        string;
-  message:      string;
-  url:          string;
-  tag:          string;
-  minutes_left: number;
-  type?:        string;
-}): Promise<void> {
-  const isRing = opts.type === "class_ring" || opts.type === "ring";
-  const baseOpts: NotificationOptions = {
-    body:               opts.message,
-    icon:               "/icons/icon-192x192.png",
-    badge:              "/icons/icon-96x96.png",
-    tag:                opts.tag,
-    renotify:           true,
-    requireInteraction: isRing || opts.minutes_left <= 5,
-    vibrate:            isRing
-      ? [800, 300, 800, 300, 800, 600, 800, 300, 800]
-      : [200, 100, 200, 100, 400],
-    data:               { url: opts.url, type: opts.type },
-    actions: isRing
-      ? [{ action: "join", title: "📹 Join Now" }, { action: "dismiss", title: "Dismiss" }]
-      : [{ action: "open", title: "View"         }, { action: "dismiss", title: "Dismiss" }],
-  } as NotificationOptions;
-
-  if (_swReg) {
-    try { await _swReg.showNotification(opts.title, baseOpts); return; } catch {}
-  }
-  if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-    try { new Notification(opts.title, { body: opts.message, icon: "/icons/icon-192x192.png", tag: opts.tag }); } catch {}
-  }
-  try { navigator.vibrate?.(isRing ? [800, 300, 800] : [200, 100, 200]); } catch {}
-}
-
-// ── Realtime listener ─────────────────────────────────────────────────────────
+// ── Realtime bell icon updates ────────────────────────────────────────────────
 
 function subscribeToNotifications(userId: string): () => void {
   const channel = supabase
@@ -178,19 +191,11 @@ function subscribeToNotifications(userId: string): () => void {
       },
       async (payload) => {
         const row = payload.new as any;
-
-        // Show browser popup for relevant types
         if (row.type === "class_reminder" || row.type === "class_ring") {
-          const isRing      = row.type === "class_ring";
-          const minsLeft    = isRing ? 0 : (row.message?.includes("5 min") ? 5 : 15);
-          await showBrowserNotification({
-            title:        row.title   ?? "Class Reminder",
-            message:      row.message ?? "",
-            url:          row.link    ?? "/student/timetable",
-            tag:          row.id      ?? row.link,
-            minutes_left: minsLeft,
-            type:         row.type,
-          });
+          const isRing = row.type === "class_ring";
+          try {
+            navigator.vibrate?.(isRing ? [800, 300, 800] : [200, 100, 200]);
+          } catch {}
         }
       }
     )
@@ -199,7 +204,7 @@ function subscribeToNotifications(userId: string): () => void {
   return () => { supabase.removeChannel(channel); };
 }
 
-// ── Handle SW messages (e.g. pushsubscriptionchange) ─────────────────────────
+// ── SW message listener ───────────────────────────────────────────────────────
 
 function listenToSWMessages(userId: string): () => void {
   if (!("serviceWorker" in navigator)) return () => {};
@@ -208,17 +213,11 @@ function listenToSWMessages(userId: string): () => void {
     const msg = event.data;
     if (!msg?.type) return;
 
-    if (msg.type === "PUSH_SUBSCRIPTION_CHANGED" && msg.subscription) {
-      // Service worker rotated our push keys — re-save to DB
-      try {
-        const sub = msg.subscription;
-        const p256dh = Uint8Array.from(atob(sub.keys.p256dh.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
-        const auth   = Uint8Array.from(atob(sub.keys.auth.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0));
-        await saveSubscription(userId, sub.endpoint, p256dh.buffer, auth.buffer);
-        console.log("[useTimetableNotifications] re-saved rotated subscription");
-      } catch (e) {
-        console.warn("[useTimetableNotifications] failed to re-save rotated sub:", e);
-      }
+    if (msg.type === "RESUBSCRIBE_REQUIRED") {
+      // VAPID key changed — old subscription is dead, re-subscribe automatically
+      console.log("[useTimetableNotifications] RESUBSCRIBE_REQUIRED received");
+      const ok = await resubscribePush(userId);
+      console.log("[useTimetableNotifications] re-subscribe result:", ok);
     }
 
     if (msg.type === "NOTIFICATION_CLICK" && msg.url) {
@@ -244,18 +243,14 @@ export function useTimetableNotifications() {
 
     if (!initRef.current) {
       initRef.current = true;
-
-      // Register SW and save push subscription so server-side cron can reach device
       ensureServiceWorker().then(reg => {
         if (reg) savePushSubscription(user.id, reg);
       });
     }
 
-    // Realtime bell icon + browser popup
     if (unsubRef.current) unsubRef.current();
     unsubRef.current = subscribeToNotifications(user.id);
 
-    // SW message listener (subscription changes, click routing)
     if (swMsgUnsub.current) swMsgUnsub.current();
     swMsgUnsub.current = listenToSWMessages(user.id);
 
