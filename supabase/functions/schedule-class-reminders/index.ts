@@ -283,7 +283,7 @@ Deno.serve(async (req) => {
       const minsLeft = minutesUntil(cls.scheduled_at);
 
       for (const threshold of THRESHOLDS) {
-        const window = threshold === 0 ? 0.9 : 1.1;
+        const window = 2.5; // wider window catches cron timing variations
         if (minsLeft < threshold - window || minsLeft > threshold + window) continue;
 
         stats.checked++;
