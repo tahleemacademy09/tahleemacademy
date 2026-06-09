@@ -239,7 +239,7 @@ const PublicClassManagement = () => {
       description: form.description || null, description_ar: form.description_ar || null,
       scheduled_at: form.scheduled_at ? new Date(form.scheduled_at + ':00+01:00').toISOString() : null, room_code: roomCode,
       livekit_room_name: `public-${roomCode}`,
-      join_url: `${window.location.origin}/live/${roomCode}`,
+      join_url: `https://tahleemacademy.vercel.app/live/${roomCode}`,
       host_id: user!.id, password_enabled: form.password_enabled,
       password: form.password_enabled ? form.password : null,
       max_guests: form.max_guests, require_name: form.require_name,
