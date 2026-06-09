@@ -237,7 +237,7 @@ const PublicClassManagement = () => {
     const { error } = await supabase.from("public_classes").insert({
       title: form.title, title_ar: form.title_ar || null,
       description: form.description || null, description_ar: form.description_ar || null,
-      scheduled_at: form.scheduled_at || null, room_code: roomCode,
+      scheduled_at: form.scheduled_at ? new Date(form.scheduled_at + ':00+01:00').toISOString() : null, room_code: roomCode,
       livekit_room_name: `public-${roomCode}`,
       join_url: `${window.location.origin}/live/${roomCode}`,
       host_id: user!.id, password_enabled: form.password_enabled,
@@ -286,7 +286,7 @@ const PublicClassManagement = () => {
       title_ar:        form.title_ar        || null,
       description:     form.description     || null,
       description_ar:  form.description_ar  || null,
-      scheduled_at:    form.scheduled_at    || null,
+      scheduled_at:    form.scheduled_at ? new Date(form.scheduled_at + ':00+01:00').toISOString() : null,
       password_enabled:form.password_enabled,
       password:        form.password_enabled ? form.password : null,
       max_guests:      form.max_guests,
@@ -336,7 +336,7 @@ const PublicClassManagement = () => {
       actual_end_time: null,
       actual_start_time: null,
     };
-    if (newDate) update.scheduled_at = new Date(newDate).toISOString();
+    if (newDate) update.scheduled_at = new Date(newDate + ':00+01:00').toISOString();
     await supabase.from("public_classes").update(update).eq("id", cls.id);
     toast.success("Class rescheduled — same link still works!");
     setRescheduleTarget(null);
