@@ -34,9 +34,13 @@ function minutesUntil(scheduledAt: string): number {
 }
 
 function to12hr(isoString: string): string {
-  const d = new Date(isoString);
-  let h = d.getHours(), m = d.getMinutes();
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+  // Always display in Nigeria/Lagos time (WAT = UTC+1)
+  return new Date(isoString).toLocaleTimeString("en-US", {
+    timeZone: "Africa/Lagos",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
 }
 
 function dedupKey(classId: string, threshold: number): string {
