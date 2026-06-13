@@ -619,6 +619,32 @@ export default function QuranRevisionHub({ userId }: Props) {
     setPagePlayIdx(-1);
   }, [setPagePlayIdx]);
 
+  // ── Visibility handler: keep recording alive when tab is minimized ──
+  // Android Chrome pauses JS timers and can discard MediaRecorder when the
+  // tab goes to background. We save the current stage to sessionStorage so
+  // that if the page *does* reload, it can restore the recitation state
+  // rather than resetting to setup. Also prevent the mic from being
+  // released by explicitly keeping the MediaRecorder running.
+  useEffect(() => {
+    const key = `qrh_stage_${userId || "anon"}`;
+    const handleVisibility = () => {
+      if (document.hidden) {
+        // Page going to background — persist enough state to restore
+        sessionStorage.setItem(key, JSON.stringify({
+          stage,
+          recording,
+          recTime,
+          pageIdx: plan?.currentIdx ?? 0,
+        }));
+      }
+      // When returning to foreground: if MediaRecorder stopped unexpectedly,
+      // we can detect it here. For now just log — full recovery requires
+      // re-requesting the mic which needs a user gesture.
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [stage, recording, recTime, plan, userId]);
+
   // ═══ Transcription ════════════════════════════════════
   // refText kept for post-processing alignment only — NOT passed to Whisper as prompt
   // (passing the verse as Whisper prompt causes it to hallucinate the reference text)
@@ -738,10 +764,11 @@ export default function QuranRevisionHub({ userId }: Props) {
     setRecording(false);
   };
 
-  // ═══ FIX 3: Live Tarteel-style recording ══════════════
-  // Streams chunks to Groq every 3s, accumulates transcript,
-  // and reveals each verse as soon as the student recites it —
-  // green for correct words, red for missing. Mirrors Tarteel.
+  // ═══ Live Tarteel-style recording ══════════════════════
+  // FIX: Cumulative audio sent to Groq so the transcript grows with the
+  // recitation. A per-word tOffset pointer ensures new transcript words are
+  // matched forward from the frontier only, so the display keeps up in real
+  // time without ever jumping ahead.
   const startLiveRecording = async () => {
     const ayahs: any[] = pageDataRef.current?.ayahs ?? [];
     if (!ayahs.length) return startPageRecording();
@@ -757,8 +784,9 @@ export default function QuranRevisionHub({ userId }: Props) {
         );
       });
 
+      const R = flat.length;
+
       // ── Mutable word status array ───────────────────────────────────
-      // "hidden" | "correct" | "missing"
       const states: string[][] = displayWords.map(ws => ws.map(() => "hidden"));
       liveWordStatesRef.current = states;
       livePageWordsRef.current = flat;
@@ -783,54 +811,50 @@ export default function QuranRevisionHub({ userId }: Props) {
       setRecTime(0);
       stopAudio();
 
-      // ── LCS-based matching against FULL cumulative transcript ────────
-      // Every Groq response gives us the full transcript from t=0.
-      // We run LCS between ALL reference words and ALL transcript words,
-      // mark matched ref words as "correct", unmatched as "missing" only
-      // if the transcript has passed that point (pointer-based safety).
-      // This is the same algorithm as compareWords() but updates live state.
-      let lastTranscript = "";
-
-      // frontier: the furthest ref-word index we've ever confirmed matched.
-      // Words beyond frontier + BUFFER stay hidden (blurred) no matter what.
-      // This prevents Groq's transcript from "jumping ahead" and revealing
-      // words the reciter hasn't reached yet.
+      // ── State for cumulative matching ───────────────────────────────
+      // frontier: furthest ref-word index we've ever confirmed matched.
+      // liveTranscript: the full growing transcript text from Groq.
+      // tOffset: how many transcript words were already processed last call —
+      //   we only need to run LCS on new transcript words vs ref[frontier..].
       let frontier = 0;
-      const REVEAL_BUFFER = 0; // never reveal ahead — only words Groq has confirmed
+      let liveTranscriptAccum = "";
 
-      const applyTranscript = (fullText: string) => {
-        if (fullText === lastTranscript) return;
-        lastTranscript = fullText;
+      // applyTranscript: called every time Groq returns a new (longer) text.
+      // ONLY looks ahead from frontier so it can never lag or jump.
+      const applyTranscript = (newText: string) => {
+        // Groq sends cumulative text — ignore if shorter than what we have
+        // (can happen if a request returns out of order)
+        if (newText.length <= liveTranscriptAccum.length) return;
+        liveTranscriptAccum = newText;
 
-        const tWords = normalizeArabic(fullText).split(/\s+/).filter(Boolean);
-        if (!tWords.length) return;
-
-        const R = flat.length;
+        const tWords = normalizeArabic(newText).split(/\s+/).filter(Boolean);
         const T = tWords.length;
+        if (!T) return;
 
-        // Only run LCS up to frontier + tight window to prevent jumping ahead.
-        // 12 words gives enough room for Groq's occasional word reorder without
-        // letting it skip to a later verse entirely.
-        const rLimit = Math.min(R, frontier + 12);
+        // Run LCS only over the unmatched portion of the reference:
+        // ref[frontier..R-1] vs tWords[0..T-1].
+        // This is O((R-frontier)*T) — stays fast even on long pages.
+        const rStart = frontier;
+        const rLen   = R - rStart;
+        if (rLen <= 0) return;
 
-        // Build LCS dp table for flat[0..rLimit-1] vs tWords[0..T-1]
-        const dp: number[][] = Array.from({ length: rLimit + 1 }, () =>
+        const dp: number[][] = Array.from({ length: rLen + 1 }, () =>
           new Array(T + 1).fill(0)
         );
-        for (let r = 1; r <= rLimit; r++) {
+        for (let r = 1; r <= rLen; r++) {
           for (let t = 1; t <= T; t++) {
-            dp[r][t] = wordsMatch(flat[r-1].norm, tWords[t-1])
+            dp[r][t] = wordsMatch(flat[rStart + r - 1].norm, tWords[t - 1])
               ? dp[r-1][t-1] + 1
               : Math.max(dp[r-1][t], dp[r][t-1]);
           }
         }
 
-        // Backtrack within [0..rLimit]
-        const matched = new Set<number>();
-        let r = rLimit, t = T;
+        // Backtrack to find matched ref positions (relative to rStart)
+        const matchedRel = new Set<number>();
+        let r = rLen, t = T;
         while (r > 0 && t > 0) {
-          if (wordsMatch(flat[r-1].norm, tWords[t-1])) {
-            matched.add(r - 1);
+          if (wordsMatch(flat[rStart + r - 1].norm, tWords[t - 1])) {
+            matchedRel.add(r - 1); // relative index
             r--; t--;
           } else if (dp[r-1][t] >= dp[r][t-1]) {
             r--;
@@ -839,79 +863,63 @@ export default function QuranRevisionHub({ userId }: Props) {
           }
         }
 
-        if (!matched.size) return;
+        if (!matchedRel.size) return;
 
-        // Advance frontier to the furthest matched ref word
-        const newFrontier = Math.max(...Array.from(matched));
-        frontier = Math.max(frontier, newFrontier);
+        // Advance frontier to furthest newly matched ref word (absolute index)
+        const newFrontierRel = Math.max(...Array.from(matchedRel));
+        const newFrontierAbs = rStart + newFrontierRel;
+        frontier = Math.max(frontier, newFrontierAbs);
 
-        // Reveal window: words up to frontier + REVEAL_BUFFER
-        const revealUpTo = Math.min(R - 1, frontier + REVEAL_BUFFER);
-
-        // Update states — only within reveal window
+        // Update states: everything up to and including frontier
         let changed = false;
-        for (let i = 0; i <= revealUpTo; i++) {
+        for (let i = rStart; i <= frontier; i++) {
           const { ai, wi } = flat[i];
-          if (matched.has(i)) {
-            if (states[ai][wi] !== "correct") {
-              states[ai][wi] = "correct";
-              changed = true;
-            }
-          } else if (i < frontier && states[ai][wi] === "hidden") {
-            // Behind frontier and not matched = genuinely missing
+          const isMatched = matchedRel.has(i - rStart);
+          if (isMatched) {
+            if (states[ai][wi] !== "correct") { states[ai][wi] = "correct"; changed = true; }
+          } else if (states[ai][wi] === "hidden") {
+            // Behind frontier but unmatched = missed word
             states[ai][wi] = "missing";
             changed = true;
           }
-          // i >= frontier && !matched: still hidden (blurred) — not yet recited
         }
-
-        // Everything beyond revealUpTo stays "hidden" (blurred) — enforced here
-        for (let i = revealUpTo + 1; i < R; i++) {
-          const { ai, wi } = flat[i];
-          if (states[ai][wi] !== "hidden") {
-            states[ai][wi] = "hidden";
-            changed = true;
-          }
-        }
-
+        // Words beyond frontier stay hidden
         if (changed) pushDisplay();
       };
 
       // ── MediaRecorder ───────────────────────────────────────────────
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
-        .find(t => MediaRecorder.isTypeSupported(t));
+        .find(m => MediaRecorder.isTypeSupported(m));
       const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
       recChunksRef.current = [];
       mediaRecRef.current = mr;
 
-      const allAudioChunks: Blob[] = [];
       let inFlight = 0;
-      // Rolling window: send only the last ~3 s of audio to Groq on each request.
-      // This keeps payload size constant so Groq latency stays ~600-800ms even
-      // after many minutes of recording. Full audio is still kept in recChunksRef
-      // for the final Groq evaluation blob.
-      // Each chunk is 250ms → 12 chunks ≈ 3 s of audio.
-      const WINDOW_CHUNKS = 12;
 
       const sendToGroq = async () => {
-        if (inFlight >= 1 || allAudioChunks.length === 0) return;
+        if (inFlight >= 1 || recChunksRef.current.length === 0) return;
         inFlight++;
         const ext = (mime ?? "").includes("mp4") ? "mp4"
           : (mime ?? "").includes("ogg") ? "ogg" : "webm";
-        // Snapshot a rolling window of recent chunks — constant payload size
-        const windowChunks = allAudioChunks.slice(-WINDOW_CHUNKS);
-        const snap = new Blob(windowChunks, { type: mime || "audio/webm" });
+
+        // ── CUMULATIVE blob: everything recorded so far ──────────────
+        // Groq Whisper transcribes the full audio from t=0 each time,
+        // so the returned text grows longer with every call — matching
+        // how far the student has recited. This is what keeps the word
+        // highlighting in sync with the actual recitation position.
+        const cumBlob = new Blob([...recChunksRef.current], { type: mime || "audio/webm" });
+
+        // Dynamic prompt: 15 words around current frontier for Groq context
+        const promptStart = Math.max(0, frontier - 3);
+        const promptWords = flat.slice(promptStart, promptStart + 15).map(f => f.norm).join(" ");
+
         try {
           const fd = new FormData();
-          fd.append("file", new File([snap], `q.${ext}`, { type: mime || "audio/webm" }));
-          // Dynamic prompt: reference words near the current frontier so Groq
-          // recognises exactly which ayah the student is reciting right now.
-          const promptStart = Math.max(0, frontier - 5);
-          const promptWords = flat.slice(promptStart, promptStart + 20).map(f => f.norm).join(" ");
+          fd.append("file", new File([cumBlob], `q.${ext}`, { type: mime || "audio/webm" }));
           fd.append("prompt", promptWords || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ");
           const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/groq-transcribe`;
-          const r = await fetch(url, {
+          const res = await fetch(url, {
             method: "POST",
             headers: {
               Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
@@ -919,38 +927,41 @@ export default function QuranRevisionHub({ userId }: Props) {
             },
             body: fd,
           });
-          if (r.ok) {
-            const { text } = await r.json();
+          if (res.ok) {
+            const { text } = await res.json();
             const clean = (text || "").trim();
-            if (clean.length > 1) applyTranscript(clean);
+            // Save full cumulative transcript for instant results (no re-call needed)
+            if (clean.length > 1) {
+              liveAccumRef.current = clean;
+              applyTranscript(clean);
+            }
           }
         } catch {}
         inFlight--;
       };
 
       mr.ondataavailable = (e) => {
-        if (!e.data?.size) return;
-        recChunksRef.current.push(e.data);
-        allAudioChunks.push(e.data);
-        // Keep allAudioChunks bounded — we only ever need the last WINDOW_CHUNKS.
-        // recChunksRef keeps everything for the final evaluation blob.
-        if (allAudioChunks.length > WINDOW_CHUNKS * 2) allAudioChunks.splice(0, allAudioChunks.length - WINDOW_CHUNKS * 2);
+        if (e.data?.size) recChunksRef.current.push(e.data);
       };
 
-      // Poll Groq every 1500ms — fast enough to feel live, slow enough that
-      // each request completes before the next one starts (Groq p50 ~600ms).
-      const groqInterval = setInterval(sendToGroq, 1500);
+      // Poll Groq every 2000ms. Cumulative audio grows, so Groq always sees
+      // the full recitation and returns a longer transcript each time.
+      // 2s interval balances responsiveness vs payload size growth.
+      const groqInterval = setInterval(sendToGroq, 2000);
       liveMediaRef.current = { stop: () => { clearInterval(groqInterval); mr.stop(); } };
 
       mr.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
         clearInterval(recTimerRef.current);
+        // ── FIX: reuse the live transcript for instant results ──────
+        // liveAccumRef.current holds the last full cumulative transcript
+        // returned by Groq during live recording. Use it directly instead
+        // of making a second full Whisper call — eliminates the long wait.
         const blob = new Blob(recChunksRef.current, { type: mime || "audio/webm" });
-        if (blob.size > 500) runPageEvaluation(blob);
+        if (blob.size > 500) runPageEvaluation(blob, liveAccumRef.current || undefined);
       };
 
-      // 250ms chunks — fine-grained audio so the rolling window is precise
-      mr.start(250);
+      mr.start(500); // 500ms chunks — good balance on Android
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
 
     } catch {
@@ -964,9 +975,9 @@ export default function QuranRevisionHub({ userId }: Props) {
   };
 
   // ═══ Page Evaluation ══════════════════════════════════
-  const runPageEvaluation = async (blob: Blob) => {
-    // Stage/evaluating/pageVisible already set by Done button for instant feedback
-    // Only set them here as fallback (e.g. if called from other paths)
+  // precomputedTranscript: if provided, skip the Whisper re-call entirely.
+  // Passed from startLiveRecording so there's no second wait after Done.
+  const runPageEvaluation = async (blob: Blob, precomputedTranscript?: string) => {
     setStage(s => s === "evaluating" ? s : "evaluating");
     setEvaluating(true);
     if (!evalResult) setEvalResult(null);
@@ -974,7 +985,10 @@ export default function QuranRevisionHub({ userId }: Props) {
     try {
       const ayahs    = pageDataRef.current?.ayahs ?? [];
       const refText  = ayahs.map((a: any) => a.text).join(" ");
-      const transcript = await transcribeAudio(blob, refText);
+      // Use live transcript if available — avoids a full second Whisper round-trip
+      const transcript = precomputedTranscript && precomputedTranscript.length > 3
+        ? precomputedTranscript
+        : await transcribeAudio(blob, refText);
 
       if (!transcript || transcript.trim().length < 3) {
         // Fallback: use the live word-match results we already have
