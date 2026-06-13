@@ -1,7 +1,8 @@
-/*  src/components/dashboard/IslamicDailyFeedData.ts
-    Static data for IslamicDailyFeed — hadiths, seerah, events, tawheed lessons.
-    Split from IslamicDailyFeed.tsx to keep file sizes manageable.
+/*  src/components/dashboard/IslamicDailyFeed.tsx
+    Islamic Daily Feed — Live Hadith · Rich Seerah · Events · Multi-source News
 */
+import { useState, useEffect } from "react";
+import { BookMarked, ScrollText, CalendarDays, Newspaper, ExternalLink, RefreshCw, Star, ChevronDown, ChevronUp, Shield } from "lucide-react";
 
 const DARK_GREEN = "#0f2d1f";
 const MID_GREEN  = "#1a4731";
@@ -351,6 +352,23 @@ const ISLAMIC_EVENTS = [
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────
+interface LiveHadith {
+  ar?: string;
+  en: string;
+  source: string;
+  narrator: string;
+  grade: string;
+  explanation: string;
+}
+interface NewsItem {
+  title: string;
+  link: string;
+  description: string;
+  thumbnail: string;
+  pubDate: string;
+}
+type TabId = "hadith" | "seerah" | "event" | "news" | "tawheed";
+
 // ─── TAWHEED LESSON DATA ────────────────────────────────────────────────────
 interface TawheedLesson {
   module: string;
@@ -533,49 +551,9 @@ const TAWHEED_LESSONS: TawheedLesson[] = [
     explanation: `THREAT 1 — SPIRITUAL MATERIALISM: Treating du'a as a vending machine and Allah as a means to worldly ends. Sign: you call on Allah only when you need something. Remedy: establish daily dhikr purely about knowing Allah — regardless of whether you want anything.\n\nTHREAT 2 — DIGITAL RIYA': Performing worship for an online audience. Remedy: establish a secret 'ibadah practice — a nightly du'a, a hidden sadaqah, a private Quran recitation no one knows about. What is hidden from people but known to Allah is the most sincere.\n\nTHREAT 3 — CULTURAL SHIRK: Practices inherited from culture — shrine visits for requests, taweez, horoscopes (still fortune-telling). Remedy: evaluate every practice: "Is this directed solely to Allah? Is it from Quran and Sunnah?"\n\nTHREAT 4 — THEOLOGICAL RELATIVISM: Social media pressure to say "all religions are the same." Remedy: Al-Qawa'id al-Arba', Principle One. Even Qurayshi idol-worshippers acknowledged "the same God." What makes Islam Islam is exclusive Uluhiyyah.\n\nTHREAT 5 — DELAYED REPENTANCE: "I'll fix my deen later." The Prophet ﷺ said: "Take advantage of five before five — your youth before old age, your health before illness, your wealth before poverty, your free time before occupation, and your life before death." (Hakim — Sahih). Tawheed begins today.`
   },
 ];
-
-export {
-  DARK_GREEN, MID_GREEN, GOLD, GOLD_LIGHT,
-  TEXT_DARK, TEXT_MED, TEXT_LIGHT,
-  BORDER, AMBER, AMBER_BG,
-  dayOfYear, getHijriNumeric,
-  FALLBACK_HADITHS, SEERAH, ISLAMIC_EVENTS,
-  TAWHEED_LESSONS,
-};
-export type { TawheedLesson };
-/*  src/components/dashboard/IslamicDailyFeed.tsx
-    Islamic Daily Feed — Live Hadith · Rich Seerah · Events · Multi-source News
-*/
-import { useState, useEffect } from "react";
-import { BookMarked, ScrollText, CalendarDays, Newspaper, ExternalLink, RefreshCw, Star, ChevronDown, ChevronUp, Shield } from "lucide-react";
-import {
-  DARK_GREEN, MID_GREEN, GOLD, GOLD_LIGHT,
-  TEXT_DARK, TEXT_MED, TEXT_LIGHT,
-  BORDER, AMBER, AMBER_BG,
-  dayOfYear, getHijriNumeric,
-  FALLBACK_HADITHS, SEERAH, ISLAMIC_EVENTS,
-  TAWHEED_LESSONS,
-} from "./IslamicDailyFeedData";
-import type { TawheedLesson } from "./IslamicDailyFeedData";
-
-interface LiveHadith {
-  ar?: string;
-  en: string;
-  source: string;
-  narrator: string;
-  grade: string;
-  explanation: string;
-}
-interface NewsItem {
-  title: string;
-  link: string;
-  description: string;
-  thumbnail: string;
-  pubDate: string;
-}
-type TabId = "hadith" | "seerah" | "event" | "news" | "tawheed";
 interface Props { language?: string; }
 
+// ── Static curated Islamic news — shown when live fetch fails (CORS/mobile) ──
 const STATIC_NEWS: NewsItem[] = [
   {
     title: "The Importance of Seeking Knowledge in Islam",
