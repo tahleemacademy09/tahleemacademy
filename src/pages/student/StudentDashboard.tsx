@@ -425,55 +425,60 @@ const StudentDashboard = () => {
           <div style={{ position:"absolute", bottom:-40, left:-40, width:140, height:140, borderRadius:"50%", background:"rgba(255,255,255,0.03)", pointerEvents:"none" }} />
           <div style={{ position:"absolute", top:"40%", right:-20, width:80, height:80, borderRadius:"50%", background:"rgba(201,168,76,0.06)", pointerEvents:"none" }} />
 
-          <div style={{ padding: "24px 22px 20px", position:"relative", zIndex:1 }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
-              <span className="dwani-text" style={{ fontSize:12, color:"rgba(255,255,255,0.9)", fontWeight:700, letterSpacing:"0.06em", textShadow:"0 1px 6px rgba(0,0,0,0.3)", whiteSpace:"nowrap" as const }}>
+          <div style={{ padding: "20px 20px 0", position:"relative", zIndex:1 }}>
+            {/* Top row: Bismillah + Level/Type badge */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
+              <span className="dwani-text" style={{ fontSize:13, color:"rgba(255,255,255,0.9)", fontWeight:700, letterSpacing:"0.06em", textShadow:"0 1px 6px rgba(0,0,0,0.3)", whiteSpace:"nowrap" as const }}>
                 بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
               </span>
-              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                {/* Level / Type badge */}
-                {(() => {
-                  const rawLevel = (displayProfile as any)?.level || (displayProfile as any)?.course_level;
-                  if (isPrivateStudent) {
-                    const hasAccess = allowGeneralAccess;
-                    return (
-                      <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, fontWeight:800, padding:"4px 10px", borderRadius:20,
-                        background: hasAccess ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.12)",
-                        color:"#fff", border:"1px solid rgba(255,255,255,0.25)", backdropFilter:"blur(4px)", lineHeight:1 }}>
-                        <Lock style={{ width:9, height:9, flexShrink:0 }} />
-                        <span style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
-                          <span>{hasAccess ? "Private + General" : "Private"}</span>
-                          <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.85 }}>{hasAccess ? "خاص + عام" : "خاص"}</span>
-                        </span>
+              {/* Level / Type badge */}
+              {(() => {
+                const rawLevel = (displayProfile as any)?.level || (displayProfile as any)?.course_level;
+                if (isPrivateStudent) {
+                  const hasAccess = allowGeneralAccess;
+                  return (
+                    <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, fontWeight:800, padding:"4px 10px", borderRadius:20, flexShrink:0,
+                      background: hasAccess ? "rgba(255,255,255,0.15)" : "rgba(255,255,255,0.12)",
+                      color:"#fff", border:"1px solid rgba(255,255,255,0.25)", backdropFilter:"blur(4px)", lineHeight:1 }}>
+                      <Lock style={{ width:9, height:9, flexShrink:0 }} />
+                      <span style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1 }}>
+                        <span>{hasAccess ? "Private + General" : "Private"}</span>
+                        <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.85 }}>{hasAccess ? "خاص + عام" : "خاص"}</span>
                       </span>
-                    );
-                  }
-                  const levelLabels: Record<string,{en:string;ar:string;bg:string;color:string}> = {
-                    beginner:     { en:"Beginner",     ar:"مبتدئ",  bg:"rgba(34,197,94,0.2)",  color:"#86efac" },
-                    intermediate: { en:"Intermediate", ar:"متوسط",  bg:"rgba(251,191,36,0.2)", color:"#fde68a" },
-                    advanced:     { en:"Advanced",     ar:"متقدم",  bg:"rgba(239,68,68,0.2)",  color:"#fca5a5" },
-                    tamhidi:      { en:"Tamhidi",      ar:"تمهيدي", bg:"rgba(99,102,241,0.2)", color:"#c7d2fe" },
-                  };
-                  const lc = levelLabels[rawLevel] || { en: rawLevel, ar: rawLevel, bg:"rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.8)" };
-                  return rawLevel ? (
-                    <span style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1, fontSize:10, fontWeight:800, padding:"4px 10px", borderRadius:20,
-                      background:lc.bg, color:lc.color, border:`1px solid ${lc.color}44`, lineHeight:1 }}>
-                      <span>{lc.en}</span>
-                      <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.9 }}>{lc.ar}</span>
                     </span>
-                  ) : null;
-                })()}
-                <div style={{ background:GOLD, borderRadius:30, padding:"6px 14px", display:"flex", alignItems:"center", gap:6, boxShadow:`0 2px 10px ${GOLD}66` }}>
-                  <Calendar style={{ width:12, height:12, color:DARK_GREEN }} />
-                  <span style={{ fontSize:12, color:DARK_GREEN, fontFamily:"'Amiri',serif", fontWeight:900 }} dir="rtl">{hijri.full}</span>
-                </div>
-              </div>
+                  );
+                }
+                const levelLabels: Record<string,{en:string;ar:string;bg:string;color:string}> = {
+                  beginner:     { en:"Beginner",     ar:"مبتدئ",  bg:"rgba(34,197,94,0.2)",  color:"#86efac" },
+                  intermediate: { en:"Intermediate", ar:"متوسط",  bg:"rgba(251,191,36,0.2)", color:"#fde68a" },
+                  advanced:     { en:"Advanced",     ar:"متقدم",  bg:"rgba(239,68,68,0.2)",  color:"#fca5a5" },
+                  tamhidi:      { en:"Tamhidi",      ar:"تمهيدي", bg:"rgba(99,102,241,0.2)", color:"#c7d2fe" },
+                };
+                const lc = levelLabels[rawLevel] || { en: rawLevel, ar: rawLevel, bg:"rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.8)" };
+                return rawLevel ? (
+                  <span style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1, fontSize:10, fontWeight:800, padding:"4px 10px", borderRadius:20, flexShrink:0,
+                    background:lc.bg, color:lc.color, border:`1px solid ${lc.color}44`, lineHeight:1 }}>
+                    <span>{lc.en}</span>
+                    <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.9 }}>{lc.ar}</span>
+                  </span>
+                ) : null;
+              })()}
             </div>
 
-            <div style={{ textAlign:"center" }}>
-              <div style={{ margin:"0 auto 6px", textAlign:"center" }}>
+            {/* Hijri date — its own centered line */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:10, margin:"16px 0 18px" }}>
+              <div style={{ flex:1, maxWidth:50, height:"1px", background:"rgba(255,255,255,0.18)" }} />
+              <div style={{ background:`linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`, borderRadius:30, padding:"7px 18px", display:"inline-flex", alignItems:"center", gap:8, boxShadow:`0 4px 16px ${GOLD}4d` }}>
+                <Calendar style={{ width:13, height:13, color:DARK_GREEN, flexShrink:0 }} />
+                <span style={{ fontSize:13, color:DARK_GREEN, fontFamily:"'Amiri',serif", fontWeight:900, whiteSpace:"nowrap" as const }} dir="rtl">{hijri.full}</span>
+              </div>
+              <div style={{ flex:1, maxWidth:50, height:"1px", background:"rgba(255,255,255,0.18)" }} />
+            </div>
+
+            <div style={{ textAlign:"center", paddingBottom:4 }}>
+              <div style={{ margin:"0 auto 8px", textAlign:"center" }}>
                 <span className="dwani-text" style={{
-                  fontSize: 28,
+                  fontSize: 30,
                   fontWeight: 700,
                   color: "#fff",
                   lineHeight: 1.8,
@@ -485,16 +490,16 @@ const StudentDashboard = () => {
                   ٱلسَّلَامُ عَلَيْكُم
                 </span>
               </div>
-              <p style={{ fontSize:17, fontWeight:700, color:"rgba(255,255,255,0.92)", margin:"0 0 5px", letterSpacing:"-0.2px" }}>
+              <p style={{ fontSize:18, fontWeight:700, color:"#fff", margin:"0 0 4px", letterSpacing:"-0.2px" }}>
                 {t(`Marhaban, ${displayProfile?.full_name || "Student"}! 👋`, `مرحباً، ${displayProfile?.full_name || "طالب"}! 👋`)}
               </p>
-              <p style={{ fontSize:12, color:"rgba(255,255,255,0.45)", margin:0 }}>
+              <p style={{ fontSize:12, color:"rgba(255,255,255,0.5)", margin:0, fontWeight:600 }}>
                 {today.toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { weekday:"long", month:"long", day:"numeric" })}
               </p>
             </div>
           </div>
 
-          <div style={{ position:"relative", zIndex:1, padding:"0 22px" }}>
+          <div style={{ position:"relative", zIndex:1, padding:"20px 22px 0" }}>
             <div style={{ display:"flex", alignItems:"center", gap:10 }}>
               <div style={{ flex:1, height:"1.5px", background:`linear-gradient(90deg, transparent, ${GOLD}, transparent)` }} />
               <div style={{ display:"flex", alignItems:"center", gap:7 }}>
@@ -506,8 +511,8 @@ const StudentDashboard = () => {
             </div>
           </div>
 
-          <div style={{ padding:"18px 22px 24px", textAlign:"center", position:"relative", zIndex:1 }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:14 }}>
+          <div style={{ padding:"18px 18px 22px", position:"relative", zIndex:1 }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:16 }}>
               <Star style={{ width:14, height:14, color:GOLD, fill:GOLD }} />
               <span style={{ fontSize:13, fontWeight:800, color:GOLD, fontFamily:"'Playfair Display',serif", letterSpacing:"0.05em" }}>
                 {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
@@ -515,15 +520,22 @@ const StudentDashboard = () => {
               <Star style={{ width:14, height:14, color:GOLD, fill:GOLD }} />
             </div>
 
-            <p style={{ fontFamily:"'Amiri Quran',serif", fontSize:26, lineHeight:2.2, color:"#fff", margin:"0 0 12px", direction:"rtl" }}>              {dailyVerse.ar}
-            </p>
+            <div style={{
+              background:"rgba(255,255,255,0.05)", border:`1px solid ${GOLD}33`, borderRadius:18,
+              padding:"20px 18px", textAlign:"center", backdropFilter:"blur(6px)",
+              boxShadow:"inset 0 1px 0 rgba(255,255,255,0.08)",
+            }}>
+              <p style={{ fontFamily:"'Amiri Quran',serif", fontSize:26, lineHeight:2.2, color:"#fff", margin:"0 0 14px", direction:"rtl" }}>
+                {dailyVerse.ar}
+              </p>
 
-            <div style={{ width:50, height:"1.5px", background:GOLD, margin:"0 auto 12px", borderRadius:2 }} />
+              <div style={{ width:50, height:"1.5px", background:GOLD, margin:"0 auto 14px", borderRadius:2 }} />
 
-            <p style={{ fontSize:13, fontStyle:"italic", color:"rgba(255,255,255,0.8)", margin:"0 0 6px" }}>
-              "{dailyVerse.en}"
-            </p>
-            <p style={{ fontSize:12, fontWeight:800, color:GOLD, margin:0, letterSpacing:"0.05em" }}>{dailyVerse.ref}</p>
+              <p style={{ fontSize:13, fontStyle:"italic", color:"rgba(255,255,255,0.82)", margin:"0 0 8px", lineHeight:1.5 }}>
+                "{dailyVerse.en}"
+              </p>
+              <p style={{ fontSize:12, fontWeight:800, color:GOLD, margin:0, letterSpacing:"0.05em" }}>{dailyVerse.ref}</p>
+            </div>
           </div>
         </div>
 
