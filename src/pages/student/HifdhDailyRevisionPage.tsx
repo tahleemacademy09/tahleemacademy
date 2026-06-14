@@ -1883,8 +1883,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const stopQRecording = () => {
     clearInterval(qRecTimerRef.current);
-    if (qMediaRecRef.current && qMediaRecRef.current.state !== "inactive") qMediaRecRef.current.stop();
-    qMediaRecRef.current = null;
+    const mr = qMediaRecRef.current;
+    if (mr && mr.state !== "inactive") {
+      // FIX BUG 5: Null the ref inside onstop, not before stop(), to avoid race condition
+      // where onstop fires after the ref is already null.
+      const prevOnStop = mr.onstop;
+      mr.onstop = async (e) => {
+        qMediaRecRef.current = null;
+        if (prevOnStop) prevOnStop.call(mr, e);
+      };
+      mr.stop();
+    } else {
+      qMediaRecRef.current = null;
+    }
   };
 
   // ── playListenAudio ────────────────────────────────────────────────────────
