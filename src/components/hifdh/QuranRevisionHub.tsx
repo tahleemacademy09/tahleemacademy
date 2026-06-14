@@ -397,6 +397,7 @@ export default function QuranRevisionHub({ userId }: Props) {
   const liveMediaRef = useRef<any>(null);
   const liveAccumRef = useRef("");
   const liveChunkRef = useRef<Blob | null>(null);
+  const liveRecognitionRef = useRef<any>(null); // SpeechRecognition instance for instant word feedback
   // keep liveVerseResults/liveCurrentVerseIdx for backward compat with other code
   const [liveVerseResults, setLiveVerseResults] = useState<any[]>([]);
   const [liveCurrentVerseIdx, setLiveCurrentVerseIdx] = useState(0);
@@ -773,7 +774,7 @@ export default function QuranRevisionHub({ userId }: Props) {
     const ayahs: any[] = pageDataRef.current?.ayahs ?? [];
     if (!ayahs.length) return startPageRecording();
     try {
-      // ── Build flat reference word list for entire page ──────────────
+      // ── Build flat reference word list ──────────────────────────────────
       const flat: { ai: number; wi: number; norm: string }[] = [];
       const displayWords: string[][] = [];
       ayahs.forEach((ayah: any, ai: number) => {
@@ -783,10 +784,9 @@ export default function QuranRevisionHub({ userId }: Props) {
           flat.push({ ai, wi, norm: normalizeArabic(w) })
         );
       });
-
       const R = flat.length;
 
-      // ── Mutable word status array ───────────────────────────────────
+      // ── Mutable word status array ────────────────────────────────────────
       const states: string[][] = displayWords.map(ws => ws.map(() => "hidden"));
       liveWordStatesRef.current = states;
       livePageWordsRef.current = flat;
@@ -811,113 +811,142 @@ export default function QuranRevisionHub({ userId }: Props) {
       setRecTime(0);
       stopAudio();
 
-      // ── State for cumulative matching ───────────────────────────────
-      // frontier: furthest ref-word index we've ever confirmed matched.
-      // liveTranscript: the full growing transcript text from Groq.
-      // tOffset: how many transcript words were already processed last call —
-      //   we only need to run LCS on new transcript words vs ref[frontier..].
+      // ── Shared frontier (advances only forward, never back) ──────────────
+      // frontier = the furthest flat[] index whose status has been confirmed.
+      // Both SR and Groq write to this via advanceFrontier — whichever fires
+      // first wins; the slower one sees the frontier already past and skips.
       let frontier = 0;
-      let liveTranscriptAccum = "";
-
-      // applyTranscript: called every time Groq returns a new (longer) text.
-      // ONLY looks ahead from frontier so it can never lag or jump.
-      const applyTranscript = (newText: string) => {
-        // Groq sends cumulative text — ignore if shorter than what we have
-        // (can happen if a request returns out of order)
-        if (newText.length <= liveTranscriptAccum.length) return;
-        liveTranscriptAccum = newText;
-
-        const tWords = normalizeArabic(newText).split(/\s+/).filter(Boolean);
-        const T = tWords.length;
-        if (!T) return;
-
-        // Run LCS only over the unmatched portion of the reference:
-        // ref[frontier..R-1] vs tWords[0..T-1].
-        // This is O((R-frontier)*T) — stays fast even on long pages.
-        const rStart = frontier;
-        const rLen   = R - rStart;
-        if (rLen <= 0) return;
-
-        const dp: number[][] = Array.from({ length: rLen + 1 }, () =>
-          new Array(T + 1).fill(0)
-        );
-        for (let r = 1; r <= rLen; r++) {
-          for (let t = 1; t <= T; t++) {
-            dp[r][t] = wordsMatch(flat[rStart + r - 1].norm, tWords[t - 1])
-              ? dp[r-1][t-1] + 1
-              : Math.max(dp[r-1][t], dp[r][t-1]);
-          }
-        }
-
-        // Backtrack to find matched ref positions (relative to rStart)
-        const matchedRel = new Set<number>();
-        let r = rLen, t = T;
-        while (r > 0 && t > 0) {
-          if (wordsMatch(flat[rStart + r - 1].norm, tWords[t - 1])) {
-            matchedRel.add(r - 1); // relative index
-            r--; t--;
-          } else if (dp[r-1][t] >= dp[r][t-1]) {
-            r--;
-          } else {
-            t--;
-          }
-        }
-
-        if (!matchedRel.size) return;
-
-        // Advance frontier to furthest newly matched ref word (absolute index)
-        const newFrontierRel = Math.max(...Array.from(matchedRel));
-        const newFrontierAbs = rStart + newFrontierRel;
-        frontier = Math.max(frontier, newFrontierAbs);
-
-        // Update states: everything up to and including frontier
+      // advanceFrontier: the single shared matching function.
+      // Given a list of new spoken tokens, tries to match them against
+      // flat[frontier..] using a forward-only LOOKAHEAD window.
+      // Returns true if frontier advanced (triggers a re-render).
+      const advanceFrontier = (spokenToks: string[]): boolean => {
+        if (!spokenToks.length || frontier >= R) return false;
+        const LOOKAHEAD = 6; // wider = handles skips & fast reciters
+        let fi = frontier;
         let changed = false;
-        for (let i = rStart; i <= frontier; i++) {
-          const { ai, wi } = flat[i];
-          const isMatched = matchedRel.has(i - rStart);
-          if (isMatched) {
-            if (states[ai][wi] !== "correct") { states[ai][wi] = "correct"; changed = true; }
-          } else if (states[ai][wi] === "hidden") {
-            // Behind frontier but unmatched = missed word
-            states[ai][wi] = "missing";
-            changed = true;
+
+        for (const tok of spokenToks) {
+          if (fi >= R) break;
+          const end = Math.min(fi + LOOKAHEAD + 1, R);
+          let hitAt = -1;
+          for (let wi = fi; wi < end; wi++) {
+            if (wordsMatch(flat[wi].norm, tok)) { hitAt = wi; break; }
+          }
+          if (hitAt >= 0) {
+            // Mark any skipped words between old fi and hitAt as missing
+            for (let i = fi; i < hitAt; i++) {
+              if (states[flat[i].ai][flat[i].wi] === "hidden") {
+                states[flat[i].ai][flat[i].wi] = "missing";
+              }
+            }
+            // Mark the matched word as correct
+            const { ai, wi } = flat[hitAt];
+            if (states[ai][wi] !== "correct") {
+              states[ai][wi] = "correct";
+              changed = true;
+            }
+            fi = hitAt + 1;
           }
         }
-        // Words beyond frontier stay hidden
-        if (changed) pushDisplay();
+
+        if (fi > frontier) { frontier = fi; changed = true; }
+        return changed;
       };
 
-      // ── MediaRecorder ───────────────────────────────────────────────
+      // ── LAYER 1: SpeechRecognition — instant word-by-word feedback ──────
+      // Fires within 50-200 ms of each word being spoken.
+      // Uses interimResults so each partial word also advances the frontier —
+      // this is what makes it feel like Tarteel (zero perceptible delay).
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      let srLastCount = 0;
+      if (SR) {
+        const startSR = () => {
+          if (liveRecognitionRef.current || frontier >= R) return;
+          const rec = new SR();
+          rec.lang = "ar-SA";
+          rec.continuous = true;
+          rec.interimResults = true;   // KEY: get words as they're spoken, not after
+          rec.maxAlternatives = 3;
+
+          rec.onresult = (event: any) => {
+            // Prefer whichever alternative has the most Arabic characters
+            let fullText = "";
+            for (let i = 0; i < event.results.length; i++) {
+              const result = event.results[i];
+              let best = result[0]?.transcript ?? "";
+              let bestScore = (best.match(/[\u0600-\u06ff]/g) || []).length;
+              for (let k = 1; k < result.length; k++) {
+                const alt = result[k]?.transcript ?? "";
+                const sc = (alt.match(/[\u0600-\u06ff]/g) || []).length;
+                if (sc > bestScore) { best = alt; bestScore = sc; }
+              }
+              fullText += " " + best;
+            }
+
+            const allToks = normalizeArabic(fullText.trim()).split(/\s+/).filter(Boolean);
+            const newToks = allToks.slice(srLastCount);
+            if (!newToks.length) return;
+            srLastCount = allToks.length;
+
+            if (advanceFrontier(newToks)) pushDisplay();
+
+            // Also accumulate for final scoring
+            liveAccumRef.current = fullText.trim();
+          };
+
+          rec.onerror = (e: any) => {
+            if (e.error !== "no-speech" && e.error !== "aborted")
+              console.warn("[SR]", e.error);
+          };
+          rec.onend = () => {
+            if (liveRecognitionRef.current === rec) {
+              liveRecognitionRef.current = null;
+              if (frontier < R) setTimeout(startSR, 100); // auto-restart (Chrome 60s limit)
+            }
+          };
+
+          liveRecognitionRef.current = rec;
+          try { rec.start(); } catch { liveRecognitionRef.current = null; }
+        };
+        startSR();
+      }
+
+      // ── LAYER 2: Groq sliding window — accuracy correction in background ─
+      // Runs every 1.5 s with a 4-chunk (~4 s) window. Catches words SR
+      // missed (especially on devices where SR Arabic support is weak).
+      // Builds liveAccumRef which is used for final scoring.
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
         .find(m => MediaRecorder.isTypeSupported(m));
-      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 64000 } : undefined);
       recChunksRef.current = [];
       mediaRecRef.current = mr;
 
+      const slidingWindow: Blob[] = [];
       let inFlight = 0;
 
       const sendToGroq = async () => {
-        if (inFlight >= 1 || recChunksRef.current.length === 0) return;
+        if (inFlight >= 1 || slidingWindow.length === 0) return;
         inFlight++;
         const ext = (mime ?? "").includes("mp4") ? "mp4"
           : (mime ?? "").includes("ogg") ? "ogg" : "webm";
 
-        // ── CUMULATIVE blob: everything recorded so far ──────────────
-        // Groq Whisper transcribes the full audio from t=0 each time,
-        // so the returned text grows longer with every call — matching
-        // how far the student has recited. This is what keeps the word
-        // highlighting in sync with the actual recitation position.
-        const cumBlob = new Blob([...recChunksRef.current], { type: mime || "audio/webm" });
+        const windowBlob = new Blob([...slidingWindow], { type: mime || "audio/webm" });
+        if (windowBlob.size < 2000) { inFlight--; return; }
 
-        // Dynamic prompt: 15 words around current frontier for Groq context
-        const promptStart = Math.max(0, frontier - 3);
-        const promptWords = flat.slice(promptStart, promptStart + 15).map(f => f.norm).join(" ");
+        // Prompt = last 8 diacritized reference words before frontier
+        const promptStart = Math.max(0, frontier - 8);
+        const promptWords = flat.slice(promptStart, frontier).map(f => {
+          const { ai, wi } = f;
+          const refWords = (pageDataRef.current?.ayahs?.[ai]?.text ?? "").split(/\s+/).filter(Boolean);
+          return refWords[wi] ?? f.norm;
+        }).join(" ");
 
         try {
           const fd = new FormData();
-          fd.append("file", new File([cumBlob], `q.${ext}`, { type: mime || "audio/webm" }));
-          fd.append("prompt", promptWords || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ");
+          fd.append("file", new File([windowBlob], `chunk.${ext}`, { type: mime || "audio/webm" }));
+          fd.append("prompt", promptWords || "\u0628\u0650\u0633\u0652\u0645\u0650 \u0627\u0644\u0644\u0651\u064e\u0647\u0650 \u0627\u0644\u0631\u0651\u064e\u062d\u0652\u0645\u064e\u0670\u0646\u0650 \u0627\u0644\u0631\u0651\u064e\u062d\u0650\u064a\u0645\u0650");
           const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/groq-transcribe`;
           const res = await fetch(url, {
             method: "POST",
@@ -930,10 +959,13 @@ export default function QuranRevisionHub({ userId }: Props) {
           if (res.ok) {
             const { text } = await res.json();
             const clean = (text || "").trim();
-            // Save full cumulative transcript for instant results (no re-call needed)
             if (clean.length > 1) {
-              liveAccumRef.current = clean;
-              applyTranscript(clean);
+              const combined = liveAccumRef.current
+                ? liveAccumRef.current + " " + clean
+                : clean;
+              liveAccumRef.current = combined;
+              const groqToks = normalizeArabic(clean).split(/\s+/).filter(Boolean);
+              if (advanceFrontier(groqToks)) pushDisplay();
             }
           }
         } catch {}
@@ -941,27 +973,33 @@ export default function QuranRevisionHub({ userId }: Props) {
       };
 
       mr.ondataavailable = (e) => {
-        if (e.data?.size) recChunksRef.current.push(e.data);
+        if (e.data?.size) {
+          recChunksRef.current.push(e.data);
+          slidingWindow.push(e.data);
+          if (slidingWindow.length > 4) slidingWindow.shift();
+        }
       };
 
-      // Poll Groq every 2000ms. Cumulative audio grows, so Groq always sees
-      // the full recitation and returns a longer transcript each time.
-      // 2s interval balances responsiveness vs payload size growth.
-      const groqInterval = setInterval(sendToGroq, 2000);
-      liveMediaRef.current = { stop: () => { clearInterval(groqInterval); mr.stop(); } };
+      const groqInterval = setInterval(sendToGroq, 1500);
+      liveMediaRef.current = {
+        stop: () => {
+          clearInterval(groqInterval);
+          // Stop SR cleanly
+          const srToStop = liveRecognitionRef.current;
+          liveRecognitionRef.current = null;
+          try { srToStop?.stop(); } catch {}
+          mr.stop();
+        }
+      };
 
       mr.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
         clearInterval(recTimerRef.current);
-        // ── FIX: reuse the live transcript for instant results ──────
-        // liveAccumRef.current holds the last full cumulative transcript
-        // returned by Groq during live recording. Use it directly instead
-        // of making a second full Whisper call — eliminates the long wait.
         const blob = new Blob(recChunksRef.current, { type: mime || "audio/webm" });
         if (blob.size > 500) runPageEvaluation(blob, liveAccumRef.current || undefined);
       };
 
-      mr.start(500); // 500ms chunks — good balance on Android
+      mr.start(1000); // 1s timeslices → 4 chunks = 4s sliding window
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
 
     } catch {
@@ -1744,16 +1782,18 @@ export default function QuranRevisionHub({ userId }: Props) {
                                 color: w.status === "correct" ? "#16a34a"
                                      : w.status === "missing"  ? "#dc2626"
                                      : "transparent",
-                                // Hidden: show the glyph shape as a blurred silhouette
-                                // so the page looks like a real mushaf but unreadable
                                 textShadow: w.status === "hidden"
                                   ? "0 0 8px #1c1c1c"
                                   : "none",
-                                WebkitTextStroke: w.status === "hidden" ? "0px" : "0px",
                                 filter: w.status === "hidden" ? "blur(3.5px)" : "none",
+                                background: w.status === "correct" ? "#dcfce720"
+                                          : w.status === "missing"  ? "#fee2e220"
+                                          : "transparent",
+                                borderRadius: 3,
                                 textDecoration: "none",
-                                transition: "color 0.12s, filter 0.12s",
+                                transition: "color 0.08s, filter 0.08s, background 0.08s",
                                 display: "inline",
+                                padding: "0 1px",
                               }}>
                                 {w.word}{" "}
                               </span>
