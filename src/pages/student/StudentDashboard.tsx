@@ -527,46 +527,71 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        <IslamicDailyFeed language={language} />
-
-        {/* ── Academic Snapshot ── */}
-        <div style={card}>
-          <div style={{ padding:"18px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:14 }}>
-            <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>
-              {t("Academic Snapshot", "نظرة أكاديمية")}
+        {/* ── Today's Classes ── */}
+        {todayClasses.length > 0 && (!isPrivateStudent || allowGeneralAccess) && (() => {
+          const handleJoinClass = async (slot: any) => {
+            if (slot.live_url) { window.open(slot.live_url, "_blank", "noopener"); return; }
+            if (!slot.subject_id) return;
+            const todayStr = new Date().toISOString().split("T")[0];
+            const { data: existing } = await supabase.from("live_sessions").select("id").eq("subject_id", slot.subject_id).in("status", ["live","scheduled","active"]).limit(1).maybeSingle();
+            if (!existing) await supabase.from("live_sessions").insert({ subject_id: slot.subject_id, scheduled_at: `${todayStr}T${slot.start_time}`, duration_minutes: slot.duration_minutes||60, status: "scheduled", chat_enabled: true, hand_raise_enabled: true, recording_enabled: true, whiteboard_enabled: false, waiting_room_enabled: false } as any);
+            navigate(`/student/live-classes?subject=${slot.subject_id}`);
+          };
+          return (
+          <div style={card}>
+            <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <Video style={{ width:16, height:16, color:MID_GREEN }} />
+                <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Today's Classes","حصص اليوم")}</span>
+              </div>
+              <button onClick={() => navigate("/student/timetable")} style={{ fontSize:11, fontWeight:600, color:GOLD, background:"none", border:"none", cursor:"pointer" }}>
+                {t("Full schedule","الجدول الكامل")}
+              </button>
+            </div>
+            <div style={{ padding:"12px 16px", display:"flex", flexDirection:"column", gap:8 }}>
+              {todayClasses.map((slot: any) => {
+                const mins    = minsUntilTime(slot.start_time);
+                const isNow   = mins >= -30 && mins <= 0;
+                const isSoon  = mins > 0 && mins <= 15;
+                const isPast  = mins < -30;
+                const canJoin = isNow || isSoon;
+                const title   = language === "ar" ? slot.subjects?.title_ar || slot.subjects?.title : slot.subjects?.title;
+                const minsRnd = Math.round(Math.abs(mins));
+                return (
+                  <div key={slot.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:12, background: isNow ? "#f0fff4" : isSoon ? "#fffbeb" : "#f8fafb", border:`1px solid ${isNow ? "#9ae6b4" : isSoon ? "#f6d860" : BORDER}`, opacity: isPast ? .5 : 1 }}>
+                    <div style={{ flexShrink:0, textAlign:"center", minWidth:52 }}>
+                      <div style={{ fontSize:13, fontWeight:900, color: isNow ? MID_GREEN : TEXT_DARK }}>{to12hr(slot.start_time)}</div>
+                      {isNow  && <span style={{ fontSize:9, fontWeight:800, color:"#16a34a" }}>● LIVE</span>}
+                      {isSoon && <span style={{ fontSize:9, fontWeight:700, color:"#b7791f" }}>{minsRnd}m</span>}
+                      {isPast && <span style={{ fontSize:9, color:TEXT_LIGHT }}>Ended</span>}
+                    </div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</p>
+                      <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }}>
+                        {to12hr(slot.start_time)} – {to12hr(slot.end_time)}
+                        {slot.duration_minutes ? ` · ${slot.duration_minutes}m` : ""}
+                      </p>
+                    </div>
+                    {!isPast && (
+                      canJoin ? (
+                        <button onClick={() => handleJoinClass(slot)} style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 14px", borderRadius:10, border:"none", background: isNow ? MID_GREEN : GOLD, color: isNow ? "#fff" : DARK_GREEN, fontSize:11, fontWeight:800, cursor:"pointer", flexShrink:0 }}>
+                          <Video style={{ width:11, height:11 }} />
+                          {t("Join","انضمام")}
+                        </button>
+                      ) : (
+                        <div style={{ fontSize:9, color:TEXT_LIGHT, flexShrink:0, textAlign:"center" }}>
+                          <Clock style={{ width:10, height:10, display:"block", margin:"0 auto 2px" }} />
+                          {minsRnd > 60 ? `${Math.floor(minsRnd/60)}h` : `${minsRnd}m`}
+                        </div>
+                      )
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
-          <div style={{ padding:"18px 16px" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:18, flexWrap:"wrap" as const }}>
-              <div style={{ position:"relative", flexShrink:0 }}>
-                <svg width={110} height={110} style={{ transform:"rotate(-90deg)" }}>
-                  <circle cx={55} cy={55} r={45} stroke={BORDER} strokeWidth={9} fill="none" />
-                  <circle cx={55} cy={55} r={45} stroke={GOLD} strokeWidth={9} fill="none"
-                    strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset}
-                    style={{ transition:"stroke-dashoffset 1s ease" }} />
-                </svg>
-                <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
-                  <span style={{ fontSize:22, fontWeight:900, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{stats.cgpa.toFixed(2)}</span>
-                  <span style={{ fontSize:10, fontWeight:600, color:TEXT_LIGHT }}>CGPA</span>
-                </div>
-              </div>
-              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, flex:1 }}>
-                {[
-                  { icon:BookOpen, label:t("Enrollments","التسجيلات"), value:stats.enrollments, color:"#276749", bg:"#f0fff4", link:"/student/courses" },
-                  { icon:ClipboardList, label:t("Graded Exams","اختبارات مصححة"), value:stats.attemptsDone, color:"#b7791f", bg:"#fffbeb", link:"/student/exams" },
-                  { icon:TrendingUp, label:t("Avg Score","متوسط الدرجات"), value:`${stats.avgScore}%`, color:"#2b6cb0", bg:"#ebf8ff", link:"/student/transcripts" },
-                  { icon:Bell, label:t("Pending","بانتظار المراجعة"), value:stats.pendingGrading, color:"#c0392b", bg:"#fff5f5", link:"/student/exams" },
-                ].map((s,i) => (
-                  <div key={i} onClick={() => navigate(s.link)}
-                    style={{ textAlign:"center", borderRadius:12, background:s.bg, padding:"12px 8px", cursor:"pointer", transition:"transform .15s", border:`1px solid ${s.color}22` }}>
-                    <s.icon style={{ width:20, height:20, color:s.color, margin:"0 auto 6px" }} />
-                    <div style={{ fontSize:20, fontWeight:900, color:TEXT_DARK }}>{s.value}</div>
-                    <div style={{ fontSize:10, fontWeight:600, color:TEXT_LIGHT, marginTop:2 }}>{s.label}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>        </div>
+          );
+        })()}
 
         {/* ── Hifdh Daily Assignment Card ── */}
         {hifdhAssignment && (() => {
@@ -725,11 +750,131 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* ── Quran Phrases Widget ── */}
-        <QuranPhrasesWidget language={language} />
+        {/* ── Agenda Tabs ── */}
+        <div style={card}>          <div style={{ padding:"16px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:0 }}>
+            <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif", marginBottom:12 }}>
+              {t("Agenda","الأجندة")}
+            </div>
+            <Tabs defaultValue="classes" className="w-full">
+              <TabsList className="w-full h-9 mb-0" style={{ background:"#f8fafb", borderRadius:"10px 10px 0 0" }}>
+                <TabsTrigger value="classes" className="flex-1 text-xs">{t("Classes","الفصول")}</TabsTrigger>
+                <TabsTrigger value="exams"   className="flex-1 text-xs">{t("Exams","الامتحانات")}</TabsTrigger>
+                <TabsTrigger value="results" className="flex-1 text-xs">{t("Results","النتائج")}</TabsTrigger>
+              </TabsList>
+              <div style={{ padding:"14px 4px" }}>
+                <TabsContent value="classes" className="mt-0">
+                  {(() => {
+                    const displaySubjects = isPrivateStudent && !allowGeneralAccess
+                      ? liveSubjects.filter((s: any) => privateSubjectIds.has(s.id))
+                      : liveSubjects;
+                    return displaySubjects.length===0 ? (
+                      <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No active classes","لا توجد فصول نشطة")}</p>
+                    ) : displaySubjects.map((s:any)=>(
+                    <Link to={`/student/subjects/${s.id}`} key={s.id} style={{ textDecoration:"none" }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
+                        <div style={{ width:36, height:36, borderRadius:10, background:"#f0fff4", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          <BookOpen style={{ width:16, height:16, color:MID_GREEN }} />
+                        </div>
+                        <div style={{ flex:1 }}>
+                          <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0 }}>{s.title}</p>
+                          {s.title_ar && <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }} dir="rtl">{s.title_ar}</p>}
+                        </div>
+                        <ArrowRight style={{ width:14, height:14, color:TEXT_LIGHT }} />
+                      </div>
+                    </Link>
+                  ));
+                  })()}
+                </TabsContent>
+                <TabsContent value="exams" className="mt-0">
+                  {upcomingExams.length===0 ? (
+                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No upcoming exams","لا توجد امتحانات قادمة")}</p>
+                  ) : upcomingExams.map(exam=>(
+                    <div key={exam.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#fff5f5", border:"1px solid #fca5a522" }}>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }} dir="auto">{language==="ar"?exam.title_ar||exam.title:exam.title}</div>
+                        <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:TEXT_LIGHT, marginTop:2 }}>
+                          <Calendar style={{ width:10, height:10 }} />
+                          {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD","غير محدد")}
+                        </div>
+                      </div>
+                      <span style={{ fontSize:10, fontWeight:700, background:"#fff5f5", color:"#c0392b", border:"1px solid #fca5a5", borderRadius:10, padding:"3px 9px" }}>
+                        {exam.time_limit_minutes} {t("min","د")}
+                      </span>
+                    </div>
+                  ))}
+                </TabsContent>
+                <TabsContent value="results" className="mt-0">
+                  {recentResults.length===0 ? (
+                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No results yet","لا توجد نتائج بعد")}</p>                  ) : recentResults.map(attempt=>(
+                    <div key={attempt.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
+                      <div>
+                        <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }} dir="auto">{language==="ar"?attempt.exams?.title_ar||attempt.exams?.title:attempt.exams?.title}</div>
+                        <div style={{ fontSize:11, color:TEXT_LIGHT, marginTop:2 }}>{attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : ""}</div>
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        {attempt.status==="graded" ? (
+                          <>
+                            {attempt.passed
+                              ? <CheckCircle style={{ width:16, height:16, color:"#276749" }} />
+                              : <XCircle style={{ width:16, height:16, color:"#c0392b" }} />}
+                            <span style={{ fontSize:14, fontWeight:900, color:attempt.passed?"#276749":"#c0392b" }}>
+                              {Math.round(attempt.percentage||0)}%
+                            </span>
+                          </>
+                        ) : (
+                          <span style={{ fontSize:10, fontWeight:700, background:"#fffbeb", color:"#b7791f", border:"1px solid #f6d860", borderRadius:10, padding:"3px 9px" }}>
+                            {t("Awaiting","بانتظار")}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </TabsContent>
+              </div>
+            </Tabs>
+          </div>
+        </div>
 
+        {/* ── Academic Snapshot ── */}
+        <div style={card}>
+          <div style={{ padding:"18px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:14 }}>
+            <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>
+              {t("Academic Snapshot", "نظرة أكاديمية")}
+            </div>
+          </div>
+          <div style={{ padding:"18px 16px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:18, flexWrap:"wrap" as const }}>
+              <div style={{ position:"relative", flexShrink:0 }}>
+                <svg width={110} height={110} style={{ transform:"rotate(-90deg)" }}>
+                  <circle cx={55} cy={55} r={45} stroke={BORDER} strokeWidth={9} fill="none" />
+                  <circle cx={55} cy={55} r={45} stroke={GOLD} strokeWidth={9} fill="none"
+                    strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={strokeDashoffset}
+                    style={{ transition:"stroke-dashoffset 1s ease" }} />
+                </svg>
+                <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
+                  <span style={{ fontSize:22, fontWeight:900, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{stats.cgpa.toFixed(2)}</span>
+                  <span style={{ fontSize:10, fontWeight:600, color:TEXT_LIGHT }}>CGPA</span>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, flex:1 }}>
+                {[
+                  { icon:BookOpen, label:t("Enrollments","التسجيلات"), value:stats.enrollments, color:"#276749", bg:"#f0fff4", link:"/student/courses" },
+                  { icon:ClipboardList, label:t("Graded Exams","اختبارات مصححة"), value:stats.attemptsDone, color:"#b7791f", bg:"#fffbeb", link:"/student/exams" },
+                  { icon:TrendingUp, label:t("Avg Score","متوسط الدرجات"), value:`${stats.avgScore}%`, color:"#2b6cb0", bg:"#ebf8ff", link:"/student/transcripts" },
+                  { icon:Bell, label:t("Pending","بانتظار المراجعة"), value:stats.pendingGrading, color:"#c0392b", bg:"#fff5f5", link:"/student/exams" },
+                ].map((s,i) => (
+                  <div key={i} onClick={() => navigate(s.link)}
+                    style={{ textAlign:"center", borderRadius:12, background:s.bg, padding:"12px 8px", cursor:"pointer", transition:"transform .15s", border:`1px solid ${s.color}22` }}>
+                    <s.icon style={{ width:20, height:20, color:s.color, margin:"0 auto 6px" }} />
+                    <div style={{ fontSize:20, fontWeight:900, color:TEXT_DARK }}>{s.value}</div>
+                    <div style={{ fontSize:10, fontWeight:600, color:TEXT_LIGHT, marginTop:2 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>        </div>
 
-
+        {/* ── Notifications ── */}
         <div style={card}>
           <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
             <div style={{ display:"flex", alignItems:"center", gap:8 }}>
@@ -839,156 +984,10 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* ── Today's Classes ── */}
-        {todayClasses.length > 0 && (!isPrivateStudent || allowGeneralAccess) && (() => {
-          const handleJoinClass = async (slot: any) => {
-            if (slot.live_url) { window.open(slot.live_url, "_blank", "noopener"); return; }
-            if (!slot.subject_id) return;
-            const todayStr = new Date().toISOString().split("T")[0];
-            const { data: existing } = await supabase.from("live_sessions").select("id").eq("subject_id", slot.subject_id).in("status", ["live","scheduled","active"]).limit(1).maybeSingle();
-            if (!existing) await supabase.from("live_sessions").insert({ subject_id: slot.subject_id, scheduled_at: `${todayStr}T${slot.start_time}`, duration_minutes: slot.duration_minutes||60, status: "scheduled", chat_enabled: true, hand_raise_enabled: true, recording_enabled: true, whiteboard_enabled: false, waiting_room_enabled: false } as any);
-            navigate(`/student/live-classes?subject=${slot.subject_id}`);
-          };
-          return (
-          <div style={card}>
-            <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                <Video style={{ width:16, height:16, color:MID_GREEN }} />
-                <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Today's Classes","حصص اليوم")}</span>
-              </div>
-              <button onClick={() => navigate("/student/timetable")} style={{ fontSize:11, fontWeight:600, color:GOLD, background:"none", border:"none", cursor:"pointer" }}>
-                {t("Full schedule","الجدول الكامل")}
-              </button>
-            </div>
-            <div style={{ padding:"12px 16px", display:"flex", flexDirection:"column", gap:8 }}>
-              {todayClasses.map((slot: any) => {
-                const mins    = minsUntilTime(slot.start_time);
-                const isNow   = mins >= -30 && mins <= 0;
-                const isSoon  = mins > 0 && mins <= 15;
-                const isPast  = mins < -30;
-                const canJoin = isNow || isSoon;
-                const title   = language === "ar" ? slot.subjects?.title_ar || slot.subjects?.title : slot.subjects?.title;
-                const minsRnd = Math.round(Math.abs(mins));
-                return (
-                  <div key={slot.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:12, background: isNow ? "#f0fff4" : isSoon ? "#fffbeb" : "#f8fafb", border:`1px solid ${isNow ? "#9ae6b4" : isSoon ? "#f6d860" : BORDER}`, opacity: isPast ? .5 : 1 }}>
-                    <div style={{ flexShrink:0, textAlign:"center", minWidth:52 }}>
-                      <div style={{ fontSize:13, fontWeight:900, color: isNow ? MID_GREEN : TEXT_DARK }}>{to12hr(slot.start_time)}</div>
-                      {isNow  && <span style={{ fontSize:9, fontWeight:800, color:"#16a34a" }}>● LIVE</span>}
-                      {isSoon && <span style={{ fontSize:9, fontWeight:700, color:"#b7791f" }}>{minsRnd}m</span>}
-                      {isPast && <span style={{ fontSize:9, color:TEXT_LIGHT }}>Ended</span>}
-                    </div>
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</p>
-                      <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }}>
-                        {to12hr(slot.start_time)} – {to12hr(slot.end_time)}
-                        {slot.duration_minutes ? ` · ${slot.duration_minutes}m` : ""}
-                      </p>
-                    </div>
-                    {!isPast && (
-                      canJoin ? (
-                        <button onClick={() => handleJoinClass(slot)} style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 14px", borderRadius:10, border:"none", background: isNow ? MID_GREEN : GOLD, color: isNow ? "#fff" : DARK_GREEN, fontSize:11, fontWeight:800, cursor:"pointer", flexShrink:0 }}>
-                          <Video style={{ width:11, height:11 }} />
-                          {t("Join","انضمام")}
-                        </button>
-                      ) : (
-                        <div style={{ fontSize:9, color:TEXT_LIGHT, flexShrink:0, textAlign:"center" }}>
-                          <Clock style={{ width:10, height:10, display:"block", margin:"0 auto 2px" }} />
-                          {minsRnd > 60 ? `${Math.floor(minsRnd/60)}h` : `${minsRnd}m`}
-                        </div>
-                      )
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-          );
-        })()}
+        <IslamicDailyFeed language={language} />
 
-        {/* ── Agenda Tabs ── */}
-        <div style={card}>          <div style={{ padding:"16px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:0 }}>
-            <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif", marginBottom:12 }}>
-              {t("Agenda","الأجندة")}
-            </div>
-            <Tabs defaultValue="classes" className="w-full">
-              <TabsList className="w-full h-9 mb-0" style={{ background:"#f8fafb", borderRadius:"10px 10px 0 0" }}>
-                <TabsTrigger value="classes" className="flex-1 text-xs">{t("Classes","الفصول")}</TabsTrigger>
-                <TabsTrigger value="exams"   className="flex-1 text-xs">{t("Exams","الامتحانات")}</TabsTrigger>
-                <TabsTrigger value="results" className="flex-1 text-xs">{t("Results","النتائج")}</TabsTrigger>
-              </TabsList>
-              <div style={{ padding:"14px 4px" }}>
-                <TabsContent value="classes" className="mt-0">
-                  {(() => {
-                    const displaySubjects = isPrivateStudent && !allowGeneralAccess
-                      ? liveSubjects.filter((s: any) => privateSubjectIds.has(s.id))
-                      : liveSubjects;
-                    return displaySubjects.length===0 ? (
-                      <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No active classes","لا توجد فصول نشطة")}</p>
-                    ) : displaySubjects.map((s:any)=>(
-                    <Link to={`/student/subjects/${s.id}`} key={s.id} style={{ textDecoration:"none" }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
-                        <div style={{ width:36, height:36, borderRadius:10, background:"#f0fff4", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                          <BookOpen style={{ width:16, height:16, color:MID_GREEN }} />
-                        </div>
-                        <div style={{ flex:1 }}>
-                          <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0 }}>{s.title}</p>
-                          {s.title_ar && <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }} dir="rtl">{s.title_ar}</p>}
-                        </div>
-                        <ArrowRight style={{ width:14, height:14, color:TEXT_LIGHT }} />
-                      </div>
-                    </Link>
-                  ));
-                  })()}
-                </TabsContent>
-                <TabsContent value="exams" className="mt-0">
-                  {upcomingExams.length===0 ? (
-                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No upcoming exams","لا توجد امتحانات قادمة")}</p>
-                  ) : upcomingExams.map(exam=>(
-                    <div key={exam.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#fff5f5", border:"1px solid #fca5a522" }}>
-                      <div>
-                        <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }} dir="auto">{language==="ar"?exam.title_ar||exam.title:exam.title}</div>
-                        <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:TEXT_LIGHT, marginTop:2 }}>
-                          <Calendar style={{ width:10, height:10 }} />
-                          {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD","غير محدد")}
-                        </div>
-                      </div>
-                      <span style={{ fontSize:10, fontWeight:700, background:"#fff5f5", color:"#c0392b", border:"1px solid #fca5a5", borderRadius:10, padding:"3px 9px" }}>
-                        {exam.time_limit_minutes} {t("min","د")}
-                      </span>
-                    </div>
-                  ))}
-                </TabsContent>
-                <TabsContent value="results" className="mt-0">
-                  {recentResults.length===0 ? (
-                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No results yet","لا توجد نتائج بعد")}</p>                  ) : recentResults.map(attempt=>(
-                    <div key={attempt.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
-                      <div>
-                        <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }} dir="auto">{language==="ar"?attempt.exams?.title_ar||attempt.exams?.title:attempt.exams?.title}</div>
-                        <div style={{ fontSize:11, color:TEXT_LIGHT, marginTop:2 }}>{attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : ""}</div>
-                      </div>
-                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                        {attempt.status==="graded" ? (
-                          <>
-                            {attempt.passed
-                              ? <CheckCircle style={{ width:16, height:16, color:"#276749" }} />
-                              : <XCircle style={{ width:16, height:16, color:"#c0392b" }} />}
-                            <span style={{ fontSize:14, fontWeight:900, color:attempt.passed?"#276749":"#c0392b" }}>
-                              {Math.round(attempt.percentage||0)}%
-                            </span>
-                          </>
-                        ) : (
-                          <span style={{ fontSize:10, fontWeight:700, background:"#fffbeb", color:"#b7791f", border:"1px solid #f6d860", borderRadius:10, padding:"3px 9px" }}>
-                            {t("Awaiting","بانتظار")}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </TabsContent>
-              </div>
-            </Tabs>
-          </div>
-        </div>
+        {/* ── Quran Phrases Widget ── */}
+        <QuranPhrasesWidget language={language} />
 
       </div>
     </div>
