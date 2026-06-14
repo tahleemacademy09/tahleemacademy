@@ -118,7 +118,8 @@ const ConfidenceSelector = ({ value, onChange }: { value: Confidence; onChange: 
 // ── Matching Question ─────────────────────────────────────────────
 const MatchingQuestion = ({ question, answer, onAnswer }: { question: any; answer: AnswerState; onAnswer: (text: string, data: any) => void }) => {
   const pairs: { left: string; right: string; id: string }[] = question.matching_pairs || [];
-  const rights = [...pairs.map(p => p.right)].sort(() => Math.random() - 0.5);
+  // FIX: Stabilise shuffle with useState so it doesn't re-randomise on every render
+  const [rights] = useState<string[]>(() => [...pairs.map(p => p.right)].sort(() => Math.random() - 0.5));
   const saved: Record<string, string> = answer?.data?.matches || {};
   const [matches, setMatches] = useState<Record<string, string>>(saved);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -153,8 +154,8 @@ const MatchingQuestion = ({ question, answer, onAnswer }: { question: any; answe
 // ── Ordering Question ─────────────────────────────────────────────
 const OrderingQuestion = ({ question, answer, onAnswer }: { question: any; answer: AnswerState; onAnswer: (text: string, data: any) => void }) => {
   const items: string[] = question.ordering_items || [];
-  const savedOrder: string[] = answer?.data?.order || [...items].sort(() => Math.random() - 0.5);
-  const [order, setOrder] = useState<string[]>(savedOrder);
+  // FIX: Use lazy useState initialiser so shuffle only runs once, not on every render
+  const [order, setOrder] = useState<string[]>(() => answer?.data?.order || [...items].sort(() => Math.random() - 0.5));
   const [dragIdx, setDragIdx] = useState<number | null>(null);
 
   const move = (from: number, to: number) => {
@@ -439,10 +440,18 @@ const ExamTaking = () => {
     const iv = setInterval(async () => { await saveAnswers(true); }, 30000); return () => clearInterval(iv);
   }, [answers, submitted]);
 
+  // FIX BUG 13: Add pagehide to save answers when tab is closed/navigated away
+  const saveAnswersRef = useRef<((silent?: boolean) => Promise<void>) | null>(null);
   useEffect(() => {
     if (submitted) return;
     const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
-    window.addEventListener("beforeunload", h); return () => window.removeEventListener("beforeunload", h);
+    const ph = () => { saveAnswersRef.current?.(true); };
+    window.addEventListener("beforeunload", h);
+    window.addEventListener("pagehide", ph);
+    return () => {
+      window.removeEventListener("beforeunload", h);
+      window.removeEventListener("pagehide", ph);
+    };
   }, [submitted]);
 
   const saveAnswers = async (silent = false) => {
@@ -490,6 +499,8 @@ const ExamTaking = () => {
     if (user) logActivity(user.id, "exam_submitted", "exam_attempt", attemptId!, { score: r.score, percentage: Math.round(r.percentage) });
   }, [attemptId, user]);
 
+  // Keep saveAnswersRef current so pagehide can call the latest version
+  useEffect(() => { saveAnswersRef.current = saveAnswers; });
   useEffect(() => { submitRef.current = handleSubmit; }, [handleSubmit]);
 
   const answeredCount = Object.keys(answers).filter(k => answers[k]?.text).length;
