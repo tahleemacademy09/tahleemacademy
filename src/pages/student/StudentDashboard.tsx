@@ -408,6 +408,18 @@ const StudentDashboard = () => {
         .dwani-text {
           font-family: 'Scheherazade New', 'Amiri Quran', 'Amiri', serif !important;
         }
+        .qa-scroll { scrollbar-width: none; -ms-overflow-style: none; }
+        .qa-scroll::-webkit-scrollbar { display: none; }
+        .qa-tile { transition: transform .15s ease; }
+        .qa-tile:active { transform: scale(0.94); }
+        @keyframes livePulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.45); }
+          50% { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -200% 0; }
+          100% { background-position: 200% 0; }
+        }
       `}</style>
 
       <div style={{ maxWidth: 720, margin: "0 auto", padding: "20px 16px 40px", display: "flex", flexDirection: "column", gap: 18 }}>
@@ -539,6 +551,35 @@ const StudentDashboard = () => {
           </div>
         </div>
 
+        {/* ── Quick Actions ── */}
+        <div>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+            <Star style={{ width:13, height:13, color:GOLD, fill:GOLD, flexShrink:0 }} />
+            <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>
+              {t("Quick Actions", "الإجراءات السريعة")}
+            </span>
+          </div>
+          <div className="qa-scroll" style={{ display:"flex", gap:16, overflowX:"auto", paddingBottom:4, marginRight:-16, paddingRight:16 }}>
+            {([
+              { to:"/student/hifdh-daily",  icon:Mic,           label:t("Daily Hifdh","الحفظ اليومي"),  grad:`linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})`,  iconColor:"#fff", show: true },
+              { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), grad:"linear-gradient(135deg,#4299e1,#2b6cb0)",               iconColor:"#fff", show: !isPrivateStudent || allowGeneralAccess },
+              { to:"/student/exams",        icon:ClipboardList, label:t("My Exams","امتحاناتي"),        grad:"linear-gradient(135deg,#48bb78,#276749)",               iconColor:"#fff", show: true },
+              { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),       grad:`linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`,       iconColor:DARK_GREEN, show: true },
+              { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),          grad:"linear-gradient(135deg,#9f7aea,#6b46c1)",               iconColor:"#fff", show: true },
+              { to:"/student/courses",      icon:BookOpen,      label:t("Courses","الدروس"),            grad:"linear-gradient(135deg,#f56565,#c0392b)",               iconColor:"#fff", show: true },
+            ] as const).filter(a => a.show).map((action, i) => (
+              <Link to={action.to} key={i} className="qa-tile" style={{ textDecoration:"none", flexShrink:0, width:72 }}>
+                <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:7 }}>
+                  <div style={{ width:58, height:58, borderRadius:18, background:action.grad, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 6px 16px rgba(15,45,31,0.18)" }}>
+                    <action.icon style={{ width:24, height:24, color:action.iconColor }} />
+                  </div>
+                  <span style={{ fontSize:11, fontWeight:700, color:TEXT_DARK, textAlign:"center", lineHeight:1.25 }}>{action.label}</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+
         {/* ── Today's Classes ── */}
         {todayClasses.length > 0 && (!isPrivateStudent || allowGeneralAccess) && (() => {
           const handleJoinClass = async (slot: any) => {
@@ -573,9 +614,14 @@ const StudentDashboard = () => {
                   <div key={slot.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:12, background: isNow ? "#f0fff4" : isSoon ? "#fffbeb" : "#f8fafb", border:`1px solid ${isNow ? "#9ae6b4" : isSoon ? "#f6d860" : BORDER}`, opacity: isPast ? .5 : 1 }}>
                     <div style={{ flexShrink:0, textAlign:"center", minWidth:52 }}>
                       <div style={{ fontSize:13, fontWeight:900, color: isNow ? MID_GREEN : TEXT_DARK }}>{to12hr(slot.start_time)}</div>
-                      {isNow  && <span style={{ fontSize:9, fontWeight:800, color:"#16a34a" }}>● LIVE</span>}
+                      {isNow  && (
+                        <span style={{ display:"inline-flex", alignItems:"center", gap:3, fontSize:9, fontWeight:800, color:"#16a34a" }}>
+                          <span style={{ width:6, height:6, borderRadius:"50%", background:"#22c55e", animation:"livePulse 1.6s infinite" }} />
+                          {t("LIVE","مباشر")}
+                        </span>
+                      )}
                       {isSoon && <span style={{ fontSize:9, fontWeight:700, color:"#b7791f" }}>{minsRnd}m</span>}
-                      {isPast && <span style={{ fontSize:9, color:TEXT_LIGHT }}>Ended</span>}
+                      {isPast && <span style={{ fontSize:9, color:TEXT_LIGHT }}>{t("Ended","انتهى")}</span>}
                     </div>
                     <div style={{ flex:1, minWidth:0 }}>
                       <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</p>
@@ -586,7 +632,7 @@ const StudentDashboard = () => {
                     </div>
                     {!isPast && (
                       canJoin ? (
-                        <button onClick={() => handleJoinClass(slot)} style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 14px", borderRadius:10, border:"none", background: isNow ? MID_GREEN : GOLD, color: isNow ? "#fff" : DARK_GREEN, fontSize:11, fontWeight:800, cursor:"pointer", flexShrink:0 }}>
+                        <button onClick={() => handleJoinClass(slot)} style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 14px", borderRadius:10, border:"none", background: isNow ? `linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})` : `linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`, color: isNow ? "#fff" : DARK_GREEN, fontSize:11, fontWeight:800, cursor:"pointer", flexShrink:0, boxShadow: isNow ? "0 4px 12px rgba(15,45,31,0.25)" : `0 4px 12px ${GOLD}55` }}>
                           <Video style={{ width:11, height:11 }} />
                           {t("Join","انضمام")}
                         </button>
@@ -713,65 +759,48 @@ const StudentDashboard = () => {
                       ? "linear-gradient(135deg,#276749,#34d399)"
                       : `linear-gradient(135deg,${DARK_GREEN},${MID_GREEN})`,
                     color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    position: "relative", overflow: "hidden",
                     boxShadow: `0 4px 14px ${completed ? "#22c55e44" : DARK_GREEN + "44"}`,
                   }}
                 >
-                  <BookMarked style={{ width: 15, height: 15 }} />
-                  {completed
-                    ? t("View Today's Session", "عرض جلسة اليوم")
-                    : quizPending
-                    ? t("Resume — Take the Quiz", "استكمل — أجِب الاختبار")
-                    : t("Start Revision Now", "ابدأ المراجعة الآن")}
-                  <ArrowRight style={{ width: 13, height: 13 }} />
+                  {!completed && (
+                    <span style={{
+                      position: "absolute", inset: 0, zIndex: 0,
+                      background: "linear-gradient(110deg, transparent 35%, rgba(255,255,255,0.22) 50%, transparent 65%)",
+                      backgroundSize: "200% 100%",
+                      animation: "shimmer 2.8s infinite",
+                      pointerEvents: "none",
+                    }} />
+                  )}
+                  <span style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    <BookMarked style={{ width: 15, height: 15 }} />
+                    {completed
+                      ? t("View Today's Session", "عرض جلسة اليوم")
+                      : quizPending
+                      ? t("Resume — Take the Quiz", "استكمل — أجِب الاختبار")
+                      : t("Start Revision Now", "ابدأ المراجعة الآن")}
+                    <ArrowRight style={{ width: 13, height: 13 }} />
+                  </span>
                 </button>
               </div>
             </div>
           );
         })()}
 
-        {/* ── Quick Actions ── */}
-        <div>
-          <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif", marginBottom:12 }}>
-            {t("Quick Actions", "الإجراءات السريعة")}
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
-            {([
-              { to:"/student/exams",        icon:ClipboardList, label:t("My Exams","امتحاناتي"),        ar:"امتحاناتي",    color:"#276749", bg:"#f0fff4", show: true },
-              { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),        ar:"السجلات",      color:"#b7791f", bg:"#fffbeb", show: true },
-              { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), ar:"الفصول الحية", color:"#2b6cb0", bg:"#ebf8ff", show: !isPrivateStudent || allowGeneralAccess },
-              { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),           ar:"المجلس",       color:"#6b46c1", bg:"#faf5ff", show: true },
-              { to:"/student/hifdh-daily",        icon:Mic,           label:t("Daily Hifdh","الحفظ اليومي"),     ar:"الحِفظ الذكي", color:DARK_GREEN, bg:"#f0fdf4", show: true },
-              { to:"/student/courses",      icon:BookOpen,      label:t("Courses","الدروس"),             ar:"الدروس",       color:"#c0392b", bg:"#fff5f5", show: true },
-            ] as const).filter(link => link.show).map((link,i) => (
-              <Link to={link.to} key={i} style={{ textDecoration:"none" }}>
-                <div style={{ ...card, display:"flex", alignItems:"center", gap:12, padding:"14px 14px", transition:"transform .15s, box-shadow .15s" }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform="translateY(-2px)"; (e.currentTarget as HTMLElement).style.boxShadow="0 6px 20px rgba(0,0,0,.1)"; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform="none"; (e.currentTarget as HTMLElement).style.boxShadow="0 2px 12px rgba(0,0,0,.06)"; }}>
-                  <div style={{ width:40, height:40, borderRadius:12, background:link.bg, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, border:`1px solid ${link.color}22` }}>
-                    <link.icon style={{ width:20, height:20, color:link.color }} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }}>{link.label}</div>
-                    <div style={{ fontSize:10, color:TEXT_LIGHT }}>{link.ar}</div>
-                  </div>
-                  <ArrowRight style={{ width:14, height:14, color:TEXT_LIGHT, marginLeft:"auto" }} />
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
-
         {/* ── Agenda Tabs ── */}
-        <div style={card}>          <div style={{ padding:"16px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:0 }}>
-            <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif", marginBottom:12 }}>
-              {t("Agenda","الأجندة")}
+        <div style={card}>
+          <div style={{ padding:"16px 18px 0", paddingBottom:0 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+              <ClipboardList style={{ width:16, height:16, color:MID_GREEN }} />
+              <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>
+                {t("Agenda","الأجندة")}
+              </span>
             </div>
             <Tabs defaultValue="classes" className="w-full">
-              <TabsList className="w-full h-9 mb-0" style={{ background:"#f8fafb", borderRadius:"10px 10px 0 0" }}>
-                <TabsTrigger value="classes" className="flex-1 text-xs">{t("Classes","الفصول")}</TabsTrigger>
-                <TabsTrigger value="exams"   className="flex-1 text-xs">{t("Exams","الامتحانات")}</TabsTrigger>
-                <TabsTrigger value="results" className="flex-1 text-xs">{t("Results","النتائج")}</TabsTrigger>
+              <TabsList className="w-full h-9 mb-0" style={{ background:"#f8fafb", borderRadius:12, padding:3 }}>
+                <TabsTrigger value="classes" className="flex-1 text-xs rounded-lg">{t("Classes","الفصول")}</TabsTrigger>
+                <TabsTrigger value="exams"   className="flex-1 text-xs rounded-lg">{t("Exams","الامتحانات")}</TabsTrigger>
+                <TabsTrigger value="results" className="flex-1 text-xs rounded-lg">{t("Results","النتائج")}</TabsTrigger>
               </TabsList>
               <div style={{ padding:"14px 4px" }}>
                 <TabsContent value="classes" className="mt-0">
@@ -849,10 +878,11 @@ const StudentDashboard = () => {
 
         {/* ── Academic Snapshot ── */}
         <div style={card}>
-          <div style={{ padding:"18px 18px 0", borderBottom:`1px solid ${BORDER}`, paddingBottom:14 }}>
-            <div style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>
+          <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", gap:8 }}>
+            <TrendingUp style={{ width:16, height:16, color:MID_GREEN }} />
+            <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>
               {t("Academic Snapshot", "نظرة أكاديمية")}
-            </div>
+            </span>
           </div>
           <div style={{ padding:"18px 16px" }}>
             <div style={{ display:"flex", alignItems:"center", gap:18, flexWrap:"wrap" as const }}>
@@ -870,14 +900,16 @@ const StudentDashboard = () => {
               </div>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, flex:1 }}>
                 {[
-                  { icon:BookOpen, label:t("Enrollments","التسجيلات"), value:stats.enrollments, color:"#276749", bg:"#f0fff4", link:"/student/courses" },
-                  { icon:ClipboardList, label:t("Graded Exams","اختبارات مصححة"), value:stats.attemptsDone, color:"#b7791f", bg:"#fffbeb", link:"/student/exams" },
-                  { icon:TrendingUp, label:t("Avg Score","متوسط الدرجات"), value:`${stats.avgScore}%`, color:"#2b6cb0", bg:"#ebf8ff", link:"/student/transcripts" },
-                  { icon:Bell, label:t("Pending","بانتظار المراجعة"), value:stats.pendingGrading, color:"#c0392b", bg:"#fff5f5", link:"/student/exams" },
+                  { icon:BookOpen, label:t("Enrollments","التسجيلات"), value:stats.enrollments, color:"#276749", grad:"linear-gradient(135deg,#48bb78,#276749)", link:"/student/courses" },
+                  { icon:ClipboardList, label:t("Graded Exams","اختبارات مصححة"), value:stats.attemptsDone, color:"#b7791f", grad:`linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`, link:"/student/exams" },
+                  { icon:TrendingUp, label:t("Avg Score","متوسط الدرجات"), value:`${stats.avgScore}%`, color:"#2b6cb0", grad:"linear-gradient(135deg,#4299e1,#2b6cb0)", link:"/student/transcripts" },
+                  { icon:Bell, label:t("Pending","بانتظار المراجعة"), value:stats.pendingGrading, color:"#c0392b", grad:"linear-gradient(135deg,#f56565,#c0392b)", link:"/student/exams" },
                 ].map((s,i) => (
-                  <div key={i} onClick={() => navigate(s.link)}
-                    style={{ textAlign:"center", borderRadius:12, background:s.bg, padding:"12px 8px", cursor:"pointer", transition:"transform .15s", border:`1px solid ${s.color}22` }}>
-                    <s.icon style={{ width:20, height:20, color:s.color, margin:"0 auto 6px" }} />
+                  <div key={i} onClick={() => navigate(s.link)} className="qa-tile"
+                    style={{ textAlign:"center", borderRadius:14, background:"#fff", padding:"12px 8px", cursor:"pointer", border:`1px solid ${BORDER}`, boxShadow:"0 2px 8px rgba(0,0,0,.04)" }}>
+                    <div style={{ width:34, height:34, borderRadius:10, background:s.grad, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 7px", boxShadow:`0 3px 10px ${s.color}33` }}>
+                      <s.icon style={{ width:16, height:16, color: s.color === "#b7791f" ? DARK_GREEN : "#fff" }} />
+                    </div>
                     <div style={{ fontSize:20, fontWeight:900, color:TEXT_DARK }}>{s.value}</div>
                     <div style={{ fontSize:10, fontWeight:600, color:TEXT_LIGHT, marginTop:2 }}>{s.label}</div>
                   </div>
