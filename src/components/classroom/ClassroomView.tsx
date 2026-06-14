@@ -666,7 +666,11 @@ const VolumeBooster = () => {
         el.srcObject  = ms;
         el.autoplay   = true;
         // NOT muted — this is the reliable fallback so students always hear the teacher
-        el.muted      = false;
+        // FIX BUG 7: Mute the <audio> element when Web Audio pipeline is active to prevent
+        // double playback (raw + boosted). The <audio> element is kept in the DOM as a
+        // fallback — if Web Audio fails, we unmute it so sound still plays.
+        const webAudioWillConnect = !!(ac && gain && webAudioOkRef.current && ac.state === "running");
+        el.muted      = webAudioWillConnect; // muted when Web Audio handles playback
         el.volume     = 1.0;
         // Attach to DOM so mobile browsers don't suppress it
         el.style.display = "none";
@@ -674,15 +678,16 @@ const VolumeBooster = () => {
         el.play().catch(() => {});
 
         let source: MediaStreamAudioSourceNode | null = null;
-        if (ac && gain && webAudioOkRef.current && ac.state === "running") {
+        if (webAudioWillConnect) {
           try {
-            // Web Audio pipeline adds gain+compression on top of the <audio> element.
-            // Use a separate MediaStream source — do NOT use createMediaElementSource
-            // because that would silence the <audio> element itself.
             const ms2 = new MediaStream([pub.track.mediaStreamTrack]);
-            source = ac.createMediaStreamSource(ms2);
-            source.connect(gain);
-          } catch { source = null; }
+            source = ac!.createMediaStreamSource(ms2);
+            source.connect(gain!);
+          } catch {
+            source = null;
+            // Web Audio failed after all — unmute the <audio> element as fallback
+            el.muted = false;
+          }
         }
 
         nodesRef.current.set(sid, { source: source as any, el });
@@ -911,17 +916,25 @@ const Whiteboard = ({room,onClose,isTeacher,initialStrokes,subjectId,canStudentW
       ctx.stroke();
     }
   },[]);
-  useEffect(()=>{(async()=>{
-    try{const{data}=await supabase.from("subject_whiteboard"as any).select("strokes").eq("subject_id",subjectId).maybeSingle();
-      if((data as any)?.strokes?.length)strokesRef.current=(data as any).strokes;
-      else if(initialStrokes?.length)strokesRef.current=initialStrokes;
-    }catch{if(initialStrokes?.length)strokesRef.current=initialStrokes;}
-    setBusy(false);setTimeout(redraw,40);
-  })();},[]);
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{const{data}=await supabase.from("subject_whiteboard"as any).select("strokes").eq("subject_id",subjectId).maybeSingle();
+        if(!cancelled){
+          if((data as any)?.strokes?.length)strokesRef.current=(data as any).strokes;
+          else if(initialStrokes?.length)strokesRef.current=initialStrokes;
+        }
+      }catch{if(!cancelled&&initialStrokes?.length)strokesRef.current=initialStrokes;}
+      if(!cancelled){setBusy(false);setTimeout(redraw,40);}
+    })();
+    // FIX BUG 4: Cancel async state updates if Whiteboard unmounts before fetch completes
+    return()=>{cancelled=true;};
+  },[]);
+  // FIX BUG 10: Use canDraw (not isTeacher) as dep — canDraw is the actual guard
   const save=useCallback(()=>{
     if(!canDraw)return;clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(async()=>{try{await supabase.from("subject_whiteboard"as any).upsert({subject_id:subjectId,strokes:strokesRef.current,updated_at:new Date().toISOString()},{onConflict:"subject_id"});}catch{}},1200);
-  },[isTeacher,subjectId]);
+  },[canDraw,subjectId]);
   useEffect(()=>{
     if(!room)return;
     const h=(payload:Uint8Array)=>{try{const msg=JSON.parse(new TextDecoder().decode(payload));if(msg.type==="wb_strokes"){strokesRef.current=msg.strokes;redraw();}if(msg.type==="wb_clear"){strokesRef.current=[];redraw();}}catch{}};
@@ -1094,13 +1107,16 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   useEffect(()=>{
     if(kind!=="video")return;
     const iv=setInterval(()=>{
-      if(videoRef.current&&isFinite(videoRef.current.currentTime)&&videoRef.current.currentTime>0)
-        saveResume(matId,{time:videoRef.current.currentTime});
+      const el=videoRef.current;
+      if(el&&isFinite(el.currentTime)&&el.currentTime>0)
+        saveResume(matId,{time:el.currentTime});
     },3000);
     return()=>{
       clearInterval(iv);
-      if(videoRef.current&&videoRef.current.currentTime>0)
-        saveResume(matId,{time:videoRef.current.currentTime});
+      // FIX BUG 9: Capture ref value before cleanup — ref may be null after unmount
+      const el=videoRef.current;
+      if(el&&isFinite(el.currentTime)&&el.currentTime>0)
+        saveResume(matId,{time:el.currentTime});
     };
   },[matId,kind]);
 
@@ -1566,10 +1582,13 @@ const InClassQuranReader=({onClose}:any)=>{
     if(mode==="tafseer")fetchSurahArabic(surahNum);
   },[surahNum,mode]);
 
+  // FIX BUG 6: Add mode to deps; surahAyahs.length check was a stale closure.
+  // Use surahNum/surahAyahs from outer scope which are always current when mode changes.
   useEffect(()=>{
     if(mode==="quran")fetchMushafPage(page);
     if(mode==="translation")fetchTranslation(page);
-    if(mode==="tafseer"&&surahAyahs.length===0)fetchSurahArabic(surahNum);
+    if(mode==="tafseer")fetchSurahArabic(surahNum);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[mode]);
 
   useEffect(()=>{return()=>{audioRef.current?.pause();};},[]);
@@ -2318,7 +2337,7 @@ const MaterialViewer=({material,isTeacher,onClose}:any)=>{
    • Empty-chunk abort on fast stop → mr.requestData() flushes pending chunk before stop()
    • Lost subject_id                → always falls back to subjectId prop so DB row is queryable
    ══════════════════════════════════════════════════════════════════════════════════════════ */
-const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:any)=>{
+const RecController=({sessionId,subjectId,userEmail,onSavingChange,onRecordingChange,stopRecRef}:any)=>{
   const room=useRoomContext();const{t}=useLanguage();
   const[recording,setRecording]=useState(false);
   const[paused,setPaused]=useState(false);
@@ -2386,7 +2405,7 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
       mr.ondataavailable=e=>{if(e.data&&e.data.size>0)chunksRef.current.push(e.data);};
       mr.start(2000); // chunk every 2 s — smaller chunks = less data lost on crash
       mrRef.current=mr;
-      setRecording(true);setPaused(false);setDisplayTime(0);
+      setRecording(true);setPaused(false);setDisplayTime(0);onRecordingChange?.(true);
       timerRef.current=setInterval(()=>{
         timeRef.current+=1;
         setDisplayTime(timeRef.current);
@@ -2473,7 +2492,7 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
     if(!mr||mr.state==="inactive"){return;}
     clearInterval(timerRef.current);
     const finalTime=timeRef.current;
-    setRecording(false);setPaused(false);
+    setRecording(false);setPaused(false);onRecordingChange?.(false);
 
     if(sessionRef.current)
       supabase.from("live_sessions").update({is_recording:false}as any)
@@ -3385,14 +3404,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // pagehide fires synchronously; stopRec is async but the browser allows
   // async work initiated from pagehide as long as we don't await across
   // microtask boundaries that the browser kills. We kick it off and let it run.
+  // FIX BUG 11: Separate ref to track recording state — avoids false "recording" warning
+  // on page unload when no recording is actually active.
+  const isRecordingActiveRef=useRef(false);
   useEffect(()=>{
     const onPageHide=()=>{ recStopRef.current?.(); };
     const onBeforeUnload=(e:BeforeUnloadEvent)=>{
-      // If recording is active, warn the user before leaving
-      const mr=(recStopRef as any).current;
-      if(mr&&typeof mr==="function"){
-        // We can't reliably detect if recording is active here, so show warning always
-        // The RecController itself handles the actual save
+      // Only warn if a recording is actually in progress
+      if(isRecordingActiveRef.current){
         e.preventDefault();
         e.returnValue="A recording is in progress. Are you sure you want to leave?";
       }
@@ -3405,6 +3424,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     };
   },[]);
   const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
+  // FIX BUG 3: ref tracks chatOpen so subscription callback avoids stale closure
+  const chatOpenRef=useRef(false);
+  useEffect(()=>{chatOpenRef.current=chatOpen;},[chatOpen]);
   useEffect(()=>{
     if(!sessionId||phase!=="live")return;
     const ch=supabase.channel(`chat-unread-${sessionId}`)
@@ -3412,7 +3434,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         (payload:any)=>{
           if(payload.new?.sender_id===user?.id)return;
           if(payload.new?.type==="system")return;
-          setChatUnread(n=>{const panelClosed=!chatOpen;return panelClosed?n+1:0;});
+          // Use ref instead of stale closure value
+          setChatUnread(n=>{const panelClosed=!chatOpenRef.current;return panelClosed?n+1:0;});
         })
       .subscribe();
     return()=>{supabase.removeChannel(ch);};
@@ -3469,7 +3492,19 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     return()=>clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[autoJoin]);
-  useEffect(()=>{const check=async()=>{const{data}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();if(data){setSessionInfo(data);setSessionId(data.id);setIsSessionLive(true);}else setIsSessionLive(false);};check();const iv=setInterval(check,4000);return()=>clearInterval(iv);},[subject.id]);
+  // FIX BUG 8: Stop polling for live session once we've joined (phase === "live")
+  // to avoid unnecessary DB queries during the class.
+  useEffect(()=>{
+    if(phase==="live")return; // already in class — no need to poll
+    const check=async()=>{
+      const{data}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","live").maybeSingle();
+      if(data){setSessionInfo(data);setSessionId(data.id);setIsSessionLive(true);}
+      else setIsSessionLive(false);
+    };
+    check();
+    const iv=setInterval(check,4000);
+    return()=>clearInterval(iv);
+  },[subject.id,phase]);
 
   /* ── Student auto-kick: watch DB for session.status → "ended" ────────────
      Two-pronged approach: LiveKit data channel (fast) + Supabase realtime (backup).
@@ -3800,7 +3835,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {/* Layout switcher — desktop only */}
               {!isMobile&&<LayoutSwitcher layout={layout} onChange={setLayout}/>}
               {/* RecController — admin only */}
-              {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
+              {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={(v)=>{setSavingRec(v);}} onRecordingChange={(v:boolean)=>{isRecordingActiveRef.current=v;}} stopRecRef={recStopRef}/>}
             </div>
           </div>
           {/* Content — material panels render here so footer always stays visible */}
