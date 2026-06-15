@@ -17,6 +17,18 @@
   ─────────────────────────────────
   • NO navigate() calls. The classroom is position:fixed — the React Router
     route under it is always the correct page. Just toggle minimized state.
+
+  Screen-lock keep-alive fix:
+  ─────────────────────────────────
+  • visibilitychange fires when the screen locks, but stays "hidden" until
+    the user unlocks. The old onVis handler only ran wakeAudio() when
+    visibilityState === "visible" — so nothing ran during screen lock.
+  • We now also listen to:
+      pageshow  — fires when Android brings the WebView back to foreground
+      resume    — fires in Capacitor Android WebView when app resumes
+      focus     — fires when the browser tab regains focus
+    These all fire when the user returns from the lock screen, even if
+    visibilityState is still "hidden" for a split second.
 */
 
 import {
@@ -33,13 +45,40 @@ function useLiveClassKeepAlive(inCall: boolean) {
     if (!inCall) return;
     const sw = navigator.serviceWorker?.controller;
     sw?.postMessage({ type: "LIVE_CLASS_START" });
+
+    // Ping every 10 s — tighter interval survives Android doze better
     const ping = () => navigator.serviceWorker?.controller?.postMessage({ type: "LIVE_CLASS_KEEPALIVE" });
-    const iv = setInterval(ping, 20_000);
-    const onVis = () => { if (document.visibilityState === "visible") ping(); };
+    const iv = setInterval(ping, 10_000);
+
+    // wakeAudio — called on any wake-up event (return from lock screen, tab focus, etc.)
+    // Sends a SW ping AND briefly creates/resumes an AudioContext to unblock any
+    // suspended audio pipeline (belt-and-suspenders alongside useBackgroundAudio).
+    const wakeAudio = () => {
+      ping();
+      try {
+        const AC = window.AudioContext || (window as any).webkitAudioContext;
+        const tmpCtx = new AC();
+        tmpCtx.resume().then(() => tmpCtx.close()).catch(() => {});
+      } catch {}
+    };
+
+    // visibilitychange: fires on tab switch AND screen lock.
+    // We wake on BOTH transitions — not just "visible" — because:
+    //   • going to "hidden" means we need to ensure audio is running
+    //   • returning to "visible" means we should definitely resume
+    const onVis = () => wakeAudio();
+
     document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus",    wakeAudio);  // tab regains focus
+    window.addEventListener("pageshow", wakeAudio);  // Android WebView returns from background
+    document.addEventListener("resume", wakeAudio);  // Capacitor Android WebView resume
+
     return () => {
       clearInterval(iv);
       document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus",    wakeAudio);
+      window.removeEventListener("pageshow", wakeAudio);
+      document.removeEventListener("resume", wakeAudio);
       navigator.serviceWorker?.controller?.postMessage({ type: "LIVE_CLASS_END" });
     };
   }, [inCall]);
@@ -84,6 +123,9 @@ interface LiveClassContextType extends LiveClassState {
   setHasConnected: (v: boolean) => void;
   toggleMicFnRef:  React.MutableRefObject<() => void>;
   toggleCamFnRef:  React.MutableRefObject<() => void>;
+  // FIX: "restore" sets mic ON only — safe to call on background return.
+  // toggleMicFnRef flips state and must never be used for restoration.
+  restoreMicFnRef: React.MutableRefObject<() => void>;
 }
 const LiveClassContext = createContext<LiveClassContextType | null>(null);
 
@@ -97,8 +139,9 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<LiveClassState>(() => restore() ?? DEFAULT_STATE);
   const guardPushed = useRef(false);
 
-  const toggleMicFnRef = useRef<() => void>(() => {});
-  const toggleCamFnRef = useRef<() => void>(() => {});
+  const toggleMicFnRef  = useRef<() => void>(() => {});
+  const toggleCamFnRef  = useRef<() => void>(() => {});
+  const restoreMicFnRef = useRef<() => void>(() => {});
 
   useLiveClassKeepAlive(state.inCall);
 
@@ -122,11 +165,11 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [state.inCall]);
 
-  // Back button → minimize instead of navigating away
+  // Back button → minimize instead of navigating away.
   // Re-push the guard so the NEXT back press also minimizes.
   useEffect(() => {
     if (!state.inCall) return;
-    const onPop = (e: PopStateEvent) => {
+    const onPop = (_e: PopStateEvent) => {
       // Always re-push the guard so back button keeps working
       history.pushState({ [HISTORY_STATE]: true }, "");
       // Minimize the classroom
@@ -172,7 +215,8 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   return (
     <LiveClassContext.Provider value={{
       ...state, joinClass, leaveClass, setMinimized,
-      setMicEnabled, setCamEnabled, setHasConnected, toggleMicFnRef, toggleCamFnRef,
+      setMicEnabled, setCamEnabled, setHasConnected,
+      toggleMicFnRef, toggleCamFnRef, restoreMicFnRef,
     }}>
       {children}
     </LiveClassContext.Provider>
