@@ -38,26 +38,6 @@ const toHijri = (date: Date) => {
   }
 };
 
-const VERSES = [
-  { ar: "إِنَّ مَعَ الْعُسْرِ يُسْرًا", en: "Indeed, with hardship comes ease.", ref: "Quran 94:6" },
-  { ar: "وَمَن يَتَوَكَّلْ عَلَى اللَّهِ فَهُوَ حَسْبُهُ", en: "Whoever relies upon Allah, He is sufficient for him.", ref: "Quran 65:3" },
-  { ar: "رَبِّ زِدْنِي عِلْمًا", en: "My Lord, increase me in knowledge.", ref: "Quran 20:114" },
-  { ar: "وَاصْبِرْ فَإِنَّ اللَّهَ لَا يُضِيعُ أَجْرَ الْمُحْسِنِينَ", en: "Be patient, for Allah does not waste the reward of the righteous.", ref: "Quran 11:115" },
-  { ar: "فَاذْكُرُونِي أَذْكُرْكُمْ", en: "Remember Me; I will remember you.", ref: "Quran 2:152" },
-  { ar: "وَلَسَوْفَ يُعْطِيكَ رَبُّكَ فَتَرْضَىٰ", en: "And your Lord is going to give you, and you will be satisfied.", ref: "Quran 93:5" },
-  { ar: "إِنَّ اللَّهَ مَعَ الصَّابِرِينَ", en: "Indeed, Allah is with the patient.", ref: "Quran 2:153" },
-  { ar: "وَعَسَىٰ أَن تَكْرَهُوا شَيْئًا وَهُوَ خَيْرٌ لَّكُمْ", en: "Perhaps you dislike something which is good for you.", ref: "Quran 2:216" },
-  { ar: "إِنَّ اللَّهَ لَا يُغَيِّرُ مَا بِقَوْمٍ حَتَّىٰ يُغَيِّرُوا مَا بِأَنفُسِهِمْ", en: "Allah does not change a people until they change what is within themselves.", ref: "Quran 13:11" },
-  { ar: "وَمَا تَوْفِيقِي إِلَّا بِاللَّهِ", en: "My success is only through Allah.", ref: "Quran 11:88" },
-  { ar: "قُلْ هُوَ اللَّهُ أَحَدٌ", en: "Say: He is Allah, the One.", ref: "Quran 112:1" },
-  { ar: "وَنُنَزِّلُ مِنَ الْقُرْآنِ مَا هُوَ شِفَاءٌ وَرَحْمَةٌ لِّلْمُؤْمِنِينَ", en: "We send down in the Quran that which is a healing and mercy for the believers.", ref: "Quran 17:82" },
-  { ar: "أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ", en: "Verily, in the remembrance of Allah do hearts find rest.", ref: "Quran 13:28" },
-  { ar: "وَقُل رَّبِّ ارْحَمْهُمَا كَمَا رَبَّيَانِي صَغِيرًا", en: "My Lord, have mercy upon them as they brought me up when I was small.", ref: "Quran 17:24" },
-  { ar: "إِنَّ أَكْرَمَكُمْ عِندَ اللَّهِ أَتْقَاكُمْ", en: "The most noble of you in the sight of Allah is the most righteous.", ref: "Quran 49:13" },  { ar: "وَلَا تَيْأَسُوا مِن رَّوْحِ اللَّهِ", en: "Do not despair of the mercy of Allah.", ref: "Quran 12:87" },
-  { ar: "فَإِذَا فَرَغْتَ فَانصَبْ", en: "So when you have finished, then stand up for worship.", ref: "Quran 94:7" },
-  { ar: "وَاسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ", en: "Seek help through patience and prayer.", ref: "Quran 2:45" },
-];
-
 /** Convert "HH:MM:SS" → "H:MM AM/PM" */
 const to12hr = (timeStr: string): string => {
   if (!timeStr) return "";
@@ -216,8 +196,6 @@ const StudentDashboard = () => {
     };
   }, [profile?.full_name, greetingSpoken, loading, user?.id]);
 
-  const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
-  const dailyVerse = VERSES[dayOfYear % VERSES.length];
   const hijri = toHijri(new Date());
   const today = new Date();
 
@@ -510,46 +488,10 @@ const StudentDashboard = () => {
               </p>
             </div>
           </div>
-
-          <div style={{ position:"relative", zIndex:1, padding:"20px 22px 0" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-              <div style={{ flex:1, height:"1.5px", background:`linear-gradient(90deg, transparent, ${GOLD}, transparent)` }} />
-              <div style={{ display:"flex", alignItems:"center", gap:7 }}>
-                <div style={{ width:6, height:6, borderRadius:"50%", background:GOLD }} />
-                <Star style={{ width:16, height:16, color:GOLD, fill:GOLD }} />
-                <div style={{ width:6, height:6, borderRadius:"50%", background:GOLD }} />
-              </div>
-              <div style={{ flex:1, height:"1.5px", background:`linear-gradient(90deg, transparent, ${GOLD}, transparent)` }} />
-            </div>
-          </div>
-
-          <div style={{ padding:"18px 18px 22px", position:"relative", zIndex:1 }}>
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:8, marginBottom:16 }}>
-              <Star style={{ width:14, height:14, color:GOLD, fill:GOLD }} />
-              <span style={{ fontSize:13, fontWeight:800, color:GOLD, fontFamily:"'Playfair Display',serif", letterSpacing:"0.05em" }}>
-                {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
-              </span>
-              <Star style={{ width:14, height:14, color:GOLD, fill:GOLD }} />
-            </div>
-
-            <div style={{
-              background:"rgba(255,255,255,0.05)", border:`1px solid ${GOLD}33`, borderRadius:18,
-              padding:"20px 18px", textAlign:"center", backdropFilter:"blur(6px)",
-              boxShadow:"inset 0 1px 0 rgba(255,255,255,0.08)",
-            }}>
-              <p style={{ fontFamily:"'Amiri Quran',serif", fontSize:26, lineHeight:2.2, color:"#fff", margin:"0 0 14px", direction:"rtl" }}>
-                {dailyVerse.ar}
-              </p>
-
-              <div style={{ width:50, height:"1.5px", background:GOLD, margin:"0 auto 14px", borderRadius:2 }} />
-
-              <p style={{ fontSize:13, fontStyle:"italic", color:"rgba(255,255,255,0.82)", margin:"0 0 8px", lineHeight:1.5 }}>
-                "{dailyVerse.en}"
-              </p>
-              <p style={{ fontSize:12, fontWeight:800, color:GOLD, margin:0, letterSpacing:"0.05em" }}>{dailyVerse.ref}</p>
-            </div>
-          </div>
         </div>
+
+        {/* ── Islamic Daily Feed (Quran · Hadith · Tawheed · Seerah · Events · News) ── */}
+        <IslamicDailyFeed language={language} />
 
         {/* ── Quick Actions ── */}
         <div>
@@ -1027,8 +969,6 @@ const StudentDashboard = () => {
             </div>
           </div>
         </div>
-
-        <IslamicDailyFeed language={language} />
 
         {/* ── Quran Phrases Widget ── */}
         <QuranPhrasesWidget language={language} />
