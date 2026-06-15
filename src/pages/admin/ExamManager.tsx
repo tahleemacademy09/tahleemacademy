@@ -29,6 +29,7 @@ export default function ExamManager() {
   const { user }        = useAuth();
   const navigate        = useNavigate();
   const { data: academicLevels = [] } = useAcademicLevels();
+  const LEVELS = academicLevels.map(l => l.slug);
 
   const [exams, setExams]               = useState<any[]>([]);
   const [loading, setLoading]           = useState(true);
