@@ -691,6 +691,19 @@ The Farewell Sermon is the Prophet's ﷺ gift to humanity — a manifesto of jus
   },
 ];
 
+
+const getHijriNumeric = (date: Date): { day: number; month: number } => {
+  try {
+    const parts = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura", {
+      day: "numeric", month: "numeric", year: "numeric",
+    }).formatToParts(date);
+    return {
+      day:   parseInt(parts.find(p => p.type === "day")?.value   ?? "0"),
+      month: parseInt(parts.find(p => p.type === "month")?.value ?? "0"),
+    };
+  } catch { return { day: 0, month: 0 }; }
+};
+
 // ── Islamic Events (Hijri-based) ──────────────────────────────────────────
 const ISLAMIC_EVENTS = [
   { hijriMonth: 1,  hijriDay: 1,  name: "Islamic New Year",           nameAr: "رأس السنة الهجرية",     emoji: "🌙", daysWindow: 4, writeup: "The Islamic New Year marks the beginning of Muharram and commemorates the Hijrah — the Prophet's ﷺ migration from Makkah to Madinah in 622 CE. Umar ibn al-Khattab (RA) chose this event as the start of the Islamic calendar, because it represents the moment faith became a state and conviction became a civilisation. The Prophet ﷺ said about Muharram: 'The best fasts after Ramadan are in the month of Allah, which you call Muharram.' (Muslim 1163). Use this new year to make sincere tawbah, set learning goals for the year, increase fasting, and renew your covenant with Allah. 'Indeed, the number of months with Allah is twelve months in the register of Allah [from] the day He created the heavens and the earth; of these, four are sacred.' (9:36)" },
