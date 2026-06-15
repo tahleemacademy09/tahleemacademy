@@ -2,7 +2,7 @@
     Islamic Daily Feed — Live Hadith · Rich Seerah · Events · Multi-source News
 */
 import { useState, useEffect } from "react";
-import { BookMarked, ScrollText, CalendarDays, Newspaper, ExternalLink, RefreshCw, Star, ChevronDown, ChevronUp, Shield } from "lucide-react";
+import { BookMarked, ScrollText, CalendarDays, Newspaper, ExternalLink, RefreshCw, Star, ChevronDown, ChevronUp, Shield, BookOpen } from "lucide-react";
 
 const DARK_GREEN = "#0f2d1f";
 const MID_GREEN  = "#1a4731";
@@ -17,6 +17,28 @@ const AMBER_BG   = "#fffbeb";
 
 const dayOfYear = () =>
   Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
+
+// ── Daily Quranic Verses ─────────────────────────────────────────────────
+const VERSES = [
+  { ar: "إِنَّ مَعَ الْعُسْرِ يُسْرًا", en: "Indeed, with hardship comes ease.", ref: "Quran 94:6" },
+  { ar: "وَمَن يَتَوَكَّلْ عَلَى اللَّهِ فَهُوَ حَسْبُهُ", en: "Whoever relies upon Allah, He is sufficient for him.", ref: "Quran 65:3" },
+  { ar: "رَبِّ زِدْنِي عِلْمًا", en: "My Lord, increase me in knowledge.", ref: "Quran 20:114" },
+  { ar: "وَاصْبِرْ فَإِنَّ اللَّهَ لَا يُضِيعُ أَجْرَ الْمُحْسِنِينَ", en: "Be patient, for Allah does not waste the reward of the righteous.", ref: "Quran 11:115" },
+  { ar: "فَاذْكُرُونِي أَذْكُرْكُمْ", en: "Remember Me; I will remember you.", ref: "Quran 2:152" },
+  { ar: "وَلَسَوْفَ يُعْطِيكَ رَبُّكَ فَتَرْضَىٰ", en: "And your Lord is going to give you, and you will be satisfied.", ref: "Quran 93:5" },
+  { ar: "إِنَّ اللَّهَ مَعَ الصَّابِرِينَ", en: "Indeed, Allah is with the patient.", ref: "Quran 2:153" },
+  { ar: "وَعَسَىٰ أَن تَكْرَهُوا شَيْئًا وَهُوَ خَيْرٌ لَّكُمْ", en: "Perhaps you dislike something which is good for you.", ref: "Quran 2:216" },
+  { ar: "إِنَّ اللَّهَ لَا يُغَيِّرُ مَا بِقَوْمٍ حَتَّىٰ يُغَيِّرُوا مَا بِأَنفُسِهِمْ", en: "Allah does not change a people until they change what is within themselves.", ref: "Quran 13:11" },
+  { ar: "وَمَا تَوْفِيقِي إِلَّا بِاللَّهِ", en: "My success is only through Allah.", ref: "Quran 11:88" },
+  { ar: "قُلْ هُوَ اللَّهُ أَحَدٌ", en: "Say: He is Allah, the One.", ref: "Quran 112:1" },
+  { ar: "وَنُنَزِّلُ مِنَ الْقُرْآنِ مَا هُوَ شِفَاءٌ وَرَحْمَةٌ لِّلْمُؤْمِنِينَ", en: "We send down in the Quran that which is a healing and mercy for the believers.", ref: "Quran 17:82" },
+  { ar: "أَلَا بِذِكْرِ اللَّهِ تَطْمَئِنُّ الْقُلُوبُ", en: "Verily, in the remembrance of Allah do hearts find rest.", ref: "Quran 13:28" },
+  { ar: "وَقُل رَّبِّ ارْحَمْهُمَا كَمَا رَبَّيَانِي صَغِيرًا", en: "My Lord, have mercy upon them as they brought me up when I was small.", ref: "Quran 17:24" },
+  { ar: "إِنَّ أَكْرَمَكُمْ عِندَ اللَّهِ أَتْقَاكُمْ", en: "The most noble of you in the sight of Allah is the most righteous.", ref: "Quran 49:13" },
+  { ar: "وَلَا تَيْأَسُوا مِن رَّوْحِ اللَّهِ", en: "Do not despair of the mercy of Allah.", ref: "Quran 12:87" },
+  { ar: "فَإِذَا فَرَغْتَ فَانصَبْ", en: "So when you have finished, then stand up for worship.", ref: "Quran 94:7" },
+  { ar: "وَاسْتَعِينُوا بِالصَّبْرِ وَالصَّلَاةِ", en: "Seek help through patience and prayer.", ref: "Quran 2:45" },
+];
 
 const getHijriNumeric = (date: Date): { day: number; month: number } => {
   try {
@@ -367,7 +389,7 @@ interface NewsItem {
   thumbnail: string;
   pubDate: string;
 }
-type TabId = "hadith" | "seerah" | "event" | "news" | "tawheed";
+type TabId = "quran" | "hadith" | "seerah" | "event" | "news" | "tawheed";
 
 // ─── TAWHEED LESSON DATA ────────────────────────────────────────────────────
 interface TawheedLesson {
@@ -612,7 +634,7 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
     return { event: ISLAMIC_EVENTS[doy % ISLAMIC_EVENTS.length], daysAway: -1 };
   })();
 
-  const [activeTab,  setActiveTab]  = useState<TabId>("hadith");
+  const [activeTab,  setActiveTab]  = useState<TabId>("quran");
   const [liveHadith, setLiveHadith] = useState<LiveHadith | null>(null);
   const [hadithLoad, setHadithLoad] = useState(true);
   const [news,       setNews]       = useState<NewsItem[]>([]);
@@ -704,13 +726,15 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
   };
 
   const hadith = liveHadith ?? fallbackHadith;
+  const dailyVerse = VERSES[doy % VERSES.length];
 
   const TABS: { id: TabId; en: string; ar: string; Icon: any; color: string }[] = [
-    { id: "hadith", en: "Hadith",  ar: "حديث",   Icon: BookMarked,   color: DARK_GREEN },
-    { id: "seerah", en: "Seerah",  ar: "سيرة",   Icon: ScrollText,   color: AMBER },
-    { id: "event",  en: "Events",  ar: "مناسبة", Icon: CalendarDays, color: MID_GREEN },
-    { id: "news",   en: "News",    ar: "أخبار",  Icon: Newspaper,    color: "#1e3a5f" },
+    { id: "quran",   en: "Quran",   ar: "قرآن",   Icon: BookOpen,     color: "#b7791f" },
+    { id: "hadith",  en: "Hadith",  ar: "حديث",   Icon: BookMarked,   color: DARK_GREEN },
     { id: "tawheed", en: "Tawheed", ar: "توحيد",  Icon: Shield,       color: "#6b21a8" },
+    { id: "seerah",  en: "Seerah",  ar: "سيرة",   Icon: ScrollText,   color: AMBER },
+    { id: "event",   en: "Events",  ar: "مناسبة", Icon: CalendarDays, color: MID_GREEN },
+    { id: "news",    en: "News",    ar: "أخبار",  Icon: Newspaper,    color: "#1e3a5f" },
   ];
 
   const outerCard: React.CSSProperties = {
@@ -723,15 +747,6 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
 
   return (
     <div>
-      {/* Section label */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <Star style={{ width: 14, height: 14, color: GOLD, fill: GOLD }} />
-        <span style={{ fontSize: 15, fontWeight: 900, color: TEXT_DARK, fontFamily: "'Playfair Display', serif" }}>
-          {t("Islamic Daily", "يوميتك الإسلامية")}
-        </span>
-        <Star style={{ width: 14, height: 14, color: GOLD, fill: GOLD }} />
-      </div>
-
       <div style={outerCard}>
 
         {/* Tab strip */}
@@ -754,6 +769,36 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
             );
           })}
         </div>
+
+        {/* ══ QURAN TAB ═══════════════════════════════════════════════════ */}
+        {activeTab === "quran" && (
+          <div style={{ background: `linear-gradient(160deg, ${DARK_GREEN} 0%, ${MID_GREEN} 100%)`, padding: "22px 20px 26px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 18 }}>
+              <Star style={{ width: 14, height: 14, color: GOLD, fill: GOLD }} />
+              <span style={{ fontSize: 12, fontWeight: 800, color: GOLD, letterSpacing: "0.06em", fontFamily: "'Playfair Display', serif" }}>
+                {t("Daily Quranic Reflection", "تأمل قرآني يومي")}
+              </span>
+              <Star style={{ width: 14, height: 14, color: GOLD, fill: GOLD }} />
+            </div>
+
+            <div style={{
+              background: "rgba(255,255,255,0.05)", border: `1px solid ${GOLD}33`, borderRadius: 18,
+              padding: "20px 18px", textAlign: "center", backdropFilter: "blur(6px)",
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.08)",
+            }}>
+              <p style={{ fontFamily: "'Amiri Quran',serif", fontSize: 26, lineHeight: 2.2, color: "#fff", margin: "0 0 14px", direction: "rtl" }}>
+                {dailyVerse.ar}
+              </p>
+
+              <div style={{ width: 50, height: 1.5, background: GOLD, margin: "0 auto 14px", borderRadius: 2 }} />
+
+              <p style={{ fontSize: 13, fontStyle: "italic", color: "rgba(255,255,255,0.82)", margin: "0 0 8px", lineHeight: 1.5 }}>
+                "{dailyVerse.en}"
+              </p>
+              <p style={{ fontSize: 12, fontWeight: 800, color: GOLD, margin: 0, letterSpacing: "0.05em" }}>{dailyVerse.ref}</p>
+            </div>
+          </div>
+        )}
 
         {/* ══ HADITH TAB ══════════════════════════════════════════════════ */}
         {activeTab === "hadith" && (
