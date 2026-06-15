@@ -197,6 +197,13 @@ const StudentDashboard = () => {
   const hijri = toHijri(new Date());
   const today = new Date();
 
+  // Is any of today's scheduled classes happening right now?
+  const hasLiveClassNow = todayClasses.some((slot: any) => {
+    const startMins = minsUntilTime(slot.start_time);
+    const endMins   = minsUntilTime(slot.end_time);
+    return startMins <= 0 && endMins > 0;
+  });
+
   useEffect(() => {
     if (!effectiveUserId) return;
     const fetchData = async () => {
@@ -501,17 +508,30 @@ const StudentDashboard = () => {
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16, rowGap:18 }}>
             {([
-              { to:"/student/hifdh-daily",  icon:Mic,           label:t("Daily Hifdh","الحفظ اليومي"),  grad:`linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})`,  iconColor:"#fff", show: true },
-              { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), grad:"linear-gradient(135deg,#4299e1,#2b6cb0)",               iconColor:"#fff", show: !isPrivateStudent || allowGeneralAccess },
-              { to:"/student/exams",        icon:ClipboardList, label:t("My Exams","امتحاناتي"),        grad:"linear-gradient(135deg,#48bb78,#276749)",               iconColor:"#fff", show: true },
-              { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),       grad:`linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`,       iconColor:DARK_GREEN, show: true },
-              { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),          grad:"linear-gradient(135deg,#9f7aea,#6b46c1)",               iconColor:"#fff", show: true },
-              { to:"/student/courses",      icon:BookOpen,      label:t("Courses","الدروس"),            grad:"linear-gradient(135deg,#f56565,#c0392b)",               iconColor:"#fff", show: true },
+              { to:"/student/hifdh-daily",  icon:Mic,           label:t("Daily Hifdh","الحفظ اليومي"),  grad:`linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})`,  iconColor:"#fff", show: true, live:false },
+              { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), grad:"linear-gradient(135deg,#4299e1,#2b6cb0)",               iconColor:"#fff", show: !isPrivateStudent || allowGeneralAccess, live: hasLiveClassNow },
+              { to:"/student/exams",        icon:ClipboardList, label:t("My Exams","امتحاناتي"),        grad:"linear-gradient(135deg,#48bb78,#276749)",               iconColor:"#fff", show: true, live:false },
+              { to:"/student/transcripts",  icon:GraduationCap, label:t("Transcripts","السجلات"),       grad:`linear-gradient(135deg, ${GOLD_LIGHT}, ${GOLD})`,       iconColor:DARK_GREEN, show: true, live:false },
+              { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),          grad:"linear-gradient(135deg,#9f7aea,#6b46c1)",               iconColor:"#fff", show: true, live:false },
+              { to:"/student/courses",      icon:BookOpen,      label:t("Courses","الدروس"),            grad:"linear-gradient(135deg,#f56565,#c0392b)",               iconColor:"#fff", show: true, live:false },
             ] as const).filter(a => a.show).map((action, i) => (
               <Link to={action.to} key={i} className="qa-tile" style={{ textDecoration:"none" }}>
                 <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:7 }}>
-                  <div style={{ width:"100%", aspectRatio:"1", maxWidth:58, borderRadius:18, background:action.grad, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 6px 16px rgba(15,45,31,0.18)", margin:"0 auto" }}>
-                    <action.icon style={{ width:24, height:24, color:action.iconColor }} />
+                  <div style={{ position:"relative", width:"100%", maxWidth:58, margin:"0 auto" }}>
+                    <div style={{ width:"100%", aspectRatio:"1", borderRadius:18, background:action.grad, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 6px 16px rgba(15,45,31,0.18)" }}>
+                      <action.icon style={{ width:24, height:24, color:action.iconColor }} />
+                    </div>
+                    {action.live && (
+                      <span style={{
+                        position:"absolute", top:-6, right:-6, display:"flex", alignItems:"center", gap:3,
+                        background:"#ef4444", color:"#fff", fontSize:8, fontWeight:800, letterSpacing:"0.04em",
+                        borderRadius:20, padding:"2px 6px", boxShadow:"0 2px 6px rgba(239,68,68,0.5)",
+                        border:"1.5px solid #fff", animation:"livePulse 1.6s infinite",
+                      }}>
+                        <span style={{ width:5, height:5, borderRadius:"50%", background:"#fff" }} />
+                        {t("LIVE","مباشر")}
+                      </span>
+                    )}
                   </div>
                   <span style={{ fontSize:11, fontWeight:700, color:TEXT_DARK, textAlign:"center", lineHeight:1.25 }}>{action.label}</span>
                 </div>
