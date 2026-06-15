@@ -4,22 +4,20 @@ import NotificationPermissionBanner from "@/components/NotificationPermissionBan
 import { useImpersonation } from "@/hooks/useImpersonation";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import QuranPhrasesWidget from "@/components/dashboard/QuranPhrasesWidget";
 import IslamicDailyFeed from "@/components/dashboard/IslamicDailyFeed";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle, XCircle,
+  Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle,
   GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft,
-  ChevronRight, AlertTriangle, Info, Mic, Lock, BookMarked, Flame
+  ChevronRight, AlertTriangle, Mic, Lock, BookMarked, Flame
 } from "lucide-react";
 
 const toHijri = (date: Date) => {
@@ -501,7 +499,7 @@ const StudentDashboard = () => {
               {t("Quick Actions", "الإجراءات السريعة")}
             </span>
           </div>
-          <div className="qa-scroll" style={{ display:"flex", gap:16, overflowX:"auto", paddingBottom:4, marginRight:-16, paddingRight:16 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:16, rowGap:18 }}>
             {([
               { to:"/student/hifdh-daily",  icon:Mic,           label:t("Daily Hifdh","الحفظ اليومي"),  grad:`linear-gradient(135deg, ${MID_GREEN}, ${DARK_GREEN})`,  iconColor:"#fff", show: true },
               { to:"/student/live-classes", icon:Video,         label:t("Live Classes","الفصول الحية"), grad:"linear-gradient(135deg,#4299e1,#2b6cb0)",               iconColor:"#fff", show: !isPrivateStudent || allowGeneralAccess },
@@ -510,9 +508,9 @@ const StudentDashboard = () => {
               { to:"/student/majlis",       icon:MessageCircle, label:t("Al-Majlis","المجلس"),          grad:"linear-gradient(135deg,#9f7aea,#6b46c1)",               iconColor:"#fff", show: true },
               { to:"/student/courses",      icon:BookOpen,      label:t("Courses","الدروس"),            grad:"linear-gradient(135deg,#f56565,#c0392b)",               iconColor:"#fff", show: true },
             ] as const).filter(a => a.show).map((action, i) => (
-              <Link to={action.to} key={i} className="qa-tile" style={{ textDecoration:"none", flexShrink:0, width:72 }}>
+              <Link to={action.to} key={i} className="qa-tile" style={{ textDecoration:"none" }}>
                 <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:7 }}>
-                  <div style={{ width:58, height:58, borderRadius:18, background:action.grad, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 6px 16px rgba(15,45,31,0.18)" }}>
+                  <div style={{ width:"100%", aspectRatio:"1", maxWidth:58, borderRadius:18, background:action.grad, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:"0 6px 16px rgba(15,45,31,0.18)", margin:"0 auto" }}>
                     <action.icon style={{ width:24, height:24, color:action.iconColor }} />
                   </div>
                   <span style={{ fontSize:11, fontWeight:700, color:TEXT_DARK, textAlign:"center", lineHeight:1.25 }}>{action.label}</span>
@@ -729,95 +727,6 @@ const StudentDashboard = () => {
           );
         })()}
 
-        {/* ── Agenda Tabs ── */}
-        <div style={card}>
-          <div style={{ padding:"16px 18px 0", paddingBottom:0 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
-              <ClipboardList style={{ width:16, height:16, color:MID_GREEN }} />
-              <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>
-                {t("Agenda","الأجندة")}
-              </span>
-            </div>
-            <Tabs defaultValue="classes" className="w-full">
-              <TabsList className="w-full h-9 mb-0" style={{ background:"#f8fafb", borderRadius:12, padding:3 }}>
-                <TabsTrigger value="classes" className="flex-1 text-xs rounded-lg">{t("Classes","الفصول")}</TabsTrigger>
-                <TabsTrigger value="exams"   className="flex-1 text-xs rounded-lg">{t("Exams","الامتحانات")}</TabsTrigger>
-                <TabsTrigger value="results" className="flex-1 text-xs rounded-lg">{t("Results","النتائج")}</TabsTrigger>
-              </TabsList>
-              <div style={{ padding:"14px 4px" }}>
-                <TabsContent value="classes" className="mt-0">
-                  {(() => {
-                    const displaySubjects = isPrivateStudent && !allowGeneralAccess
-                      ? liveSubjects.filter((s: any) => privateSubjectIds.has(s.id))
-                      : liveSubjects;
-                    return displaySubjects.length===0 ? (
-                      <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No active classes","لا توجد فصول نشطة")}</p>
-                    ) : displaySubjects.map((s:any)=>(
-                    <Link to={`/student/subjects/${s.id}`} key={s.id} style={{ textDecoration:"none" }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
-                        <div style={{ width:36, height:36, borderRadius:10, background:"#f0fff4", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-                          <BookOpen style={{ width:16, height:16, color:MID_GREEN }} />
-                        </div>
-                        <div style={{ flex:1 }}>
-                          <p style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, margin:0 }}>{s.title}</p>
-                          {s.title_ar && <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }} dir="rtl">{s.title_ar}</p>}
-                        </div>
-                        <ArrowRight style={{ width:14, height:14, color:TEXT_LIGHT }} />
-                      </div>
-                    </Link>
-                  ));
-                  })()}
-                </TabsContent>
-                <TabsContent value="exams" className="mt-0">
-                  {upcomingExams.length===0 ? (
-                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No upcoming exams","لا توجد امتحانات قادمة")}</p>
-                  ) : upcomingExams.map(exam=>(
-                    <div key={exam.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#fff5f5", border:"1px solid #fca5a522" }}>
-                      <div>
-                        <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }} dir="auto">{language==="ar"?exam.title_ar||exam.title:exam.title}</div>
-                        <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, color:TEXT_LIGHT, marginTop:2 }}>
-                          <Calendar style={{ width:10, height:10 }} />
-                          {exam.start_date ? new Date(exam.start_date).toLocaleDateString() : t("TBD","غير محدد")}
-                        </div>
-                      </div>
-                      <span style={{ fontSize:10, fontWeight:700, background:"#fff5f5", color:"#c0392b", border:"1px solid #fca5a5", borderRadius:10, padding:"3px 9px" }}>
-                        {exam.time_limit_minutes} {t("min","د")}
-                      </span>
-                    </div>
-                  ))}
-                </TabsContent>
-                <TabsContent value="results" className="mt-0">
-                  {recentResults.length===0 ? (
-                    <p style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>{t("No results yet","لا توجد نتائج بعد")}</p>                  ) : recentResults.map(attempt=>(
-                    <div key={attempt.id} style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 12px", borderRadius:10, marginBottom:6, background:"#f8fafb", border:`1px solid ${BORDER}` }}>
-                      <div>
-                        <div style={{ fontSize:13, fontWeight:700, color:TEXT_DARK }} dir="auto">{language==="ar"?attempt.exams?.title_ar||attempt.exams?.title:attempt.exams?.title}</div>
-                        <div style={{ fontSize:11, color:TEXT_LIGHT, marginTop:2 }}>{attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : ""}</div>
-                      </div>
-                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                        {attempt.status==="graded" ? (
-                          <>
-                            {attempt.passed
-                              ? <CheckCircle style={{ width:16, height:16, color:"#276749" }} />
-                              : <XCircle style={{ width:16, height:16, color:"#c0392b" }} />}
-                            <span style={{ fontSize:14, fontWeight:900, color:attempt.passed?"#276749":"#c0392b" }}>
-                              {Math.round(attempt.percentage||0)}%
-                            </span>
-                          </>
-                        ) : (
-                          <span style={{ fontSize:10, fontWeight:700, background:"#fffbeb", color:"#b7791f", border:"1px solid #f6d860", borderRadius:10, padding:"3px 9px" }}>
-                            {t("Awaiting","بانتظار")}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </TabsContent>
-              </div>
-            </Tabs>
-          </div>
-        </div>
-
         {/* ── Academic Snapshot ── */}
         <div style={card}>
           <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", gap:8 }}>
@@ -859,53 +768,6 @@ const StudentDashboard = () => {
               </div>
             </div>
           </div>        </div>
-
-        {/* ── Notifications ── */}
-        <div style={card}>
-          <div style={{ padding:"16px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-              <Bell style={{ width:16, height:16, color:GOLD }} />
-              <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Notifications","الإشعارات")}</span>
-              {unreadCount > 0 && (
-                <span style={{ fontSize:10, fontWeight:700, background:"#c0392b", color:"#fff", borderRadius:20, padding:"2px 8px" }}>{unreadCount}</span>
-              )}
-            </div>
-            {notifications.length > 3 && (
-              <button onClick={() => setShowAllNotifs(v=>!v)}
-                style={{ fontSize:11, fontWeight:600, color:GOLD, background:"none", border:"none", cursor:"pointer" }}>
-                {showAllNotifs ? t("Show less","عرض أقل") : t("View all","عرض الكل")}              </button>
-            )}
-          </div>
-          <div style={{ padding:"12px 16px" }}>
-            {notifications.length === 0 ? (
-              <div style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:TEXT_LIGHT }}>
-                {t("No notifications yet","لا توجد إشعارات بعد")}
-              </div>
-            ) : (showAllNotifs ? notifications : notifications.slice(0,3)).map(n => (
-              <div key={n.id} onClick={() => !n.is_read && markAsRead(n.id)}
-                style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"10px 10px", borderRadius:10, marginBottom:6, cursor:"pointer",
-                  background: n.is_read ? "#f8fafb" : "#fffbeb",
-                  border:`1px solid ${n.is_read ? BORDER : GOLD+"44"}`,
-                }}>
-                <div style={{ width:30, height:30, borderRadius:"50%", background:n.is_read?"#f0f4f0":"#fffbeb", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, border:`1px solid ${n.is_read?BORDER:GOLD+"44"}` }}>
-                  {n.type==="warning" ? <AlertTriangle style={{ width:12, height:12, color:GOLD }} /> :
-                   n.type==="exam"    ? <ClipboardList style={{ width:12, height:12, color:"#c0392b" }} /> :
-                   <Info style={{ width:12, height:12, color:MID_GREEN }} />}
-                </div>
-                <div style={{ flex:1 }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                    <p style={{ fontSize:13, fontWeight:n.is_read?400:700, color:TEXT_DARK, margin:0 }}>{n.title}</p>
-                    {!n.is_read && <div style={{ width:7, height:7, borderRadius:"50%", background:GOLD, flexShrink:0 }} />}
-                  </div>
-                  <p style={{ fontSize:11, color:TEXT_LIGHT, margin:"2px 0 0" }}>{n.message}</p>
-                  <p style={{ fontSize:10, color:TEXT_LIGHT, margin:"3px 0 0" }}>
-                    {new Date(n.created_at).toLocaleDateString(language==="ar"?"ar-SA":"en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
 
         {/* ── Academic Calendar ── */}
         <div style={card}>
@@ -969,10 +831,6 @@ const StudentDashboard = () => {
             </div>
           </div>
         </div>
-
-        {/* ── Quran Phrases Widget ── */}
-        <QuranPhrasesWidget language={language} />
-
       </div>
     </div>
   );
