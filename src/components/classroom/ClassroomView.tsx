@@ -4063,4 +4063,3 @@ const MatViewerInlineBridge=({material,isPrivileged,onClose}:any)=>{
 };
 
 export default ClassroomView;
-
