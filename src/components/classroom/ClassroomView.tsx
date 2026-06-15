@@ -1,22 +1,26 @@
 /*
-  ClassroomView_Part1.tsx — Tahleem Academy Live Classroom
-  Constants · CSS · Hooks · Small components · Whiteboard
-  (Part 1 of 3 — imported by ClassroomView_Part2 and ClassroomView_Part3)
+  ClassroomView.tsx — Tahleem Academy Live Classroom
+  Google Meet-style UI · iOS-safe · Persistent call context
 */
 
 import {
-  useRoomContext,
+  LiveKitRoom, useRoomContext,
   useParticipants, useLocalParticipant, useTracks,
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
-import { Track, RoomEvent, ConnectionState } from "livekit-client";
+import { Track, RoomEvent, ConnectionState, RemoteTrackPublication, RemoteParticipant } from "livekit-client";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { getSignedUrl } from "../../integrations/supabase/storageClient";
+import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { toast } from "@/hooks/use-toast";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import {
   Mic, MicOff, Video, VideoOff, Phone, Hand,
   PenTool, MessageCircle, MoreVertical, BookOpen,
@@ -25,6 +29,14 @@ import {
   LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
   SwitchCamera, Settings, Check, Wifi,
 } from "lucide-react";
+import ClassLobby        from "./ClassLobby";
+import ClassChatPanel    from "./ClassChatPanel";
+import ClassParticipants from "./ClassParticipants";
+import ClassPolls        from "./ClassPolls";
+import ClassEndScreen    from "./ClassEndScreen";
+import LiveQuizOverlay   from "./LiveQuizOverlay";
+import PDFViewer         from "./PDFViewer";
+import { useIsMobile }   from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
 interface ClassroomViewProps { subject: any; onLeave: () => void; onMinimize?: () => void; autoJoin?: boolean; }
@@ -1004,47 +1016,6 @@ const Whiteboard = ({room,onClose,isTeacher,initialStrokes,subjectId,canStudentW
   );
 };
 const WhiteboardBridge=({onClose,isTeacher,initialStrokes,subjectId,canStudentWrite}:any)=>{const room=useRoomContext();return<Whiteboard room={room} onClose={onClose} isTeacher={isTeacher} initialStrokes={initialStrokes} subjectId={subjectId} canStudentWrite={canStudentWrite}/>;};
-
-
-// ── Exports for Part2 & Part3 ──────────────────────────────────────────────
-export type { ClassroomViewProps, LayoutMode, FloatingEmoji, RaisedHand };
-export {
-  TEAL, TEAL2, DARK, GLASS, GLASSB, GREEN, RED, BAR_H, CSS,
-  MINIMIZE_GRACE_MS,
-  useSilentAudioKeepAlive,
-  ReconnectMonitor,
-  WbSyncBridge,
-  AdminMuteListener,
-  VolumeBooster,
-  MediaAutoPublish,
-  RoomDataListener,
-  FloatingEmojiLayer,
-  RaisedHandsOverlay,
-  GroupRecitePermDialog,
-  LAYOUT_OPTIONS,
-  LayoutSwitcher,
-  MicKeepAlive,
-  MicKeepAliveFromContext,
-  GroupReciteAutoMic,
-  Whiteboard,
-  WhiteboardBridge,
-};
-/*
-  ClassroomView_Part2.tsx — Tahleem Academy Live Classroom
-  MaterialPicker · InClassMaterialViewer · InClassQuranReader · SubjectMaterialsPanel · MaterialViewer
-  (Part 2 of 3 — imports from Part1, imported by Part3)
-*/
-
-import { useState, useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { getSignedUrl } from "../../integrations/supabase/storageClient";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { useAuth } from "@/contexts/AuthContext";
-import { useLiveClass } from "@/contexts/LiveClassContext";
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Circle, Eye, Loader2, Video, X } from "lucide-react";
-import PDFViewer from "./PDFViewer";
-import { TEAL } from "./ClassroomView_Part1";
 
 /* ══ MATERIAL VIEWER ══ */
 /* ══ MATERIAL PICKER ══ */
@@ -2396,71 +2367,6 @@ const SubjectMaterialsPanel=({subjectId,subject,onClose,canStudentRec,isPrivileg
 
 /* ══ MATERIAL VIEWER (teacher-shared) ══
    Renders as position:absolute inside content area so footer stays visible.     */
-
-// ── Exports for Part3 ──────────────────────────────────────────────────────
-export { MaterialPicker, InClassMaterialViewer, SubjectMaterialsPanel, MaterialViewer };
-/*
-  ClassroomView_Part3.tsx — Tahleem Academy Live Classroom
-  RecController · RoomSettingsModal · ParticipantTile · VideoGrid · BottomBar · ClassroomView (main)
-  (Part 3 of 3 — imports from Part1 & Part2, default export: ClassroomView)
-*/
-
-import {
-  LiveKitRoom, useRoomContext,
-  useParticipants, useLocalParticipant, useTracks,
-} from "@livekit/components-react";
-// @ts-ignore
-import "@livekit/components-styles";
-import { Track, RoomEvent, ConnectionState } from "livekit-client";
-import { createPortal } from "react-dom";
-import { supabase } from "@/integrations/supabase/client";
-import { storageSupabase } from "../../integrations/supabase/storageClient";
-import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
-import { useAuth } from "@/contexts/AuthContext";
-import { useLanguage } from "@/contexts/LanguageContext";
-import { useLiveClass } from "@/contexts/LiveClassContext";
-import { toast } from "@/hooks/use-toast";
-import {
-  Mic, MicOff, Video, VideoOff, Phone, Hand,
-  PenTool, MessageCircle, MoreVertical, BookOpen,
-  Circle, Loader2, X, Smile, Play, Pause,
-  Volume2, ChevronDown, ChevronLeft, ChevronRight, Users, Eye,
-  LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
-  SwitchCamera, Settings, Check, Wifi,
-} from "lucide-react";
-import ClassLobby        from "./ClassLobby";
-import ClassChatPanel    from "./ClassChatPanel";
-import ClassParticipants from "./ClassParticipants";
-import ClassPolls        from "./ClassPolls";
-import ClassEndScreen    from "./ClassEndScreen";
-import LiveQuizOverlay   from "./LiveQuizOverlay";
-import { useIsMobile }   from "@/hooks/use-mobile";
-import { useState, useEffect, useRef, useCallback } from "react";
-
-import type { ClassroomViewProps, LayoutMode, FloatingEmoji, RaisedHand } from "./ClassroomView_Part1";
-import {
-  TEAL, TEAL2, DARK, GLASS, GLASSB, GREEN, RED, BAR_H, CSS,
-  MINIMIZE_GRACE_MS,
-  useSilentAudioKeepAlive,
-  ReconnectMonitor,
-  WbSyncBridge,
-  AdminMuteListener,
-  VolumeBooster,
-  MediaAutoPublish,
-  RoomDataListener,
-  FloatingEmojiLayer,
-  RaisedHandsOverlay,
-  GroupRecitePermDialog,
-  LAYOUT_OPTIONS,
-  LayoutSwitcher,
-  MicKeepAlive,
-  MicKeepAliveFromContext,
-  GroupReciteAutoMic,
-  Whiteboard,
-  WhiteboardBridge,
-} from "./ClassroomView_Part1";
-import { MaterialPicker, InClassMaterialViewer, SubjectMaterialsPanel, MaterialViewer } from "./ClassroomView_Part2";
-
 const MaterialViewer=({material,isTeacher,onClose}:any)=>{
   return <InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={onClose}/>;
 };
@@ -4063,3 +3969,4 @@ const MatViewerInlineBridge=({material,isPrivileged,onClose}:any)=>{
 };
 
 export default ClassroomView;
+
