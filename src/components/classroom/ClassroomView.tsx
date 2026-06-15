@@ -2796,11 +2796,14 @@ const RoomSettingsModal = ({ onClose, room }: { onClose: () => void; room: any }
   );
 };
 
-/* ══ PARTICIPANT TILE — Google Meet premium style ══ */
-const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small"})=>{
+/* ══ PARTICIPANT TILE — WhatsApp call style ══ */
+const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small";pip?:boolean})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
-  const[hasVideo,setHasVideo]=useState(false);const[isSpeaking,setIsSpeaking]=useState(false);const[micEnabled,setMicEnabled]=useState(true);
+  const[hasVideo,setHasVideo]=useState(false);
+  const[isSpeaking,setIsSpeaking]=useState(false);
+  const[micEnabled,setMicEnabled]=useState(true);
   const room=useRoomContext();
+
   const attachVideo=useCallback(()=>{
     let pub=participant.getTrackPublication?.(Track.Source.Camera);
     if(!pub){participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Camera||p.kind==="video")pub=pub||p;});}
@@ -2816,6 +2819,7 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
     if(!micPub)participant.trackPublications?.forEach?.((p:any)=>{if(p.source===Track.Source.Microphone)micPub=micPub||p;});
     setMicEnabled(!(micPub?.isMuted??false));
   },[participant,isLocal]);
+
   useEffect(()=>{
     attachVideo();
     const onSpeak=(v:boolean)=>setIsSpeaking(v);
@@ -2836,77 +2840,114 @@ const ParticipantTile=({participant,isLocal,size="normal"}:{participant:any;isLo
   },[participant,attachVideo,room,isLocal]);
 
   const name=participant.name||participant.identity||"User";
-  // avatarSz/avatarFs kept for speaking wave sizing only
-  const avatarSz = size==="large" ? 80 : size==="small" ? 40 : 56;
 
-  // Speaking ring color — Google Meet blue
-  const speakBorder = isSpeaking ? "2px solid #1a73e8" : "2px solid transparent";
+  // WhatsApp-style avatar sizes
+  const avatarW = pip ? "55%" : size==="small" ? "60%" : "52%";
 
   return(
     <div
       className={`gm-tile${isSpeaking?" speaking":""}`}
-      style={{width:"100%",height:"100%",border:speakBorder,transition:"border-color .2s"}}
+      style={{
+        width:"100%",height:"100%",
+        borderRadius: pip ? 16 : 0,
+        border: isSpeaking ? `3px solid #25D366` : pip ? "3px solid transparent" : "none",
+        overflow:"hidden",
+        transition:"border-color .2s",
+        background: "#111",
+      }}
     >
       {/* Live video */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
-        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none",background:"#202124"}}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
       />
 
-      {/* Camera-off avatar — exact silhouette match to GuestClassroom/Image 2 */}
+      {/* Camera-off avatar — WhatsApp dark grey background + large silhouette */}
       {!hasVideo&&(
-        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#111111"}}>
-          {/* Exact silhouette from Image 2 — light grey, large, fills tile */}
-          <svg
-            viewBox="0 0 200 220"
-            style={{
-              width:size==="small"?"65%":"72%",
-              height:size==="small"?"65%":"72%",
-              maxWidth:220,maxHeight:220,
-            }}
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            {/* Head — large circle, same proportions as Image 2 */}
-            <circle cx="100" cy="72" r="52" fill="#6e7681"/>
-            {/* Shoulders/body — wide rounded trapezoid matching Image 2 */}
-            <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#6e7681"/>
-          </svg>
-          {isSpeaking&&(
-            <div className="gm-wave" style={{position:"absolute",bottom:52}}>
+        <div style={{
+          position:"absolute",inset:0,
+          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+          background: pip ? "#1a1a2e" : "#131313",
+          gap: pip ? 4 : 8,
+        }}>
+          {/* Avatar circle — WhatsApp style solid circle */}
+          <div style={{
+            width: pip ? 52 : size==="small" ? 64 : 96,
+            height: pip ? 52 : size==="small" ? 64 : 96,
+            borderRadius:"50%",
+            background:"#2a3942",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            border: isSpeaking ? "3px solid #25D366" : "3px solid #3a4a52",
+            flexShrink:0,
+          }}>
+            <svg viewBox="0 0 200 220" style={{width:avatarW,height:avatarW}} fill="none">
+              <circle cx="100" cy="72" r="52" fill="#8696a0"/>
+              <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#8696a0"/>
+            </svg>
+          </div>
+          {/* Name under avatar — only on large tiles */}
+          {!pip&&(
+            <span style={{
+              fontSize: size==="small" ? 11 : 15,
+              fontWeight:600,color:"rgba(255,255,255,.85)",
+              overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
+              maxWidth:"80%",textAlign:"center",
+              fontFamily:"system-ui,sans-serif",
+            }}>{name}{isLocal?" (You)":""}</span>
+          )}
+          {/* Speaking wave */}
+          {isSpeaking&&!pip&&(
+            <div className="gm-wave" style={{marginTop:2}}>
               {[0,1,2,3].map(i=>(
-                <div key={i} className="gm-wave-bar" style={{height:14,animationDelay:`${i*.1}s`}}/>
+                <div key={i} className="gm-wave-bar" style={{background:"#25D366",animationDelay:`${i*.1}s`}}/>
               ))}
             </div>
           )}
         </div>
       )}
 
-      {/* Speaking border ring over video */}
+      {/* Speaking glow ring over video */}
       {isSpeaking&&hasVideo&&(
-        <div style={{position:"absolute",inset:0,border:"3px solid #1a73e8",borderRadius:"inherit",pointerEvents:"none",transition:"opacity .2s"}}/>
+        <div style={{position:"absolute",inset:0,border:"3px solid #25D366",borderRadius:"inherit",pointerEvents:"none"}}/>
       )}
 
-      {/* Name bar — single pill bottom-left, exactly like Image 2 */}
-      <div style={{
-        position:"absolute",bottom:8,left:8,
-        display:"inline-flex",alignItems:"center",gap:5,
-        background:"rgba(0,0,0,.6)",backdropFilter:"blur(6px)",
-        borderRadius:20,padding:"5px 12px",
-        maxWidth:"calc(100% - 16px)",pointerEvents:"none",
-      }}>
-        <MicOff style={{width:13,height:13,color:"rgba(255,255,255,.75)",flexShrink:0,display:micEnabled?"none":"block"}}/>
-        {micEnabled&&<Mic style={{width:13,height:13,color:"rgba(255,255,255,.75)",flexShrink:0}}/>}
-        <span style={{
-          fontSize:13,fontWeight:400,color:"#fff",
-          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",
-          fontFamily:"'Google Sans',sans-serif",
-        }}>{name}{isLocal?" (You)":""}</span>
-      </div>
+      {/* Name pill — bottom-left, only on non-pip tiles */}
+      {!pip&&(
+        <div style={{
+          position:"absolute",bottom:10,left:10,
+          display:"inline-flex",alignItems:"center",gap:5,
+          background:"rgba(0,0,0,.55)",backdropFilter:"blur(8px)",
+          borderRadius:20,padding:"4px 10px",
+          maxWidth:"calc(100% - 20px)",pointerEvents:"none",
+        }}>
+          {micEnabled
+            ? <Mic style={{width:12,height:12,color:"rgba(255,255,255,.75)",flexShrink:0}}/>
+            : <MicOff style={{width:12,height:12,color:"#ef4444",flexShrink:0}}/>
+          }
+          <span style={{fontSize:12,fontWeight:500,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"system-ui,sans-serif"}}>
+            {name}{isLocal?" (You)":""}
+          </span>
+        </div>
+      )}
+
+      {/* PiP: mic indicator only */}
+      {pip&&(
+        <div style={{position:"absolute",bottom:6,left:6,background:"rgba(0,0,0,.5)",borderRadius:10,padding:"3px 6px",display:"flex",alignItems:"center",gap:3}}>
+          {micEnabled
+            ? <Mic style={{width:10,height:10,color:"rgba(255,255,255,.8)"}}/>
+            : <MicOff style={{width:10,height:10,color:"#ef4444"}}/>
+          }
+        </div>
+      )}
     </div>
   );
 };
 
-/* ══ VIDEO GRID — Google Meet adaptive tiling ══ */
+/* ══ VIDEO GRID — WhatsApp voice/video call style ══
+   1 participant  → full screen, centred avatar
+   2 participants → remote fills entire screen, local in draggable PiP corner
+   3–4            → remote(s) fill screen (top half each), local PiP corner
+   5+             → scrollable grid of remote tiles, local always PiP corner
+   ══════════════════════════════════════════════════════════════════════════ */
 const VideoGrid=({layout="grid",isMobile=false}:{layout?:LayoutMode;isMobile?:boolean})=>{
   const{localParticipant}=useLocalParticipant();
   const allParticipants=useParticipants();
@@ -2914,82 +2955,153 @@ const VideoGrid=({layout="grid",isMobile=false}:{layout?:LayoutMode;isMobile?:bo
   const all=localParticipant?[localParticipant,...remotes]:remotes;
   const n=all.length;
 
-  // Check for active screen share
+  // PiP corner drag state
+  const[pipPos,setPipPos]=useState<{bottom:number;right:number}>({bottom:16,right:12});
+  const dragRef=useRef<{startX:number;startY:number;startR:number;startB:number}|null>(null);
+
+  const onPipPointerDown=(e:React.PointerEvent)=>{
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current={startX:e.clientX,startY:e.clientY,startR:pipPos.right,startB:pipPos.bottom};
+  };
+  const onPipPointerMove=(e:React.PointerEvent)=>{
+    if(!dragRef.current)return;
+    const dx=e.clientX-dragRef.current.startX;
+    const dy=e.clientY-dragRef.current.startY;
+    setPipPos({
+      right:Math.max(8,Math.min(window.innerWidth-100,dragRef.current.startR-dx)),
+      bottom:Math.max(8,Math.min(window.innerHeight-160,dragRef.current.startB-dy)),
+    });
+  };
+  const onPipPointerUp=()=>{dragRef.current=null;};
+
+  // Screen share always takes main slot
   const screensharer=all.find(p=>{
     const pub=p.getTrackPublication?.(Track.Source.ScreenShare)||p.trackPublications?.get(Track.Source.ScreenShare);
     return pub?.track&&!pub.isMuted;
   });
-
-  if(screensharer)return(
-    <div style={{width:"100%",height:"100%",display:"flex",gap:6,padding:6,boxSizing:"border-box"}}>
-      <div style={{flex:1,minWidth:0}}><ParticipantTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity} size="large"/></div>
-      <div style={{width:140,display:"flex",flexDirection:"column",gap:6,overflowY:"auto"}}>
-        {all.map(p=>(<div key={p.identity} style={{height:90,flexShrink:0}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}
-      </div>
-    </div>
-  );
-
-  if(layout==="spotlight")return(
-    <div style={{width:"100%",height:"100%",display:"flex",gap:6,padding:6,boxSizing:"border-box"}}>
-      <div style={{flex:1,minWidth:0}}><ParticipantTile participant={all[0]} isLocal={all[0]?.identity===localParticipant?.identity} size="large"/></div>
-      {n>1&&<div style={{width:130,display:"flex",flexDirection:"column",gap:6,overflowY:"auto"}}>
-        {all.slice(1).map(p=>(<div key={p.identity} style={{height:88,flexShrink:0}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}
-      </div>}
-    </div>
-  );
-
-  if(layout==="horizontal")return(
-    <div style={{width:"100%",height:"100%",display:"flex",gap:6,padding:6,boxSizing:"border-box"}}>
-      {all.map(p=>(<div key={p.identity} style={{flex:1,minWidth:0,height:"100%"}}>
-        <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/>
-      </div>))}
-    </div>
-  );
-
-  if(layout==="vertical")return(
-    <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:6,padding:6,boxSizing:"border-box"}}>
-      {all.map(p=>(<div key={p.identity} style={{flex:1,minHeight:0,width:"100%"}}>
-        <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={n===1?"large":"normal"}/>
-      </div>))}
-    </div>
-  );
-
-  if(layout==="focus"){
-    const local=all.find(p=>p.identity===localParticipant?.identity)||all[0];
-    const others=all.filter(p=>p.identity!==local?.identity);
+  if(screensharer){
+    const others=all.filter(p=>p.identity!==screensharer.identity);
     return(
-      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:6,padding:6,boxSizing:"border-box"}}>
-        <div style={{flex:1,minHeight:0}}>{local&&<ParticipantTile participant={local} isLocal size="large"/>}</div>
-        {others.length>0&&<div style={{height:96,display:"flex",gap:6,flexShrink:0,overflowX:"auto"}}>
-          {others.map(p=>(<div key={p.identity} style={{width:128,flexShrink:0}}><ParticipantTile participant={p} isLocal={false} size="small"/></div>))}
-        </div>}
+      <div style={{width:"100%",height:"100%",position:"relative"}}>
+        <ParticipantTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity} size="large"/>
+        {/* Strip of other participants at bottom */}
+        {others.length>0&&(
+          <div style={{position:"absolute",bottom:0,left:0,right:0,height:100,display:"flex",gap:4,padding:"4px 8px",background:"rgba(0,0,0,.4)",overflowX:"auto"}}>
+            {others.map(p=>(<div key={p.identity} style={{width:72,flexShrink:0,height:92,borderRadius:10,overflow:"hidden"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}
+          </div>
+        )}
       </div>
     );
   }
 
-  if(n===1)return(
-    <div style={{width:"100%",height:"100%",padding:6,boxSizing:"border-box"}}>
-      <ParticipantTile participant={all[0]} isLocal={all[0]?.identity===localParticipant?.identity} size="large"/>
-    </div>
-  );
+  // Solo — just show yourself
+  if(n===1){
+    return(
+      <div style={{width:"100%",height:"100%"}}>
+        <ParticipantTile participant={all[0]} isLocal size="large"/>
+      </div>
+    );
+  }
 
-  // Mobile: always 2 columns so tiles stack in rows (2×3 portrait grid).
-  // Desktop: adaptive — ≤4: 2×2, ≤6: 3×2, ≤9: 3×3, else 4-col.
-  const COLS = isMobile ? 2 : (n<=2?2:n<=4?2:n<=6?3:n<=9?3:4);
-  const ROWS = Math.ceil(n/COLS);
-  const isOdd = n%COLS!==0;
-  return(
-    <div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${COLS},1fr)`,gridTemplateRows:`repeat(${ROWS},1fr)`,gap:6,padding:6,boxSizing:"border-box"}}>
-      {all.map((p,i)=>{
-        const isLastLone=isOdd&&i===n-1;
-        return(
-          <div key={p.identity} style={isLastLone?{gridColumn:"1 / -1",display:"flex",justifyContent:"center"}:{}}>
-            <div style={isLastLone?{width:`${100/COLS}%`,height:"100%"}:{width:"100%",height:"100%"}}>
-              <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size={isMobile||n<=4?"normal":"small"}/>
-            </div>
+  // WhatsApp 2-person: remote fills screen, local is draggable PiP
+  const local=all.find(p=>p.identity===localParticipant?.identity)||all[0];
+  const mainRemotes=all.filter(p=>p.identity!==local?.identity);
+
+  if(mainRemotes.length===1){
+    // ── 1 remote: full screen + PiP ──
+    return(
+      <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a"}}>
+        {/* Remote — fills entire area */}
+        <div style={{position:"absolute",inset:0}}>
+          <ParticipantTile participant={mainRemotes[0]} isLocal={false} size="large"/>
+        </div>
+        {/* Local — draggable PiP, rounded rect, top-right */}
+        {local&&(
+          <div
+            onPointerDown={onPipPointerDown}
+            onPointerMove={onPipPointerMove}
+            onPointerUp={onPipPointerUp}
+            style={{
+              position:"absolute",
+              bottom:pipPos.bottom,
+              right:pipPos.right,
+              width:isMobile?90:110,
+              height:isMobile?134:160,
+              borderRadius:18,
+              overflow:"hidden",
+              boxShadow:"0 4px 20px rgba(0,0,0,.6)",
+              cursor:"grab",
+              touchAction:"none",
+              zIndex:10,
+            }}
+          >
+            <ParticipantTile participant={local} isLocal pip size="small"/>
           </div>
-        );
-      })}
+        )}
+      </div>
+    );
+  }
+
+  if(mainRemotes.length===2){
+    // ── 2 remotes: stacked vertically (WhatsApp 3-person) + local PiP ──
+    return(
+      <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a"}}>
+        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",gap:2}}>
+          {mainRemotes.map(p=>(<div key={p.identity} style={{flex:1,minHeight:0}}><ParticipantTile participant={p} isLocal={false} size="normal"/></div>))}
+        </div>
+        {local&&(
+          <div
+            onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
+            style={{position:"absolute",bottom:pipPos.bottom,right:pipPos.right,width:isMobile?80:100,height:isMobile?120:148,borderRadius:16,overflow:"hidden",boxShadow:"0 4px 20px rgba(0,0,0,.6)",cursor:"grab",touchAction:"none",zIndex:10}}
+          >
+            <ParticipantTile participant={local} isLocal pip size="small"/>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if(mainRemotes.length===3){
+    // ── 3 remotes: 2 top + 1 bottom (WhatsApp 4-person) + local PiP ──
+    return(
+      <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a"}}>
+        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",gap:2}}>
+          <div style={{flex:1,display:"flex",gap:2}}>
+            {mainRemotes.slice(0,2).map(p=>(<div key={p.identity} style={{flex:1,minWidth:0}}><ParticipantTile participant={p} isLocal={false} size="normal"/></div>))}
+          </div>
+          <div style={{flex:1}}><ParticipantTile participant={mainRemotes[2]} isLocal={false} size="normal"/></div>
+        </div>
+        {local&&(
+          <div
+            onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
+            style={{position:"absolute",bottom:pipPos.bottom,right:pipPos.right,width:isMobile?80:100,height:isMobile?120:148,borderRadius:16,overflow:"hidden",boxShadow:"0 4px 20px rgba(0,0,0,.6)",cursor:"grab",touchAction:"none",zIndex:10}}
+          >
+            <ParticipantTile participant={local} isLocal pip size="small"/>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── 4+ remotes: 2-column grid, local always PiP ──
+  const COLS=2;
+  return(
+    <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a",overflowY:"auto"}}>
+      <div style={{display:"grid",gridTemplateColumns:`repeat(${COLS},1fr)`,gap:2,padding:2,minHeight:"100%"}}>
+        {mainRemotes.map(p=>(
+          <div key={p.identity} style={{height:isMobile?200:240}}>
+            <ParticipantTile participant={p} isLocal={false} size="normal"/>
+          </div>
+        ))}
+      </div>
+      {local&&(
+        <div
+          onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
+          style={{position:"fixed",bottom:pipPos.bottom+80,right:pipPos.right,width:isMobile?80:100,height:isMobile?120:148,borderRadius:16,overflow:"hidden",boxShadow:"0 4px 20px rgba(0,0,0,.6)",cursor:"grab",touchAction:"none",zIndex:10}}
+        >
+          <ParticipantTile participant={local} isLocal pip size="small"/>
+        </div>
+      )}
     </div>
   );
 };
