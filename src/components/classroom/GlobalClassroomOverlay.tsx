@@ -61,10 +61,17 @@ export default function GlobalClassroomOverlay() {
   useEffect(() => { micEnabledRef.current = micEnabled; }, [micEnabled]);
 
   // handleReturn: slide the classroom back — no navigate() needed.
+  // Also restores mic if it was on before minimize — covers the case where
+  // the user minimized via the button (not a tab-switch), so visibilitychange
+  // never fired and MicKeepAlive never ran.
   const handleReturn = useCallback(() => {
     userMinimizedRef.current = false;
     setMinimized(false);
-  }, [setMinimized]);
+    // Restore mic after a short delay so LiveKit room is foregrounded first
+    if (micEnabledRef.current) {
+      setTimeout(() => { restoreMicFnRef.current?.(); }, 400);
+    }
+  }, [setMinimized, restoreMicFnRef]);
 
   const handleLeave = useCallback(() => leaveClass(), [leaveClass]);
 
