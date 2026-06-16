@@ -29,8 +29,8 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     );
   }
 
-  // Not logged in → send to login
-  if (!user) return <Navigate to="/login" replace />;
+  // Not logged in → send to login, preserving current URL so we can restore it after sign-in
+  if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
 
   // Admin created this account → force password change before anything else
   if (mustChangePassword && location.pathname !== "/change-password") {
