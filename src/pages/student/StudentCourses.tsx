@@ -167,7 +167,17 @@ const CourseCard = ({
   course: any; lessonCount: number; completedCount: number; progressPct: number; language: string;
 }) => {
   const lv = safeLvl(course.level);
-  const imageUrl = course.image_url || course.thumbnail || null;
+  const rawImageUrl = course.image_url || course.thumbnail || null;
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!rawImageUrl || !rawImageUrl.trim()) { setImageUrl(null); return; }
+    if (rawImageUrl.startsWith("http")) { setImageUrl(rawImageUrl); return; }
+    import("@/integrations/supabase/storageClient").then(({ storageSupabase }) => {
+      const { data } = storageSupabase.storage.from("subject-images").getPublicUrl(rawImageUrl);
+      setImageUrl(data?.publicUrl || null);
+    });
+  }, [rawImageUrl]);
 
   return (
     <div
