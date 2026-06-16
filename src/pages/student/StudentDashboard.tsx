@@ -548,7 +548,7 @@ const StudentDashboard = () => {
             const todayStr = new Date().toISOString().split("T")[0];
             const { data: existing } = await supabase.from("live_sessions").select("id").eq("subject_id", slot.subject_id).in("status", ["live","scheduled","active"]).limit(1).maybeSingle();
             if (!existing) await supabase.from("live_sessions").insert({ subject_id: slot.subject_id, scheduled_at: `${todayStr}T${slot.start_time}`, duration_minutes: slot.duration_minutes||60, status: "scheduled", chat_enabled: true, hand_raise_enabled: true, recording_enabled: true, whiteboard_enabled: false, waiting_room_enabled: false } as any);
-            navigate(`/student/live-classes?subject=${slot.subject_id}`);
+            navigate(`/student/live-classes?subject=${slot.subject_id}&autoJoin=true`);
           };
           return (
           <div style={card}>
