@@ -1262,17 +1262,9 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
               </div>
             </div>
             <div style={{ marginLeft:20, marginRight:20, borderLeft:`2px solid ${AMBER}30`, paddingLeft:14, paddingBottom:20 }}>
-              <p style={{ fontSize:12.5, lineHeight:1.9, color:"#44200a", margin:"0 0 10px", whiteSpace:"pre-line",
-                maxHeight: expanded ? "none" : "calc(1.9em * 6)",
-                overflow: expanded ? "visible" : "hidden" } as React.CSSProperties}>
+              <p style={{ fontSize:12.5, lineHeight:1.9, color:"#44200a", margin:0, whiteSpace:"pre-line" }}>
                 {dailySeerah.content}
               </p>
-              <button onClick={() => setExpanded(v => !v)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, fontWeight:700, color:AMBER, padding:0, display:"flex", alignItems:"center", gap:4 }}>
-                {expanded
-                  ? <><ChevronUp style={{ width:13, height:13 }} />{t("Show less","أقل")}</>
-                  : <><ChevronDown style={{ width:13, height:13 }} />{t("Read full story","اقرأ القصة كاملة")}</>
-                }
-              </button>
             </div>
           </div>
         )}
@@ -1301,17 +1293,9 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
                 </div>
               </div>
               <div style={{ padding:"18px 20px 20px" }}>
-                <p style={{ fontSize:12.5, lineHeight:1.9, color:TEXT_DARK, margin:"0 0 10px", whiteSpace:"pre-line",
-                  maxHeight: expanded?"none":"calc(1.9em * 5)",
-                  overflow: expanded?"visible":"hidden" } as React.CSSProperties}>
+                <p style={{ fontSize:12.5, lineHeight:1.9, color:TEXT_DARK, margin:0, whiteSpace:"pre-line" }}>
                   {event.writeup}
                 </p>
-                <button onClick={() => setExpanded(v => !v)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, fontWeight:700, color:MID_GREEN, padding:0, display:"flex", alignItems:"center", gap:4 }}>
-                  {expanded
-                    ? <><ChevronUp style={{ width:13, height:13 }} />{t("Show less","أقل")}</>
-                    : <><ChevronDown style={{ width:13, height:13 }} />{t("Read full writeup","اقرأ أكثر")}</>
-                  }
-                </button>
               </div>
             </div>
           );
