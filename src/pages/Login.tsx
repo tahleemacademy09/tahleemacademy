@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -22,6 +22,9 @@ const Login = () => {
   const { signIn, user, roles, loading: authLoading } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const location = useLocation();
+  // If ProtectedRoute sent us here from a protected page (e.g. on refresh), restore it after login
+  const fromPath: string | undefined = (location.state as any)?.from?.pathname;
 
   const [email, setEmail]           = useState("");
   const [password, setPassword]     = useState("");
@@ -52,8 +55,8 @@ const Login = () => {
     if (!user || authLoading) return;
     const isAdmin   = roles.includes("admin");
     const isTeacher = roles.includes("teacher");
-    if (isAdmin)        { navigate("/admin",   { replace: true }); return; }
-    if (isTeacher)      { navigate("/teacher", { replace: true }); return; }
+    if (isAdmin)        { navigate(fromPath || "/admin",   { replace: true }); return; }
+    if (isTeacher)      { navigate(fromPath || "/teacher", { replace: true }); return; }
 
     // Student: check their registration step before navigating
     (async () => {
@@ -94,21 +97,13 @@ const Login = () => {
           const destination = pipelineRoute[step];
           if ((destination === "/auth/register-continue") && !!user.email_confirmed_at) {
             // Existing confirmed user stuck in enrollment/payment — just go to dashboard
-            navigate("/student", { replace: true });
+            navigate(fromPath?.startsWith("/student") ? fromPath : "/student", { replace: true });
           } else {
             navigate(destination, { replace: true });
           }
         } else if (!step) {
-          // No tasjeel_progress row yet.
-          // If the user's email is already confirmed, they're an existing/returning
-          // user whose pipeline record is missing. Sending them to register-continue
-          // causes a "Verification Error" because that page expects a fresh email
-          // verification session (URL hash/code), not a regular login session.
-          // Instead: create a completed tasjeel row for them and go to /student.
-          // Only send genuinely new users (email not yet confirmed) to register-continue.
           const emailConfirmed = !!user.email_confirmed_at;
           if (emailConfirmed) {
-            // Backfill a completed tasjeel record so this path isn't hit again
             try {
               const now = new Date().toISOString();
               await supabase.from("tasjeel_progress" as any).insert({
@@ -119,18 +114,16 @@ const Login = () => {
                 completed_at: now,
               });
             } catch { /* non-fatal — row may have been created by a race */ }
-            navigate("/student", { replace: true });
+            navigate(fromPath?.startsWith("/student") ? fromPath : "/student", { replace: true });
           } else {
-            // New user whose email hasn't been verified yet — let register-continue handle it
             navigate("/auth/register-continue", { replace: true });
           }
         } else {
-          // completed or unknown — go to dashboard as normal
-          navigate("/student", { replace: true });
+          // completed or unknown — go to dashboard or restore the page they were on
+          navigate(fromPath?.startsWith("/student") ? fromPath : "/student", { replace: true });
         }
       } catch {
-        // If the query fails just go to /student and let TasjeelGuard handle it
-        navigate("/student", { replace: true });
+        navigate(fromPath?.startsWith("/student") ? fromPath : "/student", { replace: true });
       }
     })();
   }, [user, roles, authLoading, navigate]);
