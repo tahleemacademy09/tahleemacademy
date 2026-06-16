@@ -495,9 +495,6 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* ── Islamic Daily Feed (Quran · Hadith · Tawheed · Seerah · Events · News) ── */}
-        <IslamicDailyFeed language={language} />
-
         {/* ── Quick Actions ── */}
         <div>
           <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
@@ -539,6 +536,9 @@ const StudentDashboard = () => {
             ))}
           </div>
         </div>
+
+        {/* ── Islamic Daily Feed (Quran · Hadith · Tawheed · Seerah · Events · News) ── */}
+        <IslamicDailyFeed language={language} />
 
         {/* ── Today's Classes ── */}
         {todayClasses.length > 0 && (!isPrivateStudent || allowGeneralAccess) && (() => {
