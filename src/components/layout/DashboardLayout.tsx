@@ -67,7 +67,7 @@ const PaymentLockScreen = () => {
         padding: "14px 20px", width: "100%", maxWidth: 320,
         display: "flex", flexDirection: "column", gap: 8,
       }}>
-        {["Courses & Lessons","Timetable","Al-Murājaʿah (Revision)","Al-Ḥifẓ Tracker","Exams & Transcripts","Al-Majlis Chat","Live Classes","Al-Musābaqah"].map(f => (
+        {["Courses & Lessons","Timetable","Assignments","Al-Murājaʿah (Revision)","Al-Ḥifẓ Tracker","Exams & Transcripts","Al-Majlis Chat","Live Classes","Al-Musābaqah"].map(f => (
           <div key={f} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#e53935" }}>
             <span style={{ fontSize: 15 }}>🔒</span>
             <span>{f}</span>
@@ -120,6 +120,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const PAYMENT_GATED_ROUTES = new Set([
     "/student/courses",
     "/student/timetable",
+    "/student/assignments",
     "/student/revision",
     "/student/hifdh",
     "/student/majlis",
@@ -133,6 +134,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const LOCKED_ROUTES = new Set([
     "/student/courses",
     "/student/timetable",
+    "/student/assignments",
     "/student/revision",
     "/student/hifdh",
     "/student/majlis",
@@ -154,9 +156,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
 
   const studentNav: NavItem[] = [
-    { type:"link", to:"/student",           icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
-    { type:"link", to:"/student/courses",   icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
-    { type:"link", to:"/student/timetable", icon:Calendar,        label:t("Jadwal (Timetable)","الجدول الدراسي") },
+    { type:"link", to:"/student",              icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
+    { type:"link", to:"/student/courses",      icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
+    { type:"link", to:"/student/timetable",    icon:Calendar,        label:t("Jadwal (Timetable)","الجدول الدراسي") },
+    { type:"link", to:"/student/assignments",  icon:ClipboardList,   label:t("Assignments","الواجبات") },
     { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murāja'ah","المراجعة"), children:[
       { to:"/student/revision", icon:BookMarked, label:t("At-Tadārus","التدارس") },
       { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
