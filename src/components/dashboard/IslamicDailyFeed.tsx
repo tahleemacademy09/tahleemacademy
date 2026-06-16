@@ -954,15 +954,34 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
     return { event: ISLAMIC_EVENTS[doy % ISLAMIC_EVENTS.length], daysAway: -1 };
   })();
 
+  const TABS_ORDER: TabId[] = ["quran","hadith","aqeedah","seerah","event","news"];
   const [activeTab, setActiveTab] = useState<TabId>("quran");
   const [news,      setNews]      = useState<NewsItem[]>([]);
   const [newsLoad,  setNewsLoad]  = useState(false);
   const [newsError, setNewsError] = useState(false);
-  const [expanded,  setExpanded]  = useState(false);
   const [aqExp,     setAqExp]     = useState(false);
+  const [paused,    setPaused]    = useState(false);
 
-  useEffect(() => { if (upcomingEvent.daysAway === 0 || upcomingEvent.daysAway === 1) setActiveTab("event"); }, []);
-  useEffect(() => { setExpanded(false); setAqExp(false); }, [activeTab]);
+  // Auto-rotate through all tabs every 7 seconds unless user manually picked one
+  useEffect(() => {
+    if (paused) return;
+    const id = setInterval(() => {
+      setActiveTab(cur => {
+        const idx = TABS_ORDER.indexOf(cur);
+        return TABS_ORDER[(idx + 1) % TABS_ORDER.length];
+      });
+    }, 7000);
+    return () => clearInterval(id);
+  }, [paused]);
+
+  // Tapping a tab manually pauses auto-rotate for 60 seconds then resumes
+  const handleTabClick = (id: TabId) => {
+    setActiveTab(id);
+    setPaused(true);
+    setTimeout(() => setPaused(false), 60000);
+  };
+
+  useEffect(() => { setAqExp(false); }, [activeTab]);
 
   // News fetch (unchanged)
   useEffect(() => {
@@ -1009,7 +1028,7 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
           {TABS.map(({ id, en, ar, Icon, color }) => {
             const active = activeTab === id;
             return (
-              <button key={id} onClick={() => setActiveTab(id)} style={{ flex:1, padding:"12px 4px", border:"none", cursor:"pointer", background: active?"#fff":"transparent", borderBottom: active?`2.5px solid ${color}`:"2.5px solid transparent", display:"flex", flexDirection:"column", alignItems:"center", gap:4, transition:"all .15s" }}>
+              <button key={id} onClick={() => handleTabClick(id)} style={{ flex:1, padding:"12px 4px", border:"none", cursor:"pointer", background: active?"#fff":"transparent", borderBottom: active?`2.5px solid ${color}`:"2.5px solid transparent", display:"flex", flexDirection:"column", alignItems:"center", gap:4, transition:"all .15s" }}>
                 <Icon style={{ width:16, height:16, color: active?color:TEXT_LIGHT }} />
                 <span style={{ fontSize:10, fontWeight: active?800:500, color: active?color:TEXT_LIGHT }}>{t(en, ar)}</span>
               </button>
@@ -1057,23 +1076,9 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
                   {t("Tafseer Ibn Katheer", "تفسير ابن كثير")}
                 </span>
               </div>
-              <p style={{ fontSize:12.5, lineHeight:1.88, color:TEXT_DARK, margin:"0 0 10px",
-                maxHeight: expanded ? "none" : "calc(1.88em * 4)",
-                overflow: "hidden" } as React.CSSProperties}>
+              <p style={{ fontSize:12.5, lineHeight:1.88, color:TEXT_DARK, margin:"0 0 18px" }}>
                 {dailyVerse.tafseer}
               </p>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", paddingBottom:16 }}>
-                <button onClick={() => setExpanded(v => !v)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, fontWeight:700, color:MID_GREEN, padding:0, display:"flex", alignItems:"center", gap:4 }}>
-                  {expanded
-                    ? <><ChevronUp style={{ width:13, height:13 }} />{t("Show less","أقل")}</>
-                    : <><ChevronDown style={{ width:13, height:13 }} />{t("Read full tafseer","اقرأ التفسير كاملاً")}</>
-                  }
-                </button>
-                <a href={dailyVerse.quranCom} target="_blank" rel="noopener noreferrer"
-                  style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, fontWeight:700, color:GOLD, textDecoration:"none" }}>
-                  <ExternalLink style={{ width:10, height:10 }} />{t("Quran.com","quran.com")}
-                </a>
-              </div>
             </div>
           </div>
         )}
@@ -1117,28 +1122,9 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
                   {t("Explanation & Evidence","الشرح والأدلة")}
                 </span>
               </div>
-              <p style={{ fontSize:12.5, lineHeight:1.85, color:TEXT_DARK, margin:"0 0 12px",
-                maxHeight: expanded ? "none" : "calc(1.85em * 4)",
-                overflow: "hidden" } as React.CSSProperties}>
+              <p style={{ fontSize:12.5, lineHeight:1.85, color:TEXT_DARK, margin:"0 0 18px" }}>
                 {dailyHadith.summary}
               </p>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                <button onClick={() => setExpanded(v => !v)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, fontWeight:700, color:MID_GREEN, padding:0, display:"flex", alignItems:"center", gap:4 }}>
-                  {expanded
-                    ? <><ChevronUp style={{ width:13, height:13 }} />{t("Show less","أقل")}</>
-                    : <><ChevronDown style={{ width:13, height:13 }} />{t("Read more","اقرأ أكثر")}</>
-                  }
-                </button>
-                {/* Dorar.net link — the key addition */}
-                <a
-                  href={`https://dorar.net/hadith/sharh/${dailyHadith.dorarId}`}
-                  target="_blank" rel="noopener noreferrer"
-                  style={{ display:"flex", alignItems:"center", gap:4, fontSize:10, fontWeight:700, color:DARK_GREEN, textDecoration:"none", background:`${DARK_GREEN}0d`, border:`1px solid ${DARK_GREEN}22`, borderRadius:20, padding:"4px 10px" }}
-                >
-                  <ExternalLink style={{ width:10, height:10 }} />
-                  {t("Full sharh on Dorar.net","الشرح الكامل في الدرر")}
-                </a>
-              </div>
             </div>
           </div>
         )}
