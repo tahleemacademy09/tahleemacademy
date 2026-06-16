@@ -78,6 +78,7 @@ async function insertDBNotification(
   message: string,
   sessionId: string,
   minsAhead: number,
+  subjectId?: string,
 ) {
   try {
     await supabase.from("notifications").insert({
@@ -85,7 +86,9 @@ async function insertDBNotification(
       title,
       message,
       type: "class_reminder",
-      link: `reminder:${sessionId}:${minsAhead}`,
+      // Format: reminder:{sessionId}:{minsAhead}:{subjectId}
+      // subjectId lets the notification panel navigate directly without a DB lookup
+      link: `reminder:${sessionId}:${minsAhead}${subjectId ? `:${subjectId}` : ""}`,
       is_read: false,
     } as any);
   } catch {}
@@ -317,7 +320,7 @@ const TeacherClasses = () => {
 
       const timer = setTimeout(async () => {
         if (hasPermission) fireNotification(title, body, tag);
-        await insertDBNotification(user.id, title, body, s.id, mins);
+        await insertDBNotification(user.id, title, body, s.id, mins, s.subject_id);
         markScheduled(s.id, mins);
       }, Math.max(0, delay));
 
