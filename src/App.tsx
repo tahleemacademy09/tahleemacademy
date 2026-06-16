@@ -68,6 +68,7 @@ const RecordingPlayer     = lazy(() => import("./pages/student/RecordingPlayer")
 const EnrollmentPayment   = lazy(() => import("./pages/student/EnrollmentPayment"));
 const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
 const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
+const StudentAssignments   = lazy(() => import("./pages/student/StudentAssignments"));
 const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
 
 // ── Musabaqah ──────────────────────────────────────────────────────────────
@@ -219,6 +220,7 @@ const App = () => (
                     <Route path="/student/hifdh-daily"         element={<HifdhDailyRevisionPage />} />
                     <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
+                    <Route path="/student/assignments"         element={<StudentAssignments />} />
                     <Route path="/student/profile"             element={<ProfileSettings />} />
                     <Route path="/student/enrollment-payment"  element={<EnrollmentPayment />} />
                     {/* Hub: choose between Quiz Arena or Recitation Competition */}
