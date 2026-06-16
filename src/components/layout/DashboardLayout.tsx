@@ -598,7 +598,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                     const bgColor = n.is_read ? "#fafafa" : isClassType ? "#f0faf4" : isPayment ? "#fff5f5" : isExam ? "#eff6ff" : "#fffbeb";
 
                     // Parse reminder:sessionId:mins link format
-                    const sessionIdFromLink = n.link?.startsWith("reminder:") ? n.link.split(":")[1] : null;
+                    // reminder:{sessionId}:{minsAhead}:{subjectId}
+                    const linkParts = n.link?.startsWith("reminder:") ? n.link.split(":") : null;
+                    const sessionIdFromLink = linkParts ? linkParts[1] : null;
+                    const subjectIdFromLink = linkParts && linkParts[3] ? linkParts[3] : null;
 
                     return (
                     <div key={n.id}
@@ -638,7 +641,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                           <p style={{ margin:0, fontSize:10, color:"#bbb", fontVariantNumeric:"tabular-nums" }}>
                             {new Date(n.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
                           </p>
-                          {isClassType && sessionIdFromLink && (
+                          {isClassType && subjectIdFromLink && (
                             <span style={{ fontSize:10, fontWeight:800, color:"#0f2d1f", background:"#0f2d1f18", padding:"2px 8px", borderRadius:20, border:"1px solid #0f2d1f30" }}>
                               Join class →
                             </span>
@@ -661,20 +664,17 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           const icon = isClassType ? "📚" : selectedNotif.type === "warning" ? "⚠️" : selectedNotif.type === "exam_assigned" ? "📋" : isPayment ? "💳" : selectedNotif.type === "result_released" ? "🎯" : "🔔";
 
           // Parse "reminder:sessionId:minsAhead" → look up subject_id to navigate
-          const sessionIdFromLink = selectedNotif.link?.startsWith("reminder:") ? selectedNotif.link.split(":")[1] : null;
+          // reminder:{sessionId}:{minsAhead}:{subjectId}
+          const detailLinkParts = selectedNotif.link?.startsWith("reminder:") ? selectedNotif.link.split(":") : null;
+          const sessionIdFromLink = detailLinkParts ? detailLinkParts[1] : null;
+          const subjectIdFromLink = detailLinkParts && detailLinkParts[3] ? detailLinkParts[3] : null;
 
-          const handleJoinFromNotif = async () => {
+          const handleJoinFromNotif = () => {
             setSelectedNotif(null);
             setShowNotifPanel(false);
-            if (sessionIdFromLink) {
-              // Look up subject_id for this live session
-              const { data } = await supabase.from("live_sessions").select("subject_id").eq("id", sessionIdFromLink).maybeSingle();
-              const subjectId = data?.subject_id;
-              if (subjectId) {
-                navigate(`/student/live-classes?subject=${subjectId}&autoJoin=true`);
-              } else {
-                navigate("/student/live-classes");
-              }
+            if (subjectIdFromLink) {
+              // subject_id is embedded in the link — no DB query needed
+              navigate(`/student/live-classes?subject=${subjectIdFromLink}&autoJoin=true`);
             } else if (selectedNotif.link?.startsWith("/")) {
               navigate(selectedNotif.link);
             } else {
@@ -749,7 +749,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
               {/* Footer */}
               <div style={{ padding:"14px 20px 28px", borderTop:"1px solid #f4f4f4", background:"#fff", flexShrink:0, display:"flex", flexDirection:"column", gap:8 }}>
-                {(isClassType || sessionIdFromLink) && (
+                {(isClassType || subjectIdFromLink) && (
                   <button onClick={handleJoinFromNotif}
                     style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background:"linear-gradient(135deg,#0f2d1f,#1a4a2e)", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", letterSpacing:"-0.2px" }}>
                     📚 Join Class Now
