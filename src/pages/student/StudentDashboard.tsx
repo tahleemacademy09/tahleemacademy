@@ -17,7 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle,
   GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft,
-  ChevronRight, AlertTriangle, Mic, Lock, BookMarked, Flame
+  ChevronRight, AlertTriangle, Mic, Lock, BookMarked, Flame, ClipboardCheck
 } from "lucide-react";
 
 const toHijri = (date: Date) => {
@@ -67,6 +67,77 @@ const TEXT_DARK   = "#0f2d1f";
 const TEXT_MED    = "#4a7c59";
 const TEXT_LIGHT  = "#7a9e88";
 const BORDER      = "rgba(15,45,31,0.1)";
+
+/* ── Assignment Preview Widget ─────────────────────────────────────────── */
+const AssignmentPreview = ({ userId, t, language, navigate }: { userId: string; t: any; language: string; navigate: any }) => {
+  const [items, setItems] = useState<any[]>([]);
+  const [subs, setSubs]   = useState<Record<string, any>>({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!userId) return;
+    const fetch = async () => {
+      const { data: enrollments } = await supabase.from("enrollments").select("subject_id").eq("user_id", userId);
+      const { data: ttSlots }     = await supabase.from("subject_timetable" as any).select("subject_id").eq("is_active", true);
+      const ids = [...new Set([...(enrollments||[]).map((e:any)=>e.subject_id), ...(ttSlots||[]).map((s:any)=>s.subject_id)])].filter(Boolean);
+      if (!ids.length) { setLoading(false); return; }
+      const { data: asgn } = await supabase.from("subject_assignments").select("*, subjects(id,title,title_ar)").in("subject_id", ids).order("deadline",{ascending:true}).limit(5);
+      const list = asgn || [];
+      setItems(list);
+      if (list.length) {
+        const { data: s } = await supabase.from("assignment_submissions").select("*").eq("user_id", userId).in("assignment_id", list.map((a:any)=>a.id));
+        const m: Record<string,any> = {};
+        (s||[]).forEach((sub:any) => { m[sub.assignment_id] = sub; });
+        setSubs(m);
+      }
+      setLoading(false);
+    };
+    fetch();
+  }, [userId]);
+
+  const pending = items.filter(a => !subs[a.id] && new Date(a.deadline||"9999") > new Date());
+  const overdue = items.filter(a => !subs[a.id] && a.deadline && new Date(a.deadline) < new Date());
+  if (!loading && items.length === 0) return null;
+
+  return (
+    <div style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:18, boxShadow:"0 2px 12px rgba(0,0,0,.06)", overflow:"hidden" }}>
+      <div style={{ padding:"14px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <ClipboardCheck style={{ width:16, height:16, color:MID_GREEN }} />
+          <span style={{ fontSize:15, fontWeight:800, color:TEXT_DARK, fontFamily:"'Playfair Display',serif" }}>{t("Assignments","الواجبات")}</span>
+          {overdue.length > 0 && <span style={{ background:"#c0392b", color:"#fff", fontSize:10, fontWeight:800, padding:"2px 7px", borderRadius:20 }}>{overdue.length} {t("overdue","متأخر")}</span>}
+          {pending.length > 0 && <span style={{ background:GOLD+"22", color:GOLD, fontSize:10, fontWeight:800, padding:"2px 7px", borderRadius:20, border:`1px solid ${GOLD}44` }}>{pending.length} {t("due","قادم")}</span>}
+        </div>
+        <button onClick={()=>navigate("/student/assignments")} style={{ fontSize:11, fontWeight:700, color:GOLD, background:"none", border:"none", cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
+          {t("View all","عرض الكل")} <ArrowRight style={{ width:12, height:12 }} />
+        </button>
+      </div>
+      <div style={{ padding:"10px 14px", display:"flex", flexDirection:"column", gap:8 }}>
+        {loading ? (
+          <div style={{ height:60, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <div style={{ width:24, height:24, borderRadius:"50%", border:`3px solid ${MID_GREEN}`, borderTopColor:"transparent", animation:"spin .7s linear infinite" }} />
+          </div>
+        ) : items.slice(0,4).map((a:any) => {
+          const sub  = subs[a.id];
+          const late = !sub && a.deadline && new Date(a.deadline) < new Date();
+          const done = sub?.status === "graded";
+          const sent = !!sub && !done;
+          const title = language === "ar" ? (a.title_ar||a.title) : a.title;
+          return (
+            <div key={a.id} onClick={()=>navigate("/student/assignments")} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 10px", borderRadius:12, background: late?"#fff5f5": done?"#f0fdf4": sent?"#eff6ff":"#f8fafb", border:`1px solid ${late?"#fca5a5": done?"#86efac": sent?"#93c5fd":BORDER}`, cursor:"pointer" }}>
+              <div style={{ width:8, height:8, borderRadius:"50%", background: late?"#c0392b": done?"#276749": sent?"#1d4ed8":GOLD, flexShrink:0 }} />
+              <span style={{ fontSize:13, fontWeight:700, color:TEXT_DARK, flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{title}</span>
+              {late  && <span style={{ fontSize:10, fontWeight:800, color:"#c0392b" }}>{t("Late","متأخر")}</span>}
+              {done  && <span style={{ fontSize:10, fontWeight:800, color:"#276749" }}>{sub.grade ?? "✓"}</span>}
+              {sent  && <span style={{ fontSize:10, fontWeight:800, color:"#1d4ed8" }}>{t("Sent","أُرسل")}</span>}
+              {!sub && !late && a.deadline && <span style={{ fontSize:10, color:TEXT_LIGHT }}>{new Date(a.deadline).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 const StudentDashboard = () => {
   const { t, language } = useLanguage();
@@ -536,6 +607,9 @@ const StudentDashboard = () => {
             ))}
           </div>
         </div>
+
+        {/* ── Assignments Preview ── */}
+        <AssignmentPreview userId={effectiveUserId} t={t} language={language} navigate={navigate} />
 
         {/* ── Islamic Daily Feed (Quran · Hadith · Tawheed · Seerah · Events · News) ── */}
         <IslamicDailyFeed language={language} />
