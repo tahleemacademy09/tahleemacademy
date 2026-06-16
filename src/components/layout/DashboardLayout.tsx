@@ -543,85 +543,106 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           </div>
         )}
 
+        {/* ── Notification Panel ─────────────────────────────────────────── */}
         {showNotifPanel && (
-          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+          <div style={{ position:"fixed", inset:0, zIndex:50, background:"rgba(0,0,0,0.45)", backdropFilter:"blur(4px)" }}
             onClick={() => setShowNotifPanel(false)}>
-            <div className="absolute top-0 left-0 right-0 max-h-[80vh] bg-white rounded-b-3xl shadow-2xl flex flex-col overflow-hidden"
+            <div style={{ position:"absolute", top:0, left:0, right:0, maxHeight:"82vh", background:"#fff", borderBottomLeftRadius:28, borderBottomRightRadius:28, boxShadow:"0 20px 60px rgba(0,0,0,0.18)", display:"flex", flexDirection:"column", overflow:"hidden" }}
               onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between px-5 py-4 border-b" style={{ background:"#0f2d1f" }}>
-                <div className="flex items-center gap-2.5">
-                  <Bell className="h-4 w-4" style={{ color:"#c9a84c" }}/>
-                  <span className="font-bold text-white text-base">Notifications · الإشعارات</span>
+
+              {/* Header */}
+              <div style={{ background:"linear-gradient(135deg,#0f2d1f,#1a4a2e)", padding:"18px 20px 16px", display:"flex", alignItems:"center", justifyContent:"space-between", flexShrink:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ width:34, height:34, borderRadius:10, background:"rgba(201,168,76,0.18)", border:"1.5px solid rgba(201,168,76,0.4)", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                    <Bell style={{ width:15, height:15, color:"#c9a84c" }}/>
+                  </div>
+                  <div>
+                    <p style={{ margin:0, fontWeight:800, fontSize:15, color:"#fff", letterSpacing:"-0.3px" }}>Notifications</p>
+                    <p style={{ margin:0, fontWeight:600, fontSize:11, color:"rgba(201,168,76,0.8)", fontFamily:"serif" }}>الإشعارات</p>
+                  </div>
                   {unreadNotifs > 0 && (
-                    <span className="text-[10px] font-black px-2.5 py-0.5 rounded-full text-white" style={{ background:"#c0392b" }}>
+                    <div style={{ background:"#c0392b", color:"#fff", fontSize:10, fontWeight:800, padding:"2px 8px", borderRadius:20, marginLeft:2 }}>
                       {unreadNotifs} new
-                    </span>
+                    </div>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                   {unreadNotifs > 0 && (
-                    <button
-                      onClick={markAllRead}
-                      className="text-[11px] font-semibold px-3 py-1 rounded-full transition-colors"
-                      style={{ background:"rgba(201,168,76,.18)", color:"#c9a84c", border:"1px solid rgba(201,168,76,.35)" }}
-                    >
+                    <button onClick={markAllRead}
+                      style={{ fontSize:11, fontWeight:700, padding:"6px 12px", borderRadius:20, background:"rgba(201,168,76,0.15)", color:"#c9a84c", border:"1px solid rgba(201,168,76,0.3)", cursor:"pointer" }}>
                       Mark all read
                     </button>
                   )}
                   <button onClick={() => setShowNotifPanel(false)}
-                    className="w-8 h-8 rounded-full flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10">
+                    style={{ width:32, height:32, borderRadius:10, background:"rgba(255,255,255,0.08)", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"rgba(255,255,255,0.7)", fontSize:16 }}>
                     ✕
                   </button>
                 </div>
               </div>
-              <div className="overflow-y-auto flex-1">
+
+              {/* List */}
+              <div style={{ overflowY:"auto", flex:1 }}>
                 {notifList.length === 0 ? (
-                  <div className="text-center py-10 text-muted-foreground text-sm">No notifications yet</div>
-                ) : notifList.map((n: any) => {
+                  <div style={{ textAlign:"center", padding:"48px 20px", color:"#aaa" }}>
+                    <div style={{ fontSize:32, marginBottom:8 }}>🔔</div>
+                    <p style={{ fontSize:13, fontWeight:600, margin:0 }}>No notifications yet</p>
+                    <p style={{ fontSize:11, color:"#bbb", margin:"4px 0 0", fontFamily:"serif" }}>لا توجد إشعارات</p>
+                  </div>
+                ) : notifList.map((n: any, idx: number) => {
                     const langs = resolveLangs(n);
+                    const isClassType = n.type === "class_reminder" || n.type === "class_ring";
+                    const isExam = n.type === "exam_assigned" || n.type === "exam" || n.type === "result_released";
+                    const isPayment = n.type === "payment";
+                    const icon = isClassType ? "📚" : isExam ? "📋" : isPayment ? "💳" : n.type === "warning" ? "⚠️" : n.type === "result_released" ? "🎯" : "🔔";
+                    const accentColor = isClassType ? "#0f2d1f" : isPayment ? "#c0392b" : isExam ? "#1a5276" : "#92400e";
+                    const bgColor = n.is_read ? "#fafafa" : isClassType ? "#f0faf4" : isPayment ? "#fff5f5" : isExam ? "#eff6ff" : "#fffbeb";
+
+                    // Parse reminder:sessionId:mins link format
+                    const sessionIdFromLink = n.link?.startsWith("reminder:") ? n.link.split(":")[1] : null;
+
                     return (
-                    <div key={n.id} onClick={() => {
-                        if (!n.is_read) markRead(n.id);
-                        setSelectedNotif(n);
-                      }}
-                      className="flex items-start gap-3 px-5 py-3.5 border-b cursor-pointer transition-colors"
-                      style={{ background: n.is_read ? "#fafafa" : n.type === "class_reminder" ? "#f0fff4" : n.type === "payment" ? "#fff5f5" : "#fffbeb" }}>
-                      <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-                        style={{ background: n.is_read ? "#f0f4f0" : "#fffbeb", border:`1.5px solid ${n.is_read ? "#e0e0e0" : "#c9a84c88"}` }}>
-                        <span className="text-sm">
-                          {n.type === "class_reminder"  ? "📚"
-                            : n.type === "warning"        ? "⚠️"
-                            : n.type === "exam_assigned"  ? "📋"
-                            : n.type === "result_released"? "🎯"
-                            : n.type === "exam"           ? "📋"
-                            : n.type === "payment"        ? "💳"
-                            : "🔔"}
-                        </span>
+                    <div key={n.id}
+                      onClick={() => { if (!n.is_read) markRead(n.id); setSelectedNotif(n); }}
+                      style={{ background: bgColor, borderBottom:"1px solid #f0f0f0", padding:"14px 18px", cursor:"pointer", display:"flex", alignItems:"flex-start", gap:12 }}>
+
+                      {/* Icon bubble */}
+                      <div style={{ width:40, height:40, borderRadius:12, background: n.is_read ? "#f4f4f4" : `${accentColor}18`, border:`1.5px solid ${n.is_read ? "#e8e8e8" : accentColor + "30"}`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, fontSize:18 }}>
+                        {icon}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          {/* Show English title if available, else Arabic */}
-                          <p className={`text-sm leading-tight ${n.is_read ? "font-medium" : "font-bold"} text-gray-900 truncate`}
-                            dir={langs.en ? "ltr" : "rtl"}>
+
+                      <div style={{ flex:1, minWidth:0 }}>
+                        {/* Title row */}
+                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:2 }}>
+                          <p style={{ margin:0, fontSize:13, fontWeight: n.is_read ? 600 : 800, color:"#1a1a1a", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", letterSpacing:"-0.2px" }}>
                             {langs.en ? langs.en.title : langs.ar?.title}
                           </p>
-                          {!n.is_read && <div className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0"/>}
+                          {!n.is_read && <div style={{ width:7, height:7, borderRadius:"50%", background:"#c0392b", flexShrink:0 }}/>}
                         </div>
-                        {/* English message preview */}
-                        {langs.en && (
-                          <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{langs.en.message}</p>
+
+                        {/* EN message preview */}
+                        {langs.en?.message && (
+                          <p style={{ margin:0, fontSize:11.5, color:"#666", lineHeight:1.45, display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical", overflow:"hidden" }}>
+                            {langs.en.message}
+                          </p>
                         )}
-                        {/* Arabic subtitle — show title when bilingual, message when Arabic-only */}
-                        {langs.ar && (
-                          <p className="text-xs text-gray-400 mt-0.5 line-clamp-2 font-arabic text-right" dir="rtl">
+
+                        {/* AR subtitle */}
+                        {langs.ar?.title && (
+                          <p style={{ margin:"2px 0 0", fontSize:11, color:"#999", fontFamily:"serif", textAlign:"right", direction:"rtl", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                             {langs.en ? langs.ar.title : langs.ar.message}
                           </p>
                         )}
-                        <div className="flex items-center justify-between mt-1">
-                          <p className="text-[10px] text-gray-400">
+
+                        {/* Bottom row: time + action chip */}
+                        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:5 }}>
+                          <p style={{ margin:0, fontSize:10, color:"#bbb", fontVariantNumeric:"tabular-nums" }}>
                             {new Date(n.created_at).toLocaleDateString("en-US", { month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
                           </p>
-                          <span style={{ fontSize:10, color:"#9CA3AF" }}>Tap to read →</span>
+                          {isClassType && sessionIdFromLink && (
+                            <span style={{ fontSize:10, fontWeight:800, color:"#0f2d1f", background:"#0f2d1f18", padding:"2px 8px", borderRadius:20, border:"1px solid #0f2d1f30" }}>
+                              Join class →
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -632,80 +653,117 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
           </div>
         )}
 
-        {/* ── Full Notification Detail Modal ─────────────────────────────── */}
+        {/* ── Notification Detail Modal ───────────────────────────────────── */}
         {selectedNotif && (() => {
           const langs = resolveLangs(selectedNotif);
+          const isClassType = selectedNotif.type === "class_reminder" || selectedNotif.type === "class_ring";
+          const isPayment = selectedNotif.type === "payment";
+          const icon = isClassType ? "📚" : selectedNotif.type === "warning" ? "⚠️" : selectedNotif.type === "exam_assigned" ? "📋" : isPayment ? "💳" : selectedNotif.type === "result_released" ? "🎯" : "🔔";
+
+          // Parse "reminder:sessionId:minsAhead" → look up subject_id to navigate
+          const sessionIdFromLink = selectedNotif.link?.startsWith("reminder:") ? selectedNotif.link.split(":")[1] : null;
+
+          const handleJoinFromNotif = async () => {
+            setSelectedNotif(null);
+            setShowNotifPanel(false);
+            if (sessionIdFromLink) {
+              // Look up subject_id for this live session
+              const { data } = await supabase.from("live_sessions").select("subject_id").eq("id", sessionIdFromLink).maybeSingle();
+              const subjectId = data?.subject_id;
+              if (subjectId) {
+                navigate(`/student/live-classes?subject=${subjectId}&autoJoin=true`);
+              } else {
+                navigate("/student/live-classes");
+              }
+            } else if (selectedNotif.link?.startsWith("/")) {
+              navigate(selectedNotif.link);
+            } else {
+              navigate("/student/live-classes");
+            }
+          };
+
           return (
-          <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end justify-center"
+          <div style={{ position:"fixed", inset:0, zIndex:60, background:"rgba(0,0,0,0.55)", backdropFilter:"blur(6px)", display:"flex", alignItems:"flex-end", justifyContent:"center" }}
             onClick={() => setSelectedNotif(null)}>
-            <div className="w-full max-w-lg bg-white rounded-t-3xl shadow-2xl flex flex-col overflow-hidden max-h-[85vh]"
+            <div style={{ width:"100%", maxWidth:480, background:"#fff", borderTopLeftRadius:28, borderTopRightRadius:28, boxShadow:"0 -20px 60px rgba(0,0,0,0.2)", display:"flex", flexDirection:"column", overflow:"hidden", maxHeight:"88vh" }}
               onClick={e => e.stopPropagation()}>
 
+              {/* Drag handle */}
+              <div style={{ display:"flex", justifyContent:"center", paddingTop:12, paddingBottom:4, flexShrink:0 }}>
+                <div style={{ width:36, height:4, borderRadius:2, background:"#e0e0e0" }}/>
+              </div>
+
               {/* Header */}
-              <div className="flex items-center justify-between px-5 py-4 border-b" style={{ background:"#0f2d1f" }}>
-                <div className="flex items-center gap-3">
-                  <span className="text-xl">
-                    {selectedNotif.type === "class_reminder" ? "📚"
-                      : selectedNotif.type === "warning"      ? "⚠️"
-                      : selectedNotif.type === "exam_assigned"? "📋"
-                      : selectedNotif.type === "payment"      ? "💳"
-                      : "🔔"}
-                  </span>
-                  <span className="font-bold text-white text-sm capitalize">
-                    {selectedNotif.type?.replace(/_/g, " ") || "Notification"}
-                  </span>
+              <div style={{ padding:"12px 20px 16px", borderBottom:"1px solid #f0f0f0", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+                <div style={{ width:44, height:44, borderRadius:14, background: isClassType ? "#0f2d1f18" : "#f4f4f4", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0 }}>
+                  {icon}
+                </div>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <p style={{ margin:0, fontSize:11, fontWeight:700, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.6px" }}>
+                    {selectedNotif.type?.replace(/_/g," ") || "Notification"}
+                  </p>
+                  <p style={{ margin:"1px 0 0", fontSize:12, color:"#bbb", fontVariantNumeric:"tabular-nums" }}>
+                    {new Date(selectedNotif.created_at).toLocaleDateString("en-US", { weekday:"short", month:"short", day:"numeric", hour:"2-digit", minute:"2-digit" })}
+                  </p>
                 </div>
                 <button onClick={() => setSelectedNotif(null)}
-                  className="text-white/60 hover:text-white transition-colors p-1">
-                  <X className="h-5 w-5"/>
+                  style={{ width:32, height:32, borderRadius:10, background:"#f4f4f4", border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", color:"#888", fontSize:16, flexShrink:0 }}>
+                  ✕
                 </button>
               </div>
 
               {/* Body */}
-              <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div style={{ flex:1, overflowY:"auto", padding:"20px" }}>
 
-                {/* English block — only when English text exists */}
+                {/* English block */}
                 {langs.en && (
-                  <div className="rounded-2xl border border-gray-100 bg-gray-50 p-4 space-y-2">
-                    <p className="text-[10px] font-black uppercase tracking-wider text-gray-400">🇬🇧 English</p>
-                    <p className="font-bold text-gray-900 text-base leading-snug">{langs.en.title}</p>
-                    <p className="text-sm text-gray-600 leading-relaxed">{langs.en.message}</p>
+                  <div style={{ marginBottom: langs.ar ? 12 : 0 }}>
+                    <p style={{ margin:"0 0 8px", fontSize:10, fontWeight:800, color:"#aaa", textTransform:"uppercase", letterSpacing:"0.8px" }}>English</p>
+                    <p style={{ margin:"0 0 6px", fontSize:17, fontWeight:800, color:"#111", lineHeight:1.3, letterSpacing:"-0.4px" }}>
+                      {langs.en.title}
+                    </p>
+                    <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.65 }}>
+                      {langs.en.message}
+                    </p>
                   </div>
                 )}
 
-                {/* Arabic block — only when Arabic text exists */}
+                {/* Divider between languages */}
+                {langs.en && langs.ar && (
+                  <div style={{ height:1, background:"#f0f0f0", margin:"16px 0" }}/>
+                )}
+
+                {/* Arabic block */}
                 {langs.ar && (
-                  <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 space-y-2" dir="rtl">
-                    <p className="text-[10px] font-black uppercase tracking-wider text-amber-500" dir="ltr">🇸🇦 عربي</p>
-                    <p className="font-bold text-gray-900 text-base leading-snug font-arabic">{langs.ar.title}</p>
-                    <p className="text-sm text-gray-600 font-arabic" style={{ lineHeight:1.9 }}>{langs.ar.message}</p>
+                  <div dir="rtl">
+                    <p style={{ margin:"0 0 8px", fontSize:10, fontWeight:800, color:"#c9a84c", textTransform:"uppercase", letterSpacing:"0.8px", direction:"ltr" }}>عربي</p>
+                    <p style={{ margin:"0 0 6px", fontSize:17, fontWeight:800, color:"#111", lineHeight:1.4, fontFamily:"serif", letterSpacing:"0px" }}>
+                      {langs.ar.title}
+                    </p>
+                    <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.9, fontFamily:"serif" }}>
+                      {langs.ar.message}
+                    </p>
                   </div>
                 )}
-
-                {/* Timestamp */}
-                <p className="text-[11px] text-gray-400 text-center">
-                  {new Date(selectedNotif.created_at).toLocaleDateString("en-US", { weekday:"long", year:"numeric", month:"long", day:"numeric", hour:"2-digit", minute:"2-digit" })}
-                </p>
               </div>
 
-              {/* Footer actions */}
-              <div className="px-5 pb-6 pt-3 border-t bg-white space-y-2">
-                {selectedNotif.link && (
-                  <button
-                    onClick={() => { setSelectedNotif(null); setShowNotifPanel(false); window.location.href = selectedNotif.link; }}
-                    className="w-full py-3 rounded-2xl font-bold text-sm text-white"
-                    style={{ background:"linear-gradient(135deg,#064E3B,#075E54)" }}>
-                    {selectedNotif.type === "class_reminder" || selectedNotif.type === "class_ring"
-                      ? "📚 Join Class →"
-                      : selectedNotif.type === "payment"
-                      ? "💳 Pay Now →"
-                      : "Open →"}
+              {/* Footer */}
+              <div style={{ padding:"14px 20px 28px", borderTop:"1px solid #f4f4f4", background:"#fff", flexShrink:0, display:"flex", flexDirection:"column", gap:8 }}>
+                {(isClassType || sessionIdFromLink) && (
+                  <button onClick={handleJoinFromNotif}
+                    style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background:"linear-gradient(135deg,#0f2d1f,#1a4a2e)", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", letterSpacing:"-0.2px" }}>
+                    📚 Join Class Now
                   </button>
                 )}
-                <button
-                  onClick={() => setSelectedNotif(null)}
-                  className="w-full py-3 rounded-2xl font-semibold text-sm text-gray-500 border border-gray-200 bg-gray-50">
-                  Close
+                {isPayment && selectedNotif.link?.startsWith("/") && (
+                  <button onClick={() => { setSelectedNotif(null); setShowNotifPanel(false); navigate(selectedNotif.link); }}
+                    style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background:"linear-gradient(135deg,#c0392b,#e74c3c)", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer" }}>
+                    💳 Pay Now
+                  </button>
+                )}
+                <button onClick={() => setSelectedNotif(null)}
+                  style={{ width:"100%", padding:"13px", borderRadius:16, border:"1.5px solid #e8e8e8", background:"#fafafa", color:"#888", fontSize:13, fontWeight:600, cursor:"pointer" }}>
+                  Dismiss
                 </button>
               </div>
             </div>
