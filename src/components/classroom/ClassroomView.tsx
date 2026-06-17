@@ -35,7 +35,7 @@ import ClassParticipants from "./ClassParticipants";
 import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
-import PDFViewer         from "./PDFViewer";
+import PDFViewer, { prewarmPDF } from "./PDFViewer";
 import { useIsMobile }   from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -1123,17 +1123,67 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
 
-  // ── resolve Supabase storage path to a signed/public URL ─────────────────
+  // ── resolve Supabase storage path to a working viewer URL ────────────────
+  // Strategy: if rawUrl is already https:// (teacher pre-resolved it before
+  // broadcasting) we skip all network calls entirely — zero latency.
+  // Otherwise we try public URL first (HEAD check), then signed URL fallback.
   const [resolvedUrl, setResolvedUrl] = useState<string>(
     rawUrl.startsWith("http") ? rawUrl : ""
   );
   const [urlLoading, setUrlLoading] = useState(!rawUrl.startsWith("http"));
+
   useEffect(()=>{
-    if(rawUrl.startsWith("http")){ setResolvedUrl(rawUrl); setUrlLoading(false); return; }
-    setUrlLoading(true);
-    getSignedUrl(rawUrl).then(signed=>{
-      setResolvedUrl(signed||rawUrl);
+    if(rawUrl.startsWith("http")){
+      setResolvedUrl(rawUrl);
       setUrlLoading(false);
+      // Kick off background PDF render immediately so viewer opens instantly
+      const ext = rawUrl.split("?")[0].split(".").pop()?.toLowerCase();
+      if(ext==="pdf") prewarmPDF(rawUrl);
+      return;
+    }
+
+    // Raw storage path — need to resolve
+    setUrlLoading(true);
+
+    const isSupabaseStorage = rawUrl.includes(".supabase.co/storage");
+
+    if(isSupabaseStorage){
+      // Try public URL first (fast, no token needed)
+      const match = rawUrl.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
+      if(match){
+        const [,bucketName,storagePath]=match;
+        const { data: pub } = supabase.storage.from(bucketName).getPublicUrl(storagePath);
+        if(pub?.publicUrl){
+          fetch(pub.publicUrl,{method:"HEAD",signal:AbortSignal.timeout(4000)})
+            .then(r=>{
+              if(r.ok||r.status===304){
+                setResolvedUrl(pub.publicUrl);
+                setUrlLoading(false);
+                prewarmPDF(pub.publicUrl);
+              } else { throw new Error("not public"); }
+            })
+            .catch(()=>{
+              // Fall back to signed URL
+              supabase.storage.from(bucketName).createSignedUrl(storagePath,604800)
+                .then(({data:signed})=>{
+                  const u=signed?.signedUrl||rawUrl;
+                  setResolvedUrl(u);
+                  setUrlLoading(false);
+                  prewarmPDF(u);
+                })
+                .catch(()=>{ setResolvedUrl(rawUrl); setUrlLoading(false); });
+            });
+          return;
+        }
+      }
+    }
+
+    // Legacy path or non-Supabase storage path — use getSignedUrl
+    getSignedUrl(rawUrl).then(signed=>{
+      const u=signed||rawUrl;
+      setResolvedUrl(u);
+      setUrlLoading(false);
+      prewarmPDF(u);
     }).catch(()=>{ setResolvedUrl(rawUrl); setUrlLoading(false); });
   },[rawUrl]);
 
@@ -4234,7 +4284,42 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>
         </LiveKitRoom>
       )}
-      {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={(mat:any,room:any)=>{setMatOpen(mat);setMatPicker(false);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:mat})),{reliable:true});}catch{}}} onClose={()=>setMatPicker(false)}/>}
+      {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={async(mat:any,room:any)=>{
+        // Show for the teacher immediately — they have direct storage access
+        setMatOpen(mat);
+        setMatPicker(false);
+        // Pre-resolve the URL before broadcasting so every student receives a
+        // ready https:// URL. InClassMaterialViewer skips getSignedUrl entirely
+        // and mounts the PDFViewer (or other media) with zero network delay.
+        let broadcastMat=mat;
+        try{
+          const rawUrl=mat.file_url||mat.url||"";
+          if(rawUrl&&!rawUrl.startsWith("http")){
+            const isSupabaseStorage=rawUrl.includes(".supabase.co/storage");
+            if(isSupabaseStorage){
+              const match=rawUrl.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
+              if(match){
+                const [,bucketName,storagePath]=match;
+                const {data:pub}=supabase.storage.from(bucketName).getPublicUrl(storagePath);
+                if(pub?.publicUrl){
+                  try{
+                    const r=await fetch(pub.publicUrl,{method:"HEAD",signal:AbortSignal.timeout(4000)});
+                    if(r.ok||r.status===304){broadcastMat={...mat,file_url:pub.publicUrl};}
+                    else{throw new Error("not public");}
+                  }catch{
+                    const {data:signed}=await supabase.storage.from(bucketName).createSignedUrl(storagePath,604800);
+                    if(signed?.signedUrl)broadcastMat={...mat,file_url:signed.signedUrl};
+                  }
+                }
+              }
+            }else{
+              const signed=await getSignedUrl(rawUrl);
+              if(signed)broadcastMat={...mat,file_url:signed};
+            }
+          }
+        }catch{}
+        try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_open",material:broadcastMat})),{reliable:true});}catch{}
+      }} onClose={()=>setMatPicker(false)}/>}
       {showEnd&&createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}} onClick={()=>setShowEnd(false)}>
           <div style={{background:"#2D2E30",borderRadius:20,padding:"32px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.08)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
