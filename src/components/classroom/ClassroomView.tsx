@@ -177,7 +177,7 @@ const CSS = `
   @keyframes slide-right  { from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1} }
   @keyframes fade-in      { from{opacity:0;transform:scale(.97)}to{opacity:1;transform:scale(1)} }
   @keyframes fade-up      { from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)} }
-  @keyframes emoji-float  { 0%{transform:translateY(0) scale(1);opacity:1}70%{opacity:.9}100%{transform:translateY(-300px) scale(1.4);opacity:0} }
+  @keyframes emoji-float  { 0%{transform:translateY(0) scale(1);opacity:1}60%{opacity:.95}100%{transform:translateY(-150px) scale(1.3);opacity:0} }
   @keyframes rec-pulse    { 0%,100%{opacity:1}50%{opacity:.3} }
   @keyframes hand-bounce  { 0%,100%{transform:translateY(0)}45%{transform:translateY(-6px)} }
   @keyframes speak-glow   { 0%,100%{box-shadow:0 0 0 2px #1a73e8,0 0 0 4px rgba(26,115,232,.3)}50%{box-shadow:0 0 0 2px #1a73e8,0 0 0 8px rgba(26,115,232,.15)} }
@@ -776,7 +776,7 @@ const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClos
 
 /* ══ FLOATING EMOJI LAYER ══ */
 const FloatingEmojiLayer=({emojis}:{emojis:FloatingEmoji[]})=>(
-  <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:40,overflow:"hidden"}}>
+  <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:40,overflow:"visible"}}>
     {emojis.map(fe=>(
       <div key={fe.id} style={{
         position:"absolute", bottom:90, left:`${fe.x}%`,
@@ -1218,6 +1218,14 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   };
 
   const renderContent=()=>{
+    // Text-only material (e.g. a note shared from the live class) — no file to load.
+    if(!rawUrl&&material.content)return(
+      <div style={{flex:1,overflowY:"auto",background:"#0f1117",padding:"22px 18px"}}>
+        <div style={{maxWidth:560,margin:"0 auto",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,padding:"20px 22px"}}>
+          <p style={{whiteSpace:"pre-wrap" as const,fontSize:14,lineHeight:1.7,color:"#e8eaf0",margin:0,fontFamily:"'Google Sans',sans-serif"}}>{material.content}</p>
+        </div>
+      </div>
+    );
     // Wait for URL resolution before rendering any media
     if(urlLoading||!url)return(
       <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0f1117",gap:14}}>
@@ -1285,8 +1293,8 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
           </span>
         )}
         {!isTeacher&&<span style={{fontSize:10,color:"rgba(255,255,255,.4)",flexShrink:0}}>Shared by teacher</span>}
-        <a href={url} target="_blank" rel="noopener noreferrer"
-          style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>
+        {rawUrl&&<a href={url} target="_blank" rel="noopener noreferrer"
+          style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>}
         <button onClick={onClose} title="Close material"
           style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.12)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <X style={{width:13,height:13}}/>
@@ -2164,21 +2172,96 @@ const InClassQuranReader=({onClose}:any)=>{
   );
 };
 
-const SubjectMaterialsPanel=({subjectId,subject,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
+const MAT_UPLOAD_BUCKET="subject-materials";
+const detectMaterialType=(file:File):string=>{
+  const mime=file.type.toLowerCase();const ext=file.name.split(".").pop()?.toLowerCase()||"";
+  if(mime.includes("pdf")||ext==="pdf")return"PDF";
+  if(mime.startsWith("video/")||["mp4","webm","mov","avi","m4v","mkv"].includes(ext))return"Video";
+  if(mime.startsWith("audio/")||["mp3","wav","ogg","m4a","aac","flac","opus"].includes(ext))return"Audio";
+  if(mime.startsWith("image/")||["jpg","jpeg","png","gif","webp","svg","heic"].includes(ext))return"Image";
+  return"Document";
+};
+
+const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
+  const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
   const[viewing,setViewing]=useState<any>(null);
   const[quranOpen,setQuranOpen]=useState(false);
   const[minimized,setMinimized]=useState(false);
+  // ── Share-with-class composer (teacher/admin only) ──────────────────────
+  const[composerOpen,setComposerOpen]=useState(false);
+  const[composerMode,setComposerMode]=useState<"text"|"file">("text");
+  const[cTitle,setCTitle]=useState("");
+  const[cBody,setCBody]=useState("");
+  const[cFile,setCFile]=useState<File|null>(null);
+  const[cAsAssignment,setCAsAssignment]=useState(false);
+  const[cDeadline,setCDeadline]=useState("");
+  const[cPosting,setCPosting]=useState(false);
+  const[cError,setCError]=useState("");
+  const fileInputRef=useRef<HTMLInputElement>(null);
   // Draggable pip position
   const[pipPos,setPipPos]=useState({x:20,y:120});
   const dragging=useRef(false);
   const dragStart=useRef({px:0,py:0,ox:0,oy:0});
 
-  useEffect(()=>{
+  const reloadMats=()=>{
     supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
       .then(({data})=>{setMats(data||[]);setBusy(false);});
-  },[subjectId]);
+  };
+
+  useEffect(()=>{reloadMats();},[subjectId]);
+
+  const resetComposer=()=>{
+    setCTitle("");setCBody("");setCFile(null);setCAsAssignment(false);setCDeadline("");setCError("");
+    if(fileInputRef.current)fileInputRef.current.value="";
+  };
+
+  const handleSharePost=async()=>{
+    if(!user)return;
+    setCError("");
+    if(composerMode==="text"&&!cBody.trim()){setCError("Write something before sharing.");return;}
+    if(composerMode==="file"&&!cFile){setCError("Choose a file to upload.");return;}
+    if(!cTitle.trim()&&composerMode==="text"){setCError("Give it a short title.");return;}
+    setCPosting(true);
+    try{
+      let fileUrl:string|null=null,fileType:string|null=null,fileSize:number|null=null,materialType="Text",finalTitle=cTitle.trim();
+      if(composerMode==="file"&&cFile){
+        materialType=detectMaterialType(cFile);
+        const ext=cFile.name.split(".").pop()||"bin";
+        const path=`materials/${subjectId}/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`;
+        const{error:upErr}=await supabase.storage.from(MAT_UPLOAD_BUCKET).upload(path,cFile,{cacheControl:"3600",upsert:false,contentType:cFile.type||"application/octet-stream"});
+        if(upErr)throw new Error(upErr.message);
+        const{data:pub}=supabase.storage.from(MAT_UPLOAD_BUCKET).getPublicUrl(path);
+        fileUrl=pub.publicUrl;fileType=cFile.type||null;fileSize=cFile.size;
+        if(!finalTitle)finalTitle=cFile.name.replace(/\.[^.]+$/,"");
+      }
+      const{error:matErr}=await supabase.from("subject_materials" as any).insert({
+        subject_id:subjectId,title:finalTitle||"Shared in class",material_type:materialType,
+        content:composerMode==="text"?cBody.trim():null,file_url:fileUrl,file_type:fileType,file_size:fileSize,
+        uploaded_by:user.id,session_id:sessionId||null,
+      });
+      if(matErr)throw matErr;
+
+      if(cAsAssignment){
+        const{error:asgErr}=await supabase.from("subject_assignments" as any).insert({
+          subject_id:subjectId,title:finalTitle||"Class assignment",
+          description:composerMode==="text"?cBody.trim():(cBody.trim()||`See attached: ${finalTitle}`),
+          deadline:cDeadline?new Date(cDeadline).toISOString():null,
+          file_url:fileUrl,created_by:user.id,
+        });
+        if(asgErr)throw asgErr;
+        toast({title:"✅ Shared with class and added to Assignments"});
+      }else{
+        toast({title:"✅ Shared with the class"});
+      }
+      resetComposer();setComposerOpen(false);reloadMats();
+    }catch(e:any){
+      setCError(e?.message||"Failed to share. Please try again.");
+    }finally{
+      setCPosting(false);
+    }
+  };
 
   const onPipPointerDown=(e:React.PointerEvent)=>{
     dragging.current=true;
@@ -2329,6 +2412,68 @@ const SubjectMaterialsPanel=({subjectId,subject,onClose,canStudentRec,isPrivileg
           </div>
           <ChevronRight style={{width:13,height:13,color:"#34d399",flexShrink:0}}/>
         </button>
+
+        {/* Share with class — teacher/admin only */}
+        {isPrivileged&&(
+          <div style={{margin:"10px 10px 0",borderRadius:10,border:"1px solid rgba(201,168,76,.3)",background:"rgba(201,168,76,.06)",overflow:"hidden",flexShrink:0}}>
+            <button onClick={()=>setComposerOpen(v=>!v)} style={{width:"100%",padding:"12px 14px",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left" as const}}>
+              <div style={{fontSize:18,flexShrink:0}}>📤</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#f2dfa8",fontFamily:"'Google Sans',sans-serif"}}>Share with class</div>
+                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note, upload a file, or assign homework</div>
+              </div>
+              <ChevronDown style={{width:14,height:14,color:"rgba(255,255,255,.4)",transform:composerOpen?"rotate(180deg)":"none",transition:"transform .15s",flexShrink:0}}/>
+            </button>
+            {composerOpen&&(
+              <div style={{padding:"0 14px 14px"}}>
+                {/* Mode toggle */}
+                <div style={{display:"flex",gap:6,marginBottom:10}}>
+                  {(["text","file"] as const).map(m=>(
+                    <button key={m} onClick={()=>{setComposerMode(m);setCError("");}} style={{
+                      flex:1,padding:"7px 0",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",
+                      border:`1px solid ${composerMode===m?"#c9a84c":"rgba(255,255,255,.12)"}`,
+                      background:composerMode===m?"rgba(201,168,76,.18)":"transparent",
+                      color:composerMode===m?"#f2dfa8":"rgba(255,255,255,.5)",
+                    }}>{m==="text"?"✏️ Write a note":"📎 Upload a file"}</button>
+                  ))}
+                </div>
+                <input value={cTitle} onChange={e=>setCTitle(e.target.value)} placeholder="Title (e.g. Today's homework)" style={{
+                  width:"100%",boxSizing:"border-box" as const,padding:"9px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
+                  background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit",
+                }}/>
+                {composerMode==="text"?(
+                  <textarea value={cBody} onChange={e=>setCBody(e.target.value)} rows={4} placeholder="Type the note or instructions here…" style={{
+                    width:"100%",boxSizing:"border-box" as const,padding:"9px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
+                    background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit",resize:"vertical" as const,
+                  }}/>
+                ):(
+                  <div style={{marginBottom:8}}>
+                    <input ref={fileInputRef} type="file" onChange={e=>setCFile(e.target.files?.[0]||null)} style={{
+                      width:"100%",fontSize:11,color:"rgba(255,255,255,.6)",
+                    }}/>
+                    {cFile&&<div style={{fontSize:10,color:"#34d399",marginTop:4}}>Ready: {cFile.name} ({(cFile.size/1024/1024).toFixed(1)}MB)</div>}
+                  </div>
+                )}
+                <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"rgba(255,255,255,.7)",marginBottom:cAsAssignment?8:10,cursor:"pointer"}}>
+                  <input type="checkbox" checked={cAsAssignment} onChange={e=>setCAsAssignment(e.target.checked)}/>
+                  Also save to Assignments for students
+                </label>
+                {cAsAssignment&&(
+                  <input type="date" value={cDeadline} onChange={e=>setCDeadline(e.target.value)} style={{
+                    width:"100%",boxSizing:"border-box" as const,padding:"8px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
+                    background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:10,fontFamily:"inherit",
+                  }}/>
+                )}
+                {cError&&<div style={{fontSize:11,color:"#ef4444",marginBottom:8}}>{cError}</div>}
+                <button onClick={handleSharePost} disabled={cPosting} style={{
+                  width:"100%",padding:"10px",borderRadius:8,border:"none",cursor:cPosting?"default":"pointer",
+                  background:cPosting?"rgba(201,168,76,.3)":"linear-gradient(135deg,#c9a84c,#a8893a)",
+                  color:"#1a1408",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6,
+                }}>{cPosting?"Sharing…":"Share with class"}</button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* List */}
         <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
@@ -3151,8 +3296,10 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     if(!room)return;
     const update=()=>setLiveCount(room.numParticipants||0);
     update();
-    room.on(RoomEvent.ParticipantConnected,update);room.on(RoomEvent.ParticipantDisconnected,update);
-    return()=>{room.off(RoomEvent.ParticipantConnected,update);room.off(RoomEvent.ParticipantDisconnected,update);};
+    const onJoin=()=>{update();try{playJoinSound();}catch{}};
+    const onLeave=()=>{update();try{playLeaveSound();}catch{}};
+    room.on(RoomEvent.ParticipantConnected,onJoin);room.on(RoomEvent.ParticipantDisconnected,onLeave);
+    return()=>{room.off(RoomEvent.ParticipantConnected,onJoin);room.off(RoomEvent.ParticipantDisconnected,onLeave);};
   },[room]);
 
   const computePos=(ref:React.RefObject<HTMLDivElement>,align:"left"|"right")=>{
@@ -3537,6 +3684,53 @@ const RoomToContextBridge = () => {
   return null;
 };
 
+/* ══ AUTO-ATTENDANCE SYNC ══
+   Runs once when the host ends a class. Pulls the real join data from
+   class_participants (who actually connected to this LiveKit session) and
+   the subject's full enrolled roster (same lookup TeacherAttendance.tsx
+   uses: courses→enrollments, private students, level-based), then upserts
+   manual_attendance so the Attendance pages are pre-filled with everyone
+   who joined marked present and everyone who didn't marked absent —
+   instead of starting from "everyone absent" and requiring a manual pass. */
+const syncManualAttendanceFromSession=async(sessionId:string,subject:any,hostUserId:string)=>{
+  if(!sessionId||!subject?.id)return;
+  const subjectId=subject.id;
+  const teacherId=subject.teacher_id||hostUserId;
+  const todayStr=new Date().toISOString().split("T")[0];
+
+  // ── Who actually joined this session (ground truth from the live room) ──
+  const{data:participants}=await supabase.from("class_participants").select("student_id").eq("session_id",sessionId);
+  const joinedIds=new Set((participants||[]).map((p:any)=>p.student_id));
+  if(joinedIds.size===0)return; // nobody joined — nothing meaningful to sync
+
+  // ── Full enrolled roster for this subject (mirrors TeacherAttendance.tsx) ──
+  const{data:courses}=await supabase.from("courses").select("id").eq("subject_id",subjectId);
+  const courseIds=(courses||[]).map((c:any)=>c.id);
+  let enrolledIds:string[]=[];
+  if(courseIds.length>0){
+    const{data:enrollments}=await supabase.from("enrollments").select("user_id").in("course_id",courseIds);
+    enrolledIds=[...new Set((enrollments||[]).map((e:any)=>e.user_id))];
+  }
+  const{data:privateStudents}=await supabase.from("profiles").select("user_id").eq("assigned_teacher_id",teacherId).eq("student_type","private");
+  const privateIds=(privateStudents||[]).map((p:any)=>p.user_id);
+  const subjectLevels:string[]=subject.levels||(subject.level?[subject.level]:[]);
+  let levelIds:string[]=[];
+  if(subjectLevels.length>0){
+    const{data:lvlStudents}=await supabase.from("profiles").select("user_id").in("level",subjectLevels);
+    levelIds=(lvlStudents||[]).map((p:any)=>p.user_id);
+  }
+  const roster=new Set<string>([...enrolledIds,...privateIds,...levelIds,...joinedIds]); // include joiners even if roster lookup missed them
+
+  const rows=[...roster].map(studentId=>({
+    session_id:sessionId,subject_id:subjectId,teacher_id:teacherId,student_id:studentId,
+    date:todayStr,status:joinedIds.has(studentId)?"present":"absent",
+  }));
+  if(rows.length===0)return;
+  try{
+    await supabase.from("manual_attendance").upsert(rows,{onConflict:"session_id,student_id"});
+  }catch(e){console.warn("[syncManualAttendanceFromSession] upsert failed:",e);}
+};
+
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");
   const{setHasConnected}=useLiveClass();
@@ -3800,6 +3994,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       if(sessionId){
         // 1. Update DB so students' Supabase subscription detects the end
         await supabase.from("live_sessions").update({status:"ended",ended_at:new Date().toISOString(),actual_end_time:new Date().toISOString()}).eq("id",sessionId);
+        // FIX: pre-fill manual_attendance from who actually joined, instead of
+        // leaving it for the teacher to mark every student by hand afterwards.
+        if(user)syncManualAttendanceFromSession(sessionId,subject,user.id).catch(()=>{});
         if(user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:t("Class has ended","انتهت الحصة"),type:"system"});
         // 2. Broadcast class_ended via LiveKit data channel so students disconnect immediately
         // (faster than waiting for DB subscription)
@@ -3999,7 +4196,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — absolute inside content, footer always visible */}
-              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
+              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
             </div>
