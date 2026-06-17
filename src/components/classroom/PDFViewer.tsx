@@ -2,6 +2,8 @@
 // • First open: fetches + renders all pages → caches as ImageBitmaps (module-level)
 // • Subsequent opens: draws from cache INSTANTLY — no network, no re-render
 // • Scroll position saved per materialId and restored on reopen
+// • prewarmPDF() exported so LiveClassFilePanel can silently pre-render PDFs
+//   in the background the moment the file list loads — before any click.
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
@@ -82,6 +84,18 @@ async function renderPDF(url: string, onProgress?: (done: number, total: number)
   return promise;
 }
 
+/**
+ * Call this with a resolved PDF URL right after the file list loads.
+ * It silently renders all pages into PAGE_CACHE in the background so
+ * that when the user taps the file, PDFViewer draws from cache instantly
+ * with no spinner at all.
+ */
+export function prewarmPDF(url: string): void {
+  if (!url || PAGE_CACHE.has(url) || RENDER_PROMISE.has(url)) return;
+  // Fire-and-forget — errors are silently ignored
+  renderPDF(url).catch(() => {});
+}
+
 interface Props {
   url: string;
   bg?: string;
@@ -138,6 +152,10 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
       restoreScroll();
       return;
     }
+
+    // ── STILL RENDERING IN BACKGROUND (prewarm in progress) ─────────────────
+    // If a render promise exists it was started by prewarmPDF — just attach to it
+    // and poll for partial pages as they arrive, same as first-render path below.
 
     // ── FIRST RENDER ────────────────────────────────────────────────────────
     setPhase("loading"); setErrMsg(""); setPct(0);
