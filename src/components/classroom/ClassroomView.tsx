@@ -654,32 +654,36 @@ const VolumeBooster = () => {
       if (!nodesRef.current.has(sid)) {
         const ms = new MediaStream([pub.track.mediaStreamTrack]);
 
-        // FIX: Always create and play an unmuted <audio> element as the primary
-        // playback path. Web Audio (createMediaStreamSource) is used IN ADDITION
-        // for gain/compression, but the <audio> element guarantees sound on browsers
-        // where the AudioContext is blocked (e.g. Android WebView, iOS before gesture).
-        const el = document.createElement("audio");
-        el.srcObject  = ms;
-        el.autoplay   = true;
-        // NOT muted — this is the reliable fallback so students always hear the teacher
-        el.muted      = false;
-        el.volume     = 1.0;
-        // Attach to DOM so mobile browsers don't suppress it
-        el.style.display = "none";
-        document.body.appendChild(el);
-        el.play().catch(() => {});
-
+        // Try the Web Audio path FIRST (gain/compression). Only fall back to an
+        // unmuted plain <audio> element if Web Audio isn't available — running
+        // BOTH at once means the same remote track plays twice through pipelines
+        // with different timing, which sounds like comb-filtering / "laggy" audio.
         let source: MediaStreamAudioSourceNode | null = null;
+        let useWebAudio = false;
         if (ac && gain && webAudioOkRef.current && ac.state === "running") {
           try {
-            // Web Audio pipeline adds gain+compression on top of the <audio> element.
             // Use a separate MediaStream source — do NOT use createMediaElementSource
             // because that would silence the <audio> element itself.
             const ms2 = new MediaStream([pub.track.mediaStreamTrack]);
             source = ac.createMediaStreamSource(ms2);
             source.connect(gain);
-          } catch { source = null; }
+            useWebAudio = true;
+          } catch { source = null; useWebAudio = false; }
         }
+
+        // FIX: single active output path. If Web Audio is handling playback,
+        // the <audio> element stays muted (kept in DOM only as the fallback
+        // anchor for browsers where the AudioContext is blocked, e.g. Android
+        // WebView / iOS before first gesture).
+        const el = document.createElement("audio");
+        el.srcObject  = ms;
+        el.autoplay   = true;
+        el.muted      = useWebAudio;
+        el.volume     = 1.0;
+        // Attach to DOM so mobile browsers don't suppress it
+        el.style.display = "none";
+        document.body.appendChild(el);
+        el.play().catch(() => {});
 
         nodesRef.current.set(sid, { source: source as any, el });
       }
@@ -3415,13 +3419,6 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
             </button>
           </div>
 
-          {/* Minimize — slides classroom off-screen, shows "Return to Class" pill */}
-          {onMinimize&&(
-            <button onClick={onMinimize} title="Minimize" style={{width:44,height:44,borderRadius:12,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"#e2e5e9",color:"#202124",flexShrink:0}}>
-              <ChevronDown style={{width:20,height:20}}/>
-            </button>
-          )}
-
           {/* Leave */}
           <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{height:44,padding:"0 16px",borderRadius:12,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5,background:"#ea4335",color:"#fff",flexShrink:0,boxShadow:"0 2px 8px rgba(234,67,53,.35)"}}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -3468,12 +3465,6 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           </div>
           {/* RIGHT */}
           <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-            {onMinimize&&(
-              <button onClick={onMinimize} title="Minimize (continue in background)" className="gm-ctrl" style={{color:"rgba(255,255,255,.7)"}}>
-                <span className="gm-ctrl-icon"><ChevronDown style={{width:20,height:20}}/></span>
-                <span style={{fontSize:10,color:"rgba(255,255,255,.45)",fontFamily:"'Google Sans',sans-serif"}}>Minimize</span>
-              </button>
-            )}
             <button className="gm-leave" onClick={isPrivileged?onEndClass:onLeaveClass}>
               <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/>
               {isPrivileged?"End":"Leave"}
@@ -3935,7 +3926,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       {token&&wsUrl&&(
         // key={roomKey} forces a full remount whenever autoReconnect bumps the key,
         // ensuring LiveKit starts with a fresh connection and token.
-        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:false,autoGainControl:false,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:128000},dtx:false,red:true,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
+        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:false,autoGainControl:false,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:true,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           {/* VolumeBooster replaces bare RoomAudioRenderer — Web Audio pipeline: GainNode(2.5×) + DynamicsCompressor ensures every remote voice is amplified and normalised without echo or self-playback */}
           <VolumeBooster/>
           <RoomToContextBridge />
