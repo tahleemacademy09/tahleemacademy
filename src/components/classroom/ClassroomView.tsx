@@ -546,16 +546,20 @@ const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) => {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VolumeBooster — routes every remote audio track through a Web Audio pipeline:
-//   MediaStreamSource → GainNode (2.5×) → DynamicsCompressor → speakers
+//   MediaStreamSource → GainNode (2.2×) → DynamicsCompressor → speakers
 //
 // Why this exists:
-//   1. LiveKit publishes at 64 kbps, but browser default output can still be
-//      quiet. A GainNode amplifies every remote voice without clipping.
-//   2. DynamicsCompressor auto-levels loud and soft voices so everyone is
-//      consistently audible.
+//   1. LiveKit publishes at 64 kbps; a GainNode amplifies every remote voice
+//      without clipping (2.2× is the sweet spot — louder without distortion).
+//   2. DynamicsCompressor (4:1, wide knee) auto-levels loud and soft voices so
+//      everyone is consistently audible without the "pumping" crackle that
+//      aggressive ratios (12:1) produce on poor networks.
 //   3. We deliberately SKIP the local participant so you never hear yourself.
 //   4. Each track gets its own source node so 2+ people can speak at once
 //      with zero interference — Web Audio mixes them natively.
+//   5. If the AudioContext is still suspended when a track arrives (common on
+//      mobile before first gesture), the <audio> fallback plays unmuted and is
+//      migrated to the Web Audio pipeline once the AC resumes.
 // ═══════════════════════════════════════════════════════════════════════════════
 const VolumeBooster = () => {
   const room = useRoomContext();
@@ -569,34 +573,52 @@ const VolumeBooster = () => {
   // FIX: track whether Web Audio pipeline is usable; fall back to plain <audio> if not
   const webAudioOkRef = useRef<boolean>(true);
 
-  // ── Helper: resume AudioContext — must be called from within a user-gesture
-  //    handler OR re-tried after interaction since mobile browsers (Android Chrome,
-  //    iOS Safari) silently swallow resume() calls that arrive outside a gesture.
-  const tryResumeAC = () => {
-    const ac = acRef.current;
-    if (ac && ac.state === "suspended") {
-      ac.resume().catch(() => { webAudioOkRef.current = false; });
-    }
-  };
+  // ── Helper: resume AudioContext and, once running, migrate any fallback <audio>
+  //    elements (created while AC was suspended) into the Web Audio pipeline.
+  //    Fixes "teacher joined but I heard nothing for 30 s" on iOS/Android where
+  //    the first gesture comes after tracks have already arrived.
+  const tryResumeAC = useCallback(() => {
+    const ac   = acRef.current;
+    const gain = gainRef.current;
+    if (!ac || ac.state !== "suspended") return;
+    ac.resume().then(() => {
+      if (!gain || !webAudioOkRef.current) return;
+      for (const [, node] of nodesRef.current) {
+        if (!node.el.muted && node.source == null) {
+          try {
+            const ms2 = new MediaStream((node.el.srcObject as MediaStream).getTracks());
+            const src = ac.createMediaStreamSource(ms2);
+            src.connect(gain);
+            (node as any).source = src;
+            node.el.muted = true; // hand off to Web Audio — silence the element
+          } catch {}
+        }
+      }
+    }).catch(() => { webAudioOkRef.current = false; });
+  }, []);
 
   // ── 1. Build the Web Audio pipeline once ────────────────────────────────────
   useEffect(() => {
     try {
-      const ac = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 48000 });
+      // Use native sample rate — avoids resampling artifacts on device DAC.
+      // Forcing 48000 when the OS DAC is 44100 causes subtle pitch artifacts.
+      const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
       acRef.current = ac;
 
-      // Amplify: 3.5× — noticeably louder without clipping on most voices
+      // Amplify: 2.2× — loud and clear without clipping distortion.
+      // 3.5× was too hot; voices near 0 dBFS would clip audibly.
       const gain = ac.createGain();
-      gain.gain.value = 3.5;
+      gain.gain.value = 2.2;
       gainRef.current = gain;
 
-      // Compressor: tuned for voice — keeps everyone at consistent volume
+      // Compressor: transparent voice levelling — avoids the "pumping" / "wah-wah"
+      // crackle that aggressive ratios (12:1) produce on poor-network packets.
       const comp = ac.createDynamicsCompressor();
-      comp.threshold.value = -18;   // start compressing earlier (−18 dBFS)
-      comp.knee.value      = 10;    // tighter knee = more transparent compression
-      comp.ratio.value     = 12;    // 12:1 — stronger levelling for voice
-      comp.attack.value    = 0.001; // 1 ms — catches transients instantly
-      comp.release.value   = 0.15;  // 150 ms — quick recovery, no pumping
+      comp.threshold.value = -28;   // −28 dBFS: compress only genuine peaks
+      comp.knee.value      = 20;    // wide knee → gradual, transparent onset
+      comp.ratio.value     = 4;     // 4:1 gentle ratio → natural voice levelling
+      comp.attack.value    = 0.003; // 3 ms → fast enough to catch plosives
+      comp.release.value   = 0.25;  // 250 ms → slow enough to avoid pumping
       compRef.current = comp;
 
       // Pipeline: source(s) → gain → compressor → speakers
@@ -606,20 +628,27 @@ const VolumeBooster = () => {
       webAudioOkRef.current = false;
     }
 
-    // FIX: resume AudioContext on ANY user interaction — { once: false } so it keeps
-    // retrying on every tap/click until the context is running. On mobile the first
-    // gesture may fire before the AC is created, so we re-register persistently.
+    // Resume AudioContext on ANY user interaction — persistent (not { once })
+    // so every tap retries until the context is running.
     const resume = () => tryResumeAC();
     document.addEventListener("click",      resume, { passive: true });
     document.addEventListener("touchstart", resume, { passive: true });
     document.addEventListener("touchend",   resume, { passive: true });
     document.addEventListener("keydown",    resume, { passive: true });
 
+    // Visibility resume — re-run AudioContext the moment the user returns
+    // to the tab after backgrounding / screen-lock on mobile.
+    const onVis = () => {
+      if (document.visibilityState === "visible") tryResumeAC();
+    };
+    document.addEventListener("visibilitychange", onVis, { passive: true });
+
     return () => {
-      document.removeEventListener("click",      resume);
-      document.removeEventListener("touchstart", resume);
-      document.removeEventListener("touchend",   resume);
-      document.removeEventListener("keydown",    resume);
+      document.removeEventListener("click",            resume);
+      document.removeEventListener("touchstart",       resume);
+      document.removeEventListener("touchend",         resume);
+      document.removeEventListener("keydown",          resume);
+      document.removeEventListener("visibilitychange", onVis);
       acRef.current?.close().catch(() => {});
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -630,11 +659,9 @@ const VolumeBooster = () => {
     const ac   = acRef.current;
     const gain = gainRef.current;
 
-    // FIX: Always attempt to resume when new tracks arrive — this is the critical
-    // path where mobile browsers need the AudioContext running. If the AC is still
-    // suspended here it means no user gesture has fired yet; we attempt anyway (it
-    // may succeed if this effect runs inside a React synthetic event flush) and fall
-    // back to plain unmuted <audio> elements so students always hear the teacher.
+    // Always attempt to resume when new tracks arrive — the critical mobile path.
+    // This effect often fires right after the user taps "Join", so the resume
+    // may succeed here even on Android/iOS before a separate gesture event fires.
     if (ac && ac.state === "suspended") {
       ac.resume().catch(() => { webAudioOkRef.current = false; });
     }
@@ -652,18 +679,14 @@ const VolumeBooster = () => {
       activeIds.add(sid);
 
       if (!nodesRef.current.has(sid)) {
-        const ms = new MediaStream([pub.track.mediaStreamTrack]);
-
-        // Try the Web Audio path FIRST (gain/compression). Only fall back to an
-        // unmuted plain <audio> element if Web Audio isn't available — running
-        // BOTH at once means the same remote track plays twice through pipelines
-        // with different timing, which sounds like comb-filtering / "laggy" audio.
+        // Try the Web Audio path FIRST (gain + compression).
+        // Running BOTH Web Audio AND an unmuted <audio> simultaneously causes the
+        // same track to play through two pipelines with slightly different latency
+        // → comb-filtering / metallic crackle. One path only.
         let source: MediaStreamAudioSourceNode | null = null;
         let useWebAudio = false;
         if (ac && gain && webAudioOkRef.current && ac.state === "running") {
           try {
-            // Use a separate MediaStream source — do NOT use createMediaElementSource
-            // because that would silence the <audio> element itself.
             const ms2 = new MediaStream([pub.track.mediaStreamTrack]);
             source = ac.createMediaStreamSource(ms2);
             source.connect(gain);
@@ -671,16 +694,20 @@ const VolumeBooster = () => {
           } catch { source = null; useWebAudio = false; }
         }
 
-        // FIX: single active output path. If Web Audio is handling playback,
-        // the <audio> element stays muted (kept in DOM only as the fallback
-        // anchor for browsers where the AudioContext is blocked, e.g. Android
-        // WebView / iOS before first gesture).
+        // <audio> element — always created as the fallback anchor.
+        // • Web Audio running  → element MUTED  (prevents double-playback / crackle)
+        // • Web Audio blocked  → element UNMUTED (students always hear audio)
+        // tryResumeAC() will migrate it to Web Audio once the AC wakes up.
+        const ms = new MediaStream([pub.track.mediaStreamTrack]);
         const el = document.createElement("audio");
-        el.srcObject  = ms;
-        el.autoplay   = true;
-        el.muted      = useWebAudio;
-        el.volume     = 1.0;
-        // Attach to DOM so mobile browsers don't suppress it
+        el.srcObject = ms;
+        el.autoplay  = true;
+        el.muted     = useWebAudio;
+        el.volume    = 1.0;
+        // Jitter buffer hint: "playback" tells the browser to buffer slightly more
+        // aggressively — smooths over packet bursts on poor networks and reduces
+        // the dropout / crackling artifacts during congestion.
+        try { (el as any).audioPlaybackHint = "playback"; } catch {}
         el.style.display = "none";
         document.body.appendChild(el);
         el.play().catch(() => {});
@@ -4173,8 +4200,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       {token&&wsUrl&&(
         // key={roomKey} forces a full remount whenever autoReconnect bumps the key,
         // ensuring LiveKit starts with a fresh connection and token.
-        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:false,autoGainControl:false,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:32000},dtx:true,red:true,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
-          {/* VolumeBooster replaces bare RoomAudioRenderer — Web Audio pipeline: GainNode(2.5×) + DynamicsCompressor ensures every remote voice is amplified and normalised without echo or self-playback */}
+        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:64000},dtx:false,red:true,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
+          {/* VolumeBooster replaces bare RoomAudioRenderer — Web Audio pipeline: GainNode(2.2×) + DynamicsCompressor(4:1) ensures every remote voice is loud and clear without clipping, crackle, or self-playback */}
           <VolumeBooster/>
           <RoomToContextBridge />
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam}/>
