@@ -4,6 +4,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { resolveTasjeelStep, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import { lovable } from "@/integrations/lovable";
 
 import { Loader2, Mail, Lock, Eye, EyeOff, Check, Globe, BookOpen } from "lucide-react";
@@ -46,11 +47,20 @@ const Login = () => {
   // the user back to login. Removing the duplicate navigate from handleSubmit
   // and relying solely on this effect fixes the "must refresh to login" bug.
   //
-  // BUG 4 FIX: For students who are mid-registration, navigating to /student
-  // relies on TasjeelGuard to redirect them — but if TasjeelGuard times out
-  // on a slow connection they get stuck on the spinner forever. Instead, we
-  // proactively fetch their tasjeel step here and send them straight to the
-  // right pipeline page, bypassing TasjeelGuard entirely for this case.
+  // For students who are mid-registration, navigating to /student relies on
+  // TasjeelGuard to redirect them — but if TasjeelGuard times out on a slow
+  // connection they get stuck on the spinner. So we proactively resolve their
+  // tasjeel step here and send them straight to the right pipeline page.
+  //
+  // Fix (rewrite): this used to run its OWN separate Supabase query with its
+  // own 5s timeout and its own copy of the step→route map, completely
+  // independent from the one TasjeelGuard runs (6s timeout, separate map).
+  // The two could resolve to different steps a few hundred ms apart — this
+  // effect navigates to /student, then TasjeelGuard's slower query resolves
+  // and immediately bounces to a different route. That double-navigate is
+  // what looked like a page reload right after login. Now both this effect
+  // and TasjeelGuard call the exact same resolveTasjeelStep()/TASJEEL_ROUTES,
+  // so they always agree and only one navigation ever happens.
   useEffect(() => {
     if (!user || authLoading) return;
     const isAdmin   = roles.includes("admin");
@@ -58,71 +68,19 @@ const Login = () => {
     if (isAdmin)        { navigate(fromPath || "/admin",   { replace: true }); return; }
     if (isTeacher)      { navigate(fromPath || "/teacher", { replace: true }); return; }
 
-    // Student: check their registration step before navigating
+    // Student: resolve their exact pipeline step before navigating.
     (async () => {
       try {
-        // Race the tasjeel query against a 5s timeout.
-        // If Supabase is slow (common on mobile/iOS), we fall through to /student
-        // and let TasjeelGuard handle routing rather than hanging on the login page.
-        const timeoutPromise = new Promise<{ data: null }>((resolve) =>
-          setTimeout(() => resolve({ data: null }), 5000)
-        );
-        const queryPromise = supabase
-          .from("tasjeel_progress" as any)
-          .select("current_step")
-          .eq("user_id", user.id)
-          .maybeSingle();
-
-        const { data: tp } = await Promise.race([queryPromise, timeoutPromise]);
-
-        const step = (tp as any)?.current_step;
-
-        // Route map matching TASJEEL_ROUTES in useTasjeel.ts.
-        const pipelineRoute: Record<string, string> = {
-          enrollment:       "/auth/register-continue",
-          payment:          "/auth/register-continue",
-          onboarding:       "/onboarding",
-          exam:             "/student/entrance-exam",
-          recitation:       "/student/recitation-test",
-          schedule_session: "/student/recitation-test",
-          level_assignment: "/student/awaiting-level",
-        };
-
-        if (step && step !== "completed" && pipelineRoute[step]) {
-          // For enrollment/payment steps: only send to register-continue if the
-          // user's email is NOT yet confirmed (genuinely new user who needs to
-          // complete verification). Existing confirmed users sent there get the
-          // "Verification Error" screen because register-continue expects a fresh
-          // email-link session. Instead, send confirmed users straight to /student.
-          const destination = pipelineRoute[step];
-          if ((destination === "/auth/register-continue") && !!user.email_confirmed_at) {
-            // Existing confirmed user stuck in enrollment/payment — just go to dashboard
-            navigate(fromPath?.startsWith("/student") ? fromPath : "/student", { replace: true });
-          } else {
-            navigate(destination, { replace: true });
-          }
-        } else if (!step) {
-          const emailConfirmed = !!user.email_confirmed_at;
-          if (emailConfirmed) {
-            try {
-              const now = new Date().toISOString();
-              await supabase.from("tasjeel_progress" as any).insert({
-                user_id:      user.id,
-                current_step: "completed",
-                created_at:   now,
-                updated_at:   now,
-                completed_at: now,
-              });
-            } catch { /* non-fatal — row may have been created by a race */ }
-            navigate(fromPath?.startsWith("/student") ? fromPath : "/student", { replace: true });
-          } else {
-            navigate("/auth/register-continue", { replace: true });
-          }
-        } else {
-          // completed or unknown — go to dashboard or restore the page they were on
+        const step = await resolveTasjeelStep(user.id, user.email_confirmed_at, 5000);
+        if (step === "completed") {
           navigate(fromPath?.startsWith("/student") ? fromPath : "/student", { replace: true });
+        } else {
+          navigate(TASJEEL_ROUTES[step] ?? "/student", { replace: true });
         }
       } catch {
+        // Network failure resolving the step — fall through to /student and
+        // let TasjeelGuard (same resolver, its own timeout) handle it there
+        // rather than hanging on the login page.
         navigate(fromPath?.startsWith("/student") ? fromPath : "/student", { replace: true });
       }
     })();
