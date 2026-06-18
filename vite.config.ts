@@ -11,28 +11,34 @@ import type { Plugin } from "vite";
 // the built index.html that detects "Failed to fetch dynamically imported module"
 // / "Load failed" errors and forces a hard reload — clearing the stale cache
 // and fetching the real current index.html (which is now no-store in Vercel).
+//
+// FIXED: original code would also fire when the page was hidden (PWA minimize).
+// Guard added: only reload if document.visibilityState === "visible".
 function chunkLoadRecoveryPlugin(): Plugin {
   return {
     name: "chunk-load-recovery",
     transformIndexHtml(html) {
       const script = `
 <script>
+  function _chunkReload() {
+    // Never reload while the PWA is backgrounded — that causes a
+    // jarring full-refresh when the user returns from minimize.
+    if (document.visibilityState !== 'visible') return;
+    if (!sessionStorage.getItem('_chunkReload')) {
+      sessionStorage.setItem('_chunkReload', '1');
+      window.location.reload(true);
+    }
+  }
   window.addEventListener('error', function(e) {
     var msg = (e.message || '') + (e.filename || '');
     if (msg.match(/dynamically imported|chunk|Load failed|Failed to fetch/i)) {
-      if (!sessionStorage.getItem('_chunkReload')) {
-        sessionStorage.setItem('_chunkReload', '1');
-        window.location.reload(true);
-      }
+      _chunkReload();
     }
   }, true);
   window.addEventListener('unhandledrejection', function(e) {
     var msg = String((e.reason && e.reason.message) || e.reason || '');
     if (msg.match(/dynamically imported|chunk|Load failed|Failed to fetch/i)) {
-      if (!sessionStorage.getItem('_chunkReload')) {
-        sessionStorage.setItem('_chunkReload', '1');
-        window.location.reload(true);
-      }
+      _chunkReload();
     }
   });
 </script>`;
