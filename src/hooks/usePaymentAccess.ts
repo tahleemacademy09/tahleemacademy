@@ -3,6 +3,11 @@
     Reads from profiles.payment_status + profiles.subscription_end_date
     (same source as EnrollmentPayment.tsx — single source of truth).
 
+    Fix (2026-06-18): Same root cause as useTasjeel — useCallback depended on
+    [user, isStaff, authLoading]. The user object is a new reference after every
+    TOKEN_REFRESHED, causing a full re-fetch and isLoading flicker on every app
+    resume from background. Fixed by depending on user?.id instead of user.
+
     Usage:
       const { hasAccess, accessStatus, isLoading } = usePaymentAccess();
       if (!hasAccess) return <PaymentGuard feature="Al-Hifdh" />;
@@ -26,6 +31,13 @@ const GRACE_DAYS = 7;
 
 export const usePaymentAccess = (): PaymentAccessResult => {
   const { user, hasRole, loading: authLoading } = useAuth();
+
+  // KEY FIX: use stable primitives, not the user object.
+  // user is replaced with a new reference on every TOKEN_REFRESHED.
+  const userId  = user?.id ?? null;
+  const isAdmin   = hasRole("admin");
+  const isTeacher = hasRole("teacher");
+
   const [status, setStatus]     = useState<AccessStatus>("loading");
   const [graceEnd, setGraceEnd] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -33,12 +45,12 @@ export const usePaymentAccess = (): PaymentAccessResult => {
   // Admins and teachers always bypass payment checks.
   // IMPORTANT: evaluate isStaff only after auth has finished loading so that
   // roles[] is populated. Before that, hasRole() always returns false.
-  const isStaff = !authLoading && (hasRole("admin") || hasRole("teacher"));
+  const isStaff = !authLoading && (isAdmin || isTeacher);
 
   const fetchStatus = useCallback(async () => {
     // Wait for auth to finish so roles are available before checking isStaff
     if (authLoading) return;
-    if (!user) { setStatus("loading"); return; }
+    if (!userId) { setStatus("loading"); return; }
     if (isStaff) { setStatus("active"); setIsLoading(false); return; }
 
     setIsLoading(true);
@@ -57,7 +69,7 @@ export const usePaymentAccess = (): PaymentAccessResult => {
       const { data } = await supabase
         .from("profiles")
         .select("payment_status, subscription_end_date, is_payment_exempt, created_at")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .maybeSingle();
 
       if (didTimeout) return; // timeout already resolved
@@ -126,7 +138,8 @@ export const usePaymentAccess = (): PaymentAccessResult => {
       clearTimeout(timeoutId);
       if (!didTimeout) { setIsLoading(false); }
     }
-  }, [user, isStaff, authLoading]);
+  // KEY FIX: depend on userId (stable string) not user (new object every TOKEN_REFRESHED)
+  }, [userId, isStaff, authLoading]);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
