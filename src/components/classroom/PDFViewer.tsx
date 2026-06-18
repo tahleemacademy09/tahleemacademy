@@ -22,6 +22,7 @@ const OFFLINE_CACHE_NAME = "tahleem-pdf-offline-v1";
 const PAGE_CACHE    = new Map<string, ImageBitmap[]>();
 const DIM_CACHE     = new Map<string, Array<{w:number;h:number}>>();
 const RENDER_PROMISE= new Map<string, Promise<ImageBitmap[]>>();
+const TOTAL_CACHE   = new Map<string, number>(); // known the instant the doc opens, before pages render
 
 function ensureScript(src: string): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -118,6 +119,7 @@ async function renderPDF(url: string, onProgress?: (done: number, total: number)
     }
 
     const total = pdf.numPages;
+    TOTAL_CACHE.set(url, total);
     const dpr   = Math.min(window.devicePixelRatio || 1, 2);
     const bitmaps: ImageBitmap[] = [];
     const dims: Array<{w:number;h:number}> = [];
@@ -170,6 +172,39 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
   const cancelRef = useRef(false);
   const lastDrawn = useRef(0);
 
+  // ── Page navigator (always-visible "N / total" + jump-to-page) ───────────
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages,  setTotalPages]  = useState(0);
+  const [pageInput,   setPageInput]   = useState("1");
+  const editingRef = useRef(false);
+
+  const updateCurrentPageFromScroll = useCallback(() => {
+    const sc = scrollRef.current, cont = containerRef.current;
+    if (!sc || !cont || !cont.children.length) return;
+    const top = sc.scrollTop + 40; // a page counts as "current" once its top has just entered view
+    let page = 1;
+    for (let i = 0; i < cont.children.length; i++) {
+      if ((cont.children[i] as HTMLElement).offsetTop <= top) page = i + 1; else break;
+    }
+    setCurrentPage(page);
+  }, []);
+
+  const goToPage = useCallback((n: number) => {
+    const cont = containerRef.current, sc = scrollRef.current;
+    if (!cont || !sc || !cont.children.length) return;
+    // Clamp to pages actually rendered so far — pages still streaming in aren't in the DOM yet
+    const clamped = Math.max(1, Math.min(n, cont.children.length));
+    const el = cont.children[clamped - 1] as HTMLElement;
+    sc.scrollTo({ top: Math.max(0, el.offsetTop - 8), behavior: "smooth" });
+    setCurrentPage(clamped);
+    setPageInput(String(clamped));
+  }, []);
+
+  // Keep the input showing the live page while the user isn't actively typing in it
+  useEffect(() => {
+    if (!editingRef.current) setPageInput(String(currentPage));
+  }, [currentPage]);
+
   const makePage = useCallback((bmp: ImageBitmap, dim: {w:number;h:number}, last: boolean): HTMLCanvasElement => {
     const c = document.createElement("canvas");
     c.width = dim.w; c.height = dim.h;
@@ -193,6 +228,8 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     ensureKeyframes();
     cancelRef.current = false;
     lastDrawn.current = 0;
+    setCurrentPage(1);
+    setTotalPages(TOTAL_CACHE.get(url) || 0);
 
     const cached = PAGE_CACHE.get(url);
     const dims   = DIM_CACHE.get(url);
@@ -207,6 +244,7 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
         );
       }
       lastDrawn.current = cached.length;
+      setTotalPages(dims.length);
       setPhase("done");
       restoreScroll();
       return;
@@ -229,7 +267,8 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
           containerRef.current.appendChild(makePage(partial[i], pdims[i] ?? { w: partial[i].width, h: partial[i].height }, last));
         }
         lastDrawn.current = partial.length;
-        const total = pdims.length || partial.length;
+        const total = TOTAL_CACHE.get(url) || pdims.length || partial.length;
+        setTotalPages(total);
         setPct(Math.round((lastDrawn.current / total) * 100));
       }
     }, 250);
@@ -244,6 +283,7 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
             containerRef.current.appendChild(makePage(bitmaps[i], fdims[i] ?? { w: bitmaps[i].width, h: bitmaps[i].height }, i === bitmaps.length - 1));
           }
         }
+        setTotalPages(fdims.length);
         setPhase("done");
         restoreScroll();
       })
@@ -257,25 +297,37 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     return () => { cancelRef.current = true; clearInterval(poll); };
   }, [url, makePage, restoreScroll]);
 
-  // Save scroll while reading
+  // Save scroll position + track current page while reading
   useEffect(() => {
-    if (!materialId || phase !== "done") return;
+    if (phase !== "done" && phase !== "rendering") return;
     const el = scrollRef.current;
     if (!el) return;
-    const fn = () => saveScroll(materialId, el.scrollTop);
+    const fn = () => { if (materialId) saveScroll(materialId, el.scrollTop); updateCurrentPageFromScroll(); };
+    fn(); // set the initial page right away, don't wait for the first scroll event
     el.addEventListener("scroll", fn, { passive: true });
     return () => el.removeEventListener("scroll", fn);
-  }, [materialId, phase]);
+  }, [materialId, phase, updateCurrentPageFromScroll]);
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: bg }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: bg, position: "relative" }}>
 
-      {(phase === "loading" || phase === "rendering") && (
+      {/* Nothing rendered yet — full-screen spinner is fine, there's nothing to block */}
+      {phase === "loading" && (
         <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:10, padding:"24px 16px", pointerEvents:"none" }}>
           <div style={{ width:38, height:38, borderRadius:"50%", border:"3px solid rgba(255,255,255,.1)", borderTopColor:"#10b981", animation:"pdfv-spin .7s linear infinite" }}/>
-          <p style={{ color:"#9ca3af", fontSize:12, margin:0 }}>
-            {phase === "loading" ? "Loading…" : `Rendering… ${pct}%`}
-          </p>
+          <p style={{ color:"#9ca3af", fontSize:12, margin:0 }}>Loading…</p>
+        </div>
+      )}
+
+      {/* Page 1+ already visible below — float a small chip instead of a layout-pushing banner */}
+      {phase === "rendering" && (
+        <div style={{
+          position:"absolute", bottom:14, right:14, zIndex:5, pointerEvents:"none",
+          display:"flex", alignItems:"center", gap:7, padding:"6px 12px", borderRadius:20,
+          background:"rgba(20,20,22,.85)", boxShadow:"0 2px 10px rgba(0,0,0,.4)",
+        }}>
+          <div style={{ width:13, height:13, borderRadius:"50%", border:"2px solid rgba(255,255,255,.2)", borderTopColor:"#10b981", animation:"pdfv-spin .7s linear infinite" }}/>
+          <span style={{ color:"#d1d5db", fontSize:11, fontWeight:600 }}>{pct}%</span>
         </div>
       )}
 
@@ -287,6 +339,41 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
             style={{ marginTop:6, background:"#10b981", color:"#fff", padding:"9px 22px", borderRadius:10, textDecoration:"none", fontWeight:700, fontSize:13 }}>
             Open in browser
           </a>
+        </div>
+      )}
+
+      {/* Always-visible page navigator — current/total + jump to any rendered page */}
+      {(phase === "rendering" || phase === "done") && totalPages > 0 && (
+        <div style={{
+          position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", zIndex:6,
+          display:"flex", flexDirection:"column", alignItems:"center", gap:6,
+          background:"rgba(20,20,22,.82)", borderRadius:14, padding:"10px 7px",
+          boxShadow:"0 2px 10px rgba(0,0,0,.35)",
+        }}>
+          <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} style={{
+            width:26, height:26, borderRadius:8, border:"none", cursor: currentPage <= 1 ? "default" : "pointer",
+            background:"rgba(255,255,255,.08)", color: currentPage <= 1 ? "rgba(255,255,255,.25)" : "#d1d5db",
+            fontSize:12, display:"flex", alignItems:"center", justifyContent:"center",
+          }}>▲</button>
+
+          <input
+            type="number" inputMode="numeric" value={pageInput}
+            onFocus={() => { editingRef.current = true; }}
+            onChange={e => setPageInput(e.target.value)}
+            onBlur={() => { editingRef.current = false; const n = parseInt(pageInput, 10); if (!isNaN(n)) goToPage(n); else setPageInput(String(currentPage)); }}
+            onKeyDown={e => { if (e.key === "Enter") { const n = parseInt(pageInput, 10); if (!isNaN(n)) goToPage(n); (e.target as HTMLInputElement).blur(); } }}
+            style={{
+              width:30, textAlign:"center", background:"rgba(255,255,255,.08)", border:"1px solid rgba(255,255,255,.15)",
+              borderRadius:7, color:"#fff", fontSize:12, fontWeight:700, padding:"3px 0", MozAppearance:"textfield" as any,
+            }}
+          />
+          <span style={{ color:"rgba(255,255,255,.45)", fontSize:10 }}>/ {totalPages}</span>
+
+          <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage >= totalPages} style={{
+            width:26, height:26, borderRadius:8, border:"none", cursor: currentPage >= totalPages ? "default" : "pointer",
+            background:"rgba(255,255,255,.08)", color: currentPage >= totalPages ? "rgba(255,255,255,.25)" : "#d1d5db",
+            fontSize:12, display:"flex", alignItems:"center", justifyContent:"center",
+          }}>▼</button>
         </div>
       )}
 
