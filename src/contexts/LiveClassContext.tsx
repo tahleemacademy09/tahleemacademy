@@ -35,6 +35,7 @@ import {
   createContext, useContext, useState, useCallback, useEffect, useRef,
   type ReactNode,
 } from "react";
+import { lockReload, unlockReload } from "@/lib/reloadGuard";
 
 const STORAGE_KEY   = "tahleem_live_class";
 const HISTORY_STATE = "tahleem-live-class";
@@ -81,6 +82,15 @@ function useLiveClassKeepAlive(inCall: boolean) {
       document.removeEventListener("resume", wakeAudio);
       navigator.serviceWorker?.controller?.postMessage({ type: "LIVE_CLASS_END" });
     };
+  }, [inCall]);
+}
+
+/* ── Reload safety net: never let an SW update reload the tab mid-class ── */
+function useLiveClassReloadGuard(inCall: boolean) {
+  useEffect(() => {
+    if (!inCall) return;
+    lockReload("live-class");
+    return () => unlockReload("live-class");
   }, [inCall]);
 }
 
@@ -144,6 +154,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const restoreMicFnRef = useRef<() => void>(() => {});
 
   useLiveClassKeepAlive(state.inCall);
+  useLiveClassReloadGuard(state.inCall);
 
   // Persist call state
   useEffect(() => {
