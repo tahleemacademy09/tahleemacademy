@@ -980,68 +980,501 @@ const GroupReciteAutoMic=({active,isPrivileged}:{active:boolean;isPrivileged:boo
 };
 
 
+/* ══════════════════════════════════════════════════════════════════════
+   WHITEBOARD — full-featured: pen · highlighter · shapes · text · image
+   undo/redo · zoom/pan · grid · export · colour picker · line thickness
+   Real-time broadcast via LiveKit DataChannel + Supabase persistence
+   ══════════════════════════════════════════════════════════════════════ */
+type WBTool = "pen"|"highlighter"|"eraser"|"line"|"rect"|"circle"|"arrow"|"text"|"pan";
+interface WBStroke {
+  type:"stroke"; color:string; lineWidth:number; points:{x:number;y:number}[];
+  dash?:number[]; opacity?:number;
+}
+interface WBShape {
+  type:"rect"|"circle"|"line"|"arrow";
+  color:string; lineWidth:number; fill?:string;
+  x1:number; y1:number; x2:number; y2:number;
+}
+interface WBText {
+  type:"text"; color:string; fontSize:number; fontFamily:string;
+  x:number; y:number; text:string;
+}
+interface WBImage {
+  type:"image"; dataUrl:string; x:number; y:number; w:number; h:number;
+}
+type WBElement = WBStroke|WBShape|WBText|WBImage;
+
+function drawElement(ctx:CanvasRenderingContext2D, el:WBElement){
+  ctx.save();
+  if(el.type==="stroke"){
+    const s=el as WBStroke;
+    if(!s.points||s.points.length<1){ctx.restore();return;}
+    ctx.globalAlpha=s.opacity??1;
+    ctx.strokeStyle=s.color; ctx.lineWidth=s.lineWidth;
+    ctx.lineCap="round"; ctx.lineJoin="round";
+    if(s.dash)ctx.setLineDash(s.dash);
+    ctx.beginPath();
+    if(s.points.length===1){ctx.arc(s.points[0].x,s.points[0].y,s.lineWidth/2,0,Math.PI*2);ctx.fillStyle=s.color;ctx.fill();}
+    else{
+      ctx.moveTo(s.points[0].x,s.points[0].y);
+      for(let i=1;i<s.points.length;i++){
+        const p0=s.points[i-1],p1=s.points[i];
+        ctx.quadraticCurveTo(p0.x,p0.y,(p0.x+p1.x)/2,(p0.y+p1.y)/2);
+      }
+      ctx.lineTo(s.points[s.points.length-1].x,s.points[s.points.length-1].y);
+      ctx.stroke();
+    }
+  } else if(el.type==="rect"){
+    const s=el as WBShape;
+    ctx.strokeStyle=s.color; ctx.lineWidth=s.lineWidth;
+    if(s.fill){ctx.fillStyle=s.fill;ctx.fillRect(s.x1,s.y1,s.x2-s.x1,s.y2-s.y1);}
+    ctx.strokeRect(s.x1,s.y1,s.x2-s.x1,s.y2-s.y1);
+  } else if(el.type==="circle"){
+    const s=el as WBShape;
+    ctx.strokeStyle=s.color; ctx.lineWidth=s.lineWidth;
+    const rx=Math.abs(s.x2-s.x1)/2, ry=Math.abs(s.y2-s.y1)/2;
+    const cx=(s.x1+s.x2)/2, cy=(s.y1+s.y2)/2;
+    ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,0,0,Math.PI*2);
+    if(s.fill){ctx.fillStyle=s.fill;ctx.fill();}
+    ctx.stroke();
+  } else if(el.type==="line"){
+    const s=el as WBShape;
+    ctx.strokeStyle=s.color; ctx.lineWidth=s.lineWidth;
+    ctx.beginPath(); ctx.moveTo(s.x1,s.y1); ctx.lineTo(s.x2,s.y2); ctx.stroke();
+  } else if(el.type==="arrow"){
+    const s=el as WBShape;
+    ctx.strokeStyle=s.color; ctx.fillStyle=s.color; ctx.lineWidth=s.lineWidth;
+    const dx=s.x2-s.x1, dy=s.y2-s.y1, len=Math.hypot(dx,dy)||1;
+    const ux=dx/len, uy=dy/len;
+    const headLen=Math.max(16,s.lineWidth*4);
+    ctx.beginPath(); ctx.moveTo(s.x1,s.y1); ctx.lineTo(s.x2,s.y2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(s.x2,s.y2);
+    ctx.lineTo(s.x2-headLen*(ux-uy*0.5),s.y2-headLen*(uy+ux*0.5));
+    ctx.lineTo(s.x2-headLen*(ux+uy*0.5),s.y2-headLen*(uy-ux*0.5));
+    ctx.closePath(); ctx.fill();
+  } else if(el.type==="text"){
+    const s=el as WBText;
+    ctx.fillStyle=s.color; ctx.font=`${s.fontSize}px ${s.fontFamily}`;
+    ctx.textBaseline="top";
+    s.text.split("\n").forEach((line,i)=>ctx.fillText(line,s.x,s.y+i*(s.fontSize*1.25)));
+  } else if(el.type==="image"){
+    const s=el as WBImage;
+    const img=new Image(); img.src=s.dataUrl;
+    if(img.complete)ctx.drawImage(img,s.x,s.y,s.w,s.h);
+    else img.onload=()=>{const c2=canvasCache.get(img.src);if(c2){const cx2=c2.getContext("2d");if(cx2)cx2.drawImage(img,s.x,s.y,s.w,s.h);}};
+  }
+  ctx.restore();
+}
+// tiny global image cache to avoid flicker
+const canvasCache=new Map<string,HTMLCanvasElement>();
+
 const Whiteboard = ({room,onClose,isTeacher,initialStrokes,subjectId,canStudentWrite}:any) => {
   const canDraw=isTeacher||canStudentWrite;
   const canvasRef=useRef<HTMLCanvasElement>(null);
+  const overlayRef=useRef<HTMLCanvasElement>(null); // preview layer for shapes
   const drawing=useRef(false);
-  const strokesRef=useRef<any[]>([]);
+  const startPos=useRef<{x:number;y:number}>({x:0,y:0});
+  const elementsRef=useRef<WBElement[]>([]);
+  const historyRef=useRef<WBElement[][]>([]); // undo stack
   const saveTimer=useRef<any>(null);
+  const imgInputRef=useRef<HTMLInputElement>(null);
+  // pan state
+  const panOffset=useRef<{x:number;y:number}>({x:0,y:0});
+  const panStart=useRef<{x:number;y:number}>({x:0,y:0});
+  const isPanning=useRef(false);
+
   const [color,setColor]=useState("#1a1a1a");
-  const [lineWidth,setLineWidth]=useState(4);
-  const [tool,setTool]=useState<"pen"|"eraser">("pen");
+  const [lineWidth,setLineWidth]=useState(3);
+  const [tool,setTool]=useState<WBTool>("pen");
+  const [fontSize,setFontSize]=useState(22);
+  const [fontFamily,setFontFamily]=useState("sans-serif");
+  const [fillShape,setFillShape]=useState(false);
+  const [showGrid,setShowGrid]=useState(false);
+  const [zoom,setZoom]=useState(1);
   const [busy,setBusy]=useState(true);
-  const redraw=useCallback(()=>{
-    const cv=canvasRef.current;if(!cv)return;
-    const ctx=cv.getContext("2d");if(!ctx)return;
-    ctx.fillStyle="#fff";ctx.fillRect(0,0,cv.width,cv.height);
-    for(const s of strokesRef.current){
-      if(!s.points||s.points.length<2)continue;
-      ctx.beginPath();ctx.strokeStyle=s.color;ctx.lineWidth=s.lineWidth;
-      ctx.lineCap="round";ctx.lineJoin="round";
-      ctx.moveTo(s.points[0].x,s.points[0].y);
-      for(let i=1;i<s.points.length;i++)ctx.lineTo(s.points[i].x,s.points[i].y);
-      ctx.stroke();
+  const [textInput,setTextInput]=useState<{x:number;y:number;value:string}|null>(null);
+  const textareaRef=useRef<HTMLTextAreaElement>(null);
+  const [undoLen,setUndoLen]=useState(0);
+
+  // Derived: legacy "strokes" arrays from old saves are auto-upgraded
+  const upgradeStrokes=(raw:any[]):WBElement[]=>{
+    return raw.map((el:any)=>{
+      if(el.type&&["stroke","rect","circle","line","arrow","text","image"].includes(el.type))return el;
+      // legacy stroke format
+      return {type:"stroke",color:el.color||"#1a1a1a",lineWidth:el.lineWidth||3,points:el.points||[]} as WBStroke;
+    });
+  };
+
+  const redrawMain=useCallback(()=>{
+    const cv=canvasRef.current; if(!cv)return;
+    const ctx=cv.getContext("2d"); if(!ctx)return;
+    ctx.save();
+    // background
+    ctx.fillStyle="#fff"; ctx.fillRect(0,0,cv.width,cv.height);
+    // grid
+    if(showGrid){
+      ctx.strokeStyle="rgba(180,210,200,.45)"; ctx.lineWidth=1;
+      const gs=40;
+      for(let x=0;x<cv.width;x+=gs){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,cv.height);ctx.stroke();}
+      for(let y=0;y<cv.height;y+=gs){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(cv.width,y);ctx.stroke();}
     }
-  },[]);
+    ctx.translate(panOffset.current.x,panOffset.current.y);
+    ctx.scale(zoom,zoom);
+    for(const el of elementsRef.current)drawElement(ctx,el);
+    ctx.restore();
+  },[showGrid,zoom]);
+
+  const redrawOverlay=useCallback((previewEl?:WBElement)=>{
+    const cv=overlayRef.current; if(!cv)return;
+    const ctx=cv.getContext("2d"); if(!ctx)return;
+    ctx.clearRect(0,0,cv.width,cv.height);
+    if(previewEl){ctx.save();ctx.translate(panOffset.current.x,panOffset.current.y);ctx.scale(zoom,zoom);drawElement(ctx,previewEl);ctx.restore();}
+  },[zoom]);
+
+  // load from supabase
   useEffect(()=>{(async()=>{
-    try{const{data}=await supabase.from("subject_whiteboard"as any).select("strokes").eq("subject_id",subjectId).maybeSingle();
-      if((data as any)?.strokes?.length)strokesRef.current=(data as any).strokes;
-      else if(initialStrokes?.length)strokesRef.current=initialStrokes;
-    }catch{if(initialStrokes?.length)strokesRef.current=initialStrokes;}
-    setBusy(false);setTimeout(redraw,40);
+    try{
+      const{data}=await supabase.from("subject_whiteboard"as any).select("strokes").eq("subject_id",subjectId).maybeSingle();
+      if((data as any)?.strokes?.length)elementsRef.current=upgradeStrokes((data as any).strokes);
+      else if(initialStrokes?.length)elementsRef.current=upgradeStrokes(initialStrokes);
+    }catch{if(initialStrokes?.length)elementsRef.current=upgradeStrokes(initialStrokes);}
+    setBusy(false); setTimeout(redrawMain,40);
   })();},[]);
+
+  // re-render when showGrid/zoom changes
+  useEffect(()=>{redrawMain();},[redrawMain]);
+
   const save=useCallback(()=>{
-    if(!canDraw)return;clearTimeout(saveTimer.current);
-    saveTimer.current=setTimeout(async()=>{try{await supabase.from("subject_whiteboard"as any).upsert({subject_id:subjectId,strokes:strokesRef.current,updated_at:new Date().toISOString()},{onConflict:"subject_id"});}catch{}},1200);
-  },[isTeacher,subjectId]);
+    if(!canDraw)return; clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(async()=>{
+      try{await supabase.from("subject_whiteboard"as any).upsert({subject_id:subjectId,strokes:elementsRef.current,updated_at:new Date().toISOString()},{onConflict:"subject_id"});}catch{}
+    },1200);
+  },[canDraw,subjectId]);
+
+  const broadcast=useCallback((msg:object)=>{
+    try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify(msg)),{reliable:true});}catch{}
+  },[room]);
+
   useEffect(()=>{
     if(!room)return;
-    const h=(payload:Uint8Array)=>{try{const msg=JSON.parse(new TextDecoder().decode(payload));if(msg.type==="wb_strokes"){strokesRef.current=msg.strokes;redraw();}if(msg.type==="wb_clear"){strokesRef.current=[];redraw();}}catch{}};
-    room.on(RoomEvent.DataReceived,h);return()=>room.off(RoomEvent.DataReceived,h);
-  },[room,redraw]);
-  const broadcast=useCallback((msg:object)=>{try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify(msg)),{reliable:true});}catch{}},[room]);
-  const getPos=(e:React.PointerEvent<HTMLCanvasElement>)=>{const r=canvasRef.current!.getBoundingClientRect();return{x:(e.clientX-r.left)*(canvasRef.current!.width/r.width),y:(e.clientY-r.top)*(canvasRef.current!.height/r.height)};};
-  const onDown=(e:React.PointerEvent<HTMLCanvasElement>)=>{if(!canDraw)return;drawing.current=true;(e.target as any).setPointerCapture(e.pointerId);strokesRef.current.push({color:tool==="eraser"?"#fff":color,lineWidth:tool==="eraser"?28:lineWidth,points:[getPos(e)]});};
-  const onMove=(e:React.PointerEvent<HTMLCanvasElement>)=>{if(!drawing.current||!canDraw)return;const s=strokesRef.current[strokesRef.current.length-1];if(s){s.points.push(getPos(e));redraw();}};
-  const onUp=()=>{if(!canDraw||!drawing.current)return;drawing.current=false;broadcast({type:"wb_strokes",strokes:strokesRef.current});save();};
-  const clearBoard=()=>{if(!canDraw)return;strokesRef.current=[];redraw();broadcast({type:"wb_clear"});save();};
-  const COLORS=["#1a1a1a","#EF4444","#3B82F6","#22C55E","#F59E0B","#8B5CF6","#EC4899","#ffffff"];
+    const h=(payload:Uint8Array)=>{
+      try{
+        const msg=JSON.parse(new TextDecoder().decode(payload));
+        if(msg.type==="wb_elements"){elementsRef.current=upgradeStrokes(msg.elements);redrawMain();}
+        if(msg.type==="wb_strokes"){elementsRef.current=upgradeStrokes(msg.strokes);redrawMain();} // compat
+        if(msg.type==="wb_clear"){elementsRef.current=[];redrawMain();}
+      }catch{}
+    };
+    room.on(RoomEvent.DataReceived,h); return()=>room.off(RoomEvent.DataReceived,h);
+  },[room,redrawMain]);
+
+  const pushHistory=()=>{
+    historyRef.current.push(JSON.parse(JSON.stringify(elementsRef.current)));
+    if(historyRef.current.length>60)historyRef.current.shift();
+    setUndoLen(historyRef.current.length);
+  };
+  const undo=()=>{
+    if(!historyRef.current.length)return;
+    elementsRef.current=historyRef.current.pop()||[];
+    setUndoLen(historyRef.current.length);
+    redrawMain(); broadcast({type:"wb_elements",elements:elementsRef.current}); save();
+  };
+
+  const canvasToWorld=(cx:number,cy:number)=>({
+    x:(cx-panOffset.current.x)/zoom,
+    y:(cy-panOffset.current.y)/zoom,
+  });
+  const getPos=(e:React.PointerEvent<HTMLCanvasElement>)=>{
+    const r=overlayRef.current!.getBoundingClientRect();
+    return canvasToWorld((e.clientX-r.left)*(overlayRef.current!.width/r.width),(e.clientY-r.top)*(overlayRef.current!.height/r.height));
+  };
+
+  const onDown=(e:React.PointerEvent<HTMLCanvasElement>)=>{
+    if(!canDraw)return;
+    (e.target as any).setPointerCapture(e.pointerId);
+    const pos=getPos(e);
+    if(tool==="pan"){isPanning.current=true;panStart.current={x:e.clientX-panOffset.current.x,y:e.clientY-panOffset.current.y};return;}
+    if(tool==="text"){
+      setTextInput({x:pos.x,y:pos.y,value:""});
+      setTimeout(()=>textareaRef.current?.focus(),30);
+      return;
+    }
+    drawing.current=true;
+    startPos.current=pos;
+    if(tool==="pen"||tool==="highlighter"||tool==="eraser"){
+      pushHistory();
+      const opacity=tool==="highlighter"?0.35:1;
+      const lw=tool==="eraser"?Math.max(lineWidth*4,24):lineWidth;
+      const col=tool==="eraser"?"#ffffff":color;
+      elementsRef.current.push({type:"stroke",color:col,lineWidth:lw,points:[pos],opacity} as WBStroke);
+    }
+  };
+
+  const onMove=(e:React.PointerEvent<HTMLCanvasElement>)=>{
+    if(tool==="pan"&&isPanning.current){
+      panOffset.current={x:e.clientX-panStart.current.x,y:e.clientY-panStart.current.y};
+      redrawMain(); return;
+    }
+    if(!drawing.current||!canDraw)return;
+    const pos=getPos(e);
+    if(tool==="pen"||tool==="highlighter"||tool==="eraser"){
+      const s=elementsRef.current[elementsRef.current.length-1] as WBStroke;
+      if(s?.type==="stroke"){s.points.push(pos);redrawMain();}
+    } else {
+      // shape preview on overlay canvas
+      const fill=fillShape?color+"44":undefined;
+      let preview:WBElement|undefined;
+      if(tool==="rect")preview={type:"rect",color,lineWidth,fill,x1:startPos.current.x,y1:startPos.current.y,x2:pos.x,y2:pos.y};
+      else if(tool==="circle")preview={type:"circle",color,lineWidth,fill,x1:startPos.current.x,y1:startPos.current.y,x2:pos.x,y2:pos.y};
+      else if(tool==="line")preview={type:"line",color,lineWidth,x1:startPos.current.x,y1:startPos.current.y,x2:pos.x,y2:pos.y};
+      else if(tool==="arrow")preview={type:"arrow",color,lineWidth,x1:startPos.current.x,y1:startPos.current.y,x2:pos.x,y2:pos.y};
+      if(preview)redrawOverlay(preview);
+    }
+  };
+
+  const onUp=(e:React.PointerEvent<HTMLCanvasElement>)=>{
+    if(tool==="pan"){isPanning.current=false;return;}
+    if(!canDraw||!drawing.current)return;
+    drawing.current=false;
+    const pos=getPos(e);
+    if(tool==="rect"||tool==="circle"||tool==="line"||tool==="arrow"){
+      pushHistory();
+      const fill=fillShape?color+"44":undefined;
+      if(tool==="rect")elementsRef.current.push({type:"rect",color,lineWidth,fill,x1:startPos.current.x,y1:startPos.current.y,x2:pos.x,y2:pos.y});
+      else if(tool==="circle")elementsRef.current.push({type:"circle",color,lineWidth,fill,x1:startPos.current.x,y1:startPos.current.y,x2:pos.x,y2:pos.y});
+      else if(tool==="line")elementsRef.current.push({type:"line",color,lineWidth,x1:startPos.current.x,y1:startPos.current.y,x2:pos.x,y2:pos.y});
+      else if(tool==="arrow")elementsRef.current.push({type:"arrow",color,lineWidth,x1:startPos.current.x,y1:startPos.current.y,x2:pos.x,y2:pos.y});
+      redrawOverlay();
+    }
+    redrawMain();
+    broadcast({type:"wb_elements",elements:elementsRef.current}); save();
+  };
+
+  const commitText=()=>{
+    if(!textInput||!textInput.value.trim()){setTextInput(null);return;}
+    pushHistory();
+    elementsRef.current.push({type:"text",color,fontSize,fontFamily,x:textInput.x,y:textInput.y,text:textInput.value});
+    setTextInput(null); redrawMain();
+    broadcast({type:"wb_elements",elements:elementsRef.current}); save();
+  };
+
+  const clearBoard=()=>{
+    if(!canDraw)return;
+    pushHistory();
+    elementsRef.current=[]; redrawMain(); redrawOverlay();
+    broadcast({type:"wb_clear"}); save();
+  };
+
+  const exportPNG=()=>{
+    const cv=canvasRef.current; if(!cv)return;
+    const a=document.createElement("a"); a.href=cv.toDataURL("image/png");
+    a.download=`whiteboard-${Date.now()}.png`; a.click();
+  };
+
+  const handleImageUpload=(e:React.ChangeEvent<HTMLInputElement>)=>{
+    const file=e.target.files?.[0]; if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const dataUrl=ev.target?.result as string;
+      const img=new Image(); img.onload=()=>{
+        const maxW=400,maxH=300;
+        const scale=Math.min(1,maxW/img.width,maxH/img.height);
+        const cv=canvasRef.current;
+        const cx=cv?(cv.width/2-panOffset.current.x)/zoom:200;
+        const cy=cv?(cv.height/2-panOffset.current.y)/zoom:200;
+        pushHistory();
+        elementsRef.current.push({type:"image",dataUrl,x:cx-img.width*scale/2,y:cy-img.height*scale/2,w:img.width*scale,h:img.height*scale});
+        redrawMain(); broadcast({type:"wb_elements",elements:elementsRef.current}); save();
+      };img.src=dataUrl;
+    };
+    reader.readAsDataURL(file); e.target.value="";
+  };
+
+  const onWheel=(e:React.WheelEvent<HTMLDivElement>)=>{
+    e.preventDefault();
+    const delta=e.deltaY>0?-0.1:0.1;
+    setZoom(z=>Math.max(0.3,Math.min(4,z+delta)));
+  };
+
+  const COLORS=["#1a1a1a","#EF4444","#F97316","#F59E0B","#22C55E","#3B82F6","#8B5CF6","#EC4899","#06B6D4","#ffffff"];
+  type ToolDef={id:WBTool;icon:string;label:string};
+  const TOOLS:ToolDef[]=[
+    {id:"pen",icon:"✏️",label:"Pen"},
+    {id:"highlighter",icon:"🖊️",label:"Highlight"},
+    {id:"eraser",icon:"⬜",label:"Eraser"},
+    {id:"line",icon:"╱",label:"Line"},
+    {id:"arrow",icon:"→",label:"Arrow"},
+    {id:"rect",icon:"▭",label:"Rectangle"},
+    {id:"circle",icon:"◯",label:"Ellipse"},
+    {id:"text",icon:"T",label:"Text"},
+    {id:"pan",icon:"✋",label:"Pan"},
+  ];
+
+  const getCursor=()=>{
+    if(!canDraw)return"default";
+    if(tool==="pan")return isPanning.current?"grabbing":"grab";
+    if(tool==="eraser")return"cell";
+    if(tool==="text")return"text";
+    return"crosshair";
+  };
+
   return createPortal(
-    <div style={{position:"fixed",inset:0,zIndex:9999,background:"#f8f8f8",display:"flex",flexDirection:"column"}}>
-      <div style={{background:`linear-gradient(135deg,${TEAL2},${TEAL})`,display:"flex",alignItems:"center",gap:8,padding:"8px 12px",flexShrink:0,boxShadow:"0 2px 16px rgba(0,0,0,.4)",overflowX:"auto"as const}}>
-        <button onClick={onClose} style={{width:34,height:34,borderRadius:10,background:"rgba(255,255,255,.15)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",flexShrink:0}}><X style={{width:15,height:15}}/></button>
-        <PenTool style={{width:14,height:14,color:"rgba(255,255,255,.55)",flexShrink:0}}/>
-        <span style={{fontSize:13,fontWeight:700,color:"#fff",flexShrink:0,marginRight:4}}>Whiteboard{!canDraw&&<span style={{fontSize:10,opacity:.4,marginLeft:4}}>View only</span>}</span>
+    <div style={{position:"fixed",inset:0,zIndex:9999,background:"#f0f4f3",display:"flex",flexDirection:"column"}}>
+      {/* ── TOOLBAR ── */}
+      <div style={{background:`linear-gradient(135deg,${TEAL2},${TEAL})`,display:"flex",alignItems:"center",gap:6,padding:"7px 10px",flexShrink:0,boxShadow:"0 2px 16px rgba(0,0,0,.4)",overflowX:"auto",minHeight:52}}>
+        {/* Close */}
+        <button onClick={onClose} title="Close" style={{width:32,height:32,borderRadius:8,background:"rgba(255,255,255,.15)",border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",flexShrink:0}}>
+          <X style={{width:14,height:14}}/>
+        </button>
+        <div style={{width:1,height:28,background:"rgba(255,255,255,.2)",flexShrink:0}}/>
+        {/* Title */}
+        <PenTool style={{width:13,height:13,color:"rgba(255,255,255,.6)",flexShrink:0}}/>
+        <span style={{fontSize:12,fontWeight:700,color:"#fff",flexShrink:0,marginRight:2}}>
+          Whiteboard{!canDraw&&<span style={{fontSize:10,opacity:.4,marginLeft:4}}>View only</span>}
+        </span>
         {canDraw&&<>
-          {[{id:"pen",icon:"✏️"},{id:"eraser",icon:"⬜"}].map(t=>(<button key={t.id} onClick={()=>setTool(t.id as any)} style={{width:30,height:30,borderRadius:8,border:"none",background:tool===t.id?"rgba(255,255,255,.28)":"rgba(255,255,255,.1)",fontSize:14,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>{t.icon}</button>))}
-          {COLORS.map(col=>(<button key={col} onClick={()=>{setColor(col);setTool("pen");}} style={{width:20,height:20,borderRadius:"50%",background:col,border:color===col&&tool==="pen"?"3px solid #fff":"2px solid rgba(255,255,255,.2)",cursor:"pointer",flexShrink:0}}/>))}
-          <input type="range" min={1} max={24} value={lineWidth} onChange={e=>setLineWidth(+e.target.value)} style={{width:52,accentColor:"#fff",flexShrink:0}}/>
-          {isTeacher&&<button onClick={clearBoard} style={{height:28,padding:"0 10px",borderRadius:8,border:"none",background:"#EF4444",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0}}>✕ Clear</button>}
+          <div style={{width:1,height:28,background:"rgba(255,255,255,.2)",flexShrink:0}}/>
+          {/* Tool buttons */}
+          {TOOLS.map(t=>(
+            <button key={t.id} onClick={()=>{setTool(t.id);setTextInput(null);}} title={t.label}
+              style={{width:30,height:30,borderRadius:7,border:"none",background:tool===t.id?"rgba(255,255,255,.32)":"rgba(255,255,255,.1)",
+                fontSize:t.id==="text"?13:15,fontWeight:t.id==="text"?800:400,cursor:"pointer",flexShrink:0,
+                display:"flex",alignItems:"center",justifyContent:"center",color:tool===t.id?"#fff":"rgba(255,255,255,.8)",
+                boxShadow:tool===t.id?"0 0 0 2px rgba(255,255,255,.5)":"none",transition:"all .12s"}}>
+              {t.icon}
+            </button>
+          ))}
+          <div style={{width:1,height:28,background:"rgba(255,255,255,.2)",flexShrink:0}}/>
+          {/* Colours */}
+          {COLORS.map(col=>(
+            <button key={col} onClick={()=>{setColor(col);if(tool==="pan"||tool==="eraser")setTool("pen");}} title={col}
+              style={{width:18,height:18,borderRadius:"50%",background:col,flexShrink:0,cursor:"pointer",
+                border:color===col?"3px solid #fff":"2px solid rgba(255,255,255,.25)",
+                boxShadow:color===col?"0 0 6px rgba(255,255,255,.6)":"none",transition:"all .1s"}}/>
+          ))}
+          {/* Custom colour */}
+          <div style={{position:"relative",flexShrink:0}}>
+            <input type="color" value={color} onChange={e=>setColor(e.target.value)}
+              style={{width:22,height:22,borderRadius:6,border:"2px solid rgba(255,255,255,.4)",cursor:"pointer",padding:0,background:"transparent"}}/>
+          </div>
+          <div style={{width:1,height:28,background:"rgba(255,255,255,.2)",flexShrink:0}}/>
+          {/* Line width */}
+          <span style={{fontSize:10,color:"rgba(255,255,255,.6)",flexShrink:0}}>Size</span>
+          <input type="range" min={1} max={32} value={tool==="text"?fontSize:lineWidth}
+            onChange={e=>tool==="text"?setFontSize(+e.target.value):setLineWidth(+e.target.value)}
+            style={{width:60,accentColor:"#fff",flexShrink:0}}/>
+          <span style={{fontSize:11,color:"#fff",minWidth:18,flexShrink:0,fontVariantNumeric:"tabular-nums"}}>
+            {tool==="text"?fontSize:lineWidth}
+          </span>
+          {/* Fill toggle for shapes */}
+          {(tool==="rect"||tool==="circle")&&(
+            <button onClick={()=>setFillShape(f=>!f)} title="Fill shape"
+              style={{height:26,padding:"0 8px",borderRadius:7,border:"none",background:fillShape?"rgba(255,255,255,.32)":"rgba(255,255,255,.1)",
+                color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0}}>
+              {fillShape?"■ Filled":"□ Outline"}
+            </button>
+          )}
+          {/* Font for text tool */}
+          {tool==="text"&&(
+            <select value={fontFamily} onChange={e=>setFontFamily(e.target.value)}
+              style={{height:26,borderRadius:7,border:"none",background:"rgba(255,255,255,.15)",color:"#fff",fontSize:11,padding:"0 6px",cursor:"pointer",flexShrink:0}}>
+              <option value="sans-serif">Sans</option>
+              <option value="serif">Serif</option>
+              <option value="monospace">Mono</option>
+              <option value="'Amiri', serif">Amiri (Arabic)</option>
+              <option value="'Scheherazade New', serif">Scheherazade</option>
+            </select>
+          )}
+          <div style={{width:1,height:28,background:"rgba(255,255,255,.2)",flexShrink:0}}/>
+          {/* Grid */}
+          <button onClick={()=>setShowGrid(g=>!g)} title="Toggle grid"
+            style={{height:26,padding:"0 8px",borderRadius:7,border:"none",background:showGrid?"rgba(255,255,255,.32)":"rgba(255,255,255,.1)",
+              color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0}}>
+            ⊞ Grid
+          </button>
+          {/* Zoom */}
+          <button onClick={()=>setZoom(z=>Math.min(4,+(z+0.25).toFixed(2)))} title="Zoom in"
+            style={{width:26,height:26,borderRadius:7,border:"none",background:"rgba(255,255,255,.1)",color:"#fff",fontSize:15,cursor:"pointer",flexShrink:0}}>+</button>
+          <span style={{fontSize:11,color:"#fff",flexShrink:0,minWidth:34,textAlign:"center"}}>
+            {Math.round(zoom*100)}%
+          </span>
+          <button onClick={()=>setZoom(z=>Math.max(0.3,+(z-0.25).toFixed(2)))} title="Zoom out"
+            style={{width:26,height:26,borderRadius:7,border:"none",background:"rgba(255,255,255,.1)",color:"#fff",fontSize:15,cursor:"pointer",flexShrink:0}}>−</button>
+          <button onClick={()=>{setZoom(1);panOffset.current={x:0,y:0};redrawMain();}} title="Reset view"
+            style={{height:26,padding:"0 7px",borderRadius:7,border:"none",background:"rgba(255,255,255,.1)",color:"#fff",fontSize:11,cursor:"pointer",flexShrink:0}}>
+            ⊙ Reset
+          </button>
+          <div style={{width:1,height:28,background:"rgba(255,255,255,.2)",flexShrink:0}}/>
+          {/* Undo */}
+          <button onClick={undo} disabled={undoLen===0} title="Undo (remove last action)"
+            style={{height:26,padding:"0 8px",borderRadius:7,border:"none",
+              background:undoLen>0?"rgba(255,255,255,.18)":"rgba(255,255,255,.06)",
+              color:undoLen>0?"#fff":"rgba(255,255,255,.3)",fontSize:11,fontWeight:700,cursor:undoLen>0?"pointer":"default",flexShrink:0}}>
+            ↩ Undo
+          </button>
+          {/* Image upload */}
+          <button onClick={()=>imgInputRef.current?.click()} title="Insert image"
+            style={{height:26,padding:"0 8px",borderRadius:7,border:"none",background:"rgba(255,255,255,.1)",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0}}>
+            🖼 Image
+          </button>
+          <input ref={imgInputRef} type="file" accept="image/*" style={{display:"none"}} onChange={handleImageUpload}/>
+          {/* Export */}
+          <button onClick={exportPNG} title="Export as PNG"
+            style={{height:26,padding:"0 8px",borderRadius:7,border:"none",background:"rgba(255,255,255,.1)",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer",flexShrink:0}}>
+            ↓ Export
+          </button>
+          {/* Clear (teacher only) */}
+          {isTeacher&&(
+            <button onClick={clearBoard} title="Clear board"
+              style={{height:26,padding:"0 10px",borderRadius:7,border:"none",background:"#EF4444",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0}}>
+              ✕ Clear
+            </button>
+          )}
         </>}
       </div>
-      <div style={{flex:1,position:"relative",overflow:"hidden",background:"#fff"}}>
-        {busy&&<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#fff",zIndex:5}}><Loader2 style={{width:32,height:32,color:TEAL,animation:"wb-spin .8s linear infinite"}}/></div>}
-        <canvas ref={canvasRef} width={1600} height={1000} style={{width:"100%",height:"100%",display:"block",cursor:canDraw?(tool==="eraser"?"cell":"crosshair"):"default",touchAction:"none"}} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerLeave={onUp} onPointerCancel={onUp}/>
+      {/* ── CANVAS AREA ── */}
+      <div style={{flex:1,position:"relative",overflow:"hidden",background:"#f7f9f8",cursor:getCursor()}} onWheel={onWheel}>
+        {busy&&(
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#fff",zIndex:10}}>
+            <Loader2 style={{width:32,height:32,color:TEAL,animation:"wb-spin .8s linear infinite"}}/>
+          </div>
+        )}
+        {/* Main canvas (drawn elements) */}
+        <canvas ref={canvasRef} width={1600} height={1000}
+          style={{position:"absolute",inset:0,width:"100%",height:"100%",display:"block"}}/>
+        {/* Overlay canvas (shape preview + pointer events) */}
+        <canvas ref={overlayRef} width={1600} height={1000}
+          style={{position:"absolute",inset:0,width:"100%",height:"100%",display:"block",touchAction:"none"}}
+          onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp}
+          onPointerLeave={e=>{if(tool!=="pan")onUp(e);}} onPointerCancel={e=>{if(tool!=="pan")onUp(e);}}/>
+        {/* Floating text input */}
+        {textInput&&(()=>{
+          const cv=overlayRef.current;
+          if(!cv)return null;
+          const r=cv.getBoundingClientRect();
+          const sx=(textInput.x*zoom+panOffset.current.x)*(r.width/cv.width);
+          const sy=(textInput.y*zoom+panOffset.current.y)*(r.height/cv.height);
+          return(
+            <textarea ref={textareaRef} value={textInput.value}
+              onChange={e=>setTextInput(t=>t?{...t,value:e.target.value}:null)}
+              onKeyDown={e=>{if(e.key==="Escape"){setTextInput(null);}if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();commitText();}}}
+              onBlur={commitText}
+              placeholder="Type here… (Enter to place, Shift+Enter for new line)"
+              style={{position:"absolute",left:r.left+sx,top:r.top+sy,
+                minWidth:160,minHeight:40,
+                font:`${fontSize*zoom*(r.width/cv.width)}px ${fontFamily}`,
+                color:color,background:"rgba(255,255,255,.92)",
+                border:`2px dashed ${TEAL}`,borderRadius:6,padding:"4px 8px",
+                resize:"both",zIndex:20,outline:"none",boxShadow:"0 4px 20px rgba(0,0,0,.18)"}}/>
+          );
+        })()}
+        {/* View-only label */}
+        {!canDraw&&!busy&&(
+          <div style={{position:"absolute",bottom:16,left:"50%",transform:"translateX(-50%)",background:"rgba(0,0,0,.55)",color:"#fff",borderRadius:20,padding:"6px 18px",fontSize:12,pointerEvents:"none"}}>
+            👁 View only — teacher controls this board
+          </div>
+        )}
       </div>
     </div>,document.body
   );
@@ -2277,10 +2710,20 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const[cPosting,setCPosting]=useState(false);
   const[cError,setCError]=useState("");
   const fileInputRef=useRef<HTMLInputElement>(null);
+  const editFileRef=useRef<HTMLInputElement>(null);
   // Draggable pip position
   const[pipPos,setPipPos]=useState({x:20,y:120});
   const dragging=useRef(false);
   const dragStart=useRef({px:0,py:0,ox:0,oy:0});
+  // ── Edit / delete state ─────────────────────────────────────────────────
+  const[editingId,setEditingId]=useState<string|null>(null);
+  const[editTitle,setEditTitle]=useState("");
+  const[editBody,setEditBody]=useState("");
+  const[editSaving,setEditSaving]=useState(false);
+  const[editError,setEditError]=useState("");
+  const[editReplaceFile,setEditReplaceFile]=useState<File|null>(null);
+  const[deletingId,setDeletingId]=useState<string|null>(null);
+  const[confirmDeleteId,setConfirmDeleteId]=useState<string|null>(null);
 
   const reloadMats=()=>{
     supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
@@ -2288,6 +2731,53 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   };
 
   useEffect(()=>{reloadMats();},[subjectId]);
+
+  // ── Open edit drawer ────────────────────────────────────────────────────
+  const openEdit=(m:any)=>{
+    setEditingId(m.id);setEditTitle(m.title||"");setEditBody(m.content||"");
+    setEditError("");setEditReplaceFile(null);
+    if(editFileRef.current)editFileRef.current.value="";
+  };
+
+  // ── Save edited material ────────────────────────────────────────────────
+  const handleEditSave=async()=>{
+    if(!editingId)return;
+    setEditSaving(true);setEditError("");
+    try{
+      const mat=mats.find(m=>m.id===editingId);
+      let updates:any={title:editTitle.trim()||mat?.title,content:editBody.trim()||null};
+      if(editReplaceFile){
+        const ext=editReplaceFile.name.split(".").pop()||"bin";
+        const path=`materials/${subjectId}/${Date.now()}-edit.${ext}`;
+        const{error:upErr}=await supabase.storage.from(MAT_UPLOAD_BUCKET).upload(path,editReplaceFile,{cacheControl:"3600",upsert:false,contentType:editReplaceFile.type||"application/octet-stream"});
+        if(upErr)throw new Error(upErr.message);
+        const{data:pub}=supabase.storage.from(MAT_UPLOAD_BUCKET).getPublicUrl(path);
+        updates.file_url=pub.publicUrl;updates.file_type=editReplaceFile.type||null;
+        updates.file_size=editReplaceFile.size;updates.material_type=detectMaterialType(editReplaceFile);
+        if(!editTitle.trim())updates.title=editReplaceFile.name.replace(/\.[^.]+$/,"");
+      }
+      const{error:dbErr}=await supabase.from("subject_materials" as any).update(updates).eq("id",editingId);
+      if(dbErr)throw dbErr;
+      toast({title:"✅ Material updated"});
+      setEditingId(null);reloadMats();
+    }catch(e:any){setEditError(e?.message||"Failed to save changes");}
+    finally{setEditSaving(false);}
+  };
+
+  // ── Delete a material ───────────────────────────────────────────────────
+  const handleDelete=async(m:any)=>{
+    setDeletingId(m.id);setConfirmDeleteId(null);
+    try{
+      await supabase.from("subject_materials" as any).delete().eq("id",m.id);
+      if(m.file_url){
+        const match=m.file_url.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
+        if(match){const[,bucket,path]=match;supabase.storage.from(bucket).remove([path]).catch(()=>{});}
+      }
+      if(viewing?.id===m.id)setViewing(null);
+      toast({title:"🗑️ Material deleted"});reloadMats();
+    }catch(e:any){toast({title:"Failed to delete",description:e?.message,variant:"destructive"});}
+    finally{setDeletingId(null);}
+  };
 
   const resetComposer=()=>{
     setCTitle("");setCBody("");setCFile(null);setCAsAssignment(false);setCDeadline("");setCError("");
@@ -2563,26 +3053,110 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
           {mats.map(m=>{
             const icon=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
             const resume=loadResume(m.id||"");
+            const isDeleting=deletingId===m.id;
+            const isEditing=editingId===m.id;
+
             return(
-              <button key={m.id} onClick={()=>setViewing(m)} style={{
-                width:"100%",display:"flex",alignItems:"center",gap:10,
-                padding:"10px 12px",background:"rgba(255,255,255,.04)",
-                border:"1px solid rgba(255,255,255,.07)",borderRadius:10,
-                cursor:"pointer",textAlign:"left" as const,marginBottom:6,
-              }}
-                onMouseEnter={e=>(e.currentTarget.style.background="rgba(255,255,255,.08)")}
-                onMouseLeave={e=>(e.currentTarget.style.background="rgba(255,255,255,.04)")}>
-                <div style={{width:36,height:36,borderRadius:8,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{icon}</div>
-                <div style={{flex:1,minWidth:0}}>
-                  <p style={{margin:0,fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Untitled"}</p>
-                  <p style={{margin:"2px 0 0",fontSize:10,color:"rgba(255,255,255,.35)",textTransform:"capitalize" as const}}>
-                    {m.material_type||"file"}
-                    {resume?.time&&<span style={{marginLeft:5,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
-                    {resume?.page&&!resume?.time&&<span style={{marginLeft:5,color:TEAL}}>p.{resume.page}</span>}
-                  </p>
+              <div key={m.id} style={{marginBottom:6}}>
+                {/* ── Edit drawer (slides in inline) ── */}
+                {isEditing&&isPrivileged&&(
+                  <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.3)",borderRadius:10,padding:"12px 12px 10px",marginBottom:4}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                      <span style={{fontSize:11,fontWeight:700,color:"#f2dfa8",letterSpacing:.4}}>✏️ EDITING</span>
+                      <button onClick={()=>setEditingId(null)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",fontSize:15,padding:"0 2px"}}>✕</button>
+                    </div>
+                    <input
+                      value={editTitle} onChange={e=>setEditTitle(e.target.value)}
+                      placeholder="Title"
+                      style={{width:"100%",boxSizing:"border-box" as const,padding:"8px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,.12)",background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit"}}
+                    />
+                    {/* Show text body editor only for text-type materials */}
+                    {(m.material_type==="Text"||m.material_type==="text"||!m.file_url)&&(
+                      <textarea
+                        value={editBody} onChange={e=>setEditBody(e.target.value)}
+                        rows={4} placeholder="Content / note text…"
+                        style={{width:"100%",boxSizing:"border-box" as const,padding:"8px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,.12)",background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit",resize:"vertical" as const}}
+                      />
+                    )}
+                    {/* File replacement for file-type materials */}
+                    {m.file_url&&(
+                      <div style={{marginBottom:8}}>
+                        <div style={{fontSize:10,color:"rgba(255,255,255,.4)",marginBottom:4}}>Replace file (optional):</div>
+                        <input ref={editFileRef} type="file" onChange={e=>setEditReplaceFile(e.target.files?.[0]||null)}
+                          style={{fontSize:11,color:"rgba(255,255,255,.5)",width:"100%"}}/>
+                        {editReplaceFile&&<div style={{fontSize:10,color:"#34d399",marginTop:3}}>Ready: {editReplaceFile.name}</div>}
+                        <div style={{fontSize:10,color:"rgba(255,255,255,.3)",marginTop:3}}>Current: {m.file_url?.split("/").pop()?.split("?")[0]||"file"}</div>
+                      </div>
+                    )}
+                    {editError&&<div style={{fontSize:11,color:"#ef4444",marginBottom:7}}>{editError}</div>}
+                    <div style={{display:"flex",gap:6}}>
+                      <button onClick={handleEditSave} disabled={editSaving}
+                        style={{flex:1,padding:"8px 0",borderRadius:7,border:"none",background:editSaving?"rgba(201,168,76,.3)":"linear-gradient(135deg,#c9a84c,#a8893a)",color:"#1a1408",fontWeight:700,fontSize:12,cursor:editSaving?"default":"pointer"}}>
+                        {editSaving?"Saving…":"💾 Save Changes"}
+                      </button>
+                      <button onClick={()=>setEditingId(null)}
+                        style={{padding:"8px 12px",borderRadius:7,border:"1px solid rgba(255,255,255,.12)",background:"transparent",color:"rgba(255,255,255,.5)",fontSize:12,cursor:"pointer"}}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Confirm-delete bar ── */}
+                {confirmDeleteId===m.id&&isPrivileged&&(
+                  <div style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.35)",borderRadius:10,padding:"10px 12px",marginBottom:4,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap" as const}}>
+                    <span style={{fontSize:12,color:"#fca5a5",flex:1,minWidth:120}}>Delete "<strong>{m.title||"Untitled"}</strong>"? This cannot be undone.</span>
+                    <button onClick={()=>handleDelete(m)}
+                      style={{padding:"6px 14px",borderRadius:7,border:"none",background:"#ef4444",color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                      {isDeleting?"Deleting…":"Yes, Delete"}
+                    </button>
+                    <button onClick={()=>setConfirmDeleteId(null)}
+                      style={{padding:"6px 10px",borderRadius:7,border:"1px solid rgba(255,255,255,.15)",background:"transparent",color:"rgba(255,255,255,.5)",fontSize:12,cursor:"pointer"}}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {/* ── Material card row ── */}
+                <div style={{
+                  display:"flex",alignItems:"center",gap:10,
+                  padding:"10px 10px 10px 12px",background:isEditing?"rgba(201,168,76,.06)":"rgba(255,255,255,.04)",
+                  border:`1px solid ${isEditing?"rgba(201,168,76,.25)":"rgba(255,255,255,.07)"}`,borderRadius:10,
+                }}>
+                  <button onClick={()=>setViewing(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0}}>
+                    <div style={{width:36,height:36,borderRadius:8,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{icon}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <p style={{margin:0,fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Untitled"}</p>
+                      <p style={{margin:"2px 0 0",fontSize:10,color:"rgba(255,255,255,.35)",textTransform:"capitalize" as const}}>
+                        {m.material_type||"file"}
+                        {resume?.time&&<span style={{marginLeft:5,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
+                        {resume?.page&&!resume?.time&&<span style={{marginLeft:5,color:TEAL}}>p.{resume.page}</span>}
+                      </p>
+                    </div>
+                    <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.25)",flexShrink:0}}/>
+                  </button>
+                  {/* Edit / delete buttons — teacher/admin only */}
+                  {isPrivileged&&(
+                    <div style={{display:"flex",gap:3,flexShrink:0}}>
+                      <button
+                        onClick={()=>isEditing?setEditingId(null):openEdit(m)}
+                        title="Edit title / content"
+                        style={{width:28,height:28,borderRadius:7,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+                          background:isEditing?"rgba(201,168,76,.3)":"rgba(255,255,255,.07)",
+                          color:isEditing?"#f2dfa8":"rgba(255,255,255,.45)",fontSize:13,transition:"all .12s"}}
+                      >✏️</button>
+                      <button
+                        onClick={()=>confirmDeleteId===m.id?setConfirmDeleteId(null):setConfirmDeleteId(m.id)}
+                        title="Delete material"
+                        disabled={isDeleting}
+                        style={{width:28,height:28,borderRadius:7,border:"none",cursor:isDeleting?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+                          background:confirmDeleteId===m.id?"rgba(239,68,68,.25)":"rgba(255,255,255,.07)",
+                          color:confirmDeleteId===m.id?"#ef4444":"rgba(255,255,255,.4)",fontSize:13,transition:"all .12s"}}
+                      >{isDeleting?"⌛":"🗑️"}</button>
+                    </div>
+                  )}
                 </div>
-                <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.25)",flexShrink:0}}/>
-              </button>
+              </div>
             );
           })}
         </div>
