@@ -1,7 +1,7 @@
-// public/sw.js — Tahleem Academy Service Worker v4
-// Force re-subscribe on VAPID key change
+// public/sw.js — Tahleem Academy Service Worker v5
+// Fix: no-refresh on minimize→resume. Cache-first navigation with background revalidation.
 
-const CACHE_NAME = "tahleem-v4";
+const CACHE_NAME = "tahleem-v5";
 const ICON       = "/icons/icon-192x192.png";
 const BADGE      = "/icons/icon-96x96.png";
 const APP_URL    = self.location.origin;
@@ -12,7 +12,7 @@ self.addEventListener("install", e => {
   e.waitUntil(
     caches.open(CACHE_NAME).then(cache =>
       cache.addAll(["/", "/manifest.json", ICON, BADGE]).catch(() => {})
-    ).then(() => self.skipWaiting())  // immediately activate new SW
+    ).then(() => self.skipWaiting())
   );
 });
 
@@ -20,7 +20,7 @@ self.addEventListener("activate", e => {
   e.waitUntil(
     caches.keys().then(keys =>
       Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())  // take control of all open tabs
+    ).then(() => self.clients.claim())
   );
 });
 
@@ -89,9 +89,7 @@ self.addEventListener("notificationclick", e => {
   );
 });
 
-// ── Push subscription change (VAPID key rotated) ──────────────────────────────
-// Fires automatically when the browser detects the old subscription is invalid.
-// We notify open clients so they can re-subscribe with the new VAPID key.
+// ── Push subscription change ──────────────────────────────────────────────────
 
 self.addEventListener("pushsubscriptionchange", e => {
   e.waitUntil(
@@ -111,27 +109,66 @@ self.addEventListener("message", e => {
   }
 });
 
-// ── Fetch — offline shell ─────────────────────────────────────────────────────
+// ── Fetch — FIXED navigation strategy ────────────────────────────────────────
+//
+// PROBLEM with old code:
+//   navigate requests used network-first: `fetch(e.request).catch(→ cache)`.
+//   On iOS/Android, when the PWA resumes from background, the OS re-issues
+//   the navigation request. The SW intercepts it, goes to the network, gets a
+//   fresh response, and the browser treats that as "new document" → full reload.
+//
+// FIX — cache-first for navigation + background revalidation:
+//   1. Serve the cached "/" shell instantly (no network round-trip → no reload).
+//   2. In the background, fetch "/" to keep the cache warm for the NEXT visit.
+//   3. Static assets (/assets/*) are already immutable-cached by Vercel — they
+//      never change after a deploy, so cache-first is always correct for them.
+//   4. API calls / Supabase / external requests bypass the SW entirely.
 
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
   if (!e.request.url.startsWith(self.location.origin)) return;
-  if (e.request.url.includes("supabase.co")) return;
 
+  // Let Supabase and external API calls go straight to network
+  if (
+    e.request.url.includes("supabase.co") ||
+    e.request.url.includes("livekit") ||
+    e.request.url.includes("fonts.googleapis.com") ||
+    e.request.url.includes("fonts.gstatic.com")
+  ) return;
+
+  // ── Navigation requests (HTML page loads / resume) ────────────────────────
   if (e.request.mode === "navigate") {
     e.respondWith(
-      fetch(e.request).catch(() =>
-        caches.match("/").then(r => r ?? Response.error())
-      )
+      caches.open(CACHE_NAME).then(async cache => {
+        const cached = await cache.match("/");
+
+        if (cached) {
+          // Serve the cached shell immediately — prevents the reload-on-resume.
+          // Then silently refresh the cache in the background.
+          e.waitUntil(
+            fetch("/").then(fresh => {
+              if (fresh.ok) cache.put("/", fresh);
+            }).catch(() => {/* offline — cached copy is fine */})
+          );
+          return cached;
+        }
+
+        // No cache yet (first install): go to network and cache the result.
+        return fetch(e.request).then(response => {
+          if (response.ok) cache.put("/", response.clone());
+          return response;
+        }).catch(() => Response.error());
+      })
     );
     return;
   }
 
+  // ── Static assets — cache-first, populate on miss ─────────────────────────
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;
       return fetch(e.request).then(response => {
-        if (response.ok && e.request.url.match(/\.(png|jpg|svg|woff2?|css)$/)) {
+        if (response.ok && /\.(png|jpg|svg|woff2?|css|js)$/.test(e.request.url)) {
           caches.open(CACHE_NAME).then(c => c.put(e.request, response.clone()));
         }
         return response;
