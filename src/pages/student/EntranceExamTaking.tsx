@@ -7,6 +7,7 @@
  * - After submit → advance to recitation step
  */
 import { useEffect, useState, useCallback, useRef } from "react";
+import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { useParams, useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -570,7 +571,13 @@ const EntranceExamTaking = () => {
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("blur", onBlur);
     examActiveRef.current = true;
-    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("blur", onBlur); examActiveRef.current = false; };
+    lockReload("entrance-exam");
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("blur", onBlur);
+      examActiveRef.current = false;
+      unlockReload("entrance-exam");
+    };
   }, [showInstructions, showCameraSetup, loading]);
 
   // ── Proctoring — only enabled after camera setup ──────────────────────────
