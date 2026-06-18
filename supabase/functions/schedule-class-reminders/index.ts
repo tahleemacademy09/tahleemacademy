@@ -25,6 +25,18 @@ const THRESHOLDS    = [0, 5, 15] as const;
 type Threshold      = typeof THRESHOLDS[number];
 
 const APP_BASE_URL     = "https://tahleemacademy.vercel.app";
+
+// Strips any non-production host from a join_url that may have been saved
+// when the teacher was on a Lovable preview domain. Runs at send-time so
+// old DB records get fixed without needing a migration.
+function sanitiseUrl(raw: string | null | undefined): string {
+  if (!raw) return APP_BASE_URL;
+  if (raw.startsWith(APP_BASE_URL)) return raw;
+  if (raw.startsWith("/")) return APP_BASE_URL + raw;
+  try { const { pathname, search } = new URL(raw); return APP_BASE_URL + pathname + search; }
+  catch { return APP_BASE_URL; }
+}
+
 const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram/sendMessage";
 
 // ── Time helpers ──────────────────────────────────────────────────────────────
@@ -292,7 +304,7 @@ Deno.serve(async (req) => {
 
         stats.checked++;
         const classTitle = cls.title_ar || cls.title || "Class";
-        const joinUrl    = cls.join_url ?? `${APP_BASE_URL}/live/${cls.id}`;
+        const joinUrl    = sanitiseUrl(cls.join_url ?? `${APP_BASE_URL}/live/${cls.id}`);
 
         // Teacher name
         let teacherName = "Your teacher";
