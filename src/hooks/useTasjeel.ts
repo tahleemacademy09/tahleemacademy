@@ -3,6 +3,13 @@
 // loading state. Previously when user was null (auth still initialising),
 // it set loading=false and currentStep=null. Since null !== "completed",
 // the StudentDashboard gate redirected completed students to /student/awaiting-level.
+//
+// Fix (2026-06-18): useCallback depended on [user, authLoading] — the user object
+// is replaced with a new reference on every TOKEN_REFRESHED event (Supabase creates
+// a new object even when the userId hasn't changed). This caused useTasjeel to
+// re-run fetchStep on every app resume, setting loading=true and showing the
+// TasjeelGuard full-page spinner. Fix: depend on user?.id (stable string) instead
+// of the user object itself.
 
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -66,6 +73,13 @@ export async function initializeTasjeel(userId: string, registrationEnabled = tr
 export function useTasjeel() {
   const { user, loading: authLoading } = useAuth();
 
+  // KEY FIX: extract stable primitives from auth state.
+  // The user object is replaced with a NEW reference on every TOKEN_REFRESHED
+  // (Supabase always constructs a new object). Using user?.id (a stable string)
+  // as the dependency means we only re-fetch when the actual user changes
+  // (login / logout), NOT on every silent token refresh.
+  const userId = user?.id ?? null;
+
   // Keep loading=true until both auth AND the tasjeel fetch are done.
   // This prevents the StudentDashboard gate from firing with currentStep=null.
   const [currentStep, setCurrentStep] = useState<string | null>(null);
@@ -75,7 +89,7 @@ export function useTasjeel() {
     // Don't resolve until auth itself has finished initialising
     if (authLoading) return;
 
-    if (!user) {
+    if (!userId) {
       setCurrentStep(null);
       setLoading(false);
       return;
@@ -102,7 +116,7 @@ export function useTasjeel() {
       const { data } = await supabase
         .from("tasjeel_progress")
         .select("current_step")
-        .eq("user_id", user.id)
+        .eq("user_id", userId)
         .maybeSingle();
 
       if (!didTimeout) {
@@ -122,14 +136,15 @@ export function useTasjeel() {
         setLoading(false);
       }
     }
-  }, [user, authLoading]);
+  // KEY FIX: depend on userId (stable string) not user (new object every TOKEN_REFRESHED)
+  }, [userId, authLoading]);
 
   useEffect(() => {
     fetchStep();
   }, [fetchStep]);
 
   const advanceStep = useCallback(async (nextStep: string) => {
-    if (!user) return;
+    if (!userId) return;
     // Always update local state FIRST so guards on the destination page
     // see the new step immediately — even if the DB call fails with 400.
     // (A 400 here usually means an RLS UPDATE policy is missing; see the
@@ -139,14 +154,14 @@ export function useTasjeel() {
       const { error } = await supabase
         .from("tasjeel_progress")
         .update({ current_step: nextStep, updated_at: new Date().toISOString() })
-        .eq("user_id", user.id);
+        .eq("user_id", userId);
       if (error) {
         console.error("[useTasjeel] advanceStep DB error — local state already updated:", error.message);
       }
     } catch (err) {
       console.error("[useTasjeel] advanceStep network error — local state already updated:", err);
     }
-  }, [user]);
+  }, [userId]);
 
   return { currentStep, loading, refresh: fetchStep, advanceStep };
 }
