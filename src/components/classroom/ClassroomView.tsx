@@ -28,6 +28,8 @@ import {
   Volume2, ChevronDown, ChevronLeft, ChevronRight, Users, Eye,
   LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
   SwitchCamera, Settings, Check, Wifi,
+  Monitor, MonitorOff, Pin, Timer, UserCheck, Crosshair,
+  Zap, ClipboardList, Bell, Radio,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
@@ -36,6 +38,7 @@ import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
 import PDFViewer, { prewarmPDF } from "./PDFViewer";
+import LiveClassFilePanel from "./LiveClassFilePanel";
 import { useIsMobile }   from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -185,6 +188,9 @@ const CSS = `
   @keyframes bar-reveal   { from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1} }
   @keyframes ctrl-hover   { from{transform:scale(1)}to{transform:scale(1.08)} }
   @keyframes tooltip-in   { from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%) translateY(0)} }
+  @keyframes laser-fade   { 0%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(2.5)} }
+  @keyframes timer-pulse  { 0%,100%{background:rgba(251,191,36,.15)}50%{background:rgba(251,191,36,.3)} }
+  @keyframes spotlight-ring { 0%,100%{box-shadow:0 0 0 3px #1a73e8,0 0 0 6px rgba(26,115,232,.25)}50%{box-shadow:0 0 0 3px #1a73e8,0 0 0 12px rgba(26,115,232,.12)} }
 
   * { box-sizing: border-box; }
 
@@ -3748,12 +3754,16 @@ const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participan
    3–4            → remote(s) fill screen (top half each), local PiP corner
    5+             → scrollable grid of remote tiles, local always PiP corner
    ══════════════════════════════════════════════════════════════════════════ */
-const VideoGrid=({layout="grid",isMobile=false}:{layout?:LayoutMode;isMobile?:boolean})=>{
+const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?:LayoutMode;isMobile?:boolean;spotlightId?:string|null})=>{
   const{localParticipant}=useLocalParticipant();
   const allParticipants=useParticipants();
   const remotes=allParticipants.filter(p=>p.identity!==localParticipant?.identity);
+  // If spotlight is set, move that participant to front
   const all=localParticipant?[localParticipant,...remotes]:remotes;
-  const n=all.length;
+  const orderedAll = spotlightId
+    ? [...all.filter(p=>p.identity===spotlightId), ...all.filter(p=>p.identity!==spotlightId)]
+    : all;
+  const n=orderedAll.length;
 
   // PiP corner drag state
   const[pipPos,setPipPos]=useState<{bottom:number;right:number}>({bottom:16,right:12});
@@ -3780,7 +3790,7 @@ const VideoGrid=({layout="grid",isMobile=false}:{layout?:LayoutMode;isMobile?:bo
     return pub?.track&&!pub.isMuted;
   });
   if(screensharer){
-    const others=all.filter(p=>p.identity!==screensharer.identity);
+    const others=orderedAll.filter(p=>p.identity!==screensharer.identity);
     return(
       <div style={{width:"100%",height:"100%",position:"relative"}}>
         <ParticipantTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity} size="large"/>
@@ -3798,14 +3808,34 @@ const VideoGrid=({layout="grid",isMobile=false}:{layout?:LayoutMode;isMobile?:bo
   if(n===1){
     return(
       <div style={{width:"100%",height:"100%"}}>
-        <ParticipantTile participant={all[0]} isLocal size="large"/>
+        <ParticipantTile participant={orderedAll[0]} isLocal size="large"/>
       </div>
     );
   }
 
   // WhatsApp 2-person: remote fills screen, local is draggable PiP
-  const local=all.find(p=>p.identity===localParticipant?.identity)||all[0];
-  const mainRemotes=all.filter(p=>p.identity!==local?.identity);
+  const local=orderedAll.find(p=>p.identity===localParticipant?.identity)||orderedAll[0];
+  const mainRemotes=orderedAll.filter(p=>p.identity!==local?.identity);
+
+  // Spotlight layout: spotlighted participant fills screen, others in strip
+  if(spotlightId && layout==="spotlight"){
+    const spotParticipant=orderedAll.find(p=>p.identity===spotlightId)||orderedAll[0];
+    const stripParticipants=orderedAll.filter(p=>p.identity!==spotParticipant?.identity);
+    return(
+      <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a"}}>
+        <div style={{position:"absolute",inset:0,bottom:stripParticipants.length>0?100:0}}>
+          <div style={{width:"100%",height:"100%",outline:"3px solid #1a73e8",outlineOffset:-3,borderRadius:4,animation:"spotlight-ring 2s ease-in-out infinite"}}>
+            <ParticipantTile participant={spotParticipant} isLocal={spotParticipant?.identity===localParticipant?.identity} size="large"/>
+          </div>
+        </div>
+        {stripParticipants.length>0&&(
+          <div style={{position:"absolute",bottom:0,left:0,right:0,height:96,display:"flex",gap:4,padding:"4px 8px",background:"rgba(0,0,0,.5)",overflowX:"auto"}}>
+            {stripParticipants.map(p=>(<div key={p.identity} style={{width:68,flexShrink:0,height:88,borderRadius:10,overflow:"hidden"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   if(mainRemotes.length===1){
     // ── 1 remote: full screen + PiP ──
@@ -3907,7 +3937,7 @@ const VideoGrid=({layout="grid",isMobile=false}:{layout?:LayoutMode;isMobile?:bo
 };
 
 /* ══ BOTTOM BAR — Google Meet premium ══ */
-const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji,layout,onLayoutChange,onLaunchQuiz}:any)=>{
+const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji,layout,onLayoutChange,onLaunchQuiz,onScreenShare,screenSharing,onToggleTimer,timerRunning,timerDisplay,onToggleLiveFiles,liveFilesOpen,onToggleHandQueue,onToggleAttendance,onSpotlight,onGenerateSummary,onTogglePartPanel,partPanelOpen}:any)=>{
   const{user}=useAuth();
   const[micOn,setMicOn]=useState(false);
   const[camOn,setCamOn]=useState(false);
@@ -4134,12 +4164,20 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
               <PenTool style={{width:16,height:16}}/> {whiteboardOpen?"Close Whiteboard":"Whiteboard"}
             </button>
           )}
+          {/* Screen share — mobile more menu */}
+          <button className="gm-more-item" onClick={()=>{onScreenShare();setMoreOpen(false);}} style={{color:screenSharing?"#34d399":"#e8eaed"}}>
+            <Monitor style={{width:16,height:16}}/> {screenSharing?"Stop Screen Share":"Share Screen"}
+          </button>
         </>}
         <button className="gm-more-item" onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}}>
           <Smile style={{width:16,height:16,opacity:.7}}/> Send a Reaction
         </button>
         <button className="gm-more-item" onClick={()=>{onToggleMaterials();setMoreOpen(false);}}>
-          <Eye style={{width:16,height:16,opacity:.7}}/> Materials
+          <Eye style={{width:16,height:16,opacity:.7}}/> Subject Materials
+        </button>
+        {/* In-class live file panel */}
+        <button className="gm-more-item" onClick={()=>{onToggleLiveFiles();setMoreOpen(false);}} style={{color:liveFilesOpen?"#8ab4f8":"#e8eaed"}}>
+          <ClipboardList style={{width:16,height:16}}/> Class Materials (Live)
         </button>
         {isPrivileged&&<>
           <button className="gm-more-item" onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} style={{color:groupReciteMode?"#34d399":"#e8eaed"}}>
@@ -4157,6 +4195,26 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
             toast({title:"\uD83D\uDD07 All students muted"});setMoreOpen(false);
           }} style={{color:"#fb923c"}}>
             <MicOff style={{width:16,height:16}}/> Mute All Students
+          </button>
+          {/* Countdown Timer */}
+          <button className="gm-more-item" onClick={()=>{onToggleTimer();setMoreOpen(false);}} style={{color:timerRunning?"#fbbf24":"#e8eaed"}}>
+            <Timer style={{width:16,height:16}}/> {timerRunning?`Timer: ${timerDisplay}`:"Start Timer"}
+          </button>
+          {/* Hand queue */}
+          <button className="gm-more-item" onClick={()=>{onToggleHandQueue();setMoreOpen(false);}}>
+            <Hand style={{width:16,height:16,color:"#fbbf24"}}/> Hand Queue
+          </button>
+          {/* Live attendance */}
+          <button className="gm-more-item" onClick={()=>{onToggleAttendance();setMoreOpen(false);}}>
+            <UserCheck style={{width:16,height:16,color:"#34d399"}}/> Live Attendance
+          </button>
+          {/* Launch Quiz */}
+          <button className="gm-more-item" onClick={()=>{onLaunchQuiz();setMoreOpen(false);}}>
+            <Zap style={{width:16,height:16,color:"#a78bfa"}}/> Launch Quiz
+          </button>
+          {/* Session summary */}
+          <button className="gm-more-item" onClick={()=>{onGenerateSummary();setMoreOpen(false);}}>
+            <ClipboardList style={{width:16,height:16,color:"#60a5fa"}}/> Session Summary
           </button>
         </>}
         {!isPrivileged&&canStudentRecProp&&(
@@ -4257,8 +4315,14 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
             {!isPrivileged&&canStudentWriteProp&&(
               <Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
             )}
+            {/* Screen share — all users */}
+            <Ctrl icon={screenSharing?<MonitorOff style={{...IS,color:"#34d399"}}/>:<Monitor style={{...IS,color:"#e8eaed"}}/>} label={screenSharing?"Stop Share":"Share"} onClick={onScreenShare} active={screenSharing} tooltip={screenSharing?"Stop screen share":"Share screen"}/>
             <Ctrl icon={<MessageCircle style={{...IS,color:"#e8eaed"}}/>} label="Chat" onClick={onToggleChat} badge={chatUnread} tooltip="Open chat"/>
+            {/* Participants — desktop */}
+            <Ctrl icon={<Users style={{...IS,color:partPanelOpen?"#8ab4f8":"#e8eaed"}}/>} label="People" onClick={onTogglePartPanel} active={partPanelOpen} tooltip="Participants"/>
             <Ctrl icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
+            {/* Timer indicator */}
+            {timerRunning&&<div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.15)",border:"1px solid rgba(251,191,36,.3)",borderRadius:20,padding:"4px 10px",animation:"timer-pulse 1s ease-in-out infinite",cursor:"pointer"}} onClick={onToggleTimer}><Timer style={{width:13,height:13,color:"#fbbf24"}}/><span style={{fontSize:12,fontWeight:700,color:"#fbbf24",fontVariantNumeric:"tabular-nums"}}>{timerDisplay}</span></div>}
             <Ctrl icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
           </div>
           {/* RIGHT */}
@@ -4485,6 +4549,34 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const roomRef=useRef<any>(null);
   // FIX BUG 8: ref to hold the session-end channel so we can subscribe immediately on join
   const sessionEndChannelRef=useRef<any>(null);
+
+  // ══ NEW FEATURES ══
+  // Feature 1: Screen share
+  const[screenSharing,setScreenSharing]=useState(false);
+  // Feature 3: Desktop participants panel
+  const[partPanelOpen,setPartPanelOpen]=useState(false);
+  // Feature 5: Live attendance view
+  const[attendanceOpen,setAttendanceOpen]=useState(false);
+  const[liveAttendees,setLiveAttendees]=useState<any[]>([]);
+  // Feature 9: Spotlight a participant
+  const[spotlightId,setSpotlightId]=useState<string|null>(null);
+  // Feature 10: Countdown timer
+  const[timerOpen,setTimerOpen]=useState(false);
+  const[timerSeconds,setTimerSeconds]=useState(0);
+  const[timerRunning,setTimerRunning]=useState(false);
+  const[timerInput,setTimerInput]=useState("5");
+  const timerRef=useRef<any>(null);
+  // Feature 11: LiveClassFilePanel (in-class materials)
+  const[liveFilesOpen,setLiveFilesOpen]=useState(false);
+  // Feature 13: Hand queue management
+  const[handQueueOpen,setHandQueueOpen]=useState(false);
+  // Feature 15: Recording indicator for students
+  const[teacherIsRecording,setTeacherIsRecording]=useState(false);
+  // Feature 8: Whiteboard laser pointer
+  const[laserActive,setLaserActive]=useState(false);
+  // Feature 17: Session summary
+  const[summaryOpen,setSummaryOpen]=useState(false);
+  const[sessionSummary,setSessionSummary]=useState<any>(null);
   // FIX BUG 6: prefetch includes a fetchedAt timestamp so stale tokens can be detected
   const prefetch=useRef<{token:string;url:string;fetchedAt:number}|null>(null);
   useEffect(()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now()};}).catch(()=>{});},[subject.id,isPrivileged]);
@@ -4715,6 +4807,107 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(active&&!isPrivileged){setGroupReciteDialog(true);}
     else if(!active&&!isPrivileged){setGroupReciteDialog(false);}
   };
+
+  // ══ Feature 1: Screen Share ══
+  const toggleScreenShare=async()=>{
+    const room=roomRef.current;
+    if(!room?.localParticipant)return;
+    try{
+      if(screenSharing){
+        await room.localParticipant.setScreenShareEnabled(false);
+        setScreenSharing(false);
+        toast({title:"Screen share stopped"});
+      }else{
+        await room.localParticipant.setScreenShareEnabled(true);
+        setScreenSharing(true);
+        toast({title:"📺 Screen sharing started"});
+      }
+    }catch(e:any){
+      if(e?.name==="NotAllowedError")toast({title:"Screen share permission denied",variant:"destructive"});
+      else setScreenSharing(false);
+    }
+  };
+
+  // ══ Feature 5: Live Attendance ══
+  useEffect(()=>{
+    if(!sessionId||!isPrivileged||!attendanceOpen)return;
+    const load=async()=>{
+      const{data}=await supabase.from("class_participants").select("student_id, joined_at, profiles!inner(full_name)").eq("session_id",sessionId);
+      setLiveAttendees(data||[]);
+    };
+    load();
+    const ch=supabase.channel(`attendance-live-${sessionId}`)
+      .on("postgres_changes",{event:"INSERT",schema:"public",table:"class_participants",filter:`session_id=eq.${sessionId}`},load)
+      .subscribe();
+    return()=>{supabase.removeChannel(ch);};
+  },[sessionId,isPrivileged,attendanceOpen]);
+
+  // ══ Feature 10: Countdown Timer ══
+  useEffect(()=>{
+    if(!timerRunning||timerSeconds<=0)return;
+    timerRef.current=setInterval(()=>{
+      setTimerSeconds(s=>{
+        if(s<=1){
+          clearInterval(timerRef.current);
+          setTimerRunning(false);
+          toast({title:"⏰ Time's up!"});
+          // Broadcast bell sound via data channel
+          try{roomRef.current?.localParticipant?.publishData(
+            new TextEncoder().encode(JSON.stringify({type:"class_bell",message:"Time's up!"})),{reliable:true}
+          );}catch{}
+          return 0;
+        }
+        return s-1;
+      });
+    },1000);
+    return()=>clearInterval(timerRef.current);
+  },[timerRunning]);
+
+  const startTimer=()=>{
+    const secs=parseInt(timerInput)*60;
+    if(!secs||secs<1)return;
+    setTimerSeconds(secs);
+    setTimerRunning(true);
+    setTimerOpen(false);
+    // Broadcast to students
+    try{roomRef.current?.localParticipant?.publishData(
+      new TextEncoder().encode(JSON.stringify({type:"timer_start",seconds:secs})),{reliable:true}
+    );}catch{}
+    toast({title:`⏱️ ${timerInput}-minute timer started`});
+  };
+  const stopTimer=()=>{clearInterval(timerRef.current);setTimerRunning(false);setTimerSeconds(0);};
+  const fmtTimer=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+
+  // ══ Feature 15: Teacher recording → broadcast to students ══
+  // Listen for is_recording DB changes (student side)
+  useEffect(()=>{
+    if(!sessionId||isPrivileged)return;
+    const ch=supabase.channel(`rec-indicator-${sessionId}`)
+      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${sessionId}`},
+        (payload:any)=>{if(typeof payload.new?.is_recording==="boolean")setTeacherIsRecording(payload.new.is_recording);}
+      ).subscribe();
+    return()=>{supabase.removeChannel(ch);};
+  },[sessionId,isPrivileged]);
+
+  // ══ Feature 17: Session Summary ══
+  const generateSessionSummary=async()=>{
+    if(!sessionId)return;
+    const[{data:msgs},{data:pollData},{data:attendData}]=await Promise.all([
+      supabase.from("class_chat_messages").select("*").eq("session_id",sessionId).order("created_at"),
+      supabase.from("class_polls").select("*,class_poll_answers(*)").eq("session_id",sessionId),
+      supabase.from("class_participants").select("student_id,joined_at,profiles!inner(full_name)").eq("session_id",sessionId),
+    ]);
+    setSessionSummary({
+      duration:fmtT(duration),
+      messageCount:msgs?.length||0,
+      pollCount:pollData?.length||0,
+      attendeeCount:attendData?.length||0,
+      attendees:attendData||[],
+      polls:pollData||[],
+      highlights:(msgs||[]).filter((m:any)=>m.is_pinned),
+    });
+    setSummaryOpen(true);
+  };
   const ParticipantCountBadge=()=>{
     const all=useParticipants();
     useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length]);
@@ -4843,13 +5036,159 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* Content — material panels render here so footer always stays visible */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
             <div style={{flex:1,position:"relative",minWidth:0}}>
-              <VideoGrid layout={layout} isMobile={isMobile}/>
+              <VideoGrid layout={layout} isMobile={isMobile} spotlightId={spotlightId}/>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — absolute inside content, footer always visible */}
               {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
+              {/* Feature 11: Live class file panel (in-class materials) */}
+              {liveFilesOpen&&createPortal(
+                <div style={{position:"fixed",inset:0,zIndex:9000,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"flex-end",justifyContent:"flex-end"}} onClick={()=>setLiveFilesOpen(false)}>
+                  <div onClick={e=>e.stopPropagation()} style={{width:"min(420px,100vw)",height:"min(85vh,700px)",background:"#fff",borderRadius:"20px 0 0 0",overflow:"auto",display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,.4)"}}>
+                    <div style={{display:"flex",alignItems:"center",padding:"14px 16px",borderBottom:"1px solid #e5e7eb",flexShrink:0,background:"#1B4332"}}>
+                      <span style={{flex:1,fontSize:14,fontWeight:700,color:"#fff"}}>📂 Class Materials</span>
+                      <button onClick={()=>setLiveFilesOpen(false)} style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:8,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><X style={{width:14,height:14}}/></button>
+                    </div>
+                    <div style={{flex:1,overflow:"auto",padding:12}}><LiveClassFilePanel subjectId={subject.id}/></div>
+                  </div>
+                </div>,document.body
+              )}
+              {/* Feature 3: Desktop participants panel */}
+              {partPanelOpen&&!isMobile&&createPortal(
+                <div style={{position:"fixed",top:56,right:0,bottom:80,width:300,background:"#2D2E30",borderLeft:"1px solid rgba(255,255,255,.08)",zIndex:800,display:"flex",flexDirection:"column",animation:"slide-right .2s ease",overflow:"hidden"}}>
+                  <div style={{display:"flex",alignItems:"center",padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+                    <span style={{flex:1,fontSize:13,fontWeight:700,color:"#e8eaed",display:"flex",alignItems:"center",gap:6}}><Users style={{width:14,height:14}}/> Participants</span>
+                    <button onClick={()=>setPartPanelOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:8,width:26,height:26,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><X style={{width:12,height:12}}/></button>
+                  </div>
+                  <div style={{flex:1,overflow:"auto"}}>
+                    <ClassParticipants sessionId={sessionId||""} isPrivileged={isPrivileged} room={roomRef.current} onSpotlight={(id:string)=>setSpotlightId(prev=>prev===id?null:id)} spotlightId={spotlightId}/>
+                  </div>
+                </div>,document.body
+              )}
+              {/* Feature 13: Hand queue panel */}
+              {handQueueOpen&&isPrivileged&&createPortal(
+                <div style={{position:"fixed",top:56,left:0,width:280,background:"#2D2E30",borderRight:"1px solid rgba(255,255,255,.08)",zIndex:800,maxHeight:"70vh",display:"flex",flexDirection:"column",animation:"slide-right .2s ease",borderRadius:"0 0 16px 0",overflow:"hidden"}}>
+                  <div style={{display:"flex",alignItems:"center",padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+                    <span style={{flex:1,fontSize:13,fontWeight:700,color:"#fbbf24",display:"flex",alignItems:"center",gap:6}}>✋ Hand Queue <span style={{fontSize:11,color:"rgba(255,255,255,.4)",fontWeight:400}}>({raisedHands.length})</span></span>
+                    <button onClick={()=>setHandQueueOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer"}}><X style={{width:12,height:12}}/></button>
+                  </div>
+                  <div style={{flex:1,overflowY:"auto",padding:8}}>
+                    {raisedHands.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",textAlign:"center",padding:"24px 16px"}}>No hands raised</p>}
+                    {[...raisedHands].sort((a,b)=>a.raisedAt-b.raisedAt).map((h,i)=>(
+                      <div key={h.identity} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,background:"rgba(251,191,36,.06)",border:"1px solid rgba(251,191,36,.12)",marginBottom:6}}>
+                        <span style={{fontSize:13,fontWeight:700,color:"#fbbf24",width:18,flexShrink:0}}>{i+1}</span>
+                        <span style={{animation:"hand-bounce 1.2s ease-in-out infinite",fontSize:16}}>✋</span>
+                        <span style={{flex:1,fontSize:13,color:"#e8eaed",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{h.name}</span>
+                        <div style={{display:"flex",gap:4}}>
+                          <button onClick={()=>{setSpotlightId(h.identity);setLayout("spotlight");setHandQueueOpen(false);toast({title:`📌 Spotlighting ${h.name}`,duration:2000});}}
+                            style={{background:"rgba(26,115,232,.2)",border:"1px solid rgba(26,115,232,.3)",color:"#8ab4f8",borderRadius:6,padding:"3px 8px",fontSize:10,cursor:"pointer",fontWeight:700}}>
+                            Call On
+                          </button>
+                          <button onClick={()=>{
+                            try{roomRef.current?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"force_mute",target:h.identity})),{reliable:true});}catch{}
+                            handleHandRaise(h.identity,h.name,false);
+                          }}
+                            style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.4)",borderRadius:6,padding:"3px 6px",fontSize:10,cursor:"pointer"}}>
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>,document.body
+              )}
+              {/* Feature 5: Live attendance panel */}
+              {attendanceOpen&&isPrivileged&&createPortal(
+                <div style={{position:"fixed",top:56,left:0,width:280,background:"#2D2E30",borderRight:"1px solid rgba(255,255,255,.08)",zIndex:800,maxHeight:"70vh",display:"flex",flexDirection:"column",animation:"slide-right .2s ease",borderRadius:"0 0 16px 0",overflow:"hidden"}}>
+                  <div style={{display:"flex",alignItems:"center",padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+                    <span style={{flex:1,fontSize:13,fontWeight:700,color:"#34d399",display:"flex",alignItems:"center",gap:6}}><UserCheck style={{width:14,height:14}}/> Live Attendance <span style={{fontSize:11,color:"rgba(255,255,255,.4)",fontWeight:400}}>({liveAttendees.length})</span></span>
+                    <button onClick={()=>setAttendanceOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer"}}><X style={{width:12,height:12}}/></button>
+                  </div>
+                  <div style={{flex:1,overflowY:"auto",padding:8}}>
+                    {liveAttendees.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",textAlign:"center",padding:"24px 16px"}}>Waiting for students…</p>}
+                    {liveAttendees.map((a:any,i:number)=>(
+                      <div key={a.student_id||i} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px",borderRadius:8,marginBottom:4,background:"rgba(255,255,255,.04)"}}>
+                        <div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",flexShrink:0,animation:"rec-pulse 2s ease-in-out infinite"}}/>
+                        <span style={{flex:1,fontSize:13,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.profiles?.full_name||"Student"}</span>
+                        <span style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{a.joined_at?new Date(a.joined_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):""}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>,document.body
+              )}
+              {/* Feature 10: Timer overlay */}
+              {timerOpen&&isPrivileged&&createPortal(
+                <div style={{position:"fixed",inset:0,zIndex:9500,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setTimerOpen(false)}>
+                  <div onClick={e=>e.stopPropagation()} style={{background:"#2D2E30",borderRadius:20,padding:"28px 24px",width:300,boxShadow:"0 24px 60px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease",textAlign:"center"}}>
+                    <div style={{fontSize:36,marginBottom:8}}>⏱️</div>
+                    <p style={{fontSize:16,fontWeight:700,color:"#e8eaed",marginBottom:16}}>Countdown Timer</p>
+                    {timerRunning?(
+                      <>
+                        <div style={{fontSize:48,fontWeight:900,color:"#fbbf24",fontVariantNumeric:"tabular-nums",letterSpacing:-2,marginBottom:20}}>{fmtTimer(timerSeconds)}</div>
+                        <button onClick={stopTimer} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"#ef4444",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>Stop Timer</button>
+                      </>
+                    ):(
+                      <>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,justifyContent:"center"}}>
+                          <input value={timerInput} onChange={e=>setTimerInput(e.target.value)} type="number" min="1" max="60"
+                            style={{width:80,padding:"10px",borderRadius:10,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.08)",color:"#fff",fontSize:20,fontWeight:700,textAlign:"center",outline:"none"}}/>
+                          <span style={{fontSize:14,color:"rgba(255,255,255,.6)"}}>minutes</span>
+                        </div>
+                        <button onClick={startTimer} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0a7c68,#064E3B)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>▶ Start Timer</button>
+                      </>
+                    )}
+                  </div>
+                </div>,document.body
+              )}
+              {/* Feature 15: Student recording indicator */}
+              {!isPrivileged&&teacherIsRecording&&createPortal(
+                <div style={{position:"fixed",top:64,left:"50%",transform:"translateX(-50%)",zIndex:9000,background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.3)",borderRadius:20,padding:"6px 14px",display:"flex",alignItems:"center",gap:8,backdropFilter:"blur(8px)"}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:"#ef4444",animation:"rec-pulse 1s ease-in-out infinite"}}/>
+                  <span style={{fontSize:12,fontWeight:600,color:"#fca5a5"}}>This class is being recorded</span>
+                </div>,document.body
+              )}
+              {/* Feature 17: Session summary modal */}
+              {summaryOpen&&sessionSummary&&createPortal(
+                <div style={{position:"fixed",inset:0,zIndex:9600,background:"rgba(0,0,0,.75)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={()=>setSummaryOpen(false)}>
+                  <div onClick={e=>e.stopPropagation()} style={{background:"#1e2535",borderRadius:20,padding:"28px 24px",maxWidth:440,width:"100%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 24px 60px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease"}}>
+                    <div style={{textAlign:"center",marginBottom:20}}>
+                      <div style={{fontSize:36,marginBottom:8}}>📋</div>
+                      <p style={{fontSize:17,fontWeight:800,color:"#e8eaed",margin:0}}>Session Summary</p>
+                      <p style={{fontSize:12,color:"rgba(255,255,255,.4)",margin:"4px 0 0"}}>{subject?.title}</p>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+                      {[["⏱️","Duration",sessionSummary.duration],["👥","Attendees",sessionSummary.attendeeCount],["💬","Messages",sessionSummary.messageCount],["📊","Polls",sessionSummary.pollCount]].map(([ic,lb,val])=>(
+                        <div key={lb as string} style={{background:"rgba(255,255,255,.05)",borderRadius:12,padding:"12px 16px",textAlign:"center"}}>
+                          <div style={{fontSize:22,marginBottom:4}}>{ic}</div>
+                          <div style={{fontSize:20,fontWeight:800,color:"#e8eaed"}}>{val}</div>
+                          <div style={{fontSize:11,color:"rgba(255,255,255,.4)"}}>{lb}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {sessionSummary.highlights?.length>0&&(
+                      <div style={{marginBottom:14}}>
+                        <p style={{fontSize:12,fontWeight:700,color:"rgba(255,255,255,.5)",marginBottom:8,textTransform:"uppercase",letterSpacing:.5}}>📌 Pinned Messages</p>
+                        {sessionSummary.highlights.map((m:any)=>(
+                          <div key={m.id} style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.15)",borderRadius:10,padding:"8px 12px",marginBottom:6,fontSize:13,color:"#e8eaed"}}>{m.message}</div>
+                        ))}
+                      </div>
+                    )}
+                    {sessionSummary.attendees?.length>0&&(
+                      <div>
+                        <p style={{fontSize:12,fontWeight:700,color:"rgba(255,255,255,.5)",marginBottom:8,textTransform:"uppercase",letterSpacing:.5}}>✅ Who Attended</p>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                          {sessionSummary.attendees.map((a:any)=>(
+                            <span key={a.student_id} style={{fontSize:11,background:"rgba(34,197,94,.1)",color:"#4ade80",border:"1px solid rgba(34,197,94,.2)",borderRadius:20,padding:"3px 10px"}}>{a.profiles?.full_name||"Student"}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <button onClick={()=>setSummaryOpen(false)} style={{width:"100%",marginTop:20,padding:"12px",borderRadius:12,border:"1px solid rgba(255,255,255,.1)",background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.7)",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
+                  </div>
+                </div>,document.body
+              )}
             </div>
             {chatOpen&&!isMobile&&(
               <div className="gm-sidebar">
@@ -4878,7 +5217,16 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
             />
           )}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}/>{/* FIX BUG 2: quiz launcher */}
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}
+            onScreenShare={toggleScreenShare} screenSharing={screenSharing}
+            onToggleTimer={()=>setTimerOpen(v=>!v)} timerRunning={timerRunning} timerDisplay={fmtTimer(timerSeconds)}
+            onToggleLiveFiles={()=>setLiveFilesOpen(v=>!v)} liveFilesOpen={liveFilesOpen}
+            onToggleHandQueue={()=>setHandQueueOpen(v=>!v)}
+            onToggleAttendance={()=>setAttendanceOpen(v=>!v)}
+            onSpotlight={(id:string)=>setSpotlightId(prev=>prev===id?null:id)}
+            onGenerateSummary={generateSessionSummary}
+            onTogglePartPanel={()=>setPartPanelOpen(v=>!v)} partPanelOpen={partPanelOpen}
+          />
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           {/* FIX BUG 2: LiveQuizOverlay now controlled by quizOpen state — was permanently disabled with hardcoded isOpen={false} */}
