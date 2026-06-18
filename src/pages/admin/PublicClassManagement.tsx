@@ -22,6 +22,10 @@ import { toast } from "sonner";
 const G    = "#064E3B";
 const GOLD = "#C9A84C";
 
+// FIX: Always use production domain — never APP_BASE_URL
+// (may be Lovable preview URL during development).
+const APP_BASE_URL = "https://tahleemacademy.vercel.app";
+
 const REMINDER_OPTIONS = [
   { label: "15 min before",  value: 15   },
   { label: "30 min before",  value: 30   },
@@ -390,7 +394,7 @@ const PublicClassManagement = () => {
   /* ── email blast ── */
   const openEmailBlast = (target: "class"|"all", cls?: PublicClass) => {
     const title     = cls?.title ?? "an upcoming class";
-    const joinUrl   = cls ? `${window.location.origin}/live/${cls.room_code}` : "";
+    const joinUrl   = cls ? `${APP_BASE_URL}/live/${cls.room_code}` : "";
     const scheduled = cls?.scheduled_at ? format(new Date(cls.scheduled_at), "EEEE, MMMM d 'at' h:mm a") : "";
     setEmailTarget(target);
     setEmailSubject(`📚 Reminder: ${title} — Join Link Inside`);
@@ -430,11 +434,11 @@ const PublicClassManagement = () => {
     const msg = encodeURIComponent(
       `Assalamu Alaikum! 🌙\n\nYou're invited to a FREE live Islamic class!\n\n📚 ${cls.title}\n` +
       (cls.scheduled_at ? `📅 ${format(new Date(cls.scheduled_at), "MMM d, yyyy 'at' h:mm a")}\n` : "") +
-      `\nJoin here:\n${window.location.origin}/live/${cls.room_code}\n\nRoom Code: ${cls.room_code}\n\n🤲 Share with others!`
+      `\nJoin here:\n${APP_BASE_URL}/live/${cls.room_code}\n\nRoom Code: ${cls.room_code}\n\n🤲 Share with others!`
     );
     window.open(`https://wa.me/?text=${msg}`, "_blank");
   };
-  const copyLink    = (cls: PublicClass) => { navigator.clipboard.writeText(`${window.location.origin}/live/${cls.room_code}`); toast.success("Link copied!"); };
+  const copyLink    = (cls: PublicClass) => { navigator.clipboard.writeText(`${APP_BASE_URL}/live/${cls.room_code}`); toast.success("Link copied!"); };
   const copyEmails  = (regs: Registration[]) => { const e = regs.filter(r=>r.email).map(r=>r.email).join(", "); if(!e){toast.error("No emails");return;} navigator.clipboard.writeText(e); toast.success(`Copied ${regs.filter(r=>r.email).length} emails`); };
   const exportCSV   = (regs: Registration[], fname: string) => {
     const rows = [["Name","Email","Phone","Registered At","Class"], ...regs.map(r=>[r.name,r.email||"",r.phone||"",r.registered_at?format(new Date(r.registered_at),"dd/MM/yyyy HH:mm"):"",r.class_title||""])];
@@ -709,7 +713,7 @@ const PublicClassManagement = () => {
                                       {label:"Copy Link",    icon:<Copy size={13}/>,        action:()=>{copyLink(cls);setMoreMenu(null);}},
                                       {label:"Share",        icon:<Share2 size={13}/>,       action:()=>{setShareClass(cls);setMoreMenu(null);}},
                                       {label:"Open Preview", icon:<ExternalLink size={13}/>, action:()=>{window.open(`/live/${cls.room_code}`,"_blank");setMoreMenu(null);}},
-                                      {label:"QR Code",      icon:<QrCode size={13}/>,       action:()=>{window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(window.location.origin+"/live/"+cls.room_code)}`,"_blank");setMoreMenu(null);}},
+                                      {label:"QR Code",      icon:<QrCode size={13}/>,       action:()=>{window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(APP_BASE_URL+"/live/"+cls.room_code)}`,"_blank");setMoreMenu(null);}},
                                       {label:"Recordings",   icon:<Film size={13}/>,         action:()=>openRecordingsDialog(cls)},
                                       {label:"Duplicate",    icon:<CopyPlus size={13}/>,     action:()=>duplicateClass(cls)},
                                       ...(cls.status==="ended"||cls.status==="archived" ? [{label:"View Stats", icon:<BarChart2 size={13}/>, action:()=>{setStatsTarget(cls);setMoreMenu(null);}}] : []),
@@ -974,7 +978,7 @@ const PublicClassManagement = () => {
             <div style={{padding:18}}>
               <div style={{background:"#F9FAFB",borderRadius:12,padding:14,textAlign:"center",marginBottom:14}}>
                 <p style={{fontSize:11,color:"#9CA3AF",margin:"0 0 4px"}}>Public Join Link</p>
-                <p style={{fontFamily:"monospace",fontWeight:700,fontSize:12,color:"#374151",margin:"0 0 8px",wordBreak:"break-all"}}>{window.location.origin}/live/{shareClass.room_code}</p>
+                <p style={{fontFamily:"monospace",fontWeight:700,fontSize:12,color:"#374151",margin:"0 0 8px",wordBreak:"break-all"}}>{APP_BASE_URL}/live/{shareClass.room_code}</p>
                 <div style={{display:"inline-flex",alignItems:"center",gap:6,padding:"5px 14px",borderRadius:20,background:`${G}12`}}>
                   <span style={{fontSize:12,color:"#6B7280"}}>Code:</span>
                   <code style={{fontSize:20,fontWeight:900,color:G,letterSpacing:3}}>{shareClass.room_code}</code>
@@ -984,8 +988,8 @@ const PublicClassManagement = () => {
                 {[
                   {label:"Copy Link", icon:<Copy size={14}/>,  action:()=>copyLink(shareClass!)},
                   {label:"WhatsApp",  icon:<Send size={14}/>,  action:()=>shareWhatsApp(shareClass!)},
-                  {label:"Email",     icon:"📧",               action:()=>window.open(`mailto:?subject=${encodeURIComponent("Join: "+shareClass!.title)}&body=${encodeURIComponent(window.location.origin+"/live/"+shareClass!.room_code)}`)},
-                  {label:"QR Code",   icon:<QrCode size={14}/>,action:()=>window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(window.location.origin+"/live/"+shareClass!.room_code)}`,"_blank")},
+                  {label:"Email",     icon:"📧",               action:()=>window.open(`mailto:?subject=${encodeURIComponent("Join: "+shareClass!.title)}&body=${encodeURIComponent(APP_BASE_URL+"/live/"+shareClass!.room_code)}`)},
+                  {label:"QR Code",   icon:<QrCode size={14}/>,action:()=>window.open(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(APP_BASE_URL+"/live/"+shareClass!.room_code)}`,"_blank")},
                 ].map((b,i)=>(
                   <button key={i} onClick={b.action as any}
                     style={{padding:"11px 12px",borderRadius:11,border:"1.5px solid #E5E7EB",background:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:7,fontWeight:600,fontSize:13,color:"#374151"}}>
