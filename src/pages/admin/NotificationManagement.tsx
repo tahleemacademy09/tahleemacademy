@@ -415,7 +415,7 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
           </div>
 
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setComposed(null) style={{ flex: 1, padding: "11px", borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", color: "#374151", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            <button onClick={() => setComposed(null)} style={{ flex: 1, padding: "11px", borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", color: "#374151", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
               ✏️ Regenerate
             </button>
             <button onClick={send} disabled={sending} style={{ flex: 2, padding: "11px", borderRadius: 11, border: "none", background: sending ? "#E5E7EB" : `linear-gradient(135deg,${G},${G2})`, color: sending ? "#9CA3AF" : "#fff", fontWeight: 800, fontSize: 14, cursor: sending ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
