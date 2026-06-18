@@ -16,9 +16,17 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
 // ── Step → route mapping ───────────────────────────────────────────────────
+// SINGLE SOURCE OF TRUTH. Previously Login.tsx and TasjeelGuard each kept their
+// own copy of this map and they drifted apart (e.g. enrollment/payment pointed
+// to "/register" here but "/auth/register-continue" in Login.tsx). That drift,
+// combined with two independent timed Supabase queries reaching different
+// conclusions about the same user, is what produced the "reload right after
+// login on the dashboard" symptom — it wasn't a reload, it was two different
+// navigate() calls landing one after another. Everything that needs to know
+// "where does a mid-registration student belong" must import THIS map.
 export const TASJEEL_ROUTES: Record<string, string> = {
-  enrollment:       "/register",
-  payment:          "/register",
+  enrollment:       "/auth/register-continue", // resume registration where they left off
+  payment:          "/auth/register-continue",
   onboarding:       "/onboarding",
   exam:             "/student/entrance-exam",
   recitation:       "/student/recitation-test",
@@ -34,6 +42,63 @@ export const STEP_ORDER = [
 ] as const;
 
 export type TasjeelStep = typeof STEP_ORDER[number];
+
+// ── resolveTasjeelStep ────────────────────────────────────────────────────
+// SINGLE SOURCE OF TRUTH for "what step is this authenticated user actually
+// at, and where do they belong." Used by both useTasjeel() (the continuous
+// dashboard guard) and Login.tsx (the one-time post-sign-in redirect) so the
+// two can never disagree about a user's destination. Previously each kept
+// an independent Supabase query with its own timeout, which could resolve
+// to two different steps a few hundred ms apart — Login.tsx would navigate
+// to /student, then TasjeelGuard's own slower query would resolve and bounce
+// the user again. That double-navigate is what looked like a "reload."
+//
+// "No row" handling is the existing-users-login-freely rule: a CONFIRMED
+// user with no tasjeel_progress row is an existing/legacy account that
+// predates this pipeline — back-fill them as completed rather than dropping
+// them into registration. An UNCONFIRMED user with no row is genuinely new
+// and belongs at the start of the pipeline.
+export async function resolveTasjeelStep(
+  userId: string,
+  emailConfirmedAt: string | null | undefined,
+  timeoutMs = 6000
+): Promise<string> {
+  const timeoutPromise = new Promise<{ data: null }>((resolve) =>
+    setTimeout(() => resolve({ data: null }), timeoutMs)
+  );
+  const queryPromise = supabase
+    .from("tasjeel_progress")
+    .select("current_step")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  const { data } = await Promise.race([queryPromise, timeoutPromise]);
+  const existingStep = (data as any)?.current_step as string | undefined;
+
+  if (existingStep) return existingStep;
+
+  // No row at all.
+  if (emailConfirmedAt) {
+    // Existing confirmed user predating the pipeline — back-fill once so
+    // this check is a no-op on every future login/dashboard visit.
+    try {
+      const now = new Date().toISOString();
+      await supabase.from("tasjeel_progress").insert({
+        user_id:      userId,
+        current_step: "completed",
+        created_at:   now,
+        updated_at:   now,
+        completed_at: now,
+      });
+    } catch {
+      /* non-fatal — row may already exist from a concurrent request */
+    }
+    return "completed";
+  }
+
+  // Genuinely new, unconfirmed account — start of the pipeline.
+  return "enrollment";
+}
 
 // ── createDashboardIfNotExists ────────────────────────────────────────────
 export async function createDashboardIfNotExists(userId: string) {
@@ -113,18 +178,17 @@ export function useTasjeel() {
     }, 6000);
 
     try {
-      const { data } = await supabase
-        .from("tasjeel_progress")
-        .select("current_step")
-        .eq("user_id", userId)
-        .maybeSingle();
-
+      // SINGLE SOURCE OF TRUTH: same resolver Login.tsx calls for the
+      // post-sign-in redirect. Previously this inline query had its own
+      // "no row → enrollment" fallback that did NOT back-fill confirmed
+      // legacy users, while Login.tsx's separate copy did — so a confirmed
+      // existing user landing here directly (e.g. PWA resume, deep link)
+      // without going through Login.tsx first could get bounced into
+      // registration. resolveTasjeelStep() now handles that consistently
+      // everywhere.
+      const step = await resolveTasjeelStep(userId, user?.email_confirmed_at);
       if (!didTimeout) {
-        // SAFETY: if no tasjeel_progress row exists yet, treat as "enrollment"
-        // (beginning of the pipeline), NOT "completed". Falling back to
-        // "completed" silently grants full dashboard access to brand-new
-        // users who haven't finished registration.
-        setCurrentStep(data?.current_step ?? "enrollment");
+        setCurrentStep(step);
       }
     } catch {
       if (!didTimeout) {
