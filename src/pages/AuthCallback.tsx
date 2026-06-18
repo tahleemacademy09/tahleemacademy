@@ -25,22 +25,11 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import { BookOpen } from "lucide-react";
 
 const G    = "#064E3B";
 const GOLD = "#C9973A";
-
-// ── Tasjeel step → route mapping (kept in sync with useTasjeel.ts) ────────
-const STEP_ROUTES: Record<string, string> = {
-  enrollment:       "/register",
-  payment:          "/register",
-  onboarding:       "/onboarding",
-  exam:             "/student/entrance-exam",
-  recitation:       "/student/recitation-test",
-  schedule_session: "/student/recitation-test",
-  level_assignment: "/student/awaiting-level",
-  completed:        "/student",
-};
 
 const AuthCallback = () => {
   const navigate = useNavigate();
@@ -114,9 +103,16 @@ const AuthCallback = () => {
         await new Promise((r) => setTimeout(r, 500));
       }
 
-      // If Tasjeel never initialised (edge case), fall back to student home
+      // If Tasjeel never initialised (edge case), fall back to student home.
+      // NOTE: we don't reuse resolveTasjeelStep()'s "no row + confirmed email
+      // = existing user, back-fill completed" rule here — Google/OAuth users
+      // have email_confirmed_at set immediately even on a brand-new signup,
+      // so that rule would incorrectly skip registration for new Google
+      // sign-ups. The polling loop above already gives initializeTasjeel a
+      // few seconds to create the real row; "completed" is only the fallback
+      // once that window has passed.
       const step  = (tasjeel as any)?.current_step ?? "completed";
-      const route = STEP_ROUTES[step] ?? "/student";
+      const route = TASJEEL_ROUTES[step] ?? "/student";
 
       navigate(route, { replace: true });
     };
