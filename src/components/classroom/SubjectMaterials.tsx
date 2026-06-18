@@ -11,7 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import PDFViewer from "./PDFViewer";
+import PDFViewer, { prewarmPDF } from "./PDFViewer";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -1133,6 +1133,20 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMat
       return data || [];
     },
   });
+
+  // Cache every PDF in the background as soon as the list loads — staggered so a
+  // long materials list doesn't fetch/render them all at once on a phone. By the
+  // time a student actually taps one, it opens instantly (and works offline).
+  useEffect(() => {
+    if (!materials.length) return;
+    const pdfs = materials.filter((m: any) =>
+      (m.material_type === "PDF" || (m.file_url || "").toLowerCase().split("?")[0].endsWith(".pdf")) && m.file_url
+    );
+    const timers = pdfs.map((m: any, i: number) =>
+      setTimeout(() => prewarmPDF(m.file_url), i * 600)
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [materials]);
 
   const handleDelete = async (m: any) => {
     if (!confirm(`Delete "${m.title}"?`)) return;
