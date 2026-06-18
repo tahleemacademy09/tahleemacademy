@@ -11,9 +11,6 @@
  *    file list while keeping a file "open". Click another file to navigate to it.
  *  - NAVIGATION HISTORY: back/forward arrows cycle through all opened files in
  *    the current session.
- *  - INSTANT PDF OPEN: URLs are pre-resolved and PDFs are pre-rendered into
- *    cache the moment the file list loads, so clicking a PDF opens it instantly
- *    with zero loading spinner on subsequent opens.
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -536,11 +533,6 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [resolving,   setResolving]   = useState(false);
 
-  // ── Pre-resolved URL cache (keyed by file.id) ──────────────────────────────
-  // Populated in the background after fetchFiles() completes so that openFile()
-  // can skip the network HEAD check and return instantly.
-  const resolvedUrlCache = useRef<Map<string, string>>(new Map());
-
   const currentFile = openIdx >= 0 ? openedFiles[openIdx] : null;
 
   /* ── Resolve a file_url to a working viewer URL ───────────────────
@@ -600,48 +592,23 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
 
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
-  /* ── Background pre-warm ──────────────────────────────────────────────────
-     After the file list loads, silently resolve every PDF URL and kick off
-     background rendering so the first tap opens instantly with no spinner.
-  ── */
+  // Cache PDFs in the background as soon as the list loads — staggered to avoid
+  // hitting network/CPU all at once. Works offline once cached.
   useEffect(() => {
-    if (files.length === 0) return;
-    files.forEach(f => {
-      const kind = getKind(f.file_name, f.file_type);
-      if (kind !== "PDF") return;
-      if (resolvedUrlCache.current.has(f.id)) return; // already done
-
-      resolveViewerUrl(f.file_url).then(resolved => {
-        resolvedUrlCache.current.set(f.id, resolved);
-        // Fire-and-forget PDF render into PAGE_CACHE
-        prewarmPDF(resolved);
-      }).catch(() => {
-        // If resolution fails, just leave the cache empty —
-        // openFile() will resolve it normally on click.
-      });
-    });
+    if (!files.length) return;
+    const pdfs = files.filter(f => (f.file_url || "").toLowerCase().split("?")[0].endsWith(".pdf"));
+    const timers = pdfs.map((f, i) => setTimeout(async () => {
+      const resolved = await resolveViewerUrl(f.file_url);
+      prewarmPDF(resolved);
+    }, i * 600));
+    return () => timers.forEach(clearTimeout);
   }, [files, resolveViewerUrl]);
 
   /* ── open file — builds navigation history + resolves viewer URL ── */
   const openFile = useCallback(async (f: LCFile) => {
     setMinimized(false);
-
-    // Use pre-resolved URL if available — zero network latency
-    const cached = resolvedUrlCache.current.get(f.id);
-    if (cached) {
-      setResolvedUrl(cached);
-      setResolving(false);
-    } else {
-      // URL not yet resolved (e.g. file appeared via realtime after initial load)
-      setResolvedUrl(null);
-      setResolving(true);
-      resolveViewerUrl(f.file_url).then(resolved => {
-        resolvedUrlCache.current.set(f.id, resolved);
-        setResolvedUrl(resolved);
-        setResolving(false);
-        prewarmPDF(resolved);
-      });
-    }
+    setResolvedUrl(null);
+    setResolving(true);
 
     setOpenedFiles(prev => {
       const existingIdx = prev.findIndex(x => x.id === f.id);
@@ -650,28 +617,24 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
       setOpenIdx(next.length - 1);
       return next;
     });
+
+    // Resolve the URL (handles legacy URLs, signed URLs, public URLs)
+    const resolved = await resolveViewerUrl(f.file_url);
+    setResolvedUrl(resolved);
+    setResolving(false);
   }, [openIdx, resolveViewerUrl]);
 
-  // Re-resolve when navigating back/forward (also instant if pre-warmed)
+  // Re-resolve when navigating back/forward
   const goBack = useCallback(async () => {
     const newIdx = openIdx - 1;
     if (newIdx < 0) return;
     setOpenIdx(newIdx);
     setMinimized(false);
-    const f = openedFiles[newIdx];
-    const cached = resolvedUrlCache.current.get(f.id);
-    if (cached) {
-      setResolvedUrl(cached);
-      setResolving(false);
-    } else {
-      setResolvedUrl(null);
-      setResolving(true);
-      resolveViewerUrl(f.file_url).then(resolved => {
-        resolvedUrlCache.current.set(f.id, resolved);
-        setResolvedUrl(resolved);
-        setResolving(false);
-      });
-    }
+    setResolvedUrl(null);
+    setResolving(true);
+    const resolved = await resolveViewerUrl(openedFiles[newIdx].file_url);
+    setResolvedUrl(resolved);
+    setResolving(false);
   }, [openIdx, openedFiles, resolveViewerUrl]);
 
   const goForward = useCallback(async () => {
@@ -679,20 +642,11 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     if (newIdx >= openedFiles.length) return;
     setOpenIdx(newIdx);
     setMinimized(false);
-    const f = openedFiles[newIdx];
-    const cached = resolvedUrlCache.current.get(f.id);
-    if (cached) {
-      setResolvedUrl(cached);
-      setResolving(false);
-    } else {
-      setResolvedUrl(null);
-      setResolving(true);
-      resolveViewerUrl(f.file_url).then(resolved => {
-        resolvedUrlCache.current.set(f.id, resolved);
-        setResolvedUrl(resolved);
-        setResolving(false);
-      });
-    }
+    setResolvedUrl(null);
+    setResolving(true);
+    const resolved = await resolveViewerUrl(openedFiles[newIdx].file_url);
+    setResolvedUrl(resolved);
+    setResolving(false);
   }, [openIdx, openedFiles, resolveViewerUrl]);
 
   const closeViewer = useCallback(() => {
@@ -825,8 +779,6 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
         storageSupabase.storage.from(bucketName).remove([storagePath]).catch(() => {});
       }
     }
-    // Remove from URL cache
-    resolvedUrlCache.current.delete(f.id);
     // If the deleted file is currently open, close the viewer for it
     setOpenedFiles(prev => {
       const filtered = prev.filter(x => x.id !== f.id);
