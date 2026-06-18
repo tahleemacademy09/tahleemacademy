@@ -4,6 +4,7 @@
   keyboard navigation, section support, better mobile UX
 */
 import { useEffect, useState, useCallback, useRef } from "react";
+import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { useParams, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -453,6 +454,13 @@ const ExamTaking = () => {
       window.removeEventListener("pagehide", ph);
     };
   }, [submitted]);
+
+  // Reload safety net: never let an SW update force-reload mid-exam.
+  useEffect(() => {
+    if (loading || submitted) return;
+    lockReload("exam-taking");
+    return () => unlockReload("exam-taking");
+  }, [loading, submitted]);
 
   const saveAnswers = async (silent = false) => {
     if (!attemptId || submittedRef.current) return;
