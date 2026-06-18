@@ -4,6 +4,7 @@
 import { useState, useEffect } from "react";
 import { BookMarked, ScrollText, CalendarDays, Newspaper, ExternalLink, RefreshCw,
          Star, ChevronDown, ChevronUp, Shield, BookOpen } from "lucide-react";
+import { SEERAH_EPISODES } from "./SeerahData";
 
 const DARK_GREEN = "#0f2d1f";
 const MID_GREEN  = "#1a4731";
@@ -399,297 +400,12 @@ const AQEEDAH_LESSONS = [
     explanation: "Ibn Taymiyyah clarifies in Al-Wasitiyyah that al-wala (loyalty/alliance) and al-bara (disassociation) operate at different levels:\n\nPRINCIPLE: A Muslim's deepest loyalty is to Allah, His Messenger, and the believers. This is non-negotiable and cannot be replaced by nationality, tribe, or family.\n\nPERMITTED: Fair treatment, justice, and basic courtesy to non-Muslims who do not fight Muslims. Allah says: 'Allah does not forbid you from those who do not fight you on account of religion and do not expel you — to deal with them justly.' (60:8). The Prophet ﷺ himself dealt kindly with many non-Muslims.\n\nFORBIDDEN: Taking them as awliya (intimate allies) in matters of religion — sharing secrets of the Muslims, helping them against Muslims, or showing them as the primary source of trust over Muslims.\n\nIMPORTANT: This is not a call to hatred of individuals. It is a call to clarity about where ultimate loyalty lies — and that it lies with Allah.",
   },
 ];
+// ── Seerah — The Sealed Nectar (Ar-Raheeq Al-Makhtum)
+// Sequential episodes imported from SeerahData.tsx
+// In component: const dailySeerah = SEERAH_EPISODES[doy % SEERAH_EPISODES.length];
+// Add this import at the top of your final IslamicDailyFeed.tsx:
+// import { SEERAH_EPISODES } from './SeerahData';
 
-// ── SEERAH entries preserved from original ────────────────────────────────────
-// ── Rich Seerah Entries with Quranic & Hadith Evidence ──────────────────
-const SEERAH = [
-  {
-    title: "The Year of the Elephant — Divine Protection 🐘",
-    titleAr: "عام الفيل",
-    year: "570 CE | Before Prophethood",
-    content: `In the year the Prophet ﷺ was born, a remarkable event established the divine sanctity of the Kaabah before the world. Abraha ibn al-Sabbah, the Christian viceroy of Yemen under Abyssinian rule, built an enormous church in Sana'a called al-Qullays and ordered Arabs to perform pilgrimage there instead of Makkah. When this failed, he mobilised a massive army — including war elephants — to destroy the Kaabah itself.
-
-As Abraha's army approached Makkah, Abd al-Muttalib (the Prophet's grandfather) calmly said: "As for this House [the Kaabah], it has its own Lord Who will protect it." He took his family and the Makkans to the hills. What followed was among the most miraculous events in pre-Islamic Arabia.
-
-QURANIC EVIDENCE:
-Allah preserved the memory of this event in the Quran: "Have you not seen what your Lord did to the companions of the elephant? Did He not make their plan go astray? And He sent against them birds in flocks, striking them with stones of hard clay — and He made them like eaten straw." (Surah Al-Fil 105:1-5)
-
-The Ababeel birds dropped sijjeel stones (baked clay or hardened lava) upon the army, causing a devastating plague-like destruction. The entire army collapsed. Abraha himself died on the retreat — his body reportedly deteriorating piece by piece.
-
-HISTORICAL SIGNIFICANCE:
-The Quraysh used this event as proof of their special status as guardians of the Kaabah. Allah honoured them with "the security of this House" (Surah Quraysh 106:3-4). It was also in this same year — approximately April or May — that Muhammad ﷺ was born. The timing was not coincidental. The earth was being prepared for its greatest inhabitant. As Ibn Kathir wrote: "Allah honoured the Kaabah by protecting it, just as He was about to honour the earth with His final Messenger."
-
-LESSON:
-When Allah wills to protect something, no army of any size can prevail against it. The same divine protection surrounds the Quran: "Indeed, it is We who sent down the Reminder, and indeed We will be its guardian." (Quran 15:9).`,
-  },
-  {
-    title: "Birth of the Prophet ﷺ — Light Upon the World",
-    titleAr: "مولد النبي ﷺ",
-    year: "570 CE | 12 Rabi al-Awwal",
-    content: `Muhammad ibn Abdullah ibn Abd al-Muttalib ﷺ was born on a Monday in Makkah, in the neighbourhood of Banu Hashim, in the Year of the Elephant. His father Abdullah had passed away before his birth, leaving him an orphan from his first breath — a fact the Quran later addressed as a divine arrangement: "Did He not find you an orphan and give you shelter?" (93:6).
-
-WHAT THE PROPHET ﷺ SAID ABOUT HIS BIRTH:
-When asked why he fasted on Mondays, the Prophet ﷺ replied: "That is the day I was born and the day revelation came to me." (Sahih Muslim 1162). He was born circumcised according to some narrations, and his mother Aminah reported that at his birth she saw a light that illuminated the palaces of Syria. This light is referenced in the hadith: "I was the last of the prophets with Allah, while Adam was still clay." (Ahmad — Sahih).
-
-HIS LINEAGE:
-The Prophet ﷺ himself said: "Allah chose Kinanah from the sons of Ismail, and He chose Quraysh from Kinanah, and He chose Banu Hashim from Quraysh, and He chose me from Banu Hashim." (Muslim 2276). His lineage traces back to Ibrahim (AS) through his son Ismail (AS) — making him the fulfilment of Ibrahim's famous supplication: "Our Lord, send among them a messenger from themselves who will recite to them Your verses and teach them the Book and wisdom." (Quran 2:129).
-
-THE GLAD TIDINGS BEFORE HIM:
-Both the Torah and Injeel contained prophecies about his coming. Allah says: "Those who follow the messenger, the unlettered prophet, whom they find written in what they have of the Torah and the Gospel." (Quran 7:157). And in Surah as-Saf, Allah quotes Isa (AS): "And [mention] when Jesus, the son of Mary, said: 'O children of Israel, indeed I am the messenger of Allah to you... and bringing glad tidings of a messenger to come after me whose name is Ahmad.'" (61:6).
-
-THE NAME MUHAMMAD:
-The name Muhammad — meaning "the one who is excessively praised" — was rare among Arabs at the time. His grandfather Abd al-Muttalib chose it, saying he hoped his grandson would be praised in the heavens and on earth. Indeed, he ﷺ is praised by Allah Himself: "Indeed, Allah and His angels send blessings upon the Prophet. O you who have believed, ask [Allah to confer] blessing upon him and ask [Allah to grant him] peace." (Quran 33:56).`,
-  },
-  {
-    title: "The Chest Opening — Purification of the Chosen ✨",
-    titleAr: "شق الصدر",
-    year: "~574 CE | Childhood",
-    content: `While the young Muhammad ﷺ was living with his foster family in the Banu Sa'd tribe, one of the most profound spiritual events in human history occurred in the hills of the Arabian desert. Two angels appeared in the form of men wearing white garments, and they opened the chest of the Prophet ﷺ — an event that occurred not once but twice in his lifetime.
-
-THE FIRST OPENING:
-Anas ibn Malik (RA) reported: "Jibreel came to the Messenger of Allah ﷺ while he was playing with the other boys. He took hold of him and threw him down, then he opened his chest and took out his heart. Then he took out a black clot from it and said: 'This is the portion of Shaytan from you.' Then he washed it in a golden vessel with Zamzam water, put it back together, and returned it to its place." (Sahih Muslim 162).
-
-THE SECOND OPENING — ON THE NIGHT OF MIRAJ:
-Ibn Hajar records in Fath al-Bari that the chest was opened again on the night of al-Isra wal-Miraj before the Prophet ﷺ ascended through the heavens, as a further spiritual preparation for meeting Allah.
-
-QURANIC REFERENCE:
-Allah refers to this spiritual expansion in Surah ash-Sharh: "Did We not expand for you your chest? And We removed from you your burden which had weighed upon your back. And raised high for you your repute." (94:1-4). While the scholars differ on whether this refers to the physical chest-opening or a metaphorical spiritual expansion — or both — there is consensus that Allah specially prepared the Prophet's ﷺ heart for prophethood in ways beyond ordinary human experience.
-
-WHAT DOES "CLOT OF SHAYTAN" MEAN?
-The scholars explain this is not suggesting the Prophet ﷺ was sinful — prophets are protected (ma'sum) from major sins. Rather, it refers to the natural inclination toward the dunya and desires that exists in all humans. Allah removed even this subtle trace from the Prophet ﷺ to make his heart a perfect vessel for divine revelation. Ibn al-Qayyim wrote: "The heart of the Prophet ﷺ was the most perfect of vessels — transparent, pure, a mirror for divine light."
-
-LESSON:
-Every human carries impurities in the heart — the Prophet ﷺ had his miraculously cleansed; we are expected to do ours through tawbah, dhikr, and following his Sunnah. "Verily, in the remembrance of Allah do hearts find rest." (Quran 13:28).`,
-  },
-  {
-    title: "Al-Amin — A Character Before Prophethood 🌟",
-    titleAr: "الأمين — أمانة قبل النبوة",
-    year: "Before 610 CE | Youth to Age 40",
-    content: `Before a single verse was revealed, before any claim to prophethood, before Islam was even named — the people of Makkah called Muhammad ﷺ by a title: AL-AMIN (the Trustworthy). This was not a formal designation — it was the organic, unanimous recognition of an entire society. Both friends and enemies, the poor and the wealthy, the noble and the enslaved — all agreed that Muhammad ibn Abdullah was a man of absolute integrity.
-
-HADITH EVIDENCE:
-When the Prophet ﷺ stood on Mount Safa in 613 CE to first publicly preach Islam, he called out: "O people of Quraysh! If I were to tell you that behind this hill there is an army coming to attack you — would you believe me?" Every person in the crowd replied: "Yes — for we have never known you to lie." (Bukhari 4770). This was remarkable: he was speaking to people who would later become his fiercest enemies — yet not even they could deny his truthfulness.
-
-JABIR IBN ABDILLAH (RA) NARRATED:
-"The Messenger of Allah ﷺ never said 'no' to anyone who asked him for something." (Bukhari 6034). His generosity was an extension of his truthfulness — he meant what he said and gave what he promised.
-
-KHADIJAH'S TESTIMONY:
-When he returned from the cave trembling, it was his character — not miracles — that Khadijah (RA) first cited: "By Allah, Allah will never disgrace you. You maintain family ties, you speak truthfully, you carry the burdens of the weak, you help the poor, you honour your guests, and you assist those who suffer calamities." (Bukhari 3). She knew his character so deeply that she could predict divine favour with certainty.
-
-QURANIC AFFIRMATION:
-Allah Himself certified his character: "And indeed, you are of a great moral character." (Quran 68:4). This verse was revealed early in the Makkan period — and it was affirming something the people already knew. Aishah (RA) summarised it perfectly: when asked about his character, she said: "His character was the Quran." (Muslim 746).
-
-THE LESSON FOR US:
-The Prophet ﷺ built his credibility over 40 years before making his greatest claim — prophethood. Integrity is not built in a moment; it is the accumulation of ten thousand small choices to tell the truth, keep a promise, and treat others fairly. In a world of instant credentials, Islam teaches that character is built slowly and tested constantly.`,
-  },
-  {
-    title: "Khadijah رضي الله عنها — The First Believer 💛",
-    titleAr: "أم المؤمنين السيدة خديجة رضي الله عنها",
-    year: "595 CE | Marriage | 610 CE | First Revelation",
-    content: `Khadijah bint Khuwaylid (RA) was, in the words of the Prophet ﷺ himself, "the best of the women of her time." She was a wealthy, independent businesswoman of Makkah — twice widowed, deeply respected, known for her intelligence and moral standing. When she hired the young Muhammad ﷺ to lead her trade caravan to Syria, she was immediately struck by his character, his integrity, and his results. Her servant Maysarah reported back the extraordinary signs he had witnessed on the journey.
-
-THE MARRIAGE:
-Khadijah sent word through her friend Nafisah proposing marriage. The Prophet ﷺ was 25; she was 40. Every measure of worldly convention was reversed — she was older, wealthier, and she proposed to him. Yet this was among the most blessed marriages in human history. They had six children together: al-Qasim, Zaynab, Ruqayyah, Umm Kulthum, Fatimah, and Abdullah. All sons died in infancy — a grief Allah addressed in Surah al-Kawthar.
-
-WHEN REVELATION CAME:
-The Prophet ﷺ returned from the Cave of Hira trembling, saying: "Cover me! Cover me!" Khadijah's response was not panic or doubt — it was the response of a woman who knew her husband's character with absolute certainty. She said: "By Allah, Allah will never disgrace you." Then she listed his qualities — his truthfulness, his care for family, his generosity, his hospitality. She took him to her cousin Waraqah ibn Nawfal, a Christian scholar, who confirmed: "This is the same Namus [Angel Jibreel] that came to Musa." (Bukhari 3).
-
-HER SACRIFICE:
-When the Quraysh imposed their three-year boycott, it was Khadijah's wealth that had previously sustained the early Muslim community. She gave everything — and the Prophet ﷺ never forgot. Years after her death, he would send food to her old friends. When a woman came to him who reminded him of Khadijah's time, he ﷺ honoured her warmly. Aishah (RA) said she never felt jealousy toward any of the Prophet's wives except Khadijah — though she had died before Aishah even met the Prophet ﷺ — "because he mentioned her so frequently." (Bukhari 3816).
-
-THE PROPHET'S ﷺ WORDS ABOUT HER:
-"She believed in me when no one else did. She accepted Islam when people rejected me. She helped me with her wealth when people deprived me. And Allah blessed me with children through her." (Ahmad — Sahih). When Jibreel came down and said: "O Messenger of Allah, Khadijah is coming to you with food. When she arrives, convey to her the salaam of her Lord and of me, and give her the glad tidings of a house in Paradise made of hollowed pearl, in which there is no noise and no hardship." (Bukhari 3820).
-
-QURANIC REFERENCE:
-It was Khadijah's wealth that funded much of the early dawah. She embodied the Quranic ideal: "And those who strive in Our cause — We will surely guide them to Our ways." (29:69). She strove with everything she had.`,
-  },
-  {
-    title: "The First Revelation — Iqra! 📖",
-    titleAr: "نزول الوحي — إقرأ",
-    year: "610 CE | 27 Ramadan | Jabal al-Nur, Makkah",
-    content: `For several years before revelation, the Prophet Muhammad ﷺ had been drawn to solitude and spiritual reflection. He would retreat to the Cave of Hira on Jabal al-Nur (Mountain of Light) — sometimes for days at a time — engaging in tahannuth (spiritual worship, the form of which was inspired by what remained of Ibrahim's religion). He was 40 years old. The month was Ramadan. The date was the 27th.
-
-THE MOMENT:
-Aishah (RA) narrated the full account: "The beginning of the Divine Inspiration to Allah's Messenger was in the form of true righteous visions in his sleep. Every vision he had came like the breaking of dawn. Then he was made to love seclusion. He would go to the Cave of Hira and engage in tahannuth — worship for a number of nights. He would take provisions for this and return to Khadijah to take more, until the Truth came to him suddenly while he was in the Cave of Hira." (Bukhari 3).
-
-JIBREEL'S APPEARANCE:
-"The Angel came to him and commanded: 'Read!' The Prophet ﷺ said: 'I cannot read.' He took hold of me and squeezed me with so much force that it was unbearable. Then he released me and again commanded: 'Read!' I replied: 'I cannot read.' He squeezed me again a second time — then a third time. Then he said: 'Read in the name of your Lord who created — created man from a clinging substance. Read, and your Lord is the Most Generous — who taught by the pen — taught man that which he knew not.'" (96:1-5). (Bukhari 3).
-
-WHY IQRA FIRST?
-The scholars of tafseer note the profound wisdom in the first word being "Iqra" (Read/Recite). Islam is a religion of knowledge, of revelation communicated through language, of a Book. The first command was not "pray" or "fast" but "Read." Ibn Kathir wrote: "Allah began with 'Read' because knowledge is the foundation of all worship."
-
-THE PROPHET'S ﷺ REACTION:
-He returned to Khadijah trembling: "Cover me! Cover me!" (Bukhari 3). When the shivering subsided, he said: "What has happened to me?" and told her what he had experienced. His fear was not of the angel per se — but of the enormity of what had been placed upon him. This is the mark of true prophethood — not eagerness for status, but the weight of divine responsibility.
-
-AFTER HIRA — THE PAUSE:
-Following the first revelation, there was a pause in revelation (called al-fatrah). The Prophet ﷺ was deeply distressed by this silence. According to some narrations, this pause lasted months. Then the second revelation came: "O you who is wrapped in garments! Arise and warn!" (74:1-2). The pause was a further preparation — allowing the first words to settle deeply into the Prophet's heart before the mission was formally declared.
-
-QURAN ON THIS NIGHT:
-"Indeed, We sent it [the Quran] down on the Night of Decree. And what can make you know what is the Night of Decree? The Night of Decree is better than a thousand months. The angels and the Spirit [Jibreel] descend therein by permission of their Lord for every matter. Peace it is until the emergence of dawn." (97:1-5).`,
-  },
-  {
-    title: "Persecution in Makkah — Steadfastness Under Fire 🔥",
-    titleAr: "الأذى في سبيل الله",
-    year: "613–622 CE | Makkah",
-    content: `When the Prophet ﷺ went public with his message in 613 CE, the Quraysh's response was swift and brutal. They could not kill him — he had the tribal protection of Banu Hashim and Abu Talib. So they targeted those with no protection: the poor, the enslaved, the foreigners.
-
-BILAL IBN RABAH (RA):
-Bilal was an Abyssinian slave owned by Umayyah ibn Khalaf. When he accepted Islam, his master dragged him into the burning Makkan desert at midday, placed a heavy boulder on his chest, and demanded he renounce Islam and praise al-Lat and al-Uzza. Bilal's only response: "AHAD! AHAD!" (One! One!) — referring to Allah's oneness. Abu Bakr (RA) purchased him and freed him. Bilal became the first muezzin of Islam — that same voice that cried in the desert called the Adhan from atop the Kaabah when Makkah was conquered.
-
-THE FAMILY OF YASIR:
-Yasir, his wife Sumayyah, and their son Ammar were tortured relentlessly. The Prophet ﷺ would pass by them and could only say: "Be patient, O family of Yasir! Your promised meeting is Paradise." (Hakim — Sahih). Sumayyah was killed by Abu Jahl — becoming the first martyr in Islam. Her husband Yasir died shortly after from torture. Their son Ammar was eventually forced to utter words of disbelief under torture — and came to the Prophet ﷺ crying. The verse was revealed: "Except for one who is compelled [to disbelief] while his heart is secure in faith." (16:106).
-
-KHABBAB IBN AL-ARAT (RA):
-He came to the Prophet ﷺ while he was resting in the shade of the Kaabah and said: "O Messenger of Allah, will you not pray to Allah for us?" The Prophet ﷺ sat up, his face becoming red, and said: "Among those who came before you, a man would be seized and have a trench dug for him, then a saw placed on his head and split in two — yet this would not cause him to leave his religion. By Allah, Allah will complete this matter [Islam] until a rider can travel from Sana'a to Hadramawt fearing no one except Allah." (Bukhari 3612).
-
-QURANIC SOLACE:
-Allah repeatedly consoled the believers: "And We will surely test you with something of fear and hunger and a loss of wealth and lives and fruits, but give good tidings to the patient — who, when disaster strikes them, say: Indeed we belong to Allah, and indeed to Him we will return." (2:155-156). And: "Do the people think that they will be left to say 'We believe' and they will not be tried?" (29:2).
-
-THE PROPHET'S ﷺ OWN SUFFERING:
-He was pelted with dirt and thorns. His prostrations were interrupted when Abu Jahl placed camel intestines on his back while he prayed. He was called a madman (majnun), a soothsayer (kahin), a poet (sha'ir) — all attempts to discredit the Quran. Allah responded to each claim: "And it is not the word of a poet — little do you believe. Nor the word of a soothsayer — little do you remember. [It is] a revelation from the Lord of the worlds." (69:41-43).
-
-THE LESSON:
-The persecution of the early Muslims was not incidental — it was the sieve that purified the faith of those who remained. Every era of Islam's spread was accompanied by trial. Allah promises: "After hardship comes ease." (94:5-6). The question is always: what is our "Ahad!" in the face of pressure?`,
-  },
-  {
-    title: "Al-Isra wal-Miraj — The Night That Changed Everything 🌌",
-    titleAr: "الإسراء والمعراج",
-    year: "620 CE | 27 Rajab",
-    content: `The Year of Grief (619 CE) had devastated the Prophet ﷺ. Within weeks, he had lost his beloved wife Khadijah and his uncle and protector Abu Talib. He had been driven out of Taif with bleeding feet. He was at his most vulnerable. It was in this darkness that Allah sent the greatest honour ever given to any human being.
-
-THE ISRA — THE NIGHT JOURNEY:
-"Exalted is He who took His Servant [on] a journey by night from al-Masjid al-Haram to al-Masjid al-Aqsa, whose surroundings We have blessed, to show him of Our signs." (Quran 17:1). The Prophet ﷺ was taken from Makkah to Jerusalem on the Buraq — a white animal smaller than a mule, larger than a donkey, which placed each step at the limit of its sight. At Masjid al-Aqsa, he led all the prophets in salah — confirming his station as their leader and the seal of prophethood.
-
-THE MIRAJ — THE ASCENSION:
-From Jerusalem, the Prophet ﷺ ascended through all seven heavens. In each, he met prophets:
-• First heaven: Adam (AS)
-• Second heaven: Yahya (AS) and Isa (AS)
-• Third heaven: Yusuf (AS)
-• Fourth heaven: Idris (AS)
-• Fifth heaven: Harun (AS)
-• Sixth heaven: Musa (AS)
-• Seventh heaven: Ibrahim (AS), leaning against al-Bayt al-Ma'mur (the Celestial House visited by 70,000 angels daily)
-(Bukhari 3207, Muslim 162)
-
-THE GIFT OF SALAH:
-Allah originally prescribed 50 daily prayers. As the Prophet ﷺ descended, Musa (AS) — who had experience with his people — urged him to return and request a reduction. The Prophet ﷺ made multiple returns until the prayers were reduced to five. Allah then said: "These five prayers are [counted as] fifty in reward, for My Word does not change." (Bukhari 349). The five prayers are thus both the easiest obligation and the greatest gift — a direct audience with Allah five times daily.
-
-BEYOND SIDRAT AL-MUNTAHA:
-The Prophet ﷺ reached Sidrat al-Muntaha (the Lote Tree of the Utmost Boundary), which is described in the Quran: "When there covered the lote tree that which covered it, the sight [of the Prophet] did not deviate, nor did it transgress [its limit]. He certainly saw of the greatest signs of his Lord." (53:16-18). What the Prophet ﷺ saw beyond this point was never fully described — it was between him and his Lord.
-
-THE REACTION OF THE QURAYSH:
-When the Prophet ﷺ reported this journey the next morning, the Quraysh erupted in mockery. Some who had previously been wavering toward Islam now apostatised, saying this was impossible. Abu Bakr (RA) was told about it and immediately said: "If he said it, I believe it" — earning him the title al-Siddiq (the Most Truthful). The Quraysh then tested the Prophet ﷺ by asking him to describe Jerusalem — and he described it perfectly, having never been there before.
-
-SIGNIFICANCE:
-The Miraj demonstrates that time and space are no barrier to Allah's will. It confirmed the Prophet's ﷺ unique station. It linked the Ummah eternally to Jerusalem. And it gave us the greatest gift: direct, repeated access to Allah through salah — five times every day. Guard this gift with your life.`,
-  },
-  {
-    title: "The Great Hijrah — Birth of the Islamic State 🌙",
-    titleAr: "الهجرة العظمى إلى المدينة المنورة",
-    year: "622 CE | Safar | Makkah to Madinah",
-    content: `The Hijrah was not merely a physical journey of 450 kilometres. It was the turning point in Islamic history — the moment a persecuted community became a state, a faith became a civilisation, and a prophet became also a statesman. The Islamic calendar (Hijri calendar) begins with this event — a choice made by Umar ibn al-Khattab (RA) during the caliphate of Umar — because it was the moment Islam moved from survival to establishment.
-
-THE ASSASSINATION PLOT:
-The Quraysh convened in Dar al-Nadwa (their council house) to decide what to do about the Prophet ﷺ. They settled on having one young man from each tribe simultaneously stab him — so blood guilt would be shared across all tribes and Banu Hashim could not retaliate. Allah informed His Prophet ﷺ: "And [remember, O Muhammad], when those who disbelieved plotted against you to restrain you or kill you or evict you [from Makkah]. But they plan, and Allah plans. And Allah is the best of planners." (Quran 8:30).
-
-THE DEPARTURE:
-The Prophet ﷺ asked Ali (RA) to sleep in his bed — wrapped in the Prophet's green Hadhrami cloak — to make the house appear occupied. Ali (RA) agreed without hesitation. The Prophet ﷺ then walked out past the armed men surrounding his house — reciting the opening verses of Surah Ya-Sin: "And We have put before them a barrier and behind them a barrier and covered them, so they do not see." (36:9). None of the assassins saw him. He met Abu Bakr (RA) and they departed south — in the opposite direction of Madinah, to confuse pursuit.
-
-THE CAVE OF THAWR:
-They sheltered for three days in a cave on Mount Thawr. The Quraysh offered 100 camels reward for their capture. Search parties came within metres of the cave entrance. Abu Bakr (RA) whispered, trembling: "O Messenger of Allah, if one of them looks down at his feet he will see us." The Prophet ﷺ replied — and this reply became one of the most famous words in Islamic history: "O Abu Bakr, what do you think of two when Allah is their third?" Allah recorded this moment in the Quran: "If you do not aid him, Allah has already aided him when those who disbelieved had driven him out [of Makkah] as one of two, when they were in the cave and he said to his companion: Do not grieve; indeed Allah is with us." (9:40). A spider had woven its web across the cave entrance. A pair of pigeons had nested there. The search party concluded no one had entered recently.
-
-THE ARRIVAL IN MADINAH:
-When news spread that the Prophet ﷺ was approaching, the people of Madinah — men, women, children — came out singing: "Tala'al badru alayna min thaniyyatil wada' — The full moon has risen over us from the valley of farewell." Children climbed rooftops. Tears flowed. Every household wanted the honour of hosting him. He let his camel (Qaswa) walk freely and built his mosque wherever she sat.
-
-QURANIC REASSURANCE FOR THE EXILED:
-"Those who have been evicted from their homes without right — only because they say: Our Lord is Allah." (22:40). And: "And whoever emigrates for the cause of Allah will find on the earth many [alternative] locations and abundance." (4:100). And perhaps most powerfully: "Indeed, with hardship will be ease." (94:6).
-
-THE LESSON:
-The Hijrah teaches that when you give up something for Allah, Allah replaces it with better. The Muhajirin left homes, wealth, and family. They gained the brotherhood of the Ansar, the establishment of the first Islamic community, and the eternal honour of being among the Prophet's ﷺ closest generation. What are you willing to leave behind for the sake of Allah?`,
-  },
-  {
-    title: "Battle of Badr — Truth Against Falsehood ⚔️",
-    titleAr: "غزوة بدر الكبرى — يوم الفرقان",
-    year: "624 CE | 17 Ramadan, 2 AH | Wells of Badr",
-    content: `Badr was not just a battle — it was the moment the world was forced to take Islam seriously. The Quran itself named it Yawm al-Furqan — the Day of Distinction between truth and falsehood. 313 poorly-armed Muslims stood against 1,000 experienced Qurayshi warriors with full armour, cavalry, and supplies. By every calculation of power, the Muslims should have been annihilated.
-
-THE NUMBERS:
-• Muslims: 313 men, 70 camels (shared for travel — not cavalry), 8 swords. The majority were on foot.
-• Quraysh: approximately 1,000 warriors, 100 cavalry on horses, full armour and weapons.
-
-THE PROPHET'S ﷺ PRAYER:
-The night before Badr, the Prophet ﷺ stood in prayer crying and making dua until dawn. He raised his hands and said: "O Allah, if this group [of believers] is destroyed today, You will not be worshipped on earth." (Muslim 1763). Abu Bakr (RA) eventually took his arm and said: "O Messenger of Allah, Allah will fulfil His promise to you." The Prophet ﷺ then slept briefly — a sign of absolute trust (tawakkul) in Allah — and woke with the news that Allah had sent reinforcements.
-
-DIVINE REINFORCEMENT:
-"[Remember] when you asked help of your Lord, and He answered you: Indeed, I will reinforce you with a thousand from the angels, following one another." (Quran 8:9). And: "And Allah did not make it except as [a sign of] good tidings and so that your hearts would be assured thereby. And victory is not except from Allah. Indeed, Allah is Exalted in Might and Wise." (8:10).
-
-THE BATTLE:
-Single combat began with Ali (RA), Hamzah (RA), and Ubaydah ibn al-Harith (RA) defeating the Qurayshi champions. Then full combat broke out. The Prophet ﷺ picked up a handful of pebbles and threw them toward the enemy saying: "Shahat al-wujuh!" (May the faces be disfigured!). Allah says about this: "And you did not throw when you threw, but it was Allah who threw." (8:17). The Qurayshi lines broke. Abu Jahl — one of the Prophet's most vicious persecutors — was found dying and killed by two young Ansar boys, Muadh and Muawwidh.
-
-THE OUTCOME:
-70 Qurayshi leaders killed. 70 captured. Major figures of opposition — Abu Jahl, Umayyah ibn Khalaf, Utbah ibn Rabi'a — all dead. The Muslims lost 14 men, all of whom were granted the status of shuhadaa (martyrs) and Paradise.
-
-THE PRISONERS OF BADR:
-The Prophet ﷺ treated the prisoners with remarkable dignity. The Ansar gave their prisoners their own food and ate dates themselves. Those among the prisoners who knew how to read and write were offered their freedom in exchange for teaching ten Muslim children to read — an extraordinary civilisational decision. The Quran encouraged ransom but left the door open for grace: "Thereafter [is] either a gracious release or ransom until the war lays down its burdens." (47:4).
-
-QURANIC CHAPTER:
-An entire surah — Surah al-Anfal (Chapter 8) — was revealed largely in the context of Badr, addressing divine help, the ethics of war, the distribution of spoils, and the character required of the believing community.
-
-THE LESSON:
-Badr teaches that victory belongs not to the larger army, but to the army that has Allah. Numbers, weapons, and resources matter — but tawakkul (reliance on Allah) combined with proper preparation is the true formula. The Prophet ﷺ prepared: he scouted, he strategised, he consulted companions like al-Hubab ibn al-Mundhir about water positioning. Then he prayed and trusted. Preparation + Prayer + Tawakkul = the Badr formula.`,
-  },
-  {
-    title: "The Conquest of Makkah — Mercy Over Victory 🌟",
-    titleAr: "فتح مكة المكرمة — العفو عند المقدرة",
-    year: "630 CE | 20 Ramadan, 8 AH",
-    content: `The Conquest of Makkah stands as one of the most remarkable events in human history — not for the military triumph, but for what the victor chose to do with his power. The Prophet ﷺ had been expelled from Makkah 8 years earlier with a price on his head. His companions had been tortured, killed, and stripped of their wealth and homes. Now, with 10,000 warriors, he returned victorious. What would history record?
-
-THE BREACH OF HUDAYBIYYAH:
-The Quraysh's allies (Banu Bakr) attacked the Prophet's ﷺ allies (Banu Khuza'ah) — a direct violation of the Treaty of Hudaybiyyah. The Khuza'ah sent messengers to Madinah. The Prophet ﷺ set out with the largest army yet assembled — 10,000 companions. So secretly did he march that Abu Sufyan (the Qurayshi leader) learned of it only when he was already near Makkah. Abu Sufyan sought the Prophet's ﷺ uncle Abbas (RA), who escorted him to the Prophet's camp.
-
-ABU SUFYAN'S CONVERSION:
-Standing before the Prophet ﷺ, Abbas said: "O Messenger of Allah, Abu Sufyan loves honour — give him something." The Prophet ﷺ said: "Whoever enters the house of Abu Sufyan is safe. Whoever enters the Masjid al-Haram is safe. Whoever closes his door is safe." (Muslim 1780). Abu Sufyan accepted Islam.
-
-THE ENTRY INTO MAKKAH:
-On the morning of 20 Ramadan, 8 AH, the Prophet ﷺ entered Makkah on his she-camel al-Qaswa, his head bowed in humility — not in the posture of a conqueror but of a servant of Allah. He was reciting Surah al-Fath. He wore no crown, no special garments of conquest. The army entered in four columns. Almost no blood was shed.
-
-THE KAABAH — CLEANSED:
-360 idols surrounded the Kaabah. The Prophet ﷺ began toppling them with his staff, reciting: "Truth has come, and falsehood has departed. Indeed, falsehood is [by nature] ever bound to depart." (Quran 17:81). Bilal (RA) climbed to the top of the Kaabah — the same man who had been dragged through the sand crying "Ahad!" — and called the Adhan. Former slave now calls from the highest point of the holiest house.
-
-THE MOMENT OF JUDGMENT:
-The Quraysh gathered in the Masjid al-Haram, terrified. They knew what they had done. The Prophet ﷺ addressed them: "O Quraysh! What do you think I am going to do with you?" They replied: "We think [you will treat us] well. You are a noble brother, son of a noble brother." He ﷺ said: "Go — you are free." (Ibn Hisham, authenticated chain). This was not weakness — it was the calculated mercy of a Prophet who was sent as "a mercy to the worlds" (Quran 21:107).
-
-QURANIC PROMISE FULFILLED:
-"Indeed, He who imposed upon you the Quran [i.e., its recitation and its rulings] will take you back to a place of return." (28:85). When this verse was revealed during the Hijrah, the scholars of tafseer say it promised the Prophet ﷺ he would return to Makkah. And so he did.
-
-THE LESSON:
-The Prophet ﷺ had the power to destroy his enemies. He chose forgiveness. This is not naivety — it is the highest form of wisdom and strength. As he ﷺ himself taught: "The strong person is not the one who can wrestle; the truly strong person is the one who controls himself when angry." (Bukhari 6114). The Conquest of Makkah is not a story of military victory. It is a story of moral victory — of proving that Islam came not to conquer lands, but to conquer hearts.`,
-  },
-  {
-    title: "The Farewell Sermon — Last Words of the Last Prophet ﷺ 📣",
-    titleAr: "خطبة الوداع — الرسالة الأخيرة",
-    year: "632 CE | 9 Dhul Hijjah, 10 AH | Arafat",
-    content: `The Prophet ﷺ performed only one Hajj in his lifetime — 10 AH, just three months before his death. Standing on the plain of Arafat on the Day of Arafah, before over 100,000 companions, he delivered what would become known as the Farewell Sermon (Khutbat al-Wada'). Those who heard it knew they were hearing something they would carry for the rest of their lives.
-
-THE UNIVERSAL DECLARATION OF HUMAN RIGHTS — 1,400 YEARS BEFORE THE UN:
-"O People! Your blood, your property, and your honour are sacred to one another, as sacred as this day, this month, and this city." (Bukhari 1739). He abolished all pre-Islamic blood feuds: "Every claim of blood from the pre-Islamic period is under my feet — abolished and cancelled." He abolished all usurious interest: "All riba [interest] from the pre-Islamic period is abolished."
-
-ON THE RIGHTS OF WOMEN:
-"O people, you have rights over your women, and your women have rights over you." He commanded kind treatment of women: "Fear Allah regarding women — for you have taken them as a trust from Allah." This was revolutionary in a society where women had limited legal standing.
-
-ON RACIAL EQUALITY — 1,300 YEARS BEFORE THE CIVIL RIGHTS MOVEMENT:
-"O people! Your Lord is One, and your father [Adam] is one. An Arab has no superiority over a non-Arab, nor does a non-Arab have superiority over an Arab. A white person has no superiority over a black person, nor does a black person have superiority over a white person — except through taqwa (God-consciousness)." (Ahmad — Sahih). This was not merely a proclamation — it was a demolition of the entire tribal hierarchy of Arabia.
-
-ON THE PRESERVATION OF THE MESSAGE:
-"I am leaving among you two things. You will never go astray as long as you hold onto them: the Book of Allah and my Sunnah." (Muwatta Malik, authenticated). He then asked: "Have I delivered the message?" The crowd of over 100,000 people replied as one: "Yes!" He raised his finger to the sky three times and said: "O Allah, be witness! O Allah, be witness! O Allah, be witness!"
-
-THE FINAL REVELATION:
-On this day, or shortly before it, came the final complete verse: "This day I have perfected for you your religion and completed My favour upon you and have approved for you Islam as religion." (Quran 5:3). When Abu Bakr (RA) heard this verse, he wept. People asked why. He said: "When a thing is perfected, it can only decrease." He understood that this completeness meant the Prophet ﷺ would soon leave them.
-
-THE LESSON:
-The Farewell Sermon is the Prophet's ﷺ gift to humanity — a manifesto of justice, equality, dignity, and faith. It speaks across centuries with the same urgency. Read it. Memorise it. Teach it to your children. It is the last will and testament of the Final Prophet. And the most solemn obligation it places on us is this: to carry the message forward exactly as he delivered it, until the Day it is presented back to Allah.`,
-  },
-];
 
 
 const getHijriNumeric = (date: Date): { day: number; month: number } => {
@@ -942,7 +658,7 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
   const dailyVerse   = DAILY_VERSES[doy % DAILY_VERSES.length];
   const dailyHadith  = DORAR_HADITHS[doy % DORAR_HADITHS.length];
   const dailyAqeedah = AQEEDAH_LESSONS[doy % AQEEDAH_LESSONS.length];
-  const dailySeerah  = SEERAH[doy % SEERAH.length];
+  const dailySeerah  = SEERAH_EPISODES[doy % SEERAH_EPISODES.length]; // 57 sequential episodes
 
   const upcomingEvent = (() => {
     for (let i = 0; i < 14; i++) {
@@ -1237,16 +953,41 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
         {/* ══ SEERAH TAB ════════════════════════════════════════════════ */}
         {activeTab === "seerah" && (
           <div style={{ background:AMBER_BG }}>
-            <div style={{ padding:"18px 20px 0" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
-                <ScrollText style={{ width:14, height:14, color:AMBER }} />
-                <span style={{ fontSize:11, fontWeight:800, color:AMBER, letterSpacing:"0.06em", fontFamily:"'Playfair Display',serif" }}>
-                  {t("Daily Seerah","السيرة النبوية")}
+            {/* Book source header */}
+            <div style={{ background:"#92400e", padding:"10px 20px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <ScrollText style={{ width:12, height:12, color:GOLD_LIGHT }} />
+                <span style={{ fontSize:10, fontWeight:700, color:GOLD_LIGHT, letterSpacing:"0.05em" }}>
+                  {t("Ar-Raheeq Al-Makhtum","الرحيق المختوم")}
                 </span>
-                <div style={{ marginLeft:"auto", background:`${AMBER}18`, border:`1px solid ${AMBER}40`, borderRadius:20, padding:"3px 10px" }}>
-                  <span style={{ fontSize:9, fontWeight:700, color:AMBER }}>{dailySeerah.year}</span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <span style={{ fontSize:9, color:"rgba(255,255,255,0.6)" }}>
+                  {t("Episode","الحلقة")}
+                </span>
+                <span style={{ fontSize:11, fontWeight:800, color:GOLD_LIGHT }}>
+                  {(dailySeerah as any).episode ?? ""} / 57
+                </span>
+              </div>
+            </div>
+
+            <div style={{ padding:"16px 20px 0" }}>
+              {/* Year badge */}
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+                <div style={{ background:`${AMBER}18`, border:`1px solid ${AMBER}40`, borderRadius:20, padding:"3px 10px" }}>
+                  <span style={{ fontSize:9, fontWeight:700, color:AMBER }}>{(dailySeerah as any).year ?? ""}</span>
+                </div>
+                {/* Progress dots */}
+                <div style={{ display:"flex", gap:3, flexWrap:"wrap", flex:1 }}>
+                  {Array.from({length:57}).map((_,i) => (
+                    <div key={i} style={{ width:6, height:6, borderRadius:"50%",
+                      background: i < ((dailySeerah as any).episode ?? 1) ? AMBER : `${AMBER}30`,
+                      flexShrink:0
+                    }} />
+                  ))}
                 </div>
               </div>
+
               <div style={{ display:"flex", alignItems:"flex-start", gap:10, marginBottom:14 }}>
                 <div style={{ flexShrink:0, marginTop:6 }}>
                   <div style={{ width:10, height:10, borderRadius:"50%", background:AMBER, boxShadow:`0 0 0 3px ${AMBER}33` }} />
