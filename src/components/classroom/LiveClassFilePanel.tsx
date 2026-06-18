@@ -1,16 +1,13 @@
 /**
  * LiveClassFilePanel.tsx — Tahleem Academy
  *
- * Changes in this version:
- *  - "Upload File" tab (existing) + "Add Link" tab (new)
- *  - All files AND links open in an in-page floating overlay — NEVER a new tab
- *  - Smart viewer: YouTube embed, Google Drive preview, PDF iframe, video/audio/image
- *    native players, Office Docs via Google Docs Viewer, generic iframe w/ fallback
- *  - Students stay on the ClassroomView page at all times
- *  - MINIMIZABLE VIEWER: shrinks to a floating bottom bar so you can browse the
- *    file list while keeping a file "open". Click another file to navigate to it.
- *  - NAVIGATION HISTORY: back/forward arrows cycle through all opened files in
- *    the current session.
+ * Multi-viewer edition:
+ *  - Open as many materials as you like simultaneously
+ *  - Each viewer is independently minimizable / restorable
+ *  - Back button / swipe-back → auto-minimizes the topmost expanded viewer
+ *  - Minimized viewers appear as stacked pip chips at the bottom of the screen
+ *  - Click a chip to restore that specific viewer
+ *  - Opening a file that is already open → focuses / restores it (no duplicate)
  */
 
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -33,7 +30,7 @@ const REDL = "#FEF2F2";
 const TEAL = "#0D9488";
 const TEALL= "#F0FDFA";
 
-const BUCKET  = "subject-files";   // exists in main project, has public policies
+const BUCKET  = "subject-files";
 const MAIN_URL = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
 
 /* ── types ── */
@@ -45,6 +42,16 @@ interface LCFile {
   file_type:  string | null;
   file_size:  number | null;
   created_at: string | null;
+}
+
+interface ViewerEntry {
+  id:          string;   // same as LCFile.id
+  file:        LCFile;
+  resolvedUrl: string | null;
+  resolving:   boolean;
+  minimized:   boolean;
+  /** higher = on top */
+  zOrder:      number;
 }
 
 type Tab  = "upload" | "link";
@@ -86,20 +93,17 @@ function fmtDate(iso?: string | null) {
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-/* ── URL transformer: raw URL → best embeddable URL ── */
+/* ── URL transformer ── */
 function toEmbedUrl(url: string): {
   embedUrl: string;
   embedKind: "youtube" | "gdrive" | "pdf" | "video" | "audio" | "image" | "doc" | "iframe";
 } {
-  // YouTube
   const ytMatch = url.match(
     /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/
   );
   if (ytMatch) {
     return { embedUrl: `https://www.youtube.com/embed/${ytMatch[1]}?autoplay=1&rel=0`, embedKind: "youtube" };
   }
-
-  // Google Drive  /file/d/ID/view  →  /file/d/ID/preview
   const gdMatch = url.match(/drive\.google\.com\/file\/d\/([^/?#]+)/);
   if (gdMatch) {
     return { embedUrl: `https://drive.google.com/file/d/${gdMatch[1]}/preview`, embedKind: "gdrive" };
@@ -108,7 +112,6 @@ function toEmbedUrl(url: string): {
   if (gdMatch2) {
     return { embedUrl: `https://drive.google.com/file/d/${gdMatch2[1]}/preview`, embedKind: "gdrive" };
   }
-
   const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
   if (ext === "pdf") return { embedUrl: url, embedKind: "pdf" };
   if (["mp4","webm","mov","m4v","avi","mkv"].includes(ext))          return { embedUrl: url, embedKind: "video" };
@@ -117,45 +120,27 @@ function toEmbedUrl(url: string): {
   if (["doc","docx","xls","xlsx","ppt","pptx","odt","ods","odp","csv","rtf"].includes(ext)) {
     return { embedUrl: `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`, embedKind: "doc" };
   }
-
   return { embedUrl: url, embedKind: "iframe" };
 }
 
 /* ════════════════════════════════════════════════════════════
-   IN-PAGE VIEWER — MINIMIZABLE
-   When minimized: compact floating bar at the bottom of the screen.
-   When expanded: full overlay as before.
-   Supports back/forward navigation through opened-files history.
-   Google Drive links get a dedicated fallback UI since Drive
-   silently shows a blank iframe when sharing is restricted.
+   SINGLE FILE VIEWER — one instance per open material
+   zIndex stacking is controlled by the parent (higher = on top)
 ════════════════════════════════════════════════════════════ */
 interface FileViewerProps {
-  file:       LCFile;
-  resolvedUrl: string | null;
-  resolving:   boolean;
-  minimized:  boolean;
-  canGoBack:  boolean;
-  canGoFwd:   boolean;
-  totalOpen:  number;
-  currentIdx: number;
-  onClose:    () => void;
-  onMinimize: () => void;
-  onRestore:  () => void;
-  onBack:     () => void;
-  onForward:  () => void;
+  entry:      ViewerEntry;
+  baseZ:      number;   // 99000 + zOrder * 10
+  onClose:    (id: string) => void;
+  onMinimize: (id: string) => void;
+  onFocus:    (id: string) => void;  // bring to front
 }
 
-function FileViewer({
-  file, resolvedUrl, resolving,
-  minimized,
-  canGoBack, canGoFwd, totalOpen, currentIdx,
-  onClose, onMinimize, onRestore, onBack, onForward,
-}: FileViewerProps) {
+function FileViewer({ entry, baseZ, onClose, onMinimize, onFocus }: FileViewerProps) {
+  const { file, resolvedUrl, resolving, minimized } = entry;
   const [iframeBlocked,   setIframeBlocked]   = useState(false);
   const [loaderVisible,   setLoaderVisible]   = useState(true);
   const [showDriveHelper, setShowDriveHelper] = useState(false);
 
-  // Use resolvedUrl for display; fall back to raw file_url only if resolution failed
   const url  = resolvedUrl || file.file_url;
   const kind = getKind(file.file_name, file.file_type);
 
@@ -177,98 +162,38 @@ function FileViewer({
 
   const isGdrive = embedKind === "gdrive";
 
-  // Reset state whenever the file changes
   useEffect(() => {
     setIframeBlocked(false);
     setLoaderVisible(true);
     setShowDriveHelper(false);
   }, [file.id]);
 
-  // For Google Drive: show helper hint 4 seconds after the iframe loads,
-  // because Drive silently shows a blank page when sharing is restricted —
-  // there is no error event we can catch cross-origin.
   useEffect(() => {
-    if (!isGdrive || loaderVisible) return;
+    if (!isGdrive || loaderVisible || minimized) return;
     const t = setTimeout(() => setShowDriveHelper(true), 4000);
     return () => clearTimeout(t);
-  }, [isGdrive, loaderVisible]);
+  }, [isGdrive, loaderVisible, minimized]);
 
-  // Lock body scroll only when expanded
+  // Minimized viewers don't lock body scroll; only the topmost expanded one does
   useEffect(() => {
     if (!minimized) {
       document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
     }
     return () => { document.body.style.overflow = ""; };
   }, [minimized]);
 
-  /* ── MINIMIZED: floating bottom bar ──
-     Rendered via portal on document.body so it escapes any parent
-     that has transform/contain (like .cv-bar in ClassroomView)
-     which would otherwise break position:fixed.
-  ── */
-  if (minimized) {
-    const cfg = ICONS[kind];
-    return createPortal(
-      <div style={{
-        position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 99999,
-        background: "#1f2937",
-        borderTop: `3px solid ${GOLD}`,
-        boxShadow: "0 -4px 24px rgba(0,0,0,.45)",
-        display: "flex", alignItems: "center", gap: 8,
-        padding: "10px 14px",
-        fontFamily: "system-ui,sans-serif",
-      }}>
-        <div style={{ width: 36, height: 36, borderRadius: 8, background: cfg.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, flexShrink: 0 }}>
-          {cfg.i}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#f3f4f6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {file.file_name}
-          </p>
-          <p style={{ margin: 0, fontSize: 11, color: "#9ca3af" }}>
-            Minimized · tap to restore
-            {totalOpen > 1 ? ` · ${currentIdx + 1}/${totalOpen} open` : ""}
-          </p>
-        </div>
+  /* ── MINIMIZED: rendered as a chip — the PIP bar renders them all ── */
+  if (minimized) return null;   // pip bar handled separately below
 
-        {totalOpen > 1 && (
-          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-            <button onClick={onBack} disabled={!canGoBack} style={{ background: canGoBack ? "#374151" : "#1f2937", border: "none", color: canGoBack ? "#d1d5db" : "#4b5563", borderRadius: 8, width: 32, height: 32, cursor: canGoBack ? "pointer" : "default", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
-            <button onClick={onForward} disabled={!canGoFwd} style={{ background: canGoFwd ? "#374151" : "#1f2937", border: "none", color: canGoFwd ? "#d1d5db" : "#4b5563", borderRadius: 8, width: 32, height: 32, cursor: canGoFwd ? "pointer" : "default", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
-          </div>
-        )}
+  /* ── EXPANDED OVERLAY ── */
+  const cfg = ICONS[kind];
 
-        <button onClick={onRestore} style={{ background: GOLD, border: "none", color: "#fff", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
-          ⬆ Restore
-        </button>
-        <button onClick={onClose} style={{ background: "#374151", border: "none", color: "#d1d5db", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          ✕
-        </button>
-      </div>,
-      document.body
-    );
-  }
-
-  /* ── EXPANDED: full overlay ── */
-
-  /* ── Google Drive dedicated view ──
-     Drive's /preview iframe silently shows blank when the file isn't shared
-     as "Anyone with the link". We can't detect this cross-origin, so we:
-     1. Always show an "Open in Drive" button prominently at the top
-     2. Show the embed attempt below
-     3. After 4 s post-load, show a sharing-settings helper
-  ── */
   const renderGdrive = () => (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      {/* Always-visible Drive action bar */}
       <div style={{ background: "#1a2e24", borderBottom: "1px solid #2d4a36", padding: "10px 16px", display: "flex", alignItems: "center", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
         <span style={{ fontSize: 20 }}>📁</span>
         <div style={{ flex: 1, minWidth: 120 }}>
-          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#f3f4f6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {file.file_name}
-          </p>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: "#f3f4f6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.file_name}</p>
           <p style={{ margin: 0, fontSize: 11, color: "#9ca3af" }}>Google Drive</p>
         </div>
         <a href={url} target="_blank" rel="noopener noreferrer"
@@ -276,22 +201,18 @@ function FileViewer({
           Open in Drive ↗
         </a>
       </div>
-
-      {/* Drive sharing hint — appears 4 s after load if content might be blank */}
       {showDriveHelper && (
         <div style={{ background: "#2d1f08", borderBottom: "1px solid #78350f40", padding: "10px 16px", display: "flex", alignItems: "flex-start", gap: 10, flexShrink: 0 }}>
           <span style={{ fontSize: 18, flexShrink: 0 }}>⚠️</span>
           <div style={{ flex: 1 }}>
             <p style={{ margin: "0 0 2px", fontSize: 13, fontWeight: 700, color: "#fcd34d" }}>Seeing a blank screen?</p>
             <p style={{ margin: 0, fontSize: 12, color: "#d97706", lineHeight: 1.4 }}>
-              The file must be set to <strong>"Anyone with the link can view"</strong> in Google Drive for preview to work here. Use the <strong>Open in Drive ↗</strong> button above to access it directly.
+              The file must be set to <strong>"Anyone with the link can view"</strong> in Google Drive for preview to work here.
             </p>
           </div>
           <button onClick={() => setShowDriveHelper(false)} style={{ background: "none", border: "none", color: "#d97706", cursor: "pointer", fontSize: 16, flexShrink: 0, padding: 0 }}>✕</button>
         </div>
       )}
-
-      {/* iframe preview */}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {loaderVisible && (
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", zIndex: 1, gap: 12 }}>
@@ -299,21 +220,15 @@ function FileViewer({
             <p style={{ margin: 0, fontSize: 12, color: "#9ca3af" }}>Loading Google Drive preview…</p>
           </div>
         )}
-        <iframe
-          key={embedUrl}
-          src={embedUrl}
-          title={file.file_name}
+        <iframe key={embedUrl} src={embedUrl} title={file.file_name}
           style={{ width: "100%", height: "100%", border: "none", display: "block", background: "#fff" }}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-          allowFullScreen
-          onLoad={() => setLoaderVisible(false)}
-          onError={() => { setLoaderVisible(false); setIframeBlocked(true); }}
-        />
+          allowFullScreen onLoad={() => setLoaderVisible(false)} onError={() => { setLoaderVisible(false); setIframeBlocked(true); }} />
         {iframeBlocked && (
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
             <p style={{ color: "#fff", fontWeight: 700, fontSize: 15, marginBottom: 6 }}>Preview blocked</p>
-            <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 20 }}>Google Drive's security policy prevents embedding here.</p>
+            <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 20 }}>Drive's security policy prevents embedding here.</p>
             <a href={url} target="_blank" rel="noopener noreferrer"
               style={{ background: GOLD, color: "#fff", borderRadius: 10, padding: "10px 24px", textDecoration: "none", fontWeight: 700, fontSize: 14 }}>
               Open in Drive ↗
@@ -325,61 +240,42 @@ function FileViewer({
   );
 
   const renderContent = () => {
-    if (embedKind === "image") {
-      return (
-        <div style={{ background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flex: 1, minHeight: 0 }}>
-          <img src={embedUrl} alt={file.file_name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }} />
+    if (embedKind === "image") return (
+      <div style={{ background: "#000", display: "flex", alignItems: "center", justifyContent: "center", flex: 1, minHeight: 0 }}>
+        <img src={embedUrl} alt={file.file_name} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", display: "block" }} />
+      </div>
+    );
+    if (embedKind === "audio") return (
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 32, background: "#0f1a14" }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 56, marginBottom: 16 }}>🎵</div>
+          <p style={{ color: "#fff", marginBottom: 20, fontSize: 15, fontWeight: 600 }}>{file.file_name}</p>
+          <audio src={embedUrl} controls autoPlay style={{ width: "100%", maxWidth: 400 }} />
         </div>
-      );
-    }
-
-    if (embedKind === "audio") {
-      return (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 32, background: "#0f1a14" }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 56, marginBottom: 16 }}>🎵</div>
-            <p style={{ color: "#fff", marginBottom: 20, fontSize: 15, fontWeight: 600 }}>{file.file_name}</p>
-            <audio src={embedUrl} controls autoPlay style={{ width: "100%", maxWidth: 400 }} />
-          </div>
-        </div>
-      );
-    }
-
-    if (embedKind === "video") {
-      return (
-        <div style={{ flex: 1, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 0 }}>
-          <video src={embedUrl} controls autoPlay playsInline style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }} />
-        </div>
-      );
-    }
-
-    // Google Drive gets its own dedicated render
+      </div>
+    );
+    if (embedKind === "video") return (
+      <div style={{ flex: 1, background: "#000", display: "flex", alignItems: "center", justifyContent: "center", minHeight: 0 }}>
+        <video src={embedUrl} controls autoPlay playsInline style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }} />
+      </div>
+    );
     if (embedKind === "gdrive") return renderGdrive();
-
-    /* PDF — rendered inline via pdf.js, no redirect, no download prompt */
-    if (embedKind === "pdf") {
-      return (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-          <PDFViewer url={embedUrl} bg="#0f1a14" />
-        </div>
-      );
-    }
-
-    /* youtube, doc, iframe */
-    if (iframeBlocked) {
-      return (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
-          <p style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginBottom: 8 }}>Can't display this website here</p>
-          <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 24 }}>The site's security policy prevents embedding.</p>
-          <a href={url} target="_blank" rel="noopener noreferrer"
-            style={{ background: GOLD, color: "#fff", borderRadius: 10, padding: "10px 24px", textDecoration: "none", fontWeight: 700, fontSize: 14 }}>
-            Open in new tab ↗
-          </a>
-        </div>
-      );
-    }
-
+    if (embedKind === "pdf") return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+        <PDFViewer url={embedUrl} bg="#0f1a14" />
+      </div>
+    );
+    if (iframeBlocked) return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+        <p style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginBottom: 8 }}>Can't display this website here</p>
+        <p style={{ color: "#9ca3af", fontSize: 13, marginBottom: 24 }}>The site's security policy prevents embedding.</p>
+        <a href={url} target="_blank" rel="noopener noreferrer"
+          style={{ background: GOLD, color: "#fff", borderRadius: 10, padding: "10px 24px", textDecoration: "none", fontWeight: 700, fontSize: 14 }}>
+          Open in new tab ↗
+        </a>
+      </div>
+    );
     return (
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         {loaderVisible && (
@@ -387,30 +283,24 @@ function FileViewer({
             <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #ffffff20", borderTopColor: GOLD, animation: "lcfp-spin .7s linear infinite" }} />
           </div>
         )}
-        <iframe
-          key={embedUrl}
-          src={embedUrl}
-          title={file.file_name}
+        <iframe key={embedUrl} src={embedUrl} title={file.file_name}
           style={{ width: "100%", height: "100%", border: "none", display: "block" }}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-          allowFullScreen
-          onLoad={() => setLoaderVisible(false)}
-          onError={() => setIframeBlocked(true)}
-        />
+          allowFullScreen onLoad={() => setLoaderVisible(false)} onError={() => setIframeBlocked(true)} />
       </div>
     );
   };
 
   return createPortal(
     <div
-      style={{ position: "fixed", inset: 0, zIndex: 99999, background: "rgba(0,0,0,.82)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 12 }}
-      onClick={onMinimize}
+      style={{ position: "fixed", inset: 0, zIndex: baseZ, background: "rgba(0,0,0,.75)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 12 }}
+      onClick={() => onMinimize(entry.id)}
     >
       <div
-        onClick={e => e.stopPropagation()}
+        onClick={e => { e.stopPropagation(); onFocus(entry.id); }}
         style={{ width: "100%", maxWidth: 920, height: "min(92vh, 700px)", background: "#111827", borderRadius: 16, overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 25px 60px rgba(0,0,0,.7)" }}
       >
-        {/* Resolving overlay — shown while URL is being signed/checked */}
+        {/* Resolving overlay */}
         {resolving && (
           <div style={{ position: "absolute", inset: 0, zIndex: 10, background: "#111827", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, borderRadius: 16 }}>
             <div style={{ width: 40, height: 40, border: "3px solid rgba(255,255,255,.15)", borderTopColor: GOLD, borderRadius: "50%", animation: "lcfp-spin .8s linear infinite" }} />
@@ -419,87 +309,94 @@ function FileViewer({
         )}
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: "#1f2937", borderBottom: "1px solid #374151", flexShrink: 0 }}>
-
-          {/* Back/Forward navigation */}
-          {totalOpen > 1 && (
-            <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
-              <button
-                onClick={onBack}
-                disabled={!canGoBack}
-                title="Previous file"
-                style={{
-                  background: canGoBack ? "#374151" : "transparent",
-                  border: "none", color: canGoBack ? "#d1d5db" : "#4b5563",
-                  borderRadius: 6, width: 28, height: 28,
-                  cursor: canGoBack ? "pointer" : "default",
-                  fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                ‹
-              </button>
-              <button
-                onClick={onForward}
-                disabled={!canGoFwd}
-                title="Next file"
-                style={{
-                  background: canGoFwd ? "#374151" : "transparent",
-                  border: "none", color: canGoFwd ? "#d1d5db" : "#4b5563",
-                  borderRadius: 6, width: 28, height: 28,
-                  cursor: canGoFwd ? "pointer" : "default",
-                  fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                ›
-              </button>
-              <span style={{ fontSize: 11, color: "#6b7280", alignSelf: "center", marginLeft: 2, flexShrink: 0 }}>
-                {currentIdx + 1}/{totalOpen}
-              </span>
-            </div>
-          )}
-
-          {/* File icon + name */}
-          <span style={{ fontSize: 16, flexShrink: 0 }}>{ICONS[kind].i}</span>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>{cfg.i}</span>
           <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "#f3f4f6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {file.file_name}
           </span>
-
-          {/* Action buttons */}
           {kind !== "Link" && (
             <a href={url} download={file.file_name} target="_blank" rel="noopener"
               style={{ fontSize: 12, color: "#d1d5db", background: "#374151", borderRadius: 8, padding: "5px 12px", textDecoration: "none", fontWeight: 600, flexShrink: 0 }}>
               ⬇ Download
             </a>
           )}
-
           <a href={url} target="_blank" rel="noopener noreferrer"
             style={{ fontSize: 12, color: "#d1d5db", background: "#374151", borderRadius: 8, padding: "5px 12px", textDecoration: "none", fontWeight: 600, flexShrink: 0 }}>
             ↗ New tab
           </a>
-
-          {/* Minimize */}
-          <button
-            onClick={onMinimize}
-            title="Minimize — keep file open while browsing the list"
+          <button onClick={() => onMinimize(entry.id)} title="Minimize"
             style={{ background: GOLD, border: "none", color: "#fff", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
             ⬇ Min
           </button>
-
-          {/* Close */}
-          <button
-            onClick={onClose}
+          <button onClick={() => onClose(entry.id)}
             style={{ background: "#374151", border: "none", color: "#d1d5db", borderRadius: 8, padding: "5px 12px", cursor: "pointer", fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
             ✕
           </button>
         </div>
-
         {/* Content */}
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
           {renderContent()}
         </div>
       </div>
-
-      {/* Hint text under the card */}
-      <p style={{ margin: "10px 0 0", fontSize: 12, color: "rgba(255,255,255,.45)", textAlign: "center" }}>
-        Tap outside or press ⬇ Min to minimize and browse files freely
+      <p style={{ margin: "10px 0 0", fontSize: 12, color: "rgba(255,255,255,.4)", textAlign: "center" }}>
+        Tap outside or ⬇ Min to minimize • open multiple materials at once
       </p>
+    </div>,
+    document.body
+  );
+}
+
+/* ════════════════════════════════════════════════════════════
+   PIP BAR — shows chips for all minimized viewers
+════════════════════════════════════════════════════════════ */
+interface PipBarProps {
+  entries:   ViewerEntry[];
+  onRestore: (id: string) => void;
+  onClose:   (id: string) => void;
+}
+
+function PipBar({ entries, onRestore, onClose }: PipBarProps) {
+  const minimized = entries.filter(e => e.minimized);
+  if (minimized.length === 0) return null;
+
+  return createPortal(
+    <div style={{
+      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 199999,
+      background: "#1f2937",
+      borderTop: `3px solid ${GOLD}`,
+      boxShadow: "0 -4px 24px rgba(0,0,0,.5)",
+      display: "flex", alignItems: "center", gap: 6,
+      padding: "8px 12px",
+      overflowX: "auto",
+      fontFamily: "system-ui,sans-serif",
+    }}>
+      <span style={{ fontSize: 11, color: "#6b7280", flexShrink: 0, marginRight: 4 }}>
+        📎 {minimized.length} minimized
+      </span>
+      {minimized.map(e => {
+        const kind = getKind(e.file.file_name, e.file.file_type);
+        const cfg  = ICONS[kind];
+        return (
+          <div key={e.id} style={{
+            display: "flex", alignItems: "center", gap: 6,
+            background: "#374151", borderRadius: 10,
+            padding: "6px 10px", flexShrink: 0, cursor: "pointer",
+            border: `1px solid ${GOLD}50`,
+            maxWidth: 220,
+          }}
+            onClick={() => onRestore(e.id)}
+          >
+            <span style={{ fontSize: 16, flexShrink: 0 }}>{cfg.i}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color: "#f3f4f6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+              {e.file.file_name}
+            </span>
+            <button
+              onClick={ev => { ev.stopPropagation(); onClose(e.id); }}
+              style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 14, padding: 0, flexShrink: 0, lineHeight: 1 }}>
+              ✕
+            </button>
+          </div>
+        );
+      })}
     </div>,
     document.body
   );
@@ -523,55 +420,58 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
   const [linkLabel,  setLinkLabel]  = useState("");
   const [addingLink, setAddingLink] = useState(false);
 
-  /* ── Viewer navigation state ── */
-  // openedFiles: ordered list of files opened this session (navigation history)
-  // openIdx:     which one is currently displayed
-  // minimized:   is the viewer shrunk to the bottom bar
-  const [openedFiles, setOpenedFiles] = useState<LCFile[]>([]);
-  const [openIdx,     setOpenIdx]     = useState<number>(-1);
-  const [minimized,   setMinimized]   = useState(false);
-  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
-  const [resolving,   setResolving]   = useState(false);
+  /* ── Multi-viewer state ── */
+  const [viewers,  setViewers]  = useState<ViewerEntry[]>([]);
+  const zCounter = useRef(0);
 
-  const currentFile = openIdx >= 0 ? openedFiles[openIdx] : null;
+  const expandedViewers  = viewers.filter(v => !v.minimized);
+  const minimizedViewers = viewers.filter(v => v.minimized);
+  const anyExpanded      = expandedViewers.length > 0;
+  const anyMinimized     = minimizedViewers.length > 0;
+  // IDs of files currently open in any viewer
+  const openFileIds = new Set(viewers.map(v => v.id));
 
-  /* ── Resolve a file_url to a working viewer URL ───────────────────
-     Handles: public Supabase URLs, legacy ovgsleayannsxifhiraw URLs,
-     private bucket files (generates signed URL), external links.
-  ── */
+  /* ── Back button / swipe → minimize topmost expanded viewer ── */
+  useEffect(() => {
+    if (!anyExpanded) return;
+
+    const handler = (e: PopStateEvent) => {
+      // Re-push the state so navigation doesn't leave the page
+      window.history.pushState(null, "", window.location.href);
+      // Minimize the viewer with the highest zOrder
+      setViewers(prev => {
+        const expanded = prev.filter(v => !v.minimized);
+        if (expanded.length === 0) return prev;
+        const topmost = expanded.reduce((a, b) => a.zOrder > b.zOrder ? a : b);
+        return prev.map(v => v.id === topmost.id ? { ...v, minimized: true } : v);
+      });
+    };
+
+    // Push a sentinel state so popstate fires on back/swipe
+    window.history.pushState(null, "", window.location.href);
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [anyExpanded]);
+
+  /* ── Resolve URL ── */
   const resolveViewerUrl = useCallback(async (rawUrl: string): Promise<string> => {
     if (!rawUrl) return rawUrl;
-
-    // External links (YouTube, Google Drive, http links) — pass through
     const isSupabaseStorage = rawUrl.includes(".supabase.co/storage");
     if (!isSupabaseStorage) return rawUrl;
-
-    // Extract bucket + path from any Supabase storage URL format:
-    // .../storage/v1/object/public/BUCKET/PATH
-    // .../storage/v1/object/BUCKET/PATH
     const match = rawUrl.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
     if (!match) return rawUrl;
-
     const [, bucketName, storagePath] = match;
-
-    // 1. Try public URL from main project
     const { data: pub } = supabase.storage.from(bucketName).getPublicUrl(storagePath);
     if (pub?.publicUrl) {
       try {
         const r = await fetch(pub.publicUrl, { method: "HEAD", signal: AbortSignal.timeout(4000) });
         if (r.ok || r.status === 304) return pub.publicUrl;
-      } catch { /* fall through to signed URL */ }
+      } catch { /* fall through */ }
     }
-
-    // 2. Try signed URL from main project (works for private buckets)
     try {
-      const { data: signed } = await supabase.storage
-        .from(bucketName)
-        .createSignedUrl(storagePath, 604800); // 7 days
+      const { data: signed } = await supabase.storage.from(bucketName).createSignedUrl(storagePath, 604800);
       if (signed?.signedUrl) return signed.signedUrl;
     } catch { /* fall through */ }
-
-    // 3. Return original as last resort (may still work if bucket is public)
     return rawUrl;
   }, []);
 
@@ -592,8 +492,6 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
 
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
-  // Cache PDFs in the background as soon as the list loads — staggered to avoid
-  // hitting network/CPU all at once. Works offline once cached.
   useEffect(() => {
     if (!files.length) return;
     const pdfs = files.filter(f => (f.file_url || "").toLowerCase().split("?")[0].endsWith(".pdf"));
@@ -604,71 +502,64 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     return () => timers.forEach(clearTimeout);
   }, [files, resolveViewerUrl]);
 
-  /* ── open file — builds navigation history + resolves viewer URL ── */
+  /* ── open / focus ── */
   const openFile = useCallback(async (f: LCFile) => {
-    setMinimized(false);
-    setResolvedUrl(null);
-    setResolving(true);
-
-    setOpenedFiles(prev => {
-      const existingIdx = prev.findIndex(x => x.id === f.id);
-      if (existingIdx >= 0) { setOpenIdx(existingIdx); return prev; }
-      const next = [...prev.slice(0, openIdx + 1), f];
-      setOpenIdx(next.length - 1);
-      return next;
+    // If already open, just restore + bring to front
+    setViewers(prev => {
+      const existing = prev.find(v => v.id === f.id);
+      if (existing) {
+        zCounter.current++;
+        const z = zCounter.current;
+        return prev.map(v => v.id === f.id ? { ...v, minimized: false, zOrder: z } : v);
+      }
+      return prev;
     });
 
-    // Resolve the URL (handles legacy URLs, signed URLs, public URLs)
+    // Check if it was already open (before setState resolves)
+    const alreadyOpen = viewers.some(v => v.id === f.id);
+    if (alreadyOpen) return;
+
+    // New viewer
+    zCounter.current++;
+    const z = zCounter.current;
+    const newEntry: ViewerEntry = {
+      id: f.id, file: f, resolvedUrl: null, resolving: true, minimized: false, zOrder: z,
+    };
+    setViewers(prev => [...prev, newEntry]);
+
     const resolved = await resolveViewerUrl(f.file_url);
-    setResolvedUrl(resolved);
-    setResolving(false);
-  }, [openIdx, resolveViewerUrl]);
+    setViewers(prev => prev.map(v => v.id === f.id ? { ...v, resolvedUrl: resolved, resolving: false } : v));
+  }, [viewers, resolveViewerUrl]);
 
-  // Re-resolve when navigating back/forward
-  const goBack = useCallback(async () => {
-    const newIdx = openIdx - 1;
-    if (newIdx < 0) return;
-    setOpenIdx(newIdx);
-    setMinimized(false);
-    setResolvedUrl(null);
-    setResolving(true);
-    const resolved = await resolveViewerUrl(openedFiles[newIdx].file_url);
-    setResolvedUrl(resolved);
-    setResolving(false);
-  }, [openIdx, openedFiles, resolveViewerUrl]);
-
-  const goForward = useCallback(async () => {
-    const newIdx = openIdx + 1;
-    if (newIdx >= openedFiles.length) return;
-    setOpenIdx(newIdx);
-    setMinimized(false);
-    setResolvedUrl(null);
-    setResolving(true);
-    const resolved = await resolveViewerUrl(openedFiles[newIdx].file_url);
-    setResolvedUrl(resolved);
-    setResolving(false);
-  }, [openIdx, openedFiles, resolveViewerUrl]);
-
-  const closeViewer = useCallback(() => {
-    setOpenedFiles([]);
-    setOpenIdx(-1);
-    setMinimized(false);
+  const closeViewer = useCallback((id: string) => {
+    setViewers(prev => prev.filter(v => v.id !== id));
   }, []);
 
-  /* ── upload file ── */
+  const minimizeViewer = useCallback((id: string) => {
+    setViewers(prev => prev.map(v => v.id === id ? { ...v, minimized: true } : v));
+  }, []);
+
+  const restoreViewer = useCallback((id: string) => {
+    zCounter.current++;
+    const z = zCounter.current;
+    setViewers(prev => prev.map(v => v.id === id ? { ...v, minimized: false, zOrder: z } : v));
+  }, []);
+
+  const focusViewer = useCallback((id: string) => {
+    zCounter.current++;
+    const z = zCounter.current;
+    setViewers(prev => prev.map(v => v.id === id ? { ...v, zOrder: z } : v));
+  }, []);
+
+  /* ── upload ── */
   const upload = useCallback(async (file: File) => {
     if (!user) { setErr("Not signed in"); return; }
     setUploading(true); setPct(0); setUpName(file.name); setErr(null);
-
     try {
       const slug = `liveclass/${subjectId}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}.${file.name.split(".").pop() || "bin"}`;
-
-      // ── Get a fresh auth token ──────────────────────────────────
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token ?? "";
       if (!token) throw new Error("Not authenticated — please log in again.");
-
-      // ── XHR upload with progress ────────────────────────────────
       await new Promise<void>((res, rej) => {
         const xhr = new XMLHttpRequest();
         xhr.open("POST", `${MAIN_URL}/storage/v1/object/${BUCKET}/${slug}`);
@@ -678,37 +569,25 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
         xhr.upload.onprogress = ev => {
           if (ev.lengthComputable) setPct(Math.round(ev.loaded / ev.total * 85));
         };
-        xhr.onload  = () => (xhr.status >= 200 && xhr.status < 300)
-          ? res()
-          : rej(new Error(`Upload failed (${xhr.status}): ${xhr.responseText}`));
+        xhr.onload  = () => (xhr.status >= 200 && xhr.status < 300) ? res() : rej(new Error(`Upload failed (${xhr.status}): ${xhr.responseText}`));
         xhr.onerror = () => rej(new Error("Network error during upload"));
         xhr.send(file);
       });
-
       setPct(90);
-
-      // ── Get the correct public URL from the SDK ─────────────────
       const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(slug);
       const fileUrl = pub?.publicUrl ?? `${MAIN_URL}/storage/v1/object/public/${BUCKET}/${slug}`;
-
-      const { error: dbErr } = await (supabase as any)
-        .from("liveclass_files")
-        .insert({
-          subject_id: subjectId, file_name: file.name, file_url: fileUrl,
-          file_type: file.type || null, file_size: file.size, uploaded_by: user.id,
-        });
+      const { error: dbErr } = await (supabase as any).from("liveclass_files").insert({
+        subject_id: subjectId, file_name: file.name, file_url: fileUrl,
+        file_type: file.type || null, file_size: file.size, uploaded_by: user.id,
+      });
       if (dbErr) throw dbErr;
-
       setPct(100);
       await fetchFiles();
       setTimeout(() => { setUploading(false); setPct(0); setUpName(""); }, 600);
-
     } catch (e: any) {
-      // ── SDK fallback ────────────────────────────────────────────
       try {
         const slug2 = `liveclass/${subjectId}/${Date.now()}.${file.name.split(".").pop() || "bin"}`;
-        const { error: stErr } = await storageSupabase.storage
-          .from(BUCKET).upload(slug2, file, { upsert: true, contentType: file.type });
+        const { error: stErr } = await storageSupabase.storage.from(BUCKET).upload(slug2, file, { upsert: true, contentType: file.type });
         if (stErr) throw stErr;
         const { data: pub2 } = supabase.storage.from(BUCKET).getPublicUrl(slug2);
         const url2 = pub2?.publicUrl ?? `${MAIN_URL}/storage/v1/object/public/${BUCKET}/${slug2}`;
@@ -732,17 +611,14 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     const trimUrl = linkUrl.trim();
     if (!trimUrl) { setErr("Please enter a URL"); return; }
     if (!/^https?:\/\//i.test(trimUrl)) { setErr("URL must start with http:// or https://"); return; }
-
     setAddingLink(true); setErr(null);
     const label = linkLabel.trim() || trimUrl;
-
     try {
-      const { error: dbErr } = await (supabase as any)
-        .from("liveclass_files")
-        .insert({ subject_id: subjectId, file_name: label, file_url: trimUrl, file_type: "link", file_size: null, uploaded_by: user.id });
+      const { error: dbErr } = await (supabase as any).from("liveclass_files").insert({
+        subject_id: subjectId, file_name: label, file_url: trimUrl, file_type: "link", file_size: null, uploaded_by: user.id,
+      });
       if (dbErr) throw dbErr;
-      setLinkUrl("");
-      setLinkLabel("");
+      setLinkUrl(""); setLinkLabel("");
       await fetchFiles();
     } catch (e: any) {
       setErr(e?.message ?? "Failed to save link");
@@ -772,25 +648,19 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     setDelId(f.id);
     await (supabase as any).from("liveclass_files").delete().eq("id", f.id);
     if (f.file_type !== "link") {
-      // Extract path from any Supabase storage URL: .../object/(public/)?BUCKET/PATH
       const match = f.file_url.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
       if (match) {
         const [, bucketName, storagePath] = match;
         storageSupabase.storage.from(bucketName).remove([storagePath]).catch(() => {});
       }
     }
-    // If the deleted file is currently open, close the viewer for it
-    setOpenedFiles(prev => {
-      const filtered = prev.filter(x => x.id !== f.id);
-      setOpenIdx(idx => {
-        if (filtered.length === 0) { setMinimized(false); return -1; }
-        return Math.min(idx, filtered.length - 1);
-      });
-      return filtered;
-    });
+    closeViewer(f.id);
     setFiles(prev => prev.filter(x => x.id !== f.id));
     setDelId(null);
   };
+
+  /* ── open-count badge ── */
+  const openCount = viewers.length;
 
   /* ═══════════════════ RENDER ═══════════════════ */
   return (
@@ -800,7 +670,7 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
         .lcfp-file-row { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid ${BORD}; transition:background .12s; cursor:pointer; }
         .lcfp-file-row:last-child { border-bottom:none; }
         .lcfp-file-row:hover { background:${BG}; }
-        .lcfp-file-row.lcfp-active { background:${GOLDB}; border-left:3px solid ${GOLD}; }
+        .lcfp-file-row.lcfp-open { background:${GOLDB}; border-left:3px solid ${GOLD}; }
         .lcfp-del-btn { opacity:0; border:none; background:none; cursor:pointer; padding:5px; border-radius:6px; color:${RED}; flex-shrink:0; font-size:16px; }
         .lcfp-file-row:hover .lcfp-del-btn { opacity:1; }
         .lcfp-tab { flex:1; padding:8px 12px; border:none; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s; }
@@ -808,8 +678,18 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
         .lcfp-input:focus { border-color:${G}; box-shadow:0 0 0 3px ${G}18; }
       `}</style>
 
-      {/* Add bottom padding to the panel so content isn't hidden behind the mini bar */}
-      <div style={{ fontFamily: "system-ui,sans-serif", paddingBottom: minimized && currentFile ? 72 : 0 }}>
+      <div style={{ fontFamily: "system-ui,sans-serif", paddingBottom: anyMinimized ? 72 : 0 }}>
+
+        {/* ── open-count banner ── */}
+        {openCount > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#1B433215", border: `1px solid ${G}30`, borderRadius: 12, padding: "8px 14px", marginBottom: 12, fontSize: 12, color: G }}>
+            <span style={{ fontWeight: 700 }}>📂 {openCount} material{openCount > 1 ? "s" : ""} open</span>
+            <span style={{ color: MUT }}>· tap any to switch, or open more simultaneously</span>
+            {expandedViewers.length === 0 && minimizedViewers.length > 0 && (
+              <span style={{ marginLeft: "auto", color: GOLD, fontWeight: 600 }}>all minimized ↓</span>
+            )}
+          </div>
+        )}
 
         {/* ── Tabs ── */}
         <div style={{ display: "flex", gap: 6, background: BG, borderRadius: 12, padding: 4, marginBottom: 16 }}>
@@ -913,30 +793,16 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
               </button>
             </div>
 
-            {/* Minimized hint banner */}
-            {minimized && currentFile && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "8px 14px",
-                background: GOLDB,
-                borderBottom: `1px solid ${GOLD}40`,
-                fontSize: 12, color: GOLD,
-              }}>
-                <span>⬇</span>
-                <span style={{ flex: 1 }}>
-                  <strong>{currentFile.file_name}</strong> is minimized — tap any file to switch, or restore it below
-                </span>
-              </div>
-            )}
-
             {files.map(f => {
-              const k    = getKind(f.file_name, f.file_type);
-              const cfg  = ICONS[k];
-              const isActive = currentFile?.id === f.id;
+              const k       = getKind(f.file_name, f.file_type);
+              const cfg     = ICONS[k];
+              const isOpen  = openFileIds.has(f.id);
+              const viewer  = viewers.find(v => v.id === f.id);
+              const isMinimized = viewer?.minimized ?? false;
               return (
                 <div
                   key={f.id}
-                  className={`lcfp-file-row${isActive ? " lcfp-active" : ""}`}
+                  className={`lcfp-file-row${isOpen ? " lcfp-open" : ""}`}
                   onClick={() => delId !== f.id && openFile(f)}
                 >
                   <div style={{ width: 42, height: 42, borderRadius: 10, background: cfg.bg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
@@ -944,19 +810,20 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
                   </div>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isActive ? GOLD : "inherit" }}>
+                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isOpen ? GOLD : "inherit" }}>
                       {f.file_name}
                     </p>
                     <p style={{ margin: "2px 0 0", fontSize: 11, color: MUT }}>
                       {k === "Link" ? "🔗 Link" : k}
                       {f.file_size ? ` · ${fmtBytes(f.file_size)}` : ""}
                       {f.created_at ? ` · ${fmtDate(f.created_at)}` : ""}
-                      {isActive ? " · ▶ Now viewing" : ""}
+                      {isOpen && !isMinimized ? " · ▶ Viewing" : ""}
+                      {isOpen && isMinimized ? " · ⬇ Minimized" : ""}
                     </p>
                   </div>
 
-                  <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: isActive ? GOLD : cfg.c, background: isActive ? GOLDB : cfg.bg, padding: "3px 9px", borderRadius: 20, border: isActive ? `1px solid ${GOLD}60` : "none" }}>
-                    {isActive ? "Viewing" : k === "Image" ? "Preview" : k === "Link" ? "View" : "Open"}
+                  <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 700, color: isOpen ? GOLD : cfg.c, background: isOpen ? GOLDB : cfg.bg, padding: "3px 9px", borderRadius: 20, border: isOpen ? `1px solid ${GOLD}60` : "none" }}>
+                    {isOpen && !isMinimized ? "Viewing" : isOpen && isMinimized ? "⬇ Min" : k === "Image" ? "Preview" : k === "Link" ? "View" : "Open"}
                   </span>
 
                   <button className="lcfp-del-btn" disabled={delId === f.id}
@@ -972,24 +839,24 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
         )}
       </div>
 
-      {/* Viewer — renders full overlay or minimized bottom bar */}
-      {currentFile && (
+      {/* ── All expanded viewers (stacked by zOrder) ── */}
+      {viewers.map(entry => (
         <FileViewer
-          file={currentFile}
-          resolvedUrl={resolvedUrl}
-          resolving={resolving}
-          minimized={minimized}
-          canGoBack={openIdx > 0}
-          canGoFwd={openIdx < openedFiles.length - 1}
-          totalOpen={openedFiles.length}
-          currentIdx={openIdx}
+          key={entry.id}
+          entry={entry}
+          baseZ={99000 + entry.zOrder * 10}
           onClose={closeViewer}
-          onMinimize={() => setMinimized(true)}
-          onRestore={() => setMinimized(false)}
-          onBack={goBack}
-          onForward={goForward}
+          onMinimize={minimizeViewer}
+          onFocus={focusViewer}
         />
-      )}
+      ))}
+
+      {/* ── PIP chips for minimized viewers ── */}
+      <PipBar
+        entries={viewers}
+        onRestore={restoreViewer}
+        onClose={closeViewer}
+      />
     </>
   );
 }
