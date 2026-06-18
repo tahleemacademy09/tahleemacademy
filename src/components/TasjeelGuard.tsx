@@ -68,9 +68,11 @@ const TasjeelGuard = ({ children }: TasjeelGuardProps) => {
 
   // Student: redirect to correct pipeline step if not completed
   if (!currentStep) {
-    // No tasjeel_progress row at all — should not happen for normal students
-    // but guard against it: send to register to start the pipeline.
-    return <Navigate to="/register" replace />;
+    // Should not happen — resolveTasjeelStep() (shared with Login.tsx) always
+    // resolves to a real step once loading is false, even for brand-new users
+    // with no row yet. Guard defensively anyway, pointing at the same resume
+    // page the rest of the pipeline uses rather than a separate fresh-signup page.
+    return <Navigate to="/auth/register-continue" replace />;
   }
 
   if (currentStep !== "completed") {
