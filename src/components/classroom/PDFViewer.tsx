@@ -1,17 +1,24 @@
 // PDFViewer.tsx
-// • First open: fetches + renders all pages → caches as ImageBitmaps (module-level)
-// • Subsequent opens: draws from cache INSTANTLY — no network, no re-render
+// • First open ever:        pdf.js streams via HTTP range requests, so page 1
+//                           renders as soon as ITS bytes arrive — not after the
+//                           whole file downloads. The rest streams in behind it,
+//                           then gets stashed on-device for next time.
+// • Reopen same session:    draws from in-memory bitmap cache — instant, zero network
+// • Reopen after restart:   bytes already on-device (Cache Storage) — instant, works
+//                           fully OFFLINE; only re-renders pages from local bytes
+// • prewarmPDF(url):        call ahead of time (e.g. when a material list loads, or a
+//                           teacher shares a material) so it's already cached/rendered
+//                           by the time the user actually taps to open it
 // • Scroll position saved per materialId and restored on reopen
-// • prewarmPDF() exported so LiveClassFilePanel can silently pre-render PDFs
-//   in the background the moment the file list loads — before any click.
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
 const PDFJS_VERSION = "3.11.174";
 const PDFJS_SRC    = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
 const PDFJS_WORKER = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.worker.min.js`;
+const OFFLINE_CACHE_NAME = "tahleem-pdf-offline-v1";
 
-// Module-level caches — survive React unmount/remount
+// Module-level caches — survive React unmount/remount, NOT app restart
 const PAGE_CACHE    = new Map<string, ImageBitmap[]>();
 const DIM_CACHE     = new Map<string, Array<{w:number;h:number}>>();
 const RENDER_PROMISE= new Map<string, Promise<ImageBitmap[]>>();
@@ -41,6 +48,35 @@ function loadScroll(id: string): number {
   try { return parseInt(localStorage.getItem(scrollKey(id)) || "0", 10) || 0; } catch { return 0; }
 }
 
+/** True if this PDF's bytes are already on-device (will open instantly, even offline). */
+export async function isPDFCached(url: string): Promise<boolean> {
+  if (PAGE_CACHE.has(url)) return true;
+  if (!("caches" in window)) return false;
+  try {
+    const cache = await caches.open(OFFLINE_CACHE_NAME);
+    return !!(await cache.match(url));
+  } catch { return false; }
+}
+
+/** Stash already-fetched bytes on-device so the NEXT open on this device is instant + offline. */
+async function stashBytes(url: string, data: Uint8Array | ArrayBuffer) {
+  if (!("caches" in window)) return;
+  try {
+    const cache = await caches.open(OFFLINE_CACHE_NAME);
+    await cache.put(url, new Response(data, { headers: { "Content-Type": "application/pdf" } }));
+  } catch { /* quota / unsupported — just means next open re-streams, still works */ }
+}
+
+/**
+ * Fire-and-forget: start downloading + rendering a PDF ahead of time so it's
+ * ready (cached bytes + rendered bitmaps) the instant the user taps to open it.
+ * Safe to call repeatedly — renderPDF() de-dupes in-flight/cached work.
+ */
+export function prewarmPDF(url: string): void {
+  if (!url) return;
+  renderPDF(url).catch(() => { /* silent — viewer will retry & surface the real error if opened */ });
+}
+
 async function renderPDF(url: string, onProgress?: (done: number, total: number) => void): Promise<ImageBitmap[]> {
   if (PAGE_CACHE.has(url) && !RENDER_PROMISE.has(url)) return PAGE_CACHE.get(url)!;
   if (RENDER_PROMISE.has(url)) return RENDER_PROMISE.get(url)!;
@@ -51,10 +87,36 @@ async function renderPDF(url: string, onProgress?: (done: number, total: number)
     if (!lib) throw new Error("pdf.js did not load");
     lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
 
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.arrayBuffer();
-    const pdf  = await lib.getDocument({ data }).promise;
+    // Already on this device (returning visit / prewarmed earlier) — parse
+    // straight from local bytes, no network at all, works fully offline.
+    let pdf: any;
+    let needsStash = false;
+    if ("caches" in window) {
+      try {
+        const cache = await caches.open(OFFLINE_CACHE_NAME);
+        const hit = await cache.match(url);
+        if (hit) pdf = await lib.getDocument({ data: await hit.arrayBuffer() }).promise;
+      } catch { /* fall through to network path */ }
+    }
+    if (!pdf) {
+      try {
+        // Brand-new file on this device: stream via HTTP range requests so
+        // page 1 only needs ITS bytes to render — not the whole document.
+        // (Supabase/S3-backed storage supports Range out of the box.)
+        pdf = await lib.getDocument({ url, rangeChunkSize: 1 << 16 }).promise;
+        needsStash = true;
+      } catch {
+        // Range requests blocked somewhere upstream — fall back to a plain
+        // whole-file fetch so it still works, just without the fast-first-page win.
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.arrayBuffer();
+        pdf = await lib.getDocument({ data }).promise;
+        stashBytes(url, data); // already have the full bytes — cache immediately
+        needsStash = false;
+      }
+    }
+
     const total = pdf.numPages;
     const dpr   = Math.min(window.devicePixelRatio || 1, 2);
     const bitmaps: ImageBitmap[] = [];
@@ -77,23 +139,20 @@ async function renderPDF(url: string, onProgress?: (done: number, total: number)
     PAGE_CACHE.set(url, bitmaps);
     DIM_CACHE.set(url, dims);
     RENDER_PROMISE.delete(url);
+
+    // Paging through the document means pdf.js has now pulled in (almost) all
+    // of it via ranges — grab the assembled bytes and stash them so the NEXT
+    // open on this device is instant + offline. Runs after rendering, so it
+    // never delays what the user sees.
+    if (needsStash) {
+      pdf.getData().then((bytes: Uint8Array) => stashBytes(url, bytes)).catch(() => {});
+    }
+
     return bitmaps;
   })();
 
   RENDER_PROMISE.set(url, promise);
   return promise;
-}
-
-/**
- * Call this with a resolved PDF URL right after the file list loads.
- * It silently renders all pages into PAGE_CACHE in the background so
- * that when the user taps the file, PDFViewer draws from cache instantly
- * with no spinner at all.
- */
-export function prewarmPDF(url: string): void {
-  if (!url || PAGE_CACHE.has(url) || RENDER_PROMISE.has(url)) return;
-  // Fire-and-forget — errors are silently ignored
-  renderPDF(url).catch(() => {});
 }
 
 interface Props {
@@ -152,10 +211,6 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
       restoreScroll();
       return;
     }
-
-    // ── STILL RENDERING IN BACKGROUND (prewarm in progress) ─────────────────
-    // If a render promise exists it was started by prewarmPDF — just attach to it
-    // and poll for partial pages as they arrive, same as first-render path below.
 
     // ── FIRST RENDER ────────────────────────────────────────────────────────
     setPhase("loading"); setErrMsg(""); setPct(0);
