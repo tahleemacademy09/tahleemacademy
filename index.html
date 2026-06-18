@@ -52,7 +52,7 @@
     <!-- Canonical URL -->
     <link rel="canonical" href="https://tahleemacademy.lovable.app/" />
 
-    <!-- Favicon (new gold calligraphy logo) -->
+    <!-- Favicon -->
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192x192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
@@ -76,6 +76,114 @@
       ]
     }
     </script>
+
+    <!--
+      ╔══════════════════════════════════════════════════════════╗
+      ║  INLINE SPLASH SCREEN — painted before ANY JS loads     ║
+      ║                                                          ║
+      ║  WHY THIS EXISTS:                                        ║
+      ║  iOS and Android kill PWA WebView processes when the app ║
+      ║  is backgrounded (memory pressure). On resume, a full   ║
+      ║  page reload is unavoidable — the OS has terminated the  ║
+      ║  process entirely. VS Code web, Tahleem, every PWA hits  ║
+      ║  this. No JS fix can prevent it.                         ║
+      ║                                                          ║
+      ║  What we CAN do: make the reload feel instant by showing ║
+      ║  a branded splash screen on the very first paint (before ║
+      ║  React, before fonts, before anything). The user sees   ║
+      ║  the academy logo immediately instead of a white flash.  ║
+      ║  React then mounts underneath and fades the splash out.  ║
+      ║                                                          ║
+      ║  The splash is only shown when returning from background ║
+      ║  (document.referrer === '' AND sessionStorage has a      ║
+      ║  saved path) — i.e. a reload triggered by OS process     ║
+      ║  kill. It is NOT shown on normal navigation.             ║
+      ╚══════════════════════════════════════════════════════════╝
+    -->
+    <style>
+      #ta-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 20px;
+        background: linear-gradient(160deg, #0a1f14 0%, #0f2419 50%, #1a3a2a 100%);
+        transition: opacity 0.35s ease;
+      }
+      #ta-splash.ta-fade {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #ta-splash.ta-gone {
+        display: none;
+      }
+      .ta-splash-icon {
+        width: 88px;
+        height: 88px;
+        border-radius: 22px;
+        background: linear-gradient(135deg, rgba(201,168,76,0.15), rgba(201,168,76,0.05));
+        border: 1.5px solid rgba(201,168,76,0.35);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 42px;
+      }
+      .ta-splash-name {
+        font-family: 'Georgia', 'Times New Roman', serif;
+        font-size: 22px;
+        font-weight: 700;
+        color: rgba(201,168,76,0.95);
+        letter-spacing: 0.5px;
+        text-align: center;
+      }
+      .ta-splash-ar {
+        font-size: 16px;
+        color: rgba(201,168,76,0.6);
+        direction: rtl;
+        margin-top: -10px;
+      }
+      .ta-splash-bar {
+        width: 48px;
+        height: 3px;
+        border-radius: 999px;
+        background: rgba(201,168,76,0.2);
+        overflow: hidden;
+        margin-top: 8px;
+      }
+      .ta-splash-bar-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(201,168,76,0.4), rgba(201,168,76,0.9));
+        animation: ta-bar-anim 1.6s ease forwards;
+      }
+      @keyframes ta-bar-anim {
+        0%   { width: 0%; }
+        60%  { width: 70%; }
+        100% { width: 100%; }
+      }
+    </style>
+    <script>
+      // Show splash ONLY on a process-kill reload (not on first visit or navigation).
+      // Signals: sessionStorage has a saved restore path (set by useAppStateRestore
+      // before backgrounding) but document.referrer is empty (full reload, not navigation).
+      (function() {
+        try {
+          var hasSaved = !!sessionStorage.getItem('ta_restore_path');
+          var isReload = !document.referrer || document.referrer === '';
+          // Also show on first-ever load if it's the PWA (standalone mode)
+          var isStandalone = window.matchMedia('(display-mode: standalone)').matches
+                          || window.navigator.standalone === true;
+          if ((hasSaved && isReload) || (isStandalone && isReload && !sessionStorage.getItem('ta_launched'))) {
+            sessionStorage.setItem('ta_launched', '1');
+            document.write('<div id="ta-splash"><div class="ta-splash-icon">🕌</div><div class="ta-splash-name">Tahleem Academy</div><div class="ta-splash-ar">أكاديمية التعليم</div><div class="ta-splash-bar"><div class="ta-splash-bar-fill"></div></div></div>');
+          }
+        } catch(e) {}
+      })();
+    </script>
   </head>
 
   <body>
@@ -83,5 +191,24 @@
     <!-- Paystack: defer keeps it non-blocking but still executes before app JS -->
     <script defer src="https://js.paystack.co/v1/inline.js"></script>
     <script type="module" src="/src/main.tsx"></script>
+
+    <!--
+      Dismiss the splash once React has mounted.
+      We listen for a custom "ta-app-ready" event dispatched by main.tsx,
+      OR fall back to a 2.5s timeout.
+    -->
+    <script>
+      (function() {
+        function dismissSplash() {
+          var el = document.getElementById('ta-splash');
+          if (!el) return;
+          el.classList.add('ta-fade');
+          setTimeout(function() { el.classList.add('ta-gone'); }, 380);
+        }
+        window.addEventListener('ta-app-ready', dismissSplash, { once: true });
+        // Fallback: always clear within 2.5s even if event never fires
+        setTimeout(dismissSplash, 2500);
+      })();
+    </script>
   </body>
 </html>
