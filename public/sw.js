@@ -1,19 +1,36 @@
-// public/sw.js — Tahleem Academy Service Worker v6
-// v5 fix: no-refresh on minimize→resume. Cache-first navigation with background revalidation.
-// v6 fix: ROOT CAUSE of forced reloads during login / live class / exams.
-//   `self.skipWaiting()` used to be called unconditionally on every install,
-//   which seizes every open tab the instant ANY deploy lands — regardless of
-//   what the user is doing. Per the SW spec, a worker with no existing
-//   controller activates immediately on its own (nothing to wait for), so
-//   removing the unconditional call here costs nothing for first installs
-//   and fixes everything for updates: a new SW now properly waits until the
-//   page explicitly tells it to take over (see the "message" handler below,
-//   and src/main.tsx for the safe-to-update gating).
+// public/sw.js — Tahleem Academy Service Worker v7
+// v7 fixes (on top of v6):
+//   1. APP_URL is HARDCODED to the production domain — never self.location.origin.
+//      If the SW was registered while the app was open on a Lovable preview URL,
+//      self.location.origin would be wrong and every notification click would open
+//      the wrong site.
+//   2. sanitiseUrl() strips non-production hosts from push payload URLs so old
+//      notifications with a Lovable URL stored in join_url still navigate correctly.
+//   3. Cache name bumped to tahleem-v7 so the new SW auto-activates on deploy.
 
-const CACHE_NAME = "tahleem-v6";
+const CACHE_NAME = "tahleem-v7";
 const ICON       = "/icons/icon-192x192.png";
 const BADGE      = "/icons/icon-96x96.png";
-const APP_URL    = self.location.origin;
+
+// ⚠️  HARDCODED — do NOT change to self.location.origin.
+//     self.location.origin returns whatever origin the SW script was served from.
+//     On a Lovable preview domain that becomes *.lovable.app, which gets embedded
+//     into every notification click URL permanently.
+const APP_URL = "https://tahleemacademy.vercel.app";
+
+// Strips any non-production host from an absolute URL, or prepends APP_URL to a
+// relative path. Also handles the case where old notifications stored a Lovable URL.
+function sanitiseUrl(raw) {
+  if (!raw) return APP_URL;
+  if (raw.startsWith(APP_URL)) return raw;
+  if (raw.startsWith("/")) return APP_URL + raw;
+  try {
+    const { pathname, search, hash } = new URL(raw);
+    return APP_URL + pathname + search + hash;
+  } catch {
+    return APP_URL;
+  }
+}
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -22,13 +39,9 @@ self.addEventListener("install", e => {
     caches.open(CACHE_NAME).then(cache =>
       cache.addAll(["/", "/manifest.json", ICON, BADGE]).catch(() => {})
     )
-    // NOTE: no self.skipWaiting() here on purpose. If there's no existing
-    // controller (true first install / fresh tab), the browser activates this
-    // worker on its own — nothing is disrupted. If there IS an existing
-    // controller (an update landing while the app is already open), this
-    // worker now correctly sits in "waiting" until the page asks for it via
-    // the SKIP_WAITING message below, instead of yanking control away
-    // mid-login, mid-class, or mid-exam.
+    // No self.skipWaiting() on purpose — see v6 comments. A new SW sits in
+    // "waiting" until the page explicitly requests the takeover via SKIP_WAITING,
+    // preventing disruptive reloads mid-class or mid-exam.
   );
 });
 
@@ -53,8 +66,11 @@ self.addEventListener("push", e => {
   const isRing = data.type === "ring" || data.type === "class_ring";
   const title  = data.title   ?? "Tahleem Academy 🕌";
   const body   = data.body    ?? data.message ?? "";
-  const url    = data.url     ?? data.join_url ?? "/";
-  const tag    = data.tag     ?? (isRing ? "tahleem-ring" : "tahleem-push");
+
+  // FIX: sanitise the URL from the push payload — old DB records may have a
+  // Lovable preview URL saved as join_url.
+  const url = sanitiseUrl(data.url ?? data.join_url ?? "/");
+  const tag  = data.tag ?? (isRing ? "tahleem-ring" : "tahleem-push");
 
   const options = {
     body,
@@ -68,6 +84,7 @@ self.addEventListener("push", e => {
       ? [800, 300, 800, 300, 800, 600, 800, 300, 800]
       : (data.vibrate ?? [200, 100, 200]),
     timestamp: Date.now(),
+    // Store the SANITISED url — notificationclick reads from here
     data: { url, type: data.type },
     actions: isRing
       ? [
@@ -89,17 +106,20 @@ self.addEventListener("notificationclick", e => {
   e.notification.close();
   if (e.action === "dismiss") return;
 
-  const url     = e.notification.data?.url ?? APP_URL;
-  const fullUrl = url.startsWith("http") ? url : APP_URL + (url.startsWith("/") ? url : "/" + url);
+  // Double-sanitise — handles old notifications stored before v7 that may have
+  // had a Lovable URL baked into notification.data.url
+  const fullUrl = sanitiseUrl(e.notification.data?.url ?? "/");
 
   e.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
+      // Focus an already-open Tahleem tab and navigate it to the target URL
       for (const client of list) {
         if (client.url.startsWith(APP_URL) && "focus" in client) {
           client.postMessage({ type: "NOTIFICATION_CLICK", url: fullUrl });
           return client.focus();
         }
       }
+      // No open tab — open a new window at the correct production URL
       return clients.openWindow(fullUrl);
     })
   );
@@ -125,51 +145,36 @@ self.addEventListener("message", e => {
   }
 });
 
-// ── Fetch — FIXED navigation strategy ────────────────────────────────────────
+// ── Fetch — cache-first navigation strategy (unchanged from v6) ───────────────
 //
-// PROBLEM with old code:
-//   navigate requests used network-first: `fetch(e.request).catch(→ cache)`.
-//   On iOS/Android, when the PWA resumes from background, the OS re-issues
-//   the navigation request. The SW intercepts it, goes to the network, gets a
-//   fresh response, and the browser treats that as "new document" → full reload.
-//
-// FIX — cache-first for navigation + background revalidation:
-//   1. Serve the cached "/" shell instantly (no network round-trip → no reload).
-//   2. In the background, fetch "/" to keep the cache warm for the NEXT visit.
-//   3. Static assets (/assets/*) are already immutable-cached by Vercel — they
-//      never change after a deploy, so cache-first is always correct for them.
-//   4. API calls / Supabase / external requests bypass the SW entirely.
+// Navigation requests serve the cached shell instantly to prevent the
+// reload-on-resume bug on iOS/Android. Static assets are cache-first.
+// API/Supabase/LiveKit/Anthropic calls bypass the SW entirely.
 
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
   if (!e.request.url.startsWith(self.location.origin)) return;
 
-  // Let Supabase and external API calls go straight to network
   if (
     e.request.url.includes("supabase.co") ||
     e.request.url.includes("livekit") ||
+    e.request.url.includes("anthropic.com") ||
     e.request.url.includes("fonts.googleapis.com") ||
     e.request.url.includes("fonts.gstatic.com")
   ) return;
 
-  // ── Navigation requests (HTML page loads / resume) ────────────────────────
   if (e.request.mode === "navigate") {
     e.respondWith(
       caches.open(CACHE_NAME).then(async cache => {
         const cached = await cache.match("/");
-
         if (cached) {
-          // Serve the cached shell immediately — prevents the reload-on-resume.
-          // Then silently refresh the cache in the background.
           e.waitUntil(
             fetch("/").then(fresh => {
               if (fresh.ok) cache.put("/", fresh);
-            }).catch(() => {/* offline — cached copy is fine */})
+            }).catch(() => {})
           );
           return cached;
         }
-
-        // No cache yet (first install): go to network and cache the result.
         return fetch(e.request).then(response => {
           if (response.ok) cache.put("/", response.clone());
           return response;
@@ -179,7 +184,6 @@ self.addEventListener("fetch", e => {
     return;
   }
 
-  // ── Static assets — cache-first, populate on miss ─────────────────────────
   e.respondWith(
     caches.match(e.request).then(cached => {
       if (cached) return cached;
