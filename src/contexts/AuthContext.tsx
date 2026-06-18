@@ -10,6 +10,12 @@
 // the 8s timeout (e.g. user typed slowly then clicked Sign In). This caused the
 // "must refresh to login" bug. Now only INITIAL_SESSION is suppressed after timeout;
 // genuine new auth events (SIGNED_IN etc.) reset the guard and proceed normally.
+//
+// Fix (2026-06-18): TOKEN_REFRESHED was setting loading=true and re-running fetchUserData,
+// causing the full-page spinner to appear every time the user returned from background.
+// Supabase fires TOKEN_REFRESHED silently whenever the JWT is auto-renewed (every ~1hr,
+// and immediately on app resume). We already have the user's roles & profile — we only
+// need to update the session object. No spinner, no profile re-fetch.
 
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -143,6 +149,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (timedOutRef.current) {
         if (_event === "INITIAL_SESSION") return;
         timedOutRef.current = false; // reset so subsequent events flow normally
+      }
+
+      // ── KEY FIX: TOKEN_REFRESHED must NOT show a spinner ─────────────────────
+      // Supabase silently refreshes the JWT in the background (every ~1 hour and
+      // immediately when the app returns from background). The user is already
+      // authenticated — we just need the new session token, NOT a full profile
+      // re-fetch. Setting loading=true here causes ProtectedRoute to render the
+      // full-page spinner every single time the user switches back to the app.
+      if (_event === "TOKEN_REFRESHED") {
+        // Only update the session/user objects — no spinner, no DB fetch.
+        setSession(sess);
+        setUser(sess?.user ?? null);
+        return;
       }
 
       setSession(sess);
