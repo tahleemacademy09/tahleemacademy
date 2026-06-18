@@ -18,6 +18,10 @@ import { toast } from "sonner";
 const G    = "#064E3B";
 const GOLD = "#C9A84C";
 
+// FIX: Always use production domain for join_url — window.location.origin can be
+// a Lovable preview URL when testing, which gets saved to the DB permanently.
+const APP_BASE_URL = "https://tahleemacademy.vercel.app";
+
 const generateRoomCode = () => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
@@ -61,7 +65,7 @@ export default function TeacherPublicClasses() {
     if (!form.title || !user) return;
     setCreating(true);
     const roomCode = generateRoomCode();
-    const joinUrl  = `${window.location.origin}/live/${roomCode}`;
+    const joinUrl  = `${APP_BASE_URL}/live/${roomCode}`;
 
     const { error } = await supabase.from("public_classes").insert({
       title:              form.title,
@@ -118,7 +122,7 @@ export default function TeacherPublicClasses() {
   };
 
   const copyLink = (cls: any) => {
-    const url = cls.join_url || `${window.location.origin}/live/${cls.room_code}`;
+    const url = cls.join_url?.replace(/^https?:\/\/[^/]+(?=\/live\/)/, APP_BASE_URL) || `${APP_BASE_URL}/live/${cls.room_code}`;
     navigator.clipboard.writeText(url);
     toast.success(t("Link copied!", "تم نسخ الرابط!"));
   };
@@ -289,7 +293,7 @@ export default function TeacherPublicClasses() {
           </div>
         ) : classes.map(cls => {
           const sc = statusColor[cls.status] || statusColor.scheduled;
-          const joinUrl = cls.join_url || `${window.location.origin}/live/${cls.room_code}`;
+          const joinUrl = cls.join_url?.replace(/^https?:\/\/[^/]+(?=\/live\/)/, APP_BASE_URL) || `${APP_BASE_URL}/live/${cls.room_code}`;
           return (
             <div key={cls.id} style={{
               background: "#fff", borderRadius: 18, border: "1px solid #E5E7EB",
