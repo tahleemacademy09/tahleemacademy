@@ -212,6 +212,8 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
   const [composing,     setComposing]     = useState(false);
   const [sending,       setSending]       = useState(false);
   const [bilingualReady, setBilingualReady] = useState<boolean | null>(null);
+  const [autoRephrase,  setAutoRephrase]  = useState(true);  // run through Islamic rephraser before dispatch
+  const [rephrasing,    setRephrasing]    = useState(false);
 
   // Probe whether bilingual DB columns exist yet
   useEffect(() => {
@@ -236,6 +238,31 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
     setComposing(false);
   };
 
+  // Standalone rephrase — runs current draft through Islamic AI rephraser
+  const rephrase = async () => {
+    if (!composed) return;
+    setRephrasing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("ai-notification-center", {
+        body: {
+          action:     "rephrase",
+          title_en:   composed.title_en,
+          title_ar:   composed.title_ar,
+          message_en: composed.message_en,
+          message_ar: composed.message_ar,
+          type:       composed.suggested_type || "announcement",
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      setComposed((prev: any) => ({ ...prev, ...data }));
+      toast({ title: "✨ Rephrased Islamically", description: "Review the updated wording before sending." });
+    } catch (e: any) {
+      toast({ title: "Rephrase failed", description: e.message, variant: "destructive" });
+    }
+    setRephrasing(false);
+  };
+
   const send = async () => {
     if (!composed) return;
     setSending(true);
@@ -248,7 +275,8 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
           message_en: composed.message_en,
           message_ar: composed.message_ar,
           target:     target,                          // always use the admin's explicit selection
-          type:       composed.suggested_type   || "announcement",
+          type:          composed.suggested_type || "announcement",
+          auto_rephrase: autoRephrase,
         },
       });
       if (error) throw error;
@@ -256,7 +284,7 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
       if (data?.bilingual_ready === false) {
         toast({ title: `✅ Sent to ${data.sent} users (English only)`, description: "⚠️ Run the DB migration to enable bilingual storage.", variant: "destructive" });
       } else {
-        toast({ title: `✅ Sent to ${data.sent} users — English & Arabic` });
+        toast({ title: `✅ Sent ${autoRephrase ? "(Islamically rephrased) " : ""}to ${data.sent} users — EN & AR` });
       }
       setIdea(""); setComposed(null);
     } catch (e: any) {
@@ -365,8 +393,29 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
             />
           </div>
 
+          {/* ── Islamic Rephrase toggle + button ── */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, background: "#FEF3C7", border: "1px solid #FCD34D" }}>
+            <input
+              type="checkbox"
+              id="autoRephrase"
+              checked={autoRephrase}
+              onChange={e => setAutoRephrase(e.target.checked)}
+              style={{ width: 16, height: 16, accentColor: "#064E3B", cursor: "pointer" }}
+            />
+            <label htmlFor="autoRephrase" style={{ fontSize: 12, fontWeight: 700, color: "#92400E", cursor: "pointer", flex: 1 }}>
+              🕌 Auto-apply Islamic tone before sending (adds Salam, In sha Allah, duas)
+            </label>
+            <button
+              onClick={rephrase}
+              disabled={rephrasing}
+              style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: rephrasing ? "#E5E7EB" : "#D97706", color: rephrasing ? "#9CA3AF" : "#fff", fontWeight: 700, fontSize: 12, cursor: rephrasing ? "not-allowed" : "pointer" }}
+            >
+              {rephrasing ? "⏳ Rephrasing…" : "✨ Preview Rephrase"}
+            </button>
+          </div>
+
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setComposed(null)} style={{ flex: 1, padding: "11px", borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", color: "#374151", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            <button onClick={() => setComposed(null) style={{ flex: 1, padding: "11px", borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", color: "#374151", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
               ✏️ Regenerate
             </button>
             <button onClick={send} disabled={sending} style={{ flex: 2, padding: "11px", borderRadius: 11, border: "none", background: sending ? "#E5E7EB" : `linear-gradient(135deg,${G},${G2})`, color: sending ? "#9CA3AF" : "#fff", fontWeight: 800, fontSize: 14, cursor: sending ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
