@@ -22,6 +22,7 @@ import { LiveClassProvider } from "@/contexts/LiveClassContext";
 import RecordingPlayerProvider from "@/contexts/RecordingPlayerContext";
 const GlobalClassroomOverlay = lazy(() => import("./components/classroom/GlobalClassroomOverlay"));
 import AppNotifications from "@/components/AppNotifications";
+import { useAppStateRestore } from "@/hooks/useAppStateRestore";
 
 // ── Public pages ───────────────────────────────────────────────────────────
 const Index                = lazy(() => import("./pages/Index"));
@@ -154,6 +155,7 @@ const App = () => (
           <Toaster />
           <Sonner />
           <BrowserRouter>
+      <AppStateRestorer />
             <RecordingPlayerProvider>
             <LiveClassProvider>
             <ErrorBoundary>
@@ -326,5 +328,11 @@ const App = () => (
     </LanguageProvider>
   </QueryClientProvider>
 );
+
+// Restores route + scroll after Android WebView kills the backgrounded tab
+function AppStateRestorer() {
+  useAppStateRestore();
+  return null;
+}
 
 export default App;
