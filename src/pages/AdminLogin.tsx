@@ -19,13 +19,19 @@ const AdminLogin = () => {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Redirect logic: if already logged in, redirect based on role
+  // Redirect logic: if already logged in, redirect based on role.
+  // Fix: previously both admin and teacher were sent to "/admin", relying on
+  // ProtectedRoute's requiredRole check to notice teachers don't belong there
+  // and bounce them to "/teacher" — a visible extra hop. Each role now goes
+  // straight to its own route the first time.
   useEffect(() => {
     if (!authLoading && user) {
-      if (hasRole("admin") || hasRole("teacher")) {
+      if (hasRole("admin")) {
         navigate("/admin", { replace: true });
+      } else if (hasRole("teacher")) {
+        navigate("/teacher", { replace: true });
       } else {
-        // Non-admin user trying to access admin-secure: redirect to home silently
+        // Non-admin, non-teacher user trying to access admin-secure: redirect home silently
         navigate("/", { replace: true });
       }
     }
@@ -41,15 +47,18 @@ const AdminLogin = () => {
       return;
     }
     // Check role after login
-    const { data: roles } = await supabase
+    const { data: roleRows } = await supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", data.user?.id);
-    const isAdmin = roles?.some((r) => r.role === "admin" || r.role === "teacher");
+    const isAdmin   = roleRows?.some((r) => r.role === "admin");
+    const isTeacher = roleRows?.some((r) => r.role === "teacher");
     if (isAdmin) {
       navigate("/admin");
+    } else if (isTeacher) {
+      navigate("/teacher");
     } else {
-      // Not an admin - sign them out and show error
+      // Not admin or teacher - sign them out and show error
       await supabase.auth.signOut();
       toast({
         title: t("Access Denied", "تم رفض الوصول"),
