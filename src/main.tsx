@@ -20,53 +20,34 @@ initNativeApp();
 //
 // v6 change: this used to auto-postMessage SKIP_WAITING the instant a new
 // worker reached "installed", which forced an immediate reload of whatever
-// the user was doing (login, a live class, an exam — no awareness either
-// way). Now: a genuine update (new worker installed while one already
-// controls this page) is surfaced as a dismissable "update available" event
-// for the UI to show; nothing is applied until the user asks for it, or —
-// as a convenience — the tab is hidden while it's safe to do so. Even then,
-// the actual reload is gated on isReloadSafe() so it can never land mid-class
-// or mid-exam.
+// the user was doing (login, a live class, an exam). Now: a genuine update
+// (new worker installed while one already controls this page) just dispatches
+// "ta:update-available" for the UI to show a banner. NOTHING is ever applied
+// automatically in the background or while the tab is hidden — an update is
+// only ever applied (and the resulting reload only ever fires) at a moment
+// the user is actually looking at the app AND nothing sensitive is locked.
+// This is intentional: applying while hidden and reloading later on return
+// is what caused the v6.0 regression (reload-on-resume on every page).
 if ("serviceWorker" in navigator) {
   let waitingWorker: ServiceWorker | null = null;
-  let userRequestedUpdate = false;
-  let pendingReload = false;
+  let updateRequested = false;
+  let reloading = false;
 
-  function applyUpdate() {
-    if (!waitingWorker) return;
+  function tryApplyUpdate() {
+    if (!updateRequested || !waitingWorker || reloading) return;
+    if (!isReloadSafe()) return;                          // mid-class/mid-exam — wait
+    if (document.visibilityState !== "visible") return;    // never touch anything while hidden
     waitingWorker.postMessage({ type: "SKIP_WAITING" });
   }
 
-  // If the user (or the idle-and-safe path below) has asked for the update
-  // but it wasn't safe at the time, apply it the moment all locks clear.
-  onReloadSafe(() => {
-    if (userRequestedUpdate && waitingWorker) applyUpdate();
-    if (pendingReload && document.visibilityState === "visible") {
-      pendingReload = false;
-      window.location.replace(window.location.href);
-    }
-  });
-
   // Public hook for the UpdateAvailableBanner component.
   window.addEventListener("ta:apply-update", () => {
-    userRequestedUpdate = true;
-    if (isReloadSafe()) applyUpdate();
-    // else: deferred — onReloadSafe above will apply it once safe, and the
-    // banner can reflect "will update once you're done" in the meantime.
+    updateRequested = true;
+    tryApplyUpdate(); // applies now if already safe+visible; otherwise the listeners below retry
   });
 
-  document.addEventListener("visibilitychange", () => {
-    // Opportunistic: if the tab is hidden, there's an update waiting, and
-    // nothing sensitive is in progress, go ahead and apply it quietly so
-    // it's ready next time the tab is opened — still gated on isReloadSafe().
-    if (document.visibilityState === "hidden" && waitingWorker && isReloadSafe()) {
-      applyUpdate();
-    }
-    if (document.visibilityState === "visible" && pendingReload && isReloadSafe()) {
-      pendingReload = false;
-      window.location.replace(window.location.href);
-    }
-  });
+  onReloadSafe(tryApplyUpdate);
+  document.addEventListener("visibilitychange", tryApplyUpdate);
 
   window.addEventListener("load", () => {
     navigator.serviceWorker
@@ -91,13 +72,12 @@ if ("serviceWorker" in navigator) {
       .catch((err) => console.warn("[Tahleem SW] Registration failed:", err));
 
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      if (document.visibilityState === "visible" && isReloadSafe()) {
-        window.location.replace(window.location.href);
-      } else {
-        // Tab is hidden, or something sensitive is in progress — reload once
-        // it's both visible and safe (handled by the listeners above).
-        pendingReload = true;
-      }
+      if (reloading) return;
+      reloading = true;
+      // This can only fire as a direct result of tryApplyUpdate() above, which
+      // is itself gated on visible+safe — so reloading immediately here is
+      // always the expected, already-consented-to outcome, never a surprise.
+      window.location.replace(window.location.href);
     });
   });
 }
