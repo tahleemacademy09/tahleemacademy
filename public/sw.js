@@ -1,7 +1,16 @@
-// public/sw.js — Tahleem Academy Service Worker v5
-// Fix: no-refresh on minimize→resume. Cache-first navigation with background revalidation.
+// public/sw.js — Tahleem Academy Service Worker v6
+// v5 fix: no-refresh on minimize→resume. Cache-first navigation with background revalidation.
+// v6 fix: ROOT CAUSE of forced reloads during login / live class / exams.
+//   `self.skipWaiting()` used to be called unconditionally on every install,
+//   which seizes every open tab the instant ANY deploy lands — regardless of
+//   what the user is doing. Per the SW spec, a worker with no existing
+//   controller activates immediately on its own (nothing to wait for), so
+//   removing the unconditional call here costs nothing for first installs
+//   and fixes everything for updates: a new SW now properly waits until the
+//   page explicitly tells it to take over (see the "message" handler below,
+//   and src/main.tsx for the safe-to-update gating).
 
-const CACHE_NAME = "tahleem-v5";
+const CACHE_NAME = "tahleem-v6";
 const ICON       = "/icons/icon-192x192.png";
 const BADGE      = "/icons/icon-96x96.png";
 const APP_URL    = self.location.origin;
@@ -12,7 +21,14 @@ self.addEventListener("install", e => {
   e.waitUntil(
     caches.open(CACHE_NAME).then(cache =>
       cache.addAll(["/", "/manifest.json", ICON, BADGE]).catch(() => {})
-    ).then(() => self.skipWaiting())
+    )
+    // NOTE: no self.skipWaiting() here on purpose. If there's no existing
+    // controller (true first install / fresh tab), the browser activates this
+    // worker on its own — nothing is disrupted. If there IS an existing
+    // controller (an update landing while the app is already open), this
+    // worker now correctly sits in "waiting" until the page asks for it via
+    // the SKIP_WAITING message below, instead of yanking control away
+    // mid-login, mid-class, or mid-exam.
   );
 });
 
