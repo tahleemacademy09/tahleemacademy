@@ -24,7 +24,9 @@
     and Google Meet do.
   • setInterval heartbeat (20 s) — forces event-loop ticks under throttling.
   • WakeLock — prevents CPU sleep while screen is on.
-  • MediaSession — shows Tahleem lock-screen media card with "Return to Class".
+  • MediaSession — shows Tahleem lock-screen media card with mic/camera
+    controls (seekbackward = toggle mic, seekforward = toggle camera,
+    previoustrack/play/pause = return to class, stop = leave).
   • pageshow / resume / focus listeners — restart all layers after screen unlock.
 
   REMOVED: useSilentAudio (AudioContext oscillator at gain=0).
@@ -33,7 +35,7 @@
 */
 
 import { useLiveClass } from "@/contexts/LiveClassContext";
-import { startBackgroundAudio, stopBackgroundAudio } from "@/hooks/useBackgroundAudio";
+import { startBackgroundAudio, stopBackgroundAudio, updateMediaSessionControls } from "@/hooks/useBackgroundAudio";
 import { App as CapApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import ClassroomView from "@/components/classroom/ClassroomView";
@@ -44,9 +46,9 @@ export default function GlobalClassroomOverlay() {
   const {
     activeSubject, inCall, minimized, autoJoin,
     leaveClass, setMinimized,
-    micEnabled,
+    micEnabled, camEnabled,
     hasConnected,
-    restoreMicFnRef,
+    restoreMicFnRef, toggleMicFnRef, toggleCamFnRef,
   } = useLiveClass();
 
   const title = activeSubject?.title ?? "Live Class";
@@ -100,29 +102,31 @@ export default function GlobalClassroomOverlay() {
     return () => stopBackgroundAudio();
   }, [hasConnected, title]);
 
-  // ── Wire MediaSession "Return to Class" / "Leave" actions ────────────
-  // We update the handlers whenever the callbacks change (stable refs so
-  // this rarely fires). This is separate from startBackgroundAudio so that
-  // the audio element is never torn down just because handleReturn changed.
+  // ── Wire mic/camera controls into the notification (seekbackward/seekforward) ──
+  // This single effect now owns ALL MediaSession action handlers (return,
+  // leave, mic toggle, camera toggle) and the notification title/artwork.
+  // Re-runs whenever micEnabled or camEnabled changes so the notification
+  // always reflects current state ("🎙 Mic ON · 📹 Cam OFF").
+  // toggleMicFnRef/toggleCamFnRef are stable refs registered by ClassroomView,
+  // so calling .current avoids stale closures without needing them as deps.
+  //
+  // NOTE: previously there were two separate effects writing to
+  // navigator.mediaSession — one for play/pause/stop/prev/next and one for
+  // mic/cam. Their cleanup functions raced against each other (nulling
+  // handlers the other effect had just set), which is why the notification
+  // sometimes reverted to a plain music-player card. Consolidated into one.
   useEffect(() => {
     if (!hasConnected || !("mediaSession" in navigator)) return;
-    const sa = (a: MediaSessionAction, h: MediaSessionActionHandler | null) => {
-      try { navigator.mediaSession.setActionHandler(a, h); } catch {}
-    };
-    // "play" and "pause" both mean "user wants to interact" on the lock screen
-    // (they tap the play button on the media card). Treat both as "Return to Class".
-    // "stop" ends the call. We do NOT wire "pause" → leaveClass — that would
-    // disconnect participants every time Android locks the screen.
-    sa("play",          handleReturn);
-    sa("pause",         handleReturn);
-    sa("stop",          handleLeave);
-    sa("previoustrack", handleReturn);
-    sa("nexttrack",     handleReturn);
-    return () => {
-      (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[])
-        .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
-    };
-  }, [hasConnected, handleReturn, handleLeave]);
+    updateMediaSessionControls({
+      title,
+      micOn: micEnabled,
+      camOn: camEnabled,
+      onToggleMic: () => toggleMicFnRef.current?.(),
+      onToggleCam: () => toggleCamFnRef.current?.(),
+      onReturn:    handleReturn,
+      onLeave:     handleLeave,
+    });
+  }, [hasConnected, title, micEnabled, camEnabled, handleReturn, handleLeave, toggleMicFnRef, toggleCamFnRef]);
 
   // ── Native foreground service: keeps audio alive when phone home button pressed ──
   // On Android native (Capacitor), startBackgroundAudio() also starts the
