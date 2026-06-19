@@ -2714,6 +2714,60 @@ const ViewerOverlay=({v,zIdx,viewers,onMinimize,onClose,onOpenSideBySide,matIcon
   );
 };
 
+/* ══ QURAN PIP — extracted to module level to prevent React Error #300.
+   Closing over parent handlers is done via props instead.              */
+const QuranPip=({onPointerDown,onPointerMove,onPointerUp,onClick,pipX,pipY}:{
+  onPointerDown:(e:React.PointerEvent)=>void;
+  onPointerMove:(e:React.PointerEvent)=>void;
+  onPointerUp:(e:React.PointerEvent)=>void;
+  onClick:()=>void;
+  pipX:number;pipY:number;
+})=>(
+  <div onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+    onClick={onClick} title="Open Quran"
+    style={{position:"fixed",left:pipX,top:pipY,zIndex:9001,
+      width:50,height:50,borderRadius:"50%",
+      background:"linear-gradient(135deg,#1a5276,#0a7a5e)",
+      boxShadow:"0 4px 18px rgba(0,0,0,.55)",
+      display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+      cursor:"grab",userSelect:"none",touchAction:"none",
+      border:"2px solid rgba(255,255,255,.22)"}}>
+    <span style={{fontSize:18}}>📖</span>
+    <span style={{fontSize:7,color:"rgba(255,255,255,.6)"}}>Quran</span>
+  </div>
+);
+
+/* ══ CTRL BUTTON — extracted to module level to prevent unmount-on-rerender.  */
+const Ctrl=({icon,label,onClick,active=false,danger=false,badge=0,bRef,tooltip,isMobile}:{
+  icon:React.ReactNode;label:string;onClick:()=>void;active?:boolean;danger?:boolean;
+  badge?:number;bRef?:any;tooltip?:string;isMobile?:boolean;
+})=>(
+  <div ref={bRef} style={{position:"relative",flexShrink:0}}>
+    <button
+      className={`gm-ctrl${danger?" danger":active?" active":""}`}
+      onClick={onClick} title={tooltip||label}
+      style={{background:"none",border:"none",cursor:"pointer",padding:0,outline:"none"}}
+    >
+      <div className="gm-ctrl-icon">
+        {icon}
+        {badge>0&&<span style={{position:"absolute",top:2,right:2,background:"#ea4335",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #202124"}}>{badge>9?"9+":badge}</span>}
+      </div>
+      {!isMobile&&<span className="gm-ctrl-label">{label}</span>}
+      <div className="gm-tooltip">{tooltip||label}</div>
+    </button>
+  </div>
+);
+
+/* ══ DEVICE ROW — extracted to module level.                                  */
+const DeviceRow=({label,selected,onClick}:{label:string;selected:boolean;onClick:()=>void})=>(
+  <button onClick={onClick} className="gm-sheet-item" style={{color:selected?"#8ab4f8":"rgba(255,255,255,.75)"}}>
+    <div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${selected?"#8ab4f8":"rgba(255,255,255,.3)"}`,background:selected?"#8ab4f8":"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      {selected&&<div style={{width:5,height:5,borderRadius:"50%",background:"#202124"}}/>}
+    </div>
+    <span style={{fontSize:13,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{label}</span>
+  </button>
+);
+
 const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
@@ -2955,27 +3009,13 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
     );
   };
 
-  /* ── Quran pip bubble ── */
-  const QuranPip=()=>(
-    <div onPointerDown={onQPipDown} onPointerMove={onQPipMove} onPointerUp={onQPipUp}
-      onClick={()=>setQuranMinimized(false)} title="Open Quran"
-      style={{position:"fixed",left:quranPip.x,top:quranPip.y,zIndex:9001,
-        width:50,height:50,borderRadius:"50%",
-        background:"linear-gradient(135deg,#1a5276,#0a7a5e)",
-        boxShadow:"0 4px 18px rgba(0,0,0,.55)",
-        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-        cursor:"grab",userSelect:"none",touchAction:"none",
-        border:"2px solid rgba(255,255,255,.22)"}}>
-      <span style={{fontSize:18}}>📖</span>
-      <span style={{fontSize:7,color:"rgba(255,255,255,.6)"}}>Quran</span>
-    </div>
-  );
+  /* ── Quran pip bubble — now module-level component, receives handlers as props ── */
 
   return(
     <>
       {/* Single minimized-materials tray badge */}
       {renderMinimizedMaterialsTray()}
-      {quranOpen&&quranMinimized&&<QuranPip/>}
+      {quranOpen&&quranMinimized&&<QuranPip onPointerDown={onQPipDown} onPointerMove={onQPipMove} onPointerUp={onQPipUp} onClick={()=>setQuranMinimized(false)} pipX={quranPip.x} pipY={quranPip.y}/>}
 
       {/* Quran viewer (non-minimized) */}
       {quranOpen&&!quranMinimized&&(
@@ -4293,33 +4333,8 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
   const portal=typeof document!=="undefined"?document.body:null;
   const SZ=isMobile?18:20;const IS={width:SZ,height:SZ};
 
-  /* ── Google Meet style ctrl button ── */
-  const Ctrl=({icon,label,onClick,active=false,danger=false,badge=0,bRef,tooltip}:{icon:React.ReactNode;label:string;onClick:()=>void;active?:boolean;danger?:boolean;badge?:number;bRef?:any;tooltip?:string})=>(
-    <div ref={bRef} style={{position:"relative",flexShrink:0}}>
-      <button
-        className={`gm-ctrl${danger?" danger":active?" active":""}`}
-        onClick={onClick} title={tooltip||label}
-        style={{background:"none",border:"none",cursor:"pointer",padding:0,outline:"none"}}
-      >
-        <div className="gm-ctrl-icon">
-          {icon}
-          {badge>0&&<span style={{position:"absolute",top:2,right:2,background:"#ea4335",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #202124"}}>{badge>9?"9+":badge}</span>}
-        </div>
-        {!isMobile&&<span className="gm-ctrl-label">{label}</span>}
-        <div className="gm-tooltip">{tooltip||label}</div>
-      </button>
-    </div>
-  );
-
-  /* ── Device list item ── */
-  const DeviceRow=({label,selected,onClick}:{label:string;selected:boolean;onClick:()=>void})=>(
-    <button onClick={onClick} className="gm-sheet-item" style={{color:selected?"#8ab4f8":"rgba(255,255,255,.75)"}}>
-      <div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${selected?"#8ab4f8":"rgba(255,255,255,.3)"}`,background:selected?"#8ab4f8":"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-        {selected&&<div style={{width:5,height:5,borderRadius:"50%",background:"#202124"}}/>}
-      </div>
-      <span style={{fontSize:13,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{label}</span>
-    </button>
-  );
+  /* ── Ctrl + DeviceRow are now module-level components (see above SubjectMaterialsPanel).
+     Pass isMobile as a prop where needed. ── */
 
   return(<>
     {/* Click-away */}
@@ -4505,21 +4520,21 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           {/* CENTER */}
           <div style={{display:"flex",alignItems:"center",gap:8,flex:1,justifyContent:"center"}}>
             {isPrivileged
-              ?<Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
-              :<Ctrl icon={<Hand style={{...IS,color:handUp?"#fbbf24":"#e8eaed"}}/>} label={handUp?"Lower":"Raise Hand"} onClick={toggleHand} active={handUp} tooltip={handUp?"Lower hand":"Raise hand"}/>
+              ?<Ctrl isMobile={isMobile} icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
+              :<Ctrl isMobile={isMobile} icon={<Hand style={{...IS,color:handUp?"#fbbf24":"#e8eaed"}}/>} label={handUp?"Lower":"Raise Hand"} onClick={toggleHand} active={handUp} tooltip={handUp?"Lower hand":"Raise hand"}/>
             }
             {!isPrivileged&&canStudentWriteProp&&(
-              <Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
+              <Ctrl isMobile={isMobile} icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
             )}
             {/* Screen share — all users */}
-            <Ctrl icon={screenSharing?<MonitorOff style={{...IS,color:"#34d399"}}/>:<Monitor style={{...IS,color:"#e8eaed"}}/>} label={screenSharing?"Stop Share":"Share"} onClick={onScreenShare} active={screenSharing} tooltip={screenSharing?"Stop screen share":"Share screen"}/>
-            <Ctrl icon={<MessageCircle style={{...IS,color:"#e8eaed"}}/>} label="Chat" onClick={onToggleChat} badge={chatUnread} tooltip="Open chat"/>
+            <Ctrl isMobile={isMobile} icon={screenSharing?<MonitorOff style={{...IS,color:"#34d399"}}/>:<Monitor style={{...IS,color:"#e8eaed"}}/>} label={screenSharing?"Stop Share":"Share"} onClick={onScreenShare} active={screenSharing} tooltip={screenSharing?"Stop screen share":"Share screen"}/>
+            <Ctrl isMobile={isMobile} icon={<MessageCircle style={{...IS,color:"#e8eaed"}}/>} label="Chat" onClick={onToggleChat} badge={chatUnread} tooltip="Open chat"/>
             {/* Participants — desktop */}
-            <Ctrl icon={<Users style={{...IS,color:partPanelOpen?"#8ab4f8":"#e8eaed"}}/>} label="People" onClick={onTogglePartPanel} active={partPanelOpen} tooltip="Participants"/>
-            <Ctrl icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
+            <Ctrl isMobile={isMobile} icon={<Users style={{...IS,color:partPanelOpen?"#8ab4f8":"#e8eaed"}}/>} label="People" onClick={onTogglePartPanel} active={partPanelOpen} tooltip="Participants"/>
+            <Ctrl isMobile={isMobile} icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
             {/* Timer indicator */}
             {/* Timer removed */}
-            <Ctrl icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
+            <Ctrl isMobile={isMobile} icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
           </div>
           {/* RIGHT */}
           <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
