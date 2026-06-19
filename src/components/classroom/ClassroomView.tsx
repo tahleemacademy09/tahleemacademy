@@ -2648,6 +2648,64 @@ const detectMaterialType=(file:File):string=>{
   return"Document";
 };
 
+/* ══ VIEWER OVERLAY — module-level component ══
+   CRITICAL: This MUST be defined outside SubjectMaterialsPanel.
+   When defined as an inner component, React sees a new component type on every
+   render of SubjectMaterialsPanel, causing it to unmount+remount the viewer —
+   producing the "shaking / close-and-reopen" flicker bug.
+   By being at module level the identity is stable and React only updates props. */
+interface ViewerOverlayProps {
+  v: {id:string;material:any;minimized:boolean;pipX:number;pipY:number};
+  zIdx: number;
+  viewers: {id:string;material:any;minimized:boolean;pipX:number;pipY:number}[];
+  onMinimize: (vid:string)=>void;
+  onClose: (vid:string)=>void;
+  onOpenSideBySide: (material:any)=>void;
+  matIcon: (m:any)=>string;
+}
+const ViewerOverlay=({v,zIdx,viewers,onMinimize,onClose,onOpenSideBySide,matIcon}:ViewerOverlayProps)=>{
+  // Animation only fires on the very first mount — never on subsequent prop updates.
+  // didMount starts false; after the first paint the effect sets it true so any
+  // future re-renders (state changes, layout shifts) skip the slide-in animation.
+  const didMount=useRef(false);
+  const [mounted, setMounted] = useState(false);
+  useEffect(()=>{
+    if(!didMount.current){didMount.current=true;setMounted(true);}
+  },[]);
+  if(v.minimized) return null;
+  return(
+  <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:mounted?"none":"slide-right .18s ease both"}}>
+    <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+      <button onClick={()=>onMinimize(v.id)} title="Minimize"
+        style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <ChevronDown style={{width:14,height:14}}/>
+      </button>
+      <button onClick={()=>onClose(v.id)}
+        style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+        <X style={{width:12,height:12}}/> Close
+      </button>
+      <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>
+        {matIcon(v.material)} {v.material?.title||v.material?.name||"Material"}
+      </span>
+      {viewers.length<5&&(
+        <button onClick={()=>onOpenSideBySide(v.material)} title="Open a second copy side-by-side"
+          style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.6)",borderRadius:8,padding:"4px 9px",cursor:"pointer",fontSize:11,fontFamily:"'Google Sans',sans-serif",display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+          ⊕ Side-by-side
+        </button>
+      )}
+      {viewers.length>1&&(
+        <span style={{background:"rgba(10,122,94,.4)",color:"#fff",borderRadius:10,padding:"2px 7px",fontSize:10,fontWeight:700,flexShrink:0}}>
+          {viewers.findIndex(x=>x.id===v.id)+1}/{viewers.length}
+        </span>
+      )}
+    </div>
+    <div style={{flex:1,overflow:"hidden"}}>
+      <InClassMaterialViewer material={v.material} onClose={()=>onClose(v.id)}/>
+    </div>
+  </div>
+  );
+};
+
 const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
@@ -2836,7 +2894,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
 
   /* ── Single tray badge for ALL minimized viewers ── */
   const[matTrayOpen,setMatTrayOpen]=useState(false);
-  const MinimizedMaterialsTray=(()=>{
+  const renderMinimizedMaterialsTray=()=>{
     const minimized=viewers.filter(v=>v.minimized);
     if(!minimized.length) return null;
     return(
@@ -2887,46 +2945,6 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         )}
       </div>
     );
-  })();
-
-  /* ── Full-screen overlay for one viewer slot ── */
-  /* Fix: don't re-run the open animation on every render — only on first mount */
-  const ViewerOverlay=({v,zIdx}:{v:{id:string;material:any;minimized:boolean;pipX:number;pipY:number};zIdx:number})=>{
-    const didMount=useRef(false);
-    const animStyle=didMount.current?"none":"slide-right .18s ease both";
-    useEffect(()=>{didMount.current=true;},[]);
-    if(v.minimized) return null;
-    return(
-    <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:animStyle}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-        <button onClick={()=>minimizeViewer(v.id)} title="Minimize"
-          style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <ChevronDown style={{width:14,height:14}}/>
-        </button>
-        <button onClick={()=>closeViewer(v.id)}
-          style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-          <X style={{width:12,height:12}}/> Close
-        </button>
-        <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>
-          {MAT_ICON(v.material)} {v.material?.title||v.material?.name||"Material"}
-        </span>
-        {viewers.length<5&&(
-          <button onClick={()=>openViewer(v.material)} title="Open a second copy side-by-side"
-            style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.6)",borderRadius:8,padding:"4px 9px",cursor:"pointer",fontSize:11,fontFamily:"'Google Sans',sans-serif",display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-            ⊕ Side-by-side
-          </button>
-        )}
-        {viewers.length>1&&(
-          <span style={{background:"rgba(10,122,94,.4)",color:"#fff",borderRadius:10,padding:"2px 7px",fontSize:10,fontWeight:700,flexShrink:0}}>
-            {viewers.findIndex(x=>x.id===v.id)+1}/{viewers.length}
-          </span>
-        )}
-      </div>
-      <div style={{flex:1,overflow:"hidden"}}>
-        <InClassMaterialViewer material={v.material} onClose={()=>closeViewer(v.id)}/>
-      </div>
-    </div>
-    );
   };
 
   /* ── Quran pip bubble ── */
@@ -2948,7 +2966,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   return(
     <>
       {/* Single minimized-materials tray badge */}
-      {MinimizedMaterialsTray}
+      {renderMinimizedMaterialsTray()}
       {quranOpen&&quranMinimized&&<QuranPip/>}
 
       {/* Quran viewer (non-minimized) */}
@@ -2971,7 +2989,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
 
       {/* Material viewer overlays — stacked by z-index */}
       {viewers.filter(v=>!v.minimized).map((v,i)=>(
-        <ViewerOverlay key={v.id} v={v} zIdx={8960+i}/>
+        <ViewerOverlay key={v.id} v={v} zIdx={8960+i} viewers={viewers} onMinimize={minimizeViewer} onClose={closeViewer} onOpenSideBySide={openViewer} matIcon={MAT_ICON}/>
       ))}
 
       {/* Material list panel — always rendered underneath */}
@@ -4685,6 +4703,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     };
   },[]);
   const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
+  // FIX Bug 4: ref mirrors chatOpen so the unread-counter subscription callback
+  // always reads the current value instead of a stale closure capture.
+  const chatOpenRef=useRef(false);
+  useEffect(()=>{chatOpenRef.current=chatOpen;},[chatOpen]);
   useEffect(()=>{
     if(!sessionId||phase!=="live")return;
     const ch=supabase.channel(`chat-unread-${sessionId}`)
@@ -4692,7 +4714,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         (payload:any)=>{
           if(payload.new?.sender_id===user?.id)return;
           if(payload.new?.type==="system")return;
-          setChatUnread(n=>{const panelClosed=!chatOpen;return panelClosed?n+1:0;});
+          // FIX: read chatOpen via a ref to avoid stale closure (the original
+          // captured chatOpen's value at subscription time, so the badge never
+          // cleared when the panel was opened after the subscription was created)
+          setChatUnread(n=>{
+            const panelOpen=chatOpenRef.current;
+            return panelOpen?0:n+1;
+          });
         })
       .subscribe();
     return()=>{supabase.removeChannel(ch);};
