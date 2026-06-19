@@ -1758,7 +1758,6 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
           <ChevronDown style={{width:13,height:13}}/>
           <span>Minimize</span>
         </button>
-        <span style={{fontSize:15,flexShrink:0}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
         <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
         {resumeBadge&&(
           <span style={{fontSize:10,color:"rgba(255,255,255,.5)",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"2px 7px",flexShrink:0}}>
