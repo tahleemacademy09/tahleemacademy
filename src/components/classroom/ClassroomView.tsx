@@ -38,7 +38,7 @@ import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
 import PDFViewer, { prewarmPDF } from "./PDFViewer";
-// LiveClassFilePanel removed
+// LiveClassFilePanel was removed; restored below as ClassMaterialsLivePanel
 import { useIsMobile }   from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -2768,18 +2768,25 @@ const DeviceRow=({label,selected,onClick}:{label:string;selected:boolean;onClick
   </button>
 );
 
-const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord,viewers,openViewer,closeViewer,minimizeViewer,restoreViewer,setViewerPip}:any)=>{
+const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
-  // ── viewers state is now LIFTED to ClassroomView (passed as props above) ──
-  // This prevents Error #300 when matPanelOpen toggles unmounts this component
-  // while ViewerOverlay hooks are still active.
+  // ── Multi-viewer: each opened material is its own layer ────────────────
+  const[viewers,setViewers]=useState<{id:string;material:any;minimized:boolean;pipX:number;pipY:number}[]>([]);
   const[quranOpen,setQuranOpen]=useState(false);
   const[quranMinimized,setQuranMinimized]=useState(false);
   const[quranPip,setQuranPip]=useState({x:20,y:70});
   // compat shim used by legacy delete handler
-  const viewing=viewers.find((v:any)=>!v.minimized)?.material??null;
+  const viewing=viewers.find(v=>!v.minimized)?.material??null;
+  const openViewer=(m:any)=>{
+    const idx=viewers.length;
+    setViewers(v=>[...v,{id:`${m.id}-${Date.now()}`,material:m,minimized:false,pipX:18+idx*58,pipY:80+idx*4}]);
+  };
+  const closeViewer=(vid:string)=>setViewers(v=>v.filter(x=>x.id!==vid));
+  const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
+  const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
+  const setViewerPip=(vid:string,px:number,py:number)=>setViewers(v=>v.map(x=>x.id===vid?{...x,pipX:px,pipY:py}:x));
 
   // ── Back button / Android swipe → minimize topmost open viewer ──────────
   useEffect(()=>{
@@ -3028,8 +3035,10 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         </div>
       )}
 
-      {/* Material viewer overlays — now rendered in ClassroomView directly
-          so they survive matPanelOpen toggling. See ViewerOverlay block below. */}
+      {/* Material viewer overlays — stacked by z-index */}
+      {viewers.filter(v=>!v.minimized).map((v,i)=>(
+        <ViewerOverlay key={v.id} v={v} zIdx={8960+i} viewers={viewers} onMinimize={minimizeViewer} onClose={closeViewer} onOpenSideBySide={openViewer} matIcon={MAT_ICON}/>
+      ))}
 
       {/* Material list panel — always rendered underneath */}
       <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
@@ -3264,6 +3273,190 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
           })}
         </div>
       </div>
+      </div>
+    </>
+  );
+};
+
+/* ══ CLASS MATERIALS LIVE PANEL ══
+   Restored panel (previously removed). Shows a single live-updating list
+   combining: the Full Quran entry + every uploaded subject material.
+   "Live" = subscribes to Supabase realtime so new uploads from the teacher
+   appear instantly for every student without needing to reopen the panel. */
+const ClassMaterialsLivePanel=({subjectId,subject,onClose}:any)=>{
+  const[mats,setMats]=useState<any[]>([]);
+  const[busy,setBusy]=useState(true);
+
+  // ── Multi-viewer: each opened material is its own layer (same pattern as SubjectMaterialsPanel) ──
+  const[viewers,setViewers]=useState<{id:string;material:any;minimized:boolean;pipX:number;pipY:number}[]>([]);
+  const[quranOpen,setQuranOpen]=useState(false);
+  const[quranMinimized,setQuranMinimized]=useState(false);
+
+  const openViewer=(m:any)=>{
+    const idx=viewers.length;
+    setViewers(v=>[...v,{id:`${m.id}-${Date.now()}`,material:m,minimized:false,pipX:18+idx*58,pipY:80+idx*4}]);
+  };
+  const closeViewer=(vid:string)=>setViewers(v=>v.filter(x=>x.id!==vid));
+  const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
+  const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
+
+  const reloadMats=()=>{
+    supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
+      .then(({data}:any)=>{setMats(data||[]);setBusy(false);});
+  };
+
+  useEffect(()=>{reloadMats();},[subjectId]);
+
+  // ── Realtime: new/edited/deleted materials show up instantly (this is the "Live" part) ──
+  useEffect(()=>{
+    if(!subjectId)return;
+    const ch=supabase.channel(`class-mats-live-${subjectId}`)
+      .on("postgres_changes",{event:"*",schema:"public",table:"subject_materials",filter:`subject_id=eq.${subjectId}`},reloadMats)
+      .subscribe();
+    return()=>{supabase.removeChannel(ch);};
+  },[subjectId]);
+
+  // ── Back button / Android swipe → minimize topmost open viewer ──────────
+  useEffect(()=>{
+    window.history.pushState({matLiveSentinel:true},"");
+    const handleBack=()=>{
+      const openV=viewers.filter(x=>!x.minimized);
+      if(openV.length>0){minimizeViewer(openV[openV.length-1].id);window.history.pushState({matLiveSentinel:true},"");return;}
+      if(quranOpen&&!quranMinimized){setQuranMinimized(true);window.history.pushState({matLiveSentinel:true},"");return;}
+    };
+    window.addEventListener("popstate",handleBack);
+    return()=>window.removeEventListener("popstate",handleBack);
+  },[viewers,quranOpen,quranMinimized]);
+
+  const MAT_ICON=(m:any)=>MAT_TYPE_ICON[m?.material_type||"document"]||"📄";
+
+  return(
+    <>
+      {/* Minimized material pips */}
+      {viewers.filter(v=>v.minimized).map(v=>(
+        <div key={v.id} onClick={()=>restoreViewer(v.id)} title={`Open: ${v.material?.title||"Material"}`}
+          style={{position:"fixed",left:v.pipX,top:v.pipY,zIndex:9000,width:50,height:50,borderRadius:"50%",
+            background:"linear-gradient(135deg,#0a7a5e,#1a5276)",boxShadow:"0 4px 18px rgba(0,0,0,.55)",
+            display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",
+            border:"2px solid rgba(255,255,255,.22)",fontSize:18}}>
+          {MAT_ICON(v.material)}
+        </div>
+      ))}
+
+      {/* Quran viewer overlay */}
+      {quranOpen&&!quranMinimized&&(
+        <div style={{position:"fixed",inset:0,zIndex:8950,background:"#202124",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+            <button onClick={()=>setQuranMinimized(true)} title="Minimize"
+              style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <ChevronDown style={{width:14,height:14}}/>
+            </button>
+            <button onClick={()=>setQuranOpen(false)}
+              style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+              <X style={{width:12,height:12}}/> Close
+            </button>
+            <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>📖 Full Quran</span>
+          </div>
+          <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
+        </div>
+      )}
+      {quranOpen&&quranMinimized&&(
+        <div onClick={()=>setQuranMinimized(false)} title="Open: Full Quran"
+          style={{position:"fixed",left:20,top:70,zIndex:9000,width:50,height:50,borderRadius:"50%",
+            background:"linear-gradient(135deg,#1a3d24,#276749)",boxShadow:"0 4px 18px rgba(0,0,0,.55)",
+            display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",
+            border:"2px solid rgba(183,121,31,.5)",fontSize:18}}>
+          📖
+        </div>
+      )}
+
+      {/* Material viewer overlays — stacked by z-index */}
+      {viewers.filter(v=>!v.minimized).map((v,i)=>(
+        <div key={v.id} style={{position:"fixed",inset:0,zIndex:8960+i,background:"#202124",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+            <button onClick={()=>minimizeViewer(v.id)} title="Minimize material — class stays open"
+              style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <ChevronDown style={{width:14,height:14}}/>
+            </button>
+            <span style={{fontSize:15,flexShrink:0}}>{MAT_ICON(v.material)}</span>
+            <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.material?.title||"Material"}</span>
+            <button onClick={()=>closeViewer(v.id)} title="Close material"
+              style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <X style={{width:14,height:14}}/>
+            </button>
+          </div>
+          <div style={{flex:1,overflow:"hidden"}}>
+            <InClassMaterialViewer material={v.material} onClose={()=>closeViewer(v.id)}/>
+          </div>
+        </div>
+      ))}
+
+      {/* Material list panel — always rendered underneath */}
+      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
+        <div onClick={e=>e.stopPropagation()} style={{
+          position:"absolute",top:0,right:0,bottom:0,width:"min(340px,100%)",
+          background:"#202124",borderLeft:"1px solid rgba(255,255,255,.08)",
+          display:"flex",flexDirection:"column",
+          animation:"slide-right .2s cubic-bezier(.34,1.2,.64,1) both",
+          boxShadow:"-6px 0 28px rgba(0,0,0,.5)",
+        }}>
+          {/* Header */}
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"#2d2e30",height:50}}>
+            <span style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"center",width:9,height:9,flexShrink:0}}>
+              <span style={{position:"absolute",width:"100%",height:"100%",borderRadius:"50%",background:"#ef4444",opacity:.6,animation:"tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite"}}/>
+              <span style={{position:"relative",width:7,height:7,borderRadius:"50%",background:"#ef4444",display:"block"}}/>
+            </span>
+            <span style={{flex:1,fontSize:14,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Class Materials Live</span>
+            <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <X style={{width:14,height:14}}/>
+            </button>
+          </div>
+
+          {/* Combined list: Quran pinned at top + all subject materials */}
+          <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
+            <div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>ALL FILES</div>
+
+            {/* Quran — always pinned first */}
+            <button onClick={()=>setQuranOpen(true)} style={{
+              width:"100%",boxSizing:"border-box" as const,marginBottom:6,padding:"10px 10px",borderRadius:10,
+              border:"1px solid rgba(183,121,31,.4)",
+              background:"linear-gradient(135deg,rgba(26,61,36,.9),rgba(39,103,73,.9))",
+              cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:10,
+            }}>
+              <div style={{fontSize:20,flexShrink:0}}>📖</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:"'Amiri',serif",fontSize:14,fontWeight:700,color:"#fef9ee"}}>Full Quran</div>
+                <div style={{fontSize:11,color:"rgba(255,255,255,.5)"}}>Arabic · Translation · Tafseer</div>
+              </div>
+              <ChevronRight style={{width:13,height:13,color:"#34d399",flexShrink:0}}/>
+            </button>
+
+            {busy&&<div style={{display:"flex",justifyContent:"center",padding:32}}><div style={{width:22,height:22,border:`2px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
+            {!busy&&mats.length===0&&(
+              <div style={{textAlign:"center" as const,padding:"24px 16px",color:"rgba(255,255,255,.3)"}}>
+                <div style={{fontSize:26,marginBottom:6}}>📭</div>
+                <p style={{fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>No other materials yet</p>
+              </div>
+            )}
+            {mats.map(m=>{
+              const icon=MAT_ICON(m);
+              return(
+                <button key={m.id} onClick={()=>openViewer(m)} style={{
+                  width:"100%",boxSizing:"border-box" as const,marginBottom:6,padding:"10px 10px",borderRadius:10,
+                  border:"1px solid rgba(255,255,255,.08)",background:"rgba(255,255,255,.04)",
+                  cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:10,
+                }}>
+                  <div style={{fontSize:20,flexShrink:0}}>{icon}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <p style={{color:"#fff",fontWeight:600,fontSize:14,margin:"0 0 3px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" as const}}>{m.title||m.name||"Untitled"}</p>
+                    <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0,textTransform:"capitalize" as const}}>{m.material_type||"file"}</p>
+                  </div>
+                  <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.3)",flexShrink:0}}/>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </>
   );
@@ -4365,7 +4558,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       </div>,portal
     )}
 
-    {/* More menu — clean (removed: Minimize Classroom, Class Materials Live, Group Recitation, Start Timer, Launch Quiz) */}
+    {/* More menu (removed: Minimize Classroom, Group Recitation, Start Timer, Launch Quiz). Class Materials Live restored. */}
     {moreOpen&&portal&&createPortal(
       <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right,minWidth:240}}>
         {isMobile&&<>
@@ -4392,6 +4585,9 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         </button>
         <button className="gm-more-item" onClick={()=>{onToggleMaterials();setMoreOpen(false);}}>
           <Eye style={{width:16,height:16,opacity:.7}}/> Subject Materials
+        </button>
+        <button className="gm-more-item" onClick={()=>{onToggleLiveFiles();setMoreOpen(false);}} style={{color:liveFilesOpen?"#34d399":"#e8eaed"}}>
+          <Eye style={{width:16,height:16,opacity:.7}}/> Class Materials Live
         </button>
         {isPrivileged&&<>
           <button className="gm-more-item" onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{color:canStudentWriteProp?"#34d399":"#e8eaed"}}>
@@ -4752,17 +4948,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[sideTab,setSideTab]=useState<"chat"|"polls">("chat");const[showEnd,setShowEnd]=useState(false);
   // FIX BUG 2: quizOpen state — LiveQuizOverlay was permanently disabled with hardcoded isOpen={false}
   const[quizOpen,setQuizOpen]=useState(false);
-  const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
-
-  /* ── LIFTED: viewers state lives here so ViewerOverlay survives matPanelOpen toggling.
-     Previously inside SubjectMaterialsPanel — when the panel closed (matPanelOpen=false),
-     the component unmounted and destroyed all open viewer hooks, causing Error #300. ── */
-  const[viewers,setViewers]=useState<{id:string;material:any;minimized:boolean;pipX:number;pipY:number}[]>([]);
-  const openViewer=(m:any)=>{const idx=viewers.length;setViewers(v=>[...v,{id:`${m.id}-${Date.now()}`,material:m,minimized:false,pipX:18+idx*58,pipY:80+idx*4}]);};
-  const closeViewer=(vid:string)=>setViewers(v=>v.filter(x=>x.id!==vid));
-  const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
-  const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
-  const setViewerPip=(vid:string,px:number,py:number)=>setViewers(v=>v.map(x=>x.id===vid?{...x,pipX:px,pipY:py}:x));
+  const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);const[liveFilesOpen,setLiveFilesOpenTop]=useState(false);
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
   // Student recording — lifted here so SubjectMaterialsPanel can also trigger it
   const[stuRec,setStuRec]=useState(false);
@@ -4814,8 +5000,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[timerRunning,setTimerRunning]=useState(false);
   const[timerInput,setTimerInput]=useState("5");
   const timerRef=useRef<any>(null);
-  // Feature 11: LiveClassFilePanel (in-class materials)
-  const[liveFilesOpen,setLiveFilesOpen]=useState(false);
   // Feature 13: Hand queue management
   const[handQueueOpen,setHandQueueOpen]=useState(false);
   // Feature 15: Recording indicator for students
@@ -5309,17 +5493,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — absolute inside content, footer always visible */}
-              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop} viewers={viewers} openViewer={openViewer} closeViewer={closeViewer} minimizeViewer={minimizeViewer} restoreViewer={restoreViewer} setViewerPip={setViewerPip}/>}
-              {/* ── ViewerOverlay rendered HERE (not inside SubjectMaterialsPanel) so
-                  open material viewers survive matPanelOpen toggling and minimize.
-                  Previously, closing the panel unmounted SubjectMaterialsPanel which
-                  destroyed ViewerOverlay hooks mid-render → React Error #300 crash. ── */}
-              {viewers.filter((v:any)=>!v.minimized).map((v:any,i:number)=>(
-                <ViewerOverlay key={v.id} v={v} zIdx={8960+i} viewers={viewers} onMinimize={minimizeViewer} onClose={closeViewer} onOpenSideBySide={openViewer} matIcon={MAT_ICON}/>
-              ))}
+              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
+              {liveFilesOpen&&<ClassMaterialsLivePanel subjectId={subject.id} subject={subject} onClose={()=>setLiveFilesOpenTop(false)}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
-              {/* Class Materials (Live) panel removed */}
               {/* Feature 3: Desktop participants panel */}
               {partPanelOpen&&!isMobile&&createPortal(
                 <div style={{position:"fixed",top:56,right:0,bottom:80,width:300,background:"#2D2E30",borderLeft:"1px solid rgba(255,255,255,.08)",zIndex:800,display:"flex",flexDirection:"column",animation:"slide-right .2s ease",overflow:"hidden"}}>
@@ -5475,7 +5652,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>{}}
             onScreenShare={toggleScreenShare} screenSharing={screenSharing}
             onToggleTimer={()=>{}} timerRunning={false} timerDisplay={""}
-            onToggleLiveFiles={()=>{}} liveFilesOpen={false}
+            onToggleLiveFiles={()=>setLiveFilesOpenTop(v=>!v)} liveFilesOpen={liveFilesOpen}
             onToggleHandQueue={()=>setHandQueueOpen(v=>!v)}
             onToggleAttendance={()=>setAttendanceOpen(v=>!v)}
             onSpotlight={(id:string)=>setSpotlightId(prev=>prev===id?null:id)}
