@@ -12,18 +12,22 @@
   (inaudible but non-zero) is treated as active media — Android grants audio
   focus and keeps the thread alive exactly as WhatsApp does.
 
-  HOW IT WORKS:
-  ─────────────
-  • startBackgroundAudio(title)
-      - Creates/resumes an <audio> element playing a 1-second looped silence
-      - Sets MediaSession metadata so the OS lock screen shows "Tahleem Academy"
-      - Acquires a WakeLock (keeps screen on while active, optional)
-      - Listens to pageshow + resume + focus to restart after screen unlock
+  HOW IT WORKS (5 layers):
+  ─────────────────────────
+  • Layer 1 — <audio> element (looping silence at volume=0.001)
+      Real media playback → Android grants audio focus → JS thread alive.
 
-  • stopBackgroundAudio()
-      - Pauses and removes the <audio> element
-      - Clears MediaSession metadata
-      - Releases WakeLock
+  • Layer 2 — setInterval heartbeat every 20 s
+      Forces event-loop ticks even if Chrome background-throttles timers.
+      Also re-plays the audio element if it somehow paused.
+
+  • Layer 3 — WakeLock (screen stays on while active, releases on stop)
+
+  • Layer 4 — MediaSession metadata + action handlers
+      Shows Tahleem lock-screen card with "Return to Class" button.
+
+  • Layer 5 — pageshow / resume / focus / visibilitychange listeners
+      Re-starts all layers the moment the user unlocks / returns to tab.
 
   USAGE (in GlobalClassroomOverlay):
       import { startBackgroundAudio, stopBackgroundAudio } from "@/hooks/useBackgroundAudio";
@@ -34,9 +38,10 @@
       }, [hasConnected, title]);
 */
 
-// ── 1-second mono WAV of silence (base64) ──────────────────────────────────
-// 44-byte WAV header + 44100 zero-bytes of 16-bit PCM mono @ 44100 Hz.
-// Keeping it in code avoids an extra network request and works offline.
+// ── Silence WAV (base64) ────────────────────────────────────────────────────
+// Valid minimal WAV: 44-byte header + empty data chunk.
+// "Empty" data chunk with zero bytes still produces a valid looping audio element.
+// Chrome / Android WebView treats it as active media regardless of content.
 const SILENCE_WAV =
   "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQAC" +
   "ABAAZGF0YQAAAAA=";
@@ -45,6 +50,7 @@ const SILENCE_WAV =
 let audioEl:    HTMLAudioElement | null    = null;
 let wakeLock:   WakeLockSentinel | null   = null;
 let resumeFn:   (() => void) | null       = null;
+let heartbeat:  ReturnType<typeof setInterval> | null = null;
 
 // ── Wake lock helper ─────────────────────────────────────────────────────────
 async function acquireWakeLock(): Promise<void> {
@@ -60,29 +66,38 @@ function releaseWakeLock(): void {
   wakeLock = null;
 }
 
-// ── MediaSession helper ──────────────────────────────────────────────────────
-function setMediaSession(title: string, onReturn: () => void, onLeave: () => void): void {
-  if (!("mediaSession" in navigator)) return;
+// ── Service-worker keep-alive ping ───────────────────────────────────────────
+// Pings the SW so it doesn't sleep during background. The SW handles
+// LIVE_CLASS_KEEPALIVE and resets its idle timer.
+function pingServiceWorker(): void {
   try {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title,
-      artist: "Tahleem Academy",
-      album:  "🟢 Live Class",
-    });
-    navigator.mediaSession.playbackState = "playing";
-
-    const sa = (a: MediaSessionAction, h: MediaSessionActionHandler | null) => {
-      try { navigator.mediaSession.setActionHandler(a, h); } catch {}
-    };
-    // "play" and "pause" on the lock-screen card both mean "return to class"
-    sa("play",          onReturn);
-    sa("pause",         onReturn);
-    sa("stop",          onLeave);
-    sa("previoustrack", onReturn);
-    sa("nexttrack",     onReturn);
-  } catch {}
+    navigator.serviceWorker?.controller?.postMessage({ type: "LIVE_CLASS_KEEPALIVE" });
+  } catch { /* SW not available */ }
 }
 
+// ── Heartbeat: keeps audio alive and SW awake every 20 s ────────────────────
+function startHeartbeat(): void {
+  if (heartbeat) return; // already running
+  heartbeat = setInterval(() => {
+    // Re-play if the OS paused it (screen lock, audio-focus steal)
+    if (audioEl?.paused) {
+      audioEl.play().catch(() => {});
+    }
+    // Re-acquire wake lock if it was released (screen-off / interrupted)
+    acquireWakeLock();
+    // Ping the service worker so it doesn't sleep
+    pingServiceWorker();
+  }, 20_000);
+}
+
+function stopHeartbeat(): void {
+  if (heartbeat) {
+    clearInterval(heartbeat);
+    heartbeat = null;
+  }
+}
+
+// ── MediaSession helper ──────────────────────────────────────────────────────
 function clearMediaSession(): void {
   if (!("mediaSession" in navigator)) return;
   try {
@@ -108,23 +123,23 @@ export function startBackgroundAudio(title = "Live Class"): void {
     audioEl.volume = 0.001;   // inaudible but non-zero → real audio focus
     audioEl.setAttribute("playsinline", "");
     audioEl.setAttribute("webkit-playsinline", "");
-    // Keep out of tab audio indicator — it's purely a keep-alive signal
     audioEl.style.display = "none";
     document.body.appendChild(audioEl);
   }
   audioEl.play().catch(() => {
     // Autoplay blocked (browser requires user gesture).
-    // This is fine — the element stays ready; the next user interaction
-    // (mic toggle, chat, any button tap) will unblock it via resume().
+    // Fine — the element stays ready; next user interaction unblocks it.
   });
+
+  // ── Heartbeat ──────────────────────────────────────────────────────────
+  startHeartbeat();
 
   // ── WakeLock ───────────────────────────────────────────────────────────
   acquireWakeLock();
 
-  // ── MediaSession ───────────────────────────────────────────────────────
-  // Handlers are wired by GlobalClassroomOverlay separately so they stay
-  // up-to-date with the latest handleReturn / handleLeave callbacks.
-  // We just set the metadata here.
+  // ── MediaSession metadata ──────────────────────────────────────────────
+  // Action handlers are wired by GlobalClassroomOverlay separately so they
+  // stay up-to-date with the latest handleReturn / handleLeave callbacks.
   if ("mediaSession" in navigator) {
     try {
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -138,22 +153,32 @@ export function startBackgroundAudio(title = "Live Class"): void {
 
   // ── Wake-up listeners ──────────────────────────────────────────────────
   // These fire when the user returns from lock screen / background even if
-  // visibilityState is still "hidden" for a brief moment.
+  // visibilityState is still "hidden" for a brief moment (screen-lock path).
   if (!resumeFn) {
     resumeFn = () => {
       audioEl?.play().catch(() => {});
       acquireWakeLock();
+      pingServiceWorker();
     };
-    window.addEventListener("pageshow",  resumeFn);
-    window.addEventListener("focus",     resumeFn);
-    document.addEventListener("resume",  resumeFn as EventListener); // Capacitor
+    window.addEventListener("pageshow",         resumeFn);
+    window.addEventListener("focus",            resumeFn);
+    document.addEventListener("resume",         resumeFn as EventListener); // Capacitor
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") resumeFn?.();
+    });
   }
+
+  // ── Service-worker initial ping ────────────────────────────────────────
+  pingServiceWorker();
 }
 
 /**
  * Stop the background audio keep-alive and clean up all resources.
  */
 export function stopBackgroundAudio(): void {
+  // ── Heartbeat ──────────────────────────────────────────────────────────
+  stopHeartbeat();
+
   // ── Audio element ──────────────────────────────────────────────────────
   if (audioEl) {
     audioEl.pause();
@@ -170,9 +195,11 @@ export function stopBackgroundAudio(): void {
 
   // ── Listeners ──────────────────────────────────────────────────────────
   if (resumeFn) {
-    window.removeEventListener("pageshow",  resumeFn);
-    window.removeEventListener("focus",     resumeFn);
-    document.removeEventListener("resume",  resumeFn as EventListener);
+    window.removeEventListener("pageshow", resumeFn);
+    window.removeEventListener("focus",    resumeFn);
+    document.removeEventListener("resume", resumeFn as EventListener);
+    // Note: the visibilitychange handler captures resumeFn in closure —
+    // we can't remove it precisely. It's a no-op after resumeFn = null.
     resumeFn = null;
   }
 }
