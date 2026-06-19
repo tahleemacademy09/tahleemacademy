@@ -258,7 +258,22 @@ function AICompose({ session, targets }: { session: any; targets: TargetOption[]
       setComposed((prev: any) => ({ ...prev, ...data }));
       toast({ title: "✨ Rephrased Islamically", description: "Review the updated wording before sending." });
     } catch (e: any) {
-      toast({ title: "Rephrase failed", description: e.message, variant: "destructive" });
+      // Graceful fallback: apply basic Islamic tone locally if edge function fails
+      const isApiKeyMissing = e?.message?.includes("non-2xx") || e?.message?.includes("500") || e?.message?.includes("ANTHROPIC_API_KEY");
+      if (isApiKeyMissing) {
+        // Apply simple Islamic prefix locally
+        const msgEn = composed.message_en || "";
+        const msgAr = composed.message_ar || "";
+        const hasGreeting = /assalamu|as-salamu|السلام/i.test(msgEn + msgAr);
+        setComposed((prev: any) => ({
+          ...prev,
+          message_en: hasGreeting ? msgEn : `Assalamu Alaikum wa Rahmatullahi wa Barakatuh,\n\n${msgEn}\n\nJazakumullahu Khayran`,
+          message_ar: msgAr && !hasGreeting ? `السلام عليكم ورحمة الله وبركاته،\n\n${msgAr}\n\nجزاكم الله خيراً` : msgAr,
+        }));
+        toast({ title: "🕌 Islamic tone applied (offline mode)", description: "Edge function unavailable — basic Islamic greeting added. Set ANTHROPIC_API_KEY in Supabase secrets for full AI rephrasing." });
+      } else {
+        toast({ title: "Rephrase failed", description: e.message, variant: "destructive" });
+      }
     }
     setRephrasing(false);
   };
