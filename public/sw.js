@@ -1,14 +1,12 @@
-// public/sw.js — Tahleem Academy Service Worker v7
-// v7 fixes (on top of v6):
-//   1. APP_URL is HARDCODED to the production domain — never self.location.origin.
-//      If the SW was registered while the app was open on a Lovable preview URL,
-//      self.location.origin would be wrong and every notification click would open
-//      the wrong site.
-//   2. sanitiseUrl() strips non-production hosts from push payload URLs so old
-//      notifications with a Lovable URL stored in join_url still navigate correctly.
-//   3. Cache name bumped to tahleem-v7 so the new SW auto-activates on deploy.
+// public/sw.js — Tahleem Academy Service Worker v8
+// v8 fixes (on top of v7):
+//   1. Added LIVE_CLASS_KEEPALIVE message handler — when a live class is active,
+//      useBackgroundAudio pings the SW every 20 s. The SW now responds with an ACK
+//      which keeps the SW event loop alive, preventing it from sleeping mid-class
+//      and dropping push subscriptions or background sync state.
+//   2. Cache name bumped to tahleem-v8 so the new SW auto-activates on deploy.
 
-const CACHE_NAME = "tahleem-v7";
+const CACHE_NAME = "tahleem-v8";
 const ICON       = "/icons/icon-192x192.png";
 const BADGE      = "/icons/icon-96x96.png";
 
@@ -142,6 +140,16 @@ self.addEventListener("pushsubscriptionchange", e => {
 self.addEventListener("message", e => {
   if (e.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
+    return;
+  }
+
+  // LIVE_CLASS_KEEPALIVE: sent every 20 s by useBackgroundAudio while a class
+  // is active. Responding keeps the SW's event loop alive so it doesn't sleep
+  // mid-class and drop push subscriptions or background sync.
+  // We respond with a no-op acknowledgement so the sender knows we're awake.
+  if (e.data?.type === "LIVE_CLASS_KEEPALIVE") {
+    e.source?.postMessage({ type: "LIVE_CLASS_KEEPALIVE_ACK" });
+    return;
   }
 });
 
