@@ -98,17 +98,82 @@ function stopHeartbeat(): void {
 }
 
 // ── MediaSession helper ──────────────────────────────────────────────────────
+const ALL_ACTIONS: MediaSessionAction[] = [
+  "play","pause","stop","previoustrack","nexttrack","seekbackward","seekforward",
+];
+
 function clearMediaSession(): void {
   if (!("mediaSession" in navigator)) return;
   try {
-    navigator.mediaSession.metadata       = null;
-    navigator.mediaSession.playbackState  = "none";
-    (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[])
-      .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
+    navigator.mediaSession.metadata      = null;
+    navigator.mediaSession.playbackState = "none";
+    ALL_ACTIONS.forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
   } catch {}
 }
 
 // ── Public API ───────────────────────────────────────────────────────────────
+
+/**
+ * Update the notification card to show live mic/camera controls.
+ *
+ * Android notification action mapping:
+ *   seekbackward  → "⏮" icon slot  → repurposed as Mute/Unmute Mic
+ *   seekforward   → "⏭" icon slot  → repurposed as Camera On/Off
+ *   previoustrack → Return to Class
+ *   stop          → Leave
+ *
+ * The MediaSession spec doesn't allow custom button labels, so we encode
+ * mic/cam state into the notification title so the user can read it at a
+ * glance from the lock screen:
+ *   "🎙 ON  📹 OFF — Al-hadith"
+ *
+ * Call this whenever micEnabled or camEnabled changes.
+ */
+export function updateMediaSessionControls(opts: {
+  title:         string;
+  micOn:         boolean;
+  camOn:         boolean;
+  onToggleMic:   () => void;
+  onToggleCam:   () => void;
+  onReturn:      () => void;
+  onLeave:       () => void;
+}): void {
+  if (!("mediaSession" in navigator)) return;
+  const { title, micOn, camOn, onToggleMic, onToggleCam, onReturn, onLeave } = opts;
+  try {
+    // Title encodes live mic/cam state so it's readable on the lock screen
+    const micLabel = micOn  ? "🎙 Mic ON"  : "🎙 Mic OFF";
+    const camLabel = camOn  ? "📹 Cam ON"  : "📹 Cam OFF";
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title:  `${title}`,
+      artist: `${micLabel}  ·  ${camLabel}`,
+      album:  "🔴 Live Class — Tahleem Academy",
+      // Artwork: a simple coloured square that looks like a live indicator
+      // (data URIs are the only cross-origin-safe artwork source)
+      artwork: [
+        { src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96'%3E%3Crect width='96' height='96' rx='18' fill='%23064E3B'/%3E%3Ccircle cx='20' cy='48' r='8' fill='%23ef4444'/%3E%3Ctext x='36' y='53' font-family='sans-serif' font-size='22' fill='white'%3E🎙%3C/text%3E%3C/svg%3E", sizes: "96x96", type: "image/svg+xml" },
+      ],
+    });
+    navigator.mediaSession.playbackState = "playing";
+
+    const sa = (a: MediaSessionAction, h: MediaSessionActionHandler | null) => {
+      try { navigator.mediaSession.setActionHandler(a, h); } catch {}
+    };
+
+    // Core class actions
+    sa("stop",          onLeave);
+    sa("previoustrack", onReturn);  // ⏮ = "Return to Class"
+    sa("play",          onReturn);
+    sa("pause",         onReturn);
+    sa("nexttrack",     onReturn);
+
+    // Repurposed slots → mic / cam toggles
+    // seekbackward renders as a rewind-style button — we hijack it for mic
+    // seekforward  renders as a fast-forward button — we hijack it for camera
+    sa("seekbackward",  () => onToggleMic());
+    sa("seekforward",   () => onToggleCam());
+  } catch {}
+}
 
 /**
  * Start the background audio keep-alive.
