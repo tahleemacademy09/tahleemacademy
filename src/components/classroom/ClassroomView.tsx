@@ -4649,6 +4649,24 @@ const syncManualAttendanceFromSession=async(sessionId:string,subject:any,hostUse
   }catch(e){console.warn("[syncManualAttendanceFromSession] upsert failed:",e);}
 };
 
+/* ══ PARTICIPANT COUNT BADGE — extracted to module level to prevent
+   React Error #300 ("Rendered more hooks than during the previous render").
+   When defined inside ClassroomView, every re-render of the parent created
+   a new function reference, causing React to treat it as a brand-new
+   component type and violate the rules of hooks.
+   Now it receives setPartOpen and participantCountRef as stable props.    */
+const ParticipantCountBadge=({onToggle,participantCountRef}:{onToggle:()=>void;participantCountRef:React.MutableRefObject<number>})=>{
+  const all=useParticipants();
+  useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length,participantCountRef]);
+  if(all.length===0)return null;
+  return(
+    <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0,cursor:"pointer"}} onClick={onToggle}>
+      <Users style={{width:12,height:12,opacity:.7}}/>
+      <span style={{fontSize:12,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{all.length}</span>
+    </div>
+  );
+};
+
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");
   const{setHasConnected}=useLiveClass();
@@ -5147,17 +5165,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     });
     setSummaryOpen(true);
   };
-  const ParticipantCountBadge=()=>{
-    const all=useParticipants();
-    useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length]);
-    if(all.length===0)return null;
-    return(
-      <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0,cursor:"pointer"}} onClick={()=>setPartOpen(v=>!v)}>
-        <Users style={{width:12,height:12,opacity:.7}}/>
-        <span style={{fontSize:12,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{all.length}</span>
-      </div>
-    );
-  };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   if(phase==="ended")return<ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={participantCountRef.current} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />;
   if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
@@ -5265,7 +5272,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 <span style={{fontSize:12,fontWeight:500,fontVariantNumeric:"tabular-nums",fontFamily:"'Google Sans',sans-serif"}}>{fmtT(duration)}</span>
               </div>
               {/* Participant count */}
-              <ParticipantCountBadge/>
+              <ParticipantCountBadge onToggle={()=>setPartOpen(v=>!v)} participantCountRef={participantCountRef}/>
               {/* Layout switcher — desktop only */}
               {!isMobile&&<LayoutSwitcher layout={layout} onChange={setLayout}/>}
               {/* RecController — admin only */}
