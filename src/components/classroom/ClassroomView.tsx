@@ -3218,13 +3218,116 @@ const MaterialViewer=({material,isTeacher,onClose}:any)=>{
   return <InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={onClose}/>;
 };
 
+
+// ── IndexedDB chunk cache — survives disconnects/crashes ──────────────────────
+// Every MediaRecorder chunk is also written here as it arrives. If the app is
+// killed before the final upload can happen, the chunks are still on disk and
+// get recovered + uploaded automatically next time the classroom is opened.
+const REC_IDB_NAME    = "tahleem-rec";
+const REC_IDB_STORE   = "chunks";
+
+function openRecIDB(): Promise<IDBDatabase> {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(REC_IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(REC_IDB_STORE, { keyPath: "id", autoIncrement: true });
+    req.onsuccess = () => res(req.result);
+    req.onerror   = () => rej(req.error);
+  });
+}
+
+async function idbAppendChunk(sessionKey: string, blob: Blob): Promise<void> {
+  try {
+    const db = await openRecIDB();
+    const tx = db.transaction(REC_IDB_STORE, "readwrite");
+    const ab = await blob.arrayBuffer();
+    tx.objectStore(REC_IDB_STORE).add({ sessionKey, data: ab, ts: Date.now() });
+    await new Promise<void>((r, j) => { tx.oncomplete = () => r(); tx.onerror = () => j(tx.error); });
+    db.close();
+  } catch (e) {
+    console.warn("[RecIDB] append failed:", e);
+  }
+}
+
+async function idbReadAndClear(sessionKey: string): Promise<ArrayBuffer[]> {
+  try {
+    const db = await openRecIDB();
+    const tx = db.transaction(REC_IDB_STORE, "readwrite");
+    const store = tx.objectStore(REC_IDB_STORE);
+    const all: any[] = await new Promise((res, rej) => {
+      const req = store.getAll();
+      req.onsuccess = () => res(req.result);
+      req.onerror   = () => rej(req.error);
+    });
+    const mine = all.filter(r => r.sessionKey === sessionKey).sort((a, b) => a.ts - b.ts);
+    for (const row of mine) store.delete(row.id);
+    await new Promise<void>((r, j) => { tx.oncomplete = () => r(); tx.onerror = () => j(tx.error); });
+    db.close();
+    return mine.map(r => r.data as ArrayBuffer);
+  } catch (e) {
+    console.warn("[RecIDB] read failed:", e);
+    return [];
+  }
+}
+
+// Recover any recordings left behind by a crash/kill in a PREVIOUS session.
+// Runs once when the classroom mounts.
+async function recoverOrphanedRecordings(teacherEmail: string): Promise<void> {
+  try {
+    const db = await openRecIDB();
+    const tx = db.transaction(REC_IDB_STORE, "readonly");
+    const all: any[] = await new Promise((res, rej) => {
+      const req = tx.objectStore(REC_IDB_STORE).getAll();
+      req.onsuccess = () => res(req.result);
+      req.onerror   = () => rej(req.error);
+    });
+    db.close();
+    if (!all.length) return;
+
+    const groups: Record<string, any[]> = {};
+    for (const row of all) (groups[row.sessionKey] ||= []).push(row);
+
+    for (const [sessionKey, rows] of Object.entries(groups)) {
+      const sorted = rows.sort((a, b) => a.ts - b.ts);
+      const blob   = new Blob(sorted.map(r => r.data), { type: "audio/webm" });
+      if (blob.size < 1000) { await idbReadAndClear(sessionKey); continue; }
+
+      console.log(`[RecIDB] recovering orphaned recording: ${sessionKey} (${blob.size} bytes)`);
+      const sid     = sessionKey.split("__")[0] || null;
+      const recPath = `sessions/${sid || "unknown"}/${sessionKey}_recovered.webm`;
+      const { error } = await storageSupabase.storage.from("recordings")
+        .upload(recPath, blob, { cacheControl: "3600", upsert: true, contentType: "audio/webm" });
+
+      if (!error) {
+        await supabase.from("session_recordings").insert({
+          session_id: sid,
+          file_url:   recPath,
+          teacher_name: teacherEmail || "Teacher",
+          file_size:  blob.size,
+          title:      "Recovered recording (was interrupted)",
+        }).catch(() => {});
+        await idbReadAndClear(sessionKey);
+        console.log(`[RecIDB] recovered → ${recPath}`);
+      } else {
+        console.warn("[RecIDB] recovery upload failed, will retry next mount:", error.message);
+      }
+    }
+  } catch (e) {
+    console.warn("[RecIDB] recovery scan failed:", e);
+  }
+}
+
 /* ══ RECORDING CONTROLLER ══
    Hardened against:
-   • Abrupt class exit / tab close  → visibilitychange "hidden" + pagehide both trigger save
-   • Stale closure on time          → timeRef tracks elapsed independently of React state
-   • stopRecRef stale ref           → ref assigned inside effect, stopRec uses refs not state
-   • Empty-chunk abort on fast stop → mr.requestData() flushes pending chunk before stop()
-   • Lost subject_id                → always falls back to subjectId prop so DB row is queryable
+   • Minimizing / backgrounding the app → recording KEEPS RUNNING (no longer
+     stops on visibilitychange "hidden" — that was a bug, minimizing isn't leaving)
+   • Real LiveKit disconnect            → immediate save via RoomEvent.Disconnected
+   • Abrupt tab close / navigate away   → pagehide triggers save
+   • Crash / forced app kill mid-record → every chunk also backed up to IndexedDB;
+     orphaned chunks are recovered and uploaded automatically on next mount
+   • Stale closure on time              → timeRef tracks elapsed independently of React state
+   • stopRecRef stale ref               → ref assigned inside effect, stopRec uses refs not state
+   • Empty-chunk abort on fast stop     → mr.requestData() flushes pending chunk before stop()
+   • Lost subject_id                    → always falls back to subjectId prop so DB row is queryable
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:any)=>{
   const room=useRoomContext();const{t}=useLanguage();
@@ -3242,9 +3345,16 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
   const sessionRef  = useRef(sessionId);
   const subjectRef  = useRef(subjectId);
   const emailRef    = useRef(userEmail);
+  const sessionKeyRef = useRef<string>("");   // unique key for IndexedDB chunk cache
   useEffect(()=>{ sessionRef.current=sessionId; },[sessionId]);
   useEffect(()=>{ subjectRef.current=subjectId; },[subjectId]);
   useEffect(()=>{ emailRef.current=userEmail;   },[userEmail]);
+
+  // Recover any recording left behind by a crash/forced-kill in a previous session
+  useEffect(()=>{
+    recoverOrphanedRecordings(userEmail||"Teacher").catch(e=>console.warn("[RecController] recovery error:",e));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   const collectAudio=useCallback(()=>{
     try{
@@ -3288,10 +3398,19 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
       }
       chunksRef.current=[];
       timeRef.current=0;
+      // Unique key for this recording — used to namespace IndexedDB chunk backups
+      sessionKeyRef.current=`${sessionRef.current||subjectRef.current||"unknown"}__${Date.now()}`;
       const mimeType=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"]
         .find(m=>{try{return MediaRecorder.isTypeSupported(m);}catch{return false;}})||"";
       const mr=new MediaRecorder(audio,mimeType?{mimeType}:undefined);
-      mr.ondataavailable=e=>{if(e.data&&e.data.size>0)chunksRef.current.push(e.data);};
+      mr.ondataavailable=e=>{
+        if(e.data&&e.data.size>0){
+          chunksRef.current.push(e.data);
+          // Also back this chunk up to IndexedDB immediately — if the app gets
+          // killed/disconnected before we can upload, this is what survives.
+          idbAppendChunk(sessionKeyRef.current,e.data).catch(()=>{});
+        }
+      };
       mr.start(2000); // chunk every 2 s — smaller chunks = less data lost on crash
       mrRef.current=mr;
       setRecording(true);setPaused(false);setDisplayTime(0);
@@ -3367,9 +3486,15 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
       await supabase.from("session_recordings").insert(dbRow);
       console.log("[RecController] saved OK — path:",recPath,"duration:",elapsed,"s");
       toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅"),description:`${Math.floor(elapsed/60)}m ${elapsed%60}s recorded`});
+      // Successfully saved to Supabase — clear the IndexedDB backup so it
+      // doesn't get treated as an orphan and re-uploaded later.
+      idbReadAndClear(sessionKeyRef.current).catch(()=>{});
     }catch(e:any){
       console.error("[RecController] saveChunks error:",e);
       toast({title:"Recording save failed",description:e?.message||"Unknown error",variant:"destructive"});
+      // NOTE: do NOT clear IndexedDB here — the chunks are the only backup
+      // left if the Supabase upload also failed. They'll be recovered on
+      // next classroom mount.
     }finally{
       savingRef.current=false;
       onSavingChange?.(false);
@@ -3409,23 +3534,43 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
     });
   },[saveChunks]);
 
-  // ── Emergency save on visibility hidden (Android back/home button) ──────────
-  // This fires BEFORE pagehide in most Android Chrome builds.
+  // ── Minimize / background the app — recording KEEPS RUNNING ─────────────────
+  // FIX: previously this called stopRec() on visibilitychange "hidden", which
+  // meant simply minimizing the app (Android home button, switching apps,
+  // screen lock) silently ended the recording. That's wrong — minimizing is
+  // not leaving the class. The recording must keep going in the background.
+  //
+  // What we DO want on minimize is a safety flush to IndexedDB, in case the
+  // OS kills the background tab without warning. This costs nothing and
+  // doesn't touch the live MediaRecorder at all — it just keeps stopping.
   useEffect(()=>{
-    const onHide=async()=>{
+    const onHide=()=>{
       if(document.visibilityState!=="hidden")return;
       const mr=mrRef.current;
       if(!mr||mr.state==="inactive")return;
-      console.log("[RecController] visibilitychange hidden → emergency save");
-      // Flush current chunk immediately
-      try{if(mr.state==="recording")mr.requestData();}catch{}
-      // Give ondataavailable 200 ms to fire, then save
-      await new Promise(r=>setTimeout(r,200));
-      await stopRec();
+      console.log("[RecController] backgrounded — recording continues, flushing safety chunk to IndexedDB");
+      try{ if(mr.state==="recording") mr.requestData(); }catch{}
+      // No stopRec() here. Recording keeps running in the background.
     };
     document.addEventListener("visibilitychange",onHide);
     return()=>document.removeEventListener("visibilitychange",onHide);
-  },[stopRec]);
+  },[]);
+
+  // ── Real disconnect — THIS is what should save & stop the recording ─────────
+  // A LiveKit disconnect means the room/connection is actually gone (dropped
+  // wifi, server hiccup, kicked, etc.) — unlike minimizing, there's no
+  // "coming back to the same audio stream" here, so we save immediately.
+  useEffect(()=>{
+    if(!room)return;
+    const onDisconnected=()=>{
+      const mr=mrRef.current;
+      if(!mr||mr.state==="inactive")return;
+      console.log("[RecController] room disconnected — saving recording now");
+      stopRec();
+    };
+    room.on(RoomEvent.Disconnected,onDisconnected);
+    return()=>{ room.off(RoomEvent.Disconnected,onDisconnected); };
+  },[room,stopRec]);
 
   const togglePause=useCallback(()=>{
     const mr=mrRef.current;if(!mr)return;
