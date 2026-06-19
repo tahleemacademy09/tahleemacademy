@@ -38,7 +38,7 @@ import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
 import PDFViewer, { prewarmPDF } from "./PDFViewer";
-import LiveClassFilePanel from "./LiveClassFilePanel";
+// LiveClassFilePanel removed
 import { useIsMobile }   from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -4350,22 +4350,18 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       </div>,portal
     )}
 
-    {/* Emoji tray */}
+    {/* Emoji tray — full expanded (all emojis shown at once) */}
     {emojisOpen&&portal&&createPortal(
-      <div className="gm-emoji-tray" style={{bottom:84+(isMobile?4:12)}}>
-        {["👏","🤲","❤️","😂","🌟","👍","🙏","🔥"].map(e=>(
-          <button key={e} className="gm-emoji-btn" onClick={()=>sendEmoji(e)}>{e}</button>
+      <div className="gm-emoji-tray" style={{bottom:84+(isMobile?4:12),flexWrap:"wrap",maxWidth:260,gap:6,padding:"10px 12px",display:"flex",borderRadius:16}}>
+        {["👏","🤲","❤️","😂","🌟","👍","🙏","🔥","😍","🥰","😊","🤩","🎉","💯","✨","🙌","💪","😮","😅","😇","🤔","⭐","💎","🌺"].map(e=>(
+          <button key={e} className="gm-emoji-btn" onClick={()=>{sendEmoji(e);setEmojisOpen(false);}}>{e}</button>
         ))}
       </div>,portal
     )}
 
-    {/* More menu — clean */}
+    {/* More menu — clean (removed: Minimize Classroom, Class Materials Live, Group Recitation, Start Timer, Launch Quiz) */}
     {moreOpen&&portal&&createPortal(
       <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right,minWidth:240}}>
-        {/* Minimize classroom — always visible, top of menu */}
-        {onMinimize&&<button className="gm-more-item" onClick={()=>{onMinimize();setMoreOpen(false);}}>
-          <Minimize2 style={{width:16,height:16,color:"#8ab4f8"}}/> <span style={{color:"#8ab4f8"}}>Minimize Classroom</span>
-        </button>}
         {isMobile&&<>
           {isPrivileged
             ?<button className="gm-more-item" onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} style={{color:whiteboardOpen?"#34d399":"#e8eaed"}}>
@@ -4391,14 +4387,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         <button className="gm-more-item" onClick={()=>{onToggleMaterials();setMoreOpen(false);}}>
           <Eye style={{width:16,height:16,opacity:.7}}/> Subject Materials
         </button>
-        {/* In-class live file panel */}
-        <button className="gm-more-item" onClick={()=>{onToggleLiveFiles();setMoreOpen(false);}} style={{color:liveFilesOpen?"#8ab4f8":"#e8eaed"}}>
-          <ClipboardList style={{width:16,height:16}}/> Class Materials (Live)
-        </button>
         {isPrivileged&&<>
-          <button className="gm-more-item" onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} style={{color:groupReciteMode?"#34d399":"#e8eaed"}}>
-            <Volume2 style={{width:16,height:16}}/> {groupReciteMode?"End Group Recitation":"Group Recitation"}
-          </button>
           <button className="gm-more-item" onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{color:canStudentWriteProp?"#34d399":"#e8eaed"}}>
             <PenTool style={{width:16,height:16}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
           </button>
@@ -4408,13 +4397,9 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           <button className="gm-more-item" onClick={async()=>{
             await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
             try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
-            toast({title:"\uD83D\uDD07 All students muted"});setMoreOpen(false);
+            toast({title:"🔇 All students muted"});setMoreOpen(false);
           }} style={{color:"#fb923c"}}>
             <MicOff style={{width:16,height:16}}/> Mute All Students
-          </button>
-          {/* Countdown Timer */}
-          <button className="gm-more-item" onClick={()=>{onToggleTimer();setMoreOpen(false);}} style={{color:timerRunning?"#fbbf24":"#e8eaed"}}>
-            <Timer style={{width:16,height:16}}/> {timerRunning?`Timer: ${timerDisplay}`:"Start Timer"}
           </button>
           {/* Hand queue */}
           <button className="gm-more-item" onClick={()=>{onToggleHandQueue();setMoreOpen(false);}}>
@@ -4423,10 +4408,6 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           {/* Live attendance */}
           <button className="gm-more-item" onClick={()=>{onToggleAttendance();setMoreOpen(false);}}>
             <UserCheck style={{width:16,height:16,color:"#34d399"}}/> Live Attendance
-          </button>
-          {/* Launch Quiz */}
-          <button className="gm-more-item" onClick={()=>{onLaunchQuiz();setMoreOpen(false);}}>
-            <Zap style={{width:16,height:16,color:"#a78bfa"}}/> Launch Quiz
           </button>
           {/* Session summary */}
           <button className="gm-more-item" onClick={()=>{onGenerateSummary();setMoreOpen(false);}}>
@@ -4438,7 +4419,6 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
             <Circle style={{width:13,height:13,fill:stuRec?"#ef4444":"none"}}/> {stuRec?"Stop Recording":"Record Audio"}
           </button>
         )}
-
       </div>,portal
     )}
 
@@ -4538,7 +4518,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
             <Ctrl icon={<Users style={{...IS,color:partPanelOpen?"#8ab4f8":"#e8eaed"}}/>} label="People" onClick={onTogglePartPanel} active={partPanelOpen} tooltip="Participants"/>
             <Ctrl icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
             {/* Timer indicator */}
-            {timerRunning&&<div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.15)",border:"1px solid rgba(251,191,36,.3)",borderRadius:20,padding:"4px 10px",animation:"timer-pulse 1s ease-in-out infinite",cursor:"pointer"}} onClick={onToggleTimer}><Timer style={{width:13,height:13,color:"#fbbf24"}}/><span style={{fontSize:12,fontWeight:700,color:"#fbbf24",fontVariantNumeric:"tabular-nums"}}>{timerDisplay}</span></div>}
+            {/* Timer removed */}
             <Ctrl icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
           </div>
           {/* RIGHT */}
@@ -5041,17 +5021,49 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(!room?.localParticipant)return;
     try{
       if(screenSharing){
-        await room.localParticipant.setScreenShareEnabled(false);
+        // Stop all screen share tracks
+        const pubs=Array.from(room.localParticipant.trackPublications.values())
+          .filter((pub:any)=>pub.track?.source==="screen_share"||pub.track?.source==="screen_share_audio");
+        for(const pub of pubs as any[]){
+          if(pub.track){
+            await room.localParticipant.unpublishTrack(pub.track);
+            pub.track.stop?.();
+          }
+        }
+        // Fallback: use built-in API
+        try{await room.localParticipant.setScreenShareEnabled(false);}catch{}
         setScreenSharing(false);
         toast({title:"Screen share stopped"});
       }else{
-        await room.localParticipant.setScreenShareEnabled(true);
+        // Try native getUserMedia approach first (works on mobile Chrome)
+        try{
+          const stream=await (navigator.mediaDevices as any).getDisplayMedia({video:{frameRate:15,width:{ideal:1280}},audio:true});
+          const{createLocalVideoTrack,createLocalAudioTrack}=await import("livekit-client");
+          for(const videoTrack of stream.getVideoTracks()){
+            const lkTrack=await createLocalVideoTrack({mediaStreamTrack:videoTrack});
+            await room.localParticipant.publishTrack(lkTrack,{source:"screen_share" as any,simulcast:false});
+            videoTrack.onended=async()=>{
+              await room.localParticipant.unpublishTrack(lkTrack);
+              setScreenSharing(false);
+            };
+          }
+          for(const audioTrack of stream.getAudioTracks()){
+            const lkTrack=await createLocalAudioTrack({mediaStreamTrack:audioTrack});
+            await room.localParticipant.publishTrack(lkTrack,{source:"screen_share_audio" as any});
+          }
+        }catch(innerErr:any){
+          // Fallback to LiveKit built-in
+          await room.localParticipant.setScreenShareEnabled(true,{audio:true,resolution:{width:1280,height:720,frameRate:15}});
+        }
         setScreenSharing(true);
         toast({title:"📺 Screen sharing started"});
       }
     }catch(e:any){
-      if(e?.name==="NotAllowedError")toast({title:"Screen share permission denied",variant:"destructive"});
-      else setScreenSharing(false);
+      setScreenSharing(false);
+      if(e?.name==="NotAllowedError"||e?.name==="NotFoundError")
+        toast({title:"Screen share permission denied",description:"Allow screen capture in your browser",variant:"destructive"});
+      else
+        toast({title:"Screen share failed",description:e?.message||"Try on Chrome desktop for best results",variant:"destructive"});
     }
   };
 
@@ -5277,18 +5289,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
-              {/* Feature 11: Live class file panel (in-class materials) */}
-              {liveFilesOpen&&createPortal(
-                <div style={{position:"fixed",inset:0,zIndex:9000,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"flex-end",justifyContent:"flex-end"}} onClick={()=>setLiveFilesOpen(false)}>
-                  <div onClick={e=>e.stopPropagation()} style={{width:"min(420px,100vw)",height:"min(85vh,700px)",background:"#fff",borderRadius:"20px 0 0 0",overflow:"auto",display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,.4)"}}>
-                    <div style={{display:"flex",alignItems:"center",padding:"14px 16px",borderBottom:"1px solid #e5e7eb",flexShrink:0,background:"#1B4332"}}>
-                      <span style={{flex:1,fontSize:14,fontWeight:700,color:"#fff"}}>📂 Class Materials</span>
-                      <button onClick={()=>setLiveFilesOpen(false)} style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:8,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><X style={{width:14,height:14}}/></button>
-                    </div>
-                    <div style={{flex:1,overflow:"auto",padding:12}}><LiveClassFilePanel subjectId={subject.id}/></div>
-                  </div>
-                </div>,document.body
-              )}
+              {/* Class Materials (Live) panel removed */}
               {/* Feature 3: Desktop participants panel */}
               {partPanelOpen&&!isMobile&&createPortal(
                 <div style={{position:"fixed",top:56,right:0,bottom:80,width:300,background:"#2D2E30",borderLeft:"1px solid rgba(255,255,255,.08)",zIndex:800,display:"flex",flexDirection:"column",animation:"slide-right .2s ease",overflow:"hidden"}}>
@@ -5333,49 +5334,44 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                   </div>
                 </div>,document.body
               )}
-              {/* Feature 5: Live attendance panel */}
+              {/* Feature 5: Live Attendance panel — improved with export */}
               {attendanceOpen&&isPrivileged&&createPortal(
-                <div style={{position:"fixed",top:56,left:0,width:280,background:"#2D2E30",borderRight:"1px solid rgba(255,255,255,.08)",zIndex:800,maxHeight:"70vh",display:"flex",flexDirection:"column",animation:"slide-right .2s ease",borderRadius:"0 0 16px 0",overflow:"hidden"}}>
-                  <div style={{display:"flex",alignItems:"center",padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
-                    <span style={{flex:1,fontSize:13,fontWeight:700,color:"#34d399",display:"flex",alignItems:"center",gap:6}}><UserCheck style={{width:14,height:14}}/> Live Attendance <span style={{fontSize:11,color:"rgba(255,255,255,.4)",fontWeight:400}}>({liveAttendees.length})</span></span>
-                    <button onClick={()=>setAttendanceOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer"}}><X style={{width:12,height:12}}/></button>
+                <div style={{position:"fixed",top:56,right:0,width:"min(320px,100vw)",bottom:80,background:"#2D2E30",borderLeft:"1px solid rgba(255,255,255,.08)",zIndex:800,display:"flex",flexDirection:"column",animation:"slide-right .2s ease",overflow:"hidden"}}>
+                  <div style={{display:"flex",alignItems:"center",padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0,background:"rgba(52,211,153,.08)"}}>
+                    <span style={{flex:1,fontSize:14,fontWeight:700,color:"#34d399",display:"flex",alignItems:"center",gap:8}}>
+                      <UserCheck style={{width:16,height:16}}/> Live Attendance
+                      <span style={{fontSize:12,background:"rgba(34,197,94,.2)",color:"#4ade80",borderRadius:20,padding:"2px 8px",fontWeight:700}}>{liveAttendees.length}</span>
+                    </span>
+                    <button onClick={()=>{
+                      const csv=["Name,Joined At",...liveAttendees.map((a:any)=>`${a.profiles?.full_name||"Student"},${a.joined_at||""}`).join("\n")].join("\n");
+                      const el=document.createElement("a");
+                      el.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+                      el.download=`attendance-${new Date().toISOString().slice(0,10)}.csv`;
+                      el.click();
+                    }} title="Export CSV" style={{background:"rgba(52,211,153,.15)",border:"none",color:"#34d399",borderRadius:8,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",marginRight:6,fontSize:12,fontWeight:700}}>⬇</button>
+                    <button onClick={()=>setAttendanceOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:8,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><X style={{width:14,height:14}}/></button>
                   </div>
                   <div style={{flex:1,overflowY:"auto",padding:8}}>
-                    {liveAttendees.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",textAlign:"center",padding:"24px 16px"}}>Waiting for students…</p>}
+                    {liveAttendees.length===0&&(
+                      <div style={{textAlign:"center",padding:"32px 16px"}}>
+                        <div style={{fontSize:40,marginBottom:8}}>👥</div>
+                        <p style={{fontSize:13,color:"rgba(255,255,255,.3)"}}>Waiting for students to join…</p>
+                      </div>
+                    )}
                     {liveAttendees.map((a:any,i:number)=>(
-                      <div key={a.student_id||i} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px",borderRadius:8,marginBottom:4,background:"rgba(255,255,255,.04)"}}>
+                      <div key={a.student_id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,marginBottom:4,background:"rgba(52,211,153,.05)",border:"1px solid rgba(52,211,153,.1)"}}>
                         <div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",flexShrink:0,animation:"rec-pulse 2s ease-in-out infinite"}}/>
-                        <span style={{flex:1,fontSize:13,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.profiles?.full_name||"Student"}</span>
-                        <span style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{a.joined_at?new Date(a.joined_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):""}</span>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:13,color:"#e8eaed",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.profiles?.full_name||"Student"}</div>
+                          <div style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>Joined {a.joined_at?new Date(a.joined_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):""}</div>
+                        </div>
+                        <span style={{fontSize:11,background:"rgba(34,197,94,.12)",color:"#4ade80",borderRadius:20,padding:"2px 8px",fontWeight:600}}>Present</span>
                       </div>
                     ))}
                   </div>
                 </div>,document.body
               )}
-              {/* Feature 10: Timer overlay */}
-              {timerOpen&&isPrivileged&&createPortal(
-                <div style={{position:"fixed",inset:0,zIndex:9500,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setTimerOpen(false)}>
-                  <div onClick={e=>e.stopPropagation()} style={{background:"#2D2E30",borderRadius:20,padding:"28px 24px",width:300,boxShadow:"0 24px 60px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease",textAlign:"center"}}>
-                    <div style={{fontSize:36,marginBottom:8}}>⏱️</div>
-                    <p style={{fontSize:16,fontWeight:700,color:"#e8eaed",marginBottom:16}}>Countdown Timer</p>
-                    {timerRunning?(
-                      <>
-                        <div style={{fontSize:48,fontWeight:900,color:"#fbbf24",fontVariantNumeric:"tabular-nums",letterSpacing:-2,marginBottom:20}}>{fmtTimer(timerSeconds)}</div>
-                        <button onClick={stopTimer} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"#ef4444",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>Stop Timer</button>
-                      </>
-                    ):(
-                      <>
-                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,justifyContent:"center"}}>
-                          <input value={timerInput} onChange={e=>setTimerInput(e.target.value)} type="number" min="1" max="60"
-                            style={{width:80,padding:"10px",borderRadius:10,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.08)",color:"#fff",fontSize:20,fontWeight:700,textAlign:"center",outline:"none"}}/>
-                          <span style={{fontSize:14,color:"rgba(255,255,255,.6)"}}>minutes</span>
-                        </div>
-                        <button onClick={startTimer} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0a7c68,#064E3B)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>▶ Start Timer</button>
-                      </>
-                    )}
-                  </div>
-                </div>,document.body
-              )}
+              {/* Start Timer removed */}
               {/* Feature 15: Student recording indicator */}
               {!isPrivileged&&teacherIsRecording&&createPortal(
                 <div style={{position:"fixed",top:64,left:"50%",transform:"translateX(-50%)",zIndex:9000,background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.3)",borderRadius:20,padding:"6px 14px",display:"flex",alignItems:"center",gap:8,backdropFilter:"blur(8px)"}}>
@@ -5445,16 +5441,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             )}
           </div>
           {wbOpen&&<WhiteboardBridge onClose={()=>setWbOpen(false)} isTeacher={isPrivileged} initialStrokes={wbBuffer.current} subjectId={subject.id} canStudentWrite={canStudentWrite}/>}
-          {groupReciteDialog&&!isPrivileged&&(
-            <GroupRecitePermDialog
-              onAccept={()=>{setGroupReciteDialog(false);}}
-              onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
-            />
-          )}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}
+          {/* GroupRecitePermDialog removed */}
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>{}}
             onScreenShare={toggleScreenShare} screenSharing={screenSharing}
-            onToggleTimer={()=>setTimerOpen(v=>!v)} timerRunning={timerRunning} timerDisplay={fmtTimer(timerSeconds)}
-            onToggleLiveFiles={()=>setLiveFilesOpen(v=>!v)} liveFilesOpen={liveFilesOpen}
+            onToggleTimer={()=>{}} timerRunning={false} timerDisplay={""}
+            onToggleLiveFiles={()=>{}} liveFilesOpen={false}
             onToggleHandQueue={()=>setHandQueueOpen(v=>!v)}
             onToggleAttendance={()=>setAttendanceOpen(v=>!v)}
             onSpotlight={(id:string)=>setSpotlightId(prev=>prev===id?null:id)}
