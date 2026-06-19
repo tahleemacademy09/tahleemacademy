@@ -1663,18 +1663,12 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
     return(
       <div onPointerDown={onPipDown} onPointerMove={onPipMove} onPointerUp={onPipUp}
         style={{position:"fixed",left:pipPos.x,top:pipPos.y,zIndex:9900,
-          width:64,cursor:"grab",userSelect:"none",touchAction:"none",
-          display:"flex",flexDirection:"column",alignItems:"center",gap:3,
-        }} title="Tap to open material">
-        <div style={{width:54,height:54,borderRadius:"50%",
+          width:54,height:54,borderRadius:"50%",cursor:"grab",userSelect:"none",touchAction:"none",
           background:"linear-gradient(135deg,#064e3b,#1a73e8)",
           boxShadow:"0 4px 20px rgba(0,0,0,.55)",border:"2px solid rgba(255,255,255,.2)",
-          display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <span style={{fontSize:20}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
-        </div>
-        <span style={{fontSize:9,color:"rgba(255,255,255,.7)",background:"rgba(0,0,0,.55)",borderRadius:6,padding:"1px 5px",whiteSpace:"nowrap",maxWidth:72,overflow:"hidden",textOverflow:"ellipsis",pointerEvents:"none"}}>
-          {(material.title||"Material").slice(0,10)}
-        </span>
+          display:"flex",alignItems:"center",justifyContent:"center",
+        }} title="Open material">
+        <span style={{fontSize:20}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
       </div>
     );
   }
@@ -1753,11 +1747,11 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
       {/* Viewer header */}
       <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
         {/* Minimize to pip */}
-        <button onClick={()=>setMinimized(true)} title="Minimize material — class stays open"
-          style={{height:30,padding:"0 10px",borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",gap:4,flexShrink:0,fontSize:11,fontFamily:"'Google Sans',sans-serif"}}>
+        <button onClick={()=>setMinimized(true)} title="Minimize"
+          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <ChevronDown style={{width:13,height:13}}/>
-          <span>Minimize</span>
         </button>
+        <span style={{fontSize:15,flexShrink:0}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
         <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
         {resumeBadge&&(
           <span style={{fontSize:10,color:"rgba(255,255,255,.5)",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"2px 7px",flexShrink:0}}>
@@ -2682,10 +2676,9 @@ const ViewerOverlay=({v,zIdx,viewers,onMinimize,onClose,onOpenSideBySide,matIcon
   return(
   <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:mounted?"none":"slide-right .18s ease both"}}>
     <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-      <button onClick={()=>onMinimize(v.id)} title="Minimize material — class stays open"
-        style={{height:30,padding:"0 10px",borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",gap:4,flexShrink:0,fontSize:11,fontFamily:"'Google Sans',sans-serif"}}>
+      <button onClick={()=>onMinimize(v.id)} title="Minimize"
+        style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
         <ChevronDown style={{width:14,height:14}}/>
-        <span>Minimize</span>
       </button>
       <button onClick={()=>onClose(v.id)}
         style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
