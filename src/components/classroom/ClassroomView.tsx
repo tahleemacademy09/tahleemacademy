@@ -2768,25 +2768,18 @@ const DeviceRow=({label,selected,onClick}:{label:string;selected:boolean;onClick
   </button>
 );
 
-const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
+const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord,viewers,openViewer,closeViewer,minimizeViewer,restoreViewer,setViewerPip}:any)=>{
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
-  // ── Multi-viewer: each opened material is its own layer ────────────────
-  const[viewers,setViewers]=useState<{id:string;material:any;minimized:boolean;pipX:number;pipY:number}[]>([]);
+  // ── viewers state is now LIFTED to ClassroomView (passed as props above) ──
+  // This prevents Error #300 when matPanelOpen toggles unmounts this component
+  // while ViewerOverlay hooks are still active.
   const[quranOpen,setQuranOpen]=useState(false);
   const[quranMinimized,setQuranMinimized]=useState(false);
   const[quranPip,setQuranPip]=useState({x:20,y:70});
   // compat shim used by legacy delete handler
-  const viewing=viewers.find(v=>!v.minimized)?.material??null;
-  const openViewer=(m:any)=>{
-    const idx=viewers.length;
-    setViewers(v=>[...v,{id:`${m.id}-${Date.now()}`,material:m,minimized:false,pipX:18+idx*58,pipY:80+idx*4}]);
-  };
-  const closeViewer=(vid:string)=>setViewers(v=>v.filter(x=>x.id!==vid));
-  const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
-  const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
-  const setViewerPip=(vid:string,px:number,py:number)=>setViewers(v=>v.map(x=>x.id===vid?{...x,pipX:px,pipY:py}:x));
+  const viewing=viewers.find((v:any)=>!v.minimized)?.material??null;
 
   // ── Back button / Android swipe → minimize topmost open viewer ──────────
   useEffect(()=>{
@@ -3035,10 +3028,8 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         </div>
       )}
 
-      {/* Material viewer overlays — stacked by z-index */}
-      {viewers.filter(v=>!v.minimized).map((v,i)=>(
-        <ViewerOverlay key={v.id} v={v} zIdx={8960+i} viewers={viewers} onMinimize={minimizeViewer} onClose={closeViewer} onOpenSideBySide={openViewer} matIcon={MAT_ICON}/>
-      ))}
+      {/* Material viewer overlays — now rendered in ClassroomView directly
+          so they survive matPanelOpen toggling. See ViewerOverlay block below. */}
 
       {/* Material list panel — always rendered underneath */}
       <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
@@ -4762,6 +4753,16 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // FIX BUG 2: quizOpen state — LiveQuizOverlay was permanently disabled with hardcoded isOpen={false}
   const[quizOpen,setQuizOpen]=useState(false);
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
+
+  /* ── LIFTED: viewers state lives here so ViewerOverlay survives matPanelOpen toggling.
+     Previously inside SubjectMaterialsPanel — when the panel closed (matPanelOpen=false),
+     the component unmounted and destroyed all open viewer hooks, causing Error #300. ── */
+  const[viewers,setViewers]=useState<{id:string;material:any;minimized:boolean;pipX:number;pipY:number}[]>([]);
+  const openViewer=(m:any)=>{const idx=viewers.length;setViewers(v=>[...v,{id:`${m.id}-${Date.now()}`,material:m,minimized:false,pipX:18+idx*58,pipY:80+idx*4}]);};
+  const closeViewer=(vid:string)=>setViewers(v=>v.filter(x=>x.id!==vid));
+  const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
+  const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
+  const setViewerPip=(vid:string,px:number,py:number)=>setViewers(v=>v.map(x=>x.id===vid?{...x,pipX:px,pipY:py}:x));
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
   // Student recording — lifted here so SubjectMaterialsPanel can also trigger it
   const[stuRec,setStuRec]=useState(false);
@@ -5308,7 +5309,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — absolute inside content, footer always visible */}
-              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
+              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop} viewers={viewers} openViewer={openViewer} closeViewer={closeViewer} minimizeViewer={minimizeViewer} restoreViewer={restoreViewer} setViewerPip={setViewerPip}/>}
+              {/* ── ViewerOverlay rendered HERE (not inside SubjectMaterialsPanel) so
+                  open material viewers survive matPanelOpen toggling and minimize.
+                  Previously, closing the panel unmounted SubjectMaterialsPanel which
+                  destroyed ViewerOverlay hooks mid-render → React Error #300 crash. ── */}
+              {viewers.filter((v:any)=>!v.minimized).map((v:any,i:number)=>(
+                <ViewerOverlay key={v.id} v={v} zIdx={8960+i} viewers={viewers} onMinimize={minimizeViewer} onClose={closeViewer} onOpenSideBySide={openViewer} matIcon={MAT_ICON}/>
+              ))}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
               {/* Class Materials (Live) panel removed */}
