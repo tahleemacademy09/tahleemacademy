@@ -38,7 +38,9 @@ const fmtAmt = (amt: number, currency = "NGN") => {
 
 // ── Stat Card ─────────────────────────────────────────────────
 const StatCard = ({ icon: Icon, label, value, sub, color, bg }: any) => (
-  <div style={{ background:"#fff", borderRadius:16, padding:"16px 18px", border:`1px solid ${BORDER}`, boxShadow:"0 2px 8px rgba(0,0,0,.05)", display:"flex", alignItems:"center", gap:14 }}>
+  <div style={{ background:"#fff", borderRadius:16, padding:"16px 18px", border:`1px solid ${BORDER}`, boxShadow:"0 2px 8px rgba(0,0,0,.05)", display:"flex", alignItems:"center", gap:14, transition:"box-shadow .15s,transform .15s" }}
+    onMouseEnter={e=>{(e.currentTarget as HTMLDivElement).style.boxShadow="0 4px 16px rgba(0,0,0,.12)";(e.currentTarget as HTMLDivElement).style.transform="translateY(-1px)";}}
+    onMouseLeave={e=>{(e.currentTarget as HTMLDivElement).style.boxShadow="0 2px 8px rgba(0,0,0,.05)";(e.currentTarget as HTMLDivElement).style.transform="translateY(0)";}}>
     <div style={{ width:46, height:46, borderRadius:14, background:bg, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
       <Icon style={{ width:22, height:22, color }} />
     </div>
@@ -93,6 +95,12 @@ const PaymentManagement = () => {
 
   // Transaction expand
   const [expandedTx, setExpandedTx]     = useState<string|null>(null);
+
+  // Grace period dialog
+  const [graceOpen, setGraceOpen]       = useState(false);
+  const [graceStudent, setGraceStudent] = useState<any>(null);
+  const [graceForm, setGraceForm]       = useState({ days: 7, notes: "" });
+  const [graceLoading, setGraceLoading] = useState(false);
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true); else setRefreshing(true);
@@ -149,8 +157,10 @@ const PaymentManagement = () => {
     setManualLoading(true);
     const plan = plans.find((p:any) => p.id === manualForm.plan_id);
     const ref  = `TAH-MANUAL-${Date.now()}`;
+    // Term = exactly 3 months; monthly = 1 month; fall back to plan.duration_months
+    const durationMonths = plan?.type === "term" ? 3 : plan?.type === "monthly" ? 1 : (plan?.duration_months || 3);
     const endDate = new Date(manualForm.date);
-    endDate.setMonth(endDate.getMonth() + (plan?.duration_months || 3));
+    endDate.setMonth(endDate.getMonth() + durationMonths);
     const endStr = endDate.toISOString().split("T")[0];
 
     await Promise.all([
@@ -179,6 +189,44 @@ const PaymentManagement = () => {
     await supabase.from("profiles").update({ is_payment_exempt:exempt, payment_status:exempt?"exempt":"unpaid" } as any).eq("user_id",studentId);
     toast({ title: exempt ? t("Marked as exempt 🎓","تم وضع علامة كمعفى 🎓") : t("Exemption removed","تمت إزالة الإعفاء") });
     loadData(true);
+  };
+
+  // ── Grant grace period ──────────────────────────────────────────────────
+  const grantGrace = async () => {
+    if (!graceStudent) return;
+    setGraceLoading(true);
+    const now = new Date();
+    const graceEnd = new Date(now.getTime() + graceForm.days * 86400000);
+    const endStr = graceEnd.toISOString().split("T")[0];
+
+    await Promise.all([
+      supabase.from("profiles").update({ payment_status:"grace", subscription_end_date:endStr } as any).eq("user_id",graceStudent.user_id),
+      supabase.from("notifications" as any).insert({
+        user_id:  graceStudent.user_id,
+        title:    t("Grace Period Granted 🕐","تم منح فترة سماح 🕐"),
+        message:  t(
+          `You have been granted a ${graceForm.days}-day grace period until ${format(graceEnd,"d MMM yyyy")}. Please complete your payment before then to retain full access.`,
+          `لقد مُنحت فترة سماح مدتها ${graceForm.days} يومًا حتى ${format(graceEnd,"d MMM yyyy")}. يرجى إتمام الدفع قبل ذلك للحفاظ على وصولك الكامل.`
+        ),
+        type: "info",
+        link: "/student/enrollment-payment",
+        is_read: false,
+      }),
+      supabase.from("activity_logs").insert({
+        user_id:     user!.id,
+        action:      "grace_period_granted",
+        entity_type: "profile",
+        entity_id:   graceStudent.user_id,
+        metadata: { student_name:graceStudent.full_name, days:graceForm.days, until:endStr, notes:graceForm.notes },
+      }),
+    ]);
+
+    toast({ title: t(`✅ Grace period granted to ${graceStudent.full_name}`,`✅ تم منح فترة سماح لـ ${graceStudent.full_name}`), description: t(`${graceForm.days} days until ${format(graceEnd,"d MMM yyyy")}`,`${graceForm.days} أيام حتى ${format(graceEnd,"d MMM yyyy")}`) });
+    setGraceOpen(false);
+    setGraceStudent(null);
+    setGraceForm({ days:7, notes:"" });
+    loadData(true);
+    setGraceLoading(false);
   };
 
   // ── Send reminder ─────────────────────────────────────────────────────────
@@ -347,12 +395,24 @@ const PaymentManagement = () => {
         </div>
       </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:10, marginBottom:12 }}>
-        <StatCard icon={TrendingUp}     label={t("NGN This Month","هذا الشهر ₦")}  value={fmtAmt(stats.totalMonth)} sub={t("Nigeria Revenue","إيرادات نيجيريا")} color="#22c55e" bg="#f0fff4" />
-        <StatCard icon={DollarSign}     label={t("NGN All Time","إجمالي ₦")}       value={fmtAmt(stats.totalAll)}   sub={t("Total NGN","إجمالي نيرا")}           color="#3b82f6" bg="#eff6ff" />
-        <StatCard icon={Users}          label={t("Active Subs","اشتراكات نشطة")}   value={stats.active}             sub={t("Subscriptions","اشتراكات")}          color="#8b5cf6" bg="#f5f3ff" />
-        <StatCard icon={AlertTriangle}  label={t("Unpaid","غير مدفوع")}            value={stats.unpaid}             sub={t("Students","طلاب")}                   color="#ef4444" bg="#fff5f5" />
-        <StatCard icon={Bell}           label={t("Expiring","تنتهي قريباً")}       value={stats.expiring}           sub={t("Within 7 days","خلال 7 أيام")}       color="#f59e0b" bg="#fffbeb" />
-        <StatCard icon={CreditCard}     label={t("Failed","فاشلة")}                value={stats.failed}             sub={t("Transactions","معاملات")}            color="#ef4444" bg="#fff5f5" />
+        <div onClick={()=>{ setActiveTab("students"); setFilter("all"); }} style={{ cursor:"pointer" }}>
+          <StatCard icon={TrendingUp}     label={t("NGN This Month","هذا الشهر ₦")}  value={fmtAmt(stats.totalMonth)} sub={t("Nigeria Revenue","إيرادات نيجيريا")} color="#22c55e" bg="#f0fff4" />
+        </div>
+        <div onClick={()=>setActiveTab("transactions")} style={{ cursor:"pointer" }}>
+          <StatCard icon={DollarSign}     label={t("NGN All Time","إجمالي ₦")}       value={fmtAmt(stats.totalAll)}   sub={t("Total NGN","إجمالي نيرا")}           color="#3b82f6" bg="#eff6ff" />
+        </div>
+        <div onClick={()=>setActiveTab("students")} style={{ cursor:"pointer" }}>
+          <StatCard icon={Users}          label={t("Active Subs","اشتراكات نشطة")}   value={stats.active}             sub={t("Subscriptions","اشتراكات")}          color="#8b5cf6" bg="#f5f3ff" />
+        </div>
+        <div onClick={()=>{ setActiveTab("students"); setFilter("unpaid"); }} style={{ cursor:"pointer" }}>
+          <StatCard icon={AlertTriangle}  label={t("Unpaid","غير مدفوع")}            value={stats.unpaid}             sub={t("Students","طلاب")}                   color="#ef4444" bg="#fff5f5" />
+        </div>
+        <div onClick={()=>{ setActiveTab("students"); setFilter("grace"); }} style={{ cursor:"pointer" }}>
+          <StatCard icon={Bell}           label={t("Expiring","تنتهي قريباً")}       value={stats.expiring}           sub={t("Within 7 days","خلال 7 أيام")}       color="#f59e0b" bg="#fffbeb" />
+        </div>
+        <div onClick={()=>setActiveTab("transactions")} style={{ cursor:"pointer" }}>
+          <StatCard icon={CreditCard}     label={t("Failed","فاشلة")}                value={stats.failed}             sub={t("Transactions","معاملات")}            color="#ef4444" bg="#fff5f5" />
+        </div>
       </div>
 
       {/* ── INTERNATIONAL REVENUE STRIP ── */}
@@ -464,6 +524,12 @@ const PaymentManagement = () => {
                         style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", flex:1, justifyContent:"center" }}>
                         <DollarSign style={{ width:13, height:13 }} />{t("Record Payment","تسجيل دفعة")}
                       </button>
+                      {(!s.is_payment_exempt && (s.payment_status==="unpaid"||!s.payment_status||s.payment_status==="grace")) && (
+                        <button onClick={()=>{ setGraceStudent(s); setGraceForm({ days:7, notes:"" }); setGraceOpen(true); }}
+                          style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:"#f0fff4", border:`1px solid #86efac`, color:"#15803d", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                          <Clock style={{ width:12, height:12 }} />{t("Grace","سماح")}
+                        </button>
+                      )}
                       {(!s.is_payment_exempt && (s.payment_status==="unpaid"||!s.payment_status)) && (
                         <button onClick={()=>sendReminder(s)}
                           style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:"#fffbeb", border:`1px solid ${GOLD}`, color:"#92400e", fontSize:12, fontWeight:700, cursor:"pointer" }}>
@@ -777,6 +843,64 @@ const PaymentManagement = () => {
         </div>
       )}
 
+      {/* ── GRACE PERIOD DIALOG ── */}
+      {graceOpen && graceStudent && (
+        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={()=>setGraceOpen(false)}>
+          <div style={{ background:"#fff", borderRadius:20, padding:24, width:"100%", maxWidth:420 }} onClick={e=>e.stopPropagation()}>
+            {/* Header */}
+            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:20 }}>
+              <div style={{ width:44, height:44, borderRadius:14, background:"#f0fff4", display:"flex", alignItems:"center", justifyContent:"center" }}>
+                <Clock style={{ width:22, height:22, color:"#15803d" }} />
+              </div>
+              <div>
+                <div style={{ fontSize:17, fontWeight:800, color:G }}>{t("Grant Grace Period","منح فترة سماح")}</div>
+                <div style={{ fontSize:12, color:"#7a9e88", marginTop:1 }}>{graceStudent.full_name}</div>
+              </div>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
+              {/* Days selector */}
+              <div>
+                <label style={lbl}>{t("Extension (days)","التمديد (أيام)")}</label>
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
+                  {[3,7,14,30].map(d=>(
+                    <button key={d} onClick={()=>setGraceForm(f=>({...f,days:d}))}
+                      style={{ padding:"8px 16px", borderRadius:20, border:`1.5px solid ${graceForm.days===d?G:BORDER}`, background:graceForm.days===d?G:"#fff", color:graceForm.days===d?"#fff":G, fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                      {d}d
+                    </button>
+                  ))}
+                </div>
+                <input type="number" value={graceForm.days} min={1} max={90}
+                  onChange={e=>setGraceForm(f=>({...f,days:Math.max(1,+e.target.value)}))}
+                  style={inp} placeholder={t("Custom days…","أيام مخصصة…")} />
+              </div>
+              {/* Preview */}
+              <div style={{ background:"#f0fff4", borderRadius:12, padding:"12px 16px", border:"1px solid #86efac" }}>
+                <div style={{ fontSize:12, color:"#15803d", fontWeight:700 }}>
+                  {t("Grace period until","فترة السماح حتى")}: <strong>{format(new Date(Date.now()+graceForm.days*86400000),"d MMM yyyy")}</strong>
+                </div>
+                <div style={{ fontSize:11, color:"#16a34a", marginTop:4 }}>
+                  {t("Student will be notified automatically","سيُخطر الطالب تلقائيًا")}
+                </div>
+              </div>
+              {/* Notes */}
+              <div>
+                <label style={lbl}>{t("Admin Note (optional)","ملاحظة المشرف (اختياري)")}</label>
+                <textarea value={graceForm.notes} onChange={e=>setGraceForm(f=>({...f,notes:e.target.value}))} rows={2} style={{ ...inp, resize:"none" }} placeholder={t("e.g. Financial hardship, awaiting bank transfer…","مثال: ضائقة مالية، بانتظار التحويل…")} />
+              </div>
+              {/* Actions */}
+              <div style={{ display:"flex", gap:10, marginTop:4 }}>
+                <button onClick={()=>setGraceOpen(false)} style={{ flex:1, padding:"11px 0", borderRadius:12, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif" }}>
+                  {t("Cancel","إلغاء")}
+                </button>
+                <button onClick={grantGrace} disabled={graceLoading} style={{ flex:2, padding:"11px 0", borderRadius:12, background:"#15803d", border:"none", color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer", fontFamily:"'Cairo',sans-serif", opacity:graceLoading?.7:1 }}>
+                  {graceLoading ? t("Saving…","جاري الحفظ…") : t("Grant Grace Period ✅","منح فترة السماح ✅")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── PLAN DIALOG ── */}
       {planOpen && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.5)", zIndex:100, display:"flex", alignItems:"center", justifyContent:"center", padding:16 }} onClick={()=>setPlanOpen(false)}>
@@ -813,10 +937,13 @@ const PaymentManagement = () => {
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
                 <div>
                   <label style={lbl}>{t("Type","النوع")}</label>
-                  <select value={planForm.type} onChange={e=>setPlanForm((f:any)=>({...f,type:e.target.value}))} style={{ ...inp, appearance:"none" }}>
-                    <option value="term">Term</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="yearly">Yearly</option>
+                  <select value={planForm.type} onChange={e=>{
+                    const t2 = e.target.value;
+                    const autoMonths = t2==="term" ? 3 : t2==="monthly" ? 1 : planForm.duration_months;
+                    setPlanForm((f:any)=>({...f,type:t2,duration_months:autoMonths}));
+                  }} style={{ ...inp, appearance:"none" }}>
+                    <option value="term">Term (3 months)</option>
+                    <option value="monthly">Monthly (1 month)</option>
                     <option value="one_time">One-Time</option>
                     <option value="private">Private</option>
                   </select>
