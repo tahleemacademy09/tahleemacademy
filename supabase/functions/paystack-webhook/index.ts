@@ -112,10 +112,24 @@ Deno.serve(async (req) => {
           .eq("user_id", payment.student_id);
 
         // ── 1b. Update profiles.payment_status + subscription_end_date ────
-        // Authoritative server-side update so usePaymentAccess always reflects
-        // payment even if the browser tab was closed before the client callback.
-        const subEnd = new Date();
-        subEnd.setFullYear(subEnd.getFullYear() + 1); // 1-year subscription
+        // Uses plan duration_months (e.g. 1 for monthly, 3 for term, 12 for annual).
+        // If subscription is still active, extends from current end date; otherwise from today.
+        const planDurationMonths = payment.payment_plans?.duration_months || 1;
+        const { data: currentProfile } = await supabase
+          .from("profiles")
+          .select("subscription_end_date, payment_status")
+          .eq("user_id", payment.student_id)
+          .single();
+
+        const baseDate = currentProfile?.subscription_end_date &&
+          currentProfile.payment_status === "paid" &&
+          new Date(currentProfile.subscription_end_date) > new Date()
+          ? new Date(currentProfile.subscription_end_date)
+          : new Date();
+
+        const subEnd = new Date(baseDate);
+        subEnd.setMonth(subEnd.getMonth() + planDurationMonths);
+
         await supabase
           .from("profiles")
           .update({
@@ -123,6 +137,35 @@ Deno.serve(async (req) => {
             subscription_end_date: subEnd.toISOString().split("T")[0],
           })
           .eq("user_id", payment.student_id);
+
+        // ── 1c. Upsert student_subscriptions for proper tracking ──────────
+        const { data: existingSub } = await supabase
+          .from("student_subscriptions" as any)
+          .select("id, end_date, status")
+          .eq("student_id", payment.student_id)
+          .eq("status", "active")
+          .maybeSingle();
+
+        if (existingSub) {
+          // Extend active subscription
+          const extendBase = existingSub.end_date && new Date(existingSub.end_date) > new Date()
+            ? new Date(existingSub.end_date) : new Date();
+          const extendEnd = new Date(extendBase);
+          extendEnd.setMonth(extendEnd.getMonth() + planDurationMonths);
+          await supabase
+            .from("student_subscriptions" as any)
+            .update({ end_date: extendEnd.toISOString().split("T")[0], status: "active" })
+            .eq("id", existingSub.id);
+        } else {
+          // Create new subscription record
+          await supabase.from("student_subscriptions" as any).insert({
+            student_id: payment.student_id,
+            plan_id:    payment.plan_id,
+            status:     "active",
+            start_date: new Date().toISOString().split("T")[0],
+            end_date:   subEnd.toISOString().split("T")[0],
+          });
+        }
 
         // ── 2. Advance Tasjeel step (NEW — TASJEEL INTEGRATION) ──────────
         //
