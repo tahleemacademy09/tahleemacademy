@@ -1653,22 +1653,28 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   const[pipPos,setPipPos]=useState({x:20,y:80});
   const dragging=useRef(false);
   const dragStart=useRef({px:0,py:0,ox:0,oy:0});
-  const onPipDown=(e:React.PointerEvent)=>{dragging.current=true;dragStart.current={px:e.clientX,py:e.clientY,ox:pipPos.x,oy:pipPos.y};(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);};
-  const onPipMove=(e:React.PointerEvent)=>{if(!dragging.current)return;setPipPos({x:dragStart.current.ox+(e.clientX-dragStart.current.px),y:dragStart.current.oy+(e.clientY-dragStart.current.py)});};
-  const onPipUp=()=>{dragging.current=false;};
+  const pipDidDrag=useRef(false);
+  const onPipDown=(e:React.PointerEvent)=>{dragging.current=true;pipDidDrag.current=false;dragStart.current={px:e.clientX,py:e.clientY,ox:pipPos.x,oy:pipPos.y};(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);};
+  const onPipMove=(e:React.PointerEvent)=>{if(!dragging.current)return;const dx=e.clientX-dragStart.current.px;const dy=e.clientY-dragStart.current.py;if(Math.abs(dx)>4||Math.abs(dy)>4)pipDidDrag.current=true;setPipPos({x:dragStart.current.ox+dx,y:dragStart.current.oy+dy});};
+  const onPipUp=()=>{dragging.current=false;if(!pipDidDrag.current)setMinimized(false);pipDidDrag.current=false;};
 
   // ── pip (minimized) ──────────────────────────────────────────────────────
   if(minimized){
     return(
       <div onPointerDown={onPipDown} onPointerMove={onPipMove} onPointerUp={onPipUp}
-        onClick={()=>setMinimized(false)}
-        style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,
-          width:54,height:54,borderRadius:"50%",cursor:"grab",userSelect:"none",touchAction:"none",
+        style={{position:"fixed",left:pipPos.x,top:pipPos.y,zIndex:9900,
+          width:64,cursor:"grab",userSelect:"none",touchAction:"none",
+          display:"flex",flexDirection:"column",alignItems:"center",gap:3,
+        }} title="Tap to open material">
+        <div style={{width:54,height:54,borderRadius:"50%",
           background:"linear-gradient(135deg,#064e3b,#1a73e8)",
           boxShadow:"0 4px 20px rgba(0,0,0,.55)",border:"2px solid rgba(255,255,255,.2)",
-          display:"flex",alignItems:"center",justifyContent:"center",
-        }} title="Open material">
-        <span style={{fontSize:20}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
+          display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <span style={{fontSize:20}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
+        </div>
+        <span style={{fontSize:9,color:"rgba(255,255,255,.7)",background:"rgba(0,0,0,.55)",borderRadius:6,padding:"1px 5px",whiteSpace:"nowrap",maxWidth:72,overflow:"hidden",textOverflow:"ellipsis",pointerEvents:"none"}}>
+          {(material.title||"Material").slice(0,10)}
+        </span>
       </div>
     );
   }
@@ -1747,9 +1753,10 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
       {/* Viewer header */}
       <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
         {/* Minimize to pip */}
-        <button onClick={()=>setMinimized(true)} title="Minimize"
-          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+        <button onClick={()=>setMinimized(true)} title="Minimize material — class stays open"
+          style={{height:30,padding:"0 10px",borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",gap:4,flexShrink:0,fontSize:11,fontFamily:"'Google Sans',sans-serif"}}>
           <ChevronDown style={{width:13,height:13}}/>
+          <span>Minimize</span>
         </button>
         <span style={{fontSize:15,flexShrink:0}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
         <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
@@ -2676,9 +2683,10 @@ const ViewerOverlay=({v,zIdx,viewers,onMinimize,onClose,onOpenSideBySide,matIcon
   return(
   <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:mounted?"none":"slide-right .18s ease both"}}>
     <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-      <button onClick={()=>onMinimize(v.id)} title="Minimize"
-        style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+      <button onClick={()=>onMinimize(v.id)} title="Minimize material — class stays open"
+        style={{height:30,padding:"0 10px",borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",gap:4,flexShrink:0,fontSize:11,fontFamily:"'Google Sans',sans-serif"}}>
         <ChevronDown style={{width:14,height:14}}/>
+        <span>Minimize</span>
       </button>
       <button onClick={()=>onClose(v.id)}
         style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
@@ -4354,6 +4362,10 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     {/* More menu — clean */}
     {moreOpen&&portal&&createPortal(
       <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right,minWidth:240}}>
+        {/* Minimize classroom — always visible, top of menu */}
+        {onMinimize&&<button className="gm-more-item" onClick={()=>{onMinimize();setMoreOpen(false);}}>
+          <Minimize2 style={{width:16,height:16,color:"#8ab4f8"}}/> <span style={{color:"#8ab4f8"}}>Minimize Classroom</span>
+        </button>}
         {isMobile&&<>
           {isPrivileged
             ?<button className="gm-more-item" onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} style={{color:whiteboardOpen?"#34d399":"#e8eaed"}}>
@@ -4531,6 +4543,13 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           </div>
           {/* RIGHT */}
           <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+            {/* Minimize — go to GlobalClassroomOverlay pill without ending class */}
+            {onMinimize&&(
+              <button onClick={onMinimize} title="Minimize classroom"
+                style={{height:40,padding:"0 14px",borderRadius:20,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.07)",color:"rgba(255,255,255,.8)",cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontSize:13,fontFamily:"'Google Sans',sans-serif",fontWeight:500}}>
+                <Minimize2 style={{width:14,height:14}}/> Minimize
+              </button>
+            )}
             <button className="gm-leave" onClick={isPrivileged?onEndClass:onLeaveClass}>
               <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/>
               {isPrivileged?"End":"Leave"}
@@ -5226,7 +5245,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               )}
             </div>
 
-            {/* RIGHT — timer · participants · [layout desktop] · [rec admin] */}
+            {/* RIGHT — timer · participants · [layout desktop] · [rec admin] · minimize */}
             <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
               {/* Timer */}
               <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",padding:"3px 8px"}}>
@@ -5239,6 +5258,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {!isMobile&&<LayoutSwitcher layout={layout} onChange={setLayout}/>}
               {/* RecController — admin only */}
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
+              {/* Minimize — go to GlobalClassroomOverlay pill without ending class */}
+              {onMinimize&&(
+                <button onClick={onMinimize} title="Minimize classroom"
+                  style={{width:32,height:32,borderRadius:8,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.75)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <Minimize2 style={{width:14,height:14}}/>
+                </button>
+              )}
             </div>
           </div>
           {/* Content — material panels render here so footer always stays visible */}
