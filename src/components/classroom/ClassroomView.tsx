@@ -2702,9 +2702,34 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
-  const[viewing,setViewing]=useState<any>(null);
+  // ── Multi-viewer: each opened material is its own layer ────────────────
+  const[viewers,setViewers]=useState<{id:string;material:any;minimized:boolean;pipX:number;pipY:number}[]>([]);
   const[quranOpen,setQuranOpen]=useState(false);
-  const[minimized,setMinimized]=useState(false);
+  const[quranMinimized,setQuranMinimized]=useState(false);
+  const[quranPip,setQuranPip]=useState({x:20,y:70});
+  // compat shim used by legacy delete handler
+  const viewing=viewers.find(v=>!v.minimized)?.material??null;
+  const openViewer=(m:any)=>{
+    const idx=viewers.length;
+    setViewers(v=>[...v,{id:`${m.id}-${Date.now()}`,material:m,minimized:false,pipX:18+idx*58,pipY:80+idx*4}]);
+  };
+  const closeViewer=(vid:string)=>setViewers(v=>v.filter(x=>x.id!==vid));
+  const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
+  const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
+  const setViewerPip=(vid:string,px:number,py:number)=>setViewers(v=>v.map(x=>x.id===vid?{...x,pipX:px,pipY:py}:x));
+
+  // ── Back button / Android swipe → minimize topmost open viewer ──────────
+  useEffect(()=>{
+    window.history.pushState({matSentinel:true},"");
+    const handleBack=()=>{
+      const openV=viewers.filter(x=>!x.minimized);
+      if(openV.length>0){minimizeViewer(openV[openV.length-1].id);window.history.pushState({matSentinel:true},"");return;}
+      if(quranOpen&&!quranMinimized){setQuranMinimized(true);window.history.pushState({matSentinel:true},"");return;}
+    };
+    window.addEventListener("popstate",handleBack);
+    return()=>window.removeEventListener("popstate",handleBack);
+  },[viewers,quranOpen,quranMinimized]);
+
   // ── Share-with-class composer (teacher/admin only) ──────────────────────
   const[composerOpen,setComposerOpen]=useState(false);
   const[composerMode,setComposerMode]=useState<"text"|"file">("text");
@@ -2717,10 +2742,6 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const[cError,setCError]=useState("");
   const fileInputRef=useRef<HTMLInputElement>(null);
   const editFileRef=useRef<HTMLInputElement>(null);
-  // Draggable pip position
-  const[pipPos,setPipPos]=useState({x:20,y:120});
-  const dragging=useRef(false);
-  const dragStart=useRef({px:0,py:0,ox:0,oy:0});
   // ── Edit / delete state ─────────────────────────────────────────────────
   const[editingId,setEditingId]=useState<string|null>(null);
   const[editTitle,setEditTitle]=useState("");
@@ -2779,7 +2800,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         const match=m.file_url.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
         if(match){const[,bucket,path]=match;supabase.storage.from(bucket).remove([path]).catch(()=>{});}
       }
-      if(viewing?.id===m.id)setViewing(null);
+      setViewers(v=>v.filter(x=>x.material?.id!==m.id));
       toast({title:"🗑️ Material deleted"});reloadMats();
     }catch(e:any){toast({title:"Failed to delete",description:e?.message,variant:"destructive"});}
     finally{setDeletingId(null);}
@@ -2836,108 +2857,136 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
     }
   };
 
-  const onPipPointerDown=(e:React.PointerEvent)=>{
-    dragging.current=true;
-    dragStart.current={px:e.clientX,py:e.clientY,ox:pipPos.x,oy:pipPos.y};
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  // ── Per-viewer pip drag (keyed ref, not state) ──────────────────────────
+  const pipDrag=useRef<{vid:string;px:number;py:number;ox:number;oy:number}|null>(null);
+  const onPipDown=(e:React.PointerEvent,vid:string,ox:number,oy:number)=>{
+    pipDrag.current={vid,px:e.clientX,py:e.clientY,ox,oy};
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);e.stopPropagation();
   };
-  const onPipPointerMove=(e:React.PointerEvent)=>{
-    if(!dragging.current)return;
-    const dx=e.clientX-dragStart.current.px;
-    const dy=e.clientY-dragStart.current.py;
-    setPipPos({x:dragStart.current.ox+dx,y:dragStart.current.oy+dy});
+  const onPipMove=(e:React.PointerEvent)=>{
+    if(!pipDrag.current)return;
+    const{vid,px,py,ox,oy}=pipDrag.current;
+    setViewerPip(vid,ox+(e.clientX-px),oy+(e.clientY-py));e.stopPropagation();
   };
-  const onPipPointerUp=()=>{dragging.current=false;};
+  const onPipUp=()=>{pipDrag.current=null;};
+  // Quran pip drag
+  const qpDrag=useRef<{px:number;py:number;ox:number;oy:number}|null>(null);
+  const onQPipDown=(e:React.PointerEvent)=>{
+    qpDrag.current={px:e.clientX,py:e.clientY,ox:quranPip.x,oy:quranPip.y};
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);e.stopPropagation();
+  };
+  const onQPipMove=(e:React.PointerEvent)=>{
+    if(!qpDrag.current)return;
+    setQuranPip({x:qpDrag.current.ox+(e.clientX-qpDrag.current.px),y:qpDrag.current.oy+(e.clientY-qpDrag.current.py)});
+    e.stopPropagation();
+  };
+  const onQPipUp=()=>{qpDrag.current=null;};
 
-  /* ── MINIMIZED: draggable floating circle pip ── */
-  if(minimized){
-    return(
-      <div
-        onPointerDown={onPipPointerDown}
-        onPointerMove={onPipPointerMove}
-        onPointerUp={onPipPointerUp}
-        onClick={()=>setMinimized(false)}
-        style={{
-          position:"absolute",
-          left:pipPos.x,top:pipPos.y,
-          zIndex:60,width:54,height:54,
-          borderRadius:"50%",
-          background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",
-          boxShadow:"0 4px 20px rgba(0,0,0,.5)",
-          display:"flex",alignItems:"center",justifyContent:"center",
-          cursor:"grab",userSelect:"none",touchAction:"none",
-          border:"2px solid rgba(255,255,255,.2)",
-        }}
-        title="Open Materials"
-      >
-        <Eye style={{width:22,height:22,color:"#fff"}}/>
+  const MAT_ICON=(m:any)=>MAT_TYPE_ICON[m?.material_type||"document"]||"📄";
+
+  /* ── Pip bubble for one minimized viewer ── */
+  const PipBubble=({v}:{v:{id:string;material:any;minimized:boolean;pipX:number;pipY:number}})=>(
+    <div
+      onPointerDown={e=>onPipDown(e,v.id,v.pipX,v.pipY)}
+      onPointerMove={onPipMove} onPointerUp={onPipUp}
+      onClick={()=>restoreViewer(v.id)}
+      title={`Open: ${v.material?.title||"Material"}`}
+      style={{position:"fixed",left:v.pipX,top:v.pipY,zIndex:9000,
+        width:50,height:50,borderRadius:"50%",
+        background:"linear-gradient(135deg,#0a7a5e,#1a5276)",
+        boxShadow:"0 4px 18px rgba(0,0,0,.55)",
+        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+        cursor:"grab",userSelect:"none",touchAction:"none",
+        border:"2px solid rgba(255,255,255,.22)",
+      }}>
+      <span style={{fontSize:16,lineHeight:1}}>{MAT_ICON(v.material)}</span>
+      <span style={{fontSize:7,color:"rgba(255,255,255,.65)",maxWidth:44,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"center",marginTop:2}}>
+        {v.material?.title||"Material"}
+      </span>
+    </div>
+  );
+
+  /* ── Full-screen overlay for one viewer slot ── */
+  const ViewerOverlay=({v,zIdx}:{v:{id:string;material:any;minimized:boolean;pipX:number;pipY:number};zIdx:number})=>(
+    v.minimized?<PipBubble v={v}/>:
+    <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:"slide-right .18s ease both"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+        <button onClick={()=>minimizeViewer(v.id)} title="Minimize"
+          style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <ChevronDown style={{width:14,height:14}}/>
+        </button>
+        <button onClick={()=>closeViewer(v.id)}
+          style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+          <X style={{width:12,height:12}}/> Close
+        </button>
+        <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>
+          {MAT_ICON(v.material)} {v.material?.title||v.material?.name||"Material"}
+        </span>
+        {viewers.length<5&&(
+          <button onClick={()=>openViewer(v.material)} title="Open a second copy side-by-side"
+            style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.6)",borderRadius:8,padding:"4px 9px",cursor:"pointer",fontSize:11,fontFamily:"'Google Sans',sans-serif",display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+            ⊕ Side-by-side
+          </button>
+        )}
+        {viewers.length>1&&(
+          <span style={{background:"rgba(10,122,94,.4)",color:"#fff",borderRadius:10,padding:"2px 7px",fontSize:10,fontWeight:700,flexShrink:0}}>
+            {viewers.findIndex(x=>x.id===v.id)+1}/{viewers.length}
+          </span>
+        )}
       </div>
-    );
-  }
+      <div style={{flex:1,overflow:"hidden"}}>
+        <InClassMaterialViewer material={v.material} onClose={()=>closeViewer(v.id)}/>
+      </div>
+    </div>
+  );
 
-  /* ── VIEWING A MATERIAL ── */
-  if(quranOpen){
-    return(
-      <>
-        {/* pip always rendered when minimized so video shows through */}
-        {minimized
-          ? <div onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
-              onClick={()=>setMinimized(false)}
-              style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,width:54,height:54,borderRadius:"50%",background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",boxShadow:"0 4px 20px rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",userSelect:"none",touchAction:"none",border:"2px solid rgba(255,255,255,.2)"}} title="Open Materials">
-              <Eye style={{width:22,height:22,color:"#fff"}}/>
-            </div>
-          : <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-                <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <ChevronDown style={{width:14,height:14}}/>
-                </button>
-                <button onClick={()=>setQuranOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-                  <ChevronLeft style={{width:13,height:13}}/> Back
-                </button>
-                <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>Full Quran</span>
-                <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <X style={{width:13,height:13}}/>
-                </button>
-              </div>
-              <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
-            </div>
-        }
-      </>
-    );
-  }
+  /* ── Quran pip bubble ── */
+  const QuranPip=()=>(
+    <div onPointerDown={onQPipDown} onPointerMove={onQPipMove} onPointerUp={onQPipUp}
+      onClick={()=>setQuranMinimized(false)} title="Open Quran"
+      style={{position:"fixed",left:quranPip.x,top:quranPip.y,zIndex:9001,
+        width:50,height:50,borderRadius:"50%",
+        background:"linear-gradient(135deg,#1a5276,#0a7a5e)",
+        boxShadow:"0 4px 18px rgba(0,0,0,.55)",
+        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+        cursor:"grab",userSelect:"none",touchAction:"none",
+        border:"2px solid rgba(255,255,255,.22)"}}>
+      <span style={{fontSize:18}}>📖</span>
+      <span style={{fontSize:7,color:"rgba(255,255,255,.6)"}}>Quran</span>
+    </div>
+  );
 
-  if(viewing){
-    return(
-      <>
-        {minimized
-          ? <div onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
-              onClick={()=>setMinimized(false)}
-              style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,width:54,height:54,borderRadius:"50%",background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",boxShadow:"0 4px 20px rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",userSelect:"none",touchAction:"none",border:"2px solid rgba(255,255,255,.2)"}} title="Open Materials">
-              <Eye style={{width:22,height:22,color:"#fff"}}/>
-            </div>
-          : <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-                <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <ChevronDown style={{width:14,height:14}}/>
-                </button>
-                <button onClick={()=>setViewing(null)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-                  <ChevronLeft style={{width:13,height:13}}/> Back
-                </button>
-                <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{viewing.title||viewing.name||"Material"}</span>
-                <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <X style={{width:13,height:13}}/>
-                </button>
-              </div>
-              <div style={{flex:1,overflow:"hidden"}}><InClassMaterialViewer material={viewing} onClose={()=>setViewing(null)}/></div>
-            </div>
-        }
-      </>
-    );
-  }
-
-  /* ── MATERIAL LIST — slides from right, does NOT cover full height ── */
   return(
-    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
+    <>
+      {/* Always-visible minimized pips */}
+      {viewers.filter(v=>v.minimized).map(v=><PipBubble key={v.id} v={v}/>)}
+      {quranOpen&&quranMinimized&&<QuranPip/>}
+
+      {/* Quran viewer (non-minimized) */}
+      {quranOpen&&!quranMinimized&&(
+        <div style={{position:"fixed",inset:0,zIndex:8950,background:"#202124",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+            <button onClick={()=>setQuranMinimized(true)} title="Minimize"
+              style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <ChevronDown style={{width:14,height:14}}/>
+            </button>
+            <button onClick={()=>setQuranOpen(false)}
+              style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+              <X style={{width:12,height:12}}/> Close
+            </button>
+            <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>📖 Full Quran</span>
+          </div>
+          <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
+        </div>
+      )}
+
+      {/* Material viewer overlays — stacked by z-index */}
+      {viewers.filter(v=>!v.minimized).map((v,i)=>(
+        <ViewerOverlay key={v.id} v={v} zIdx={8960+i}/>
+      ))}
+
+      {/* Material list panel — always rendered underneath */}
+      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{
         position:"absolute",top:0,right:0,
         /* Important: bottom:0 so footer stays below this panel */
@@ -3129,7 +3178,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
                   padding:"10px 10px 10px 12px",background:isEditing?"rgba(201,168,76,.06)":"rgba(255,255,255,.04)",
                   border:`1px solid ${isEditing?"rgba(201,168,76,.25)":"rgba(255,255,255,.07)"}`,borderRadius:10,
                 }}>
-                  <button onClick={()=>setViewing(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0}}>
+                  <button onClick={()=>openViewer(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0}}>
                     <div style={{width:36,height:36,borderRadius:8,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{icon}</div>
                     <div style={{flex:1,minWidth:0}}>
                       <p style={{margin:0,fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Untitled"}</p>
@@ -3137,6 +3186,8 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
                         {m.material_type||"file"}
                         {resume?.time&&<span style={{marginLeft:5,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
                         {resume?.page&&!resume?.time&&<span style={{marginLeft:5,color:TEAL}}>p.{resume.page}</span>}
+                        {viewers.some(v=>v.material?.id===m.id&&!v.minimized)&&<span style={{marginLeft:5,color:"#f2dfa8"}}>● open</span>}
+                        {viewers.some(v=>v.material?.id===m.id&&v.minimized)&&<span style={{marginLeft:5,color:"rgba(255,255,255,.3)"}}>● min</span>}
                       </p>
                     </div>
                     <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.25)",flexShrink:0}}/>
@@ -3167,7 +3218,8 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
           })}
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 
