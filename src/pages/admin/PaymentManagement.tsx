@@ -16,6 +16,7 @@ import {
 import { format } from "date-fns";
 
 const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c", BORDER = "rgba(15,45,31,0.12)";
+const isMob = () => window.innerWidth < 640;
 
 const EMPTY_PLAN = {
   name: "", name_ar: "", description: "", description_ar: "",
@@ -310,32 +311,42 @@ const PaymentManagement = () => {
   );
 
   return (
-    <div style={{ padding:"20px 16px", maxWidth:1200, margin:"0 auto", fontFamily:"'Cairo',sans-serif" }}>
+    <div style={{ padding:"16px", maxWidth:1200, margin:"0 auto", fontFamily:"'Cairo',sans-serif" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} input:focus,textarea:focus,select:focus{border-color:${GM}!important;box-shadow:0 0 0 3px ${GM}22}`}</style>
 
       {/* ── PAGE HEADER ── */}
-      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:24, flexWrap:"wrap", gap:12 }}>
+      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", marginBottom:20, flexWrap:"wrap", gap:10 }}>
         <div>
-          <h1 style={{ fontSize:24, fontWeight:900, color:G, margin:0 }}>{t("Payment Management","إدارة المدفوعات")}</h1>
-          <p style={{ fontSize:13, color:"#7a9e88", marginTop:3 }}>{t("Track fees, subscriptions and student payment status","تتبع الرسوم والاشتراكات وحالة دفع الطلاب")}</p>
+          <h1 style={{ fontSize:20, fontWeight:900, color:G, margin:0 }}>{t("Payment Management","إدارة المدفوعات")}</h1>
+          <p style={{ fontSize:12, color:"#7a9e88", marginTop:2 }}>{t("Track fees, subscriptions and student payment status","تتبع الرسوم والاشتراكات وحالة دفع الطلاب")}</p>
         </div>
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          <button onClick={()=>loadData(true)} style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:13, fontWeight:600, cursor:"pointer" }}>
-            <RefreshCw style={{ width:14, height:14, animation:refreshing?"spin .8s linear infinite":"none" }} />
+          <button onClick={()=>loadData(true)} style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 12px", borderRadius:10, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+            <RefreshCw style={{ width:13, height:13, animation:refreshing?"spin .8s linear infinite":"none" }} />
             {t("Refresh","تحديث")}
           </button>
-          <button onClick={exportCSV} style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:13, fontWeight:600, cursor:"pointer" }}>
-            <Download style={{ width:14, height:14 }} />{t("Export CSV","تصدير CSV")}
+          <button onClick={exportCSV} style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 12px", borderRadius:10, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:12, fontWeight:600, cursor:"pointer" }}>
+            <Download style={{ width:13, height:13 }} />{t("Export","تصدير")}
           </button>
           <button onClick={()=>{setManualOpen(true);}}
-            style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 16px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-            <Plus style={{ width:14, height:14 }} />{t("Record Payment","تسجيل دفعة")}
+            style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+            <Plus style={{ width:13, height:13 }} />{t("Record Payment","تسجيل دفعة")}
           </button>
         </div>
       </div>
 
-      {/* ── STATS ── */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(175px,1fr))", gap:12, marginBottom:12 }}>
+      {/* ── PAYSTACK AUTO-SYNC NOTICE ── */}
+      <div style={{ background:"linear-gradient(135deg,#f0fff4,#ecfdf5)", border:`1px solid rgba(34,197,94,.2)`, borderRadius:14, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"flex-start", gap:12 }}>
+        <div style={{ fontSize:22, flexShrink:0 }}>⚡</div>
+        <div>
+          <div style={{ fontSize:13, fontWeight:700, color:G }}>Paystack Auto-Sync Active</div>
+          <div style={{ fontSize:12, color:"#7a9e88", marginTop:2, lineHeight:1.5 }}>
+            Payments made via Paystack are automatically recorded and subscriptions extended based on the plan duration.
+            Webhook endpoint: <span style={{ fontFamily:"monospace", fontSize:11, background:"rgba(0,0,0,.06)", padding:"1px 6px", borderRadius:4 }}>supabase/functions/paystack-webhook</span>
+          </div>
+        </div>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))", gap:10, marginBottom:12 }}>
         <StatCard icon={TrendingUp}     label={t("NGN This Month","هذا الشهر ₦")}  value={fmtAmt(stats.totalMonth)} sub={t("Nigeria Revenue","إيرادات نيجيريا")} color="#22c55e" bg="#f0fff4" />
         <StatCard icon={DollarSign}     label={t("NGN All Time","إجمالي ₦")}       value={fmtAmt(stats.totalAll)}   sub={t("Total NGN","إجمالي نيرا")}           color="#3b82f6" bg="#eff6ff" />
         <StatCard icon={Users}          label={t("Active Subs","اشتراكات نشطة")}   value={stats.active}             sub={t("Subscriptions","اشتراكات")}          color="#8b5cf6" bg="#f5f3ff" />
@@ -362,8 +373,8 @@ const PaymentManagement = () => {
 
       {/* ── TABS ── */}
       <div style={{ background:"#fff", borderRadius:18, border:`1px solid ${BORDER}`, boxShadow:"0 2px 12px rgba(0,0,0,.06)", overflow:"hidden" }}>
-        {/* Tab bar */}
-        <div style={{ display:"flex", borderBottom:`1px solid ${BORDER}`, background:"#fafafa" }}>
+        {/* Tab bar — horizontally scrollable on mobile */}
+        <div style={{ display:"flex", borderBottom:`1px solid ${BORDER}`, background:"#fafafa", overflowX:"auto", WebkitOverflowScrolling:"touch" as any }}>
           {([
             ["students",      t("Students","الطلاب"),           Users],
             ["transactions",  t("Transactions","المعاملات"),    CreditCard],
@@ -371,10 +382,10 @@ const PaymentManagement = () => {
             ["plans",         t("Plans","خطط الدفع"),           TrendingUp],
           ] as any[]).map(([key, label, Icon]) => (
             <button key={key} onClick={()=>setActiveTab(key)}
-              style={{ display:"flex", alignItems:"center", gap:6, padding:"13px 20px", background:"none", border:"none",
+              style={{ display:"flex", alignItems:"center", gap:6, padding:"13px 16px", background:"none", border:"none",
                 borderBottom:`3px solid ${activeTab===key?GOLD:"transparent"}`,
                 color:activeTab===key?G:"#7a9e88", fontSize:13, fontWeight:activeTab===key?800:500, cursor:"pointer", transition:"all .15s",
-                position:"relative" }}>
+                position:"relative", whiteSpace:"nowrap", flexShrink:0 }}>
               <Icon style={{ width:14, height:14 }} />{label}
               {key==="international" && stats.intlCount > 0 && (
                 <span style={{ marginLeft:4, background:GOLD, color:"#fff", fontSize:9, fontWeight:900, borderRadius:10, padding:"1px 6px" }}>
@@ -390,7 +401,7 @@ const PaymentManagement = () => {
           <div style={{ padding:18 }}>
             {/* Search + filter */}
             <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
-              <div style={{ position:"relative", flex:1, minWidth:200 }}>
+              <div style={{ position:"relative", flex:1, minWidth:180 }}>
                 <Search style={{ position:"absolute", left:11, top:"50%", transform:"translateY(-50%)", width:14, height:14, color:"#7a9e88" }} />
                 <input value={search} onChange={e=>setSearch(e.target.value)} placeholder={t("Search students…","بحث عن طالب…")}
                   style={{ ...inp, paddingLeft:34 }} />
@@ -398,68 +409,76 @@ const PaymentManagement = () => {
               <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
                 {["all","paid","unpaid","grace","exempt"].map(f => (
                   <button key={f} onClick={()=>setFilter(f)}
-                    style={{ padding:"7px 14px", borderRadius:20, border:`1.5px solid ${filter===f?G:BORDER}`, background:filter===f?G:"#fff", color:filter===f?"#fff":G, fontSize:12, fontWeight:filter===f?700:500, cursor:"pointer", transition:"all .15s", textTransform:"capitalize" }}>
+                    style={{ padding:"7px 12px", borderRadius:20, border:`1.5px solid ${filter===f?G:BORDER}`, background:filter===f?G:"#fff", color:filter===f?"#fff":G, fontSize:12, fontWeight:filter===f?700:500, cursor:"pointer", transition:"all .15s", textTransform:"capitalize" }}>
                     {f==="all"?t("All","الكل"):f}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Count */}
             <div style={{ fontSize:12, color:"#7a9e88", marginBottom:10 }}>
               {t("Showing","عرض")} <strong style={{ color:G }}>{filtered.length}</strong> {t("of","من")} {students.length} {t("students","طلاب")}
             </div>
 
-            {/* Table */}
-            <div style={{ borderRadius:12, border:`1px solid ${BORDER}`, overflow:"hidden" }}>
-              {/* Header */}
-              <div style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1.2fr 1.5fr", background:"#f8fafb", padding:"10px 16px", gap:8 }}>
-                {[t("Student","الطالب"),t("Level","المستوى"),t("Status","الحالة"),t("Expires","انتهاء"),t("Actions","إجراءات")].map((h,i)=>(
-                  <span key={i} style={{ fontSize:10, fontWeight:800, color:"#7a9e88", letterSpacing:.8, textTransform:"uppercase" }}>{h}</span>
-                ))}
-              </div>
-              {/* Rows */}
+            {/* Mobile: card list | Desktop: table */}
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
               {filtered.length===0 ? (
                 <div style={{ padding:"40px 20px", textAlign:"center", color:"#7a9e88", fontSize:14 }}>
                   {t("No students found","لا يوجد طلاب")}
                 </div>
-              ) : filtered.map((s:any, i:number) => (
-                <div key={s.user_id} style={{ display:"grid", gridTemplateColumns:"2fr 1fr 1fr 1.2fr 1.5fr", padding:"12px 16px", gap:8, alignItems:"center", borderTop:i===0?"none":`1px solid ${BORDER}`, background:i%2===0?"#fff":"#fafcfb" }}>
-                  {/* Student */}
-                  <div>
-                    <div style={{ fontSize:14, fontWeight:700, color:G }}>{s.full_name||"—"}</div>
-                    <div style={{ fontSize:11, color:"#7a9e88" }}>{s.email}</div>
-                  </div>
-                  {/* Level */}
-                  <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, background:"rgba(15,45,31,.08)", color:G, fontWeight:600, display:"inline-block" }}>
-                    {s.level||"—"}
-                  </span>
-                  {/* Status */}
-                  <StatusPill status={s.payment_status} exempt={s.is_payment_exempt} />
-                  {/* Expiry */}
-                  <span style={{ fontSize:12, color: s.subscription_end_date && new Date(s.subscription_end_date)<new Date() ? "#ef4444" : "#7a9e88" }}>
-                    {s.subscription_end_date ? format(new Date(s.subscription_end_date),"dd MMM yyyy") : "—"}
-                  </span>
-                  {/* Actions */}
-                  <div style={{ display:"flex", gap:5, flexWrap:"wrap" }}>
-                    <button onClick={()=>{ setManualForm(f=>({...f,student_id:s.user_id})); setManualOpen(true); }}
-                      style={{ display:"flex", alignItems:"center", gap:4, padding:"5px 10px", borderRadius:8, background:G, border:"none", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                      <DollarSign style={{ width:11, height:11 }} />{t("Pay","دفع")}
-                    </button>
-                    {(!s.is_payment_exempt && (s.payment_status==="unpaid"||!s.payment_status)) && (
-                      <button onClick={()=>sendReminder(s)}
-                        style={{ display:"flex", alignItems:"center", gap:4, padding:"5px 10px", borderRadius:8, background:"#fffbeb", border:`1px solid ${GOLD}`, color:"#92400e", fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                        <Bell style={{ width:11, height:11 }} />{t("Remind","تذكير")}
+              ) : filtered.map((s:any) => {
+                const sub = subscriptions.find((x:any) => x.student_id===s.user_id);
+                return (
+                  <div key={s.user_id} style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:14, padding:"14px 16px", display:"flex", flexDirection:"column", gap:10, boxShadow:"0 1px 4px rgba(0,0,0,.04)" }}>
+                    {/* Top row */}
+                    <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:15, fontWeight:700, color:G, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.full_name||"—"}</div>
+                        <div style={{ fontSize:11, color:"#7a9e88", marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.email}</div>
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
+                        <StatusPill status={s.payment_status} exempt={s.is_payment_exempt} />
+                      </div>
+                    </div>
+                    {/* Middle row */}
+                    <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                      {s.level && (
+                        <span style={{ fontSize:11, padding:"3px 10px", borderRadius:20, background:"rgba(15,45,31,.08)", color:G, fontWeight:600 }}>
+                          {s.level}
+                        </span>
+                      )}
+                      {s.subscription_end_date && (
+                        <span style={{ fontSize:11, color: new Date(s.subscription_end_date)<new Date() ? "#ef4444" : "#7a9e88" }}>
+                          {new Date(s.subscription_end_date)<new Date() ? "⚠️ Expired" : "✅ Until"} {format(new Date(s.subscription_end_date),"dd MMM yyyy")}
+                        </span>
+                      )}
+                      {sub && (
+                        <span style={{ fontSize:11, color:"#7a9e88" }}>
+                          Sub: {sub.status}
+                        </span>
+                      )}
+                    </div>
+                    {/* Actions row */}
+                    <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                      <button onClick={()=>{ setManualForm(f=>({...f,student_id:s.user_id})); setManualOpen(true); }}
+                        style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", flex:1, justifyContent:"center" }}>
+                        <DollarSign style={{ width:13, height:13 }} />{t("Record Payment","تسجيل دفعة")}
                       </button>
-                    )}
-                    <button onClick={()=>toggleExempt(s.user_id,!s.is_payment_exempt)}
-                      title={s.is_payment_exempt?t("Remove exemption","إزالة الإعفاء"):t("Mark exempt","وضع علامة كمعفى")}
-                      style={{ padding:"5px 8px", borderRadius:8, background:s.is_payment_exempt?"#fff5f5":"#f0f9ff", border:`1px solid ${s.is_payment_exempt?"#fca5a5":"#93c5fd"}`, color:s.is_payment_exempt?"#ef4444":"#3b82f6", fontSize:11, fontWeight:700, cursor:"pointer" }}>
-                      <GraduationCap style={{ width:12, height:12 }} />
-                    </button>
+                      {(!s.is_payment_exempt && (s.payment_status==="unpaid"||!s.payment_status)) && (
+                        <button onClick={()=>sendReminder(s)}
+                          style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:"#fffbeb", border:`1px solid ${GOLD}`, color:"#92400e", fontSize:12, fontWeight:700, cursor:"pointer" }}>
+                          <Bell style={{ width:12, height:12 }} />{t("Remind","تذكير")}
+                        </button>
+                      )}
+                      <button onClick={()=>toggleExempt(s.user_id,!s.is_payment_exempt)}
+                        title={s.is_payment_exempt?t("Remove exemption","إزالة الإعفاء"):t("Mark exempt","وضع علامة كمعفى")}
+                        style={{ padding:"8px 12px", borderRadius:10, background:s.is_payment_exempt?"#fff5f5":"#f0f9ff", border:`1px solid ${s.is_payment_exempt?"#fca5a5":"#93c5fd"}`, color:s.is_payment_exempt?"#ef4444":"#3b82f6", fontSize:12, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
+                        <GraduationCap style={{ width:13, height:13 }} />{s.is_payment_exempt?"Unexempt":"Exempt"}
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -470,45 +489,37 @@ const PaymentManagement = () => {
             <div style={{ fontSize:12, color:"#7a9e88", marginBottom:12 }}>
               {payments.length} {t("transactions total","معاملة إجمالاً")} — {payments.filter((p:any)=>p.status==="success").length} {t("successful","ناجحة")}
             </div>
-            <div style={{ borderRadius:12, border:`1px solid ${BORDER}`, overflow:"hidden" }}>
-              {/* Header */}
-              <div style={{ display:"grid", gridTemplateColumns:"1.2fr 1.5fr 1fr 1fr 0.8fr 1.5fr", background:"#f8fafb", padding:"10px 16px", gap:8 }}>
-                {[t("Date","التاريخ"),t("Student","الطالب"),t("Amount","المبلغ"),t("Method","الطريقة"),t("Status","الحالة"),t("Reference","المرجع")].map((h,i)=>(
-                  <span key={i} style={{ fontSize:10, fontWeight:800, color:"#7a9e88", letterSpacing:.8, textTransform:"uppercase" }}>{h}</span>
-                ))}
-              </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
               {payments.length===0 ? (
                 <div style={{ padding:"40px 20px", textAlign:"center", color:"#7a9e88" }}>{t("No transactions yet","لا توجد معاملات")}</div>
-              ) : payments.map((p:any, i:number) => {
+              ) : payments.map((p:any) => {
                 const stu  = students.find((s:any)=>s.user_id===p.student_id);
                 const plan = plans.find((pl:any)=>pl.id===p.plan_id);
                 const isExpanded = expandedTx===p.id;
                 return (
-                  <div key={p.id}>
-                    <div style={{ display:"grid", gridTemplateColumns:"1.2fr 1.5fr 1fr 1fr 0.8fr 1.5fr", padding:"12px 16px", gap:8, alignItems:"center", borderTop:`1px solid ${BORDER}`, background:i%2===0?"#fff":"#fafcfb", cursor:"pointer" }}
-                      onClick={()=>setExpandedTx(isExpanded?null:p.id)}>
-                      <span style={{ fontSize:12, color:"#7a9e88" }}>{format(new Date(p.paid_at||p.created_at),"dd MMM yyyy")}</span>
-                      <div>
-                        <div style={{ fontSize:13, fontWeight:600, color:G }}>{stu?.full_name||"—"}</div>
-                        {plan&&<div style={{ fontSize:11, color:"#7a9e88" }}>{plan.name}</div>}
-                      </div>
-                      <span style={{ fontSize:14, fontWeight:800, color:G }}>{fmtAmt(p.amount, plan?.currency)}</span>
-                      <span style={{ fontSize:12, color:"#7a9e88", textTransform:"capitalize" }}>{p.payment_method||"—"}</span>
-                      <StatusPill status={p.status==="success"?"paid":p.status==="failed"?"unpaid":"grace"} />
-                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                        <span style={{ fontSize:10, fontFamily:"monospace", color:"#7a9e88", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:120 }}>
-                          {p.paystack_reference||"—"}
-                        </span>
-                        {isExpanded?<ChevronUp style={{width:13,height:13,color:"#7a9e88",flexShrink:0}}/>:<ChevronDown style={{width:13,height:13,color:"#7a9e88",flexShrink:0}}/>}
+                  <div key={p.id} style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:14, overflow:"hidden", boxShadow:"0 1px 4px rgba(0,0,0,.04)" }}>
+                    <div style={{ padding:"14px 16px", cursor:"pointer" }} onClick={()=>setExpandedTx(isExpanded?null:p.id)}>
+                      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:8 }}>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:14, fontWeight:700, color:G, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{stu?.full_name||"—"}</div>
+                          {plan && <div style={{ fontSize:11, color:"#7a9e88" }}>{plan.name}</div>}
+                          <div style={{ fontSize:11, color:"#7a9e88", marginTop:2 }}>{format(new Date(p.paid_at||p.created_at),"dd MMM yyyy")}</div>
+                        </div>
+                        <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4, flexShrink:0 }}>
+                          <span style={{ fontSize:16, fontWeight:900, color:G }}>{fmtAmt(p.amount, plan?.currency)}</span>
+                          <StatusPill status={p.status==="success"?"paid":p.status==="failed"?"unpaid":"grace"} />
+                        </div>
+                        {isExpanded?<ChevronUp style={{width:14,height:14,color:"#7a9e88",alignSelf:"center"}}/>:<ChevronDown style={{width:14,height:14,color:"#7a9e88",alignSelf:"center"}}/>}
                       </div>
                     </div>
                     {isExpanded && (
                       <div style={{ padding:"12px 16px 14px", background:"#f8fafb", borderTop:`1px solid ${BORDER}` }}>
-                        <div style={{ display:"flex", gap:20, flexWrap:"wrap", fontSize:12, color:"#7a9e88" }}>
-                          {p.notes && <span><strong style={{ color:G }}>Notes:</strong> {p.notes}</span>}
-                          {p.type && <span><strong style={{ color:G }}>Type:</strong> {p.type}</span>}
-                          <span><strong style={{ color:G }}>Reference:</strong> {p.paystack_reference||"—"}</span>
-                          <span><strong style={{ color:G }}>Created:</strong> {format(new Date(p.created_at),"dd MMM yyyy HH:mm")}</span>
+                        <div style={{ display:"flex", flexDirection:"column", gap:6, fontSize:12, color:"#7a9e88" }}>
+                          <div><strong style={{ color:G }}>Method:</strong> {p.payment_method||"—"}</div>
+                          {p.notes && <div><strong style={{ color:G }}>Notes:</strong> {p.notes}</div>}
+                          {p.type && <div><strong style={{ color:G }}>Type:</strong> {p.type}</div>}
+                          <div><strong style={{ color:G }}>Reference:</strong> <span style={{fontFamily:"monospace"}}>{p.paystack_reference||"—"}</span></div>
+                          <div><strong style={{ color:G }}>Created:</strong> {format(new Date(p.created_at),"dd MMM yyyy HH:mm")}</div>
                         </div>
                       </div>
                     )}
