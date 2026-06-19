@@ -129,13 +129,24 @@ export default function GlobalClassroomOverlay() {
   // Android foreground service via @capacitor/background-audio (if installed).
   // The useEffect above already calls startBackgroundAudio, so this block only
   // handles the Capacitor app lifecycle events.
+  //
+  // CRITICAL FIX: `minimized` was previously in the deps array, causing the
+  // entire listener pair to be removed and re-added on every minimize/restore
+  // toggle. This created duplicate listeners and could miss appStateChange
+  // events that fired during the brief re-registration window.
+  // Solution: read `minimized` through a ref so the effect never needs to
+  // re-register because of it.
+  const minimizedRef = useRef(minimized);
+  useEffect(() => { minimizedRef.current = minimized; }, [minimized]);
+
   useEffect(() => {
     if (!Capacitor.isNativePlatform() || !hasConnected) return;
     let backHandle: any = null;
     let stateHandle: any = null;
 
     CapApp.addListener("backButton", () => {
-      if (!minimized) setMinimized(true);
+      // Read minimized via ref — stable, no re-registration needed
+      if (!minimizedRef.current) setMinimized(true);
     }).then(h => { backHandle = h; });
 
     // appStateChange fires when app goes to background/foreground on Android.
@@ -158,7 +169,10 @@ export default function GlobalClassroomOverlay() {
       backHandle?.remove();
       stateHandle?.remove();
     };
-  }, [hasConnected, minimized, setMinimized, restoreMicFnRef]);
+    // minimized intentionally NOT in deps — read via minimizedRef above.
+    // Re-registering on every minimize toggle causes duplicate listeners.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasConnected, setMinimized, restoreMicFnRef]);
 
   /* ── Minimize button ── */
   const handleMinimize = useCallback(() => {
