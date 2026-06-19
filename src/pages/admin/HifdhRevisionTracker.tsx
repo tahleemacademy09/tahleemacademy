@@ -507,6 +507,7 @@ export default function HifdhRevisionTracker() {
         daysOff:      assignForm.days_off ?? [],
         custom:       assignForm.notes || "",
       });
+      // Try RPC first (with assigned_by param)
       const {error: rpcErr} = await (supabase as any).rpc("save_hifdh_assignment",{
         p_student_id:     studentId,
         p_mode:           assignForm.mode,
@@ -514,8 +515,26 @@ export default function HifdhRevisionTracker() {
         p_daily_pages:    assignForm.daily_pages,
         p_reciter_id:     assignForm.reciter_id||"Alafasy_128kbps",
         p_notes:          notesJson,
+        p_assigned_by:    userId,
       });
-      if (rpcErr){ setSaveError(`Save failed: ${rpcErr.message}`); setSavingAssign(false); return; }
+      if (rpcErr) {
+        // Fallback: direct upsert so assigned_by is always set
+        const payload: any = {
+          student_id:     studentId,
+          assigned_by:    userId,
+          mode:           assignForm.mode,
+          selected_items: assignForm.selected_items,
+          daily_pages:    assignForm.daily_pages,
+          reciter_id:     assignForm.reciter_id||"Alafasy_128kbps",
+          notes:          notesJson,
+          active:         true,
+          created_at:     new Date().toISOString(),
+        };
+        const { error: upErr } = await (supabase as any)
+          .from("hifdh_daily_assignments")
+          .upsert(payload, { onConflict: "student_id" });
+        if (upErr) { setSaveError(`Save failed: ${upErr.message}`); setSavingAssign(false); return; }
+      }
       setShowAssign(null);
       await load();
     } catch(e:any){ setSaveError(`Unexpected error: ${e?.message??String(e)}`); }
