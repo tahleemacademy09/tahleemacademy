@@ -1737,8 +1737,13 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
 
   const resumeBadge=resume?.time||resume?.page;
 
+  // Animate only on first mount — prevent re-renders from re-triggering the animation (shake fix)
+  const didMountAnim=useRef(false);
+  const mountAnim=didMountAnim.current?"none":"fade-in .18s ease";
+  useEffect(()=>{didMountAnim.current=true;},[]);
+
   return(
-    <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column",animation:"fade-in .18s ease"}}>
+    <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column",animation:mountAnim}}>
       {/* Viewer header */}
       <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
         {/* Minimize to pip */}
@@ -2829,32 +2834,70 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
 
   const MAT_ICON=(m:any)=>MAT_TYPE_ICON[m?.material_type||"document"]||"📄";
 
-  /* ── Pip bubble for one minimized viewer ── */
-  const PipBubble=({v}:{v:{id:string;material:any;minimized:boolean;pipX:number;pipY:number}})=>(
-    <div
-      onPointerDown={e=>onPipDown(e,v.id,v.pipX,v.pipY)}
-      onPointerMove={onPipMove} onPointerUp={onPipUp}
-      onClick={()=>restoreViewer(v.id)}
-      title={`Open: ${v.material?.title||"Material"}`}
-      style={{position:"fixed",left:v.pipX,top:v.pipY,zIndex:9000,
-        width:50,height:50,borderRadius:"50%",
-        background:"linear-gradient(135deg,#0a7a5e,#1a5276)",
-        boxShadow:"0 4px 18px rgba(0,0,0,.55)",
-        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-        cursor:"grab",userSelect:"none",touchAction:"none",
-        border:"2px solid rgba(255,255,255,.22)",
-      }}>
-      <span style={{fontSize:16,lineHeight:1}}>{MAT_ICON(v.material)}</span>
-      <span style={{fontSize:7,color:"rgba(255,255,255,.65)",maxWidth:44,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"center",marginTop:2}}>
-        {v.material?.title||"Material"}
-      </span>
-    </div>
-  );
+  /* ── Single tray badge for ALL minimized viewers ── */
+  const[matTrayOpen,setMatTrayOpen]=useState(false);
+  const MinimizedMaterialsTray=(()=>{
+    const minimized=viewers.filter(v=>v.minimized);
+    if(!minimized.length) return null;
+    return(
+      <div style={{position:"fixed",bottom:80,right:16,zIndex:9002,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
+        {/* Collapsed badge — always visible */}
+        <button
+          onClick={()=>setMatTrayOpen(o=>!o)}
+          style={{display:"flex",alignItems:"center",gap:7,padding:"7px 13px 7px 10px",borderRadius:24,
+            background:"linear-gradient(135deg,#0a7a5e,#1a3a52)",
+            boxShadow:"0 4px 18px rgba(0,0,0,.55)",border:"1.5px solid rgba(255,255,255,.18)",
+            cursor:"pointer",color:"#fff",userSelect:"none"}}
+        >
+          <span style={{fontSize:16}}>📂</span>
+          <span style={{fontSize:12,fontWeight:700}}>{minimized.length} open</span>
+          <span style={{fontSize:10,opacity:.6,marginLeft:2}}>{matTrayOpen?"▲":"▼"}</span>
+        </button>
+
+        {/* Expanded tray list */}
+        {matTrayOpen&&(
+          <div style={{background:"#1e293b",borderRadius:14,padding:"8px 6px",
+            boxShadow:"0 8px 32px rgba(0,0,0,.55)",border:"1px solid rgba(255,255,255,.1)",
+            display:"flex",flexDirection:"column",gap:4,minWidth:220,maxWidth:280}}>
+            {minimized.map(v=>(
+              <div key={v.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 8px",borderRadius:10,
+                background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)"}}>
+                <button
+                  onClick={()=>{restoreViewer(v.id);setMatTrayOpen(false);}}
+                  style={{display:"flex",alignItems:"center",gap:8,flex:1,background:"none",border:"none",
+                    cursor:"pointer",textAlign:"left",minWidth:0,color:"#fff"}}
+                >
+                  <span style={{fontSize:18,flexShrink:0}}>{MAT_ICON(v.material)}</span>
+                  <span style={{fontSize:12,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
+                    {v.material?.title||"Material"}
+                  </span>
+                  <span style={{fontSize:10,opacity:.5,flexShrink:0}}>Tap to open</span>
+                </button>
+                <button
+                  onClick={()=>closeViewer(v.id)}
+                  title="Close"
+                  style={{width:22,height:22,borderRadius:6,background:"rgba(255,255,255,.08)",border:"none",
+                    color:"rgba(255,255,255,.5)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}
+                >
+                  <X style={{width:11,height:11}}/>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  })();
 
   /* ── Full-screen overlay for one viewer slot ── */
-  const ViewerOverlay=({v,zIdx}:{v:{id:string;material:any;minimized:boolean;pipX:number;pipY:number};zIdx:number})=>(
-    v.minimized?<PipBubble v={v}/>:
-    <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:"slide-right .18s ease both"}}>
+  /* Fix: don't re-run the open animation on every render — only on first mount */
+  const ViewerOverlay=({v,zIdx}:{v:{id:string;material:any;minimized:boolean;pipX:number;pipY:number};zIdx:number})=>{
+    const didMount=useRef(false);
+    const animStyle=didMount.current?"none":"slide-right .18s ease both";
+    useEffect(()=>{didMount.current=true;},[]);
+    if(v.minimized) return null;
+    return(
+    <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:animStyle}}>
       <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
         <button onClick={()=>minimizeViewer(v.id)} title="Minimize"
           style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -2883,7 +2926,8 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         <InClassMaterialViewer material={v.material} onClose={()=>closeViewer(v.id)}/>
       </div>
     </div>
-  );
+    );
+  };
 
   /* ── Quran pip bubble ── */
   const QuranPip=()=>(
@@ -2903,8 +2947,8 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
 
   return(
     <>
-      {/* Always-visible minimized pips */}
-      {viewers.filter(v=>v.minimized).map(v=><PipBubble key={v.id} v={v}/>)}
+      {/* Single minimized-materials tray badge */}
+      {MinimizedMaterialsTray}
       {quranOpen&&quranMinimized&&<QuranPip/>}
 
       {/* Quran viewer (non-minimized) */}
