@@ -190,30 +190,13 @@ const TeacherDashboard = () => {
       const seenLive = new Set(liveSessions.map(s => s.id));
       for (const s of (hostSess || [])) { if (!seenLive.has(s.id)) { seenLive.add(s.id); liveSessions.push(s); } }
 
-      // TODAY's timetable slots only (day_of_week === today)
+      // TODAY's timetable slots only (day_of_week === today).
+      // subjectIds already comes solely from subject_timetable.teacher_id
+      // (see above), so a single direct query by teacher_id is both
+      // sufficient and authoritative — same pattern as My Timetable.
       const todayIndex = today.getDay();
-      let ttToday: any[] = [];
-      if (subjectIds.length) {
-        const { data: tt } = await supabase.from("subject_timetable" as any).select("id,subject_id,start_time,end_time,subjects(title,title_ar)").eq("day_of_week", todayIndex).eq("is_active", true).in("subject_id", subjectIds);
-        ttToday = tt || [];
-      }
-      const { data: ttDirect } = await supabase.from("subject_timetable" as any).select("id,subject_id,start_time,end_time,subjects(title,title_ar)").eq("day_of_week", todayIndex).eq("is_active", true).eq("teacher_id", user.id);
-      const seenTT = new Set(ttToday.map((s: any) => s.id));
-      for (const s of (ttDirect || [])) { if (!seenTT.has(s.id)) { seenTT.add(s.id); ttToday.push(s); } }
-
-      // Defensive de-dup: the two queries above can both return a *different*
-      // timetable row for the same subject+time (e.g. a leftover duplicate
-      // row in subject_timetable), which would otherwise show as repeated
-      // cards for the same class. Keep only one row per subject+start_time.
-      {
-        const seenSlot = new Set<string>();
-        ttToday = ttToday.filter((slot: any) => {
-          const key = `${slot.subject_id}|${slot.start_time}`;
-          if (seenSlot.has(key)) return false;
-          seenSlot.add(key);
-          return true;
-        });
-      }
+      const { data: tt } = await supabase.from("subject_timetable" as any).select("id,subject_id,start_time,end_time,subjects(title,title_ar)").eq("day_of_week", todayIndex).eq("is_active", true).eq("teacher_id", user.id);
+      const ttToday = tt || [];
 
       // Virtual sessions from timetable — skip if live_session already exists for subject today
       const liveSubIds = new Set(liveSessions.map(s => s.subject_id));
