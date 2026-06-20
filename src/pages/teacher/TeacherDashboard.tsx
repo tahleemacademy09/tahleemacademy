@@ -160,21 +160,12 @@ const TeacherDashboard = () => {
   useEffect(() => {
     if (!user) return;
     (async () => {
-      // Owned subjects
-      const { data: ownedSubs } = await supabase.from("subjects").select("id,title,title_ar").eq("teacher_id", user.id);
-      const ownedIds = (ownedSubs || []).map(s => s.id);
-
-      // Timetable-assigned subjects
-      const { data: ttAll } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
-      const ttIds = [...new Set((ttAll || []).map((s: any) => s.subject_id).filter(Boolean))];
-      const missingIds = ttIds.filter(id => !ownedIds.includes(id));
-      let extraSubs: any[] = [];
-      if (missingIds.length) {
-        const { data: es } = await supabase.from("subjects").select("id,title,title_ar").in("id", missingIds);
-        extraSubs = es || [];
-      }
-      const allSubs = [...(ownedSubs || []), ...extraSubs];
-      const subjectIds = allSubs.map(s => s.id);
+      // Subject visibility comes ONLY from the admin timetable
+      // (subject_timetable.teacher_id) — not from subjects.teacher_id, which
+      // can be stale or set independently of what the admin has actually
+      // assigned. Only active assignments count.
+      const { data: ttAll } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id).eq("is_active", true);
+      const subjectIds = [...new Set((ttAll || []).map((s: any) => s.subject_id).filter(Boolean))];
 
       // Students / courses
       let studentCount = 0, courseIds: string[] = [];
