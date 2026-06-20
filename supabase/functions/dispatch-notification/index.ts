@@ -3,13 +3,13 @@
   Triggered by Postgres trigger on every INSERT into public.notifications.
 
   Sends:
-    1) Web Push to ALL user devices (VAPID)  — works when browser/app closed
-    2) Telegram via Lovable gateway
+    1) Web Push (VAPID) — browser subscriptions (PWA / web)
+    2) FCM HTTP v1     — native Android/iOS via Capacitor
+    3) Telegram
 
-  FIX (v2): Uses SUPABASE_SERVICE_ROLE_KEY (not anon) so it can read
-  push_subscriptions even though the trigger fires from a pg_net HTTP call.
-  The anon key could not read push_subscriptions with the service-role RLS
-  policy — so no pushes were ever delivered from triggers.
+  FIX: Native Capacitor tokens (endpoint starts with "native:") were being
+  passed to sendWebPush() which crashed because they are FCM tokens, not
+  VAPID endpoints. Now routed to sendFCM() which uses Google FCM HTTP v1.
 */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -22,7 +22,7 @@ const corsHeaders = {
 
 const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram";
 
-// ── Web Push ──────────────────────────────────────────────────────────────────
+// ── Web Push (VAPID) ──────────────────────────────────────────────────────────
 
 async function sendWebPush(
   sub: { endpoint: string; p256dh: string; auth: string },
@@ -51,7 +51,123 @@ async function sendWebPush(
   } catch (err: any) {
     const status = err?.statusCode ?? err?.status ?? 0;
     if (status === 404 || status === 410) return "expired";
-    console.error("[dispatch-notification] push error:", err?.message ?? err);
+    console.error("[dispatch-notification] web push error:", err?.message ?? err);
+    return "error";
+  }
+}
+
+// ── FCM HTTP v1 (native Android / iOS via Capacitor) ─────────────────────────
+// Uses a Google service-account JSON stored in env GOOGLE_SERVICE_ACCOUNT_JSON.
+// To get this: Firebase Console → Project Settings → Service Accounts → Generate new private key
+
+async function getGoogleAccessToken(serviceAccountJson: string): Promise<string> {
+  const sa = JSON.parse(serviceAccountJson);
+  const now = Math.floor(Date.now() / 1000);
+
+  const header  = { alg: "RS256", typ: "JWT" };
+  const payload = {
+    iss:   sa.client_email,
+    scope: "https://www.googleapis.com/auth/firebase.messaging",
+    aud:   "https://oauth2.googleapis.com/token",
+    iat:   now,
+    exp:   now + 3600,
+  };
+
+  const encode = (obj: object) =>
+    btoa(JSON.stringify(obj)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+  const signingInput = `${encode(header)}.${encode(payload)}`;
+
+  // Import RSA private key for signing
+  const pemBody = sa.private_key
+    .replace(/-----BEGIN PRIVATE KEY-----/, "")
+    .replace(/-----END PRIVATE KEY-----/, "")
+    .replace(/\s/g, "");
+  const keyDer = Uint8Array.from(atob(pemBody), c => c.charCodeAt(0));
+  const cryptoKey = await crypto.subtle.importKey(
+    "pkcs8", keyDer.buffer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5", cryptoKey,
+    new TextEncoder().encode(signingInput)
+  );
+  const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+  const jwt = `${signingInput}.${sigB64}`;
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${jwt}`,
+  });
+  const tokenData = await tokenRes.json();
+  if (!tokenData.access_token) throw new Error("FCM token exchange failed: " + JSON.stringify(tokenData));
+  return tokenData.access_token;
+}
+
+async function sendFCM(
+  fcmToken: string,
+  payload: { title: string; message: string; url: string; type: string },
+  serviceAccountJson: string,
+  projectId: string
+): Promise<"ok" | "expired" | "error"> {
+  try {
+    const accessToken = await getGoogleAccessToken(serviceAccountJson);
+
+    const body = {
+      message: {
+        token: fcmToken,
+        notification: {
+          title: payload.title,
+          body:  payload.message,
+        },
+        data: {
+          url:  payload.url,
+          type: payload.type,
+        },
+        android: {
+          priority: "high",
+          notification: {
+            sound:        "default",
+            click_action: "FLUTTER_NOTIFICATION_CLICK",
+            channel_id:   "tahleem_class",
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: "default",
+              badge: 1,
+            },
+          },
+        },
+      },
+    };
+
+    const res = await fetch(
+      `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`,
+      {
+        method:  "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type":  "application/json",
+        },
+        body: JSON.stringify(body),
+      }
+    );
+
+    if (res.ok) return "ok";
+    const errData = await res.json();
+    const errCode = errData?.error?.details?.[0]?.errorCode ?? errData?.error?.status ?? "";
+    // UNREGISTERED or INVALID_ARGUMENT = token expired/revoked
+    if (["UNREGISTERED", "INVALID_ARGUMENT"].includes(errCode) || res.status === 404) return "expired";
+    console.error("[dispatch-notification] FCM error:", errData);
+    return "error";
+  } catch (err: any) {
+    console.error("[dispatch-notification] FCM exception:", err?.message ?? err);
     return "error";
   }
 }
@@ -104,7 +220,6 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    // Always use service role — this function reads push_subscriptions
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
@@ -121,7 +236,6 @@ Deno.serve(async (req) => {
     let title_ar: string | undefined   = body.title_ar;
     let message_ar: string | undefined = body.message_ar;
 
-    // Resolve from notification row if notification_id supplied
     if (body.notification_id) {
       const { data: n, error: nErr } = await supabase
         .from("notifications")
@@ -129,9 +243,7 @@ Deno.serve(async (req) => {
         .eq("id", body.notification_id)
         .maybeSingle();
 
-      if (nErr) {
-        console.error("[dispatch-notification] notification lookup failed:", nErr.message);
-      }
+      if (nErr) console.error("[dispatch-notification] notification lookup failed:", nErr.message);
 
       if (n) {
         user_id    = n.user_id;
@@ -153,20 +265,25 @@ Deno.serve(async (req) => {
     const fullUrl = absUrl(link);
     const results: Record<string, string> = {};
 
-    // ── 1. Web Push — fan out to ALL devices for this user ───────────────────
+    // ── FCM config (for native Capacitor tokens) ──────────────────────────────
+    const SERVICE_ACCOUNT_JSON = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
+    const FCM_PROJECT_ID       = Deno.env.get("FCM_PROJECT_ID");
+
+    // ── Fan out to ALL subscriptions for this user ────────────────────────────
     const { data: subs, error: subsErr } = await supabase
       .from("push_subscriptions")
-      .select("endpoint, p256dh, auth")
+      .select("endpoint, p256dh, auth, keys")
       .eq("user_id", user_id);
 
     if (subsErr) {
       console.error("[dispatch-notification] push_subscriptions read error:", subsErr.message);
-      results.web_push = `db_error: ${subsErr.message}`;
+      results.push = `db_error: ${subsErr.message}`;
     } else if (!subs || subs.length === 0) {
-      results.web_push = "no_subscription";
+      results.push = "no_subscription";
       console.warn("[dispatch-notification] no push subscription for user_id:", user_id);
     } else {
-      let sent = 0, failed = 0, expired = 0;
+      let webSent = 0, webFailed = 0, webExpired = 0;
+      let fcmSent = 0, fcmFailed = 0, fcmExpired = 0;
       const expiredEndpoints: string[] = [];
 
       const pushPayload = {
@@ -186,14 +303,47 @@ Deno.serve(async (req) => {
 
       await Promise.all(
         subs.map(async (sub: any) => {
-          const result = await sendWebPush(sub, pushPayload);
-          if (result === "expired") {
-            expired++;
-            expiredEndpoints.push(sub.endpoint);
-          } else if (result === "ok") {
-            sent++;
+          const isNative = sub.endpoint?.startsWith("native:");
+
+          if (isNative) {
+            // ── Native Capacitor token → FCM HTTP v1 ─────────────────────────
+            // endpoint format: "native:android:FCM_TOKEN" or "native:ios:APNs_TOKEN"
+            const parts    = sub.endpoint.split(":");
+            const platform = parts[1]; // "android" | "ios"
+            const token    = parts.slice(2).join(":"); // rest is the token (may contain colons)
+
+            if (!SERVICE_ACCOUNT_JSON || !FCM_PROJECT_ID) {
+              console.warn("[dispatch-notification] FCM not configured — skipping native token");
+              fcmFailed++;
+              return;
+            }
+
+            // iOS APNs tokens via FCM are supported if the iOS app is linked in Firebase
+            const result = await sendFCM(
+              token,
+              { title, message, url: fullUrl, type: type ?? "announcement" },
+              SERVICE_ACCOUNT_JSON,
+              FCM_PROJECT_ID
+            );
+
+            if (result === "ok")      { fcmSent++; }
+            else if (result === "expired") { fcmExpired++; expiredEndpoints.push(sub.endpoint); }
+            else                      { fcmFailed++; }
+
+            console.log(`[dispatch-notification] FCM ${platform} → ${result}`);
           } else {
-            failed++;
+            // ── Web Push (VAPID) ──────────────────────────────────────────────
+            if (!sub.p256dh || !sub.auth) {
+              // Malformed web subscription — clean it up
+              expiredEndpoints.push(sub.endpoint);
+              webExpired++;
+              return;
+            }
+
+            const result = await sendWebPush(sub, pushPayload);
+            if (result === "ok")           { webSent++; }
+            else if (result === "expired") { webExpired++; expiredEndpoints.push(sub.endpoint); }
+            else                           { webFailed++; }
           }
         })
       );
@@ -204,13 +354,14 @@ Deno.serve(async (req) => {
           .delete()
           .eq("user_id", user_id)
           .in("endpoint", expiredEndpoints);
-        console.warn(`[dispatch-notification] cleaned ${expiredEndpoints.length} expired sub(s) for user:`, user_id);
+        console.warn(`[dispatch-notification] cleaned ${expiredEndpoints.length} expired sub(s)`);
       }
 
-      results.web_push = `sent ${sent}/${subs.length}${expired ? ` (${expired} expired/cleaned)` : ""}${failed ? ` (${failed} failed)` : ""}`;
+      results.web_push = `sent ${webSent}${webExpired ? ` (${webExpired} expired)` : ""}${webFailed ? ` (${webFailed} failed)` : ""}`;
+      results.fcm      = `sent ${fcmSent}${fcmExpired ? ` (${fcmExpired} expired)` : ""}${fcmFailed ? ` (${fcmFailed} failed)` : ""}`;
     }
 
-    // ── 2. Telegram ──────────────────────────────────────────────────────────
+    // ── Telegram ──────────────────────────────────────────────────────────────
     const { data: prof } = await supabase
       .from("profiles")
       .select("telegram_chat_id")
