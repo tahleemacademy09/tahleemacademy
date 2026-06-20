@@ -72,14 +72,15 @@ export default function TeacherTimetable() {
   useEffect(() => {
     if (!user) return;
     const fetchIds = async () => {
-      const { data: owned } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const ownedIds = (owned || []).map((s: any) => s.id);
-
+      // Subject visibility comes ONLY from the admin timetable
+      // (subject_timetable.teacher_id) — not from subjects.teacher_id, which
+      // can be stale or set independently of what the admin has actually
+      // assigned. Only active assignments count.
       const { data: ttSlots } = await supabase
-        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id).eq("is_active", true);
       const ttIds = (ttSlots || []).map((s: any) => s.subject_id).filter(Boolean);
 
-      setSubjectIds([...new Set([...ownedIds, ...ttIds])]);
+      setSubjectIds([...new Set(ttIds)]);
     };
     fetchIds();
   }, [user]);
@@ -89,27 +90,18 @@ export default function TeacherTimetable() {
     enabled: !!user,
     queryFn: async () => {
       try {
-        let rows: any[] = [];
-        if (subjectIds.length > 0) {
-          const { data: bySubject } = await supabase
-            .from("subject_timetable" as any)
-            .select("*, subjects(id, title, title_ar, image_url)")
-            .in("subject_id", subjectIds)
-            .eq("is_active", true)
-            .order("day_of_week").order("start_time");          rows = bySubject || [];
-        }
+        // subjectIds is already derived solely from subject_timetable rows
+        // assigned to this teacher, so a single direct query by teacher_id
+        // is both sufficient and authoritative — no need to also query by
+        // subject_id, which previously let stale subjects.teacher_id rows
+        // leak other teachers' slots into this list.
         const { data: byTeacher } = await supabase
           .from("subject_timetable" as any)
           .select("*, subjects(id, title, title_ar, image_url)")
           .eq("teacher_id", user!.id)
           .eq("is_active", true)
           .order("day_of_week").order("start_time");
-        const byTeacherRows = byTeacher || [];
-        const seen = new Set(rows.map((r: any) => r.id));
-        for (const r of byTeacherRows) {
-          if (!seen.has(r.id)) { rows.push(r); seen.add(r.id); }
-        }
-        return rows;
+        return byTeacher || [];
       } catch { return []; }
     },
   });
