@@ -4225,14 +4225,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         <button className="gm-more-item" onClick={()=>{onToggleMaterials();setMoreOpen(false);}}>
           <Eye style={{width:16,height:16,opacity:.7}}/> Subject Materials
         </button>
-        {/* In-class live file panel */}
-        <button className="gm-more-item" onClick={()=>{onToggleLiveFiles();setMoreOpen(false);}} style={{color:liveFilesOpen?"#8ab4f8":"#e8eaed"}}>
-          <ClipboardList style={{width:16,height:16}}/> Class Materials (Live)
-        </button>
         {isPrivileged&&<>
-          <button className="gm-more-item" onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} style={{color:groupReciteMode?"#34d399":"#e8eaed"}}>
-            <Volume2 style={{width:16,height:16}}/> {groupReciteMode?"End Group Recitation":"Group Recitation"}
-          </button>
           <button className="gm-more-item" onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{color:canStudentWriteProp?"#34d399":"#e8eaed"}}>
             <PenTool style={{width:16,height:16}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
           </button>
@@ -4246,10 +4239,6 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           }} style={{color:"#fb923c"}}>
             <MicOff style={{width:16,height:16}}/> Mute All Students
           </button>
-          {/* Countdown Timer */}
-          <button className="gm-more-item" onClick={()=>{onToggleTimer();setMoreOpen(false);}} style={{color:timerRunning?"#fbbf24":"#e8eaed"}}>
-            <Timer style={{width:16,height:16}}/> {timerRunning?`Timer: ${timerDisplay}`:"Start Timer"}
-          </button>
           {/* Hand queue */}
           <button className="gm-more-item" onClick={()=>{onToggleHandQueue();setMoreOpen(false);}}>
             <Hand style={{width:16,height:16,color:"#fbbf24"}}/> Hand Queue
@@ -4257,10 +4246,6 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           {/* Live attendance */}
           <button className="gm-more-item" onClick={()=>{onToggleAttendance();setMoreOpen(false);}}>
             <UserCheck style={{width:16,height:16,color:"#34d399"}}/> Live Attendance
-          </button>
-          {/* Launch Quiz */}
-          <button className="gm-more-item" onClick={()=>{onLaunchQuiz();setMoreOpen(false);}}>
-            <Zap style={{width:16,height:16,color:"#a78bfa"}}/> Launch Quiz
           </button>
           {/* Session summary */}
           <button className="gm-more-item" onClick={()=>{onGenerateSummary();setMoreOpen(false);}}>
@@ -4889,13 +4874,19 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         setScreenSharing(false);
         toast({title:"Screen share stopped"});
       }else{
-        await room.localParticipant.setScreenShareEnabled(true);
+        await room.localParticipant.setScreenShareEnabled(true,{audio:true});
         setScreenSharing(true);
         toast({title:"📺 Screen sharing started"});
       }
     }catch(e:any){
-      if(e?.name==="NotAllowedError")toast({title:"Screen share permission denied",variant:"destructive"});
-      else setScreenSharing(false);
+      setScreenSharing(false);
+      if(e?.name==="NotAllowedError"||e?.name==="PermissionDeniedError"){
+        toast({title:"Screen share permission denied",description:"Allow screen capture in your browser settings",variant:"destructive"});
+      }else if(e?.name==="NotSupportedError"||e?.message?.includes("not supported")||e?.message?.includes("getDisplayMedia")){
+        toast({title:"Screen share not supported",description:"Screen sharing requires Chrome on desktop. On mobile, use the desktop site or a laptop.",variant:"destructive"});
+      }else{
+        toast({title:"Screen share failed",description:e?.message||"Could not start screen share",variant:"destructive"});
+      }
     }
   };
 
