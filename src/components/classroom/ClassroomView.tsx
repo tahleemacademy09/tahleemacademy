@@ -2688,10 +2688,13 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   // listVisible: whether the sliding list panel is shown
   // (panel stays mounted even when list is hidden, so PiP survives)
   const[listVisible,setListVisible]=useState(true);
+  // forceList: when true, show the material list even if openMats.length>0
+  // This lets the user browse while a PiP is floating
+  const[forceList,setForceList]=useState(false);
 
   // Expose showList() so parent can imperatively bring list back into view
   useEffect(()=>{
-    if(panelRef)panelRef.current={showList:()=>setListVisible(true)};
+    if(panelRef)panelRef.current={showList:()=>{setListVisible(true);setForceList(true);}};
   },[panelRef]);
 
   // Notify parent whenever open materials change so it can keep us mounted
@@ -2846,15 +2849,23 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   };
   const onPipPointerUp=()=>{dragging.current=false;};
 
+  // When user closes the list panel while in forceList mode (PiP exists),
+  // just hide the list rather than fully unmounting — PiP stays alive
+  const handleClose=()=>{
+    if(forceList&&openMats.length>0){setListVisible(false);setForceList(false);}
+    else onClose();
+  };
+
   // ── Open / restore / close a material (multi-material aware) ──────────────
   const openMaterial=(m:any)=>{
     setOpenMats(prev=>prev.find(e=>e.id===m.id)?prev:[...prev,m]);
     setActiveMatId(m.id);
     setQuranOpen(false);
     setListVisible(true);
+    setForceList(false);
   };
   const minimizeActive=()=>{setActiveMatId(null);setListVisible(false);};
-  const restoreMaterial=(id:string)=>{setActiveMatId(id);setPipListOpen(false);setListVisible(true);};
+  const restoreMaterial=(id:string)=>{setActiveMatId(id);setPipListOpen(false);setListVisible(true);setForceList(false);};
   const closeMaterial=(id:string)=>{
     setOpenMats(prev=>prev.filter(e=>e.id!==id));
     setActiveMatId(prev=>prev===id?null:prev);
@@ -2946,7 +2957,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   }
 
   /* ── ONE OR MORE MATERIALS OPEN ── */
-  if(openMats.length>0){
+  if(openMats.length>0 && !forceList){
     return(
       <>
         {renderPip()}
@@ -2972,7 +2983,10 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
     return <>{renderPip()}</>;
   }
   return(
-    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
+    <>
+    {/* PiP floats above list when user is browsing while materials are minimized */}
+    {forceList&&renderPip()}
+    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={handleClose}>
       <div onClick={e=>e.stopPropagation()} style={{
         position:"absolute",top:0,right:0,
         /* Important: bottom:0 so footer stays below this panel */
@@ -2988,7 +3002,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"#2d2e30",height:50}}>
           <Eye style={{width:15,height:15,color:TEAL,flexShrink:0}}/>
           <span style={{flex:1,fontSize:14,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Materials</span>
-          <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <button onClick={handleClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <X style={{width:14,height:14}}/>
           </button>
         </div>
@@ -3203,6 +3217,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         </div>
       </div>
     </div>
+    </>
   );
 };
 
