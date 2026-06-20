@@ -18,7 +18,6 @@ import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
-import { claimBackPress } from "@/lib/backPressClaim";
 import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -39,7 +38,7 @@ import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
 import PDFViewer, { prewarmPDF } from "./PDFViewer";
-// LiveClassFilePanel was removed; restored below as ClassMaterialsLivePanel
+import LiveClassFilePanel from "./LiveClassFilePanel";
 import { useIsMobile }   from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -1654,28 +1653,22 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   const[pipPos,setPipPos]=useState({x:20,y:80});
   const dragging=useRef(false);
   const dragStart=useRef({px:0,py:0,ox:0,oy:0});
-  const pipDidDrag=useRef(false);
-  const onPipDown=(e:React.PointerEvent)=>{dragging.current=true;pipDidDrag.current=false;dragStart.current={px:e.clientX,py:e.clientY,ox:pipPos.x,oy:pipPos.y};(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);};
-  const onPipMove=(e:React.PointerEvent)=>{if(!dragging.current)return;const dx=e.clientX-dragStart.current.px;const dy=e.clientY-dragStart.current.py;if(Math.abs(dx)>4||Math.abs(dy)>4)pipDidDrag.current=true;setPipPos({x:dragStart.current.ox+dx,y:dragStart.current.oy+dy});};
-  const onPipUp=()=>{dragging.current=false;if(!pipDidDrag.current)setMinimized(false);pipDidDrag.current=false;};
+  const onPipDown=(e:React.PointerEvent)=>{dragging.current=true;dragStart.current={px:e.clientX,py:e.clientY,ox:pipPos.x,oy:pipPos.y};(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);};
+  const onPipMove=(e:React.PointerEvent)=>{if(!dragging.current)return;setPipPos({x:dragStart.current.ox+(e.clientX-dragStart.current.px),y:dragStart.current.oy+(e.clientY-dragStart.current.py)});};
+  const onPipUp=()=>{dragging.current=false;};
 
   // ── pip (minimized) ──────────────────────────────────────────────────────
   if(minimized){
     return(
       <div onPointerDown={onPipDown} onPointerMove={onPipMove} onPointerUp={onPipUp}
-        style={{position:"fixed",left:pipPos.x,top:pipPos.y,zIndex:9900,
-          width:64,cursor:"grab",userSelect:"none",touchAction:"none",
-          display:"flex",flexDirection:"column",alignItems:"center",gap:3,
-        }} title="Tap to open material">
-        <div style={{width:54,height:54,borderRadius:"50%",
+        onClick={()=>setMinimized(false)}
+        style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,
+          width:54,height:54,borderRadius:"50%",cursor:"grab",userSelect:"none",touchAction:"none",
           background:"linear-gradient(135deg,#064e3b,#1a73e8)",
           boxShadow:"0 4px 20px rgba(0,0,0,.55)",border:"2px solid rgba(255,255,255,.2)",
-          display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <span style={{fontSize:20}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
-        </div>
-        <span style={{fontSize:9,color:"rgba(255,255,255,.7)",background:"rgba(0,0,0,.55)",borderRadius:6,padding:"1px 5px",whiteSpace:"nowrap",maxWidth:72,overflow:"hidden",textOverflow:"ellipsis",pointerEvents:"none"}}>
-          {(material.title||"Material").slice(0,10)}
-        </span>
+          display:"flex",alignItems:"center",justifyContent:"center",
+        }} title="Open material">
+        <span style={{fontSize:20}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
       </div>
     );
   }
@@ -1754,10 +1747,9 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
       {/* Viewer header */}
       <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
         {/* Minimize to pip */}
-        <button onClick={()=>setMinimized(true)} title="Minimize material — class stays open"
-          style={{height:30,padding:"0 10px",borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",gap:4,flexShrink:0,fontSize:11,fontFamily:"'Google Sans',sans-serif"}}>
+        <button onClick={()=>setMinimized(true)} title="Minimize"
+          style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <ChevronDown style={{width:13,height:13}}/>
-          <span>Minimize</span>
         </button>
         <span style={{fontSize:15,flexShrink:0}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
         <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
@@ -2656,119 +2648,6 @@ const detectMaterialType=(file:File):string=>{
   return"Document";
 };
 
-/* ══ VIEWER OVERLAY — module-level component ══
-   CRITICAL: This MUST be defined outside SubjectMaterialsPanel.
-   When defined as an inner component, React sees a new component type on every
-   render of SubjectMaterialsPanel, causing it to unmount+remount the viewer —
-   producing the "shaking / close-and-reopen" flicker bug.
-   By being at module level the identity is stable and React only updates props. */
-interface ViewerOverlayProps {
-  v: {id:string;material:any;minimized:boolean;pipX:number;pipY:number};
-  zIdx: number;
-  viewers: {id:string;material:any;minimized:boolean;pipX:number;pipY:number}[];
-  onMinimize: (vid:string)=>void;
-  onClose: (vid:string)=>void;
-  onOpenSideBySide: (material:any)=>void;
-  matIcon: (m:any)=>string;
-}
-const ViewerOverlay=({v,zIdx,viewers,onMinimize,onClose,onOpenSideBySide,matIcon}:ViewerOverlayProps)=>{
-  // Animation only fires on the very first mount — never on subsequent prop updates.
-  // didMount starts false; after the first paint the effect sets it true so any
-  // future re-renders (state changes, layout shifts) skip the slide-in animation.
-  const didMount=useRef(false);
-  const [mounted, setMounted] = useState(false);
-  useEffect(()=>{
-    if(!didMount.current){didMount.current=true;setMounted(true);}
-  },[]);
-  if(v.minimized) return null;
-  return(
-  <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:mounted?"none":"slide-right .18s ease both"}}>
-    <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-      <button onClick={()=>onMinimize(v.id)} title="Minimize material — class stays open"
-        style={{height:30,padding:"0 10px",borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",gap:4,flexShrink:0,fontSize:11,fontFamily:"'Google Sans',sans-serif"}}>
-        <ChevronDown style={{width:14,height:14}}/>
-        <span>Minimize</span>
-      </button>
-      <button onClick={()=>onClose(v.id)}
-        style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-        <X style={{width:12,height:12}}/> Close
-      </button>
-      <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>
-        {matIcon(v.material)} {v.material?.title||v.material?.name||"Material"}
-      </span>
-      {viewers.length<5&&(
-        <button onClick={()=>onOpenSideBySide(v.material)} title="Open a second copy side-by-side"
-          style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.6)",borderRadius:8,padding:"4px 9px",cursor:"pointer",fontSize:11,fontFamily:"'Google Sans',sans-serif",display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-          ⊕ Side-by-side
-        </button>
-      )}
-      {viewers.length>1&&(
-        <span style={{background:"rgba(10,122,94,.4)",color:"#fff",borderRadius:10,padding:"2px 7px",fontSize:10,fontWeight:700,flexShrink:0}}>
-          {viewers.findIndex(x=>x.id===v.id)+1}/{viewers.length}
-        </span>
-      )}
-    </div>
-    <div style={{flex:1,overflow:"hidden"}}>
-      <InClassMaterialViewer material={v.material} onClose={()=>onClose(v.id)}/>
-    </div>
-  </div>
-  );
-};
-
-/* ══ QURAN PIP — extracted to module level to prevent React Error #300.
-   Closing over parent handlers is done via props instead.              */
-const QuranPip=({onPointerDown,onPointerMove,onPointerUp,onClick,pipX,pipY}:{
-  onPointerDown:(e:React.PointerEvent)=>void;
-  onPointerMove:(e:React.PointerEvent)=>void;
-  onPointerUp:(e:React.PointerEvent)=>void;
-  onClick:()=>void;
-  pipX:number;pipY:number;
-})=>(
-  <div onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-    onClick={onClick} title="Open Quran"
-    style={{position:"fixed",left:pipX,top:pipY,zIndex:9001,
-      width:50,height:50,borderRadius:"50%",
-      background:"linear-gradient(135deg,#1a5276,#0a7a5e)",
-      boxShadow:"0 4px 18px rgba(0,0,0,.55)",
-      display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-      cursor:"grab",userSelect:"none",touchAction:"none",
-      border:"2px solid rgba(255,255,255,.22)"}}>
-    <span style={{fontSize:18}}>📖</span>
-    <span style={{fontSize:7,color:"rgba(255,255,255,.6)"}}>Quran</span>
-  </div>
-);
-
-/* ══ CTRL BUTTON — extracted to module level to prevent unmount-on-rerender.  */
-const Ctrl=({icon,label,onClick,active=false,danger=false,badge=0,bRef,tooltip,isMobile}:{
-  icon:React.ReactNode;label:string;onClick:()=>void;active?:boolean;danger?:boolean;
-  badge?:number;bRef?:any;tooltip?:string;isMobile?:boolean;
-})=>(
-  <div ref={bRef} style={{position:"relative",flexShrink:0}}>
-    <button
-      className={`gm-ctrl${danger?" danger":active?" active":""}`}
-      onClick={onClick} title={tooltip||label}
-      style={{background:"none",border:"none",cursor:"pointer",padding:0,outline:"none"}}
-    >
-      <div className="gm-ctrl-icon">
-        {icon}
-        {badge>0&&<span style={{position:"absolute",top:2,right:2,background:"#ea4335",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #202124"}}>{badge>9?"9+":badge}</span>}
-      </div>
-      {!isMobile&&<span className="gm-ctrl-label">{label}</span>}
-      <div className="gm-tooltip">{tooltip||label}</div>
-    </button>
-  </div>
-);
-
-/* ══ DEVICE ROW — extracted to module level.                                  */
-const DeviceRow=({label,selected,onClick}:{label:string;selected:boolean;onClick:()=>void})=>(
-  <button onClick={onClick} className="gm-sheet-item" style={{color:selected?"#8ab4f8":"rgba(255,255,255,.75)"}}>
-    <div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${selected?"#8ab4f8":"rgba(255,255,255,.3)"}`,background:selected?"#8ab4f8":"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      {selected&&<div style={{width:5,height:5,borderRadius:"50%",background:"#202124"}}/>}
-    </div>
-    <span style={{fontSize:13,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{label}</span>
-  </button>
-);
-
 const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
@@ -2788,45 +2667,18 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
   const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
   const setViewerPip=(vid:string,px:number,py:number)=>setViewers(v=>v.map(x=>x.id===vid?{...x,pipX:px,pipY:py}:x));
-  // Whether the materials LIST itself (header + backdrop scrim) is minimized.
-  // When true, nothing from this panel covers the live class except whatever
-  // pips are currently showing — this is what "minimize" should look like.
-  const[listMinimized,setListMinimized]=useState(false);
 
   // ── Back button / Android swipe → minimize topmost open viewer ──────────
-  // FIX: previously this pushed its own history sentinel and listened on
-  // window in bubble phase — same as LiveClassContext's class-minimize
-  // listener. Both fired on every back press, so minimizing a material here
-  // ALSO minimized/closed the whole live class. Now:
-  //   1. We listen in capture phase so we run before LiveClassContext's
-  //      listener regardless of which mounted first.
-  //   2. We only call claimBackPress() when we actually consume the press
-  //      (an open viewer minimized, the Quran minimized, or — as a final
-  //      fallback — this panel itself closes). If none of that applies we
-  //      don't claim it, and we don't push an extra history entry either,
-  //      so the class-level handler is free to act normally.
   useEffect(()=>{
+    window.history.pushState({matSentinel:true},"");
     const handleBack=()=>{
       const openV=viewers.filter(x=>!x.minimized);
-      if(openV.length>0){claimBackPress();minimizeViewer(openV[openV.length-1].id);window.history.pushState({matSentinel:true},"");return;}
-      if(quranOpen&&!quranMinimized){claimBackPress();setQuranMinimized(true);window.history.pushState({matSentinel:true},"");return;}
-      if(!listMinimized){
-        // Nothing open inside the panel — minimize the list itself so only
-        // pips (if any) remain over the live class. This is NOT the same as
-        // onClose(): closing would unmount the panel and lose any pips.
-        claimBackPress();
-        setListMinimized(true);
-        window.history.pushState({matSentinel:true},"");
-        return;
-      }
-      // List is already minimized and nothing else to consume — let this
-      // back press fall through to LiveClassContext (class-minimize) by
-      // simply not claiming it and not pushing a new sentinel.
+      if(openV.length>0){minimizeViewer(openV[openV.length-1].id);window.history.pushState({matSentinel:true},"");return;}
+      if(quranOpen&&!quranMinimized){setQuranMinimized(true);window.history.pushState({matSentinel:true},"");return;}
     };
-    window.history.pushState({matSentinel:true},"");
-    window.addEventListener("popstate",handleBack,{capture:true});
-    return()=>window.removeEventListener("popstate",handleBack,{capture:true} as any);
-  },[viewers,quranOpen,quranMinimized,listMinimized,onClose]);
+    window.addEventListener("popstate",handleBack);
+    return()=>window.removeEventListener("popstate",handleBack);
+  },[viewers,quranOpen,quranMinimized]);
 
   // ── Share-with-class composer (teacher/admin only) ──────────────────────
   const[composerOpen,setComposerOpen]=useState(false);
@@ -2984,7 +2836,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
 
   /* ── Single tray badge for ALL minimized viewers ── */
   const[matTrayOpen,setMatTrayOpen]=useState(false);
-  const renderMinimizedMaterialsTray=()=>{
+  const MinimizedMaterialsTray=(()=>{
     const minimized=viewers.filter(v=>v.minimized);
     if(!minimized.length) return null;
     return(
@@ -3035,15 +2887,69 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         )}
       </div>
     );
+  })();
+
+  /* ── Full-screen overlay for one viewer slot ── */
+  /* Fix: don't re-run the open animation on every render — only on first mount */
+  const ViewerOverlay=({v,zIdx}:{v:{id:string;material:any;minimized:boolean;pipX:number;pipY:number};zIdx:number})=>{
+    const didMount=useRef(false);
+    const animStyle=didMount.current?"none":"slide-right .18s ease both";
+    useEffect(()=>{didMount.current=true;},[]);
+    if(v.minimized) return null;
+    return(
+    <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:animStyle}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+        <button onClick={()=>minimizeViewer(v.id)} title="Minimize"
+          style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <ChevronDown style={{width:14,height:14}}/>
+        </button>
+        <button onClick={()=>closeViewer(v.id)}
+          style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+          <X style={{width:12,height:12}}/> Close
+        </button>
+        <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>
+          {MAT_ICON(v.material)} {v.material?.title||v.material?.name||"Material"}
+        </span>
+        {viewers.length<5&&(
+          <button onClick={()=>openViewer(v.material)} title="Open a second copy side-by-side"
+            style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.6)",borderRadius:8,padding:"4px 9px",cursor:"pointer",fontSize:11,fontFamily:"'Google Sans',sans-serif",display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
+            ⊕ Side-by-side
+          </button>
+        )}
+        {viewers.length>1&&(
+          <span style={{background:"rgba(10,122,94,.4)",color:"#fff",borderRadius:10,padding:"2px 7px",fontSize:10,fontWeight:700,flexShrink:0}}>
+            {viewers.findIndex(x=>x.id===v.id)+1}/{viewers.length}
+          </span>
+        )}
+      </div>
+      <div style={{flex:1,overflow:"hidden"}}>
+        <InClassMaterialViewer material={v.material} onClose={()=>closeViewer(v.id)}/>
+      </div>
+    </div>
+    );
   };
 
-  /* ── Quran pip bubble — now module-level component, receives handlers as props ── */
+  /* ── Quran pip bubble ── */
+  const QuranPip=()=>(
+    <div onPointerDown={onQPipDown} onPointerMove={onQPipMove} onPointerUp={onQPipUp}
+      onClick={()=>setQuranMinimized(false)} title="Open Quran"
+      style={{position:"fixed",left:quranPip.x,top:quranPip.y,zIndex:9001,
+        width:50,height:50,borderRadius:"50%",
+        background:"linear-gradient(135deg,#1a5276,#0a7a5e)",
+        boxShadow:"0 4px 18px rgba(0,0,0,.55)",
+        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+        cursor:"grab",userSelect:"none",touchAction:"none",
+        border:"2px solid rgba(255,255,255,.22)"}}>
+      <span style={{fontSize:18}}>📖</span>
+      <span style={{fontSize:7,color:"rgba(255,255,255,.6)"}}>Quran</span>
+    </div>
+  );
 
   return(
     <>
       {/* Single minimized-materials tray badge */}
-      {renderMinimizedMaterialsTray()}
-      {quranOpen&&quranMinimized&&<QuranPip onPointerDown={onQPipDown} onPointerMove={onQPipMove} onPointerUp={onQPipUp} onClick={()=>setQuranMinimized(false)} pipX={quranPip.x} pipY={quranPip.y}/>}
+      {MinimizedMaterialsTray}
+      {quranOpen&&quranMinimized&&<QuranPip/>}
 
       {/* Quran viewer (non-minimized) */}
       {quranOpen&&!quranMinimized&&(
@@ -3065,12 +2971,11 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
 
       {/* Material viewer overlays — stacked by z-index */}
       {viewers.filter(v=>!v.minimized).map((v,i)=>(
-        <ViewerOverlay key={v.id} v={v} zIdx={8960+i} viewers={viewers} onMinimize={minimizeViewer} onClose={closeViewer} onOpenSideBySide={openViewer} matIcon={MAT_ICON}/>
+        <ViewerOverlay key={v.id} v={v} zIdx={8960+i}/>
       ))}
 
-      {/* Material list panel — hidden while minimized so only pips show over the live class */}
-      {!listMinimized&&(
-      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={()=>setListMinimized(true)}>
+      {/* Material list panel — always rendered underneath */}
+      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{
         position:"absolute",top:0,right:0,
         /* Important: bottom:0 so footer stays below this panel */
@@ -3082,14 +2987,10 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         animation:"slide-right .2s cubic-bezier(.34,1.2,.64,1) both",
         boxShadow:"-6px 0 28px rgba(0,0,0,.5)",
       }}>
-        {/* Header — minimize tucks the panel away as a pip over the live class; close ends it entirely */}
+        {/* Header — no minimize button here, only close */}
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"#2d2e30",height:50}}>
           <Eye style={{width:15,height:15,color:TEAL,flexShrink:0}}/>
           <span style={{flex:1,fontSize:14,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Materials</span>
-          <button onClick={()=>setListMinimized(true)} title="Minimize — keep the class visible"
-            style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-            <ChevronDown style={{width:14,height:14}}/>
-          </button>
           <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <X style={{width:14,height:14}}/>
           </button>
@@ -3307,239 +3208,6 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         </div>
       </div>
       </div>
-      )}
-      {/* Small badge to bring the list back when minimized — sits with the other pips, never blocks the live class */}
-      {listMinimized&&(
-        <button onClick={()=>setListMinimized(false)} title="Show materials list"
-          style={{position:"fixed",right:16,bottom:140,zIndex:8999,display:"flex",alignItems:"center",gap:6,
-            padding:"6px 12px",borderRadius:20,background:"rgba(20,20,22,.85)",backdropFilter:"blur(8px)",
-            border:"1px solid rgba(255,255,255,.15)",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer",
-            fontFamily:"'Google Sans',sans-serif"}}>
-          <Eye style={{width:12,height:12,color:TEAL}}/> Materials
-        </button>
-      )}
-    </>
-  );
-};
-
-/* ══ CLASS MATERIALS LIVE PANEL ══
-   Restored panel (previously removed). Shows a single live-updating list
-   combining: the Full Quran entry + every uploaded subject material.
-   "Live" = subscribes to Supabase realtime so new uploads from the teacher
-   appear instantly for every student without needing to reopen the panel. */
-const ClassMaterialsLivePanel=({subjectId,subject,onClose}:any)=>{
-  const[mats,setMats]=useState<any[]>([]);
-  const[busy,setBusy]=useState(true);
-
-  // ── Multi-viewer: each opened material is its own layer (same pattern as SubjectMaterialsPanel) ──
-  const[viewers,setViewers]=useState<{id:string;material:any;minimized:boolean;pipX:number;pipY:number}[]>([]);
-  const[quranOpen,setQuranOpen]=useState(false);
-  const[quranMinimized,setQuranMinimized]=useState(false);
-  // Whether the materials LIST itself (header + backdrop scrim) is minimized.
-  // When true, nothing from this panel covers the live class except whatever
-  // pips are currently showing — this is what "minimize" should look like.
-  const[listMinimized,setListMinimized]=useState(false);
-
-  const openViewer=(m:any)=>{
-    const idx=viewers.length;
-    setViewers(v=>[...v,{id:`${m.id}-${Date.now()}`,material:m,minimized:false,pipX:18+idx*58,pipY:80+idx*4}]);
-  };
-  const closeViewer=(vid:string)=>setViewers(v=>v.filter(x=>x.id!==vid));
-  const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
-  const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
-
-  const reloadMats=()=>{
-    supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
-      .then(({data}:any)=>{setMats(data||[]);setBusy(false);});
-  };
-
-  useEffect(()=>{reloadMats();},[subjectId]);
-
-  // ── Realtime: new/edited/deleted materials show up instantly (this is the "Live" part) ──
-  useEffect(()=>{
-    if(!subjectId)return;
-    const ch=supabase.channel(`class-mats-live-${subjectId}`)
-      .on("postgres_changes",{event:"*",schema:"public",table:"subject_materials",filter:`subject_id=eq.${subjectId}`},reloadMats)
-      .subscribe();
-    return()=>{supabase.removeChannel(ch);};
-  },[subjectId]);
-
-  // ── Back button / Android swipe → minimize topmost open viewer ──────────
-  // Same fix as SubjectMaterialsPanel: capture-phase listener + only claim
-  // the back press when we actually consume it, falling back to closing
-  // this panel itself rather than letting the class minimize underneath us.
-  useEffect(()=>{
-    const handleBack=()=>{
-      const openV=viewers.filter(x=>!x.minimized);
-      if(openV.length>0){claimBackPress();minimizeViewer(openV[openV.length-1].id);window.history.pushState({matLiveSentinel:true},"");return;}
-      if(quranOpen&&!quranMinimized){claimBackPress();setQuranMinimized(true);window.history.pushState({matLiveSentinel:true},"");return;}
-      if(!listMinimized){
-        // Nothing open inside the panel — minimize the list itself so only
-        // pips (if any) remain over the live class, instead of closing the
-        // panel outright or letting the class minimize underneath us.
-        claimBackPress();
-        setListMinimized(true);
-        window.history.pushState({matLiveSentinel:true},"");
-        return;
-      }
-      // List already minimized and nothing else to consume — don't claim,
-      // let this back press fall through to LiveClassContext normally.
-    };
-    window.history.pushState({matLiveSentinel:true},"");
-    window.addEventListener("popstate",handleBack,{capture:true});
-    return()=>window.removeEventListener("popstate",handleBack,{capture:true} as any);
-  },[viewers,quranOpen,quranMinimized,listMinimized,onClose]);
-
-  const MAT_ICON=(m:any)=>MAT_TYPE_ICON[m?.material_type||"document"]||"📄";
-
-  return(
-    <>
-      {/* Minimized material pips */}
-      {viewers.filter(v=>v.minimized).map(v=>(
-        <div key={v.id} onClick={()=>restoreViewer(v.id)} title={`Open: ${v.material?.title||"Material"}`}
-          style={{position:"fixed",left:v.pipX,top:v.pipY,zIndex:9000,width:50,height:50,borderRadius:"50%",
-            background:"linear-gradient(135deg,#0a7a5e,#1a5276)",boxShadow:"0 4px 18px rgba(0,0,0,.55)",
-            display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",
-            border:"2px solid rgba(255,255,255,.22)",fontSize:18}}>
-          {MAT_ICON(v.material)}
-        </div>
-      ))}
-
-      {/* Quran viewer overlay */}
-      {quranOpen&&!quranMinimized&&(
-        <div style={{position:"fixed",inset:0,zIndex:8950,background:"#202124",display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-            <button onClick={()=>setQuranMinimized(true)} title="Minimize"
-              style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <ChevronDown style={{width:14,height:14}}/>
-            </button>
-            <button onClick={()=>setQuranOpen(false)}
-              style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-              <X style={{width:12,height:12}}/> Close
-            </button>
-            <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>📖 Full Quran</span>
-          </div>
-          <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
-        </div>
-      )}
-      {quranOpen&&quranMinimized&&(
-        <div onClick={()=>setQuranMinimized(false)} title="Open: Full Quran"
-          style={{position:"fixed",left:20,top:70,zIndex:9000,width:50,height:50,borderRadius:"50%",
-            background:"linear-gradient(135deg,#1a3d24,#276749)",boxShadow:"0 4px 18px rgba(0,0,0,.55)",
-            display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",
-            border:"2px solid rgba(183,121,31,.5)",fontSize:18}}>
-          📖
-        </div>
-      )}
-
-      {/* Material viewer overlays — stacked by z-index */}
-      {viewers.filter(v=>!v.minimized).map((v,i)=>(
-        <div key={v.id} style={{position:"fixed",inset:0,zIndex:8960+i,background:"#202124",display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-            <button onClick={()=>minimizeViewer(v.id)} title="Minimize material — class stays open"
-              style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <ChevronDown style={{width:14,height:14}}/>
-            </button>
-            <span style={{fontSize:15,flexShrink:0}}>{MAT_ICON(v.material)}</span>
-            <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{v.material?.title||"Material"}</span>
-            <button onClick={()=>closeViewer(v.id)} title="Close material"
-              style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <X style={{width:14,height:14}}/>
-            </button>
-          </div>
-          <div style={{flex:1,overflow:"hidden"}}>
-            <InClassMaterialViewer material={v.material} onClose={()=>closeViewer(v.id)}/>
-          </div>
-        </div>
-      ))}
-
-      {/* Material list panel — hidden while minimized so only pips show over the live class */}
-      {!listMinimized&&(
-      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={()=>setListMinimized(true)}>
-        <div onClick={e=>e.stopPropagation()} style={{
-          position:"absolute",top:0,right:0,bottom:0,width:"min(340px,100%)",
-          background:"#202124",borderLeft:"1px solid rgba(255,255,255,.08)",
-          display:"flex",flexDirection:"column",
-          animation:"slide-right .2s cubic-bezier(.34,1.2,.64,1) both",
-          boxShadow:"-6px 0 28px rgba(0,0,0,.5)",
-        }}>
-          {/* Header — minimize tucks the panel away as a pip over the live class; close ends it entirely */}
-          <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"#2d2e30",height:50}}>
-            <span style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"center",width:9,height:9,flexShrink:0}}>
-              <span style={{position:"absolute",width:"100%",height:"100%",borderRadius:"50%",background:"#ef4444",opacity:.6,animation:"tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite"}}/>
-              <span style={{position:"relative",width:7,height:7,borderRadius:"50%",background:"#ef4444",display:"block"}}/>
-            </span>
-            <span style={{flex:1,fontSize:14,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Class Materials Live</span>
-            <button onClick={()=>setListMinimized(true)} title="Minimize — keep the class visible"
-              style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <ChevronDown style={{width:14,height:14}}/>
-            </button>
-            <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <X style={{width:14,height:14}}/>
-            </button>
-          </div>
-
-          {/* Combined list: Quran pinned at top + all subject materials */}
-          <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
-            <div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>ALL FILES</div>
-
-            {/* Quran — always pinned first */}
-            <button onClick={()=>setQuranOpen(true)} style={{
-              width:"100%",boxSizing:"border-box" as const,marginBottom:6,padding:"10px 10px",borderRadius:10,
-              border:"1px solid rgba(183,121,31,.4)",
-              background:"linear-gradient(135deg,rgba(26,61,36,.9),rgba(39,103,73,.9))",
-              cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:10,
-            }}>
-              <div style={{fontSize:20,flexShrink:0}}>📖</div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontFamily:"'Amiri',serif",fontSize:14,fontWeight:700,color:"#fef9ee"}}>Full Quran</div>
-                <div style={{fontSize:11,color:"rgba(255,255,255,.5)"}}>Arabic · Translation · Tafseer</div>
-              </div>
-              <ChevronRight style={{width:13,height:13,color:"#34d399",flexShrink:0}}/>
-            </button>
-
-            {busy&&<div style={{display:"flex",justifyContent:"center",padding:32}}><div style={{width:22,height:22,border:`2px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
-            {!busy&&mats.length===0&&(
-              <div style={{textAlign:"center" as const,padding:"24px 16px",color:"rgba(255,255,255,.3)"}}>
-                <div style={{fontSize:26,marginBottom:6}}>📭</div>
-                <p style={{fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>No other materials yet</p>
-              </div>
-            )}
-            {mats.map(m=>{
-              const icon=MAT_ICON(m);
-              return(
-                <button key={m.id} onClick={()=>openViewer(m)} style={{
-                  width:"100%",boxSizing:"border-box" as const,marginBottom:6,padding:"10px 10px",borderRadius:10,
-                  border:"1px solid rgba(255,255,255,.08)",background:"rgba(255,255,255,.04)",
-                  cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:10,
-                }}>
-                  <div style={{fontSize:20,flexShrink:0}}>{icon}</div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <p style={{color:"#fff",fontWeight:600,fontSize:14,margin:"0 0 3px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap" as const}}>{m.title||m.name||"Untitled"}</p>
-                    <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0,textTransform:"capitalize" as const}}>{m.material_type||"file"}</p>
-                  </div>
-                  <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.3)",flexShrink:0}}/>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-      )}
-      {/* Small badge to bring the list back when minimized — sits with the other pips, never blocks the live class */}
-      {listMinimized&&(
-        <button onClick={()=>setListMinimized(false)} title="Show Class Materials Live"
-          style={{position:"fixed",right:16,bottom:140,zIndex:8999,display:"flex",alignItems:"center",gap:6,
-            padding:"6px 12px",borderRadius:20,background:"rgba(20,20,22,.85)",backdropFilter:"blur(8px)",
-            border:"1px solid rgba(255,255,255,.15)",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer",
-            fontFamily:"'Google Sans',sans-serif"}}>
-          <span style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"center",width:7,height:7,flexShrink:0}}>
-            <span style={{position:"absolute",width:"100%",height:"100%",borderRadius:"50%",background:"#ef4444",opacity:.6,animation:"tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite"}}/>
-            <span style={{position:"relative",width:5,height:5,borderRadius:"50%",background:"#ef4444",display:"block"}}/>
-          </span>
-          Materials Live
-        </button>
-      )}
     </>
   );
 };
@@ -4599,8 +4267,33 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
   const portal=typeof document!=="undefined"?document.body:null;
   const SZ=isMobile?18:20;const IS={width:SZ,height:SZ};
 
-  /* ── Ctrl + DeviceRow are now module-level components (see above SubjectMaterialsPanel).
-     Pass isMobile as a prop where needed. ── */
+  /* ── Google Meet style ctrl button ── */
+  const Ctrl=({icon,label,onClick,active=false,danger=false,badge=0,bRef,tooltip}:{icon:React.ReactNode;label:string;onClick:()=>void;active?:boolean;danger?:boolean;badge?:number;bRef?:any;tooltip?:string})=>(
+    <div ref={bRef} style={{position:"relative",flexShrink:0}}>
+      <button
+        className={`gm-ctrl${danger?" danger":active?" active":""}`}
+        onClick={onClick} title={tooltip||label}
+        style={{background:"none",border:"none",cursor:"pointer",padding:0,outline:"none"}}
+      >
+        <div className="gm-ctrl-icon">
+          {icon}
+          {badge>0&&<span style={{position:"absolute",top:2,right:2,background:"#ea4335",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #202124"}}>{badge>9?"9+":badge}</span>}
+        </div>
+        {!isMobile&&<span className="gm-ctrl-label">{label}</span>}
+        <div className="gm-tooltip">{tooltip||label}</div>
+      </button>
+    </div>
+  );
+
+  /* ── Device list item ── */
+  const DeviceRow=({label,selected,onClick}:{label:string;selected:boolean;onClick:()=>void})=>(
+    <button onClick={onClick} className="gm-sheet-item" style={{color:selected?"#8ab4f8":"rgba(255,255,255,.75)"}}>
+      <div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${selected?"#8ab4f8":"rgba(255,255,255,.3)"}`,background:selected?"#8ab4f8":"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        {selected&&<div style={{width:5,height:5,borderRadius:"50%",background:"#202124"}}/>}
+      </div>
+      <span style={{fontSize:13,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{label}</span>
+    </button>
+  );
 
   return(<>
     {/* Click-away */}
@@ -4631,16 +4324,16 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
       </div>,portal
     )}
 
-    {/* Emoji tray — full expanded (all emojis shown at once) */}
+    {/* Emoji tray */}
     {emojisOpen&&portal&&createPortal(
-      <div className="gm-emoji-tray" style={{bottom:84+(isMobile?4:12),flexWrap:"wrap",maxWidth:260,gap:6,padding:"10px 12px",display:"flex",borderRadius:16}}>
-        {["👏","🤲","❤️","😂","🌟","👍","🙏","🔥","😍","🥰","😊","🤩","🎉","💯","✨","🙌","💪","😮","😅","😇","🤔","⭐","💎","🌺"].map(e=>(
-          <button key={e} className="gm-emoji-btn" onClick={()=>{sendEmoji(e);setEmojisOpen(false);}}>{e}</button>
+      <div className="gm-emoji-tray" style={{bottom:84+(isMobile?4:12)}}>
+        {["👏","🤲","❤️","😂","🌟","👍","🙏","🔥"].map(e=>(
+          <button key={e} className="gm-emoji-btn" onClick={()=>sendEmoji(e)}>{e}</button>
         ))}
       </div>,portal
     )}
 
-    {/* More menu (removed: Minimize Classroom, Group Recitation, Start Timer, Launch Quiz). Class Materials Live restored. */}
+    {/* More menu — clean */}
     {moreOpen&&portal&&createPortal(
       <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right,minWidth:240}}>
         {isMobile&&<>
@@ -4668,10 +4361,14 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
         <button className="gm-more-item" onClick={()=>{onToggleMaterials();setMoreOpen(false);}}>
           <Eye style={{width:16,height:16,opacity:.7}}/> Subject Materials
         </button>
-        <button className="gm-more-item" onClick={()=>{onToggleLiveFiles();setMoreOpen(false);}} style={{color:liveFilesOpen?"#34d399":"#e8eaed"}}>
-          <Eye style={{width:16,height:16,opacity:.7}}/> Class Materials Live
+        {/* In-class live file panel */}
+        <button className="gm-more-item" onClick={()=>{onToggleLiveFiles();setMoreOpen(false);}} style={{color:liveFilesOpen?"#8ab4f8":"#e8eaed"}}>
+          <ClipboardList style={{width:16,height:16}}/> Class Materials (Live)
         </button>
         {isPrivileged&&<>
+          <button className="gm-more-item" onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} style={{color:groupReciteMode?"#34d399":"#e8eaed"}}>
+            <Volume2 style={{width:16,height:16}}/> {groupReciteMode?"End Group Recitation":"Group Recitation"}
+          </button>
           <button className="gm-more-item" onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{color:canStudentWriteProp?"#34d399":"#e8eaed"}}>
             <PenTool style={{width:16,height:16}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
           </button>
@@ -4681,9 +4378,13 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           <button className="gm-more-item" onClick={async()=>{
             await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
             try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
-            toast({title:"🔇 All students muted"});setMoreOpen(false);
+            toast({title:"\uD83D\uDD07 All students muted"});setMoreOpen(false);
           }} style={{color:"#fb923c"}}>
             <MicOff style={{width:16,height:16}}/> Mute All Students
+          </button>
+          {/* Countdown Timer */}
+          <button className="gm-more-item" onClick={()=>{onToggleTimer();setMoreOpen(false);}} style={{color:timerRunning?"#fbbf24":"#e8eaed"}}>
+            <Timer style={{width:16,height:16}}/> {timerRunning?`Timer: ${timerDisplay}`:"Start Timer"}
           </button>
           {/* Hand queue */}
           <button className="gm-more-item" onClick={()=>{onToggleHandQueue();setMoreOpen(false);}}>
@@ -4692,6 +4393,10 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           {/* Live attendance */}
           <button className="gm-more-item" onClick={()=>{onToggleAttendance();setMoreOpen(false);}}>
             <UserCheck style={{width:16,height:16,color:"#34d399"}}/> Live Attendance
+          </button>
+          {/* Launch Quiz */}
+          <button className="gm-more-item" onClick={()=>{onLaunchQuiz();setMoreOpen(false);}}>
+            <Zap style={{width:16,height:16,color:"#a78bfa"}}/> Launch Quiz
           </button>
           {/* Session summary */}
           <button className="gm-more-item" onClick={()=>{onGenerateSummary();setMoreOpen(false);}}>
@@ -4703,6 +4408,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
             <Circle style={{width:13,height:13,fill:stuRec?"#ef4444":"none"}}/> {stuRec?"Stop Recording":"Record Audio"}
           </button>
         )}
+
       </div>,portal
     )}
 
@@ -4789,31 +4495,24 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           {/* CENTER */}
           <div style={{display:"flex",alignItems:"center",gap:8,flex:1,justifyContent:"center"}}>
             {isPrivileged
-              ?<Ctrl isMobile={isMobile} icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
-              :<Ctrl isMobile={isMobile} icon={<Hand style={{...IS,color:handUp?"#fbbf24":"#e8eaed"}}/>} label={handUp?"Lower":"Raise Hand"} onClick={toggleHand} active={handUp} tooltip={handUp?"Lower hand":"Raise hand"}/>
+              ?<Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
+              :<Ctrl icon={<Hand style={{...IS,color:handUp?"#fbbf24":"#e8eaed"}}/>} label={handUp?"Lower":"Raise Hand"} onClick={toggleHand} active={handUp} tooltip={handUp?"Lower hand":"Raise hand"}/>
             }
             {!isPrivileged&&canStudentWriteProp&&(
-              <Ctrl isMobile={isMobile} icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
+              <Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
             )}
             {/* Screen share — all users */}
-            <Ctrl isMobile={isMobile} icon={screenSharing?<MonitorOff style={{...IS,color:"#34d399"}}/>:<Monitor style={{...IS,color:"#e8eaed"}}/>} label={screenSharing?"Stop Share":"Share"} onClick={onScreenShare} active={screenSharing} tooltip={screenSharing?"Stop screen share":"Share screen"}/>
-            <Ctrl isMobile={isMobile} icon={<MessageCircle style={{...IS,color:"#e8eaed"}}/>} label="Chat" onClick={onToggleChat} badge={chatUnread} tooltip="Open chat"/>
+            <Ctrl icon={screenSharing?<MonitorOff style={{...IS,color:"#34d399"}}/>:<Monitor style={{...IS,color:"#e8eaed"}}/>} label={screenSharing?"Stop Share":"Share"} onClick={onScreenShare} active={screenSharing} tooltip={screenSharing?"Stop screen share":"Share screen"}/>
+            <Ctrl icon={<MessageCircle style={{...IS,color:"#e8eaed"}}/>} label="Chat" onClick={onToggleChat} badge={chatUnread} tooltip="Open chat"/>
             {/* Participants — desktop */}
-            <Ctrl isMobile={isMobile} icon={<Users style={{...IS,color:partPanelOpen?"#8ab4f8":"#e8eaed"}}/>} label="People" onClick={onTogglePartPanel} active={partPanelOpen} tooltip="Participants"/>
-            <Ctrl isMobile={isMobile} icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
+            <Ctrl icon={<Users style={{...IS,color:partPanelOpen?"#8ab4f8":"#e8eaed"}}/>} label="People" onClick={onTogglePartPanel} active={partPanelOpen} tooltip="Participants"/>
+            <Ctrl icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
             {/* Timer indicator */}
-            {/* Timer removed */}
-            <Ctrl isMobile={isMobile} icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
+            {timerRunning&&<div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.15)",border:"1px solid rgba(251,191,36,.3)",borderRadius:20,padding:"4px 10px",animation:"timer-pulse 1s ease-in-out infinite",cursor:"pointer"}} onClick={onToggleTimer}><Timer style={{width:13,height:13,color:"#fbbf24"}}/><span style={{fontSize:12,fontWeight:700,color:"#fbbf24",fontVariantNumeric:"tabular-nums"}}>{timerDisplay}</span></div>}
+            <Ctrl icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
           </div>
           {/* RIGHT */}
           <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-            {/* Minimize — go to GlobalClassroomOverlay pill without ending class */}
-            {onMinimize&&(
-              <button onClick={onMinimize} title="Minimize classroom"
-                style={{height:40,padding:"0 14px",borderRadius:20,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.07)",color:"rgba(255,255,255,.8)",cursor:"pointer",display:"flex",alignItems:"center",gap:6,fontSize:13,fontFamily:"'Google Sans',sans-serif",fontWeight:500}}>
-                <Minimize2 style={{width:14,height:14}}/> Minimize
-              </button>
-            )}
             <button className="gm-leave" onClick={isPrivileged?onEndClass:onLeaveClass}>
               <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/>
               {isPrivileged?"End":"Leave"}
@@ -4933,24 +4632,6 @@ const syncManualAttendanceFromSession=async(sessionId:string,subject:any,hostUse
   }catch(e){console.warn("[syncManualAttendanceFromSession] upsert failed:",e);}
 };
 
-/* ══ PARTICIPANT COUNT BADGE — extracted to module level to prevent
-   React Error #300 ("Rendered more hooks than during the previous render").
-   When defined inside ClassroomView, every re-render of the parent created
-   a new function reference, causing React to treat it as a brand-new
-   component type and violate the rules of hooks.
-   Now it receives setPartOpen and participantCountRef as stable props.    */
-const ParticipantCountBadge=({onToggle,participantCountRef}:{onToggle:()=>void;participantCountRef:React.MutableRefObject<number>})=>{
-  const all=useParticipants();
-  useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length,participantCountRef]);
-  if(all.length===0)return null;
-  return(
-    <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0,cursor:"pointer"}} onClick={onToggle}>
-      <Users style={{width:12,height:12,opacity:.7}}/>
-      <span style={{fontSize:12,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{all.length}</span>
-    </div>
-  );
-};
-
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");
   const{setHasConnected}=useLiveClass();
@@ -5004,10 +4685,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     };
   },[]);
   const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
-  // FIX Bug 4: ref mirrors chatOpen so the unread-counter subscription callback
-  // always reads the current value instead of a stale closure capture.
-  const chatOpenRef=useRef(false);
-  useEffect(()=>{chatOpenRef.current=chatOpen;},[chatOpen]);
   useEffect(()=>{
     if(!sessionId||phase!=="live")return;
     const ch=supabase.channel(`chat-unread-${sessionId}`)
@@ -5015,13 +4692,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         (payload:any)=>{
           if(payload.new?.sender_id===user?.id)return;
           if(payload.new?.type==="system")return;
-          // FIX: read chatOpen via a ref to avoid stale closure (the original
-          // captured chatOpen's value at subscription time, so the badge never
-          // cleared when the panel was opened after the subscription was created)
-          setChatUnread(n=>{
-            const panelOpen=chatOpenRef.current;
-            return panelOpen?0:n+1;
-          });
+          setChatUnread(n=>{const panelClosed=!chatOpen;return panelClosed?n+1:0;});
         })
       .subscribe();
     return()=>{supabase.removeChannel(ch);};
@@ -5030,7 +4701,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[sideTab,setSideTab]=useState<"chat"|"polls">("chat");const[showEnd,setShowEnd]=useState(false);
   // FIX BUG 2: quizOpen state — LiveQuizOverlay was permanently disabled with hardcoded isOpen={false}
   const[quizOpen,setQuizOpen]=useState(false);
-  const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);const[liveFilesOpen,setLiveFilesOpenTop]=useState(false);
+  const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
   // Student recording — lifted here so SubjectMaterialsPanel can also trigger it
   const[stuRec,setStuRec]=useState(false);
@@ -5082,6 +4753,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[timerRunning,setTimerRunning]=useState(false);
   const[timerInput,setTimerInput]=useState("5");
   const timerRef=useRef<any>(null);
+  // Feature 11: LiveClassFilePanel (in-class materials)
+  const[liveFilesOpen,setLiveFilesOpen]=useState(false);
   // Feature 13: Hand queue management
   const[handQueueOpen,setHandQueueOpen]=useState(false);
   // Feature 15: Recording indicator for students
@@ -5321,49 +4994,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(!room?.localParticipant)return;
     try{
       if(screenSharing){
-        // Stop all screen share tracks
-        const pubs=Array.from(room.localParticipant.trackPublications.values())
-          .filter((pub:any)=>pub.track?.source==="screen_share"||pub.track?.source==="screen_share_audio");
-        for(const pub of pubs as any[]){
-          if(pub.track){
-            await room.localParticipant.unpublishTrack(pub.track);
-            pub.track.stop?.();
-          }
-        }
-        // Fallback: use built-in API
-        try{await room.localParticipant.setScreenShareEnabled(false);}catch{}
+        await room.localParticipant.setScreenShareEnabled(false);
         setScreenSharing(false);
         toast({title:"Screen share stopped"});
       }else{
-        // Try native getUserMedia approach first (works on mobile Chrome)
-        try{
-          const stream=await (navigator.mediaDevices as any).getDisplayMedia({video:{frameRate:15,width:{ideal:1280}},audio:true});
-          const{createLocalVideoTrack,createLocalAudioTrack}=await import("livekit-client");
-          for(const videoTrack of stream.getVideoTracks()){
-            const lkTrack=await createLocalVideoTrack({mediaStreamTrack:videoTrack});
-            await room.localParticipant.publishTrack(lkTrack,{source:"screen_share" as any,simulcast:false});
-            videoTrack.onended=async()=>{
-              await room.localParticipant.unpublishTrack(lkTrack);
-              setScreenSharing(false);
-            };
-          }
-          for(const audioTrack of stream.getAudioTracks()){
-            const lkTrack=await createLocalAudioTrack({mediaStreamTrack:audioTrack});
-            await room.localParticipant.publishTrack(lkTrack,{source:"screen_share_audio" as any});
-          }
-        }catch(innerErr:any){
-          // Fallback to LiveKit built-in
-          await room.localParticipant.setScreenShareEnabled(true,{audio:true,resolution:{width:1280,height:720,frameRate:15}});
-        }
+        await room.localParticipant.setScreenShareEnabled(true);
         setScreenSharing(true);
         toast({title:"📺 Screen sharing started"});
       }
     }catch(e:any){
-      setScreenSharing(false);
-      if(e?.name==="NotAllowedError"||e?.name==="NotFoundError")
-        toast({title:"Screen share permission denied",description:"Allow screen capture in your browser",variant:"destructive"});
-      else
-        toast({title:"Screen share failed",description:e?.message||"Try on Chrome desktop for best results",variant:"destructive"});
+      if(e?.name==="NotAllowedError")toast({title:"Screen share permission denied",variant:"destructive"});
+      else setScreenSharing(false);
     }
   };
 
@@ -5446,6 +5087,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       highlights:(msgs||[]).filter((m:any)=>m.is_pinned),
     });
     setSummaryOpen(true);
+  };
+  const ParticipantCountBadge=()=>{
+    const all=useParticipants();
+    useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length]);
+    if(all.length===0)return null;
+    return(
+      <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0,cursor:"pointer"}} onClick={()=>setPartOpen(v=>!v)}>
+        <Users style={{width:12,height:12,opacity:.7}}/>
+        <span style={{fontSize:12,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{all.length}</span>
+      </div>
+    );
   };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   if(phase==="ended")return<ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={participantCountRef.current} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />;
@@ -5546,7 +5198,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               )}
             </div>
 
-            {/* RIGHT — timer · participants · [layout desktop] · [rec admin] · minimize */}
+            {/* RIGHT — timer · participants · [layout desktop] · [rec admin] */}
             <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
               {/* Timer */}
               <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",padding:"3px 8px"}}>
@@ -5554,18 +5206,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 <span style={{fontSize:12,fontWeight:500,fontVariantNumeric:"tabular-nums",fontFamily:"'Google Sans',sans-serif"}}>{fmtT(duration)}</span>
               </div>
               {/* Participant count */}
-              <ParticipantCountBadge onToggle={()=>setPartOpen(v=>!v)} participantCountRef={participantCountRef}/>
+              <ParticipantCountBadge/>
               {/* Layout switcher — desktop only */}
               {!isMobile&&<LayoutSwitcher layout={layout} onChange={setLayout}/>}
               {/* RecController — admin only */}
               {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
-              {/* Minimize — go to GlobalClassroomOverlay pill without ending class */}
-              {onMinimize&&(
-                <button onClick={onMinimize} title="Minimize classroom"
-                  style={{width:32,height:32,borderRadius:8,background:"rgba(255,255,255,.08)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.75)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <Minimize2 style={{width:14,height:14}}/>
-                </button>
-              )}
             </div>
           </div>
           {/* Content — material panels render here so footer always stays visible */}
@@ -5576,9 +5221,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — absolute inside content, footer always visible */}
               {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
-              {liveFilesOpen&&<ClassMaterialsLivePanel subjectId={subject.id} subject={subject} onClose={()=>setLiveFilesOpenTop(false)}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
+              {/* Feature 11: Live class file panel (in-class materials) */}
+              {liveFilesOpen&&createPortal(
+                <div style={{position:"fixed",inset:0,zIndex:9000,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"flex-end",justifyContent:"flex-end"}} onClick={()=>setLiveFilesOpen(false)}>
+                  <div onClick={e=>e.stopPropagation()} style={{width:"min(420px,100vw)",height:"min(85vh,700px)",background:"#fff",borderRadius:"20px 0 0 0",overflow:"auto",display:"flex",flexDirection:"column",boxShadow:"-8px 0 40px rgba(0,0,0,.4)"}}>
+                    <div style={{display:"flex",alignItems:"center",padding:"14px 16px",borderBottom:"1px solid #e5e7eb",flexShrink:0,background:"#1B4332"}}>
+                      <span style={{flex:1,fontSize:14,fontWeight:700,color:"#fff"}}>📂 Class Materials</span>
+                      <button onClick={()=>setLiveFilesOpen(false)} style={{background:"rgba(255,255,255,.15)",border:"none",color:"#fff",borderRadius:8,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><X style={{width:14,height:14}}/></button>
+                    </div>
+                    <div style={{flex:1,overflow:"auto",padding:12}}><LiveClassFilePanel subjectId={subject.id}/></div>
+                  </div>
+                </div>,document.body
+              )}
               {/* Feature 3: Desktop participants panel */}
               {partPanelOpen&&!isMobile&&createPortal(
                 <div style={{position:"fixed",top:56,right:0,bottom:80,width:300,background:"#2D2E30",borderLeft:"1px solid rgba(255,255,255,.08)",zIndex:800,display:"flex",flexDirection:"column",animation:"slide-right .2s ease",overflow:"hidden"}}>
@@ -5623,44 +5279,49 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                   </div>
                 </div>,document.body
               )}
-              {/* Feature 5: Live Attendance panel — improved with export */}
+              {/* Feature 5: Live attendance panel */}
               {attendanceOpen&&isPrivileged&&createPortal(
-                <div style={{position:"fixed",top:56,right:0,width:"min(320px,100vw)",bottom:80,background:"#2D2E30",borderLeft:"1px solid rgba(255,255,255,.08)",zIndex:800,display:"flex",flexDirection:"column",animation:"slide-right .2s ease",overflow:"hidden"}}>
-                  <div style={{display:"flex",alignItems:"center",padding:"14px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0,background:"rgba(52,211,153,.08)"}}>
-                    <span style={{flex:1,fontSize:14,fontWeight:700,color:"#34d399",display:"flex",alignItems:"center",gap:8}}>
-                      <UserCheck style={{width:16,height:16}}/> Live Attendance
-                      <span style={{fontSize:12,background:"rgba(34,197,94,.2)",color:"#4ade80",borderRadius:20,padding:"2px 8px",fontWeight:700}}>{liveAttendees.length}</span>
-                    </span>
-                    <button onClick={()=>{
-                      const csv=["Name,Joined At",...liveAttendees.map((a:any)=>`${a.profiles?.full_name||"Student"},${a.joined_at||""}`).join("\n")].join("\n");
-                      const el=document.createElement("a");
-                      el.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-                      el.download=`attendance-${new Date().toISOString().slice(0,10)}.csv`;
-                      el.click();
-                    }} title="Export CSV" style={{background:"rgba(52,211,153,.15)",border:"none",color:"#34d399",borderRadius:8,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",marginRight:6,fontSize:12,fontWeight:700}}>⬇</button>
-                    <button onClick={()=>setAttendanceOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:8,width:28,height:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}><X style={{width:14,height:14}}/></button>
+                <div style={{position:"fixed",top:56,left:0,width:280,background:"#2D2E30",borderRight:"1px solid rgba(255,255,255,.08)",zIndex:800,maxHeight:"70vh",display:"flex",flexDirection:"column",animation:"slide-right .2s ease",borderRadius:"0 0 16px 0",overflow:"hidden"}}>
+                  <div style={{display:"flex",alignItems:"center",padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0}}>
+                    <span style={{flex:1,fontSize:13,fontWeight:700,color:"#34d399",display:"flex",alignItems:"center",gap:6}}><UserCheck style={{width:14,height:14}}/> Live Attendance <span style={{fontSize:11,color:"rgba(255,255,255,.4)",fontWeight:400}}>({liveAttendees.length})</span></span>
+                    <button onClick={()=>setAttendanceOpen(false)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer"}}><X style={{width:12,height:12}}/></button>
                   </div>
                   <div style={{flex:1,overflowY:"auto",padding:8}}>
-                    {liveAttendees.length===0&&(
-                      <div style={{textAlign:"center",padding:"32px 16px"}}>
-                        <div style={{fontSize:40,marginBottom:8}}>👥</div>
-                        <p style={{fontSize:13,color:"rgba(255,255,255,.3)"}}>Waiting for students to join…</p>
-                      </div>
-                    )}
+                    {liveAttendees.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",textAlign:"center",padding:"24px 16px"}}>Waiting for students…</p>}
                     {liveAttendees.map((a:any,i:number)=>(
-                      <div key={a.student_id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:10,marginBottom:4,background:"rgba(52,211,153,.05)",border:"1px solid rgba(52,211,153,.1)"}}>
+                      <div key={a.student_id||i} style={{display:"flex",alignItems:"center",gap:8,padding:"9px 12px",borderRadius:8,marginBottom:4,background:"rgba(255,255,255,.04)"}}>
                         <div style={{width:8,height:8,borderRadius:"50%",background:"#22c55e",flexShrink:0,animation:"rec-pulse 2s ease-in-out infinite"}}/>
-                        <div style={{flex:1,minWidth:0}}>
-                          <div style={{fontSize:13,color:"#e8eaed",fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.profiles?.full_name||"Student"}</div>
-                          <div style={{fontSize:10,color:"rgba(255,255,255,.35)"}}>Joined {a.joined_at?new Date(a.joined_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):""}</div>
-                        </div>
-                        <span style={{fontSize:11,background:"rgba(34,197,94,.12)",color:"#4ade80",borderRadius:20,padding:"2px 8px",fontWeight:600}}>Present</span>
+                        <span style={{flex:1,fontSize:13,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{a.profiles?.full_name||"Student"}</span>
+                        <span style={{fontSize:10,color:"rgba(255,255,255,.3)"}}>{a.joined_at?new Date(a.joined_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):""}</span>
                       </div>
                     ))}
                   </div>
                 </div>,document.body
               )}
-              {/* Start Timer removed */}
+              {/* Feature 10: Timer overlay */}
+              {timerOpen&&isPrivileged&&createPortal(
+                <div style={{position:"fixed",inset:0,zIndex:9500,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setTimerOpen(false)}>
+                  <div onClick={e=>e.stopPropagation()} style={{background:"#2D2E30",borderRadius:20,padding:"28px 24px",width:300,boxShadow:"0 24px 60px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.1)",animation:"fade-in .18s ease",textAlign:"center"}}>
+                    <div style={{fontSize:36,marginBottom:8}}>⏱️</div>
+                    <p style={{fontSize:16,fontWeight:700,color:"#e8eaed",marginBottom:16}}>Countdown Timer</p>
+                    {timerRunning?(
+                      <>
+                        <div style={{fontSize:48,fontWeight:900,color:"#fbbf24",fontVariantNumeric:"tabular-nums",letterSpacing:-2,marginBottom:20}}>{fmtTimer(timerSeconds)}</div>
+                        <button onClick={stopTimer} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"#ef4444",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>Stop Timer</button>
+                      </>
+                    ):(
+                      <>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16,justifyContent:"center"}}>
+                          <input value={timerInput} onChange={e=>setTimerInput(e.target.value)} type="number" min="1" max="60"
+                            style={{width:80,padding:"10px",borderRadius:10,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.08)",color:"#fff",fontSize:20,fontWeight:700,textAlign:"center",outline:"none"}}/>
+                          <span style={{fontSize:14,color:"rgba(255,255,255,.6)"}}>minutes</span>
+                        </div>
+                        <button onClick={startTimer} style={{width:"100%",padding:"12px",borderRadius:12,border:"none",background:"linear-gradient(135deg,#0a7c68,#064E3B)",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer"}}>▶ Start Timer</button>
+                      </>
+                    )}
+                  </div>
+                </div>,document.body
+              )}
               {/* Feature 15: Student recording indicator */}
               {!isPrivileged&&teacherIsRecording&&createPortal(
                 <div style={{position:"fixed",top:64,left:"50%",transform:"translateX(-50%)",zIndex:9000,background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.3)",borderRadius:20,padding:"6px 14px",display:"flex",alignItems:"center",gap:8,backdropFilter:"blur(8px)"}}>
@@ -5730,11 +5391,16 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             )}
           </div>
           {wbOpen&&<WhiteboardBridge onClose={()=>setWbOpen(false)} isTeacher={isPrivileged} initialStrokes={wbBuffer.current} subjectId={subject.id} canStudentWrite={canStudentWrite}/>}
-          {/* GroupRecitePermDialog removed */}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>{}}
+          {groupReciteDialog&&!isPrivileged&&(
+            <GroupRecitePermDialog
+              onAccept={()=>{setGroupReciteDialog(false);}}
+              onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
+            />
+          )}
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}
             onScreenShare={toggleScreenShare} screenSharing={screenSharing}
-            onToggleTimer={()=>{}} timerRunning={false} timerDisplay={""}
-            onToggleLiveFiles={()=>setLiveFilesOpenTop(v=>!v)} liveFilesOpen={liveFilesOpen}
+            onToggleTimer={()=>setTimerOpen(v=>!v)} timerRunning={timerRunning} timerDisplay={fmtTimer(timerSeconds)}
+            onToggleLiveFiles={()=>setLiveFilesOpen(v=>!v)} liveFilesOpen={liveFilesOpen}
             onToggleHandQueue={()=>setHandQueueOpen(v=>!v)}
             onToggleAttendance={()=>setAttendanceOpen(v=>!v)}
             onSpotlight={(id:string)=>setSpotlightId(prev=>prev===id?null:id)}
