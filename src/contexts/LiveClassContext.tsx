@@ -38,6 +38,8 @@ import {
 import { lockReload, unlockReload } from "@/lib/reloadGuard";
 
 const STORAGE_KEY   = "tahleem_live_class";
+import { wasBackPressClaimed } from "@/lib/backPressClaim";
+
 const HISTORY_STATE = "tahleem-live-class";
 
 /* ── SW keep-alive ── */
@@ -178,11 +180,20 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
 
   // Back button → minimize instead of navigating away.
   // Re-push the guard so the NEXT back press also minimizes.
+  //
+  // FIX: if a material/Quran panel inside the classroom already claimed this
+  // exact back-press (e.g. to minimize itself to a pip, or close a viewer),
+  // we must NOT also minimize the whole class here — that was the bug where
+  // minimizing a material accidentally minimized/closed the live class too.
+  // wasBackPressClaimed() checks a shared flag set synchronously by panels
+  // in a capture-phase listener, so it's already up to date by the time this
+  // bubble-phase handler runs.
   useEffect(() => {
     if (!state.inCall) return;
     const onPop = (_e: PopStateEvent) => {
-      // Always re-push the guard so back button keeps working
+      // Always re-push the guard so back button keeps working for next time
       history.pushState({ [HISTORY_STATE]: true }, "");
+      if (wasBackPressClaimed()) return; // a panel already handled this press
       // Minimize the classroom
       setState(prev => prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev);
     };
@@ -239,3 +250,4 @@ export const useLiveClass = () => {
   if (!ctx) throw new Error("useLiveClass must be used inside LiveClassProvider");
   return ctx;
 };
+
