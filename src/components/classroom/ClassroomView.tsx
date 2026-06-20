@@ -2674,7 +2674,7 @@ const detectMaterialType=(file:File):string=>{
   return"Document";
 };
 
-const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord,visible=true,onOpenMatsChange}:any)=>{
+const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord,onOpenMatsChange,panelRef}:any)=>{
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
@@ -2685,9 +2685,21 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const[openMats,setOpenMats]=useState<any[]>([]);
   const[activeMatId,setActiveMatId]=useState<string|null>(null);
   const[quranOpen,setQuranOpen]=useState(false);
+  // listVisible: whether the sliding list panel is shown
+  // (panel stays mounted even when list is hidden, so PiP survives)
+  const[listVisible,setListVisible]=useState(true);
+
+  // Expose showList() so parent can imperatively bring list back into view
+  useEffect(()=>{
+    if(panelRef)panelRef.current={showList:()=>setListVisible(true)};
+  },[panelRef]);
 
   // Notify parent whenever open materials change so it can keep us mounted
-  useEffect(()=>{onOpenMatsChange?.(openMats.length>0);},[openMats.length]);
+  useEffect(()=>{
+    onOpenMatsChange?.(openMats.length>0);
+    // When all materials are closed, bring the list back into view automatically
+    if(openMats.length===0)setListVisible(true);
+  },[openMats.length]);
   const[pipListOpen,setPipListOpen]=useState(false);
   // ── Share-with-class composer (teacher/admin only) ──────────────────────
   const[composerOpen,setComposerOpen]=useState(false);
@@ -2839,9 +2851,10 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
     setOpenMats(prev=>prev.find(e=>e.id===m.id)?prev:[...prev,m]);
     setActiveMatId(m.id);
     setQuranOpen(false);
+    setListVisible(true);
   };
-  const minimizeActive=()=>setActiveMatId(null);
-  const restoreMaterial=(id:string)=>{setActiveMatId(id);setPipListOpen(false);};
+  const minimizeActive=()=>{setActiveMatId(null);setListVisible(false);};
+  const restoreMaterial=(id:string)=>{setActiveMatId(id);setPipListOpen(false);setListVisible(true);};
   const closeMaterial=(id:string)=>{
     setOpenMats(prev=>prev.filter(e=>e.id!==id));
     setActiveMatId(prev=>prev===id?null:prev);
@@ -2916,7 +2929,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
     return(
       <>
         {renderPip()}
-        {visible&&<div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
+        {listVisible&&<div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
             <button onClick={()=>setQuranOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
               <ChevronLeft style={{width:13,height:13}}/> Back
@@ -2939,7 +2952,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         {renderPip()}
         {/* All open materials stay mounted (so video/audio keep playing);
             only the active one is visible. */}
-        {visible&&openMats.map(m=>(
+        {listVisible&&openMats.map(m=>(
           <div key={m.id} style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:m.id===activeMatId?"flex":"none",flexDirection:"column"}}>
             <InClassMaterialViewer
               material={m}
@@ -2954,8 +2967,11 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   }
 
   /* ── MATERIAL LIST — slides from right, does NOT cover full height ── */
+  if(!listVisible){
+    // List is hidden but PiP may still be floating — just render PiP
+    return <>{renderPip()}</>;
+  }
   return(
-    <div style={{display:visible?"contents":"none"}}>
     <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{
         position:"absolute",top:0,right:0,
@@ -3186,7 +3202,6 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
           })}
         </div>
       </div>
-    </div>
     </div>
   );
 };
@@ -4535,13 +4550,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // FIX BUG 2: quizOpen state — LiveQuizOverlay was permanently disabled with hardcoded isOpen={false}
   const[quizOpen,setQuizOpen]=useState(false);
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
-  // Track whether SubjectMaterialsPanel has any open/minimized materials — if so, keep it mounted
+  // Track whether SubjectMaterialsPanel has any open/minimized materials — keep it mounted if so
   const[matPanelHasPip,setMatPanelHasPip]=useState(false);
-  // Smart toggle: if panel has PiP, re-show it; if panel is open, close list view; otherwise open it
-  const toggleMatPanel=()=>setMatPanelOpen(v=>{
-    if(!v&&matPanelHasPip)return true; // panel has pip but is hidden — re-open
-    return !v;
-  });
+  // Imperative ref to panel — lets us call showList() without toggling mount state
+  const matPanelRef=useRef<{showList:()=>void}|null>(null);
+  // Smart toggle: if panel is mounted (has pip or is open), just call showList(); else open it
+  const toggleMatPanel=()=>{
+    if(matPanelHasPip||matPanelOpen){
+      // Panel is alive — tell it to show the list, and make sure it's "open"
+      setMatPanelOpen(true);
+      matPanelRef.current?.showList();
+    } else {
+      setMatPanelOpen(true);
+    }
+  };
   const[matMinimized,setMatMinimized]=useState(false);
   const[matPipPos,setMatPipPos]=useState({x:20,y:120});
   const matPipDragging=useRef(false);
@@ -5074,7 +5096,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — keep mounted when it has minimized PiP materials */}
-              {(matPanelOpen||matPanelHasPip)&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop} visible={matPanelOpen} onOpenMatsChange={(has:boolean)=>setMatPanelHasPip(has)}/>}
+              {(matPanelOpen||matPanelHasPip)&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop} onOpenMatsChange={(has:boolean)=>setMatPanelHasPip(has)} panelRef={matPanelRef}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&(
                 <div style={{position:"absolute",inset:0,zIndex:55,display:matMinimized?"none":"block"}}>
