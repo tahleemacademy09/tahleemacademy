@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import {
-  Users, UserCheck, BookOpen, Video, FileText, ClipboardList,
+  Users, UserCheck, BookOpen, Video, ClipboardList,
   Clock, BarChart, CheckSquare, Calendar,
   Mic, GraduationCap, MessageSquare, Radio, Star,
   AlertTriangle, CheckCircle, XCircle, Megaphone,
@@ -273,27 +273,23 @@ const TeacherDashboard = () => {
   );
 
   const STAT_CARDS = [
-    { icon: Users,         label: t("My Students",    "طلابي"),           value: stats.students,        color: G,        to: "/teacher/students" },
-    { icon: UserCheck,     label: t("Private",         "خاصون"),          value: stats.privateStudents, color: "#7C3AED", to: "/teacher/private-students" },
+    { icon: Users,         label: t("Students",        "الطلاب"),          value: stats.students + stats.privateStudents, color: G,        to: "/teacher/students" },
     { icon: BookOpen,      label: t("Subjects",        "مواد"),            value: stats.subjects,        color: GOLD,     to: "/teacher/subjects" },
     { icon: Video,         label: t("Today",           "اليوم"),           value: stats.todayClasses,    color: "#2563EB", to: "/teacher/classes" },
-    { icon: CheckSquare,   label: t("Pending Exams",   "امتحانات"),        value: stats.pendingExams,    color: "#DC2626", to: "/teacher/grading" },
-    { icon: FileText,      label: t("Pending Tests",   "تمرينات"),         value: stats.pendingTests,    color: "#D97706", to: "/teacher/grading" },
+    { icon: CheckSquare,   label: t("Needs Grading",   "للتصحيح"),         value: stats.pendingExams + stats.pendingTests, color: "#DC2626", to: "/teacher/grading" },
     { icon: Mic,           label: t("Recordings",      "تسجيلات"),         value: stats.totalRecordings, color: "#059669", to: "/teacher/recordings" },
-    { icon: BookOpen,      label: t("Hifdh Tracker",  "متابعة الحفظ"),    value: "",                    color: "#b7791f", to: "/teacher/hifdh-tracker" },
-    { icon: GraduationCap, label: t("Transcripts",     "كشوف"),            value: stats.students,        color: "#0891B2", to: "/teacher/transcripts" },
   ];
 
   const QUICK_ACTIONS = [
-    { icon: Video,         label: t("Schedule Class", "جدولة حصة"),       to: "/teacher/classes",       color: "#2563EB" },
-    { icon: CheckSquare,   label: t("Grade Exams",    "تصحيح"),           to: "/teacher/grading",       color: "#DC2626" },
-    { icon: BookOpen,      label: t("Hifdh Tracker", "متابعة الحفظ"),    to: "/teacher/hifdh-tracker", color: "#b7791f" },
-    { icon: Megaphone,     label: t("Announce",       "إعلان"),           to: "/teacher/announcements", color: G },
-    { icon: GraduationCap, label: t("Transcripts",    "كشوف النتائج"),    to: "/teacher/transcripts",   color: GOLD },
-    { icon: Calendar,      label: t("Attendance",     "الحضور"),          to: "/teacher/attendance",    color: "#059669" },
-    { icon: MessageSquare, label: t("Al-Majlis",      "المجلس"),          to: "/teacher/majlis",        color: "#7C3AED" },
-    { icon: Star,          label: t("Recitation",     "التلاوة"),         to: "/teacher/recitation",    color: "#D97706" },
-    { icon: Radio,         label: t("Public Class",   "درس عام"),         to: "/teacher/public-classes",color: "#0891B2" },
+    { icon: Video,         label: t("Schedule",   "جدولة"),       to: "/teacher/classes",       color: "#2563EB" },
+    { icon: CheckSquare,   label: t("Grade",      "تصحيح"),       to: "/teacher/grading",       color: "#DC2626" },
+    { icon: BookOpen,      label: t("Hifdh",      "الحفظ"),       to: "/teacher/hifdh-tracker", color: "#b7791f" },
+    { icon: Megaphone,     label: t("Announce",   "إعلان"),       to: "/teacher/announcements", color: G },
+    { icon: GraduationCap, label: t("Transcripts","كشوف"),        to: "/teacher/transcripts",   color: "#0891B2" },
+    { icon: Calendar,      label: t("Attendance", "الحضور"),      to: "/teacher/attendance",    color: "#059669" },
+    { icon: MessageSquare, label: t("Al-Majlis",  "المجلس"),      to: "/teacher/majlis",        color: "#7C3AED" },
+    { icon: Star,          label: t("Recitation", "التلاوة"),     to: "/teacher/recitation",    color: "#D97706" },
+    { icon: Radio,         label: t("Public",     "درس عام"),     to: "/teacher/public-classes",color: "#0E7490" },
   ];
 
   return (
@@ -306,12 +302,16 @@ const TeacherDashboard = () => {
         .td-main  { display:grid; grid-template-columns:1fr; gap:14px; padding:14px 14px 40px; }
         @media(min-width:620px){ .td-main { grid-template-columns:1fr 1fr; } }
 
-        /* Stats: 4 across on mobile (compact numbers), auto on wider screens */
-        .td-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; padding:0 14px; margin-top:-44px; position:relative; z-index:2; }
-        @media(min-width:600px){ .td-stats { grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px; } }
+        /* Stats: horizontal scroll row on mobile, no wrap, no orphan cells */
+        .td-stats { display:flex; gap:8px; padding:0 14px; margin-top:-44px; position:relative; z-index:2; overflow-x:auto; scroll-snap-type:x proximity; -ms-overflow-style:none; scrollbar-width:none; }
+        .td-stats::-webkit-scrollbar { display:none; }
+        .td-stats > a, .td-stats > div { flex:0 0 84px; scroll-snap-align:start; }
+        @media(min-width:600px){ .td-stats { overflow-x:visible; } .td-stats > a, .td-stats > div { flex:1 1 0; } }
 
-        /* Quick actions always 2 cols */
-        .td-qa { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+        /* Quick actions — slim horizontal pill row */
+        .td-qa-row { display:flex; gap:8px; padding:14px 14px 0; overflow-x:auto; scroll-snap-type:x proximity; -ms-overflow-style:none; scrollbar-width:none; }
+        .td-qa-row::-webkit-scrollbar { display:none; }
+        .td-qa-pill { flex:0 0 auto; scroll-snap-align:start; display:flex; align-items:center; gap:6px; padding:8px 13px; border-radius:20px; font-size:12px; font-weight:700; text-decoration:none; white-space:nowrap; }
 
         .td-card { background:#fff; border-radius:18px; border:1px solid rgba(15,45,31,.07); overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.04); }
         .td-card-head { padding:13px 15px; border-bottom:1px solid #F3F4F6; display:flex; align-items:center; justify-content:space-between; }
@@ -358,6 +358,16 @@ const TeacherDashboard = () => {
       {/* ── Stats ────────────────────────────────────────────────── */}
       <div className="td-stats">
         {STAT_CARDS.map((s, i) => <StatCard key={i} {...s} />)}
+      </div>
+
+      {/* ── Quick Actions — slim scrollable pill row, not a full card ── */}
+      <div className="td-qa-row">
+        {QUICK_ACTIONS.map((a, i) => (
+          <Link key={i} to={a.to} className="td-qa-pill" style={{ color: a.color, background: `${a.color}0D`, border: `1px solid ${a.color}1A` }}>
+            <a.icon size={13} />
+            <span>{a.label}</span>
+          </Link>
+        ))}
       </div>
 
       {/* ── Cards ────────────────────────────────────────────────── */}
@@ -465,28 +475,6 @@ const TeacherDashboard = () => {
                 </span>
               </div>
             ))}
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="td-card">
-          <div className="td-card-head">
-            <span style={{ fontWeight: 800, fontSize: 14, color: G }}>⚡ {t("Quick Actions", "إجراءات سريعة")}</span>
-          </div>
-          <div style={{ padding: "12px 14px" }}>
-            <div className="td-qa">
-              {QUICK_ACTIONS.map((a, i) => (
-                <Link key={i} to={a.to} style={{ textDecoration: "none" }}>
-                  <div style={{ padding: "11px 10px", borderRadius: 11, background: `${a.color}0D`, border: `1px solid ${a.color}1A`, display: "flex", alignItems: "center", gap: 8, cursor: "pointer", transition: "background .15s" }}
-                    onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = `${a.color}1A`}
-                    onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = `${a.color}0D`}
-                  >
-                    <a.icon size={14} color={a.color} />
-                    <span style={{ fontSize: 11, fontWeight: 700, color: a.color, lineHeight: 1.3 }}>{a.label}</span>
-                  </div>
-                </Link>
-              ))}
-            </div>
           </div>
         </div>
 
