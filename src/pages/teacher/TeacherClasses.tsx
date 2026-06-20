@@ -467,11 +467,14 @@ const TeacherClasses = () => {
             const hasReminder = remindersSet[s.id];
             const minsUntil = s.scheduled_at ? differenceInMinutes(new Date(s.scheduled_at), new Date()) : Infinity;
             const isImminent = minsUntil <= 15 && minsUntil >= -5;
+            // Only show a topic if it's a real, distinct note from the teacher —
+            // not the subject's own name repeated back.
+            const topic = (s as any).topic && (s as any).topic !== subTitle ? (s as any).topic : null;
 
             return (
               <div
                 key={s.id}
-                className={`rounded-xl border p-4 space-y-3 transition-all ${
+                className={`rounded-xl border p-4 space-y-2.5 transition-all ${
                   isActive
                     ? "border-green-500/50 bg-green-50/50 dark:bg-green-950/20"
                     : isImminent
@@ -479,90 +482,68 @@ const TeacherClasses = () => {
                     : "border-border bg-muted/30"
                 }`}
               >
-                {/* Top row: session number + topic + LIVE badge */}
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="outline" className="text-xs">#{(s as any).session_number || "?"}</Badge>
-                    <span className="font-semibold text-sm">
-                      {(s as any).topic || subTitle}
-                    </span>
+                {/* Title row: subject name + status badge (if any) */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-semibold text-sm truncate">{subTitle}</span>
                     {isActive && (
-                      <Badge className="bg-green-500 text-white text-xs animate-pulse gap-1">
+                      <Badge className="bg-green-500 text-white text-xs animate-pulse gap-1 shrink-0">
                         🔴 {t("LIVE", "مباشر")}
                       </Badge>
                     )}
-                    {(s as any)._isTimetable && !isActive && (
-                      <Badge className="bg-amber-100 text-amber-700 border-amber-300 text-xs">
-                        🔁 {t("Recurring", "متكرر")}
-                      </Badge>
-                    )}
                     {isImminent && !isActive && (
-                      <Badge className="bg-amber-500 text-white text-xs gap-1">
-                        ⚡ {t("Starting soon", "يبدأ قريباً")}
+                      <Badge className="bg-amber-500 text-white text-xs gap-1 shrink-0">
+                        ⚡ {t("Soon", "قريباً")}
                       </Badge>
                     )}
                   </div>
+                  {/* Reminder — small icon-only toggle, doesn't compete with Start */}
+                  {!isActive && (
+                    <button
+                      onClick={() => handleSetReminder(s)}
+                      title={hasReminder ? t("Reminder set", "تم ضبط التذكير") : t("Set reminder", "ضبط تذكير")}
+                      className={`shrink-0 h-8 w-8 rounded-lg flex items-center justify-center transition-colors ${
+                        hasReminder ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground hover:bg-muted/70"
+                      }`}
+                    >
+                      {hasReminder ? <BellRing className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
+                    </button>
+                  )}
                 </div>
 
-                {/* Meta: subject • date • countdown */}
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-                  <span>{subTitle}</span>
-                  {s.scheduled_at && (
-                    <>
-                      <span>•</span>
-                      <span>{format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a")}</span>
-                    </>
-                  )}
-                  {(s as any).duration_minutes && (
-                    <>
-                      <span>•</span>
-                      <span>{(s as any).duration_minutes}m</span>
-                    </>
+                {/* Meta: topic (if distinct) • date/time, with countdown on its own line */}
+                <div className="text-xs text-muted-foreground space-y-0.5">
+                  {(topic || s.scheduled_at) && (
+                    <div className="flex flex-wrap items-center gap-x-1.5">
+                      {topic && <span>{topic}</span>}
+                      {topic && s.scheduled_at && <span>•</span>}
+                      {s.scheduled_at && <span>{format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a")}</span>}
+                    </div>
                   )}
                   {countdown && !isActive && (
-                    <span className={`font-bold ${isImminent ? "text-amber-600" : "text-primary"}`}>
+                    <div className={`font-bold ${isImminent ? "text-amber-600" : "text-primary"}`}>
                       ⏱ {countdown}
-                    </span>
+                    </div>
                   )}
                 </div>
 
-                {/* Action buttons */}
-                <div className="flex items-center gap-2">
-                  {/* Join / Start button */}
-                  <Button
-                    size="sm"
-                    className={`flex-1 gap-1.5 ${
-                      isActive
-                        ? "bg-green-600 hover:bg-green-700 text-white"
-                        : isImminent
-                        ? "bg-amber-600 hover:bg-amber-700 text-white"
-                        : ""
-                    }`}
-                    onClick={() => openClassroom(s)}
-                  >
-                    <Video className="h-3.5 w-3.5" />
-                    {isActive
-                      ? t("Join Live", "انضم الآن")
-                      : t("Start Class", "ابدأ الحصة")}
-                  </Button>
-
-                  {/* Reminder button */}
-                  <Button
-                    size="sm"
-                    variant={hasReminder ? "default" : "outline"}
-                    className={`gap-1.5 px-3 ${hasReminder ? "bg-primary/20 text-primary border-primary/30 hover:bg-primary/30" : ""}`}
-                    onClick={() => handleSetReminder(s)}
-                    title={hasReminder ? t("Reminder set", "تم ضبط التذكير") : t("Set reminder", "ضبط تذكير")}
-                  >
-                    {hasReminder
-                      ? <BellRing className="h-3.5 w-3.5" />
-                      : <Bell className="h-3.5 w-3.5" />
-                    }
-                    <span className="text-xs hidden sm:inline">
-                      {hasReminder ? t("Reminded", "تم التذكير") : t("Remind", "تذكير")}
-                    </span>
-                  </Button>
-                </div>
+                {/* Single full-width action */}
+                <Button
+                  size="sm"
+                  className={`w-full gap-1.5 ${
+                    isActive
+                      ? "bg-green-600 hover:bg-green-700 text-white"
+                      : isImminent
+                      ? "bg-amber-600 hover:bg-amber-700 text-white"
+                      : ""
+                  }`}
+                  onClick={() => openClassroom(s)}
+                >
+                  <Video className="h-3.5 w-3.5" />
+                  {isActive
+                    ? t("Join Live", "انضم الآن")
+                    : t("Start Class", "ابدأ الحصة")}
+                </Button>
               </div>
             );
           })}
@@ -583,22 +564,23 @@ const TeacherClasses = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {past.slice(0, 20).map(s => (
-            <div key={s.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-              <div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">#{(s as any).session_number || "?"}</Badge>
-                  <p className="font-medium text-sm">{(s as any).topic || (s as any).subjects?.title || "Class"}</p>
+          {past.slice(0, 20).map(s => {
+            const subTitle = (s as any).subjects?.title || "Class";
+            const topic = (s as any).topic && (s as any).topic !== subTitle ? (s as any).topic : null;
+            return (
+              <div key={s.id} className="flex items-center justify-between gap-2 p-3 rounded-lg bg-muted/50">
+                <div className="min-w-0">
+                  <p className="font-medium text-sm truncate">{topic || subTitle}</p>
+                  <p className="text-xs text-muted-foreground mt-1 truncate">
+                    {topic && `${subTitle} • `}
+                    {s.scheduled_at ? format(new Date(s.scheduled_at), "MMM d, yyyy") : ""} •{" "}
+                    {s.total_participants || 0} {t("participants", "مشاركين")}
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {(s as any).subjects?.title} •{" "}
-                  {s.scheduled_at ? format(new Date(s.scheduled_at), "MMM d, yyyy") : ""} •{" "}
-                  {s.total_participants || 0} {t("participants", "مشاركين")}
-                </p>
+                <Badge variant="outline" className="shrink-0">{t("Ended", "انتهت")}</Badge>
               </div>
-              <Badge variant="outline">{t("Ended", "انتهت")}</Badge>
-            </div>
-          ))}
+            );
+          })}
           {past.length === 0 && (
             <p className="text-muted-foreground text-sm">{t("No past classes", "لا توجد حصص سابقة")}</p>
           )}
