@@ -29,7 +29,7 @@ import {
   LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
   SwitchCamera, Settings, Check, Wifi,
   Monitor, MonitorOff, Pin, Timer, UserCheck, Crosshair,
-  Zap, ClipboardList, Bell, Radio,
+  Zap, ClipboardList, Bell, Radio, Layers,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
@@ -1585,7 +1585,7 @@ function loadResume(id:string):{time?:number;page?:number}|null{
    Renders INSIDE the content area (position:absolute) so the footer and top bar
    always remain visible. Has an opt-in fullscreen button that expands to the full
    viewport when needed. Saves / restores video time and PDF page automatically.   */
-const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
+const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize}:any)=>{
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
 
@@ -1703,30 +1703,6 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
     }
   };
 
-  // ── minimize pip state ──────────────────────────────────────────────────
-  const[minimized,setMinimized]=useState(false);
-  const[pipPos,setPipPos]=useState({x:20,y:80});
-  const dragging=useRef(false);
-  const dragStart=useRef({px:0,py:0,ox:0,oy:0});
-  const onPipDown=(e:React.PointerEvent)=>{dragging.current=true;dragStart.current={px:e.clientX,py:e.clientY,ox:pipPos.x,oy:pipPos.y};(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);};
-  const onPipMove=(e:React.PointerEvent)=>{if(!dragging.current)return;setPipPos({x:dragStart.current.ox+(e.clientX-dragStart.current.px),y:dragStart.current.oy+(e.clientY-dragStart.current.py)});};
-  const onPipUp=()=>{dragging.current=false;};
-
-  // ── pip (minimized) ──────────────────────────────────────────────────────
-  if(minimized){
-    return(
-      <div onPointerDown={onPipDown} onPointerMove={onPipMove} onPointerUp={onPipUp}
-        onClick={()=>setMinimized(false)}
-        style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,
-          width:54,height:54,borderRadius:"50%",cursor:"grab",userSelect:"none",touchAction:"none",
-          background:"linear-gradient(135deg,#064e3b,#1a73e8)",
-          boxShadow:"0 4px 20px rgba(0,0,0,.55)",border:"2px solid rgba(255,255,255,.2)",
-          display:"flex",alignItems:"center",justifyContent:"center",
-        }} title="Open material">
-        <span style={{fontSize:20}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
-      </div>
-    );
-  }
 
   // Use absolute positioning scoped to the video content area so footer is always visible
   const overlayStyle: React.CSSProperties = {
@@ -1793,14 +1769,14 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
   const resumeBadge=resume?.time||resume?.page;
 
   return(
-    <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column",animation:"fade-in .18s ease"}}>
+    <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column"}}>
       {/* Viewer header */}
       <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
         {/* Minimize to pip */}
-        <button onClick={()=>setMinimized(true)} title="Minimize"
+        {onMinimize&&<button onClick={onMinimize} title="Minimize"
           style={{width:30,height:30,borderRadius:8,background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
           <ChevronDown style={{width:13,height:13}}/>
-        </button>
+        </button>}
         <span style={{fontSize:15,flexShrink:0}}>{MAT_TYPE_ICON[material.material_type||"document"]||"📄"}</span>
         <span style={{flex:1,fontSize:13,fontWeight:600,color:"#fff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{material.title||"Material"}</span>
         {resumeBadge&&(
@@ -2702,9 +2678,14 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
-  const[viewing,setViewing]=useState<any>(null);
+  // ── Multiple materials can be open at once; each can be minimized
+  //    independently. openMats = every material currently open (incl.
+  //    minimized ones so their position/state is preserved).
+  //    activeMatId = the one currently shown full-screen (null = all minimized).
+  const[openMats,setOpenMats]=useState<any[]>([]);
+  const[activeMatId,setActiveMatId]=useState<string|null>(null);
   const[quranOpen,setQuranOpen]=useState(false);
-  const[minimized,setMinimized]=useState(false);
+  const[pipListOpen,setPipListOpen]=useState(false);
   // ── Share-with-class composer (teacher/admin only) ──────────────────────
   const[composerOpen,setComposerOpen]=useState(false);
   const[composerMode,setComposerMode]=useState<"text"|"file">("text");
@@ -2779,7 +2760,8 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         const match=m.file_url.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
         if(match){const[,bucket,path]=match;supabase.storage.from(bucket).remove([path]).catch(()=>{});}
       }
-      if(viewing?.id===m.id)setViewing(null);
+      setOpenMats(prev=>prev.filter(e=>e.id!==m.id));
+      setActiveMatId(prev=>prev===m.id?null:prev);
       toast({title:"🗑️ Material deleted"});reloadMats();
     }catch(e:any){toast({title:"Failed to delete",description:e?.message,variant:"destructive"});}
     finally{setDeletingId(null);}
@@ -2849,88 +2831,128 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   };
   const onPipPointerUp=()=>{dragging.current=false;};
 
-  /* ── MINIMIZED: draggable floating circle pip ── */
-  if(minimized){
+  // ── Open / restore / close a material (multi-material aware) ──────────────
+  const openMaterial=(m:any)=>{
+    setOpenMats(prev=>prev.find(e=>e.id===m.id)?prev:[...prev,m]);
+    setActiveMatId(m.id);
+    setQuranOpen(false);
+  };
+  const minimizeActive=()=>setActiveMatId(null);
+  const restoreMaterial=(id:string)=>{setActiveMatId(id);setPipListOpen(false);};
+  const closeMaterial=(id:string)=>{
+    setOpenMats(prev=>prev.filter(e=>e.id!==id));
+    setActiveMatId(prev=>prev===id?null:prev);
+  };
+
+  const minimizedMats=openMats.filter(m=>m.id!==activeMatId);
+  const showPip=minimizedMats.length>0;
+
+  /* ── Single PiP bubble representing ALL minimized materials ──
+     Tap it to expand a compact list; tap an item to restore it.   */
+  const renderPip=()=>{
+    if(!showPip)return null;
+    const topMat=minimizedMats[minimizedMats.length-1];
+    const topIcon=MAT_TYPE_ICON[topMat.material_type||"document"]||"📄";
     return(
-      <div
-        onPointerDown={onPipPointerDown}
-        onPointerMove={onPipPointerMove}
-        onPointerUp={onPipPointerUp}
-        onClick={()=>setMinimized(false)}
-        style={{
-          position:"absolute",
-          left:pipPos.x,top:pipPos.y,
-          zIndex:60,width:54,height:54,
-          borderRadius:"50%",
-          background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",
-          boxShadow:"0 4px 20px rgba(0,0,0,.5)",
-          display:"flex",alignItems:"center",justifyContent:"center",
-          cursor:"grab",userSelect:"none",touchAction:"none",
-          border:"2px solid rgba(255,255,255,.2)",
-        }}
-        title="Open Materials"
-      >
-        <Eye style={{width:22,height:22,color:"#fff"}}/>
+      <div style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,display:"flex",flexDirection:"column",alignItems:"flex-start",gap:8}}>
+        {pipListOpen&&(
+          <div style={{width:240,maxHeight:300,background:"#202124",borderRadius:14,border:"1px solid rgba(255,255,255,.12)",boxShadow:"0 10px 36px rgba(0,0,0,.5)",overflow:"hidden",display:"flex",flexDirection:"column"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,padding:"8px 10px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0}}>
+              <Layers style={{width:13,height:13,color:"#c9a84c"}}/>
+              <span style={{flex:1,fontSize:11,fontWeight:700,color:"#e8eaf0"}}>Minimized ({minimizedMats.length})</span>
+              <button onClick={()=>setPipListOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",borderRadius:6,width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}>
+                <ChevronDown style={{width:11,height:11,color:"#9ca3af"}}/>
+              </button>
+            </div>
+            <div style={{overflowY:"auto",padding:6,display:"flex",flexDirection:"column",gap:5}}>
+              {minimizedMats.map(m=>{
+                const ic=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
+                return(
+                  <div key={m.id} style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.07)",borderRadius:9,padding:"6px 7px"}}>
+                    <button onClick={()=>restoreMaterial(m.id)} style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,padding:0}}>
+                      <span style={{fontSize:15,flexShrink:0}}>{ic}</span>
+                      <span style={{fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{m.title||m.name||"Material"}</span>
+                    </button>
+                    <button onClick={()=>closeMaterial(m.id)} title="Close" style={{background:"rgba(255,255,255,.08)",border:"none",borderRadius:6,width:20,height:20,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}>
+                      <X style={{width:10,height:10,color:"#9ca3af"}}/>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <div
+          onPointerDown={onPipPointerDown}
+          onPointerMove={onPipPointerMove}
+          onPointerUp={onPipPointerUp}
+          onClick={()=>setPipListOpen(o=>!o)}
+          style={{
+            position:"relative",width:54,height:54,borderRadius:"50%",
+            background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",
+            boxShadow:"0 4px 20px rgba(0,0,0,.5)",
+            display:"flex",alignItems:"center",justifyContent:"center",
+            cursor:"grab",userSelect:"none",touchAction:"none",
+            border:"2px solid rgba(255,255,255,.2)",
+          }}
+          title={`${minimizedMats.length} minimized — tap to view`}
+        >
+          <span style={{fontSize:20}}>{topIcon}</span>
+          {minimizedMats.length>1&&(
+            <span style={{position:"absolute",top:-4,right:-4,minWidth:18,height:18,borderRadius:9,background:"#C9A84C",color:"#1a1408",fontSize:10,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px",border:"2px solid #202124"}}>
+              {minimizedMats.length}
+            </span>
+          )}
+        </div>
       </div>
     );
-  }
+  };
 
-  /* ── VIEWING A MATERIAL ── */
+  /* ── VIEWING THE FULL QURAN ── */
   if(quranOpen){
     return(
       <>
-        {/* pip always rendered when minimized so video shows through */}
-        {minimized
-          ? <div onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
-              onClick={()=>setMinimized(false)}
-              style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,width:54,height:54,borderRadius:"50%",background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",boxShadow:"0 4px 20px rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",userSelect:"none",touchAction:"none",border:"2px solid rgba(255,255,255,.2)"}} title="Open Materials">
-              <Eye style={{width:22,height:22,color:"#fff"}}/>
-            </div>
-          : <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-                <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <ChevronDown style={{width:14,height:14}}/>
-                </button>
-                <button onClick={()=>setQuranOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-                  <ChevronLeft style={{width:13,height:13}}/> Back
-                </button>
-                <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>Full Quran</span>
-                <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <X style={{width:13,height:13}}/>
-                </button>
-              </div>
-              <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
-            </div>
-        }
+        {renderPip()}
+        <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+            <button onClick={()=>setQuranOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+              <ChevronLeft style={{width:13,height:13}}/> Back
+            </button>
+            <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>Full Quran</span>
+            <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <X style={{width:13,height:13}}/>
+            </button>
+          </div>
+          <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
+        </div>
       </>
     );
   }
 
-  if(viewing){
+  /* ── ONE OR MORE MATERIALS OPEN ── */
+  if(openMats.length>0){
     return(
       <>
-        {minimized
-          ? <div onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
-              onClick={()=>setMinimized(false)}
-              style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,width:54,height:54,borderRadius:"50%",background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",boxShadow:"0 4px 20px rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",userSelect:"none",touchAction:"none",border:"2px solid rgba(255,255,255,.2)"}} title="Open Materials">
-              <Eye style={{width:22,height:22,color:"#fff"}}/>
+        {renderPip()}
+        {/* All open materials stay mounted (so video/audio keep playing);
+            only the active one is visible. */}
+        {openMats.map(m=>(
+          <div key={m.id} style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:m.id===activeMatId?"flex":"none",flexDirection:"column"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+              <button onClick={minimizeActive} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                <ChevronDown style={{width:14,height:14}}/>
+              </button>
+              <button onClick={()=>closeMaterial(m.id)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+                <ChevronLeft style={{width:13,height:13}}/> Back
+              </button>
+              <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Material"}</span>
+              <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <X style={{width:13,height:13}}/>
+              </button>
             </div>
-          : <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
-              <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-                <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                  <ChevronDown style={{width:14,height:14}}/>
-                </button>
-                <button onClick={()=>setViewing(null)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-                  <ChevronLeft style={{width:13,height:13}}/> Back
-                </button>
-                <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{viewing.title||viewing.name||"Material"}</span>
-                <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <X style={{width:13,height:13}}/>
-                </button>
-              </div>
-              <div style={{flex:1,overflow:"hidden"}}><InClassMaterialViewer material={viewing} onClose={()=>setViewing(null)}/></div>
-            </div>
-        }
+            <div style={{flex:1,overflow:"hidden"}}><InClassMaterialViewer material={m} onClose={()=>closeMaterial(m.id)}/></div>
+          </div>
+        ))}
       </>
     );
   }
@@ -3129,7 +3151,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
                   padding:"10px 10px 10px 12px",background:isEditing?"rgba(201,168,76,.06)":"rgba(255,255,255,.04)",
                   border:`1px solid ${isEditing?"rgba(201,168,76,.25)":"rgba(255,255,255,.07)"}`,borderRadius:10,
                 }}>
-                  <button onClick={()=>setViewing(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0}}>
+                  <button onClick={()=>openMaterial(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0}}>
                     <div style={{width:36,height:36,borderRadius:8,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{icon}</div>
                     <div style={{flex:1,minWidth:0}}>
                       <p style={{margin:0,fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Untitled"}</p>
