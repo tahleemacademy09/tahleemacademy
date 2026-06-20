@@ -29,7 +29,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { format, isFuture, isPast, differenceInMinutes } from "date-fns";
+import { format, isFuture, isPast, isToday, differenceInMinutes } from "date-fns";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 
 // ── Reminder helpers ──────────────────────────────────────────────────────────
@@ -374,13 +374,20 @@ const TeacherClasses = () => {
   }, []);
 
   // ── Split upcoming / past ───────────────────────────────────────────────────
-  // Priority: status field wins; fallback to date comparison
-  const upcoming = sessions.filter(s => {
-    if (s.status === "active") return true;
-    if (s.status === "ended" || s.status === "completed") return false;
-    if (s.status === "scheduled") return true; // keep regardless of date (admin may set stale)
-    return s.scheduled_at && isFuture(new Date(s.scheduled_at));
-  });
+  // "Upcoming Classes" is scoped to TODAY only — a class still shows after its
+  // time has passed (faded, not removed) so the teacher can see what already
+  // happened today, but tomorrow it drops off entirely.
+  const upcoming = sessions
+    .filter(s => {
+      if (s.status === "active") return true;
+      if (s.status === "ended" || s.status === "completed") return false;
+      return s.scheduled_at && isToday(new Date(s.scheduled_at));
+    })
+    .sort((a, b) => {
+      const da = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+      const db_ = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+      return da - db_;
+    });
 
   const past = sessions.filter(s => {
     if (s.status === "ended" || s.status === "completed") return true;
@@ -450,7 +457,7 @@ const TeacherClasses = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Calendar className="h-5 w-5" />
-            {t("Upcoming Classes", "الحصص القادمة")}
+            {t("Today's Classes", "حصص اليوم")}
             {upcoming.length > 0 && (
               <Badge className="bg-primary/20 text-primary border-primary/30 ms-1">
                 {upcoming.length}
@@ -467,6 +474,9 @@ const TeacherClasses = () => {
             const hasReminder = remindersSet[s.id];
             const minsUntil = s.scheduled_at ? differenceInMinutes(new Date(s.scheduled_at), new Date()) : Infinity;
             const isImminent = minsUntil <= 15 && minsUntil >= -5;
+            // A class whose time has already passed today fades out instead
+            // of disappearing — still visible, but visually de-emphasized.
+            const isPastToday = !isActive && s.scheduled_at && minsUntil < -5;
             // Only show a topic if it's a real, distinct note from the teacher —
             // not the subject's own name repeated back.
             const topic = (s as any).topic && (s as any).topic !== subTitle ? (s as any).topic : null;
@@ -480,7 +490,7 @@ const TeacherClasses = () => {
                     : isImminent
                     ? "border-amber-400/50 bg-amber-50/50 dark:bg-amber-950/20"
                     : "border-border bg-muted/30"
-                }`}
+                } ${isPastToday ? "opacity-45" : ""}`}
               >
                 {/* Title row: subject name + status badge (if any) */}
                 <div className="flex items-center justify-between gap-2">
@@ -520,9 +530,14 @@ const TeacherClasses = () => {
                       {s.scheduled_at && <span>{format(new Date(s.scheduled_at), "EEE, MMM d 'at' h:mm a")}</span>}
                     </div>
                   )}
-                  {countdown && !isActive && (
+                  {countdown && !isActive && !isPastToday && (
                     <div className={`font-bold ${isImminent ? "text-amber-600" : "text-primary"}`}>
                       ⏱ {countdown}
+                    </div>
+                  )}
+                  {isPastToday && (
+                    <div className="font-medium text-muted-foreground/70">
+                      {t("Ended earlier today", "انتهت اليوم")}
                     </div>
                   )}
                 </div>
@@ -549,9 +564,12 @@ const TeacherClasses = () => {
           })}
 
           {upcoming.length === 0 && (
-            <p className="text-muted-foreground text-sm py-2">
-              {t("No upcoming classes", "لا توجد حصص قادمة")}
-            </p>
+            <div className="text-center py-6">
+              <Calendar className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
+              <p className="text-muted-foreground text-sm">
+                {t("No classes scheduled today", "لا توجد حصص مجدولة اليوم")}
+              </p>
+            </div>
           )}
         </CardContent>
       </Card>
