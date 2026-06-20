@@ -181,6 +181,18 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
   const [navVisible, setNavVisible] = useState(false);
   const navHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Keep the navigator visible while the user is actively touching/pressing
+  // it (e.g. holding the ▲/▼ buttons or typing a page number), so it doesn't
+  // fade out mid-interaction. Restarts the hide countdown on release.
+  const keepNavAlive = useCallback(() => {
+    setNavVisible(true);
+    if (navHideTimer.current) clearTimeout(navHideTimer.current);
+  }, []);
+  const releaseNavAlive = useCallback(() => {
+    if (navHideTimer.current) clearTimeout(navHideTimer.current);
+    navHideTimer.current = setTimeout(() => setNavVisible(false), 1500);
+  }, []);
+
   const updateCurrentPageFromScroll = useCallback(() => {
     const sc = scrollRef.current, cont = containerRef.current;
     if (!sc || !cont || !cont.children.length) return;
@@ -312,7 +324,7 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
       // out 500ms after the last scroll event so it doesn't block the page.
       setNavVisible(true);
       if (navHideTimer.current) clearTimeout(navHideTimer.current);
-      navHideTimer.current = setTimeout(() => setNavVisible(false), 500);
+      navHideTimer.current = setTimeout(() => setNavVisible(false), 1200);
     };
     fn(); // set the initial page right away, don't wait for the first scroll event
     el.addEventListener("scroll", fn, { passive: true });
@@ -357,17 +369,26 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
       )}
 
       {/* Page navigator — current/total + jump to any rendered page.
-          Appears while scrolling, fades out 500ms after scrolling stops. */}
+          Appears while scrolling, fades out 1.2s after scrolling stops
+          (paused while the navigator itself is being touched/pressed). */}
       {(phase === "rendering" || phase === "done") && totalPages > 0 && (
-        <div style={{
-          position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", zIndex:6,
-          display:"flex", flexDirection:"column", alignItems:"center", gap:6,
-          background:"rgba(20,20,22,.82)", borderRadius:14, padding:"10px 7px",
-          boxShadow:"0 2px 10px rgba(0,0,0,.35)",
-          opacity: navVisible ? 1 : 0,
-          pointerEvents: navVisible ? "auto" : "none",
-          transition:"opacity .25s ease",
-        }}>          <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} style={{
+        <div
+          onPointerDown={keepNavAlive}
+          onPointerUp={releaseNavAlive}
+          onPointerLeave={releaseNavAlive}
+          onTouchStart={keepNavAlive}
+          onTouchEnd={releaseNavAlive}
+          style={{
+            position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", zIndex:6,
+            display:"flex", flexDirection:"column", alignItems:"center", gap:6,
+            background:"rgba(20,20,22,.82)", borderRadius:14, padding:"10px 7px",
+            boxShadow:"0 2px 10px rgba(0,0,0,.35)",
+            opacity: navVisible ? 1 : 0,
+            pointerEvents: navVisible ? "auto" : "none",
+            transition:"opacity .25s ease",
+          }}
+        >
+          <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} style={{
             width:26, height:26, borderRadius:8, border:"none", cursor: currentPage <= 1 ? "default" : "pointer",
             background:"rgba(255,255,255,.08)", color: currentPage <= 1 ? "rgba(255,255,255,.25)" : "#d1d5db",
             fontSize:12, display:"flex", alignItems:"center", justifyContent:"center",
@@ -375,9 +396,9 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
 
           <input
             type="number" inputMode="numeric" value={pageInput}
-            onFocus={() => { editingRef.current = true; }}
+            onFocus={() => { editingRef.current = true; keepNavAlive(); }}
             onChange={e => setPageInput(e.target.value)}
-            onBlur={() => { editingRef.current = false; const n = parseInt(pageInput, 10); if (!isNaN(n)) goToPage(n); else setPageInput(String(currentPage)); }}
+            onBlur={() => { editingRef.current = false; const n = parseInt(pageInput, 10); if (!isNaN(n)) goToPage(n); else setPageInput(String(currentPage)); releaseNavAlive(); }}
             onKeyDown={e => { if (e.key === "Enter") { const n = parseInt(pageInput, 10); if (!isNaN(n)) goToPage(n); (e.target as HTMLInputElement).blur(); } }}
             style={{
               width:30, textAlign:"center", background:"rgba(255,255,255,.08)", border:"1px solid rgba(255,255,255,.15)",
