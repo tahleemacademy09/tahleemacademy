@@ -4537,6 +4537,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // FIX BUG 2: quizOpen state — LiveQuizOverlay was permanently disabled with hardcoded isOpen={false}
   const[quizOpen,setQuizOpen]=useState(false);
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
+  const[matMinimized,setMatMinimized]=useState(false);
+  const[matPipPos,setMatPipPos]=useState({x:20,y:120});
+  const matPipDragging=useRef(false);
+  const matPipDragStart=useRef({px:0,py:0,ox:0,oy:0});
+  const onMatPipPointerDown=(e:React.PointerEvent)=>{matPipDragging.current=true;matPipDragStart.current={px:e.clientX,py:e.clientY,ox:matPipPos.x,oy:matPipPos.y};(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);};
+  const onMatPipPointerMove=(e:React.PointerEvent)=>{if(!matPipDragging.current)return;setMatPipPos({x:matPipDragStart.current.ox+(e.clientX-matPipDragStart.current.px),y:matPipDragStart.current.oy+(e.clientY-matPipDragStart.current.py)});};
+  const onMatPipPointerUp=()=>{matPipDragging.current=false;};
   const[groupRecite,setGroupRecite]=useState(false);const[canStudentWrite,setCanStudentWrite]=useState(false);const[canStudentRec,setCanStudentRec]=useState(false);
   // Student recording — lifted here so SubjectMaterialsPanel can also trigger it
   const[stuRec,setStuRec]=useState(false);
@@ -5009,7 +5016,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             }}
             onDisconnected={autoReconnect}
           />
-          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>setMatOpen(mat)} onMatClose={()=>setMatOpen(null)} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
+          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(32,33,36,.92)",backdropFilter:"blur(12px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
             <div style={{width:52,height:52,border:"3px solid rgba(138,180,248,.2)",borderTopColor:"#8ab4f8",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/>
@@ -5064,7 +5071,32 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {/* Materials panel — absolute inside content, footer always visible */}
               {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
-              {matOpen&&<MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onClose={()=>setMatOpen(null)}/>}
+              {matOpen&&(
+                <div style={{position:"absolute",inset:0,zIndex:55,display:matMinimized?"none":"block"}}>
+                  <MatViewerInlineBridge material={matOpen} isPrivileged={isPrivileged} onMinimize={()=>setMatMinimized(true)} onClose={()=>{setMatOpen(null);setMatMinimized(false);}}/>
+                </div>
+              )}
+              {/* Floating PiP for the teacher-shared material when minimized */}
+              {matOpen&&matMinimized&&(
+                <div
+                  onPointerDown={onMatPipPointerDown}
+                  onPointerMove={onMatPipPointerMove}
+                  onPointerUp={onMatPipPointerUp}
+                  onClick={()=>setMatMinimized(false)}
+                  style={{
+                    position:"absolute", left:matPipPos.x, top:matPipPos.y, zIndex:60,
+                    width:54, height:54, borderRadius:"50%",
+                    background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",
+                    boxShadow:"0 4px 20px rgba(0,0,0,.5)",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    cursor:"grab", userSelect:"none", touchAction:"none",
+                    border:"2px solid rgba(255,255,255,.2)",
+                  }}
+                  title={matOpen.title||"Open material"}
+                >
+                  <span style={{fontSize:20}}>{MAT_TYPE_ICON[matOpen.material_type||"document"]||"📄"}</span>
+                </div>
+              )}
               {/* Feature 11: Live class file panel (in-class materials) */}
               {liveFilesOpen&&createPortal(
                 <div style={{position:"fixed",inset:0,zIndex:9000,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"flex-end",justifyContent:"flex-end"}} onClick={()=>setLiveFilesOpen(false)}>
@@ -5258,6 +5290,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       {matPicker&&<MatPickerBridge subjectId={subject.id} onShare={async(mat:any,room:any)=>{
         // Show for the teacher immediately — they have direct storage access
         setMatOpen(mat);
+        setMatMinimized(false);
         setMatPicker(false);
         // Pre-resolve the URL before broadcasting so every student receives a
         // ready https:// URL. InClassMaterialViewer skips getSignedUrl entirely
@@ -5316,9 +5349,9 @@ const MatPickerBridge=({subjectId,onShare,onClose}:any)=>{const room=useRoomCont
 // MatViewerBridge (legacy — kept for backwards compat, now delegates to InClassMaterialViewer)
 const MatViewerBridge=({material,isTeacher,onClose}:any)=>{const room=useRoomContext();return<InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={()=>onClose(room)}/>;};
 // MatViewerInlineBridge — renders INSIDE LiveKitRoom (has room context) so mat_close can be broadcast
-const MatViewerInlineBridge=({material,isPrivileged,onClose}:any)=>{
+const MatViewerInlineBridge=({material,isPrivileged,onClose,onMinimize}:any)=>{
   const room=useRoomContext();
-  return<InClassMaterialViewer material={material} isTeacher={isPrivileged} onClose={()=>{
+  return<InClassMaterialViewer material={material} isTeacher={isPrivileged} onMinimize={onMinimize} onClose={()=>{
     onClose();
     if(isPrivileged){try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_close"})),{reliable:true});}catch{}}
   }}/>;
