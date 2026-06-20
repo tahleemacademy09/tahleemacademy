@@ -24,9 +24,7 @@
     and Google Meet do.
   • setInterval heartbeat (20 s) — forces event-loop ticks under throttling.
   • WakeLock — prevents CPU sleep while screen is on.
-  • MediaSession — shows Tahleem lock-screen media card with mic/camera
-    controls (seekbackward = toggle mic, seekforward = toggle camera,
-    previoustrack/play/pause = return to class, stop = leave).
+  • MediaSession — shows Tahleem lock-screen media card with "Return to Class".
   • pageshow / resume / focus listeners — restart all layers after screen unlock.
 
   REMOVED: useSilentAudio (AudioContext oscillator at gain=0).
@@ -35,7 +33,7 @@
 */
 
 import { useLiveClass } from "@/contexts/LiveClassContext";
-import { startBackgroundAudio, stopBackgroundAudio, updateMediaSessionControls } from "@/hooks/useBackgroundAudio";
+import { startBackgroundAudio, stopBackgroundAudio } from "@/hooks/useBackgroundAudio";
 import { App as CapApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import ClassroomView from "@/components/classroom/ClassroomView";
@@ -46,9 +44,9 @@ export default function GlobalClassroomOverlay() {
   const {
     activeSubject, inCall, minimized, autoJoin,
     leaveClass, setMinimized,
-    micEnabled, camEnabled,
+    micEnabled,
     hasConnected,
-    restoreMicFnRef, toggleMicFnRef, toggleCamFnRef,
+    restoreMicFnRef,
   } = useLiveClass();
 
   const title = activeSubject?.title ?? "Live Class";
@@ -102,55 +100,42 @@ export default function GlobalClassroomOverlay() {
     return () => stopBackgroundAudio();
   }, [hasConnected, title]);
 
-  // ── Wire mic/camera controls into the notification (seekbackward/seekforward) ──
-  // This single effect now owns ALL MediaSession action handlers (return,
-  // leave, mic toggle, camera toggle) and the notification title/artwork.
-  // Re-runs whenever micEnabled or camEnabled changes so the notification
-  // always reflects current state ("🎙 Mic ON · 📹 Cam OFF").
-  // toggleMicFnRef/toggleCamFnRef are stable refs registered by ClassroomView,
-  // so calling .current avoids stale closures without needing them as deps.
-  //
-  // NOTE: previously there were two separate effects writing to
-  // navigator.mediaSession — one for play/pause/stop/prev/next and one for
-  // mic/cam. Their cleanup functions raced against each other (nulling
-  // handlers the other effect had just set), which is why the notification
-  // sometimes reverted to a plain music-player card. Consolidated into one.
+  // ── Wire MediaSession "Return to Class" / "Leave" actions ────────────
+  // We update the handlers whenever the callbacks change (stable refs so
+  // this rarely fires). This is separate from startBackgroundAudio so that
+  // the audio element is never torn down just because handleReturn changed.
   useEffect(() => {
     if (!hasConnected || !("mediaSession" in navigator)) return;
-    updateMediaSessionControls({
-      title,
-      micOn: micEnabled,
-      camOn: camEnabled,
-      onToggleMic: () => toggleMicFnRef.current?.(),
-      onToggleCam: () => toggleCamFnRef.current?.(),
-      onReturn:    handleReturn,
-      onLeave:     handleLeave,
-    });
-  }, [hasConnected, title, micEnabled, camEnabled, handleReturn, handleLeave, toggleMicFnRef, toggleCamFnRef]);
+    const sa = (a: MediaSessionAction, h: MediaSessionActionHandler | null) => {
+      try { navigator.mediaSession.setActionHandler(a, h); } catch {}
+    };
+    // "play" and "pause" both mean "user wants to interact" on the lock screen
+    // (they tap the play button on the media card). Treat both as "Return to Class".
+    // "stop" ends the call. We do NOT wire "pause" → leaveClass — that would
+    // disconnect participants every time Android locks the screen.
+    sa("play",          handleReturn);
+    sa("pause",         handleReturn);
+    sa("stop",          handleLeave);
+    sa("previoustrack", handleReturn);
+    sa("nexttrack",     handleReturn);
+    return () => {
+      (["play","pause","stop","previoustrack","nexttrack"] as MediaSessionAction[])
+        .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
+    };
+  }, [hasConnected, handleReturn, handleLeave]);
 
   // ── Native foreground service: keeps audio alive when phone home button pressed ──
   // On Android native (Capacitor), startBackgroundAudio() also starts the
   // Android foreground service via @capacitor/background-audio (if installed).
   // The useEffect above already calls startBackgroundAudio, so this block only
   // handles the Capacitor app lifecycle events.
-  //
-  // CRITICAL FIX: `minimized` was previously in the deps array, causing the
-  // entire listener pair to be removed and re-added on every minimize/restore
-  // toggle. This created duplicate listeners and could miss appStateChange
-  // events that fired during the brief re-registration window.
-  // Solution: read `minimized` through a ref so the effect never needs to
-  // re-register because of it.
-  const minimizedRef = useRef(minimized);
-  useEffect(() => { minimizedRef.current = minimized; }, [minimized]);
-
   useEffect(() => {
     if (!Capacitor.isNativePlatform() || !hasConnected) return;
     let backHandle: any = null;
     let stateHandle: any = null;
 
     CapApp.addListener("backButton", () => {
-      // Read minimized via ref — stable, no re-registration needed
-      if (!minimizedRef.current) setMinimized(true);
+      if (!minimized) setMinimized(true);
     }).then(h => { backHandle = h; });
 
     // appStateChange fires when app goes to background/foreground on Android.
@@ -173,10 +158,7 @@ export default function GlobalClassroomOverlay() {
       backHandle?.remove();
       stateHandle?.remove();
     };
-    // minimized intentionally NOT in deps — read via minimizedRef above.
-    // Re-registering on every minimize toggle causes duplicate listeners.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasConnected, setMinimized, restoreMicFnRef]);
+  }, [hasConnected, minimized, setMinimized, restoreMicFnRef]);
 
   /* ── Minimize button ── */
   const handleMinimize = useCallback(() => {

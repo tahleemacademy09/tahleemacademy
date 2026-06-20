@@ -192,10 +192,6 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
   const goToPage = useCallback((n: number) => {
     const cont = containerRef.current, sc = scrollRef.current;
     if (!cont || !sc || !cont.children.length) return;
-    // Treat explicit navigation the same as user scrolling — never let a
-    // pending restoreScroll() snap the view back after the user has chosen
-    // a page.
-    userScrolledRef.current = true;
     // Clamp to pages actually rendered so far — pages still streaming in aren't in the DOM yet
     const clamped = Math.max(1, Math.min(n, cont.children.length));
     const el = cont.children[clamped - 1] as HTMLElement;
@@ -220,28 +216,18 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     return c;
   }, []);
 
-  const restoredRef = useRef<string>(""); // tracks which materialId's scroll has already been restored
-  const userScrolledRef = useRef(false);  // true once the user manually scrolls — never auto-restore after that
   const restoreScroll = useCallback(() => {
     if (!materialId) return;
-    // Only restore once per material per mount, and never if the user has
-    // already scrolled on their own (e.g. while pages were still streaming
-    // in) — forcing scrollTop back at that point is exactly what caused the
-    // "shake" (page visibly snapping back toward the saved position).
-    if (restoredRef.current === materialId) return;
-    if (userScrolledRef.current) return;
     const saved = loadScroll(materialId);
     if (saved > 0) requestAnimationFrame(() => {
-      if (scrollRef.current && !userScrolledRef.current) scrollRef.current.scrollTop = saved;
+      if (scrollRef.current) scrollRef.current.scrollTop = saved;
     });
-    restoredRef.current = materialId;
   }, [materialId]);
 
   useEffect(() => {
     ensureKeyframes();
     cancelRef.current = false;
     lastDrawn.current = 0;
-    userScrolledRef.current = false; // new document — allow one restore for it
     setCurrentPage(1);
     setTotalPages(TOTAL_CACHE.get(url) || 0);
 
@@ -311,25 +297,15 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     return () => { cancelRef.current = true; clearInterval(poll); };
   }, [url, makePage, restoreScroll]);
 
-  // Save scroll position + track current page while reading.
-  // Also detect real user interaction (wheel / touch) so we know to stop
-  // ever forcing the scroll position back via restoreScroll() — this is
-  // what previously caused the page to visibly "shake" while it streamed in.
+  // Save scroll position + track current page while reading
   useEffect(() => {
     if (phase !== "done" && phase !== "rendering") return;
     const el = scrollRef.current;
     if (!el) return;
-    const markUserScrolled = () => { userScrolledRef.current = true; };
     const fn = () => { if (materialId) saveScroll(materialId, el.scrollTop); updateCurrentPageFromScroll(); };
     fn(); // set the initial page right away, don't wait for the first scroll event
     el.addEventListener("scroll", fn, { passive: true });
-    el.addEventListener("wheel", markUserScrolled, { passive: true });
-    el.addEventListener("touchmove", markUserScrolled, { passive: true });
-    return () => {
-      el.removeEventListener("scroll", fn);
-      el.removeEventListener("wheel", markUserScrolled);
-      el.removeEventListener("touchmove", markUserScrolled);
-    };
+    return () => el.removeEventListener("scroll", fn);
   }, [materialId, phase, updateCurrentPageFromScroll]);
 
   return (

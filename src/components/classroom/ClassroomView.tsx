@@ -75,22 +75,98 @@ const BAR_H = 76;
      Re-starts both layers the moment the user returns to the tab.
    ══════════════════════════════════════════════════════════════════════ */
 
-/*
-  REMOVED: useSilentAudioKeepAlive (the AudioContext oscillator + duplicate <audio> element).
+const _CV_SILENCE_WAV =
+  "data:audio/wav;base64," +
+  "UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=";
 
-  WHY: GlobalClassroomOverlay already owns the single authoritative audio keep-alive
-  via useBackgroundAudio (startBackgroundAudio / stopBackgroundAudio). That module
-  creates ONE <audio> element at volume=0.001 — Android grants audio focus to it and
-  keeps the JS thread alive through screen lock, exactly as WhatsApp does.
+function useSilentAudioKeepAlive(active: boolean) {
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const acRef      = useRef<AudioContext | null>(null);
+  const oscRef     = useRef<OscillatorNode | null>(null);
+  const gainRef    = useRef<GainNode | null>(null);
+  const hbRef      = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  Having TWO <audio> elements here created a resource conflict: Chrome on Android can
-  suppress duplicate silent-audio sources, cancelling both. The AudioContext oscillator
-  at gain=0 is additionally detected by Chrome as "silent audio" and throttled after
-  ~30 s of screen lock, defeating the entire point.
+  useEffect(() => {
+    if (!active) {
+      if (hbRef.current)      { clearInterval(hbRef.current); hbRef.current = null; }
+      if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.src = ""; audioElRef.current = null; }
+      try { oscRef.current?.stop(); } catch {}
+      oscRef.current = null; gainRef.current = null;
+      acRef.current?.close().catch(() => {}); acRef.current = null;
+      return;
+    }
 
-  The call site below (useSilentAudioKeepAlive(phase === "live")) is replaced with a
-  no-op comment so nothing changes structurally in ClassroomView.
-*/
+    // Layer 1 — <audio>
+    const startAudioEl = () => {
+      if (audioElRef.current) return;
+      try {
+        const el = new Audio(_CV_SILENCE_WAV);
+        el.loop = true; el.volume = 0.001;
+        el.play().catch(() => {});
+        audioElRef.current = el;
+      } catch {}
+    };
+
+    // iOS primer — first touch/click unlocks AudioContext
+    const prime = () => {
+      startAudioEl();
+      const ctx = acRef.current;
+      if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+    };
+    ["touchstart","pointerdown","click","keydown"].forEach(ev =>
+      document.addEventListener(ev, prime, { once: true, passive: true, capture: true })
+    );
+
+    // Layer 2 — AudioContext
+    const startAC = () => {
+      if (acRef.current && acRef.current.state !== "closed") return;
+      try {
+        const AC   = window.AudioContext || (window as any).webkitAudioContext;
+        const ctx  = new AC();
+        const osc  = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.value = 1; gain.gain.value = 0;
+        osc.connect(gain); gain.connect(ctx.destination); osc.start();
+        acRef.current = ctx; oscRef.current = osc; gainRef.current = gain;
+      } catch {}
+    };
+
+    startAudioEl(); startAC();
+
+    // Layer 3 — heartbeat
+    hbRef.current = setInterval(() => {
+      const ctx = acRef.current;
+      if (ctx?.state === "suspended") ctx.resume().catch(() => {});
+      const el = audioElRef.current;
+      if (el?.paused) el.play().catch(() => {});
+    }, 15_000);
+
+    // Layer 4 — resume on return
+    const resume = () => {
+      const el = audioElRef.current;
+      if (!el)       startAudioEl();
+      else if (el.paused) el.play().catch(() => {});
+      const ctx = acRef.current;
+      if (!ctx || ctx.state === "closed") startAC();
+      else if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    };
+
+    document.addEventListener("visibilitychange", resume);
+    document.addEventListener("pageshow",         resume);
+    window.addEventListener("focus",              resume);
+
+    return () => {
+      document.removeEventListener("visibilitychange", resume);
+      document.removeEventListener("pageshow",         resume);
+      window.removeEventListener("focus",              resume);
+      if (hbRef.current) { clearInterval(hbRef.current); hbRef.current = null; }
+      audioElRef.current?.pause();
+      if (audioElRef.current) { audioElRef.current.src = ""; audioElRef.current = null; }
+      try { oscRef.current?.stop(); } catch {}
+      acRef.current?.close().catch(() => {});
+    };
+  }, [active]);
+}
 
 
 const CSS = `
@@ -401,13 +477,8 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
       }
 
       // Tab coming back to foreground
-      // RACE FIX: snapshot wsDropped BEFORE clearGrace() resets it.
-      // Old code: clearGrace() ran first → wsDropped.current became false →
-      // the check below never saw the drop → onDisconnected was never called
-      // even when the WS actually disconnected during the background period.
-      const didDrop = wsDropped.current;
       clearGrace();
-      if (room.state === ConnectionState.Disconnected || didDrop) { onDisconnected(); return; }
+      if (room.state === ConnectionState.Disconnected) { onDisconnected(); return; }
       try {
         if (room.state === ConnectionState.Connected) {
           // NOTE: mic restoration is handled by MicKeepAliveFromContext which reads
@@ -837,17 +908,8 @@ const LayoutSwitcher=({layout,onChange}:{layout:LayoutMode;onChange:(m:LayoutMod
 /* ══ MIC KEEP-ALIVE ══
    WhatsApp-style: when Android returns from background/screen-lock,
    the mic track may be suspended. This re-enables it automatically.
-
-   PING FIX: The previous implementation called getUserMedia and immediately
-   released the stream (s.getTracks().forEach(t => t.stop())). On some Android
-   builds this creates a ~200ms window where the OS revokes mic permission,
-   interrupting the active LiveKit mic track. Now we hold the stream for 500ms
-   before releasing — long enough for Android to see "mic is still needed"
-   without actually consuming it for longer than necessary.
-
-   PAGESHOW FIX: Added pageshow listener to catch the screen-lock → screen-unlock
-   return path. visibilitychange stays "hidden" during screen lock; pageshow fires
-   when the user wakes the device.                                              */
+   Also fires a silent getUserMedia ping every 25 s to prevent Android
+   from revoking the mic permission while the app is backgrounded.    */
 const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
   const room = useRoomContext();
   const micWasEnabledRef = useRef(micWasEnabled);
@@ -855,7 +917,6 @@ const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
 
   useEffect(() => {
     const restoreMic = async () => {
-      // Only restore when actually visible — no-op during screen lock
       if (document.visibilityState !== "visible") return;
       const lp = room?.localParticipant;
       if (!lp) return;
@@ -876,29 +937,23 @@ const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
       }
     };
 
-    // Ping: keeps mic permission alive on Android while backgrounded.
-    // FIX: Hold the stream 500ms before releasing so Android doesn't see
-    // a permission gap that could interrupt the live LiveKit mic track.
+    // Ping: keeps mic permission alive on Android while backgrounded
     const pingMic = async () => {
-      if (document.visibilityState === "visible") return; // only ping in background
+      if (document.visibilityState === "visible") return;
       try {
         const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        // Hold briefly — prevents the OS from seeing a "mic not needed" gap
-        await new Promise(r => setTimeout(r, 500));
-        s.getTracks().forEach(t => t.stop());
+        s.getTracks().forEach(t => t.stop()); // immediately release — just a keep-alive ping
       } catch {}
     };
 
     const pingInterval = setInterval(pingMic, 25_000);
     document.addEventListener("visibilitychange", restoreMic);
-    window.addEventListener("focus",    restoreMic);
-    window.addEventListener("pageshow", restoreMic); // screen-lock → wake path
+    window.addEventListener("focus", restoreMic);
 
     return () => {
       clearInterval(pingInterval);
       document.removeEventListener("visibilitychange", restoreMic);
-      window.removeEventListener("focus",    restoreMic);
-      window.removeEventListener("pageshow", restoreMic);
+      window.removeEventListener("focus", restoreMic);
     };
   }, [room]);
 
@@ -1737,13 +1792,8 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false}:any)=>{
 
   const resumeBadge=resume?.time||resume?.page;
 
-  // Animate only on first mount — prevent re-renders from re-triggering the animation (shake fix)
-  const didMountAnim=useRef(false);
-  const mountAnim=didMountAnim.current?"none":"fade-in .18s ease";
-  useEffect(()=>{didMountAnim.current=true;},[]);
-
   return(
-    <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column",animation:mountAnim}}>
+    <div style={{...overlayStyle,background:"#0f1117",display:"flex",flexDirection:"column",animation:"fade-in .18s ease"}}>
       {/* Viewer header */}
       <div style={{height:46,background:"#2d2e30",display:"flex",alignItems:"center",padding:"0 10px",gap:8,flexShrink:0,borderBottom:"1px solid rgba(255,255,255,.08)"}}>
         {/* Minimize to pip */}
@@ -2652,34 +2702,9 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
-  // ── Multi-viewer: each opened material is its own layer ────────────────
-  const[viewers,setViewers]=useState<{id:string;material:any;minimized:boolean;pipX:number;pipY:number}[]>([]);
+  const[viewing,setViewing]=useState<any>(null);
   const[quranOpen,setQuranOpen]=useState(false);
-  const[quranMinimized,setQuranMinimized]=useState(false);
-  const[quranPip,setQuranPip]=useState({x:20,y:70});
-  // compat shim used by legacy delete handler
-  const viewing=viewers.find(v=>!v.minimized)?.material??null;
-  const openViewer=(m:any)=>{
-    const idx=viewers.length;
-    setViewers(v=>[...v,{id:`${m.id}-${Date.now()}`,material:m,minimized:false,pipX:18+idx*58,pipY:80+idx*4}]);
-  };
-  const closeViewer=(vid:string)=>setViewers(v=>v.filter(x=>x.id!==vid));
-  const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
-  const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
-  const setViewerPip=(vid:string,px:number,py:number)=>setViewers(v=>v.map(x=>x.id===vid?{...x,pipX:px,pipY:py}:x));
-
-  // ── Back button / Android swipe → minimize topmost open viewer ──────────
-  useEffect(()=>{
-    window.history.pushState({matSentinel:true},"");
-    const handleBack=()=>{
-      const openV=viewers.filter(x=>!x.minimized);
-      if(openV.length>0){minimizeViewer(openV[openV.length-1].id);window.history.pushState({matSentinel:true},"");return;}
-      if(quranOpen&&!quranMinimized){setQuranMinimized(true);window.history.pushState({matSentinel:true},"");return;}
-    };
-    window.addEventListener("popstate",handleBack);
-    return()=>window.removeEventListener("popstate",handleBack);
-  },[viewers,quranOpen,quranMinimized]);
-
+  const[minimized,setMinimized]=useState(false);
   // ── Share-with-class composer (teacher/admin only) ──────────────────────
   const[composerOpen,setComposerOpen]=useState(false);
   const[composerMode,setComposerMode]=useState<"text"|"file">("text");
@@ -2692,6 +2717,10 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const[cError,setCError]=useState("");
   const fileInputRef=useRef<HTMLInputElement>(null);
   const editFileRef=useRef<HTMLInputElement>(null);
+  // Draggable pip position
+  const[pipPos,setPipPos]=useState({x:20,y:120});
+  const dragging=useRef(false);
+  const dragStart=useRef({px:0,py:0,ox:0,oy:0});
   // ── Edit / delete state ─────────────────────────────────────────────────
   const[editingId,setEditingId]=useState<string|null>(null);
   const[editTitle,setEditTitle]=useState("");
@@ -2750,7 +2779,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         const match=m.file_url.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
         if(match){const[,bucket,path]=match;supabase.storage.from(bucket).remove([path]).catch(()=>{});}
       }
-      setViewers(v=>v.filter(x=>x.material?.id!==m.id));
+      if(viewing?.id===m.id)setViewing(null);
       toast({title:"🗑️ Material deleted"});reloadMats();
     }catch(e:any){toast({title:"Failed to delete",description:e?.message,variant:"destructive"});}
     finally{setDeletingId(null);}
@@ -2807,175 +2836,108 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
     }
   };
 
-  // ── Per-viewer pip drag (keyed ref, not state) ──────────────────────────
-  const pipDrag=useRef<{vid:string;px:number;py:number;ox:number;oy:number}|null>(null);
-  const onPipDown=(e:React.PointerEvent,vid:string,ox:number,oy:number)=>{
-    pipDrag.current={vid,px:e.clientX,py:e.clientY,ox,oy};
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);e.stopPropagation();
+  const onPipPointerDown=(e:React.PointerEvent)=>{
+    dragging.current=true;
+    dragStart.current={px:e.clientX,py:e.clientY,ox:pipPos.x,oy:pipPos.y};
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
-  const onPipMove=(e:React.PointerEvent)=>{
-    if(!pipDrag.current)return;
-    const{vid,px,py,ox,oy}=pipDrag.current;
-    setViewerPip(vid,ox+(e.clientX-px),oy+(e.clientY-py));e.stopPropagation();
+  const onPipPointerMove=(e:React.PointerEvent)=>{
+    if(!dragging.current)return;
+    const dx=e.clientX-dragStart.current.px;
+    const dy=e.clientY-dragStart.current.py;
+    setPipPos({x:dragStart.current.ox+dx,y:dragStart.current.oy+dy});
   };
-  const onPipUp=()=>{pipDrag.current=null;};
-  // Quran pip drag
-  const qpDrag=useRef<{px:number;py:number;ox:number;oy:number}|null>(null);
-  const onQPipDown=(e:React.PointerEvent)=>{
-    qpDrag.current={px:e.clientX,py:e.clientY,ox:quranPip.x,oy:quranPip.y};
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);e.stopPropagation();
-  };
-  const onQPipMove=(e:React.PointerEvent)=>{
-    if(!qpDrag.current)return;
-    setQuranPip({x:qpDrag.current.ox+(e.clientX-qpDrag.current.px),y:qpDrag.current.oy+(e.clientY-qpDrag.current.py)});
-    e.stopPropagation();
-  };
-  const onQPipUp=()=>{qpDrag.current=null;};
+  const onPipPointerUp=()=>{dragging.current=false;};
 
-  const MAT_ICON=(m:any)=>MAT_TYPE_ICON[m?.material_type||"document"]||"📄";
-
-  /* ── Single tray badge for ALL minimized viewers ── */
-  const[matTrayOpen,setMatTrayOpen]=useState(false);
-  const MinimizedMaterialsTray=(()=>{
-    const minimized=viewers.filter(v=>v.minimized);
-    if(!minimized.length) return null;
+  /* ── MINIMIZED: draggable floating circle pip ── */
+  if(minimized){
     return(
-      <div style={{position:"fixed",bottom:80,right:16,zIndex:9002,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:6}}>
-        {/* Collapsed badge — always visible */}
-        <button
-          onClick={()=>setMatTrayOpen(o=>!o)}
-          style={{display:"flex",alignItems:"center",gap:7,padding:"7px 13px 7px 10px",borderRadius:24,
-            background:"linear-gradient(135deg,#0a7a5e,#1a3a52)",
-            boxShadow:"0 4px 18px rgba(0,0,0,.55)",border:"1.5px solid rgba(255,255,255,.18)",
-            cursor:"pointer",color:"#fff",userSelect:"none"}}
-        >
-          <span style={{fontSize:16}}>📂</span>
-          <span style={{fontSize:12,fontWeight:700}}>{minimized.length} open</span>
-          <span style={{fontSize:10,opacity:.6,marginLeft:2}}>{matTrayOpen?"▲":"▼"}</span>
-        </button>
+      <div
+        onPointerDown={onPipPointerDown}
+        onPointerMove={onPipPointerMove}
+        onPointerUp={onPipPointerUp}
+        onClick={()=>setMinimized(false)}
+        style={{
+          position:"absolute",
+          left:pipPos.x,top:pipPos.y,
+          zIndex:60,width:54,height:54,
+          borderRadius:"50%",
+          background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",
+          boxShadow:"0 4px 20px rgba(0,0,0,.5)",
+          display:"flex",alignItems:"center",justifyContent:"center",
+          cursor:"grab",userSelect:"none",touchAction:"none",
+          border:"2px solid rgba(255,255,255,.2)",
+        }}
+        title="Open Materials"
+      >
+        <Eye style={{width:22,height:22,color:"#fff"}}/>
+      </div>
+    );
+  }
 
-        {/* Expanded tray list */}
-        {matTrayOpen&&(
-          <div style={{background:"#1e293b",borderRadius:14,padding:"8px 6px",
-            boxShadow:"0 8px 32px rgba(0,0,0,.55)",border:"1px solid rgba(255,255,255,.1)",
-            display:"flex",flexDirection:"column",gap:4,minWidth:220,maxWidth:280}}>
-            {minimized.map(v=>(
-              <div key={v.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 8px",borderRadius:10,
-                background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)"}}>
-                <button
-                  onClick={()=>{restoreViewer(v.id);setMatTrayOpen(false);}}
-                  style={{display:"flex",alignItems:"center",gap:8,flex:1,background:"none",border:"none",
-                    cursor:"pointer",textAlign:"left",minWidth:0,color:"#fff"}}
-                >
-                  <span style={{fontSize:18,flexShrink:0}}>{MAT_ICON(v.material)}</span>
-                  <span style={{fontSize:12,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>
-                    {v.material?.title||"Material"}
-                  </span>
-                  <span style={{fontSize:10,opacity:.5,flexShrink:0}}>Tap to open</span>
+  /* ── VIEWING A MATERIAL ── */
+  if(quranOpen){
+    return(
+      <>
+        {/* pip always rendered when minimized so video shows through */}
+        {minimized
+          ? <div onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
+              onClick={()=>setMinimized(false)}
+              style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,width:54,height:54,borderRadius:"50%",background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",boxShadow:"0 4px 20px rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",userSelect:"none",touchAction:"none",border:"2px solid rgba(255,255,255,.2)"}} title="Open Materials">
+              <Eye style={{width:22,height:22,color:"#fff"}}/>
+            </div>
+          : <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+                <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <ChevronDown style={{width:14,height:14}}/>
                 </button>
-                <button
-                  onClick={()=>closeViewer(v.id)}
-                  title="Close"
-                  style={{width:22,height:22,borderRadius:6,background:"rgba(255,255,255,.08)",border:"none",
-                    color:"rgba(255,255,255,.5)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}
-                >
-                  <X style={{width:11,height:11}}/>
+                <button onClick={()=>setQuranOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+                  <ChevronLeft style={{width:13,height:13}}/> Back
+                </button>
+                <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>Full Quran</span>
+                <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <X style={{width:13,height:13}}/>
                 </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
+            </div>
+        }
+      </>
     );
-  })();
+  }
 
-  /* ── Full-screen overlay for one viewer slot ── */
-  /* Fix: don't re-run the open animation on every render — only on first mount */
-  const ViewerOverlay=({v,zIdx}:{v:{id:string;material:any;minimized:boolean;pipX:number;pipY:number};zIdx:number})=>{
-    const didMount=useRef(false);
-    const animStyle=didMount.current?"none":"slide-right .18s ease both";
-    useEffect(()=>{didMount.current=true;},[]);
-    if(v.minimized) return null;
+  if(viewing){
     return(
-    <div style={{position:"fixed",inset:0,zIndex:zIdx,background:"#202124",display:"flex",flexDirection:"column",animation:animStyle}}>
-      <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-        <button onClick={()=>minimizeViewer(v.id)} title="Minimize"
-          style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <ChevronDown style={{width:14,height:14}}/>
-        </button>
-        <button onClick={()=>closeViewer(v.id)}
-          style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-          <X style={{width:12,height:12}}/> Close
-        </button>
-        <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>
-          {MAT_ICON(v.material)} {v.material?.title||v.material?.name||"Material"}
-        </span>
-        {viewers.length<5&&(
-          <button onClick={()=>openViewer(v.material)} title="Open a second copy side-by-side"
-            style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",color:"rgba(255,255,255,.6)",borderRadius:8,padding:"4px 9px",cursor:"pointer",fontSize:11,fontFamily:"'Google Sans',sans-serif",display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-            ⊕ Side-by-side
-          </button>
-        )}
-        {viewers.length>1&&(
-          <span style={{background:"rgba(10,122,94,.4)",color:"#fff",borderRadius:10,padding:"2px 7px",fontSize:10,fontWeight:700,flexShrink:0}}>
-            {viewers.findIndex(x=>x.id===v.id)+1}/{viewers.length}
-          </span>
-        )}
-      </div>
-      <div style={{flex:1,overflow:"hidden"}}>
-        <InClassMaterialViewer material={v.material} onClose={()=>closeViewer(v.id)}/>
-      </div>
-    </div>
+      <>
+        {minimized
+          ? <div onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
+              onClick={()=>setMinimized(false)}
+              style={{position:"absolute",left:pipPos.x,top:pipPos.y,zIndex:60,width:54,height:54,borderRadius:"50%",background:"linear-gradient(135deg,#0a7a5e,#1a73e8)",boxShadow:"0 4px 20px rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",userSelect:"none",touchAction:"none",border:"2px solid rgba(255,255,255,.2)"}} title="Open Materials">
+              <Eye style={{width:22,height:22,color:"#fff"}}/>
+            </div>
+          : <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
+                <button onClick={()=>setMinimized(true)} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <ChevronDown style={{width:14,height:14}}/>
+                </button>
+                <button onClick={()=>setViewing(null)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
+                  <ChevronLeft style={{width:13,height:13}}/> Back
+                </button>
+                <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{viewing.title||viewing.name||"Material"}</span>
+                <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <X style={{width:13,height:13}}/>
+                </button>
+              </div>
+              <div style={{flex:1,overflow:"hidden"}}><InClassMaterialViewer material={viewing} onClose={()=>setViewing(null)}/></div>
+            </div>
+        }
+      </>
     );
-  };
+  }
 
-  /* ── Quran pip bubble ── */
-  const QuranPip=()=>(
-    <div onPointerDown={onQPipDown} onPointerMove={onQPipMove} onPointerUp={onQPipUp}
-      onClick={()=>setQuranMinimized(false)} title="Open Quran"
-      style={{position:"fixed",left:quranPip.x,top:quranPip.y,zIndex:9001,
-        width:50,height:50,borderRadius:"50%",
-        background:"linear-gradient(135deg,#1a5276,#0a7a5e)",
-        boxShadow:"0 4px 18px rgba(0,0,0,.55)",
-        display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-        cursor:"grab",userSelect:"none",touchAction:"none",
-        border:"2px solid rgba(255,255,255,.22)"}}>
-      <span style={{fontSize:18}}>📖</span>
-      <span style={{fontSize:7,color:"rgba(255,255,255,.6)"}}>Quran</span>
-    </div>
-  );
-
+  /* ── MATERIAL LIST — slides from right, does NOT cover full height ── */
   return(
-    <>
-      {/* Single minimized-materials tray badge */}
-      {MinimizedMaterialsTray}
-      {quranOpen&&quranMinimized&&<QuranPip/>}
-
-      {/* Quran viewer (non-minimized) */}
-      {quranOpen&&!quranMinimized&&(
-        <div style={{position:"fixed",inset:0,zIndex:8950,background:"#202124",display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-            <button onClick={()=>setQuranMinimized(true)} title="Minimize"
-              style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-              <ChevronDown style={{width:14,height:14}}/>
-            </button>
-            <button onClick={()=>setQuranOpen(false)}
-              style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-              <X style={{width:12,height:12}}/> Close
-            </button>
-            <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",fontFamily:"'Google Sans',sans-serif"}}>📖 Full Quran</span>
-          </div>
-          <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
-        </div>
-      )}
-
-      {/* Material viewer overlays — stacked by z-index */}
-      {viewers.filter(v=>!v.minimized).map((v,i)=>(
-        <ViewerOverlay key={v.id} v={v} zIdx={8960+i}/>
-      ))}
-
-      {/* Material list panel — always rendered underneath */}
-      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
+    <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{
         position:"absolute",top:0,right:0,
         /* Important: bottom:0 so footer stays below this panel */
@@ -3167,7 +3129,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
                   padding:"10px 10px 10px 12px",background:isEditing?"rgba(201,168,76,.06)":"rgba(255,255,255,.04)",
                   border:`1px solid ${isEditing?"rgba(201,168,76,.25)":"rgba(255,255,255,.07)"}`,borderRadius:10,
                 }}>
-                  <button onClick={()=>openViewer(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0}}>
+                  <button onClick={()=>setViewing(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0}}>
                     <div style={{width:36,height:36,borderRadius:8,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{icon}</div>
                     <div style={{flex:1,minWidth:0}}>
                       <p style={{margin:0,fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Untitled"}</p>
@@ -3175,8 +3137,6 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
                         {m.material_type||"file"}
                         {resume?.time&&<span style={{marginLeft:5,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
                         {resume?.page&&!resume?.time&&<span style={{marginLeft:5,color:TEAL}}>p.{resume.page}</span>}
-                        {viewers.some(v=>v.material?.id===m.id&&!v.minimized)&&<span style={{marginLeft:5,color:"#f2dfa8"}}>● open</span>}
-                        {viewers.some(v=>v.material?.id===m.id&&v.minimized)&&<span style={{marginLeft:5,color:"rgba(255,255,255,.3)"}}>● min</span>}
                       </p>
                     </div>
                     <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.25)",flexShrink:0}}/>
@@ -3207,8 +3167,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
           })}
         </div>
       </div>
-      </div>
-    </>
+    </div>
   );
 };
 
@@ -3218,116 +3177,13 @@ const MaterialViewer=({material,isTeacher,onClose}:any)=>{
   return <InClassMaterialViewer material={material} isTeacher={isTeacher} onClose={onClose}/>;
 };
 
-
-// ── IndexedDB chunk cache — survives disconnects/crashes ──────────────────────
-// Every MediaRecorder chunk is also written here as it arrives. If the app is
-// killed before the final upload can happen, the chunks are still on disk and
-// get recovered + uploaded automatically next time the classroom is opened.
-const REC_IDB_NAME    = "tahleem-rec";
-const REC_IDB_STORE   = "chunks";
-
-function openRecIDB(): Promise<IDBDatabase> {
-  return new Promise((res, rej) => {
-    const req = indexedDB.open(REC_IDB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(REC_IDB_STORE, { keyPath: "id", autoIncrement: true });
-    req.onsuccess = () => res(req.result);
-    req.onerror   = () => rej(req.error);
-  });
-}
-
-async function idbAppendChunk(sessionKey: string, blob: Blob): Promise<void> {
-  try {
-    const db = await openRecIDB();
-    const tx = db.transaction(REC_IDB_STORE, "readwrite");
-    const ab = await blob.arrayBuffer();
-    tx.objectStore(REC_IDB_STORE).add({ sessionKey, data: ab, ts: Date.now() });
-    await new Promise<void>((r, j) => { tx.oncomplete = () => r(); tx.onerror = () => j(tx.error); });
-    db.close();
-  } catch (e) {
-    console.warn("[RecIDB] append failed:", e);
-  }
-}
-
-async function idbReadAndClear(sessionKey: string): Promise<ArrayBuffer[]> {
-  try {
-    const db = await openRecIDB();
-    const tx = db.transaction(REC_IDB_STORE, "readwrite");
-    const store = tx.objectStore(REC_IDB_STORE);
-    const all: any[] = await new Promise((res, rej) => {
-      const req = store.getAll();
-      req.onsuccess = () => res(req.result);
-      req.onerror   = () => rej(req.error);
-    });
-    const mine = all.filter(r => r.sessionKey === sessionKey).sort((a, b) => a.ts - b.ts);
-    for (const row of mine) store.delete(row.id);
-    await new Promise<void>((r, j) => { tx.oncomplete = () => r(); tx.onerror = () => j(tx.error); });
-    db.close();
-    return mine.map(r => r.data as ArrayBuffer);
-  } catch (e) {
-    console.warn("[RecIDB] read failed:", e);
-    return [];
-  }
-}
-
-// Recover any recordings left behind by a crash/kill in a PREVIOUS session.
-// Runs once when the classroom mounts.
-async function recoverOrphanedRecordings(teacherEmail: string): Promise<void> {
-  try {
-    const db = await openRecIDB();
-    const tx = db.transaction(REC_IDB_STORE, "readonly");
-    const all: any[] = await new Promise((res, rej) => {
-      const req = tx.objectStore(REC_IDB_STORE).getAll();
-      req.onsuccess = () => res(req.result);
-      req.onerror   = () => rej(req.error);
-    });
-    db.close();
-    if (!all.length) return;
-
-    const groups: Record<string, any[]> = {};
-    for (const row of all) (groups[row.sessionKey] ||= []).push(row);
-
-    for (const [sessionKey, rows] of Object.entries(groups)) {
-      const sorted = rows.sort((a, b) => a.ts - b.ts);
-      const blob   = new Blob(sorted.map(r => r.data), { type: "audio/webm" });
-      if (blob.size < 1000) { await idbReadAndClear(sessionKey); continue; }
-
-      console.log(`[RecIDB] recovering orphaned recording: ${sessionKey} (${blob.size} bytes)`);
-      const sid     = sessionKey.split("__")[0] || null;
-      const recPath = `sessions/${sid || "unknown"}/${sessionKey}_recovered.webm`;
-      const { error } = await storageSupabase.storage.from("recordings")
-        .upload(recPath, blob, { cacheControl: "3600", upsert: true, contentType: "audio/webm" });
-
-      if (!error) {
-        await supabase.from("session_recordings").insert({
-          session_id: sid,
-          file_url:   recPath,
-          teacher_name: teacherEmail || "Teacher",
-          file_size:  blob.size,
-          title:      "Recovered recording (was interrupted)",
-        }).catch(() => {});
-        await idbReadAndClear(sessionKey);
-        console.log(`[RecIDB] recovered → ${recPath}`);
-      } else {
-        console.warn("[RecIDB] recovery upload failed, will retry next mount:", error.message);
-      }
-    }
-  } catch (e) {
-    console.warn("[RecIDB] recovery scan failed:", e);
-  }
-}
-
 /* ══ RECORDING CONTROLLER ══
    Hardened against:
-   • Minimizing / backgrounding the app → recording KEEPS RUNNING (no longer
-     stops on visibilitychange "hidden" — that was a bug, minimizing isn't leaving)
-   • Real LiveKit disconnect            → immediate save via RoomEvent.Disconnected
-   • Abrupt tab close / navigate away   → pagehide triggers save
-   • Crash / forced app kill mid-record → every chunk also backed up to IndexedDB;
-     orphaned chunks are recovered and uploaded automatically on next mount
-   • Stale closure on time              → timeRef tracks elapsed independently of React state
-   • stopRecRef stale ref               → ref assigned inside effect, stopRec uses refs not state
-   • Empty-chunk abort on fast stop     → mr.requestData() flushes pending chunk before stop()
-   • Lost subject_id                    → always falls back to subjectId prop so DB row is queryable
+   • Abrupt class exit / tab close  → visibilitychange "hidden" + pagehide both trigger save
+   • Stale closure on time          → timeRef tracks elapsed independently of React state
+   • stopRecRef stale ref           → ref assigned inside effect, stopRec uses refs not state
+   • Empty-chunk abort on fast stop → mr.requestData() flushes pending chunk before stop()
+   • Lost subject_id                → always falls back to subjectId prop so DB row is queryable
    ══════════════════════════════════════════════════════════════════════════════════════════ */
 const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:any)=>{
   const room=useRoomContext();const{t}=useLanguage();
@@ -3345,16 +3201,9 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
   const sessionRef  = useRef(sessionId);
   const subjectRef  = useRef(subjectId);
   const emailRef    = useRef(userEmail);
-  const sessionKeyRef = useRef<string>("");   // unique key for IndexedDB chunk cache
   useEffect(()=>{ sessionRef.current=sessionId; },[sessionId]);
   useEffect(()=>{ subjectRef.current=subjectId; },[subjectId]);
   useEffect(()=>{ emailRef.current=userEmail;   },[userEmail]);
-
-  // Recover any recording left behind by a crash/forced-kill in a previous session
-  useEffect(()=>{
-    recoverOrphanedRecordings(userEmail||"Teacher").catch(e=>console.warn("[RecController] recovery error:",e));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[]);
 
   const collectAudio=useCallback(()=>{
     try{
@@ -3398,19 +3247,10 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
       }
       chunksRef.current=[];
       timeRef.current=0;
-      // Unique key for this recording — used to namespace IndexedDB chunk backups
-      sessionKeyRef.current=`${sessionRef.current||subjectRef.current||"unknown"}__${Date.now()}`;
       const mimeType=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/ogg"]
         .find(m=>{try{return MediaRecorder.isTypeSupported(m);}catch{return false;}})||"";
       const mr=new MediaRecorder(audio,mimeType?{mimeType}:undefined);
-      mr.ondataavailable=e=>{
-        if(e.data&&e.data.size>0){
-          chunksRef.current.push(e.data);
-          // Also back this chunk up to IndexedDB immediately — if the app gets
-          // killed/disconnected before we can upload, this is what survives.
-          idbAppendChunk(sessionKeyRef.current,e.data).catch(()=>{});
-        }
-      };
+      mr.ondataavailable=e=>{if(e.data&&e.data.size>0)chunksRef.current.push(e.data);};
       mr.start(2000); // chunk every 2 s — smaller chunks = less data lost on crash
       mrRef.current=mr;
       setRecording(true);setPaused(false);setDisplayTime(0);
@@ -3486,15 +3326,9 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
       await supabase.from("session_recordings").insert(dbRow);
       console.log("[RecController] saved OK — path:",recPath,"duration:",elapsed,"s");
       toast({title:t("Recording saved ✅","تم حفظ التسجيل ✅"),description:`${Math.floor(elapsed/60)}m ${elapsed%60}s recorded`});
-      // Successfully saved to Supabase — clear the IndexedDB backup so it
-      // doesn't get treated as an orphan and re-uploaded later.
-      idbReadAndClear(sessionKeyRef.current).catch(()=>{});
     }catch(e:any){
       console.error("[RecController] saveChunks error:",e);
       toast({title:"Recording save failed",description:e?.message||"Unknown error",variant:"destructive"});
-      // NOTE: do NOT clear IndexedDB here — the chunks are the only backup
-      // left if the Supabase upload also failed. They'll be recovered on
-      // next classroom mount.
     }finally{
       savingRef.current=false;
       onSavingChange?.(false);
@@ -3534,43 +3368,23 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
     });
   },[saveChunks]);
 
-  // ── Minimize / background the app — recording KEEPS RUNNING ─────────────────
-  // FIX: previously this called stopRec() on visibilitychange "hidden", which
-  // meant simply minimizing the app (Android home button, switching apps,
-  // screen lock) silently ended the recording. That's wrong — minimizing is
-  // not leaving the class. The recording must keep going in the background.
-  //
-  // What we DO want on minimize is a safety flush to IndexedDB, in case the
-  // OS kills the background tab without warning. This costs nothing and
-  // doesn't touch the live MediaRecorder at all — it just keeps stopping.
+  // ── Emergency save on visibility hidden (Android back/home button) ──────────
+  // This fires BEFORE pagehide in most Android Chrome builds.
   useEffect(()=>{
-    const onHide=()=>{
+    const onHide=async()=>{
       if(document.visibilityState!=="hidden")return;
       const mr=mrRef.current;
       if(!mr||mr.state==="inactive")return;
-      console.log("[RecController] backgrounded — recording continues, flushing safety chunk to IndexedDB");
-      try{ if(mr.state==="recording") mr.requestData(); }catch{}
-      // No stopRec() here. Recording keeps running in the background.
+      console.log("[RecController] visibilitychange hidden → emergency save");
+      // Flush current chunk immediately
+      try{if(mr.state==="recording")mr.requestData();}catch{}
+      // Give ondataavailable 200 ms to fire, then save
+      await new Promise(r=>setTimeout(r,200));
+      await stopRec();
     };
     document.addEventListener("visibilitychange",onHide);
     return()=>document.removeEventListener("visibilitychange",onHide);
-  },[]);
-
-  // ── Real disconnect — THIS is what should save & stop the recording ─────────
-  // A LiveKit disconnect means the room/connection is actually gone (dropped
-  // wifi, server hiccup, kicked, etc.) — unlike minimizing, there's no
-  // "coming back to the same audio stream" here, so we save immediately.
-  useEffect(()=>{
-    if(!room)return;
-    const onDisconnected=()=>{
-      const mr=mrRef.current;
-      if(!mr||mr.state==="inactive")return;
-      console.log("[RecController] room disconnected — saving recording now");
-      stopRec();
-    };
-    room.on(RoomEvent.Disconnected,onDisconnected);
-    return()=>{ room.off(RoomEvent.Disconnected,onDisconnected); };
-  },[room,stopRec]);
+  },[stopRec]);
 
   const togglePause=useCallback(()=>{
     const mr=mrRef.current;if(!mr)return;
@@ -4651,11 +4465,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   /* ── lobby media choices ── */
   const[lobbyMic,setLobbyMic]=useState(false); // OFF by default — user must explicitly enable
   const[lobbyCam,setLobbyCam]=useState(false); // OFF by default — user must explicitly enable
-  /* ── Background keep-alive: owned by GlobalClassroomOverlay via useBackgroundAudio ──
-     useSilentAudioKeepAlive was removed to avoid duplicate <audio> elements that
-     fight each other. GlobalClassroomOverlay creates the single authoritative keep-alive
-     element at volume=0.001 which grants Android audio focus for the lifetime of inCall. */
-  // NOTE: Wake lock is also owned by GlobalClassroomOverlay. No second lock here.
+  /* ── Background keep-alive: silent audio (student & teacher) ── */
+  useSilentAudioKeepAlive(phase === "live");
+  // NOTE: Wake lock is owned by GlobalClassroomOverlay via useWakeLock(hasConnected).
+  // No second wake lock here — dual requests waste a browser resource.
 
   const[sessionId,setSessionId]=useState<string|null>(null);const[sessionInfo,setSessionInfo]=useState<any>(null);
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
@@ -4804,14 +4617,21 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[sessionId,isPrivileged,phase]);
   useEffect(()=>{if(phase!=="live")return;const ti=setInterval(()=>setDuration(d=>d+1),1000);return()=>clearInterval(ti);},[phase]);
-  // NOTE: MediaSession metadata and action handlers are owned exclusively by
-  // GlobalClassroomOverlay (via useBackgroundAudio + the separate MediaSession
-  // useEffect in GlobalClassroomOverlay). ClassroomView must NOT set its own
-  // MediaSession handlers — doing so overwrites the "pause → Return to Class"
-  // and "stop → Leave" handlers that GlobalClassroomOverlay sets, breaking
-  // the lock-screen "Return to Class" button.
-  // The old handler block here (phase + subject.title dep, setActionHandler "stop")
-  // was removed as part of the background-audio consolidation.
+  useEffect(()=>{
+    if(phase!=="live"||!("mediaSession"in navigator))return;
+    try{
+      (navigator as any).mediaSession.metadata=new(window as any).MediaMetadata({title:subject.title,artist:"Tahleem Academy — Live Class",album:"In Progress"});
+      (navigator as any).mediaSession.playbackState="playing";
+      // FIX: "stop" ends the call; "pause" is a no-op — the OS fires pause on
+      // screen-lock/app-switch and we must NOT leave the session in response.
+      // "play" is also a no-op; LiveKit manages audio independently of MediaSession.
+      (navigator as any).mediaSession.setActionHandler("stop",  ()=>leaveSession());
+      try{(navigator as any).mediaSession.setActionHandler("pause", null);}catch{}
+      try{(navigator as any).mediaSession.setActionHandler("play",  null);}catch{}
+    }catch{}
+    return()=>{try{(navigator as any).mediaSession.playbackState="none";}catch{}};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[phase,subject.title]);
 
   const connect=async(action:string,settings?:any,mediaSettings?:{micOn:boolean;cameraOn:boolean})=>{
     if(mediaSettings){setLobbyMic(mediaSettings.micOn);setLobbyCam(mediaSettings.cameraOn);}
