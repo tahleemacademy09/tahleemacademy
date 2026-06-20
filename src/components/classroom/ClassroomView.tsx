@@ -1585,7 +1585,7 @@ function loadResume(id:string):{time?:number;page?:number}|null{
    Renders INSIDE the content area (position:absolute) so the footer and top bar
    always remain visible. Has an opt-in fullscreen button that expands to the full
    viewport when needed. Saves / restores video time and PDF page automatically.   */
-const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize}:any)=>{
+const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize,fromPanel=false}:any)=>{
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
 
@@ -1784,7 +1784,7 @@ const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize}:any)=
             {resume?.time?`▶ ${Math.floor((resume.time||0)/60)}m${Math.floor((resume.time||0)%60)}s`:`p.${resume?.page}`} resumed
           </span>
         )}
-        {!isTeacher&&<span style={{fontSize:10,color:"rgba(255,255,255,.4)",flexShrink:0}}>Shared by teacher</span>}
+        {!isTeacher&&!fromPanel&&<span style={{fontSize:10,color:"rgba(255,255,255,.4)",flexShrink:0}}>Shared by teacher</span>}
         {rawUrl&&<a href={url} target="_blank" rel="noopener noreferrer"
           style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>}
         <button onClick={onClose} title="Close material"
@@ -2938,19 +2938,12 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
             only the active one is visible. */}
         {openMats.map(m=>(
           <div key={m.id} style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:m.id===activeMatId?"flex":"none",flexDirection:"column"}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
-              <button onClick={minimizeActive} title="Minimize" style={{background:"rgba(255,255,255,.1)",border:"none",color:"#fff",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-                <ChevronDown style={{width:14,height:14}}/>
-              </button>
-              <button onClick={()=>closeMaterial(m.id)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
-                <ChevronLeft style={{width:13,height:13}}/> Back
-              </button>
-              <span style={{flex:1,fontSize:13,fontWeight:500,color:"#e8eaed",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Material"}</span>
-              <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                <X style={{width:13,height:13}}/>
-              </button>
-            </div>
-            <div style={{flex:1,overflow:"hidden"}}><InClassMaterialViewer material={m} onClose={()=>closeMaterial(m.id)}/></div>
+            <InClassMaterialViewer
+              material={m}
+              onMinimize={minimizeActive}
+              onClose={()=>closeMaterial(m.id)}
+              fromPanel={true}
+            />
           </div>
         ))}
       </>
