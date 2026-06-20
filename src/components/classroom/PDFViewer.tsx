@@ -177,8 +177,8 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
   const [totalPages,  setTotalPages]  = useState(0);
   const [pageInput,   setPageInput]   = useState("1");
   const editingRef = useRef(false);
-  // Fade the navigator out while actively scrolling, back in once scrolling settles
-  const [navVisible, setNavVisible] = useState(true);
+  // Show the navigator while actively scrolling, fade out once scrolling settles
+  const [navVisible, setNavVisible] = useState(false);
   const navHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const updateCurrentPageFromScroll = useCallback(() => {
@@ -308,11 +308,11 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     const fn = () => {
       if (materialId) saveScroll(materialId, el.scrollTop);
       updateCurrentPageFromScroll();
-      // Hide the navigator while the user is actively scrolling; bring it
-      // back 500ms after the last scroll event.
-      setNavVisible(false);
+      // Show the navigator while the user is actively scrolling; fade it
+      // out 500ms after the last scroll event so it doesn't block the page.
+      setNavVisible(true);
       if (navHideTimer.current) clearTimeout(navHideTimer.current);
-      navHideTimer.current = setTimeout(() => setNavVisible(true), 500);
+      navHideTimer.current = setTimeout(() => setNavVisible(false), 500);
     };
     fn(); // set the initial page right away, don't wait for the first scroll event
     el.addEventListener("scroll", fn, { passive: true });
@@ -357,7 +357,7 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
       )}
 
       {/* Page navigator — current/total + jump to any rendered page.
-          Fades out while scrolling, fades back in 500ms after scrolling stops. */}
+          Appears while scrolling, fades out 500ms after scrolling stops. */}
       {(phase === "rendering" || phase === "done") && totalPages > 0 && (
         <div style={{
           position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", zIndex:6,
