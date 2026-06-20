@@ -266,8 +266,11 @@ Deno.serve(async (req) => {
     const results: Record<string, string> = {};
 
     // ── FCM config (for native Capacitor tokens) ──────────────────────────────
-    const SERVICE_ACCOUNT_JSON = Deno.env.get("GOOGLE_SERVICE_ACCOUNT_JSON");
-    const FCM_PROJECT_ID       = Deno.env.get("FCM_PROJECT_ID");
+    const SERVICE_ACCOUNT_JSON = Deno.env.get("FIREBASE_SERVICE_ACCOUNT");
+    const FCM_PROJECT_ID       = (() => {
+      try { return JSON.parse(SERVICE_ACCOUNT_JSON ?? "{}").project_id ?? ""; }
+      catch { return ""; }
+    })();
 
     // ── Fan out to ALL subscriptions for this user ────────────────────────────
     const { data: subs, error: subsErr } = await supabase
