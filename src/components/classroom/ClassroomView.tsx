@@ -18,6 +18,7 @@ import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
+import { claimBackPress } from "@/lib/backPressClaim";
 import { toast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -2787,18 +2788,45 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const minimizeViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:true}:x));
   const restoreViewer=(vid:string)=>setViewers(v=>v.map(x=>x.id===vid?{...x,minimized:false}:x));
   const setViewerPip=(vid:string,px:number,py:number)=>setViewers(v=>v.map(x=>x.id===vid?{...x,pipX:px,pipY:py}:x));
+  // Whether the materials LIST itself (header + backdrop scrim) is minimized.
+  // When true, nothing from this panel covers the live class except whatever
+  // pips are currently showing — this is what "minimize" should look like.
+  const[listMinimized,setListMinimized]=useState(false);
 
   // ── Back button / Android swipe → minimize topmost open viewer ──────────
+  // FIX: previously this pushed its own history sentinel and listened on
+  // window in bubble phase — same as LiveClassContext's class-minimize
+  // listener. Both fired on every back press, so minimizing a material here
+  // ALSO minimized/closed the whole live class. Now:
+  //   1. We listen in capture phase so we run before LiveClassContext's
+  //      listener regardless of which mounted first.
+  //   2. We only call claimBackPress() when we actually consume the press
+  //      (an open viewer minimized, the Quran minimized, or — as a final
+  //      fallback — this panel itself closes). If none of that applies we
+  //      don't claim it, and we don't push an extra history entry either,
+  //      so the class-level handler is free to act normally.
   useEffect(()=>{
-    window.history.pushState({matSentinel:true},"");
     const handleBack=()=>{
       const openV=viewers.filter(x=>!x.minimized);
-      if(openV.length>0){minimizeViewer(openV[openV.length-1].id);window.history.pushState({matSentinel:true},"");return;}
-      if(quranOpen&&!quranMinimized){setQuranMinimized(true);window.history.pushState({matSentinel:true},"");return;}
+      if(openV.length>0){claimBackPress();minimizeViewer(openV[openV.length-1].id);window.history.pushState({matSentinel:true},"");return;}
+      if(quranOpen&&!quranMinimized){claimBackPress();setQuranMinimized(true);window.history.pushState({matSentinel:true},"");return;}
+      if(!listMinimized){
+        // Nothing open inside the panel — minimize the list itself so only
+        // pips (if any) remain over the live class. This is NOT the same as
+        // onClose(): closing would unmount the panel and lose any pips.
+        claimBackPress();
+        setListMinimized(true);
+        window.history.pushState({matSentinel:true},"");
+        return;
+      }
+      // List is already minimized and nothing else to consume — let this
+      // back press fall through to LiveClassContext (class-minimize) by
+      // simply not claiming it and not pushing a new sentinel.
     };
-    window.addEventListener("popstate",handleBack);
-    return()=>window.removeEventListener("popstate",handleBack);
-  },[viewers,quranOpen,quranMinimized]);
+    window.history.pushState({matSentinel:true},"");
+    window.addEventListener("popstate",handleBack,{capture:true});
+    return()=>window.removeEventListener("popstate",handleBack,{capture:true} as any);
+  },[viewers,quranOpen,quranMinimized,listMinimized,onClose]);
 
   // ── Share-with-class composer (teacher/admin only) ──────────────────────
   const[composerOpen,setComposerOpen]=useState(false);
@@ -3040,8 +3068,9 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         <ViewerOverlay key={v.id} v={v} zIdx={8960+i} viewers={viewers} onMinimize={minimizeViewer} onClose={closeViewer} onOpenSideBySide={openViewer} matIcon={MAT_ICON}/>
       ))}
 
-      {/* Material list panel — always rendered underneath */}
-      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
+      {/* Material list panel — hidden while minimized so only pips show over the live class */}
+      {!listMinimized&&(
+      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={()=>setListMinimized(true)}>
       <div onClick={e=>e.stopPropagation()} style={{
         position:"absolute",top:0,right:0,
         /* Important: bottom:0 so footer stays below this panel */
@@ -3053,10 +3082,14 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         animation:"slide-right .2s cubic-bezier(.34,1.2,.64,1) both",
         boxShadow:"-6px 0 28px rgba(0,0,0,.5)",
       }}>
-        {/* Header — no minimize button here, only close */}
+        {/* Header — minimize tucks the panel away as a pip over the live class; close ends it entirely */}
         <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"#2d2e30",height:50}}>
           <Eye style={{width:15,height:15,color:TEAL,flexShrink:0}}/>
           <span style={{flex:1,fontSize:14,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Materials</span>
+          <button onClick={()=>setListMinimized(true)} title="Minimize — keep the class visible"
+            style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <ChevronDown style={{width:14,height:14}}/>
+          </button>
           <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
             <X style={{width:14,height:14}}/>
           </button>
@@ -3274,6 +3307,17 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         </div>
       </div>
       </div>
+      )}
+      {/* Small badge to bring the list back when minimized — sits with the other pips, never blocks the live class */}
+      {listMinimized&&(
+        <button onClick={()=>setListMinimized(false)} title="Show materials list"
+          style={{position:"fixed",right:16,bottom:140,zIndex:8999,display:"flex",alignItems:"center",gap:6,
+            padding:"6px 12px",borderRadius:20,background:"rgba(20,20,22,.85)",backdropFilter:"blur(8px)",
+            border:"1px solid rgba(255,255,255,.15)",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer",
+            fontFamily:"'Google Sans',sans-serif"}}>
+          <Eye style={{width:12,height:12,color:TEAL}}/> Materials
+        </button>
+      )}
     </>
   );
 };
@@ -3291,6 +3335,10 @@ const ClassMaterialsLivePanel=({subjectId,subject,onClose}:any)=>{
   const[viewers,setViewers]=useState<{id:string;material:any;minimized:boolean;pipX:number;pipY:number}[]>([]);
   const[quranOpen,setQuranOpen]=useState(false);
   const[quranMinimized,setQuranMinimized]=useState(false);
+  // Whether the materials LIST itself (header + backdrop scrim) is minimized.
+  // When true, nothing from this panel covers the live class except whatever
+  // pips are currently showing — this is what "minimize" should look like.
+  const[listMinimized,setListMinimized]=useState(false);
 
   const openViewer=(m:any)=>{
     const idx=viewers.length;
@@ -3317,16 +3365,30 @@ const ClassMaterialsLivePanel=({subjectId,subject,onClose}:any)=>{
   },[subjectId]);
 
   // ── Back button / Android swipe → minimize topmost open viewer ──────────
+  // Same fix as SubjectMaterialsPanel: capture-phase listener + only claim
+  // the back press when we actually consume it, falling back to closing
+  // this panel itself rather than letting the class minimize underneath us.
   useEffect(()=>{
-    window.history.pushState({matLiveSentinel:true},"");
     const handleBack=()=>{
       const openV=viewers.filter(x=>!x.minimized);
-      if(openV.length>0){minimizeViewer(openV[openV.length-1].id);window.history.pushState({matLiveSentinel:true},"");return;}
-      if(quranOpen&&!quranMinimized){setQuranMinimized(true);window.history.pushState({matLiveSentinel:true},"");return;}
+      if(openV.length>0){claimBackPress();minimizeViewer(openV[openV.length-1].id);window.history.pushState({matLiveSentinel:true},"");return;}
+      if(quranOpen&&!quranMinimized){claimBackPress();setQuranMinimized(true);window.history.pushState({matLiveSentinel:true},"");return;}
+      if(!listMinimized){
+        // Nothing open inside the panel — minimize the list itself so only
+        // pips (if any) remain over the live class, instead of closing the
+        // panel outright or letting the class minimize underneath us.
+        claimBackPress();
+        setListMinimized(true);
+        window.history.pushState({matLiveSentinel:true},"");
+        return;
+      }
+      // List already minimized and nothing else to consume — don't claim,
+      // let this back press fall through to LiveClassContext normally.
     };
-    window.addEventListener("popstate",handleBack);
-    return()=>window.removeEventListener("popstate",handleBack);
-  },[viewers,quranOpen,quranMinimized]);
+    window.history.pushState({matLiveSentinel:true},"");
+    window.addEventListener("popstate",handleBack,{capture:true});
+    return()=>window.removeEventListener("popstate",handleBack,{capture:true} as any);
+  },[viewers,quranOpen,quranMinimized,listMinimized,onClose]);
 
   const MAT_ICON=(m:any)=>MAT_TYPE_ICON[m?.material_type||"document"]||"📄";
 
@@ -3391,8 +3453,9 @@ const ClassMaterialsLivePanel=({subjectId,subject,onClose}:any)=>{
         </div>
       ))}
 
-      {/* Material list panel — always rendered underneath */}
-      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
+      {/* Material list panel — hidden while minimized so only pips show over the live class */}
+      {!listMinimized&&(
+      <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={()=>setListMinimized(true)}>
         <div onClick={e=>e.stopPropagation()} style={{
           position:"absolute",top:0,right:0,bottom:0,width:"min(340px,100%)",
           background:"#202124",borderLeft:"1px solid rgba(255,255,255,.08)",
@@ -3400,13 +3463,17 @@ const ClassMaterialsLivePanel=({subjectId,subject,onClose}:any)=>{
           animation:"slide-right .2s cubic-bezier(.34,1.2,.64,1) both",
           boxShadow:"-6px 0 28px rgba(0,0,0,.5)",
         }}>
-          {/* Header */}
+          {/* Header — minimize tucks the panel away as a pip over the live class; close ends it entirely */}
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,background:"#2d2e30",height:50}}>
             <span style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"center",width:9,height:9,flexShrink:0}}>
               <span style={{position:"absolute",width:"100%",height:"100%",borderRadius:"50%",background:"#ef4444",opacity:.6,animation:"tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite"}}/>
               <span style={{position:"relative",width:7,height:7,borderRadius:"50%",background:"#ef4444",display:"block"}}/>
             </span>
             <span style={{flex:1,fontSize:14,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif"}}>Class Materials Live</span>
+            <button onClick={()=>setListMinimized(true)} title="Minimize — keep the class visible"
+              style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <ChevronDown style={{width:14,height:14}}/>
+            </button>
             <button onClick={onClose} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.5)",borderRadius:8,width:30,height:30,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
               <X style={{width:14,height:14}}/>
             </button>
@@ -3458,6 +3525,21 @@ const ClassMaterialsLivePanel=({subjectId,subject,onClose}:any)=>{
           </div>
         </div>
       </div>
+      )}
+      {/* Small badge to bring the list back when minimized — sits with the other pips, never blocks the live class */}
+      {listMinimized&&(
+        <button onClick={()=>setListMinimized(false)} title="Show Class Materials Live"
+          style={{position:"fixed",right:16,bottom:140,zIndex:8999,display:"flex",alignItems:"center",gap:6,
+            padding:"6px 12px",borderRadius:20,background:"rgba(20,20,22,.85)",backdropFilter:"blur(8px)",
+            border:"1px solid rgba(255,255,255,.15)",color:"#fff",fontSize:11,fontWeight:600,cursor:"pointer",
+            fontFamily:"'Google Sans',sans-serif"}}>
+          <span style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"center",width:7,height:7,flexShrink:0}}>
+            <span style={{position:"absolute",width:"100%",height:"100%",borderRadius:"50%",background:"#ef4444",opacity:.6,animation:"tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite"}}/>
+            <span style={{position:"relative",width:5,height:5,borderRadius:"50%",background:"#ef4444",display:"block"}}/>
+          </span>
+          Materials Live
+        </button>
+      )}
     </>
   );
 };
