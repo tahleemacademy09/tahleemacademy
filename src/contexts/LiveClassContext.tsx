@@ -51,7 +51,7 @@ function useLiveClassKeepAlive(inCall: boolean) {
 
     // Ping every 10 s — tighter interval survives Android doze better
     const ping = () => navigator.serviceWorker?.controller?.postMessage({ type: "LIVE_CLASS_KEEPALIVE" });
-    const iv = setInterval(ping, 10_000);
+    const iv = setInterval(ping, 5_000);
 
     // wakeAudio — called on any wake-up event (return from lock screen, tab focus, etc.)
     // Sends a SW ping AND briefly creates/resumes an AudioContext to unblock any
