@@ -1,8 +1,11 @@
 // src/pages/teacher/TeacherTeachingHub.tsx
 // FIXED:
-//  1. Timetable "View" button now calls joinClass() / creates a live_session — not navigate()
-//  2. Live Classes tab shows today's timetable slots with Start/Join per subject
-//  3. Subjects fetched from BOTH teacher_id owner AND subject_timetable assigned rows
+//  1. Timetable "View" button calls joinClass() / creates a live_session — not navigate()
+//  2. Live Classes tab shows today's timetable slots with Start/Join per subject,
+//     collapsed to one card per subject (soonest time) for the quick-glance view
+//  3. Subjects fetched ONLY from subject_timetable.teacher_id (the admin
+//     timetable) — subjects.teacher_id is no longer a visibility source,
+//     since it can be stale or set independently of admin assignment
 
 import { useEffect, useState, useCallback } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -24,16 +27,16 @@ import TeacherRecitation    from "./TeacherRecitation";
 import TeacherHifdhReview   from "./TeacherHifdhReview";
 import TeacherPublicClasses from "./TeacherPublicClasses";
 
-const G    = "#064E3B";
-const GM   = "#0a5c3e";
-const GOLD = "#C9A84C";
-const BG   = "#F0F2F5";
+const G    = "#0f2d1f";
+const GM   = "#1a4731";
+const GOLD = "#c9a84c";
+const BG   = "#F3F4F6";
 const DAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const DAY_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 const card: React.CSSProperties = {
-  background: "#fff", borderRadius: 16, border: "1px solid rgba(15,45,31,.07)",
-  boxShadow: "0 1px 6px rgba(0,0,0,.04)",
+  background: "#fff", borderRadius: 18, border: "1px solid rgba(15,45,31,.07)",
+  boxShadow: "0 1px 4px rgba(0,0,0,.04)",
 };
 const bs = (active = false): React.CSSProperties => ({
   padding: "8px 16px", borderRadius: 10, border: "none", cursor: "pointer",
@@ -65,29 +68,21 @@ const TABS: { id: HubTab; icon: any; en: string; ar: string }[] = [
 function Spin() { return <div style={{ width:14,height:14,borderRadius:"50%",border:"2px solid #fff8",borderTopColor:"#fff",animation:"spin .6s linear infinite" }} />; }
 function Loader() { return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:200}}><div style={{width:32,height:32,borderRadius:"50%",border:`3px solid ${G}`,borderTopColor:"transparent",animation:"spin .7s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>; }
 
-// ── Fetch subjects for teacher: both owned and timetable-assigned ──
+// ── Fetch subjects for teacher: ONLY from the admin timetable
+//    (subject_timetable.teacher_id) — not subjects.teacher_id, which can be
+//    stale or set independently of what the admin has actually assigned.
 async function fetchTeacherSubjects(userId: string): Promise<any[]> {
-  const { data: owned } = await supabase.from("subjects").select("*").eq("teacher_id", userId).order("title");
-  const { data: ttSlots } = await (supabase as any).from("subject_timetable").select("subject_id").eq("teacher_id", userId);
+  const { data: ttSlots } = await (supabase as any).from("subject_timetable").select("subject_id").eq("teacher_id", userId).eq("is_active", true);
   const ttIds = [...new Set((ttSlots||[]).map((s:any)=>s.subject_id).filter(Boolean))];
-  const ownedIds = (owned||[]).map((s:any)=>s.id);
-  const missing = ttIds.filter((id:string)=>!ownedIds.includes(id));
-  let extra: any[] = [];
-  if (missing.length) { const {data}=await supabase.from("subjects").select("*").in("id",missing as string[]); extra=data||[]; }
-  return [...(owned||[]),...extra];
+  if (!ttIds.length) return [];
+  const { data } = await supabase.from("subjects").select("*").in("id", ttIds as string[]).order("title");
+  return data || [];
 }
 
-// ── Fetch all timetable slots for teacher ──
-async function fetchTimetableSlots(userId: string, subjectIds: string[]): Promise<any[]> {
-  let rows: any[] = [];
-  if (subjectIds.length) {
-    const {data} = await (supabase as any).from("subject_timetable").select("*, subjects(id,title,title_ar)").in("subject_id",subjectIds).eq("is_active",true);
-    rows = data||[];
-  }
-  const {data:byT} = await (supabase as any).from("subject_timetable").select("*, subjects(id,title,title_ar)").eq("teacher_id",userId).eq("is_active",true);
-  const seen = new Set(rows.map((r:any)=>r.id));
-  for (const r of (byT||[])) { if (!seen.has(r.id)) { seen.add(r.id); rows.push(r); } }
-  return rows;
+// ── Fetch all timetable slots for teacher — single authoritative query ──
+async function fetchTimetableSlots(userId: string, _subjectIds: string[]): Promise<any[]> {
+  const {data} = await (supabase as any).from("subject_timetable").select("*, subjects(id,title,title_ar)").eq("teacher_id",userId).eq("is_active",true);
+  return data || [];
 }
 
 function to12(t:string){if(!t)return"";const[h,m]=t.split(":").map(Number);return`${h%12||12}:${String(m).padStart(2,"0")} ${h>=12?"PM":"AM"}`;}
@@ -115,7 +110,13 @@ function LiveClassesTab({user,t}:any){
     setSubjects(subs);
     const ids=subs.map((s:any)=>s.id);
     const slots=await fetchTimetableSlots(user.id,ids);
-    setTodaySlots(slots.filter((s:any)=>s.day_of_week===today).sort((a:any,b:any)=>a.start_time.localeCompare(b.start_time)));
+    const todayRaw=slots.filter((s:any)=>s.day_of_week===today).sort((a:any,b:any)=>a.start_time.localeCompare(b.start_time));
+    // Quick-glance "Today's Schedule" shows one card per subject (the
+    // soonest slot) even if the admin timetable has several entries for
+    // the same subject today — the full Timetable tab still shows all of them.
+    const bestBySubject=new Map<string,any>();
+    for(const slot of todayRaw){ if(!bestBySubject.has(slot.subject_id)) bestBySubject.set(slot.subject_id,slot); }
+    setTodaySlots(Array.from(bestBySubject.values()));
     if(ids.length){
       const {data}=await supabase.from("live_sessions").select("*, subjects(id,title,title_ar)").in("subject_id",ids).in("status",["live","scheduled"]).order("scheduled_at",{ascending:false});
       setSessions(data||[]);
@@ -551,7 +552,7 @@ function SubjectsTab({user,t,language}:any){
         <div style={{...card,padding:"48px 24px",textAlign:"center"}}>
           <BookOpen size={40} style={{opacity:.2,marginBottom:12,color:G}}/>
           <p style={{fontSize:14,color:"#6b7280"}}>{search?t("No match.","لا توجد مواد."):t("No subjects assigned yet.","لا توجد مواد معينة لك بعد.")}</p>
-          {!search&&<p style={{fontSize:12,color:"#9ca3af",marginTop:6}}>{t("Check that your user id is set as teacher_id on a subject, or that you appear in subject_timetable.","تأكد من تعيين معرفك كـ teacher_id على مادة، أو ظهورك في الجدول الزمني.")}</p>}
+          {!search&&<p style={{fontSize:12,color:"#9ca3af",marginTop:6}}>{t("You'll see a subject here once an admin assigns you to it in the timetable.","ستظهر لك المادة هنا بمجرد أن يعيّنك المسؤول لها في الجدول الزمني.")}</p>}
         </div>
       )}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:12}}>
@@ -644,17 +645,32 @@ export default function TeacherTeachingHub(){
               <p style={{fontSize:12,color:"rgba(255,255,255,.55)",margin:0}}>{t("Live classes, subjects, timetable, recordings, recitation & hifdh","الفصول المباشرة والمواد والجدول والتسجيلات والتلاوة والحفظ")}</p>
             </div>
           </div>
-          <div style={{display:"flex",gap:2,overflowX:"auto"}}>
-            {TABS.map(tb=>{
-              const active=tab===tb.id;
-              return(
-                <button key={tb.id} onClick={()=>setTab(tb.id)}
-                  style={{display:"flex",alignItems:"center",gap:5,padding:"9px 14px",border:"none",cursor:"pointer",borderRadius:"10px 10px 0 0",fontWeight:active?700:500,fontSize:12,background:active?"#fff":"transparent",color:active?G:"rgba(255,255,255,.7)",flexShrink:0,transition:"all .15s"}}>
-                  <tb.icon size={13}/>{language==="ar"?tb.ar:tb.en}
-                </button>
-              );
-            })}
+          {/* Tab bar — horizontally scrollable pill row, with a fade hint
+              on the right edge so it's clear more tabs sit off-screen. */}
+          <div style={{ position: "relative" }}>
+            <div className="hub-tabs" style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 14 }}>
+              {TABS.map(tb => {
+                const active = tab === tb.id;
+                return (
+                  <button key={tb.id} onClick={() => setTab(tb.id)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "9px 15px", border: "none", cursor: "pointer",
+                      borderRadius: 20, fontWeight: active ? 800 : 600, fontSize: 12.5,
+                      background: active ? GOLD : "rgba(255,255,255,.1)",
+                      color: active ? G : "rgba(255,255,255,.75)",
+                      flexShrink: 0, transition: "background .15s, color .15s",
+                      whiteSpace: "nowrap",
+                    }}>
+                    <tb.icon size={13} />{language === "ar" ? tb.ar : tb.en}
+                  </button>
+                );
+              })}
+            </div>
+            {/* Fade hint that more tabs are scrollable */}
+            <div style={{ position: "absolute", top: 0, right: 0, bottom: 14, width: 28, background: `linear-gradient(90deg, transparent, ${GM})`, pointerEvents: "none" }} />
           </div>
+          <style>{`.hub-tabs::-webkit-scrollbar{display:none} .hub-tabs{-ms-overflow-style:none;scrollbar-width:none}`}</style>
         </div>
       </div>
       {isFullPage?(
