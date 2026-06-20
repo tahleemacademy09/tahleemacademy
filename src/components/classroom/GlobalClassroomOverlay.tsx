@@ -38,6 +38,18 @@ import { App as CapApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import ClassroomView from "@/components/classroom/ClassroomView";
 import { useEffect, useRef, useCallback } from "react";
+import { useLocation } from "react-router-dom";
+
+// Routes where the overlay is allowed to persist.
+// Navigating to anything else (home, login, register) auto-calls leaveClass().
+const ALLOWED_ROUTE_PREFIXES = [
+  "/student",
+  "/admin",
+  "/teacher",
+  "/live",
+  "/public/classes",
+  "/class",
+];
 
 /* ════════════════════════════════════════════════════════════════════ */
 export default function GlobalClassroomOverlay() {
@@ -50,6 +62,15 @@ export default function GlobalClassroomOverlay() {
   } = useLiveClass();
 
   const title = activeSubject?.title ?? "Live Class";
+  const location = useLocation();
+
+  // Auto-leave when user navigates away from student/admin area —
+  // prevents the "Return to Class" banner haunting the home/login pages.
+  useEffect(() => {
+    if (!inCall) return;
+    const allowed = ALLOWED_ROUTE_PREFIXES.some(p => location.pathname.startsWith(p));
+    if (!allowed) leaveClass();
+  }, [location.pathname, inCall, leaveClass]);
 
   // Track whether the user explicitly minimized (button/back) vs tab-switched
   const userMinimizedRef = useRef(false);
