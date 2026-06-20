@@ -112,6 +112,7 @@ const TeacherClasses = () => {
 
   // Track which sessions have reminders set (sessionId → true/false)
   const [remindersSet, setRemindersSet] = useState<Record<string, boolean>>({});
+  const [expandedPastSubject, setExpandedPastSubject] = useState<string | null>(null);
   const timerRefs = useRef<Record<string, ReturnType<typeof setTimeout>[]>>({});
   const notifPermission = useRef<boolean>(false);
 
@@ -582,26 +583,82 @@ const TeacherClasses = () => {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          {past.slice(0, 20).map(s => {
-            const subTitle = (s as any).subjects?.title || "Class";
-            const topic = (s as any).topic && (s as any).topic !== subTitle ? (s as any).topic : null;
-            return (
-              <div key={s.id} className="flex items-center justify-between gap-2 p-3 rounded-lg bg-muted/50">
-                <div className="min-w-0">
-                  <p className="font-medium text-sm truncate">{topic || subTitle}</p>
-                  <p className="text-xs text-muted-foreground mt-1 truncate">
-                    {topic && `${subTitle} • `}
-                    {s.scheduled_at ? format(new Date(s.scheduled_at), "MMM d, yyyy") : ""} •{" "}
-                    {s.total_participants || 0} {t("participants", "مشاركين")}
-                  </p>
+          {(() => {
+            // Group past sessions by subject so the same class run many
+            // times doesn't show as a wall of identical-looking rows.
+            // Tapping a subject expands its individual past sessions.
+            const groups = new Map<string, { subTitle: string; sessions: any[] }>();
+            for (const s of past) {
+              const subId = (s as any).subject_id || "unknown";
+              const subTitle = (s as any).subjects?.title || "Class";
+              if (!groups.has(subId)) groups.set(subId, { subTitle, sessions: [] });
+              groups.get(subId)!.sessions.push(s);
+            }
+            const groupList = Array.from(groups.entries())
+              .map(([subId, g]) => {
+                const sorted = [...g.sessions].sort((a, b) => {
+                  const da = a.scheduled_at ? new Date(a.scheduled_at).getTime() : 0;
+                  const db_ = b.scheduled_at ? new Date(b.scheduled_at).getTime() : 0;
+                  return db_ - da; // most recent first
+                });
+                return { subId, subTitle: g.subTitle, sessions: sorted, mostRecent: sorted[0] };
+              })
+              .sort((a, b) => {
+                const da = a.mostRecent?.scheduled_at ? new Date(a.mostRecent.scheduled_at).getTime() : 0;
+                const db_ = b.mostRecent?.scheduled_at ? new Date(b.mostRecent.scheduled_at).getTime() : 0;
+                return db_ - da;
+              });
+
+            if (groupList.length === 0) {
+              return <p className="text-muted-foreground text-sm">{t("No past classes", "لا توجد حصص سابقة")}</p>;
+            }
+
+            return groupList.map(g => {
+              const isOpen = expandedPastSubject === g.subId;
+              return (
+                <div key={g.subId} className="rounded-lg bg-muted/50 overflow-hidden">
+                  {/* Subject summary row — tap to expand */}
+                  <button
+                    onClick={() => setExpandedPastSubject(isOpen ? null : g.subId)}
+                    className="w-full flex items-center justify-between gap-2 p-3 text-left"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm truncate">{g.subTitle}</p>
+                      <p className="text-xs text-muted-foreground mt-1 truncate">
+                        {g.sessions.length} {g.sessions.length === 1 ? t("session", "حصة") : t("sessions", "حصص")}
+                        {g.mostRecent?.scheduled_at && ` • ${t("last", "آخر")} ${format(new Date(g.mostRecent.scheduled_at), "MMM d, yyyy")}`}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="shrink-0">
+                      {isOpen ? t("Hide", "إخفاء") : t("View", "عرض")}
+                    </Badge>
+                  </button>
+
+                  {/* Expanded: every individual past session for this subject */}
+                  {isOpen && (
+                    <div className="border-t border-border/60 divide-y divide-border/60">
+                      {g.sessions.map(s => {
+                        const topic = (s as any).topic && (s as any).topic !== g.subTitle ? (s as any).topic : null;
+                        return (
+                          <div key={s.id} className="flex items-center justify-between gap-2 px-3 py-2.5 bg-background/40">
+                            <div className="min-w-0">
+                              <p className="text-sm truncate">{topic || g.subTitle}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {s.scheduled_at ? format(new Date(s.scheduled_at), "MMM d, yyyy 'at' h:mm a") : t("No date", "بلا تاريخ")}
+                                {typeof s.duration_minutes === "number" && s.duration_minutes > 0 && ` • ${s.duration_minutes}m`}
+                                {` • ${s.total_participants || 0} ${t("participants", "مشاركين")}`}
+                              </p>
+                            </div>
+                            <Badge variant="outline" className="shrink-0 text-xs">{t("Ended", "انتهت")}</Badge>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                <Badge variant="outline" className="shrink-0">{t("Ended", "انتهت")}</Badge>
-              </div>
-            );
-          })}
-          {past.length === 0 && (
-            <p className="text-muted-foreground text-sm">{t("No past classes", "لا توجد حصص سابقة")}</p>
-          )}
+              );
+            });
+          })()}
         </CardContent>
       </Card>
     </div>
