@@ -172,23 +172,11 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
   const cancelRef = useRef(false);
   const lastDrawn = useRef(0);
 
-  // ── Page navigator ("N / total" + jump-to-page) — hidden by default,
-  //    fades in while the user is scrolling and fades back out shortly after
-  //    they stop, instead of permanently covering part of the page. ─────────
+  // ── Page navigator (always-visible "N / total" + jump-to-page) ───────────
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages,  setTotalPages]  = useState(0);
   const [pageInput,   setPageInput]   = useState("1");
   const editingRef = useRef(false);
-  const [navVisible, setNavVisible] = useState(false);
-  const navHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const revealNav = useCallback(() => {
-    setNavVisible(true);
-    if (navHideTimer.current) clearTimeout(navHideTimer.current);
-    navHideTimer.current = setTimeout(() => {
-      if (!editingRef.current) setNavVisible(false);
-    }, 1400);
-  }, []);
-  useEffect(() => () => { if (navHideTimer.current) clearTimeout(navHideTimer.current); }, []);
 
   const updateCurrentPageFromScroll = useCallback(() => {
     const sc = scrollRef.current, cont = containerRef.current;
@@ -204,14 +192,17 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
   const goToPage = useCallback((n: number) => {
     const cont = containerRef.current, sc = scrollRef.current;
     if (!cont || !sc || !cont.children.length) return;
+    // Treat explicit navigation the same as user scrolling — never let a
+    // pending restoreScroll() snap the view back after the user has chosen
+    // a page.
+    userScrolledRef.current = true;
     // Clamp to pages actually rendered so far — pages still streaming in aren't in the DOM yet
     const clamped = Math.max(1, Math.min(n, cont.children.length));
     const el = cont.children[clamped - 1] as HTMLElement;
     sc.scrollTo({ top: Math.max(0, el.offsetTop - 8), behavior: "smooth" });
     setCurrentPage(clamped);
     setPageInput(String(clamped));
-    revealNav();
-  }, [revealNav]);
+  }, []);
 
   // Keep the input showing the live page while the user isn't actively typing in it
   useEffect(() => {
@@ -229,18 +220,28 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     return c;
   }, []);
 
+  const restoredRef = useRef<string>(""); // tracks which materialId's scroll has already been restored
+  const userScrolledRef = useRef(false);  // true once the user manually scrolls — never auto-restore after that
   const restoreScroll = useCallback(() => {
     if (!materialId) return;
+    // Only restore once per material per mount, and never if the user has
+    // already scrolled on their own (e.g. while pages were still streaming
+    // in) — forcing scrollTop back at that point is exactly what caused the
+    // "shake" (page visibly snapping back toward the saved position).
+    if (restoredRef.current === materialId) return;
+    if (userScrolledRef.current) return;
     const saved = loadScroll(materialId);
     if (saved > 0) requestAnimationFrame(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = saved;
+      if (scrollRef.current && !userScrolledRef.current) scrollRef.current.scrollTop = saved;
     });
+    restoredRef.current = materialId;
   }, [materialId]);
 
   useEffect(() => {
     ensureKeyframes();
     cancelRef.current = false;
     lastDrawn.current = 0;
+    userScrolledRef.current = false; // new document — allow one restore for it
     setCurrentPage(1);
     setTotalPages(TOTAL_CACHE.get(url) || 0);
 
@@ -310,16 +311,26 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     return () => { cancelRef.current = true; clearInterval(poll); };
   }, [url, makePage, restoreScroll]);
 
-  // Save scroll position + track current page while reading
+  // Save scroll position + track current page while reading.
+  // Also detect real user interaction (wheel / touch) so we know to stop
+  // ever forcing the scroll position back via restoreScroll() — this is
+  // what previously caused the page to visibly "shake" while it streamed in.
   useEffect(() => {
     if (phase !== "done" && phase !== "rendering") return;
     const el = scrollRef.current;
     if (!el) return;
-    const fn = () => { if (materialId) saveScroll(materialId, el.scrollTop); updateCurrentPageFromScroll(); revealNav(); };
+    const markUserScrolled = () => { userScrolledRef.current = true; };
+    const fn = () => { if (materialId) saveScroll(materialId, el.scrollTop); updateCurrentPageFromScroll(); };
     fn(); // set the initial page right away, don't wait for the first scroll event
     el.addEventListener("scroll", fn, { passive: true });
-    return () => el.removeEventListener("scroll", fn);
-  }, [materialId, phase, updateCurrentPageFromScroll, revealNav]);
+    el.addEventListener("wheel", markUserScrolled, { passive: true });
+    el.addEventListener("touchmove", markUserScrolled, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", fn);
+      el.removeEventListener("wheel", markUserScrolled);
+      el.removeEventListener("touchmove", markUserScrolled);
+    };
+  }, [materialId, phase, updateCurrentPageFromScroll]);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: bg, position: "relative" }}>
@@ -355,17 +366,13 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
         </div>
       )}
 
-      {/* Page navigator — hidden by default, fades in while scrolling / jumping
-          pages and fades back out ~1.4s after the user stops interacting. */}
+      {/* Always-visible page navigator — current/total + jump to any rendered page */}
       {(phase === "rendering" || phase === "done") && totalPages > 0 && (
         <div style={{
           position:"absolute", right:8, top:"50%", transform:"translateY(-50%)", zIndex:6,
           display:"flex", flexDirection:"column", alignItems:"center", gap:6,
           background:"rgba(20,20,22,.82)", borderRadius:14, padding:"10px 7px",
           boxShadow:"0 2px 10px rgba(0,0,0,.35)",
-          opacity: navVisible ? 1 : 0,
-          pointerEvents: navVisible ? "auto" : "none",
-          transition: "opacity .25s ease",
         }}>
           <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage <= 1} style={{
             width:26, height:26, borderRadius:8, border:"none", cursor: currentPage <= 1 ? "default" : "pointer",
@@ -375,7 +382,7 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
 
           <input
             type="number" inputMode="numeric" value={pageInput}
-            onFocus={() => { editingRef.current = true; revealNav(); }}
+            onFocus={() => { editingRef.current = true; }}
             onChange={e => setPageInput(e.target.value)}
             onBlur={() => { editingRef.current = false; const n = parseInt(pageInput, 10); if (!isNaN(n)) goToPage(n); else setPageInput(String(currentPage)); }}
             onKeyDown={e => { if (e.key === "Enter") { const n = parseInt(pageInput, 10); if (!isNaN(n)) goToPage(n); (e.target as HTMLInputElement).blur(); } }}
