@@ -2674,7 +2674,7 @@ const detectMaterialType=(file:File):string=>{
   return"Document";
 };
 
-const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord}:any)=>{
+const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord,visible=true,onOpenMatsChange}:any)=>{
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
@@ -2685,6 +2685,9 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
   const[openMats,setOpenMats]=useState<any[]>([]);
   const[activeMatId,setActiveMatId]=useState<string|null>(null);
   const[quranOpen,setQuranOpen]=useState(false);
+
+  // Notify parent whenever open materials change so it can keep us mounted
+  useEffect(()=>{onOpenMatsChange?.(openMats.length>0);},[openMats.length]);
   const[pipListOpen,setPipListOpen]=useState(false);
   // ── Share-with-class composer (teacher/admin only) ──────────────────────
   const[composerOpen,setComposerOpen]=useState(false);
@@ -2913,7 +2916,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
     return(
       <>
         {renderPip()}
-        <div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
+        {visible&&<div style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:"flex",flexDirection:"column"}}>
           <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#2d2e30",borderBottom:"1px solid rgba(255,255,255,.08)",flexShrink:0,height:46}}>
             <button onClick={()=>setQuranOpen(false)} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.7)",borderRadius:8,padding:"4px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:4,fontSize:12,fontFamily:"'Google Sans',sans-serif"}}>
               <ChevronLeft style={{width:13,height:13}}/> Back
@@ -2924,7 +2927,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
             </button>
           </div>
           <div style={{flex:1,overflow:"hidden"}}><InClassQuranReader onClose={()=>setQuranOpen(false)}/></div>
-        </div>
+        </div>}
       </>
     );
   }
@@ -2936,7 +2939,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
         {renderPip()}
         {/* All open materials stay mounted (so video/audio keep playing);
             only the active one is visible. */}
-        {openMats.map(m=>(
+        {visible&&openMats.map(m=>(
           <div key={m.id} style={{position:"absolute",inset:0,zIndex:55,background:"#202124",display:m.id===activeMatId?"flex":"none",flexDirection:"column"}}>
             <InClassMaterialViewer
               material={m}
@@ -2952,6 +2955,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
 
   /* ── MATERIAL LIST — slides from right, does NOT cover full height ── */
   return(
+    <div style={{display:visible?"contents":"none"}}>
     <div style={{position:"absolute",inset:0,zIndex:55,background:"rgba(0,0,0,.4)"}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{
         position:"absolute",top:0,right:0,
@@ -3182,6 +3186,7 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
           })}
         </div>
       </div>
+    </div>
     </div>
   );
 };
@@ -4530,6 +4535,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // FIX BUG 2: quizOpen state — LiveQuizOverlay was permanently disabled with hardcoded isOpen={false}
   const[quizOpen,setQuizOpen]=useState(false);
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
+  // Track whether SubjectMaterialsPanel has any open/minimized materials — if so, keep it mounted
+  const[matPanelHasPip,setMatPanelHasPip]=useState(false);
+  // Smart toggle: if panel has PiP, re-show it; if panel is open, close list view; otherwise open it
+  const toggleMatPanel=()=>setMatPanelOpen(v=>{
+    if(!v&&matPanelHasPip)return true; // panel has pip but is hidden — re-open
+    return !v;
+  });
   const[matMinimized,setMatMinimized]=useState(false);
   const[matPipPos,setMatPipPos]=useState({x:20,y:120});
   const matPipDragging=useRef(false);
@@ -5061,8 +5073,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <VideoGrid layout={layout} isMobile={isMobile} spotlightId={spotlightId}/>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
-              {/* Materials panel — absolute inside content, footer always visible */}
-              {matPanelOpen&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop}/>}
+              {/* Materials panel — keep mounted when it has minimized PiP materials */}
+              {(matPanelOpen||matPanelHasPip)&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop} visible={matPanelOpen} onOpenMatsChange={(has:boolean)=>setMatPanelHasPip(has)}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&(
                 <div style={{position:"absolute",inset:0,zIndex:55,display:matMinimized?"none":"block"}}>
@@ -5264,7 +5276,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
             />
           )}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={()=>setMatPanelOpen(v=>!v)} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}
+          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={toggleMatPanel} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}
             onScreenShare={toggleScreenShare} screenSharing={screenSharing}
             onToggleTimer={()=>setTimerOpen(v=>!v)} timerRunning={timerRunning} timerDisplay={fmtTimer(timerSeconds)}
             onToggleLiveFiles={()=>setLiveFilesOpen(v=>!v)} liveFilesOpen={liveFilesOpen}
