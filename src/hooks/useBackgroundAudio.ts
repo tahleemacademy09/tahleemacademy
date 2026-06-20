@@ -87,7 +87,7 @@ function startHeartbeat(): void {
     acquireWakeLock();
     // Ping the service worker so it doesn't sleep
     pingServiceWorker();
-  }, 20_000);
+  }, 5_000);
 }
 
 function stopHeartbeat(): void {
