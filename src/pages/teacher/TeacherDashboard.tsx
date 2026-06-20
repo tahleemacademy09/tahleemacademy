@@ -6,6 +6,7 @@ import AcademyStatusBanner from "@/components/shared/AcademyStatusBanner";
 import { Link, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLiveClass } from "@/contexts/LiveClassContext";
 import { supabase } from "@/integrations/supabase/client";
 import { format } from "date-fns";
 import {
@@ -145,6 +146,7 @@ const TeacherDashboard = () => {
   const { t } = useLanguage();
   const { user, profile } = useAuth();
   const navigate = useNavigate();
+  const { joinClass } = useLiveClass();
 
   const [stats, setStats] = useState({ students: 0, privateStudents: 0, subjects: 0, todayClasses: 0, pendingTests: 0, pendingExams: 0, totalRecordings: 0 });
   const [todaySessions,   setTodaySessions]   = useState<any[]>([]);
@@ -208,9 +210,23 @@ const TeacherDashboard = () => {
       const seenTT = new Set(ttToday.map((s: any) => s.id));
       for (const s of (ttDirect || [])) { if (!seenTT.has(s.id)) { seenTT.add(s.id); ttToday.push(s); } }
 
+      // Defensive de-dup: the two queries above can both return a *different*
+      // timetable row for the same subject+time (e.g. a leftover duplicate
+      // row in subject_timetable), which would otherwise show as repeated
+      // cards for the same class. Keep only one row per subject+start_time.
+      {
+        const seenSlot = new Set<string>();
+        ttToday = ttToday.filter((slot: any) => {
+          const key = `${slot.subject_id}|${slot.start_time}`;
+          if (seenSlot.has(key)) return false;
+          seenSlot.add(key);
+          return true;
+        });
+      }
+
       // Virtual sessions from timetable — skip if live_session already exists for subject today
       const liveSubIds = new Set(liveSessions.map(s => s.subject_id));
-      const virtualToday = ttToday
+      let virtualToday = ttToday
         .filter((slot: any) => !liveSubIds.has(slot.subject_id))
         .map((slot: any) => {
           let scheduledAt: string | null = null;
@@ -221,6 +237,20 @@ const TeacherDashboard = () => {
           }
           return { id: `tt-${slot.id}`, subject_id: slot.subject_id, subjects: slot.subjects, scheduled_at: scheduledAt, start_time: slot.start_time, end_time: slot.end_time, status: "scheduled", _isTimetable: true };
         });
+
+      // A subject can have several leftover/incorrect timetable rows for the
+      // same day (different times). Only show the soonest one per subject so
+      // the schedule doesn't repeat the same class card over and over.
+      {
+        const bestBySubject = new Map<string, any>();
+        for (const v of virtualToday) {
+          const existing = bestBySubject.get(v.subject_id);
+          const vTime = v.scheduled_at ? new Date(v.scheduled_at).getTime() : Infinity;
+          const exTime = existing?.scheduled_at ? new Date(existing.scheduled_at).getTime() : Infinity;
+          if (!existing || vTime < exTime) bestBySubject.set(v.subject_id, v);
+        }
+        virtualToday = Array.from(bestBySubject.values());
+      }
 
       const allToday = [...liveSessions, ...virtualToday].sort((a, b) => {
         const ta = a.scheduled_at ? new Date(a.scheduled_at).getTime() : Infinity;
@@ -397,7 +427,18 @@ const TeacherDashboard = () => {
               </div>
             ) : (
               <>
-                {todaySessions.map(s => <ScheduleCard key={s.id} session={s} onJoin={() => navigate("/teacher/classes")} t={t} />)}
+                {todaySessions.map(s => (
+                  <ScheduleCard
+                    key={s.id}
+                    session={s}
+                    onJoin={() => joinClass({
+                      id: s.subject_id,
+                      title: s.subjects?.title || "Class",
+                      title_ar: s.subjects?.title_ar || "",
+                    })}
+                    t={t}
+                  />
+                ))}
                 {todayPrivate.map(s => (
                   <div key={s.id} className="td-row" style={{ background: "#FDF4FF", border: "1px solid #E9D5FF" }}>
                     <div className="td-icon" style={{ background: "#9333EA" }}><UserCheck size={15} color="#fff" /></div>
