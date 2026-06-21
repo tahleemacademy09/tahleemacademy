@@ -1,11 +1,13 @@
 // src/components/hifdh/HifdhMemorization.tsx
-// STRICT MULTI-VERSE MATCHING + COMPLETELY HIDDEN VERSES
-//   • Multi-verse: ALL words from ALL verses required before counting
-//   • Non-active verses: display:none + visibility:hidden + pointer-events:none
-//   • Cumulative mode: hidden verses completely invisible until peek
+// DEEPGRAM ARABIC TRANSCRIPTION — replaces broken Web Speech API
+//  • Records audio via MediaRecorder (webm/ogg → Deepgram nova-2 Arabic)
+//  • Sends chunk on silence (800ms) to supabase edge fn transcribe-hifdh
+//  • Accumulates finals; matches ALL words from ALL target verses (strict)
+//  • Manual ✓ button always available as fallback
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, RECITERS, audioUrl, DEFAULT_RECITER } from "./surahData";
+import { supabase } from "@/integrations/supabase/client";
 
 /* ── Palette ────────────────────────────────────────────────── */
 const G      = "#1a3d24";
@@ -47,7 +49,8 @@ function buildSteps(count: number, R: number): MemStep[] {
     steps.push({
       type: "single", indices: [i], reps: R,
       label: `Verse ${i + 1} — Repeat ${R}×`,
-      labelAr: `الآية ${toAr(i + 1)} — كرر ${toAr(R)} مرات`,    });
+      labelAr: `الآية ${toAr(i + 1)} — كرر ${toAr(R)} مرات`,
+    });
     if (i > 0) {
       steps.push({
         type: "pair", indices: [i - 1, i], reps: RP,
@@ -69,17 +72,11 @@ function toAr(n: number) {
   return String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]);
 }
 
-/* ── Huruf Muqatta'at normaliser ──────────────────────────────────
-   Web Speech API spells out letter names when it hears muqatta'at.
-   ASR outputs WITHOUT hamza on alif: "الف لام ميم" (not "ألف لام ميم").
-   We normalise alif variants FIRST, then match, so both forms collapse.  */
+/* ── Huruf Muqatta'at normaliser ──────────────────────────────── */
 function normalizeHurufMuqattaat(text: string): string {
-  // Step 1: flatten all alif variants so patterns only need "ا"
   const t = text
     .replace(/[أإآٱ]/g, "ا")
-    .replace(/[\u064B-\u065F\u0670]/g, ""); // strip diacritics early for matching
-
-  // Step 2: longest combos first to avoid partial matches
+    .replace(/[\u064B-\u065F\u0670]/g, "");
   return t
     .replace(/الف\s+لام\s+ميم\s+را/g,         "المر")
     .replace(/الف\s+لام\s+ميم\s+صاد/g,        "المص")
@@ -89,12 +86,10 @@ function normalizeHurufMuqattaat(text: string): string {
     .replace(/حا\s+ميم\s+عين\s+سين\s+قاف/g,  "حمعسق")
     .replace(/الف\s+لام\s+ميم/g,              "الم")
     .replace(/الف\s+لام\s+را/g,               "الر")
-    .replace(/الف\s+لام\s+ميم\b/g,            "الم")
     .replace(/حا\s+ميم/g,                     "حم")
     .replace(/يا\s+سين/g,                     "يس")
     .replace(/طا\s+سين/g,                     "طس")
     .replace(/طا\s+ها/g,                      "طه")
-    // standalone letter names — use space-based boundaries (\b doesn't work for Arabic in JS)
     .replace(/(^|\s)صاد(\s|$)/g,  "$1ص$2")
     .replace(/(^|\s)قاف(\s|$)/g,  "$1ق$2")
     .replace(/(^|\s)نون(\s|$)/g,  "$1ن$2")
@@ -121,11 +116,6 @@ function norm(text: string): string {
     .trim();
 }
 
-/* ── Combined text builder ───────────────────────────────────── */
-function buildCombinedText(targets: Ayah[]): string {
-  return targets.map(a => a.text).join(" ");
-}
-
 /* ── STRICT MULTI-VERSE MATCHING ─────────────────────────────── */
 function isVerseComplete(transcript: string, targets: Ayah[]): {
   isComplete: boolean;
@@ -133,70 +123,54 @@ function isVerseComplete(transcript: string, targets: Ayah[]): {
   missingWords: string[];
 } {
   const t = norm(transcript);
-  
-  // Build combined expected text
-  const combinedText = buildCombinedText(targets);
-  const e = norm(combinedText);  
+  const combinedText = targets.map(a => a.text).join(" ");
+  const e = norm(combinedText);
   if (!t || t.length < 3) return { isComplete: false, progress: 0, missingWords: [] };
   if (!e) return { isComplete: false, progress: 0, missingWords: [] };
-  
-  // Get all meaningful words from ALL verses
+
   const eWords = e.split(" ").filter(w => w.length > 1);
-  
   if (eWords.length === 0) {
-    const lengthRatio = t.length / Math.max(1, e.length);
-    return { 
-      isComplete: lengthRatio >= 0.9 && lengthRatio <= 1.2, 
-      progress: Math.min(lengthRatio * 100, 100),
-      missingWords: []
-    };
+    const lr = t.length / Math.max(1, e.length);
+    return { isComplete: lr >= 0.9 && lr <= 1.2, progress: Math.min(lr * 100, 100), missingWords: [] };
   }
-  
-  // ✅ STRICT: Check each word from ALL verses
+
   const foundWords: string[] = [];
   const missingWords: string[] = [];
-  
   for (const ew of eWords) {
-    // Word must be contained in transcript (strict containment)
-    const isFound = t.includes(ew);
-    
-    if (isFound) {
-      foundWords.push(ew);
-    } else {
-      missingWords.push(ew);
-    }
+    if (t.includes(ew)) foundWords.push(ew);
+    else missingWords.push(ew);
   }
-  
   const coverage = foundWords.length / eWords.length;
   const lengthRatio = t.length / Math.max(1, e.length);
-  
-  // ✅ MULTI-VERSE STRICT: ALL words from ALL verses must be present
   const isComplete = coverage === 1 && lengthRatio >= 0.85 && lengthRatio <= 1.3;
-  const progress = Math.min(coverage * 100, 100);
-  
-  return { isComplete, progress, missingWords };
+  return { isComplete, progress: Math.min(coverage * 100, 100), missingWords };
 }
 
-/* ── Speech Recognition wrapper ──────────────────────────────── */
-declare global {
-  interface Window {
-    SpeechRecognition: any;
-    webkitSpeechRecognition: any;
+/* ── Best audio mime type for this device ────────────────────── */
+function getBestMime(): string {
+  const candidates = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+    "audio/mp4",
+  ];
+  for (const m of candidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) return m;
   }
+  return "audio/webm";
 }
-const SR = typeof window !== "undefined"
-  ? (window.SpeechRecognition || window.webkitSpeechRecognition)  : null;
 
 /* ── Step accent colours ──────────────────────────────────────── */
 const STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; icon: string; grad: string }> = {
   overview:   { bg: GOLD_L,    text: GOLD,     border: "#f6d860", icon: "📖", grad: `linear-gradient(135deg,${GOLD},#e09b2f)` },
-  single:     { bg: LIGHT,     text: G,         border: BORDER,    icon: "🎯", grad: `linear-gradient(135deg,${G},${GM})` },
+  single:     { bg: LIGHT,     text: G,        border: BORDER,    icon: "🎯", grad: `linear-gradient(135deg,${G},${GM})` },
   pair:       { bg: "#eff6ff", text: "#2563eb", border: "#bfdbfe", icon: "🔗", grad: "linear-gradient(135deg,#2563eb,#3b82f6)" },
   cumulative: { bg: "#f5f3ff", text: "#7c3aed", border: "#ddd6fe", icon: "📚", grad: "linear-gradient(135deg,#7c3aed,#8b5cf6)" },
 };
 
 /* ══════════════════════════════════════════════════════════════
-   COMPONENT - STRICT MULTI-VERSE + COMPLETELY HIDDEN VERSES
+   COMPONENT
 ══════════════════════════════════════════════════════════════ */
 export default function HifdhMemorization({ reciter: reciterProp }: Props) {
 
@@ -220,21 +194,21 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const [selectedReciter, setSelectedReciter] = useState(reciterProp || DEFAULT_RECITER);
   const [peeking,         setPeeking]         = useState(false);
   const [justCounted,     setJustCounted]     = useState(false);
-  const [srAvailable]                         = useState(!!SR);
   const [micTime,         setMicTime]         = useState(0);
   const [recitingVerses,  setRecitingVerses]  = useState<Set<number>>(new Set());
   const [matchProgress,   setMatchProgress]   = useState(0);
   const [missingWords,    setMissingWords]    = useState<string[]>([]);
   const [isListening,     setIsListening]     = useState(false);
+  const [transcribing,    setTranscribing]    = useState(false);
 
   /* ── Refs ───────────────────────────────────────────────────── */
   const sessionAyahsRef    = useRef<Ayah[]>([]);
   const audioRef           = useRef<HTMLAudioElement | null>(null);
   const playingRef         = useRef(false);
-  const srRef              = useRef<any>(null);
   const repsDoneRef        = useRef(0);
   const totalRepsRef       = useRef(5);
-  const stepsRef           = useRef<MemStep[]>([]);  const stepIdxRef         = useRef(0);
+  const stepsRef           = useRef<MemStep[]>([]);
+  const stepIdxRef         = useRef(0);
   const prevStepIdxRef     = useRef(-1);
   const advanceStepRef     = useRef<() => void>(() => {});
   const pendingRestoreRef  = useRef<Saved | null>(null);
@@ -243,12 +217,18 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const lastCountedTimeRef = useRef(0);
   const micTimerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
   const verseRefs          = useRef<Record<number, HTMLDivElement | null>>({});
-  
-  /* ── VOICE ACTIVATION REFS ─────────────────────────────────── */
-  const lastVoiceTimeRef     = useRef<number>(0);
-  const silenceCheckRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-  const currentTranscriptRef = useRef("");
-  const finalAccRef          = useRef(""); // accumulates ALL final results within one rep
+
+  /* ── MediaRecorder refs ─────────────────────────────────────── */
+  const mediaStreamRef     = useRef<MediaStream | null>(null);
+  const recorderRef        = useRef<MediaRecorder | null>(null);
+  const chunksRef          = useRef<Blob[]>([]);
+  const silenceTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const finalAccRef        = useRef("");   // all transcribed text this rep
+  const isRecordingRef     = useRef(false);
+  const audioContextRef    = useRef<AudioContext | null>(null);
+  const analyserRef        = useRef<AnalyserNode | null>(null);
+  const vadFrameRef        = useRef<number | null>(null);
+  const lastVoiceTimeRef   = useRef(0);
 
   const surah = SURAHS[surahNum - 1];
 
@@ -284,6 +264,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     } catch { /**/ }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
   /* ── Fetch ayahs ────────────────────────────────────────────── */
   const fetchAyahs = useCallback(async (num: number) => {
     setLoading(true); setFetchError("");
@@ -315,7 +296,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
 
   useEffect(() => { fetchAyahs(surahNum); }, [surahNum, fetchAyahs]);
 
-  /* ── Audio ─────────────────────────────────────────────────── */
+  /* ── Audio playback ─────────────────────────────────────────── */
   const stopAudio = useCallback(() => {
     playingRef.current = false;
     audioRef.current?.pause();
@@ -333,235 +314,250 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     au.play().catch(() => { playingRef.current = false; setIsPlaying(false); });
   }, [stopAudio]);
 
-  /* ── Count one rep ─────────────────────────────────────────── */  const countOneRep = useCallback(() => {
+  /* ── Count one rep ─────────────────────────────────────────── */
+  const countOneRep = useCallback(() => {
     const done = repsDoneRef.current + 1;
     repsDoneRef.current = done;
     setRepsDone(done);
-    
-    // ✅ CLEAR TRANSCRIPTION FOR NEXT REP
     setLiveText("");
     setRecitingVerses(new Set());
     setMatchProgress(0);
     setMissingWords([]);
     setIsListening(false);
-    currentTranscriptRef.current = "";
     finalAccRef.current = "";
-    lastVoiceTimeRef.current = 0;
-    
-    // Record count time for double-count prevention
     lastCountedTimeRef.current = Date.now();
-    
     setJustCounted(true);
     setTimeout(() => setJustCounted(false), 500);
     saveSession({ repsDone: done });
 
-    // If all reps done, advance after delay
     if (done >= totalRepsRef.current) {
       setTimeout(() => {
-        stopSR();
+        stopMic();
         setTimeout(() => advanceStepRef.current(), 500);
       }, 300);
     }
-  }, [saveSession]);
+  }, [saveSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Check for silence (600ms — fast reader friendly) ──────────── */
-  const startSilenceChecker = useCallback(() => {
-    if (silenceCheckRef.current) {
-      clearInterval(silenceCheckRef.current);
-    }
-    
-    const silenceThreshold = 600;
-    
-    silenceCheckRef.current = setInterval(() => {
-      const silenceDuration = Date.now() - lastVoiceTimeRef.current;
-      
-      if (silenceDuration > silenceThreshold) {
-        if (silenceCheckRef.current) {
-          clearInterval(silenceCheckRef.current);
-          silenceCheckRef.current = null;
+  /* ── Send audio chunk to Deepgram via edge function ──────────── */
+  const transcribeChunk = useCallback(async (blob: Blob) => {
+    if (blob.size < 2000) return; // too short to be meaningful speech
+    setTranscribing(true);
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((res, rej) => {
+        reader.onload = () => {
+          const result = reader.result as string;
+          res(result.split(",")[1] || "");
+        };
+        reader.onerror = () => rej(new Error("FileReader failed"));
+        reader.readAsDataURL(blob);
+      });
+
+      const { data, error } = await supabase.functions.invoke("transcribe-hifdh", {
+        body: { audio: base64, mimeType: blob.type || "audio/webm" },
+      });
+
+      if (error || !data?.transcript) {
+        console.warn("Deepgram transcription error:", error);
+        return;
+      }
+
+      const transcript: string = data.transcript.trim();
+      if (!transcript) return;
+
+      // Accumulate into full rep text
+      finalAccRef.current = (finalAccRef.current + " " + transcript).trim();
+      const fullText = finalAccRef.current;
+
+      setLiveText(fullText.slice(-120));
+      setIsListening(true);
+
+      // Highlight matching verses
+      const tNorm = norm(fullText);
+      const activeVerses = new Set<number>();
+      const step = stepsRef.current[stepIdxRef.current];
+      if (step) {
+        const targets = step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean);
+        targets.forEach(ayah => {
+          const aNorm = norm(ayah.text);
+          if (tNorm.includes(aNorm) || aNorm.includes(tNorm)) {
+            activeVerses.add(ayah.numberInSurah);
+          }
+        });
+        setRecitingVerses(activeVerses);
+
+        const { isComplete, progress, missingWords: missing } = isVerseComplete(fullText, targets);
+        setMatchProgress(progress);
+        setMissingWords(missing.slice(0, 3));
+
+        const timeSinceLastCount = Date.now() - lastCountedTimeRef.current;
+        const normText = norm(fullText);
+
+        if (
+          isComplete &&
+          normText !== lastCountedText.current &&
+          timeSinceLastCount > 800 &&
+          repsDoneRef.current < totalRepsRef.current
+        ) {
+          lastCountedText.current = normText;
+          countOneRep();
         }
-        setIsListening(false);
-        
-        // Try to match and count
-        const step = stepsRef.current[stepIdxRef.current];        if (step && step.type !== "overview") {
-          const targets = step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean);
-          if (targets.length > 0) {
-            const { isComplete } = isVerseComplete(currentTranscriptRef.current, targets);
-            
-            // ✅ STRICT: Only count if ALL words from ALL verses present
-            if (isComplete && repsDoneRef.current < totalRepsRef.current) {
-              countOneRep();
+      }
+    } catch (err) {
+      console.warn("transcribeChunk error:", err);
+    } finally {
+      setTranscribing(false);
+    }
+  }, [countOneRep]);
+
+  /* ── VAD: voice activity detection via AnalyserNode ─────────── */
+  const startVAD = useCallback((stream: MediaStream) => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.3;
+      source.connect(analyser);
+      audioContextRef.current = ctx;
+      analyserRef.current = analyser;
+
+      const SILENCE_MS = 800; // wait 800ms after last voice before flushing
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      lastVoiceTimeRef.current = Date.now();
+
+      const tick = () => {
+        if (!isRecordingRef.current) return;
+        analyser.getByteFrequencyData(buf);
+        // Average energy in voice frequency band (300–3400 Hz)
+        const binHz = ctx.sampleRate / analyser.fftSize;
+        const lo = Math.floor(300 / binHz);
+        const hi = Math.floor(3400 / binHz);
+        let sum = 0;
+        for (let i = lo; i < hi && i < buf.length; i++) sum += buf[i];
+        const avg = sum / Math.max(1, hi - lo);
+
+        if (avg > 12) {
+          // Voice detected
+          lastVoiceTimeRef.current = Date.now();
+          setIsListening(true);
+        } else {
+          const silenceDur = Date.now() - lastVoiceTimeRef.current;
+          if (silenceDur > SILENCE_MS && isRecordingRef.current) {
+            // Flush current chunks
+            setIsListening(false);
+            const rec = recorderRef.current;
+            if (rec && rec.state === "recording" && chunksRef.current.length > 0) {
+              rec.requestData(); // triggers ondataavailable with current buffer
             }
           }
         }
-      }
-    }, 400);
-  }, [countOneRep]);
-
-  /* ── Web Speech Recognition ────────────────────────────────── */
-  const stopSR = useCallback(() => {
-    if (silenceCheckRef.current) {
-      clearInterval(silenceCheckRef.current);
-      silenceCheckRef.current = null;
+        vadFrameRef.current = requestAnimationFrame(tick);
+      };
+      vadFrameRef.current = requestAnimationFrame(tick);
+    } catch (e) {
+      console.warn("VAD init failed:", e);
     }
-    if (micTimerRef.current) clearInterval(micTimerRef.current);
-    if (srRef.current) {
-      try { srRef.current.stop(); } catch { /**/ }
-      srRef.current = null;
-    }
-    setMicActive(false);
-    setMicTime(0);
-    setLiveText("");
-    setIsListening(false);
-    currentTranscriptRef.current = "";
-    finalAccRef.current = "";
   }, []);
 
-  const startSR = useCallback(() => {
-    if (!SR) { setMicError("Speech recognition not supported."); return; }
-    if (srRef.current) return;
-
-    setMicError("");
-    lastCountedText.current = "";
-    currentTranscriptRef.current = "";
-    finalAccRef.current = "";
-    lastVoiceTimeRef.current = Date.now();
-    lastCountedTimeRef.current = 0;
-    setIsListening(false);
-
-    const sr = new SR();
-    sr.lang = "ar-SA";
-    sr.continuous = true;
-    sr.interimResults = true;
-    sr.maxAlternatives = 3;
-    sr.onstart = () => {
-      setMicActive(true);
-      setMicTime(0);
-      micTimerRef.current = setInterval(() => setMicTime(t => t + 1), 1000);
-    };
-
-    sr.onresult = (event: any) => {
-      const step = stepsRef.current[stepIdxRef.current];
-      if (!step || step.type === "overview") return;
-      
-      const targets = step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean);
-      if (!targets.length) return;
-
-      let interimText = "";
-      let newFinalText = "";
-
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        // pick the longest alternative
-        let bestAlt = "";
-        for (let j = 0; j < result.length; j++) {
-          if ((result[j].transcript || "").length > bestAlt.length) bestAlt = result[j].transcript;
-        }
-        if (result.isFinal) {
-          newFinalText += " " + bestAlt;
-        } else {
-          interimText += " " + bestAlt;
-        }
-      }
-
-      // Accumulate finals so pausing between verses doesn't lose earlier text
-      if (newFinalText.trim()) {
-        finalAccRef.current = (finalAccRef.current + " " + newFinalText).trim();
-      }
-
-      // Full transcript = everything final so far + current interim
-      const bestTranscript = (finalAccRef.current + " " + interimText).trim();
-
-      if (!bestTranscript.trim()) return;
-      
-      // ✅ VOICE DETECTED - Update immediately
-      lastVoiceTimeRef.current = Date.now();
-      setIsListening(true);
-      
-      currentTranscriptRef.current = bestTranscript;
-      setLiveText(bestTranscript.slice(-100));
-
-      // Highlighting
-      const transcriptNorm = norm(bestTranscript);
-      const activeVerses = new Set<number>();
-      
-      targets.forEach((ayah) => {
-        const ayahNorm = norm(ayah.text);
-        if (transcriptNorm.includes(ayahNorm) || ayahNorm.includes(transcriptNorm)) {
-          activeVerses.add(ayah.numberInSurah);
-        }
-      });
-      setRecitingVerses(activeVerses);
-
-      // ✅ STRICT MULTI-VERSE MATCHING
-      const { isComplete, progress, missingWords: missing } = isVerseComplete(bestTranscript, targets);
-      setMatchProgress(progress);
-      setMissingWords(missing.slice(0, 3));
-      // Start silence checker
-      if (!silenceCheckRef.current) {
-        startSilenceChecker();
-      }
-
-      // ✅ Count as soon as complete — don't wait for isFinal (too slow for fast readers)
-      const timeSinceLastCount = Date.now() - lastCountedTimeRef.current;
-      const normText = norm(bestTranscript);
-      
-      if (isComplete && 
-          normText !== lastCountedText.current && 
-          timeSinceLastCount > 500 &&
-          repsDoneRef.current < totalRepsRef.current) {
-        lastCountedText.current = normText;
-        countOneRep();
-      }
-    };
-
-    sr.onerror = (e: any) => {
-      console.warn("SR error:", e.error);
-      if (e.error === "not-allowed") {
-        setMicError("🎤 Mic access denied");
-        stopSR();
-      } else if (e.error === "no-speech") {
-        // Keep going
-      } else if (e.error === "network") {
-        setMicError("Network error");
-        stopSR();
-      }
-    };
-
-    sr.onend = () => {
-      if (micTimerRef.current) clearInterval(micTimerRef.current);
-      if (silenceCheckRef.current) {
-        clearInterval(silenceCheckRef.current);
-        silenceCheckRef.current = null;
-      }
-      
-      const stillActive = !!srRef.current;
-      srRef.current = null;
-      
-      // AUTO-RESTART
-      if (stillActive && repsDoneRef.current < totalRepsRef.current) {
-        setTimeout(() => {
-          if (!srRef.current && repsDoneRef.current < totalRepsRef.current) {
-            startSR();
-          }
-        }, 300);
-      } else {        setMicActive(false);
-        setIsListening(false);
-      }
-    };
-
-    srRef.current = sr;
-    try { sr.start(); }
-    catch (err) {
-      console.warn("SR start error:", err);
-      srRef.current = null;
-      setMicError("Could not start mic");
+  /* ── Stop mic completely ────────────────────────────────────── */
+  const stopMic = useCallback(() => {
+    isRecordingRef.current = false;
+    if (vadFrameRef.current) { cancelAnimationFrame(vadFrameRef.current); vadFrameRef.current = null; }
+    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+    if (micTimerRef.current) { clearInterval(micTimerRef.current); micTimerRef.current = null; }
+    if (recorderRef.current) {
+      try { recorderRef.current.stop(); } catch { /**/ }
+      recorderRef.current = null;
     }
-  }, [countOneRep, stopSR, startSilenceChecker]);
+    if (audioContextRef.current) {
+      try { audioContextRef.current.close(); } catch { /**/ }
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(t => t.stop());
+      mediaStreamRef.current = null;
+    }
+    chunksRef.current = [];
+    setMicActive(false);
+    setMicTime(0);
+    setIsListening(false);
+    setTranscribing(false);
+  }, []);
+
+  /* ── Start mic + MediaRecorder ──────────────────────────────── */
+  const startMic = useCallback(async () => {
+    if (isRecordingRef.current) return;
+    setMicError("");
+    finalAccRef.current = "";
+    lastCountedText.current = "";
+    lastCountedTimeRef.current = 0;
+    lastVoiceTimeRef.current = Date.now();
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: 16000,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      mediaStreamRef.current = stream;
+
+      const mime = getBestMime();
+      const rec = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 32000 });
+      recorderRef.current = rec;
+      chunksRef.current = [];
+
+      rec.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          chunksRef.current.push(e.data);
+          // Immediately transcribe each data chunk
+          const blob = new Blob([e.data], { type: mime });
+          transcribeChunk(blob);
+        }
+      };
+
+      rec.onerror = () => {
+        setMicError("Recording error — tap retry");
+        stopMic();
+      };
+
+      rec.onstart = () => {
+        isRecordingRef.current = true;
+        setMicActive(true);
+        setMicTime(0);
+        micTimerRef.current = setInterval(() => setMicTime(t => t + 1), 1000);
+      };
+
+      rec.onstop = () => {
+        if (chunksRef.current.length > 0) {
+          const blob = new Blob(chunksRef.current, { type: mime });
+          transcribeChunk(blob);
+          chunksRef.current = [];
+        }
+      };
+
+      // Collect in 2-second slices for continuous transcription
+      rec.start(2000);
+      startVAD(stream);
+
+    } catch (err: any) {
+      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
+        setMicError("🎤 Mic access denied — allow microphone in browser settings");
+      } else {
+        setMicError("Could not start microphone");
+      }
+      stopMic();
+    }
+  }, [transcribeChunk, startVAD, stopMic]);
 
   /* ── Step navigation ────────────────────────────────────────── */
   const advanceStep = useCallback(() => {
-    stopSR();
+    stopMic();
     const idx = stepIdxRef.current;
     const all = stepsRef.current;
     if (idx < all.length - 1) {
@@ -570,8 +566,10 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       repsDoneRef.current  = 0;
       totalRepsRef.current = all[next].reps;
       lastCountedText.current = "";
-      currentTranscriptRef.current = "";
-      setStepIdx(next); setRepsDone(0); setPeeking(false); setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]); setIsListening(false);
+      finalAccRef.current = "";
+      setStepIdx(next); setRepsDone(0); setPeeking(false);
+      setRecitingVerses(new Set()); setMatchProgress(0);
+      setMissingWords([]); setIsListening(false); setLiveText("");
       stopAudio();
       saveSession({ stepIdx: next, repsDone: 0 });
     } else {
@@ -579,7 +577,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       clearSession();
       setCompleted(true);
     }
-  }, [stopAudio, saveSession, clearSession, stopSR]);
+  }, [stopAudio, saveSession, clearSession, stopMic]);
 
   useEffect(() => { advanceStepRef.current = advanceStep; }, [advanceStep]);
 
@@ -587,26 +585,23 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   useEffect(() => {
     if (!started || steps.length === 0) return;
     const step = steps[stepIdx];
-    if (!step || step.type === "overview") { stopSR(); return; }
+    if (!step || step.type === "overview") { stopMic(); return; }
     if (stepIdx === prevStepIdxRef.current) return;
     prevStepIdxRef.current = stepIdx;
-    stopSR();
-    const t = setTimeout(() => startSR(), 400);
+    stopMic();
+    const t = setTimeout(() => startMic(), 500);
     return () => clearTimeout(t);
-  }, [stepIdx, started, steps, startSR, stopSR]);
+  }, [stepIdx, started, steps, startMic, stopMic]);
+
   /* ── Scroll active verse into view ─────────────────────────── */
   useEffect(() => {
     const step = steps[stepIdx];
     if (!step || step.type === "overview") return;
-    
     const activeIndices = step.indices;
     if (activeIndices.length > 0 && sessionAyahsRef.current.length > 0) {
       const firstActiveVerse = sessionAyahsRef.current[activeIndices[0]]?.numberInSurah;
       if (firstActiveVerse && verseRefs.current[firstActiveVerse]) {
-        verseRefs.current[firstActiveVerse]?.scrollIntoView({ 
-          behavior: "smooth", 
-          block: "center" 
-        });
+        verseRefs.current[firstActiveVerse]?.scrollIntoView({ behavior: "smooth", block: "center" });
       }
     }
   }, [stepIdx, steps]);
@@ -614,9 +609,8 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   /* ── Cleanup on unmount ─────────────────────────────────────── */
   useEffect(() => () => {
     audioRef.current?.pause();
-    stopSR();
-    if (silenceCheckRef.current) clearInterval(silenceCheckRef.current);
-  }, [stopSR]);
+    stopMic();
+  }, [stopMic]);
 
   /* ── Manual rep ─────────────────────────────────────────────── */
   const markRep = () => {
@@ -643,6 +637,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     };
     playNext();
   };
+
   /* ── Session start ──────────────────────────────────────────── */
   const startSession = () => {
     const s     = Math.max(1, startVerse);
@@ -658,16 +653,13 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     totalRepsRef.current    = ns[0]?.reps ?? repsPerVerse;
     prevStepIdxRef.current  = -1;
     lastCountedText.current = "";
-    currentTranscriptRef.current = "";
-    lastVoiceTimeRef.current = 0;
+    finalAccRef.current = "";
     lastCountedTimeRef.current = 0;
     setSteps(ns); setStepIdx(0); setRepsDone(0);
     setPeeking(false); setCompleted(false); setStarted(true);
-    setRecitingVerses(new Set());
-    setMatchProgress(0);
-    setMissingWords([]);
-    setIsListening(false);
-    stopAudio(); stopSR();
+    setRecitingVerses(new Set()); setMatchProgress(0);
+    setMissingWords([]); setIsListening(false); setLiveText("");
+    stopAudio(); stopMic();
     saveSession({ stepIdx: 0, repsDone: 0, started: true, surahNum, startVerse: s, endVerse: e, repsPerVerse });
   };
 
@@ -676,9 +668,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     boxShadow: "0 2px 10px rgba(26,61,36,.06)", ...ex,
   });
 
-  /* ─────────────────────────────────────────────────────────────
-     COMPLETED
-  ───────────────────────────────────────────────────────────── */
+  /* ── COMPLETED ──────────────────────────────────────────────── */
   if (completed) return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", padding: "16px", background: LIGHT }}>
       <div style={card({ padding: "28px 20px", textAlign: "center", maxWidth: 340 })}>
@@ -692,7 +682,8 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             background: "#f8fafb", color: G, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
           ← New
         </button>
-        <button onClick={() => { clearSession(); setStarted(false); setCompleted(false); setTimeout(startSession, 100); }}          style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none",
+        <button onClick={() => { clearSession(); setStarted(false); setCompleted(false); setTimeout(startSession, 100); }}
+          style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none",
             background: `linear-gradient(135deg,${G},${GM})`, color: "#fff",
             fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
           🔁 Repeat
@@ -701,14 +692,10 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     </div>
   );
 
-  /* ─────────────────────────────────────────────────────────────
-     SETUP
-  ───────────────────────────────────────────────────────────── */
+  /* ── SETUP ──────────────────────────────────────────────────── */
   if (!started) {
     const verseCount = Math.max(0, endVerse - startVerse + 1);
     const canStart   = !loading && ayahs.length > 0 && endVerse >= startVerse;
-
-    /* ── New refined palette ── */
     const W    = "#ffffff";
     const WARM = "#faf8f4";
     const B    = "#e8ddd0";
@@ -732,14 +719,8 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           .mem-input:focus { outline: 2px solid #1a3d24; outline-offset: 1px; border-color: #1a3d24 !important; }
         `}</style>
 
-        {/* ── Header ── */}
         <div style={{ background: W, borderBottom: `1px solid ${B}`, padding: "16px 16px 14px", flexShrink: 0, position: "relative", overflow: "hidden" }}>
-          {/* Decorative emerald bar */}
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${G},${GM},${GOLD})` }} />
-          {/* Subtle geometric watermark */}
-          <div style={{ position: "absolute", right: -10, top: -10, width: 90, height: 90, borderRadius: "50%", border: `1px solid ${G}10`, pointerEvents: "none" }} />
-          <div style={{ position: "absolute", right: 5, top: 5, width: 60, height: 60, borderRadius: "50%", border: `1px solid ${G}08`, pointerEvents: "none" }} />
-
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ width: 44, height: 44, borderRadius: 12, background: `linear-gradient(135deg,${G},${GM})`,
               display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0, boxShadow: "0 2px 8px rgba(26,61,36,.25)" }}>
@@ -750,22 +731,18 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
               <div style={{ fontFamily: "'Amiri',serif", fontSize: 12, color: GOLD, marginTop: 1 }}>نظام الحفظ المنهجي</div>
             </div>
             <div style={{ marginLeft: "auto", padding: "3px 9px", borderRadius: 10,
-              background: srAvailable ? `${G}10` : "#fff0f0",
-              border: `1px solid ${srAvailable ? G + "30" : "#fca5a5"}`,
-              fontSize: 10, fontWeight: 700, color: srAvailable ? G : "#c0392b" }}>
-              {srAvailable ? "🎙 Voice On" : "⚠️ No Voice"}
+              background: `${G}10`, border: `1px solid ${G}30`,
+              fontSize: 10, fontWeight: 700, color: G }}>
+              🎙 Deepgram AI
             </div>
           </div>
         </div>
 
-        {/* ── Scrollable Content ── */}
         <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 100px", display: "flex", flexDirection: "column", gap: 12 }}>
-
-          {/* Surah & Verse card */}
           <div style={sCard({ padding: "14px" })}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-              <div style={{ width: 3, height: 14, borderRadius: 2, background: GOLD }} />
-              <span style={{ fontSize: 10, fontWeight: 800, color: GOLD, letterSpacing: 1, textTransform: "uppercase" }}>Surah & Verse</span>
+              <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" }}>Surah & Verse</span>
             </div>
             <select value={surahNum} className="mem-select"
               onChange={e => { setSurahNum(Number(e.target.value)); setStartVerse(1); setEndVerse(1); }}
@@ -788,7 +765,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                 </div>
               ))}
             </div>
-
             {verseCount > 0 && (
               <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 10,
                 background: `${G}08`, border: `1px solid ${G}20`,
@@ -798,11 +774,10 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             )}
           </div>
 
-          {/* Repetitions card */}
           <div style={sCard({ padding: "14px" })}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-              <div style={{ width: 3, height: 14, borderRadius: 2, background: GOLD }} />
-              <span style={{ fontSize: 10, fontWeight: 800, color: GOLD, letterSpacing: 1, textTransform: "uppercase" }}>Repetitions</span>
+              <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" }}>Repetitions</span>
             </div>
             <div style={{ display: "flex", gap: 6 }}>
               {REP_OPTIONS.map(opt => (
@@ -820,11 +795,10 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             </div>
           </div>
 
-          {/* Reciter card */}
           <div style={sCard({ padding: "14px" })}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-              <div style={{ width: 3, height: 14, borderRadius: 2, background: GOLD }} />
-              <span style={{ fontSize: 10, fontWeight: 800, color: GOLD, letterSpacing: 1, textTransform: "uppercase" }}>Reciter</span>
+              <div style={{ width: 3, height: 14, borderRadius: 2, background: GL }} />
+              <span style={{ fontSize: 10, fontWeight: 800, color: GL, letterSpacing: 1, textTransform: "uppercase" }}>Reciter</span>
             </div>
             <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2, scrollbarWidth: "none" } as React.CSSProperties}>
               {RECITERS.map(r => (
@@ -842,14 +816,12 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             </div>
           </div>
 
-          {/* BEGIN BUTTON */}
           <button className="mem-btn" onClick={startSession} disabled={!canStart}
             style={{ width: "100%", padding: "16px 0", borderRadius: 14, border: "none",
               cursor: canStart ? "pointer" : "not-allowed", transition: "all .2s",
               background: canStart ? `linear-gradient(135deg,${G} 0%,${GM} 100%)` : "#f0f0ee",
               color: canStart ? "#fff" : MUT, fontSize: 16, fontWeight: 800,
-              boxShadow: canStart ? `0 4px 16px ${G}40` : "none",
-              letterSpacing: .3 }}>
+              boxShadow: canStart ? `0 4px 16px ${G}40` : "none", letterSpacing: .3 }}>
             {loading ? "Loading…" : !canStart ? "Adjust range" : "🧠 Begin Memorization · ابدأ"}
           </button>
 
@@ -867,9 +839,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     );
   }
 
-  /* ─────────────────────────────────────────────────────────────
-     ACTIVE SESSION
-  ───────────────────────────────────────────────────────────── */
+  /* ── ACTIVE SESSION ─────────────────────────────────────────── */
   const currentStep = steps[stepIdx] ?? steps[0];
   if (!currentStep) return (
     <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: LIGHT }}>
@@ -882,7 +852,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const pool       = sessionAyahsRef.current;
   const isOverview = currentStep.type === "overview";
   const activeSet  = new Set(currentStep.indices);
-  const isGoodText = liveText && !liveText.startsWith("…");
+  const isGoodText = liveText && liveText.trim().length > 0;
   const isMultiVerse = currentStep.indices.length > 1;
 
   return (
@@ -894,29 +864,21 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         @keyframes slideIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
         @keyframes matchPulse{0%,100%{box-shadow:0 0 0 0 rgba(183,121,31,0.7)}50%{box-shadow:0 0 0 12px rgba(183,121,31,0)}}
         @keyframes listeningPulse{0%,100%{opacity:0.4}50%{opacity:1}}
+        @keyframes spin{to{transform:rotate(360deg)}}
         .peek-btn{user-select:none;-webkit-user-select:none}
-        .verse-active { 
-          background: linear-gradient(135deg, #fffbeb, #fff);
-          border: 2px solid ${GOLD};
-          border-radius: 12px;
-          animation: matchPulse 2s ease-in-out;
-        }
-        .verse-reciting {
-          background: ${LIGHT};
-        }
-        /* ✅ COMPLETELY HIDE NON-ACTIVE VERSES */
         .verse-hidden {
           display: none !important;
           visibility: hidden !important;
           pointer-events: none !important;
-          opacity: 0 !important;          height: 0 !important;
+          opacity: 0 !important;
+          height: 0 !important;
           overflow: hidden !important;
         }
         * { box-sizing: border-box; }
         body { margin: 0; padding: 0; overflow: hidden; }
       `}</style>
 
-      {/* ── HEADER ───────────────────────────────────────────── */}
+      {/* ── HEADER ── */}
       <div style={{ background: "#fff", borderBottom: `2px solid ${BORDER}`, padding: "8px 12px", flexShrink: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -934,7 +896,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             <span style={{ fontSize: 11, color: "#7a9e88", fontWeight: 700 }}>
               {stepIdx + 1}/{steps.length}
             </span>
-            <button onClick={() => { stopAudio(); stopSR(); clearSession(); setStarted(false); setStepIdx(0); setRepsDone(0); }}
+            <button onClick={() => { stopAudio(); stopMic(); clearSession(); setStarted(false); setStepIdx(0); setRepsDone(0); }}
               style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: `1px solid ${BORDER}`,
                 background: "#f8fafb", color: "#7a9e88", cursor: "pointer" }}>
               ✕
@@ -947,46 +909,24 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         </div>
       </div>
 
-      {/* ── MUSHAF PAGE ──────────────────────────────────────── */}
-      <div style={{
-        flex: 1,
-        overflowY: "auto",
-        background: `linear-gradient(180deg, ${PARCH} 0%, ${PARCH2} 100%)`,
-        padding: "10px 8px 16px",
-      }}>
-        <div style={{
-          background: "#fdf6e3",
-          border: `2px solid ${GOLD}88`,
-          borderRadius: 4,
-          position: "relative",          maxWidth: 520,
-          margin: "0 auto",
-          boxShadow: "0 4px 20px rgba(26,61,36,0.15)",
-        }}>
-          <div style={{
-            position: "absolute", inset: 7,
-            border: `1px solid ${GOLD}44`,
-            borderRadius: 1,
-            pointerEvents: "none",
-            zIndex: 1,
-          }} />
+      {/* ── MUSHAF PAGE ── */}
+      <div style={{ flex: 1, overflowY: "auto", background: `linear-gradient(180deg,${PARCH} 0%,${PARCH2} 100%)`, padding: "10px 8px 16px" }}>
+        <div style={{ background: "#fdf6e3", border: `2px solid ${GOLD}88`, borderRadius: 4, position: "relative",
+          maxWidth: 520, margin: "0 auto", boxShadow: "0 4px 20px rgba(26,61,36,0.15)" }}>
+          <div style={{ position: "absolute", inset: 7, border: `1px solid ${GOLD}44`, borderRadius: 1, pointerEvents: "none", zIndex: 1 }} />
 
-          <div style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "8px 16px",
-            background: `linear-gradient(to bottom, ${GOLD}18, transparent)`,
-            borderBottom: `1px solid ${GOLD}55`,
-          }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "8px 16px", background: `linear-gradient(to bottom,${GOLD}18,transparent)`,
+            borderBottom: `1px solid ${GOLD}55` }}>
             <span style={{ fontFamily: "'Amiri',serif", color: "#1c1208", fontSize: "0.8em", fontWeight: 700, direction: "rtl" }}>
               {SURAHS[surahNum - 1]?.nameAr}
             </span>
             <button onClick={() => isPlaying ? stopAudio() : playCurrentStep()}
-              style={{
-                padding: "4px 12px", borderRadius: 14,
+              style={{ padding: "4px 12px", borderRadius: 14,
                 border: `1.5px solid ${isPlaying ? "#dc2626" : GOLD + "88"}`,
                 background: isPlaying ? "#fee2e2" : `${GOLD}18`,
                 color: isPlaying ? "#dc2626" : GOLD,
-                fontSize: 11, fontWeight: 700, cursor: "pointer",
-              }}>
+                fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
               {isPlaying ? "⏹ Stop" : "🔊 Listen"}
             </button>
             <span style={{ fontFamily: "'Amiri',serif", color: "#5a4a20", fontSize: "0.72em" }}>
@@ -995,32 +935,21 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           </div>
 
           {startVerse === 1 && surahNum !== 1 && surahNum !== 9 && (
-            <div style={{
-              fontFamily: "'Amiri Quran','Amiri',serif",
-              direction: "rtl", textAlign: "center",
-              color: "#1c1208", margin: "8px 16px 4px",
-              fontSize: 22, lineHeight: 2,
-            }}>
+            <div style={{ fontFamily: "'Amiri Quran','Amiri',serif", direction: "rtl", textAlign: "center",
+              color: "#1c1208", margin: "8px 16px 4px", fontSize: 22, lineHeight: 2 }}>
               بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ
             </div>
           )}
 
           <div style={{ padding: "8px 20px 16px" }}>
-            <p style={{
-              fontFamily: "'Amiri Quran','Scheherazade New','Amiri',serif",              direction: "rtl",
-              textAlign: "justify",
-              lineHeight: 2.8,
-              color: "#1c1208",
-              fontSize: 24,
-              margin: 0,
-              wordBreak: "break-word",
-            }}>
+            <p style={{ fontFamily: "'Amiri Quran','Scheherazade New','Amiri',serif", direction: "rtl",
+              textAlign: "justify", lineHeight: 2.8, color: "#1c1208", fontSize: 24, margin: 0, wordBreak: "break-word" }}>
               {pool.map((ayah, poolIdx) => {
-                const isActive    = activeSet.has(poolIdx);
-                const isReciting  = recitingVerses.has(ayah.numberInSurah);
-                const isCumul     = currentStep.type === "cumulative";
-                const hideText    = isCumul && !peeking && isActive;
-                const isHidden    = !isActive; // ✅ COMPLETELY HIDDEN if not active
+                const isActive   = activeSet.has(poolIdx);
+                const isReciting = recitingVerses.has(ayah.numberInSurah);
+                const isCumul    = currentStep.type === "cumulative";
+                const hideText   = isCumul && !peeking && isActive;
+                const isHidden   = !isActive;
 
                 return (
                   <span
@@ -1028,35 +957,26 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                     ref={el => { verseRefs.current[ayah.numberInSurah] = el; }}
                     className={isHidden ? "verse-hidden" : ""}
                     style={{
-                      // ✅ COMPLETE HIDE: Multiple CSS properties ensure nothing shows
                       display: isHidden ? "none" : "inline",
                       visibility: isHidden ? "hidden" : "visible",
                       pointerEvents: isHidden ? "none" : "auto",
-                      opacity:    isActive ? 1 : 0,
-                      filter:     hideText ? "blur(9px)" : "none",
-                      background: isActive
-                        ? isReciting
-                          ? `${GOLD}22`
-                          : `${GOLD}0d`
-                        : "transparent",
-                      borderRadius:  isActive ? 3 : 0,
-                      outline:       isActive ? `1.5px solid ${GOLD}55` : "none",
-                      padding:       isActive ? "0 3px" : undefined,
-                      transition:    "all .35s ease",
-                      cursor:        isActive ? "pointer" : "default",
-                      userSelect:    "none",
+                      opacity: isActive ? 1 : 0,
+                      filter: hideText ? "blur(9px)" : "none",
+                      background: isActive ? (isReciting ? `${GOLD}22` : `${GOLD}0d`) : "transparent",
+                      borderRadius: isActive ? 3 : 0,
+                      outline: isActive ? `1.5px solid ${GOLD}55` : "none",
+                      padding: isActive ? "0 3px" : undefined,
+                      transition: "all .35s ease",
+                      cursor: isActive ? "pointer" : "default",
+                      userSelect: "none",
                       WebkitUserSelect: "none",
                     } as React.CSSProperties}
                     onClick={() => isActive && playVerse(surahNum, ayah.numberInSurah, selectedReciter)}
                   >
                     {ayah.text}{" "}
-                    <span style={{
-                      fontFamily: "'Amiri',serif",
-                      color: isActive ? GOLD : "#b0956a",
-                      fontSize: "0.68em",
-                      margin: "0 1px",
-                      opacity: isActive ? 1 : 0.5,
-                    }}>                      ۝{toAr(ayah.numberInSurah)}
+                    <span style={{ fontFamily: "'Amiri',serif", color: isActive ? GOLD : "#b0956a",
+                      fontSize: "0.68em", margin: "0 1px", opacity: isActive ? 1 : 0.5 }}>
+                      ۝{toAr(ayah.numberInSurah)}
                     </span>{" "}
                   </span>
                 );
@@ -1071,94 +991,61 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                 onPointerUp={() => setPeeking(false)}
                 onPointerLeave={() => setPeeking(false)}
                 onPointerCancel={() => setPeeking(false)}
-                style={{
-                  width: "100%", padding: "8px 0", borderRadius: 10,
+                style={{ width: "100%", padding: "8px 0", borderRadius: 10,
                   border: `1.5px solid ${peeking ? G : BORDER}`,
                   background: peeking ? LIGHT : "#fdf6e3",
                   color: peeking ? G : "#7a9e88",
-                  fontSize: 11, fontWeight: 700, cursor: "pointer",
-                }}>
+                  fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
                 {peeking ? "👁 Showing…" : "👁 Hold to Reveal"}
               </button>
             </div>
           )}
 
-          <div style={{
-            borderTop: `1px solid ${GOLD}55`,
-            padding: "4px 16px",
-            textAlign: "center",
-            fontFamily: "'Amiri',serif",
-            color: GOLD,
-            fontSize: "0.78em",
-            background: `linear-gradient(to top, ${GOLD}12, transparent)`,
-          }}>
+          <div style={{ borderTop: `1px solid ${GOLD}55`, padding: "4px 16px", textAlign: "center",
+            fontFamily: "'Amiri',serif", color: GOLD, fontSize: "0.78em",
+            background: `linear-gradient(to top,${GOLD}12,transparent)` }}>
             ─── {toAr(startVerse)}–{toAr(endVerse)} ───
           </div>
         </div>
 
+        {/* Live transcription display */}
         {isGoodText && (
-          <div style={{
-            margin: "10px auto 6px",
-            maxWidth: 520,
-            padding: "10px 14px",
-            borderRadius: 10,
-            background: "#f0fff4",
-            border: `2px solid ${BORDER}`,
-            direction: "rtl",
-            display: "flex",
-            flexWrap: "wrap" as const,
-            gap: "4px 6px",
-            justifyContent: "flex-end",
-            animation: "slideIn .25s ease",
-          }}>
+          <div style={{ margin: "10px auto 6px", maxWidth: 520, padding: "10px 14px", borderRadius: 10,
+            background: "#f0fff4", border: `2px solid ${BORDER}`, direction: "rtl",
+            display: "flex", flexWrap: "wrap" as const, gap: "4px 6px",
+            justifyContent: "flex-end", animation: "slideIn .25s ease" }}>
             {liveText.trim().split(/\s+/).filter(Boolean).map((word, wi) => (
-              <span key={wi} style={{
-                fontFamily: "'Amiri',serif",
-                fontSize: 19,
-                color: G,
-                background: "rgba(26,61,36,0.07)",
-                borderRadius: 6,
-                padding: "2px 8px",
-                lineHeight: 2,
-                display: "inline-block",
-              }}>{word}</span>
+              <span key={wi} style={{ fontFamily: "'Amiri',serif", fontSize: 19, color: G,
+                background: "rgba(26,61,36,0.07)", borderRadius: 6, padding: "2px 8px",
+                lineHeight: 2, display: "inline-block" }}>{word}</span>
             ))}
           </div>
         )}
 
+        {/* Mic status bar */}
         {micActive && (
-          <div style={{
-            margin: "8px auto",
-            maxWidth: 520,
-            padding: "10px 14px",
-            borderRadius: 10,
-            background: col.bg,
-            border: `1.5px solid ${col.border}`,
-          }}>
+          <div style={{ margin: "8px auto", maxWidth: 520, padding: "10px 14px", borderRadius: 10,
+            background: col.bg, border: `1.5px solid ${col.border}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
               <span style={{ fontSize: 11, color: col.text, fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
-                {isListening ? (
+                {transcribing ? (
+                  <span style={{ display: "inline-block", width: 12, height: 12, border: `2px solid ${col.text}`,
+                    borderTopColor: "transparent", borderRadius: "50%", animation: "spin .7s linear infinite" }} />
+                ) : isListening ? (
                   <span style={{ animation: "listeningPulse 1s ease-in-out infinite" }}>🎤</span>
-                ) : (
-                  "⏸"
-                )}
-                {isListening ? "Listening… Recite now" : "Waiting for voice…"}
+                ) : "⏸"}
+                {transcribing ? "Transcribing…" : isListening ? "Listening… Recite now" : "Waiting for voice…"}
               </span>
               {matchProgress >= 100 && (
                 <span style={{ fontSize: 11, color: G, fontWeight: 700 }}>✅ All words matched</span>
               )}
             </div>
             <div style={{ height: 6, borderRadius: 3, background: "rgba(0,0,0,0.1)", overflow: "hidden" }}>
-              <div style={{ 
-                width: `${matchProgress}%`, 
-                height: "100%", 
-                borderRadius: 3,
-                background: matchProgress === 100 ? GOLD : col.text,
-                transition: "width .3s ease"
-              }} />
+              <div style={{ width: `${matchProgress}%`, height: "100%", borderRadius: 3,
+                background: matchProgress === 100 ? GOLD : col.text, transition: "width .3s ease" }} />
             </div>
             {missingWords.length > 0 && matchProgress < 100 && (
-              <div style={{ marginTop: 6, fontSize: 10, color: "#7a9e88" }}>
+              <div style={{ marginTop: 6, fontSize: 10, color: "#7a9e88", direction: "rtl", textAlign: "right" }}>
                 Still need: {missingWords.join(" · ")}
               </div>
             )}
@@ -1166,37 +1053,24 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         )}
 
         {isMultiVerse && micActive && (
-          <div style={{            margin: "0 auto 8px",
-            maxWidth: 520,
-            padding: "8px 12px",
-            borderRadius: 10,
-            background: col.bg,
-            border: `1.5px solid ${col.border}`,
-            fontSize: 11,
-            color: col.text,
-            fontWeight: 600,
-            textAlign: "center",
-          }}>
+          <div style={{ margin: "0 auto 8px", maxWidth: 520, padding: "8px 12px", borderRadius: 10,
+            background: col.bg, border: `1.5px solid ${col.border}`,
+            fontSize: 11, color: col.text, fontWeight: 600, textAlign: "center" }}>
             🔗 Reciting {currentStep.indices.length} verses — All words required
           </div>
         )}
       </div>
 
-      {/* ── FOOTER ───────────────────────────────────────────── */}
+      {/* ── FOOTER ── */}
       <div style={{ background: "#fff", borderTop: `2px solid ${BORDER}`, flexShrink: 0 }}>
-        
+
         {!isOverview && (
-          <div style={{
-            padding: "7px 10px",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            borderBottom: `1px solid ${BORDER}`,
-          }}>
+          <div style={{ padding: "7px 10px", display: "flex", alignItems: "center", gap: 6, borderBottom: `1px solid ${BORDER}` }}>
             {micActive && (
               <div style={{ display: "flex", alignItems: "center", gap: 2, marginRight: 2, flexShrink: 0 }}>
                 {[4, 8, 6, 12, 7, 10, 5].map((h, i) => (
-                  <div key={i} style={{ width: 2.5, height: h, borderRadius: 2, background: isListening ? "#ef4444" : "#9ca3af",
+                  <div key={i} style={{ width: 2.5, height: h, borderRadius: 2,
+                    background: isListening ? "#ef4444" : "#9ca3af",
                     animation: isListening ? `wavePulse .75s ease-in-out ${i * 0.09}s infinite alternate` : "none" }} />
                 ))}
               </div>
@@ -1207,22 +1081,15 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                 const done    = i < repsDone;
                 const current = i === repsDone;
                 return (
-                  <div key={i} style={{
-                    width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                  <div key={i} style={{ width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
                     display: "flex", alignItems: "center", justifyContent: "center",
                     fontSize: 10, fontWeight: 700,
-                    background: done
-                      ? col.grad
-                      : current && justCounted
-                      ? "#bbf7d0"
-                      : current                      ? `${col.text}18`
-                      : "#f0f4f0",
+                    background: done ? col.grad : current && justCounted ? "#bbf7d0" : current ? `${col.text}18` : "#f0f4f0",
                     color: done ? "#fff" : current ? col.text : "#ccc",
                     border: `2px solid ${current ? col.text : done ? "transparent" : "#e4e4e4"}`,
                     boxShadow: current ? `0 0 0 3px ${col.text}25` : "none",
                     animation: done && i === repsDone - 1 && justCounted ? "flashGreen .5s ease" : "none",
-                    transition: "all .3s ease",
-                  }}>
+                    transition: "all .3s ease" }}>
                     {done ? "✓" : i + 1}
                   </div>
                 );
@@ -1238,7 +1105,8 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
             </div>
 
             {micActive && (
-              <div style={{ fontSize: 10, fontWeight: 700, color: isListening ? "#ef4444" : "#9ca3af", minWidth: 34, textAlign: "center", flexShrink: 0 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: isListening ? "#ef4444" : "#9ca3af",
+                minWidth: 34, textAlign: "center", flexShrink: 0 }}>
                 {String(Math.floor(micTime / 60)).padStart(2, "0")}:{String(micTime % 60).padStart(2, "0")}
               </div>
             )}
@@ -1256,13 +1124,12 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           {!isOverview && (
             micActive ? (
               <>
-                <button onClick={stopSR}
+                <button onClick={stopMic}
                   style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none",
                     background: "#fee2e2", color: "#c0392b", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                   ⏹ Stop
                 </button>
-                <button
-                  onClick={() => { stopSR(); setTimeout(() => startSR(), 300); }}
+                <button onClick={() => { stopMic(); setTimeout(() => startMic(), 400); }}
                   title="Restart recording"
                   style={{ width: 44, height: 44, borderRadius: 10, border: `1px solid ${BORDER}`,
                     background: "#f8fafb", color: "#7a9e88", fontSize: 18, cursor: "pointer",
@@ -1271,7 +1138,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
                 </button>
               </>
             ) : (
-              <button onClick={startSR}
+              <button onClick={startMic}
                 style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none",
                   background: `linear-gradient(135deg,${G},${GM})`, color: "#fff",
                   fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
@@ -1293,9 +1160,10 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
 
         <button
           onClick={() => {
-            stopAudio(); stopSR(); setPeeking(false); setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]); setIsListening(false);
-            currentTranscriptRef.current = "";
-            if (silenceCheckRef.current) clearInterval(silenceCheckRef.current);
+            stopAudio(); stopMic(); setPeeking(false);
+            setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]);
+            setIsListening(false); setLiveText("");
+            finalAccRef.current = "";
             if (stepIdx > 0) {
               const prev = stepIdx - 1;
               stepIdxRef.current = prev; repsDoneRef.current = 0;
