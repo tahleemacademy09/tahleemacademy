@@ -348,9 +348,9 @@ function makeExercise(currentAyahs: any[], prevAyahs: any[]): ExerciseQ[] {
 //  COMPONENT
 // ═══════════════════════════════════════════════════════════════════════
 
-interface Props { userId: string | null; }
+interface Props { userId: string | null; autoStart?: boolean; }
 
-export default function QuranRevisionHub({ userId }: Props) {
+export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
 
   const [stage, setStage]         = useState<Stage>("setup");
 
@@ -464,6 +464,33 @@ export default function QuranRevisionHub({ userId }: Props) {
     if (done) { try { setCompletedPages(new Set(JSON.parse(done))); } catch { /* ignore */ } }
   }, [userId]);
 
+  // ═══ Persist session to sessionStorage on every stage/page change ═══════
+  // This ensures refresh restores the exact position the student was at.
+  useEffect(() => {
+    if (!userId || !plan || stage === "setup") return;
+    const key = `qrh_stage_${userId}`;
+    sessionStorage.setItem(key, JSON.stringify({
+      stage,
+      pageIdx: plan.currentIdx,
+    }));
+  }, [stage, plan, userId]);
+
+  // Also persist on visibility change (tab backgrounded on Android)
+  useEffect(() => {
+    if (!userId) return;
+    const key = `qrh_stage_${userId}`;
+    const handleVisibility = () => {
+      if (document.hidden && plan && stage !== "setup") {
+        sessionStorage.setItem(key, JSON.stringify({
+          stage,
+          pageIdx: plan.currentIdx,
+        }));
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [stage, plan, userId]);
+
   // ═══ Fetch page ════════════════════════════════════════
   const fetchPage = useCallback(async (pageNum: number) => {
     setPageLoading(true); setPageData(null);
@@ -488,16 +515,19 @@ export default function QuranRevisionHub({ userId }: Props) {
   useEffect(() => {
     if (!userId || didStartRef.current) return;
 
-    const startSession = (p: RevisionPlan) => {
-      const currentPage = p.allPages[p.currentIdx];
-      console.log("[Hifdh] startSession → page:", currentPage, "plan:", p);
+    const startSession = (p: RevisionPlan, resumeIdx?: number) => {
+      const planToResume: RevisionPlan = resumeIdx != null
+        ? { ...p, currentIdx: resumeIdx }
+        : p;
+      const currentPage = planToResume.allPages[planToResume.currentIdx];
+      console.log("[Hifdh] startSession → page:", currentPage, "plan:", planToResume);
       if (!currentPage) {
-        console.warn("[Hifdh] startSession: no currentPage, allPages:", p.allPages);
+        console.warn("[Hifdh] startSession: no currentPage, allPages:", planToResume.allPages);
         setAssignmentLoaded(true);
         return;
       }
       didStartRef.current = true;
-      setPlan(p);
+      setPlan(planToResume);
       setSessionStart(Date.now());
       setPageVisible(true);
       fetchPage(currentPage);
@@ -505,6 +535,29 @@ export default function QuranRevisionHub({ userId }: Props) {
       setStage("reciting");
       setAssignmentLoaded(true);
     };
+
+    // ── Refresh / reload restore: check sessionStorage for in-progress session ──
+    const ssKey = `qrh_stage_${userId}`;
+    const savedSS = sessionStorage.getItem(ssKey);
+    if (savedSS) {
+      try {
+        const ss = JSON.parse(savedSS);
+        // Only restore if they were mid-session (not setup or complete)
+        if (ss.stage && ss.stage !== "setup" && ss.stage !== "complete") {
+          const lsSaved = localStorage.getItem(`revision_plan_${userId}`);
+          if (lsSaved) {
+            const p: RevisionPlan = JSON.parse(lsSaved);
+            // If sessionStorage has a more recent pageIdx, use it
+            const resumeIdx = ss.pageIdx != null ? ss.pageIdx : p.currentIdx;
+            console.log("[Hifdh] Restoring from sessionStorage — stage:", ss.stage, "pageIdx:", resumeIdx);
+            sessionStorage.removeItem(ssKey); // consume it
+            startSession(p, resumeIdx);
+            return;
+          }
+        }
+      } catch { /* ignore corrupted state */ }
+      sessionStorage.removeItem(ssKey);
+    }
 
     (supabase as any)
       .from("hifdh_daily_assignments")
@@ -553,22 +606,31 @@ export default function QuranRevisionHub({ userId }: Props) {
             localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(planToUse));
           }
 
-          // Populate plan but stay on setup screen — user clicks Resume/Start to begin
-          setPlan(planToUse);
-          didStartRef.current = true;
-          setAssignmentLoaded(true);
+          // If autoStart (navigated from dashboard), jump straight to reciting.
+          // Otherwise stay on setup screen — user clicks Resume/Start to begin.
+          if (autoStart) {
+            startSession(planToUse);
+          } else {
+            setPlan(planToUse);
+            didStartRef.current = true;
+            setAssignmentLoaded(true);
+          }
         } else {
           // No assignment — fall back to localStorage or show setup
           const saved = localStorage.getItem(`revision_plan_${userId}`);
           if (!saved) { setAssignmentLoaded(true); return; }
           try {
             const p: RevisionPlan = JSON.parse(saved);
-            setPlan(p);
-            setSelectMode(p.mode);
-            setSelected(p.selected);
-            setDailyPages(p.dailyPages);
-            didStartRef.current = true;
-            setAssignmentLoaded(true);
+            if (autoStart) {
+              startSession(p);
+            } else {
+              setPlan(p);
+              setSelectMode(p.mode);
+              setSelected(p.selected);
+              setDailyPages(p.dailyPages);
+              didStartRef.current = true;
+              setAssignmentLoaded(true);
+            }
           } catch {
             setAssignmentLoaded(true);
           }
