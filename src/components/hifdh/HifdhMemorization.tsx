@@ -93,7 +93,7 @@ function isVerseComplete(transcript: string, targets: Ayah[]): {
   const eWords = e.split(" ").filter(w => w.length > 1);
   if (eWords.length === 0) {
     const lr = t.length / Math.max(1, e.length);
-    return { isComplete: lr >= 0.9 && lr <= 1.2, progress: Math.min(lr * 100, 100), missingWords: [] };
+    return { isComplete: lr >= 0.8 && lr <= 1.3, progress: Math.min(lr * 100, 100), missingWords: [] };
   }
   const found: string[] = [], missing: string[] = [];
   for (const ew of eWords) {
@@ -101,7 +101,7 @@ function isVerseComplete(transcript: string, targets: Ayah[]): {
   }
   const coverage = found.length / eWords.length;
   const lr = t.length / Math.max(1, e.length);
-  return { isComplete: coverage === 1 && lr >= 0.85 && lr <= 1.3, progress: Math.min(coverage * 100, 100), missingWords: missing };
+  return { isComplete: coverage >= 0.8 && lr >= 0.7 && lr <= 1.4, progress: Math.min(coverage * 100, 100), missingWords: missing };
 }
 
 function getBestMime(): string {
@@ -277,8 +277,8 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
    * appear ~1.5 s after speaking instead of only after silence ends.
    * ────────────────────────────────────────────────── */
   const sendToGroq = useCallback(async (blob: Blob) => {
-    if (blob.size < 1000) return; // too small — likely silence padding
-    if (voiceFramesRef.current < 2) { voiceFramesRef.current = 0; return; } // no real speech this window
+    if (blob.size < 700) return; // too small — likely silence padding
+    if (voiceFramesRef.current < 1) { voiceFramesRef.current = 0; return; } // no real speech this window
     voiceFramesRef.current = 0;
 
     try {
@@ -328,7 +328,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       setMissingWords(missing.slice(0, 5));
 
       const timeSinceLastCount = Date.now() - lastCountedTimeRef.current;
-      if (isComplete && tNorm !== norm(lastCountedText.current) && timeSinceLastCount > 300 && repsDoneRef.current < totalRepsRef.current) {
+      if (isComplete && tNorm !== norm(lastCountedText.current) && timeSinceLastCount > 150 && repsDoneRef.current < totalRepsRef.current) {
         lastCountedText.current = tNorm;
         countOneRep();
       }
@@ -371,7 +371,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
    * Wider chunk window + VAD gating above gives Whisper real speech
    * context per chunk and skips silent chunks, cutting hallucinations.
    * ──────────────────────── */
-  const CHUNK_MS = 1600;
+  const CHUNK_MS = 1200;
   const attachRecorder = useCallback((stream: MediaStream) => {
     const mime = mimeRef.current;
     const rec = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 24000 });
@@ -379,7 +379,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     chunksRef.current = [];
 
     rec.ondataavailable = (e) => {
-      if (!e.data || e.data.size < 1000) return;
+      if (!e.data || e.data.size < 700) return;
       // Each timeslice is a self-contained chunk — send to Groq immediately
       sendToGroq(new Blob([e.data], { type: mime }));
     };
