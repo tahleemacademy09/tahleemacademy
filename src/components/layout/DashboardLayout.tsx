@@ -608,7 +608,17 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
                     return (
                     <div key={n.id}
-                      onClick={() => { if (!n.is_read) markRead(n.id); setSelectedNotif(n); }}
+                      onClick={() => {
+                        if (!n.is_read) markRead(n.id);
+                        if (isClassType && subjectIdFromLink) {
+                          // Class reminder/ring with a known subject — go straight to the
+                          // live class, no intermediate detail screen.
+                          setShowNotifPanel(false);
+                          navigate(`/student/live-classes?subject=${subjectIdFromLink}&autoJoin=true`);
+                        } else {
+                          setSelectedNotif(n);
+                        }
+                      }}
                       style={{ background: bgColor, borderBottom:"1px solid #f0f0f0", padding:"14px 18px", cursor:"pointer", display:"flex", alignItems:"flex-start", gap:12 }}>
 
                       {/* Icon bubble */}
