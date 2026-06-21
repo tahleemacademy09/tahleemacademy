@@ -403,11 +403,9 @@ Schema: { "verdict": "approve | warn | remove", "confidence": 0.0-1.0, "reason_e
         if (!error) sent += Math.min(100, records.length - i);
       }
 
-      for (const uid of userIds) {
-        await dispatchToUser(adminClient, uid, fTitleEn, fMsgEn, {
-          title_ar: fTitleAr, message_ar: fMsgAr, link: safeLink, type,
-        });
-      }
+      // Push delivery is handled automatically by the Postgres trigger
+      // on the notifications table, which calls dispatch-notification for each row.
+      // No manual dispatchToUser loop needed here.
 
       console.log(`[ai-notification-center] sent=${sent} to ${userIds.length} users`);
 
