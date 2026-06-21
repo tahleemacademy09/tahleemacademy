@@ -104,18 +104,6 @@ function isVerseComplete(transcript: string, targets: Ayah[]): {
   return { isComplete: coverage === 1 && lr >= 0.85 && lr <= 1.3, progress: Math.min(coverage * 100, 100), missingWords: missing };
 }
 
-/* ── Word-level diff against the expected Quran text — said vs missing ── */
-function diffAgainstExpected(transcript: string, targets: Ayah[]): { word: string; said: boolean }[] {
-  const tNorm = norm(transcript);
-  const tWords = tNorm.split(" ").filter(Boolean);
-  const expectedWords = targets.flatMap(a => a.text.split(/\s+/).filter(Boolean));
-  return expectedWords.map(w => {
-    const nw = norm(w);
-    const said = nw.length < 2 || tWords.some(tw => tw.includes(nw) || nw.includes(tw));
-    return { word: w, said };
-  });
-}
-
 function getBestMime(): string {
   for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg", "audio/mp4"]) {
     if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(m)) return m;
@@ -157,7 +145,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const [missingWords,    setMissingWords]    = useState<string[]>([]);
   const [isListening,     setIsListening]     = useState(false);
   const [transcribing,    setTranscribing]    = useState(false);
-  const [wordDiff,        setWordDiff]        = useState<{ word: string; said: boolean }[]>([]);
 
   const sessionAyahsRef    = useRef<Ayah[]>([]);
   const audioRef           = useRef<HTMLAudioElement | null>(null);
@@ -270,7 +257,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     repsDoneRef.current = done;
     setRepsDone(done);
     setLiveText(""); setRecitingVerses(new Set()); setMatchProgress(0);
-    setMissingWords([]); setIsListening(false); setWordDiff([]);
+    setMissingWords([]); setIsListening(false);
     // Reset accumulators for next rep — keeps mic running
     finalAccRef.current = "";
     lastSegmentRef.current = "";
@@ -290,8 +277,8 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
    * appear ~1.5 s after speaking instead of only after silence ends.
    * ────────────────────────────────────────────────── */
   const sendToGroq = useCallback(async (blob: Blob) => {
-    if (blob.size < 1400) return; // too small — likely silence padding, avoids hallucinated text
-    if (voiceFramesRef.current < 3) { voiceFramesRef.current = 0; return; } // no real speech this window
+    if (blob.size < 1000) return; // too small — likely silence padding
+    if (voiceFramesRef.current < 2) { voiceFramesRef.current = 0; return; } // no real speech this window
     voiceFramesRef.current = 0;
 
     try {
@@ -339,10 +326,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       const { isComplete, progress, missingWords: missing } = isVerseComplete(fullText, targets);
       setMatchProgress(progress);
       setMissingWords(missing.slice(0, 5));
-      setWordDiff(diffAgainstExpected(fullText, targets));
 
       const timeSinceLastCount = Date.now() - lastCountedTimeRef.current;
-      if (isComplete && tNorm !== norm(lastCountedText.current) && timeSinceLastCount > 800 && repsDoneRef.current < totalRepsRef.current) {
+      if (isComplete && tNorm !== norm(lastCountedText.current) && timeSinceLastCount > 300 && repsDoneRef.current < totalRepsRef.current) {
         lastCountedText.current = tNorm;
         countOneRep();
       }
@@ -385,7 +371,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
    * Wider chunk window + VAD gating above gives Whisper real speech
    * context per chunk and skips silent chunks, cutting hallucinations.
    * ──────────────────────── */
-  const CHUNK_MS = 2200;
+  const CHUNK_MS = 1600;
   const attachRecorder = useCallback((stream: MediaStream) => {
     const mime = mimeRef.current;
     const rec = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 24000 });
@@ -393,7 +379,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     chunksRef.current = [];
 
     rec.ondataavailable = (e) => {
-      if (!e.data || e.data.size < 1400) return;
+      if (!e.data || e.data.size < 1000) return;
       // Each timeslice is a self-contained chunk — send to Groq immediately
       sendToGroq(new Blob([e.data], { type: mime }));
     };
@@ -453,7 +439,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       stepIdxRef.current = next; repsDoneRef.current = 0; totalRepsRef.current = all[next].reps;
       lastCountedText.current = ""; finalAccRef.current = ""; lastSegmentRef.current = "";
       setStepIdx(next); setRepsDone(0); setPeeking(false);
-      setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]); setWordDiff([]);
+      setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]);
       setIsListening(false); setLiveText(""); stopAudio();
       saveSession({ stepIdx: next, repsDone: 0 });
     } else { stopAudio(); clearSession(); setCompleted(true); }
@@ -519,7 +505,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     lastCountedTimeRef.current = 0;
     setSteps(ns); setStepIdx(0); setRepsDone(0); setPeeking(false); setCompleted(false);
     setStarted(true); setRecitingVerses(new Set()); setMatchProgress(0);
-    setMissingWords([]); setIsListening(false); setLiveText(""); setWordDiff([]);
+    setMissingWords([]); setIsListening(false); setLiveText("");
     stopAudio(); stopMicFn();
     saveSession({ stepIdx: 0, repsDone: 0, started: true, surahNum, startVerse: s, endVerse: e, repsPerVerse });
   };
@@ -795,21 +781,13 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
           </div>
         </div>
 
-        {/* Word match — actual Quran words, said vs not-yet-said */}
-        {wordDiff.length > 0 && (
+        {/* Recognized speech — plain, no color coding */}
+        {liveText.trim().length > 0 && (
           <div style={{ margin:"10px auto 6px", maxWidth:420, padding:"10px 14px", borderRadius:10,
-            background:"#f0fff4", border:`2px solid ${BORDER}`, direction:"rtl",
-            display:"flex", flexWrap:"wrap" as const, gap:"4px 6px",
-            justifyContent:"flex-end", animation:"slideIn .25s ease" }}>
-            {wordDiff.map((w, wi) => (
-              <span key={wi} style={{
-                fontFamily:"'Amiri Quran','Amiri',serif", fontSize:19,
-                color: w.said ? "#16a34a" : "#dc2626",
-                background: w.said ? "#dcfce7" : "#fee2e2",
-                borderRadius:6, padding:"2px 8px", lineHeight:2, display:"inline-block",
-                fontWeight: w.said ? 400 : 700,
-              }}>{w.word}</span>
-            ))}
+            background:"#f8fafb", border:`2px solid ${BORDER}`, direction:"rtl",
+            fontFamily:"'Amiri Quran','Amiri',serif", fontSize:19, color:G,
+            lineHeight:2, textAlign:"right", animation:"slideIn .2s ease" }}>
+            {liveText}
           </div>
         )}
 
@@ -833,11 +811,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
               <div style={{ width:`${matchProgress}%`, height:"100%", borderRadius:3,
                 background:matchProgress===100?GOLD:col.text, transition:"width .3s ease" }} />
             </div>
-            {missingWords.length > 0 && matchProgress < 100 && (
-              <div style={{ marginTop:6, fontSize:10, color:"#7a9e88", direction:"rtl", textAlign:"right" }}>
-                Still need: {missingWords.join(" · ")}
-              </div>
-            )}
           </div>
         )}
 
@@ -929,7 +902,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
 
         <button onClick={() => {
           stopAudio(); stopMicFn(); setPeeking(false);
-          setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]); setWordDiff([]);
+          setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]);
           setIsListening(false); setLiveText(""); finalAccRef.current = "";
           if (stepIdx > 0) {
             const prev = stepIdx - 1;
