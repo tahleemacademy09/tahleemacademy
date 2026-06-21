@@ -7,9 +7,15 @@
     2) FCM HTTP v1     — native Android/iOS via Capacitor
     3) Telegram
 
-  FIX: Native Capacitor tokens (endpoint starts with "native:") were being
+  FIX 1: Native Capacitor tokens (endpoint starts with "native:") were being
   passed to sendWebPush() which crashed because they are FCM tokens, not
   VAPID endpoints. Now routed to sendFCM() which uses Google FCM HTTP v1.
+
+  FIX 2: Legacy PWA service-worker FCM endpoints
+  (https://fcm.googleapis.com/fcm/send/TOKEN) were being skipped as
+  "malformed" because they have no p256dh/auth keys. They are actually
+  valid FCM registration tokens stored as URLs by the old web-push flow.
+  Now extracted and sent via FCM HTTP v1 — same path as native tokens.
 */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -306,22 +312,37 @@ Deno.serve(async (req) => {
 
       await Promise.all(
         subs.map(async (sub: any) => {
-          const isNative = sub.endpoint?.startsWith("native:");
+          const isNative    = sub.endpoint?.startsWith("native:");
+          const isLegacyFCM = sub.endpoint?.startsWith("https://fcm.googleapis.com/fcm/send/");
 
-          if (isNative) {
-            // ── Native Capacitor token → FCM HTTP v1 ─────────────────────────
-            // endpoint format: "native:android:FCM_TOKEN" or "native:ios:APNs_TOKEN"
-            const parts    = sub.endpoint.split(":");
-            const platform = parts[1]; // "android" | "ios"
-            const token    = parts.slice(2).join(":"); // rest is the token (may contain colons)
+          if (isNative || isLegacyFCM) {
+            // ── FCM HTTP v1 — covers both native Capacitor tokens and legacy
+            //    web-push FCM endpoints saved by the PWA service worker.
+            //
+            //    native:    "native:android:FCM_TOKEN"
+            //    legacy SW: "https://fcm.googleapis.com/fcm/send/FCM_TOKEN"
+            //
+            //    Both carry a real FCM registration token; FCM HTTP v1 accepts
+            //    them identically — only the extraction differs.
+            let token: string;
+            let platform: string;
+
+            if (isNative) {
+              const parts = sub.endpoint.split(":");
+              platform    = parts[1]; // "android" | "ios"
+              token       = parts.slice(2).join(":"); // token may itself contain colons
+            } else {
+              // Legacy FCM endpoint — strip the URL prefix to get the raw token
+              token    = sub.endpoint.replace("https://fcm.googleapis.com/fcm/send/", "");
+              platform = "web-fcm";
+            }
 
             if (!SERVICE_ACCOUNT_JSON || !FCM_PROJECT_ID) {
-              console.warn("[dispatch-notification] FCM not configured — skipping native token");
+              console.warn("[dispatch-notification] FCM not configured — skipping token");
               fcmFailed++;
               return;
             }
 
-            // iOS APNs tokens via FCM are supported if the iOS app is linked in Firebase
             const result = await sendFCM(
               token,
               { title, message, url: fullUrl, type: type ?? "announcement" },
@@ -329,11 +350,11 @@ Deno.serve(async (req) => {
               FCM_PROJECT_ID
             );
 
-            if (result === "ok")      { fcmSent++; }
+            if (result === "ok")           { fcmSent++; }
             else if (result === "expired") { fcmExpired++; expiredEndpoints.push(sub.endpoint); }
-            else                      { fcmFailed++; }
+            else                           { fcmFailed++; }
 
-            console.log(`[dispatch-notification] FCM ${platform} → ${result}`);
+            console.log(`[dispatch-notification] FCM (${platform}) → ${result}`);
           } else {
             // ── Web Push (VAPID) ──────────────────────────────────────────────
             if (!sub.p256dh || !sub.auth) {
