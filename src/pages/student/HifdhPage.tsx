@@ -14,12 +14,12 @@ type Tab = "overview" | "revision" | "test" | "memorization";
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "overview",      label: "Overview",      icon: <LayoutDashboard size={16} /> },
   { id: "revision",      label: "Revision",      icon: <BookOpen        size={16} /> },
-  { id: "test",          label: "Test",           icon: <ClipboardCheck  size={16} /> },
-  { id: "memorization",  label: "Memorization",   icon: <Brain           size={16} /> },
+  { id: "test",          label: "Test",          icon: <ClipboardCheck  size={16} /> },
+  { id: "memorization",  label: "Memorize",      icon: <Brain           size={16} /> },
 ];
 
 const GOLD = "#b7791f";
-const DG   = "#0f2318";
+const INK  = "#1a3d24";
 
 export default function HifdhPage() {
   const [tab, setTab]               = useState<Tab>("overview");
@@ -40,22 +40,22 @@ export default function HifdhPage() {
   }, []);
 
   return (
-    <div className="flex flex-col h-full" style={{ background: DG }}>
+    <div className="flex flex-col h-full" style={{ background: "#ffffff" }}>
       {/* ── Tab Bar ── */}
       <div
         className="flex items-center gap-0 shrink-0 border-b"
-        style={{ background: "#0b1a12", borderColor: GOLD + "33" }}>
+        style={{ background: "#ffffff", borderColor: "#e8ddd0", boxShadow: "0 1px 6px rgba(26,61,36,.06)" }}>
         {TABS.map(t => {
           const active = tab === t.id;
           return (
             <button
               key={t.id}
               onClick={() => setTab(t.id)}
-              className="flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-bold transition-all"
+              className="flex-1 flex flex-col items-center gap-1 py-3 text-[10px] font-bold transition-all"
               style={{
-                color:       active ? GOLD : "#4a6d58",
-                borderBottom: active ? `2px solid ${GOLD}` : "2px solid transparent",
-                background:  active ? GOLD + "0f" : "transparent",
+                color:        active ? GOLD : "#9aab94",
+                borderBottom: active ? `2.5px solid ${GOLD}` : "2.5px solid transparent",
+                background:   active ? "#fdf6e3" : "transparent",
               }}>
               {t.icon}
               {t.label}
@@ -65,7 +65,7 @@ export default function HifdhPage() {
       </div>
 
       {/* ── Tab Content ── */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden" style={{ background: "#f5f2ec" }}>
         {tab === "overview" && (
           <div className="h-full overflow-y-auto">
             <HifdhDashboard
