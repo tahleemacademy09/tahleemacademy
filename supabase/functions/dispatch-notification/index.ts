@@ -312,33 +312,18 @@ Deno.serve(async (req) => {
 
       await Promise.all(
         subs.map(async (sub: any) => {
-          const isNative    = sub.endpoint?.startsWith("native:");
-          const isLegacyFCM = sub.endpoint?.startsWith("https://fcm.googleapis.com/fcm/send/");
+          const isNative     = sub.endpoint?.startsWith("native:");
+          const hasVapidKeys = !!(sub.p256dh && sub.auth);
 
-          if (isNative || isLegacyFCM) {
-            // ── FCM HTTP v1 — covers both native Capacitor tokens and legacy
-            //    web-push FCM endpoints saved by the PWA service worker.
-            //
-            //    native:    "native:android:FCM_TOKEN"
-            //    legacy SW: "https://fcm.googleapis.com/fcm/send/FCM_TOKEN"
-            //
-            //    Both carry a real FCM registration token; FCM HTTP v1 accepts
-            //    them identically — only the extraction differs.
-            let token: string;
-            let platform: string;
-
-            if (isNative) {
-              const parts = sub.endpoint.split(":");
-              platform    = parts[1]; // "android" | "ios"
-              token       = parts.slice(2).join(":"); // token may itself contain colons
-            } else {
-              // Legacy FCM endpoint — strip the URL prefix to get the raw token
-              token    = sub.endpoint.replace("https://fcm.googleapis.com/fcm/send/", "");
-              platform = "web-fcm";
-            }
+          if (isNative) {
+            // ── Native Capacitor token → FCM HTTP v1 ─────────────────────────
+            // endpoint: "native:android:FCM_TOKEN" or "native:ios:TOKEN"
+            const parts    = sub.endpoint.split(":");
+            const platform = parts[1]; // "android" | "ios"
+            const token    = parts.slice(2).join(":"); // token may contain colons
 
             if (!SERVICE_ACCOUNT_JSON || !FCM_PROJECT_ID) {
-              console.warn("[dispatch-notification] FCM not configured — skipping token");
+              console.warn("[dispatch-notification] FCM not configured — skipping native token");
               fcmFailed++;
               return;
             }
@@ -355,19 +340,56 @@ Deno.serve(async (req) => {
             else                           { fcmFailed++; }
 
             console.log(`[dispatch-notification] FCM (${platform}) → ${result}`);
-          } else {
+
+          } else if (hasVapidKeys) {
             // ── Web Push (VAPID) ──────────────────────────────────────────────
-            if (!sub.p256dh || !sub.auth) {
-              // Malformed web subscription — clean it up
+            // Any endpoint with p256dh + auth keys is a VAPID subscription,
+            // including https://fcm.googleapis.com/fcm/send/... URLs that were
+            // registered via the browser Web Push API (not the FCM SDK).
+            // These MUST be sent via VAPID, not FCM HTTP v1.
+            const result = await sendWebPush(
+              { endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth },
+              pushPayload
+            );
+
+            if (result === "ok")           { webSent++; }
+            else if (result === "expired") { webExpired++; expiredEndpoints.push(sub.endpoint); }
+            else                           { webFailed++; }
+
+            console.log(`[dispatch-notification] VAPID (${sub.endpoint.includes("fcm") ? "fcm-vapid" : "web"}) → ${result}`);
+
+          } else {
+            // ── Legacy FCM URL without VAPID keys → FCM HTTP v1 ──────────────
+            // Some older subscriptions stored the FCM endpoint URL but without
+            // p256dh/auth. Extract the raw token and send via FCM HTTP v1.
+            const isFcmUrl = sub.endpoint?.startsWith("https://fcm.googleapis.com/fcm/send/");
+            if (!isFcmUrl) {
+              // Truly malformed — clean it up
               expiredEndpoints.push(sub.endpoint);
               webExpired++;
               return;
             }
 
-            const result = await sendWebPush(sub, pushPayload);
-            if (result === "ok")           { webSent++; }
-            else if (result === "expired") { webExpired++; expiredEndpoints.push(sub.endpoint); }
-            else                           { webFailed++; }
+            const token = sub.endpoint.replace("https://fcm.googleapis.com/fcm/send/", "");
+
+            if (!SERVICE_ACCOUNT_JSON || !FCM_PROJECT_ID) {
+              console.warn("[dispatch-notification] FCM not configured — skipping legacy token");
+              fcmFailed++;
+              return;
+            }
+
+            const result = await sendFCM(
+              token,
+              { title, message, url: fullUrl, type: type ?? "announcement" },
+              SERVICE_ACCOUNT_JSON,
+              FCM_PROJECT_ID
+            );
+
+            if (result === "ok")           { fcmSent++; }
+            else if (result === "expired") { fcmExpired++; expiredEndpoints.push(sub.endpoint); }
+            else                           { fcmFailed++; }
+
+            console.log(`[dispatch-notification] FCM (legacy-web) → ${result}`);
           }
         })
       );
