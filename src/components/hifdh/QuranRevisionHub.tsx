@@ -1754,9 +1754,6 @@ export default function QuranRevisionHub({ userId }: Props) {
                         <p style={{ fontFamily:"'Amiri',serif", fontSize:15, fontWeight:800, color:"#5a3e1b" }}>
                           سورة {ayahs[0].surah.nameAr}
                         </p>
-                        <p style={{ fontFamily:"'Amiri Quran','Amiri',serif", fontSize:14, color:"#8a6030", marginTop:2 }}>
-                          بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
-                        </p>
                       </div>
                     )}
 
@@ -1833,7 +1830,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                   <p className="text-xs" style={{ color: "#7aad90" }}>Loading page {currentPage}…</p>
                 </div>
               ) : (
-                <div className="qr-frame max-w-lg mx-auto shadow-2xl">
+                <div className="qr-frame max-w-[420px] mx-auto shadow-2xl">
                   {/* Page header */}
                   <div className="flex items-center justify-between px-4 py-2 border-b"
                     style={{ borderColor: GOLD + "44", background: `linear-gradient(to bottom,${GOLD}12,transparent)` }}>
@@ -1850,10 +1847,9 @@ export default function QuranRevisionHub({ userId }: Props) {
                   <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
 
                   {/* Verses */}
-                  <div className="px-5 py-5">
+                  <div className="px-7 py-5">
                     {surahGroups.map((g, gi) => {
                       const isNew     = g.ayahs[0].numberInSurah === 1;
-                      const showBism  = isNew && g.surah.number !== 9 && g.surah.number !== 1;
                       return (
                         <div key={gi}>
                           {isNew && (
@@ -1862,11 +1858,6 @@ export default function QuranRevisionHub({ userId }: Props) {
                               <small style={{ display: "block", fontSize: "0.6em", color: "#7a6030", fontFamily: "Georgia,serif" }}>
                                 {g.surah.englishName} · {g.surah.numberOfAyahs} verses
                               </small>
-                            </div>
-                          )}
-                          {showBism && (
-                            <div className="qr-bismillah" style={{ fontSize: fontSize * 0.82 }}>
-                              بِسۡمِ ٱللَّهِ ٱلرَّحۡمَٰنِ ٱلرَّحِيمِ
                             </div>
                           )}
                           <p className="qr-mushaf" style={{ fontSize }}>
@@ -1898,20 +1889,17 @@ export default function QuranRevisionHub({ userId }: Props) {
 
         {/* Footer — only when NOT recording */}
         {!recording && (
-          <div className="flex-none border-t px-3 py-2.5 space-y-2"
+          <div className="flex-none border-t px-3 py-1.5"
             style={{ borderColor: GOLD + "33", background: DG }}>
-            <p className="text-center text-xs" style={{ color: "#5a8a6a" }}>
-              Listen first, then tap the mic to recite from memory
-            </p>
-            <div className="flex items-center justify-center gap-4">
+            <div className="flex items-center justify-center gap-2">
               {/* Listen */}
               <button
                 onClick={isPagePlaying ? stopAudio : playPage}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold qr-btn"
                 style={{ background: isPagePlaying ? "#1a3025" : GOLD + "28", color: GOLD, border: `1px solid ${GOLD}44` }}>
                 {isPagePlaying
-                  ? <><StopCircle size={13} /> Stop</>
-                  : <><Headphones size={13} /> Listen</>
+                  ? <><StopCircle size={11} /> Stop</>
+                  : <><Headphones size={11} /> Listen</>
                 }
               </button>
 
@@ -1919,22 +1907,25 @@ export default function QuranRevisionHub({ userId }: Props) {
               <button
                 onClick={startLiveRecording}
                 disabled={pageLoading}
-                className="w-16 h-16 rounded-full flex items-center justify-center shadow-xl qr-btn"
+                className="w-10 h-10 rounded-full flex items-center justify-center shadow-md qr-btn"
                 style={{
                   background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
-                  boxShadow: `0 0 0 6px ${GOLD}22`,
+                  boxShadow: `0 0 0 3px ${GOLD}22`,
                 }}>
-                <Mic size={26} color={DG} />
+                <Mic size={17} color={DG} />
               </button>
 
               {/* Preview toggle */}
               <button
                 onClick={() => setPageVisible(v => !v)}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold qr-btn"
                 style={{ background: "#1a3025", color: "#7aad90", border: `1px solid ${GOLD}22` }}>
-                {pageVisible ? <><EyeOff size={13} /> Hide</> : <><Eye size={13} /> Preview</>}
+                {pageVisible ? <><EyeOff size={11} /> Hide</> : <><Eye size={11} /> Preview</>}
               </button>
             </div>
+            <p className="text-center text-[9px] mt-1" style={{ color: "#5a8a6a" }}>
+              Listen, then recite from memory
+            </p>
           </div>
         )}
       </div>
