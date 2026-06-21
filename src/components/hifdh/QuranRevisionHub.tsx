@@ -1830,7 +1830,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                   <p className="text-xs" style={{ color: "#7aad90" }}>Loading page {currentPage}…</p>
                 </div>
               ) : (
-                <div className="qr-frame max-w-[420px] mx-auto shadow-2xl">
+                <div className="qr-frame max-w-2xl mx-auto shadow-2xl">
                   {/* Page header */}
                   <div className="flex items-center justify-between px-4 py-2 border-b"
                     style={{ borderColor: GOLD + "44", background: `linear-gradient(to bottom,${GOLD}12,transparent)` }}>
@@ -1847,7 +1847,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                   <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
 
                   {/* Verses */}
-                  <div className="px-7 py-5">
+                  <div className="px-4 py-5">
                     {surahGroups.map((g, gi) => {
                       const isNew     = g.ayahs[0].numberInSurah === 1;
                       return (
@@ -1889,43 +1889,37 @@ export default function QuranRevisionHub({ userId }: Props) {
 
         {/* Footer — only when NOT recording */}
         {!recording && (
-          <div className="flex-none border-t px-3 py-1.5"
+          <div className="flex-none border-t px-3 py-1"
             style={{ borderColor: GOLD + "33", background: DG }}>
-            <div className="flex items-center justify-center gap-2">
+            <div className="flex items-center justify-center gap-3">
               {/* Listen */}
               <button
                 onClick={isPagePlaying ? stopAudio : playPage}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold qr-btn"
+                className="flex items-center justify-center w-8 h-8 rounded-full qr-btn"
                 style={{ background: isPagePlaying ? "#1a3025" : GOLD + "28", color: GOLD, border: `1px solid ${GOLD}44` }}>
-                {isPagePlaying
-                  ? <><StopCircle size={11} /> Stop</>
-                  : <><Headphones size={11} /> Listen</>
-                }
+                {isPagePlaying ? <StopCircle size={14} /> : <Headphones size={14} />}
               </button>
 
               {/* Main mic button */}
               <button
                 onClick={startLiveRecording}
                 disabled={pageLoading}
-                className="w-10 h-10 rounded-full flex items-center justify-center shadow-md qr-btn"
+                className="w-9 h-9 rounded-full flex items-center justify-center shadow-md qr-btn"
                 style={{
                   background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
                   boxShadow: `0 0 0 3px ${GOLD}22`,
                 }}>
-                <Mic size={17} color={DG} />
+                <Mic size={15} color={DG} />
               </button>
 
               {/* Preview toggle */}
               <button
                 onClick={() => setPageVisible(v => !v)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold qr-btn"
+                className="flex items-center justify-center w-8 h-8 rounded-full qr-btn"
                 style={{ background: "#1a3025", color: "#7aad90", border: `1px solid ${GOLD}22` }}>
-                {pageVisible ? <><EyeOff size={11} /> Hide</> : <><Eye size={11} /> Preview</>}
+                {pageVisible ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
-            <p className="text-center text-[9px] mt-1" style={{ color: "#5a8a6a" }}>
-              Listen, then recite from memory
-            </p>
           </div>
         )}
       </div>
