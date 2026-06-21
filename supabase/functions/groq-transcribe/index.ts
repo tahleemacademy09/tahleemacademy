@@ -9,12 +9,22 @@
 
 const corsHeaders = {
   "Access-Control-Allow-Origin":  "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-warmup",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+
+  // Lightweight warm-up ping — spins up this isolate without touching Groq
+  // (and without burning a Groq call/quota). The client fires this the
+  // instant a mic session starts, so the FIRST real repetition doesn't
+  // pay a cold-start tax on top of the unavoidable network round trip.
+  if (req.headers.get("x-warmup") === "1") {
+    return new Response(JSON.stringify({ warm: true }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   try {
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
