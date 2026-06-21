@@ -31,8 +31,8 @@ const SESSION_KEY = "hifdh_mem_v20";
  * MAX_UTTERANCE_MS     — safety cap in case VAD never sees silence
  * VOICE_ENERGY_MIN    — energy threshold in the 300–3400Hz band counted as "voiced"
  * ────────────────────────────────────────────────── */
-const ONSET_MS            = 90;
-const SILENCE_HANGOVER_MS = 650;
+const ONSET_MS            = 60;
+const SILENCE_HANGOVER_MS = 420;
 const MIN_UTTERANCE_MS    = 450;
 const MAX_UTTERANCE_MS    = 25000;
 const VOICE_ENERGY_MIN    = 14;
@@ -447,6 +447,11 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     setMicError("");
     onsetStartRef.current = 0; lastVoiceTimeRef.current = 0; pendingTxnRef.current = 0;
     mimeRef.current = getBestMime();
+
+    // Fire-and-forget warm-up — spins up the edge function isolate while
+    // the user is granting mic permission, so it's already warm by the
+    // time the first repetition is ready to transcribe.
+    supabase.functions.invoke("groq-transcribe", { body: {}, headers: { "x-warmup": "1" } }).catch(() => {});
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
