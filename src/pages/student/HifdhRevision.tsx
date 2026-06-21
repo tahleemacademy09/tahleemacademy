@@ -381,9 +381,13 @@ export default function QuranRevisionHub({ userId }: Props) {
   }, []);
 
   // Page recording
-  const [recording, setRecording]   = useState(false);
-  const [recTime, setRecTime]       = useState(0);
-  const [pageVisible, setPageVisible] = useState(true); // hides when recording
+  const [recording, setRecording]         = useState(false);
+  const [recTime, setRecTime]             = useState(0);
+  const [pageVisible, setPageVisible]     = useState(true); // hides when recording
+  const [recordedBlobUrl, setRecordedBlobUrl] = useState<string | null>(null); // for playback after recording
+  const [audioPath, setAudioPath]         = useState<string | null>(null); // uploaded path
+  const [playingRecording, setPlayingRecording] = useState(false);
+  const playbackAudioRef = useRef<HTMLAudioElement | null>(null);
   const mediaRecRef   = useRef<MediaRecorder | null>(null);
   const recChunksRef  = useRef<Blob[]>([]);
   const recTimerRef   = useRef<any>(null);
@@ -723,7 +727,8 @@ export default function QuranRevisionHub({ userId }: Props) {
       mr.start(200);
       mediaRecRef.current = mr;
       setRecording(true);
-      setPageVisible(false);  // HIDE page during recording
+      setPageVisible(false);  // HIDE page, show only recording UI
+      setRecordedBlobUrl(null);
       setRecTime(0);
       stopAudio();
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
@@ -779,7 +784,8 @@ export default function QuranRevisionHub({ userId }: Props) {
       setLiveWords(displayWords.map(ws => ws.map(word => ({ word, status: "hidden" }))));
       setLiveCurrentVerseIdx(0);
       setRecording(true);
-      setPageVisible(false);
+      setPageVisible(false); // HIDE page, show only recording UI
+      setRecordedBlobUrl(null);
       setRecTime(0);
       stopAudio();
 
@@ -956,6 +962,10 @@ export default function QuranRevisionHub({ userId }: Props) {
     setEvaluating(true);
     if (!evalResult) setEvalResult(null);
     setPageVisible(true);
+    // Save blob URL for local playback after evaluation
+    const blobUrl = URL.createObjectURL(blob);
+    setRecordedBlobUrl(blobUrl);
+    setPlayingRecording(false);
     try {
       const ayahs    = pageDataRef.current?.ayahs ?? [];
       const refText  = ayahs.map((a: any) => a.text).join(" ");
@@ -1834,38 +1844,65 @@ export default function QuranRevisionHub({ userId }: Props) {
             <p className="text-center text-xs" style={{ color: "#5a8a6a" }}>
               Listen first, then tap the mic to recite from memory
             </p>
-            <div className="flex items-center justify-center gap-4">
-              {/* Listen */}
-              <button
-                onClick={isPagePlaying ? stopAudio : playPage}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
-                style={{ background: isPagePlaying ? "#1a3025" : GOLD + "28", color: GOLD, border: `1px solid ${GOLD}44` }}>
-                {isPagePlaying
-                  ? <><StopCircle size={13} /> Stop</>
-                  : <><Headphones size={13} /> Listen</>
-                }
-              </button>
+            {recording ? (
+              /* ── Active Recording UI — full screen, no mushaf ── */
+              <div className="flex flex-col items-center justify-center gap-6 py-8">
+                {/* Pulsing mic indicator */}
+                <div className="relative flex items-center justify-center">
+                  <div className="absolute w-24 h-24 rounded-full animate-ping opacity-30"
+                    style={{ background: "#ef4444" }} />
+                  <div className="w-20 h-20 rounded-full flex items-center justify-center shadow-xl"
+                    style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)" }}>
+                    <Mic size={32} color="#fff" />
+                  </div>
+                </div>
+                <div className="flex flex-col items-center gap-1">
+                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: "#ef4444" }}>
+                    ● Recording
+                  </span>
+                  <span className="text-2xl font-black tabular-nums" style={{ color: "#fff" }}>
+                    {String(Math.floor(recTime / 60)).padStart(2, "0")}:{String(recTime % 60).padStart(2, "0")}
+                  </span>
+                  <span className="text-xs" style={{ color: "#7aad90" }}>Recite the full page from memory</span>
+                </div>
+                {/* Stop / Done button */}
+                <button
+                  onClick={stopLiveRecording}
+                  className="flex items-center gap-2 px-8 py-3.5 rounded-2xl font-black text-sm qr-btn"
+                  style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)", color: "#fff" }}>
+                  <StopCircle size={16} /> Done — Submit
+                </button>
+              </div>
+            ) : (
+              /* ── Pre-recording controls ── */
+              <div className="flex items-center justify-center gap-4">
+                {/* Listen */}
+                <button
+                  onClick={isPagePlaying ? stopAudio : playPage}
+                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
+                  style={{ background: isPagePlaying ? "#1a3025" : GOLD + "28", color: GOLD, border: `1px solid ${GOLD}44` }}>
+                  {isPagePlaying
+                    ? <><StopCircle size={13} /> Stop</>
+                    : <><Headphones size={13} /> Listen</>
+                  }
+                </button>
 
-              {/* Main mic button */}
-              <button
-                onClick={startLiveRecording}
-                disabled={pageLoading}
-                className="w-16 h-16 rounded-full flex items-center justify-center shadow-xl qr-btn"
-                style={{
-                  background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
-                  boxShadow: `0 0 0 6px ${GOLD}22`,
-                }}>
-                <Mic size={26} color={DG} />
-              </button>
+                {/* Main mic button */}
+                <button
+                  onClick={startLiveRecording}
+                  disabled={pageLoading}
+                  className="w-16 h-16 rounded-full flex items-center justify-center shadow-xl qr-btn"
+                  style={{
+                    background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                    boxShadow: `0 0 0 6px ${GOLD}22`,
+                  }}>
+                  <Mic size={26} color={DG} />
+                </button>
 
-              {/* Preview toggle */}
-              <button
-                onClick={() => setPageVisible(v => !v)}
-                className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
-                style={{ background: "#1a3025", color: "#7aad90", border: `1px solid ${GOLD}22` }}>
-                {pageVisible ? <><EyeOff size={13} /> Hide</> : <><Eye size={13} /> Preview</>}
-              </button>
-            </div>
+                {/* Spacer to balance layout */}
+                <div className="w-[72px]" />
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1944,6 +1981,40 @@ export default function QuranRevisionHub({ userId }: Props) {
                   <span className="text-xs font-black" style={{ color: GOLD }}>Teacher Feedback</span>
                 </div>
                 <p className="text-xs leading-relaxed" style={{ color: "#d4c08a" }}>{result.feedback}</p>
+              </div>
+            )}
+
+            {/* Playback your recording */}
+            {recordedBlobUrl && (
+              <div className="rounded-2xl p-4" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <div className="flex items-center gap-2 mb-3">
+                  <Headphones size={13} style={{ color: GOLD }} />
+                  <span className="text-xs font-black" style={{ color: GOLD }}>Your Recording</span>
+                </div>
+                <audio
+                  ref={playbackAudioRef}
+                  src={recordedBlobUrl}
+                  onPlay={() => setPlayingRecording(true)}
+                  onPause={() => setPlayingRecording(false)}
+                  onEnded={() => setPlayingRecording(false)}
+                  playsInline
+                  preload="metadata"
+                  style={{ display: "none" }}
+                />
+                <button
+                  onClick={() => {
+                    const a = playbackAudioRef.current;
+                    if (!a) return;
+                    if (playingRecording) { a.pause(); }
+                    else { a.currentTime = 0; a.play(); }
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-xs qr-btn"
+                  style={{ background: playingRecording ? "#1a3025" : GOLD + "22", color: GOLD, border: `1px solid ${GOLD}44` }}>
+                  {playingRecording
+                    ? <><StopCircle size={13} /> Stop Playback</>
+                    : <><Volume2 size={13} /> Play My Recording</>
+                  }
+                </button>
               </div>
             )}
 
@@ -2046,7 +2117,7 @@ export default function QuranRevisionHub({ userId }: Props) {
                   🔄 Try Again
                 </button>
               )}
-              <button onClick={() => setStage("reciting")}
+              <button onClick={() => { setStage("reciting"); setRecordedBlobUrl(null); setPlayingRecording(false); }}
                 className="w-full py-2.5 rounded-2xl text-xs font-bold qr-btn"
                 style={{ background: "transparent", color: "#4a6d58", border: `1px solid ${GOLD}15` }}>
                 ← Back to Page
