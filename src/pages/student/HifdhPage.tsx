@@ -14,10 +14,10 @@ type Tab = "overview" | "revision" | "test" | "memorization";
 const TAB_STORAGE_KEY = "hifdh_active_tab";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: "overview",      label: "Overview",      icon: <LayoutDashboard size={16} /> },
-  { id: "revision",      label: "Revision",      icon: <BookOpen        size={16} /> },
-  { id: "test",          label: "Test",          icon: <ClipboardCheck  size={16} /> },
-  { id: "memorization",  label: "Memorize",      icon: <Brain           size={16} /> },
+  { id: "overview",      label: "Overview",      icon: <LayoutDashboard size={13} /> },
+  { id: "revision",      label: "Revision",      icon: <BookOpen        size={13} /> },
+  { id: "test",          label: "Test",          icon: <ClipboardCheck  size={13} /> },
+  { id: "memorization",  label: "Memorize",      icon: <Brain           size={13} /> },
 ];
 
 const GOLD = "#b7791f";
@@ -60,7 +60,7 @@ export default function HifdhPage() {
             <button
               key={t.id}
               onClick={() => { setTab(t.id); setAutoStartRevision(false); }}
-              className="flex-1 flex flex-col items-center gap-1 py-3 text-[10px] font-bold transition-all"
+              className="flex-1 flex flex-col items-center gap-0.5 py-1.5 text-[9px] font-bold transition-all"
               style={{
                 color:        active ? GOLD : "#9aab94",
                 borderBottom: active ? `2.5px solid ${GOLD}` : "2.5px solid transparent",
