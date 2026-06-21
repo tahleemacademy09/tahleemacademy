@@ -63,6 +63,7 @@ const EntranceExamResume  = lazy(() => import("./pages/student/EntranceExamResum
 const EntranceResults     = lazy(() => import("./pages/student/EntranceResults"));
 const RevisionHub         = lazy(() => import("./pages/student/RevisionHub"));
 const HifdhRevision          = lazy(() => import("./pages/student/HifdhRevision"));
+const HifdhPage              = lazy(() => import("./pages/student/HifdhPage"));
 const HifdhDailyRevisionPage = lazy(() => import("./pages/student/HifdhDailyRevisionPage"));
 const RevisionRoom           = lazy(() => import("./pages/student/RevisionRoom"));
 const PaymentScreen       = lazy(() => import("./pages/student/PaymentScreen"));
@@ -220,7 +221,7 @@ const App = () => (
                     <Route path="/student/majlis"              element={<Majlis />} />
                     <Route path="/student/live-classes"        element={<LearningHub defaultTab="live" />} />
                     <Route path="/student/revision"            element={<RevisionHub />} />
-                    <Route path="/student/hifdh"               element={<HifdhRevision />} />
+                    <Route path="/student/hifdh"               element={<HifdhPage />} />
                     <Route path="/student/hifdh-daily"         element={<HifdhDailyRevisionPage />} />
                     <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
