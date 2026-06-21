@@ -1,9 +1,11 @@
 // src/components/hifdh/HifdhMemorization.tsx
-// GROQ WHISPER TRANSCRIPTION — rolling timeslice, near-real-time
-//  • Single continuous MediaRecorder with timeslice=1500ms
-//  • ondataavailable fires every 1.5 s → chunk sent to Groq immediately (parallel)
-//  • Words appear ~1.5 s after speaking, no waiting for silence
-//  • finalAccRef merges unique words across all chunks per rep
+// GROQ WHISPER TRANSCRIPTION — VAD-segmented, one call per repetition
+//  • Continuous VAD watches for voice onset / sustained silence
+//  • Each repetition = its own MediaRecorder (no timeslice) → one
+//    complete, properly-headed audio file per Whisper call
+//  • Far more accurate than fixed-time chunking (no broken WebM
+//    fragments, no mid-word cuts) and just as fast — next repetition
+//    starts recording immediately, transcription calls overlap
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, RECITERS, audioUrl, DEFAULT_RECITER } from "./surahData";
@@ -20,6 +22,20 @@ const PARCH  = "#faf6ec";
 const PARCH2 = "#f3ead8";
 
 const SESSION_KEY = "hifdh_mem_v20";
+
+/* ── VAD / utterance-segmentation tuning ──────────────────────
+ * One Whisper call per spoken repetition (not per fixed timeslice).
+ * ONSET_MS            — sustained voice needed before we start recording (debounces noise spikes)
+ * SILENCE_HANGOVER_MS — sustained silence needed before we consider the repetition finished
+ * MIN_UTTERANCE_MS    — discard anything shorter (breath/mic bump)
+ * MAX_UTTERANCE_MS     — safety cap in case VAD never sees silence
+ * VOICE_ENERGY_MIN    — energy threshold in the 300–3400Hz band counted as "voiced"
+ * ────────────────────────────────────────────────── */
+const ONSET_MS            = 90;
+const SILENCE_HANGOVER_MS = 650;
+const MIN_UTTERANCE_MS    = 450;
+const MAX_UTTERANCE_MS    = 25000;
+const VOICE_ENERGY_MIN    = 14;
 
 const REP_OPTIONS = [5, 7, 10, 15, 20] as const;
 type RepOption = typeof REP_OPTIONS[number];
@@ -157,26 +173,22 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const advanceStepRef     = useRef<() => void>(() => {});
   const pendingRestoreRef  = useRef<Saved | null>(null);
   const repsPerVerseRef    = useRef<number>(5);
-  const lastCountedText    = useRef("");
-  const lastCountedTimeRef = useRef(0);
-  const micTimerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
   const verseRefs          = useRef<Record<number, HTMLDivElement | null>>({});
 
-  // ── Recording state ─────────────────────────────────────────
-  const mediaStreamRef     = useRef<MediaStream | null>(null);
-  const recorderRef        = useRef<MediaRecorder | null>(null);
-  const chunksRef          = useRef<Blob[]>([]);
-  const silenceTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const finalAccRef        = useRef("");        // accumulated transcript this rep
-  const lastSegmentRef     = useRef("");        // last groq segment — for dedup
-  const isRecordingRef     = useRef(false);
-  const audioCtxRef        = useRef<AudioContext | null>(null);
-  const analyserRef        = useRef<AnalyserNode | null>(null);
-  const vadRafRef          = useRef<number | null>(null);
-  const lastVoiceTimeRef   = useRef(0);
-  const sendingRef         = useRef(false);     // prevents concurrent sends
-  const voiceFramesRef     = useRef(0);         // voiced VAD frames counted this chunk window
-  const mimeRef            = useRef("audio/webm");
+  // ── Recording state — VAD-segmented, one Whisper call per repetition ──
+  const mediaStreamRef       = useRef<MediaStream | null>(null);
+  const sessionActiveRef     = useRef(false);     // mic session on/off (the "Start Recording" toggle)
+  const utteranceRecorderRef = useRef<MediaRecorder | null>(null);
+  const utteranceActiveRef   = useRef(false);     // currently capturing one repetition
+  const utteranceStartRef    = useRef(0);
+  const onsetStartRef        = useRef(0);
+  const lastVoiceTimeRef     = useRef(0);
+  const pendingTxnRef        = useRef(0);         // in-flight Groq requests (can overlap across reps)
+  const audioCtxRef          = useRef<AudioContext | null>(null);
+  const analyserRef          = useRef<AnalyserNode | null>(null);
+  const vadRafRef            = useRef<number | null>(null);
+  const micTimerRef          = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mimeRef              = useRef("audio/webm");
 
   const surah = SURAHS[surahNum - 1];
 
@@ -257,11 +269,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     repsDoneRef.current = done;
     setRepsDone(done);
     setLiveText(""); setRecitingVerses(new Set()); setMatchProgress(0);
-    setMissingWords([]); setIsListening(false);
-    // Reset accumulators for next rep — keeps mic running
-    finalAccRef.current = "";
-    lastSegmentRef.current = "";
-    lastCountedTimeRef.current = Date.now();
+    setMissingWords([]);
     setJustCounted(true);
     setTimeout(() => setJustCounted(false), 500);
     saveSession({ repsDone: done });
@@ -271,51 +279,37 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveSession]);
 
-  /* ── Send a chunk to Groq Whisper ─────────────────────────────────────────────────
-   * Called every CHUNK_MS ms from the timeslice MediaRecorder.
-   * Multiple requests fly in parallel — no sendingRef gate — so words
-   * appear ~1.5 s after speaking instead of only after silence ends.
-   * ────────────────────────────────────────────────── */
-  const sendToGroq = useCallback(async (blob: Blob) => {
-    if (blob.size < 700) return; // too small — likely silence padding
-    if (voiceFramesRef.current < 1) { voiceFramesRef.current = 0; return; } // no real speech this window
-    voiceFramesRef.current = 0;
+  /* ── Transcribe one complete repetition (one-shot, full utterance) ──
+   * Called once per repetition when VAD detects the user has stopped
+   * speaking. Sends ONE complete, properly-headed audio file to Groq
+   * Whisper — far more accurate than slicing a stream into fixed-time
+   * fragments (which breaks words across boundaries and causes
+   * hallucination). Calls can overlap: the next repetition starts
+   * recording immediately while this one is still being transcribed,
+   * so the mic is never blocked waiting on the network. ── */
+  const transcribeUtterance = useCallback(async (blob: Blob) => {
+    if (blob.size < 1500) return; // too short to be a real attempt — discard silently
 
+    pendingTxnRef.current += 1; setTranscribing(true);
     try {
       const step = stepsRef.current[stepIdxRef.current];
       const targets = step ? step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean) : [];
       const prompt = targets.length
         ? targets.map(a => a.text).join(" ").slice(0, 224)
-        : "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
+        : "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
 
       const fd = new FormData();
-      fd.append("file", blob, `chunk_${Date.now()}.webm`);
+      fd.append("file", blob, `rep_${Date.now()}.webm`);
       fd.append("prompt", prompt);
 
       const { data, error } = await supabase.functions.invoke("groq-transcribe", { body: fd });
       if (error || !data?.text) return;
 
-      const segment: string = data.text.trim();
-      if (!segment) return;
+      const text = data.text.trim();
+      if (!text) return;
+      setLiveText(text.slice(-200));
 
-      // Skip exact duplicate of last segment
-      const segNorm = norm(segment);
-      if (segNorm === norm(lastSegmentRef.current)) return;
-      lastSegmentRef.current = segment;
-
-      // Merge: only append words not already in the running accumulator
-      const existingNorm = norm(finalAccRef.current);
-      const newWords = segment.trim().split(/\s+/).filter(w => w.length > 1 && !existingNorm.includes(norm(w)));
-      if (newWords.length > 0) {
-        finalAccRef.current = (finalAccRef.current + " " + newWords.join(" ")).trim();
-      }
-      const fullText = finalAccRef.current;
-
-      setLiveText(fullText.slice(-200));
-      setIsListening(true);
-
-      // Verse highlighting
-      const tNorm = norm(fullText);
+      const tNorm = norm(text);
       const activeVerses = new Set<number>();
       targets.forEach(ayah => {
         if (tNorm.includes(norm(ayah.text)) || norm(ayah.text).includes(tNorm))
@@ -323,24 +317,57 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       });
       setRecitingVerses(activeVerses);
 
-      const { isComplete, progress, missingWords: missing } = isVerseComplete(fullText, targets);
+      const { isComplete, progress, missingWords: missing } = isVerseComplete(text, targets);
       setMatchProgress(progress);
       setMissingWords(missing.slice(0, 5));
 
-      const timeSinceLastCount = Date.now() - lastCountedTimeRef.current;
-      if (isComplete && tNorm !== norm(lastCountedText.current) && timeSinceLastCount > 150 && repsDoneRef.current < totalRepsRef.current) {
-        lastCountedText.current = tNorm;
+      if (isComplete && repsDoneRef.current < totalRepsRef.current) {
         countOneRep();
       }
     } catch (err) {
-      console.warn("sendToGroq error:", err);
+      console.warn("transcribeUtterance error:", err);
+    } finally {
+      pendingTxnRef.current = Math.max(0, pendingTxnRef.current - 1);
+      if (pendingTxnRef.current === 0) setTranscribing(false);
     }
-    // No sendingRef gate — allow parallel requests for low latency
   }, [countOneRep]);
 
-  /* ── VAD — tracks voice presence for the isListening indicator AND counts
-   * voiced frames per chunk window so sendToGroq can skip silent chunks
-   * (the main source of Whisper hallucination on short audio) ── */
+  /* ── Per-repetition recorder ── starts on voice onset, stops on
+   * sustained silence (see VAD tick below). No timeslice is passed to
+   * MediaRecorder, so it fires exactly one ondataavailable + onstop per
+   * repetition, producing a single complete, decodable audio file. ── */
+  const startUtteranceRecorder = useCallback(() => {
+    const stream = mediaStreamRef.current;
+    if (!stream || utteranceActiveRef.current) return;
+    try {
+      const mime = mimeRef.current;
+      const rec = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 32000 });
+      const chunks: Blob[] = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      rec.onstop = () => {
+        utteranceActiveRef.current = false;
+        utteranceRecorderRef.current = null;
+        if (!sessionActiveRef.current) return; // mic was stopped mid-repetition — discard
+        transcribeUtterance(new Blob(chunks, { type: mime }));
+      };
+      rec.onerror = () => { setMicError("Recording error — tap ↺"); };
+      rec.start();
+      utteranceRecorderRef.current = rec;
+      utteranceActiveRef.current = true;
+      utteranceStartRef.current = performance.now();
+    } catch (e) { console.warn("utterance recorder failed to start:", e); }
+  }, [transcribeUtterance]);
+
+  const stopUtteranceRecorder = useCallback(() => {
+    const rec = utteranceRecorderRef.current;
+    if (rec && rec.state !== "inactive") { try { rec.stop(); } catch { /**/ } }
+  }, []);
+
+  /* ── Continuous VAD — detects the start/end of each spoken repetition
+   * and drives the per-utterance recorder above. Sampling every
+   * animation frame (~60fps) keeps onset/silence detection responsive
+   * (tens of ms); the only built-in delay is SILENCE_HANGOVER_MS — the
+   * minimum pause needed to be confident a repetition has ended. ── */
   const startVAD = useCallback((stream: MediaStream) => {
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -352,64 +379,73 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
 
       const buf = new Uint8Array(analyser.frequencyBinCount);
       const tick = () => {
-        if (!isRecordingRef.current) return;
+        if (!sessionActiveRef.current) return;
         analyser.getByteFrequencyData(buf);
         const binHz = ctx.sampleRate / analyser.fftSize;
         const lo = Math.floor(300 / binHz), hi = Math.floor(3400 / binHz);
         let sum = 0;
         for (let i = lo; i < hi && i < buf.length; i++) sum += buf[i];
-        const voiced = sum / Math.max(1, hi - lo) > 14;
-        setIsListening(voiced);
-        if (voiced) voiceFramesRef.current += 1;
+        const voiced = sum / Math.max(1, hi - lo) > VOICE_ENERGY_MIN;
+        const now = performance.now();
+
+        if (voiced) {
+          lastVoiceTimeRef.current = now;
+          setIsListening(true);
+          if (!utteranceActiveRef.current) {
+            if (onsetStartRef.current === 0) onsetStartRef.current = now;
+            if (now - onsetStartRef.current >= ONSET_MS) {
+              onsetStartRef.current = 0;
+              startUtteranceRecorder();
+            }
+          }
+        } else {
+          onsetStartRef.current = 0;
+          if (utteranceActiveRef.current) {
+            const silentFor   = now - lastVoiceTimeRef.current;
+            const recordedFor = now - utteranceStartRef.current;
+            if (silentFor >= SILENCE_HANGOVER_MS && recordedFor >= MIN_UTTERANCE_MS) {
+              setIsListening(false);
+              stopUtteranceRecorder();
+            }
+          } else {
+            setIsListening(false);
+          }
+        }
+
+        // Safety: never let a single repetition run away indefinitely
+        if (utteranceActiveRef.current && now - utteranceStartRef.current > MAX_UTTERANCE_MS) {
+          stopUtteranceRecorder();
+        }
+
         vadRafRef.current = requestAnimationFrame(tick);
       };
       vadRafRef.current = requestAnimationFrame(tick);
     } catch (e) { console.warn("VAD init failed:", e); }
-  }, []);
-
-  /* ── Attach a timeslice MediaRecorder ────────────────────────
-   * Wider chunk window + VAD gating above gives Whisper real speech
-   * context per chunk and skips silent chunks, cutting hallucinations.
-   * ──────────────────────── */
-  const CHUNK_MS = 1200;
-  const attachRecorder = useCallback((stream: MediaStream) => {
-    const mime = mimeRef.current;
-    const rec = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 24000 });
-    recorderRef.current = rec;
-    chunksRef.current = [];
-
-    rec.ondataavailable = (e) => {
-      if (!e.data || e.data.size < 700) return;
-      // Each timeslice is a self-contained chunk — send to Groq immediately
-      sendToGroq(new Blob([e.data], { type: mime }));
-    };
-
-    rec.onstop = () => { recorderRef.current = null; };
-    rec.onerror = () => { setMicError("Recording error — tap ↺"); };
-
-    // timeslice: fires ondataavailable every CHUNK_MS ms
-    rec.start(CHUNK_MS);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sendToGroq]);
+  }, [startUtteranceRecorder, stopUtteranceRecorder]);
 
   /* ── Stop mic completely ── */
   const stopMicFn = useCallback(() => {
-    isRecordingRef.current = false;
+    sessionActiveRef.current = false;     // set first — any in-flight onstop discards its blob
     if (vadRafRef.current) { cancelAnimationFrame(vadRafRef.current); vadRafRef.current = null; }
     if (micTimerRef.current) { clearInterval(micTimerRef.current); micTimerRef.current = null; }
-    if (recorderRef.current) { try { recorderRef.current.stop(); } catch { /**/ } recorderRef.current = null; }
+    if (utteranceRecorderRef.current) {
+      try { if (utteranceRecorderRef.current.state !== "inactive") utteranceRecorderRef.current.stop(); } catch { /**/ }
+      utteranceRecorderRef.current = null;
+    }
+    utteranceActiveRef.current = false;
     if (audioCtxRef.current) { try { audioCtxRef.current.close(); } catch { /**/ } audioCtxRef.current = null; }
     analyserRef.current = null;
     if (mediaStreamRef.current) { mediaStreamRef.current.getTracks().forEach(t => t.stop()); mediaStreamRef.current = null; }
-    chunksRef.current = [];
+    pendingTxnRef.current = 0;
     setMicActive(false); setMicTime(0); setIsListening(false); setTranscribing(false);
   }, []);
 
   /* ── Start mic ── */
   const startMic = useCallback(async () => {
-    if (isRecordingRef.current) return;
-    setMicError(""); finalAccRef.current = ""; lastSegmentRef.current = "";
-    lastCountedText.current = ""; lastCountedTimeRef.current = 0;
+    if (sessionActiveRef.current) return;
+    setMicError("");
+    onsetStartRef.current = 0; lastVoiceTimeRef.current = 0; pendingTxnRef.current = 0;
     mimeRef.current = getBestMime();
 
     try {
@@ -417,10 +453,9 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
       mediaStreamRef.current = stream;
-      isRecordingRef.current = true;
+      sessionActiveRef.current = true;
       setMicActive(true); setMicTime(0);
       micTimerRef.current = setInterval(() => setMicTime(t => t + 1), 1000);
-      attachRecorder(stream);
       startVAD(stream);
     } catch (err: any) {
       if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError")
@@ -428,7 +463,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       else setMicError("Could not start microphone");
       stopMicFn();
     }
-  }, [attachRecorder, startVAD, stopMicFn]);
+  }, [startVAD, stopMicFn]);
 
   /* ── Step navigation ── */
   const advanceStep = useCallback(() => {
@@ -437,7 +472,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     if (idx < all.length - 1) {
       const next = idx + 1;
       stepIdxRef.current = next; repsDoneRef.current = 0; totalRepsRef.current = all[next].reps;
-      lastCountedText.current = ""; finalAccRef.current = ""; lastSegmentRef.current = "";
       setStepIdx(next); setRepsDone(0); setPeeking(false);
       setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]);
       setIsListening(false); setLiveText(""); stopAudio();
@@ -501,8 +535,6 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     const ns = buildSteps(slice.length, repsPerVerse);
     stepsRef.current = ns; stepIdxRef.current = 0; repsDoneRef.current = 0;
     totalRepsRef.current = ns[0]?.reps ?? repsPerVerse; prevStepIdxRef.current = -1;
-    lastCountedText.current = ""; finalAccRef.current = ""; lastSegmentRef.current = "";
-    lastCountedTimeRef.current = 0;
     setSteps(ns); setStepIdx(0); setRepsDone(0); setPeeking(false); setCompleted(false);
     setStarted(true); setRecitingVerses(new Set()); setMatchProgress(0);
     setMissingWords([]); setIsListening(false); setLiveText("");
@@ -903,12 +935,12 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         <button onClick={() => {
           stopAudio(); stopMicFn(); setPeeking(false);
           setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]);
-          setIsListening(false); setLiveText(""); finalAccRef.current = "";
+          setIsListening(false); setLiveText("");
           if (stepIdx > 0) {
             const prev = stepIdx - 1;
             stepIdxRef.current = prev; repsDoneRef.current = 0;
             totalRepsRef.current = steps[prev].reps; prevStepIdxRef.current = -1;
-            lastCountedText.current = ""; setStepIdx(prev); setRepsDone(0);
+            setStepIdx(prev); setRepsDone(0);
             saveSession({ stepIdx: prev, repsDone: 0 });
           } else { clearSession(); setStarted(false); }
         }}
