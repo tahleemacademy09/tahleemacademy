@@ -11,6 +11,8 @@ import HifdhMemorization from "@/components/hifdh/HifdhMemorization";
 
 type Tab = "overview" | "revision" | "test" | "memorization";
 
+const TAB_STORAGE_KEY = "hifdh_active_tab";
+
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "overview",      label: "Overview",      icon: <LayoutDashboard size={16} /> },
   { id: "revision",      label: "Revision",      icon: <BookOpen        size={16} /> },
@@ -22,7 +24,11 @@ const GOLD = "#b7791f";
 const INK  = "#1a3d24";
 
 export default function HifdhPage() {
-  const [tab, setTab]               = useState<Tab>("overview");
+  const [tab, setTab]               = useState<Tab>(() => {
+    const saved = localStorage.getItem(TAB_STORAGE_KEY) as Tab | null;
+    return saved && ["overview","revision","test","memorization"].includes(saved) ? saved : "overview";
+  });
+  const [autoStartRevision, setAutoStartRevision] = useState(false);
   const [userId, setUserId]         = useState<string | null>(null);
   const [studentName, setStudentName] = useState("");
 
@@ -39,6 +45,9 @@ export default function HifdhPage() {
     });
   }, []);
 
+  // Persist active tab across refreshes
+  useEffect(() => { localStorage.setItem(TAB_STORAGE_KEY, tab); }, [tab]);
+
   return (
     <div className="flex flex-col h-full" style={{ background: "#ffffff" }}>
       {/* ── Tab Bar ── */}
@@ -50,7 +59,7 @@ export default function HifdhPage() {
           return (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => { setTab(t.id); setAutoStartRevision(false); }}
               className="flex-1 flex flex-col items-center gap-1 py-3 text-[10px] font-bold transition-all"
               style={{
                 color:        active ? GOLD : "#9aab94",
@@ -73,9 +82,9 @@ export default function HifdhPage() {
               studentName={studentName}
               activeTab="overview"
               onNavigate={(target) => {
-                if (target === "recitation") setTab("revision");
-                else if (target === "test")  setTab("test");
-                else if (target === "memorize") setTab("memorization");
+                if (target === "recitation") { setAutoStartRevision(true); setTab("revision"); }
+                else if (target === "test")  { setAutoStartRevision(false); setTab("test"); }
+                else if (target === "memorize") { setAutoStartRevision(false); setTab("memorization"); }
               }}
             />
           </div>
@@ -84,7 +93,7 @@ export default function HifdhPage() {
         {tab === "revision" && (
           <div className="h-full overflow-hidden">
             {/* HifdhRevision is QuranRevisionHub — pass userId */}
-            <HifdhRevision userId={userId} />
+            <HifdhRevision userId={userId} autoStart={autoStartRevision} />
           </div>
         )}
 
