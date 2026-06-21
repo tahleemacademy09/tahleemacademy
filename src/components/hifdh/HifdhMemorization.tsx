@@ -1,9 +1,9 @@
 // src/components/hifdh/HifdhMemorization.tsx
-// GROQ WHISPER TRANSCRIPTION — record-on-silence, send-once, no repeats
-//  • Single MediaRecorder, no timeslice — collects chunks until silence (900ms)
-//  • On silence: stop recorder → ondataavailable fires once with full blob → send to groq-transcribe
-//  • Restart recorder for next utterance
-//  • finalAccRef accumulates deduplicated sentence segments per rep
+// GROQ WHISPER TRANSCRIPTION — rolling timeslice, near-real-time
+//  • Single continuous MediaRecorder with timeslice=1500ms
+//  • ondataavailable fires every 1.5 s → chunk sent to Groq immediately (parallel)
+//  • Words appear ~1.5 s after speaking, no waiting for silence
+//  • finalAccRef merges unique words across all chunks per rep
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, RECITERS, audioUrl, DEFAULT_RECITER } from "./surahData";
@@ -270,44 +270,45 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveSession]);
 
-  /* ── Send blob to Groq Whisper (ONCE per utterance) ── */
+  /* ── Send a chunk to Groq Whisper ─────────────────────────────────────────────────
+   * Called every CHUNK_MS ms from the timeslice MediaRecorder.
+   * Multiple requests fly in parallel — no sendingRef gate — so words
+   * appear ~1.5 s after speaking instead of only after silence ends.
+   * ────────────────────────────────────────────────── */
   const sendToGroq = useCallback(async (blob: Blob) => {
-    if (blob.size < 1500) return;   // too short — background noise
-    if (sendingRef.current) return; // already sending; skip (prevents double-send)
-    sendingRef.current = true;
-    setTranscribing(true);
+    if (blob.size < 800) return; // too small — likely silence padding
 
     try {
-      // Build the Quranic prompt from the current target verse(s) for better accuracy
       const step = stepsRef.current[stepIdxRef.current];
       const targets = step ? step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean) : [];
       const prompt = targets.length
-        ? targets.map(a => a.text).join(" ").slice(0, 224)   // Whisper prompt max ~224 tokens
-        : "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
+        ? targets.map(a => a.text).join(" ").slice(0, 224)
+        : "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
 
       const fd = new FormData();
-      fd.append("file", blob, "rec.webm");
+      fd.append("file", blob, `chunk_${Date.now()}.webm`);
       fd.append("prompt", prompt);
 
-      const { data, error } = await supabase.functions.invoke("groq-transcribe", {
-        body: fd,
-      });
-
+      const { data, error } = await supabase.functions.invoke("groq-transcribe", { body: fd });
       if (error || !data?.text) return;
 
       const segment: string = data.text.trim();
       if (!segment) return;
 
-      // ── Deduplication: skip if this segment is identical to the last one ──
+      // Skip exact duplicate of last segment
       const segNorm = norm(segment);
       if (segNorm === norm(lastSegmentRef.current)) return;
       lastSegmentRef.current = segment;
 
-      // Append to running accumulator for this rep
-      finalAccRef.current = (finalAccRef.current + " " + segment).trim();
+      // Merge: only append words not already in the running accumulator
+      const existingNorm = norm(finalAccRef.current);
+      const newWords = segment.trim().split(/\s+/).filter(w => w.length > 1 && !existingNorm.includes(norm(w)));
+      if (newWords.length > 0) {
+        finalAccRef.current = (finalAccRef.current + " " + newWords.join(" ")).trim();
+      }
       const fullText = finalAccRef.current;
 
-      setLiveText(fullText.slice(-150));
+      setLiveText(fullText.slice(-200));
       setIsListening(true);
 
       // Verse highlighting
@@ -321,7 +322,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
 
       const { isComplete, progress, missingWords: missing } = isVerseComplete(fullText, targets);
       setMatchProgress(progress);
-      setMissingWords(missing.slice(0, 3));
+      setMissingWords(missing.slice(0, 5));
 
       const timeSinceLastCount = Date.now() - lastCountedTimeRef.current;
       if (isComplete && tNorm !== norm(lastCountedText.current) && timeSinceLastCount > 800 && repsDoneRef.current < totalRepsRef.current) {
@@ -330,21 +331,11 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       }
     } catch (err) {
       console.warn("sendToGroq error:", err);
-    } finally {
-      sendingRef.current = false;
-      setTranscribing(false);
     }
+    // No sendingRef gate — allow parallel requests for low latency
   }, [countOneRep]);
 
-  /* ── Stop recorder + flush ── */
-  const flushRecorder = useCallback(() => {
-    const rec = recorderRef.current;
-    if (!rec || rec.state === "inactive") return;
-    // stopping fires ondataavailable once with all accumulated chunks, then onstop
-    try { rec.stop(); } catch { /**/ }
-  }, []);
-
-  /* ── VAD silence detector ── */
+  /* ── VAD — tracks voice presence for the isListening indicator only ————— */
   const startVAD = useCallback((stream: MediaStream) => {
     try {
       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -354,10 +345,7 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       src.connect(analyser);
       audioCtxRef.current = ctx; analyserRef.current = analyser;
 
-      const SILENCE_MS = 900;
       const buf = new Uint8Array(analyser.frequencyBinCount);
-      lastVoiceTimeRef.current = Date.now();
-
       const tick = () => {
         if (!isRecordingRef.current) return;
         analyser.getByteFrequencyData(buf);
@@ -365,30 +353,18 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
         const lo = Math.floor(300 / binHz), hi = Math.floor(3400 / binHz);
         let sum = 0;
         for (let i = lo; i < hi && i < buf.length; i++) sum += buf[i];
-        const avg = sum / Math.max(1, hi - lo);
-
-        if (avg > 14) {
-          lastVoiceTimeRef.current = Date.now();
-          setIsListening(true);
-          // Cancel any pending silence flush
-          if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
-        } else {
-          const silent = Date.now() - lastVoiceTimeRef.current;
-          if (silent > SILENCE_MS && !silenceTimerRef.current && isRecordingRef.current) {
-            setIsListening(false);
-            silenceTimerRef.current = setTimeout(() => {
-              silenceTimerRef.current = null;
-              flushRecorder(); // stop → ondataavailable → send → restart
-            }, 50);
-          }
-        }
+        setIsListening(sum / Math.max(1, hi - lo) > 14);
         vadRafRef.current = requestAnimationFrame(tick);
       };
       vadRafRef.current = requestAnimationFrame(tick);
     } catch (e) { console.warn("VAD init failed:", e); }
-  }, [flushRecorder]);
+  }, []);
 
-  /* ── Create a fresh MediaRecorder and attach it ── */
+  /* ── Attach a timeslice MediaRecorder ────────────────────────────────
+   * Fires ondataavailable every CHUNK_MS ms. Each chunk is sent to Groq
+   * immediately — no waiting for silence — so transcription rolls in live.
+   * ────────────────────────────────────────────────── */
+  const CHUNK_MS = 1500;
   const attachRecorder = useCallback((stream: MediaStream) => {
     const mime = mimeRef.current;
     const rec = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 24000 });
@@ -396,31 +372,16 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
     chunksRef.current = [];
 
     rec.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+      if (!e.data || e.data.size < 800) return;
+      // Each timeslice is a self-contained chunk — send to Groq immediately
+      sendToGroq(new Blob([e.data], { type: mime }));
     };
 
-    rec.onstop = () => {
-      // All chunks collected — send once then restart if still active
-      if (chunksRef.current.length > 0) {
-        const blob = new Blob(chunksRef.current, { type: mime });
-        chunksRef.current = [];
-        sendToGroq(blob);
-      }
-      recorderRef.current = null;
-      // Auto-restart for next utterance
-      if (isRecordingRef.current && repsDoneRef.current < totalRepsRef.current) {
-        setTimeout(() => {
-          if (isRecordingRef.current && mediaStreamRef.current) {
-            attachRecorder(mediaStreamRef.current);
-          }
-        }, 100);
-      }
-    };
-
+    rec.onstop = () => { recorderRef.current = null; };
     rec.onerror = () => { setMicError("Recording error — tap ↺"); };
 
-    // No timeslice — collect until we call stop()
-    rec.start();
+    // timeslice: fires ondataavailable every CHUNK_MS ms
+    rec.start(CHUNK_MS);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sendToGroq]);
 
@@ -428,14 +389,12 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
   const stopMicFn = useCallback(() => {
     isRecordingRef.current = false;
     if (vadRafRef.current) { cancelAnimationFrame(vadRafRef.current); vadRafRef.current = null; }
-    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
     if (micTimerRef.current) { clearInterval(micTimerRef.current); micTimerRef.current = null; }
     if (recorderRef.current) { try { recorderRef.current.stop(); } catch { /**/ } recorderRef.current = null; }
     if (audioCtxRef.current) { try { audioCtxRef.current.close(); } catch { /**/ } audioCtxRef.current = null; }
     analyserRef.current = null;
     if (mediaStreamRef.current) { mediaStreamRef.current.getTracks().forEach(t => t.stop()); mediaStreamRef.current = null; }
     chunksRef.current = [];
-    sendingRef.current = false;
     setMicActive(false); setMicTime(0); setIsListening(false); setTranscribing(false);
   }, []);
 
