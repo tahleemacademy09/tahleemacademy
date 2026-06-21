@@ -1,17 +1,14 @@
+// src/components/hifdh/HifdhDashboard.tsx
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { 
+import {
   BookOpen, TrendingUp, Flame, Clock, ChevronRight,
-  CheckCircle2, RotateCcw, BookMarked, Headphones, Calendar, 
+  CheckCircle2, RotateCcw, BookMarked, Headphones, Calendar,
   AlertCircle, Star, Plus, Play, BarChart3, Trophy, AlertTriangle,
-  ArrowRight
+  ArrowRight, Zap
 } from "lucide-react";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -48,40 +45,44 @@ interface DailyTask {
   completed: boolean;
   target_date: string;
 }
-interface WeeklyData {
-  day: string;
-  count: number;
-}
 
-const daysSince = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+interface WeeklyData { day: string; count: number; }
+
+const GOLD       = "#c9a84c";
+const GOLD_LIGHT = "#e8c96b";
+const DG         = "#0f2318";
+const MG         = "#162d1f";
+const LG         = "#1e3d2a";
+const ACCENT     = "#276749";
+
+const daysSince = (iso: string) =>
+  Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export default function HifdhDashboard({ userId, studentName, onNavigate, activeTab = "overview" }: Props) {
-  const [progress, setProgress] = useState<ProgressEntry[]>([]);
-  const [sessions, setSessions] = useState<SessionEntry[]>([]);
-  const [juzDone, setJuzDone] = useState<number[]>([]);
-  const [juzPartial, setJuzPartial] = useState<number[]>([]);
-  const [stats, setStats] = useState({ streak: 0, avgAccuracy: 0, totalMins: 0, juzCount: 0 });
-  const [tasks, setTasks] = useState<DailyTask[]>([]);
-  const [weeklyData, setWeeklyData] = useState<WeeklyData[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function HifdhDashboard({
+  userId, studentName, onNavigate, activeTab = "overview",
+}: Props) {
+  const [progress,    setProgress]    = useState<ProgressEntry[]>([]);
+  const [sessions,    setSessions]    = useState<SessionEntry[]>([]);
+  const [juzDone,     setJuzDone]     = useState<number[]>([]);
+  const [juzPartial,  setJuzPartial]  = useState<number[]>([]);
+  const [stats,       setStats]       = useState({ streak: 0, avgAccuracy: 0, totalMins: 0, juzCount: 0 });
+  const [tasks,       setTasks]       = useState<DailyTask[]>([]);
+  const [weeklyData,  setWeeklyData]  = useState<WeeklyData[]>([]);
+  const [loading,     setLoading]     = useState(true);
   const [showAddTask, setShowAddTask] = useState(false);
-  const [taskType, setTaskType] = useState<"memorize"|"revise">("revise");
-  const [taskSurah, setTaskSurah] = useState("");
-  const [taskVerses, setTaskVerses] = useState("5");
-  const [taskPlan, setTaskPlan] = useState<"daily"|"weekly"|"biweekly"|"monthly">("daily");
-  const [savingTask, setSavingTask] = useState(false);
+  const [taskType,    setTaskType]    = useState<"memorize"|"revise">("revise");
+  const [taskSurah,   setTaskSurah]   = useState("");
+  const [taskVerses,  setTaskVerses]  = useState("5");
+  const [taskPlan,    setTaskPlan]    = useState<"daily"|"weekly"|"biweekly"|"monthly">("daily");
+  const [savingTask,  setSavingTask]  = useState(false);
 
   const overdueCount = progress.filter(p => daysSince(p.last_reviewed) >= 10).length;
-  const urgentCount = progress.filter(p => {
-    const days = daysSince(p.last_reviewed);
-    return days >= 5 && days < 10;
-  }).length;
-
-  const currentJuz = juzPartial.length > 0 ? juzPartial[0] : null;
-  const currentSurah = currentJuz ? progress.find(p => 
-    Math.ceil(p.surah_num / 4.27) === currentJuz
-  ) : null;
+  const urgentCount  = progress.filter(p => { const d = daysSince(p.last_reviewed); return d >= 5 && d < 10; }).length;
+  const currentJuz   = juzPartial.length > 0 ? juzPartial[0] : null;
+  const currentSurah = currentJuz
+    ? progress.find(p => Math.ceil(p.surah_num / 4.27) === currentJuz)
+    : null;
 
   useEffect(() => {
     if (!userId) return;
@@ -94,22 +95,21 @@ export default function HifdhDashboard({ userId, studentName, onNavigate, active
       if (prog.data) {
         const entries = prog.data as ProgressEntry[];
         setProgress(entries);
-        const done: number[] = [];
-        const partial: number[] = [];
-        entries.forEach(p => {          const j = Math.min(30, Math.ceil(p.surah_num / 4.27));
+        const done: number[] = [], partial: number[] = [];
+        entries.forEach(p => {
+          const j = Math.min(30, Math.ceil(p.surah_num / 4.27));
           if (p.best_accuracy >= 80 && !done.includes(j)) done.push(j);
           else if (!partial.includes(j) && !done.includes(j)) partial.push(j);
         });
         setJuzDone(done);
         setJuzPartial(partial);
         const scores = entries.map(p => p.best_accuracy).filter(Boolean);
-        const avg = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length) : 0;
+        const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
         setStats(s => ({ ...s, avgAccuracy: avg, juzCount: done.length }));
 
         const weekData: WeeklyData[] = [];
         for (let i = 6; i >= 0; i--) {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
+          const d = new Date(); d.setDate(d.getDate() - i);
           const dateStr = d.toDateString();
           const count = sess.data?.filter((s: any) => new Date(s.created_at).toDateString() === dateStr).length || 0;
           weekData.push({ day: WEEK_DAYS[d.getDay()], count });
@@ -118,15 +118,14 @@ export default function HifdhDashboard({ userId, studentName, onNavigate, active
       }
       if (sess.data) {
         setSessions(sess.data as SessionEntry[]);
-        const dates = [...new Set(sess.data.map((s:any) => new Date(s.created_at).toDateString()))];
+        const dates = [...new Set(sess.data.map((s: any) => new Date(s.created_at).toDateString()))];
         let streak = 0;
         for (let i = 0; i < 30; i++) {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
+          const d = new Date(); d.setDate(d.getDate() - i);
           if (dates.includes(d.toDateString())) streak++;
           else if (i > 0) break;
         }
-        const totalMins = Math.round(sess.data.reduce((a:number,s:any)=>a+(s.duration||0),0)/60);
+        const totalMins = Math.round(sess.data.reduce((a: number, s: any) => a + (s.duration || 0), 0) / 60);
         setStats(prev => ({ ...prev, streak, totalMins }));
       }
       if (taskRes.data) setTasks(taskRes.data as DailyTask[]);
@@ -138,22 +137,18 @@ export default function HifdhDashboard({ userId, studentName, onNavigate, active
     if (!userId || !taskSurah.trim()) return;
     setSavingTask(true);
     const today = new Date().toISOString().split("T")[0];
+    const count = taskPlan === "daily" ? 1 : taskPlan === "weekly" ? 7 : taskPlan === "biweekly" ? 14 : 30;
     const dates: string[] = [];
-    const count = taskPlan==="daily"?1:taskPlan==="weekly"?7:taskPlan==="biweekly"?14:30;
-    for (let i=0;i<count;i++) {
-      const d = new Date();
-      d.setDate(d.getDate()+i);
+    for (let i = 0; i < count; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
       dates.push(d.toISOString().split("T")[0]);
     }
-    const inserts = dates.map(d => ({      user_id: userId,
-      task_type: taskType,
-      surah_name: taskSurah.trim(),
-      verses_count: parseInt(taskVerses)||5,
-      completed: false,
-      target_date: d
+    const inserts = dates.map(d => ({
+      user_id: userId, task_type: taskType, surah_name: taskSurah.trim(),
+      verses_count: parseInt(taskVerses) || 5, completed: false, target_date: d,
     }));
     const { data } = await supabase.from("hifdh_daily_tasks").insert(inserts).select();
-    if (data) setTasks(prev => [...prev, ...data.filter((t:any)=>t.target_date===today) as DailyTask[]]);
+    if (data) setTasks(prev => [...prev, ...data.filter((t: any) => t.target_date === today) as DailyTask[]]);
     setSavingTask(false);
     setTaskSurah("");
     setShowAddTask(false);
@@ -162,235 +157,250 @@ export default function HifdhDashboard({ userId, studentName, onNavigate, active
   const toggleTask = async (task: DailyTask) => {
     if (!task.id) return;
     await supabase.from("hifdh_daily_tasks").update({ completed: !task.completed }).eq("id", task.id);
-    setTasks(prev => prev.map(t => t.id===task.id ? {...t,completed:!t.completed} : t));
+    setTasks(prev => prev.map(t => t.id === task.id ? { ...t, completed: !t.completed } : t));
   };
 
-  const completedToday = tasks.filter(t => t.completed).length;
-  const totalToday = tasks.length;
-  const progressPercent = totalToday > 0 ? Math.round((completedToday/totalToday)*100) : 0;
+  const completedToday  = tasks.filter(t => t.completed).length;
+  const totalToday      = tasks.length;
+  const progressPercent = totalToday > 0 ? Math.round((completedToday / totalToday) * 100) : 0;
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[600px]">
-        <div className="text-center space-y-4">
-          <div className="w-16 h-16 border-4 border-[#1a3d24] border-t-[#c9a84c] rounded-full animate-spin mx-auto" />
-          <p className="text-[#7a9e88] font-medium text-lg">Loading your dashboard...</p>
+      <div className="flex items-center justify-center min-h-[500px]" style={{ background: DG }}>
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-14 h-14 rounded-full border-4 border-t-transparent animate-spin"
+            style={{ borderColor: GOLD + "44", borderTopColor: GOLD }} />
+          <p className="text-sm font-semibold" style={{ color: GOLD + "aa" }}>Loading your Hifdh...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#faf6ee] pb-20">
-      
-      {/* ── Dashboard Content (Nav Bar Removed) ─────────────────────────── */}
-      <div className="space-y-4 p-4 md:p-6 max-w-6xl mx-auto">
-        
+    <div className="min-h-screen pb-24 overflow-y-auto" style={{ background: DG }}>
+      <div className="max-w-lg mx-auto px-4 pt-5 space-y-4">
+
+        {/* ── Alert Banner ── */}
         {overdueCount > 0 && (
-          <Card className="border-2 border-red-300 bg-gradient-to-r from-red-50 to-red-100 p-4 shadow-lg">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-red-600 flex items-center justify-center flex-shrink-0">
-                <AlertTriangle className="w-6 h-6 text-white" />
-              </div>
-              <div className="flex-1">
-                <h3 className="font-bold text-red-900 text-lg">
-                  {overdueCount} Revision{overdueCount > 1 ? "s" : ""} Overdue!                </h3>
-                <p className="text-red-700 text-sm">
-                  {urgentCount > 0 && `${urgentCount} more due soon. `}
-                  Complete them today to stay on track.
-                </p>
-              </div>
-              <Button 
-                onClick={() => onNavigate("test")}
-                className="bg-red-600 hover:bg-red-700 text-white font-semibold px-6"
-              >
-                Review Now
-              </Button>
+          <div
+            className="rounded-2xl p-4 flex items-center gap-3"
+            style={{
+              background: "linear-gradient(135deg,#3b0d0d,#5a1010)",
+              border: "1px solid #ef444455",
+            }}>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: "#ef444430" }}>
+              <AlertTriangle size={18} color="#ef4444" />
             </div>
-          </Card>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-black" style={{ color: "#fca5a5" }}>
+                {overdueCount} Revision{overdueCount > 1 ? "s" : ""} Overdue!
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "#f8717180" }}>
+                {urgentCount > 0 ? `+${urgentCount} more due soon · ` : ""}
+                Complete them to stay on track
+              </p>
+            </div>
+            <button
+              onClick={() => onNavigate("test")}
+              className="shrink-0 px-3 py-1.5 rounded-xl text-xs font-black"
+              style={{ background: "#ef4444", color: "#fff" }}>
+              Review Now
+            </button>
+          </div>
         )}
 
+        {/* ── Continue Button ── */}
         {currentSurah && (
-          <Button 
+          <button
             onClick={() => onNavigate("recitation")}
-            className="w-full h-16 md:h-20 text-base md:text-lg bg-gradient-to-r from-[#1a3d24] via-[#276749] to-[#1a3d24] hover:from-[#276749] hover:to-[#1a3d24] text-white font-bold shadow-xl hover:shadow-2xl transition-all hover:-translate-y-0.5 group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Play className="w-6 h-6 fill-white" />
-              </div>
-              <div className="text-left">
-                <div className="font-bold">Continue: Surah {currentSurah.surah_name}</div>
-                <div className="text-white/80 text-sm font-medium">
-                  {currentSurah.verses_memorized || 0} of {currentSurah.total_verses || "???"} verses
-                </div>
-              </div>
-              <ArrowRight className="w-6 h-6 ml-auto mr-2 group-hover:translate-x-1 transition-transform" />
+            className="w-full rounded-2xl p-4 flex items-center gap-4 transition-transform active:scale-[0.98]"
+            style={{
+              background: `linear-gradient(135deg, ${LG}, ${ACCENT})`,
+              border: `1px solid ${GOLD}33`,
+              boxShadow: `0 4px 24px ${GOLD}18`,
+            }}>
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: GOLD + "25" }}>
+              <Play size={22} fill={GOLD} color={GOLD} />
             </div>
-          </Button>
+            <div className="flex-1 text-left">
+              <p className="text-xs font-bold uppercase tracking-wider" style={{ color: GOLD + "aa" }}>
+                Continue Learning
+              </p>
+              <p className="text-sm font-black mt-0.5" style={{ color: "#fff" }}>
+                Surah {currentSurah.surah_name}
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: "#7aad90" }}>
+                {currentSurah.verses_memorized || 0} of {currentSurah.total_verses || "???"} verses
+              </p>
+            </div>
+            <ArrowRight size={18} color={GOLD} />
+          </button>
         )}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        {/* ── 4 Stat Cards ── */}
+        <div className="grid grid-cols-2 gap-3">
           <StatCard
-            icon={<BookOpen className="w-5 h-5" />}
+            icon={<BookOpen size={18} />}
             value={stats.juzCount || "0"}
             label="Juz Memorized"
             labelAr="أجزاء محفوظة"
-            gradient="from-[#1a3d24] to-[#276749]"
+            colors={["#1e4d35", "#276749"]}
+            accent="#4ade80"
             onClick={() => onNavigate("recitation")}
           />
           <StatCard
-            icon={<TrendingUp className="w-5 h-5" />}
+            icon={<TrendingUp size={18} />}
             value={`${stats.avgAccuracy}%`}
             label="Accuracy"
-            labelAr="الدقة"            gradient="from-[#276749] to-[#38a169]"
+            labelAr="الدقة"
+            colors={["#1a3d5c", "#1e5799"]}
+            accent="#60a5fa"
             onClick={() => onNavigate("test")}
           />
           <StatCard
-            icon={<Flame className="w-5 h-5" />}
+            icon={<Flame size={18} />}
             value={stats.streak}
             label="Day Streak"
             labelAr="الأيام"
-            gradient="from-[#b7791f] to-[#d69e2e]"
+            colors={["#4a2008", "#7c3005"]}
+            accent={GOLD}
             onClick={() => onNavigate("test")}
           />
           <StatCard
-            icon={<Clock className="w-5 h-5" />}
+            icon={<Clock size={18} />}
             value={`${stats.totalMins}m`}
             label="Total Time"
             labelAr="الوقت"
-            gradient="from-[#2b6cb0] to-[#4299e1]"
+            colors={["#1e1a4d", "#312e81"]}
+            accent="#a78bfa"
             onClick={() => onNavigate("recitation")}
           />
         </div>
 
-        <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
-          <div className="bg-gradient-to-r from-[#1a3d24] to-[#276749] p-4 md:p-5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
-                  <CheckCircle2 className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-xl text-white">Today's Tasks</h3>
-                  <p className="text-white/80 text-sm">مهام اليوم</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-2xl font-bold text-white">{completedToday}/{totalToday}</div>
-                <div className="text-xs text-white/70">Completed</div>
-              </div>
+        {/* ── Today's Tasks ── */}
+        <SectionCard
+          icon={<CheckCircle2 size={16} />}
+          title="Today's Tasks"
+          titleAr="مهام اليوم"
+          iconBg="#276749"
+          headerRight={
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black" style={{ color: GOLD }}>
+                {completedToday}/{totalToday}
+              </span>
             </div>
-            <Progress value={progressPercent} className="mt-3 h-2 bg-white/20" />
-          </div>
+          }>
+          {/* Mini progress bar */}
+          {totalToday > 0 && (
+            <div className="mx-4 mb-3 h-1.5 rounded-full overflow-hidden" style={{ background: "#ffffff0f" }}>
+              <div
+                className="h-full rounded-full transition-all duration-700"
+                style={{
+                  width: `${progressPercent}%`,
+                  background: `linear-gradient(90deg, ${GOLD}, ${GOLD_LIGHT})`,
+                }}
+              />
+            </div>
+          )}
 
-          <div className="p-4 md:p-5 space-y-4">
+          <div className="px-4 pb-4 space-y-2">
             {tasks.length === 0 ? (
-              <div className="text-center py-10">
-                <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-[#c9a84c]/20 to-[#b7791f]/20 flex items-center justify-center">
-                  <Calendar className="w-9 h-9 text-[#b7791f]" />
+              <div className="py-8 flex flex-col items-center gap-3">
+                <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+                  style={{ background: GOLD + "15" }}>
+                  <Calendar size={24} color={GOLD} />
                 </div>
-                <p className="text-[#1a3d24] font-bold text-lg mb-1">No tasks for today</p>
-                <p className="text-[#7a9e88] text-sm mb-4">لا توجد مهام اليوم بعد</p>
-                <Button                   onClick={() => setShowAddTask(true)}
-                  className="bg-[#1a3d24] hover:bg-[#276749] text-white font-semibold"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create Your First Task
-                </Button>
+                <div className="text-center">
+                  <p className="text-sm font-bold" style={{ color: "#fff" }}>No tasks today</p>
+                  <p className="text-xs mt-0.5" style={{ color: "#4a6d58" }}>لا توجد مهام اليوم بعد</p>
+                </div>
+                <button
+                  onClick={() => setShowAddTask(true)}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold"
+                  style={{ background: GOLD + "20", color: GOLD, border: `1px solid ${GOLD}44` }}>
+                  <Plus size={13} /> Add First Task
+                </button>
               </div>
             ) : (
-              <div className="space-y-2">
-                {tasks.map((task) => (
-                  <div
+              <>
+                {tasks.map(task => (
+                  <button
                     key={task.id}
                     onClick={() => toggleTask(task)}
-                    className={cn(
-                      "flex items-center gap-3 p-3.5 rounded-xl border-2 cursor-pointer transition-all",
-                      task.completed 
-                        ? "bg-gradient-to-r from-[#276749]/10 to-[#1a3d24]/10 border-[#276749]/30" 
-                        : "bg-white border-[#e2e8f0] hover:border-[#c9a84c]/50 hover:shadow-md"
-                    )}
-                  >
-                    <div className={cn(
-                      "w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0",
-                      task.completed 
-                        ? "bg-gradient-to-br from-[#276749] to-[#1a3d24] border-[#276749]" 
-                        : "border-[#cbd5e0]"
-                    )}>
-                      {task.completed && <CheckCircle2 className="w-4 h-4 text-white" />}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all"
+                    style={{
+                      background: task.completed ? GOLD + "12" : "#ffffff09",
+                      border: `1px solid ${task.completed ? GOLD + "44" : "#ffffff12"}`,
+                    }}>
+                    <div
+                      className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center border-2 transition-all"
+                      style={{
+                        background:   task.completed ? GOLD : "transparent",
+                        borderColor:  task.completed ? GOLD : "#4a6d58",
+                      }}>
+                      {task.completed && <CheckCircle2 size={11} color={DG} />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className={cn(
-                        "font-bold text-sm",
-                        task.completed ? "text-[#276749] line-through" : "text-[#1a3d24]"
-                      )}>
-                        {task.task_type === "memorize" ? "📖 Memorize" : "🔄 Revise"} · {task.surah_name}
-                      </div>
-                      <div className="text-xs text-[#7a9e88] font-medium">{task.verses_count} verses</div>
+                      <p className="text-xs font-black truncate"
+                        style={{ color: task.completed ? GOLD : "#fff", textDecoration: task.completed ? "line-through" : "none" }}>
+                        {task.task_type === "memorize" ? "📖" : "🔄"} {task.surah_name}
+                      </p>
+                      <p className="text-[10px] mt-0.5" style={{ color: "#4a6d58" }}>
+                        {task.verses_count} verses · {task.task_type}
+                      </p>
                     </div>
-                    <Badge 
-                      className={cn(
-                        "text-xs font-bold px-3 py-1",
-                        task.completed 
-                          ? "bg-gradient-to-r from-[#276749] to-[#1a3d24] text-white" 
-                          : "bg-[#f0f4f0] text-[#7a9e88]"
-                      )}
-                    >
+                    <span
+                      className="text-[10px] font-black px-2 py-0.5 rounded-lg"
+                      style={{
+                        background: task.completed ? GOLD + "22" : "#ffffff0f",
+                        color:       task.completed ? GOLD    : "#4a6d58",
+                      }}>
                       {task.completed ? "Done" : "Pending"}
-                    </Badge>
-                  </div>
+                    </span>
+                  </button>
                 ))}
-              </div>            )}
-
-            {tasks.length > 0 && (
-              <Button 
-                onClick={() => setShowAddTask(true)}
-                variant="outline"
-                className="w-full border-2 border-dashed border-[#c9a84c] text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold h-11"
-              >
-                <Plus className="w-4 h-4 mr-2" />
-                Add New Task
-              </Button>
+                <button
+                  onClick={() => setShowAddTask(true)}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold border-dashed border"
+                  style={{ color: GOLD + "88", borderColor: GOLD + "33" }}>
+                  <Plus size={13} /> Add Task
+                </button>
+              </>
             )}
           </div>
-        </Card>
+        </SectionCard>
 
-        <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
-          <div className="p-4 md:p-5">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#4299e1] to-[#2b6cb0] flex items-center justify-center">
-                  <BarChart3 className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-lg text-[#1a3d24]">Weekly Activity</h3>
-                  <p className="text-sm text-[#7a9e88]">النشاط الأسبوعي</p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="flex items-end justify-between gap-2 h-24">
-              {weeklyData.map((day, index) => {
+        {/* ── Weekly Activity ── */}
+        <SectionCard
+          icon={<BarChart3 size={16} />}
+          title="Weekly Activity"
+          titleAr="النشاط الأسبوعي"
+          iconBg="#1e5799">
+          <div className="px-4 pb-4">
+            <div className="flex items-end gap-1.5 h-20">
+              {weeklyData.map((day, i) => {
                 const maxCount = Math.max(...weeklyData.map(d => d.count), 1);
-                const height = (day.count / maxCount) * 100;
-                const isToday = index === 6;
+                const pct = (day.count / maxCount) * 100;
+                const isToday = i === 6;
                 return (
-                  <div key={index} className="flex-1 flex flex-col items-center gap-2">
-                    <div className="w-full relative">
-                      <div 
-                        className={cn(
-                          "w-full rounded-t-lg transition-all duration-500",
-                          isToday 
-                            ? "bg-gradient-to-t from-[#1a3d24] to-[#276749]" 
-                            : "bg-gradient-to-t from-[#c9a84c]/40 to-[#b7791f]/40"
-                        )}
-                        style={{ height: `${Math.max(height, day.count > 0 ? 20 : 5)}%` }}
+                  <div key={i} className="flex-1 flex flex-col items-center gap-1.5">
+                    <div className="w-full flex items-end" style={{ height: 56 }}>
+                      <div
+                        className="w-full rounded-t-lg transition-all duration-700"
+                        style={{
+                          height: `${Math.max(pct, day.count > 0 ? 18 : 4)}%`,
+                          background: isToday
+                            ? `linear-gradient(180deg, ${GOLD}, ${GOLD_LIGHT})`
+                            : day.count > 0
+                              ? `linear-gradient(180deg, ${ACCENT}cc, ${ACCENT}44)`
+                              : "#ffffff0f",
+                          boxShadow: isToday ? `0 0 8px ${GOLD}55` : "none",
+                        }}
                       />
                     </div>
-                    <span className={cn(
-                      "text-xs font-bold",
-                      isToday ? "text-[#1a3d24]" : "text-[#a0aec0]"                    )}>
+                    <span className="text-[9px] font-bold" style={{ color: isToday ? GOLD : "#4a6d58" }}>
                       {day.day}
                     </span>
                   </div>
@@ -398,287 +408,332 @@ export default function HifdhDashboard({ userId, studentName, onNavigate, active
               })}
             </div>
           </div>
-        </Card>
+        </SectionCard>
 
+        {/* ── Current Progress ── */}
         {currentSurah && (
-          <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
-            <div className="p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#c9a84c] to-[#b7791f] flex items-center justify-center">
-                    <BookMarked className="w-5 h-5 text-white" />
-                  </div>
+          <SectionCard
+            icon={<BookMarked size={16} />}
+            title="Current Progress"
+            titleAr="التقدم الحالي"
+            iconBg="#7c3005"
+            headerRight={
+              <button
+                onClick={() => onNavigate("recitation")}
+                className="flex items-center gap-0.5 text-xs font-bold"
+                style={{ color: GOLD }}>
+                View All <ChevronRight size={13} />
+              </button>
+            }>
+            <div className="px-4 pb-4">
+              <div className="rounded-xl p-4" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <div className="flex items-start justify-between mb-3">
                   <div>
-                    <h3 className="font-bold text-lg text-[#1a3d24]">Current Progress</h3>
-                    <p className="text-sm text-[#7a9e88]">التقدم الحالي</p>
+                    <p className="text-xs font-bold uppercase tracking-wider" style={{ color: GOLD + "88" }}>Juz {currentJuz}</p>
+                    <p className="text-base font-black mt-0.5" style={{ color: "#fff" }}>
+                      Surah {currentSurah.surah_name}
+                    </p>
                   </div>
+                  <Trophy size={20} color={GOLD} />
                 </div>
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={() => onNavigate("recitation")}
-                  className="text-[#c9a84c] hover:text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold"
-                >
-                  View All <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              </div>
-
-              <div className="bg-gradient-to-r from-[#1a3d24]/5 to-[#c9a84c]/5 rounded-xl p-4 border border-[#e2e8f0]">
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <h4 className="font-bold text-[#1a3d24] text-lg">Juz {currentJuz}</h4>
-                    <p className="text-sm text-[#7a9e88]">Surah {currentSurah.surah_name}</p>
-                  </div>
-                  <Trophy className="w-8 h-8 text-[#c9a84c]" />
-                </div>
-                <Progress 
-                  value={(currentSurah.verses_memorized || 0) / (currentSurah.total_verses || 1) * 100} 
-                  className="h-3 bg-white"
-                />
-                <div className="flex justify-between mt-2 text-sm">
-                  <span className="text-[#7a9e88] font-medium">
-                    {currentSurah.verses_memorized || 0} verses memorized
-                  </span>
-                  <span className="text-[#1a3d24] font-bold">                    {Math.round((currentSurah.verses_memorized || 0) / (currentSurah.total_verses || 1) * 100)}%
-                  </span>
-                </div>
-              </div>
-            </div>
-          </Card>
-        )}
-
-        {progress.length > 0 && (
-          <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
-            <div className="p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#e74c3c] to-[#c0392b] flex items-center justify-center">
-                    <RotateCcw className="w-5 h-5 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-lg text-[#1a3d24]">Urgent Revisions</h3>
-                    <p className="text-sm text-[#7a9e88]">المراجعات العاجلة</p>
-                  </div>
-                </div>
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={() => onNavigate("test")}
-                  className="text-[#c9a84c] hover:text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold"
-                >
-                  View All <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              </div>
-
-              <div className="space-y-2">
-                {progress
-                  .filter(p => daysSince(p.last_reviewed) < 10)
-                  .slice(0, 3)
-                  .map((item, index) => {
-                    const days = daysSince(item.last_reviewed);
-                    const isUrgent = days >= 5;
-                    return (
-                      <div
-                        key={index}
-                        onClick={() => onNavigate("test")}
-                        className={cn(
-                          "flex items-center gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all hover:shadow-md",
-                          isUrgent 
-                            ? "bg-gradient-to-r from-amber-50 to-amber-100 border-amber-300" 
-                            : "bg-gradient-to-r from-emerald-50 to-emerald-100 border-emerald-300"
-                        )}
-                      >
-                        <div className={cn(                          "w-3 h-3 rounded-full flex-shrink-0",
-                          isUrgent ? "bg-amber-600" : "bg-emerald-600"
-                        )} />
-                        <div className="flex-1 min-w-0">
-                          <h4 className="font-bold text-sm text-[#1a3d24] truncate">{item.surah_name}</h4>
-                          <p className="text-xs text-[#7a9e88] font-medium">
-                            {days === 0 ? "Today" : `${days}d ago`} · Best: <span className="font-bold text-[#b7791f]">{item.best_accuracy}%</span>
-                          </p>
-                        </div>
-                        <Badge 
-                          className={cn(
-                            "text-xs font-bold px-3 py-1",
-                            isUrgent 
-                              ? "bg-amber-500 text-white" 
-                              : "bg-emerald-600 text-white"
-                          )}
-                        >
-                          {isUrgent ? "Soon" : "On Track"}
-                        </Badge>
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
-          </Card>
-        )}
-
-        {sessions.length > 0 && (
-          <Card className="overflow-hidden border-2 border-[#e2e8f0] shadow-lg">
-            <div className="p-4 md:p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#2b6cb0] to-[#4299e1] flex items-center justify-center">
-                    <Headphones className="w-5 h-5 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-lg text-[#1a3d24]">Recent Sessions</h3>
-                    <p className="text-sm text-[#7a9e88]">الجلسات الأخيرة</p>
-                  </div>
-                </div>
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={() => onNavigate("recitation")}
-                  className="text-[#c9a84c] hover:text-[#b7791f] hover:bg-[#c9a84c]/10 font-semibold"
-                >
-                  View History <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              </div>
-              <div className="space-y-2">
-                {sessions.slice(0, 3).map((session, index) => (
+                {/* Progress bar */}
+                <div className="h-2 rounded-full overflow-hidden" style={{ background: "#ffffff12" }}>
                   <div
-                    key={index}
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{
+                      width: `${Math.round((currentSurah.verses_memorized || 0) / (currentSurah.total_verses || 1) * 100)}%`,
+                      background: `linear-gradient(90deg,${GOLD},${GOLD_LIGHT})`,
+                    }}
+                  />
+                </div>
+                <div className="flex justify-between mt-2">
+                  <span className="text-[10px]" style={{ color: "#4a6d58" }}>
+                    {currentSurah.verses_memorized || 0} verses
+                  </span>
+                  <span className="text-[10px] font-black" style={{ color: GOLD }}>
+                    {Math.round((currentSurah.verses_memorized || 0) / (currentSurah.total_verses || 1) * 100)}%
+                  </span>
+                </div>
+              </div>
+            </div>
+          </SectionCard>
+        )}
+
+        {/* ── Urgent Revisions ── */}
+        {progress.length > 0 && (
+          <SectionCard
+            icon={<RotateCcw size={16} />}
+            title="Urgent Revisions"
+            titleAr="المراجعات العاجلة"
+            iconBg="#7f1d1d"
+            headerRight={
+              <button
+                onClick={() => onNavigate("test")}
+                className="flex items-center gap-0.5 text-xs font-bold"
+                style={{ color: GOLD }}>
+                View All <ChevronRight size={13} />
+              </button>
+            }>
+            <div className="px-4 pb-4 space-y-2">
+              {progress
+                .filter(p => daysSince(p.last_reviewed) < 10)
+                .slice(0, 3)
+                .map((item, i) => {
+                  const days = daysSince(item.last_reviewed);
+                  const isUrgent = days >= 5;
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => onNavigate("test")}
+                      className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
+                      style={{
+                        background: isUrgent ? "#7c300520" : "#16532120",
+                        border: `1px solid ${isUrgent ? "#f59e0b44" : "#22c55e44"}`,
+                      }}>
+                      <div
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ background: isUrgent ? "#f59e0b" : "#22c55e" }}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-black truncate" style={{ color: "#fff" }}>
+                          {item.surah_name}
+                        </p>
+                        <p className="text-[10px] mt-0.5" style={{ color: "#4a6d58" }}>
+                          {days === 0 ? "Today" : `${days}d ago`} · Best:{" "}
+                          <span style={{ color: GOLD }}>{item.best_accuracy}%</span>
+                        </p>
+                      </div>
+                      <span
+                        className="text-[10px] font-black px-2 py-0.5 rounded-lg shrink-0"
+                        style={{
+                          background: isUrgent ? "#f59e0b22" : "#22c55e22",
+                          color:      isUrgent ? "#fbbf24"   : "#4ade80",
+                        }}>
+                        {isUrgent ? "⚡ Soon" : "✓ On Track"}
+                      </span>
+                    </button>
+                  );
+                })}
+              {progress.filter(p => daysSince(p.last_reviewed) < 10).length === 0 && (
+                <div className="py-6 text-center">
+                  <p className="text-xs font-bold" style={{ color: "#4a6d58" }}>No urgent revisions — great job! 🎉</p>
+                </div>
+              )}
+            </div>
+          </SectionCard>
+        )}
+
+        {/* ── Recent Sessions ── */}
+        {sessions.length > 0 && (
+          <SectionCard
+            icon={<Headphones size={16} />}
+            title="Recent Sessions"
+            titleAr="الجلسات الأخيرة"
+            iconBg="#1e1a4d"
+            headerRight={
+              <button
+                onClick={() => onNavigate("recitation")}
+                className="flex items-center gap-0.5 text-xs font-bold"
+                style={{ color: GOLD }}>
+                History <ChevronRight size={13} />
+              </button>
+            }>
+            <div className="px-4 pb-4 space-y-2">
+              {sessions.slice(0, 4).map((session, i) => {
+                const score = session.accuracy_score;
+                const color = score >= 80 ? "#4ade80" : score >= 60 ? GOLD : "#f87171";
+                const bg    = score >= 80 ? "#16532120" : score >= 60 ? "#7c300520" : "#7f1d1d20";
+                return (
+                  <button
+                    key={i}
                     onClick={() => onNavigate("recitation")}
-                    className="flex items-center gap-3 p-3 rounded-xl hover:bg-gradient-to-r hover:from-[#1a3d24]/5 hover:to-[#c9a84c]/5 cursor-pointer transition-all border border-transparent hover:border-[#e2e8f0]"
-                  >
-                    <div className={cn(
-                      "w-12 h-12 rounded-xl flex items-center justify-center font-bold text-sm flex-shrink-0 border-2 shadow-md",
-                      session.accuracy_score >= 80 
-                        ? "bg-gradient-to-br from-[#276749] to-[#1a3d24] text-white border-[#276749]" :
-                      session.accuracy_score >= 60 
-                        ? "bg-gradient-to-br from-[#b7791f] to-[#d69e2e] text-white border-[#b7791f]" :
-                        "bg-gradient-to-br from-[#c0392b] to-[#e74c3c] text-white border-[#c0392b]"
-                    )}>
-                      {session.accuracy_score}%
+                    className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
+                    style={{ background: "#ffffff08", border: "1px solid #ffffff0f" }}>
+                    <div
+                      className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 font-black text-xs"
+                      style={{ background: bg, color, border: `1px solid ${color}44` }}>
+                      {score}%
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-bold text-sm text-[#1a3d24] truncate">{session.surah_name}</h4>
-                      <p className="text-xs text-[#7a9e88] font-medium">
+                      <p className="text-xs font-black truncate" style={{ color: "#fff" }}>
+                        {session.surah_name}
+                      </p>
+                      <p className="text-[10px] mt-0.5" style={{ color: "#4a6d58" }}>
                         Ayah {session.ayah_start} · {Math.round((session.duration || 0) / 60)}m
                       </p>
                     </div>
-                    {session.accuracy_score >= 80 && <Star className="w-4 h-4 text-[#c9a84c] fill-[#c9a84c]" />}
-                  </div>
+                    {score >= 80 && <Star size={14} color={GOLD} fill={GOLD} />}
+                  </button>
+                );
+              })}
+            </div>
+          </SectionCard>
+        )}
+      </div>
+
+      {/* ── Add Task Dialog ── */}
+      <Dialog open={showAddTask} onOpenChange={setShowAddTask}>
+        <DialogContent
+          className="max-w-sm mx-4 rounded-2xl border-0"
+          style={{ background: MG, border: `1px solid ${GOLD}33` }}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base font-black" style={{ color: GOLD }}>
+              <Plus size={16} /> Add New Task
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            {/* Type */}
+            <div className="grid grid-cols-2 gap-2">
+              {(["revise", "memorize"] as const).map(t => (
+                <button
+                  key={t}
+                  onClick={() => setTaskType(t)}
+                  className="py-2.5 rounded-xl text-xs font-black transition-all"
+                  style={{
+                    background: taskType === t ? GOLD : "#ffffff0f",
+                    color:      taskType === t ? DG   : "#4a6d58",
+                  }}>
+                  {t === "revise" ? "🔄 Revise" : "📖 Memorize"}
+                </button>
+              ))}
+            </div>
+
+            {/* Surah */}
+            <div>
+              <label className="text-[10px] font-black uppercase tracking-wider mb-1.5 block" style={{ color: GOLD + "aa" }}>
+                Surah Name
+              </label>
+              <Input
+                value={taskSurah}
+                onChange={e => setTaskSurah(e.target.value)}
+                placeholder="e.g. Al-Baqarah"
+                className="h-10 text-sm rounded-xl border-0 font-medium"
+                style={{ background: "#ffffff0f", color: "#fff" }}
+              />
+            </div>
+
+            {/* Verses */}
+            <div>
+              <label className="text-[10px] font-black uppercase tracking-wider mb-1.5 block" style={{ color: GOLD + "aa" }}>
+                Verses per day
+              </label>
+              <Input
+                type="number" min={1} max={50}
+                value={taskVerses}
+                onChange={e => setTaskVerses(e.target.value)}
+                className="h-10 text-sm rounded-xl border-0 font-bold"
+                style={{ background: "#ffffff0f", color: "#fff" }}
+              />
+            </div>
+
+            {/* Plan */}
+            <div>
+              <label className="text-[10px] font-black uppercase tracking-wider mb-2 block" style={{ color: GOLD + "aa" }}>
+                Duration
+              </label>
+              <div className="grid grid-cols-4 gap-1.5">
+                {(["daily","weekly","biweekly","monthly"] as const).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setTaskPlan(p)}
+                    className="py-2 rounded-xl text-[10px] font-black transition-all"
+                    style={{
+                      background: taskPlan === p ? GOLD : "#ffffff0f",
+                      color:      taskPlan === p ? DG   : "#4a6d58",
+                    }}>
+                    {p === "daily" ? "Daily" : p === "weekly" ? "Weekly" : p === "biweekly" ? "2 Wks" : "Monthly"}
+                  </button>
                 ))}
               </div>
             </div>
-          </Card>
-        )}
 
-        <Dialog open={showAddTask} onOpenChange={setShowAddTask}>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="text-[#1a3d24] text-xl font-bold flex items-center gap-2">
-                <Plus className="w-5 h-5 text-[#c9a84c]" />
-                Add New Task
-                <span className="text-[#7a9e88] text-sm font-normal">إضافة مهمة جديدة</span>
-              </DialogTitle>
-            </DialogHeader>
-            
-            <div className="space-y-4 pt-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-bold text-[#1a3d24] mb-1.5 block">Type</label>
-                  <select
-                    value={taskType}
-                    onChange={(e) => setTaskType(e.target.value as any)}
-                    className="w-full rounded-lg border-2 border-[#e2e8f0] bg-white px-3 py-2.5 text-sm font-medium text-[#1a3d24] focus:border-[#c9a84c] focus:outline-none"
-                  >                    <option value="revise">🔄 Revise</option>
-                    <option value="memorize">📖 Memorize</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-bold text-[#1a3d24] mb-1.5 block">Verses per day</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={taskVerses}
-                    onChange={(e) => setTaskVerses(e.target.value)}
-                    className="h-10 border-2 border-[#e2e8f0] text-sm font-semibold text-[#1a3d24] focus:border-[#c9a84c]"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[#1a3d24] mb-1.5 block">Surah name</label>
-                <Input
-                  value={taskSurah}
-                  onChange={(e) => setTaskSurah(e.target.value)}
-                  placeholder="e.g. Al-Baqarah"
-                  className="h-11 border-2 border-[#e2e8f0] text-sm font-medium text-[#1a3d24] placeholder:text-[#a0aec0] focus:border-[#c9a84c]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-[#1a3d24] mb-2 block">Plan Duration</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {[
-                    ["daily", "Daily", "يومي"],
-                    ["weekly", "Weekly", "أسبوعي"],
-                    ["biweekly", "2 Weeks", "أسبوعان"],
-                    ["monthly", "Monthly", "شهري"]
-                  ].map(([key, en, ar]) => (
-                    <button
-                      key={key}
-                      onClick={() => setTaskPlan(key as "daily" | "weekly" | "biweekly" | "monthly")}
-                      className={cn(
-                        "py-2.5 px-2 rounded-xl text-center transition-all text-xs font-bold",
-                        taskPlan === key
-                          ? "bg-gradient-to-br from-[#1a3d24] to-[#276749] text-white shadow-lg scale-105"
-                          : "bg-[#f8fafb] text-[#7a9e88] hover:bg-[#e2e8f0]"
-                      )}
-                    >
-                      <div>{en}</div>
-                      <div className="text-[10px] opacity-80 mt-0.5">{ar}</div>
-                    </button>
-                  ))}                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <Button 
-                  variant="outline" 
-                  onClick={() => setShowAddTask(false)}
-                  className="flex-1 h-11 border-2 font-semibold"
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={addTask}
-                  disabled={savingTask || !taskSurah.trim()}
-                  className="flex-1 h-11 bg-gradient-to-r from-[#1a3d24] to-[#276749] hover:from-[#276749] hover:to-[#1a3d24] text-white font-bold shadow-lg disabled:opacity-50"
-                >
-                  {savingTask ? "Saving..." : "Add Task"}
-                </Button>
-              </div>
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={() => setShowAddTask(false)}
+                className="flex-1 py-2.5 rounded-xl text-xs font-bold"
+                style={{ background: "#ffffff0f", color: "#4a6d58" }}>
+                Cancel
+              </button>
+              <button
+                onClick={addTask}
+                disabled={savingTask || !taskSurah.trim()}
+                className="flex-1 py-2.5 rounded-xl text-xs font-black disabled:opacity-40"
+                style={{ background: GOLD, color: DG }}>
+                {savingTask ? "Saving..." : "Add Task"}
+              </button>
             </div>
-          </DialogContent>
-        </Dialog>
-      </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function StatCard({ icon, value, label, labelAr, gradient, onClick }: any) {
+// ── Reusable Section Card ──────────────────────────────────────────────────
+function SectionCard({
+  icon, title, titleAr, iconBg, children, headerRight,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  titleAr: string;
+  iconBg: string;
+  children: React.ReactNode;
+  headerRight?: React.ReactNode;
+}) {
   return (
-    <Card 
-      onClick={onClick}
-      className={cn(
-        "p-4 cursor-pointer transition-all hover:shadow-xl hover:-translate-y-1 active:scale-95 overflow-hidden bg-gradient-to-br",
-        gradient
-      )}
-    >
-      <div className="space-y-2 text-center">
-        <div className="w-10 h-10 rounded-xl mx-auto flex items-center justify-center bg-white/20 backdrop-blur-sm">
-          {icon}
+    <div
+      className="rounded-2xl overflow-hidden"
+      style={{ background: "#162d1f", border: "1px solid #ffffff0f" }}>
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderBottom: "1px solid #ffffff08" }}>
+        <div
+          className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
+          style={{ background: iconBg + "cc" }}>
+          <span style={{ color: "#fff" }}>{icon}</span>
         </div>
-        <div className="text-2xl md:text-3xl font-black text-white">{value}</div>
-        <div className="font-bold text-xs text-white/90 leading-tight">{label}</div>
-        <div className="text-[10px] text-white/70">{labelAr}</div>
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-black leading-tight" style={{ color: "#fff" }}>{title}</p>
+          <p className="text-[10px] leading-tight mt-0.5" style={{ color: "#4a6d58" }}>{titleAr}</p>
+        </div>
+        {headerRight}
       </div>
-    </Card>
+      {children}
+    </div>
+  );
+}
+
+// ── Stat Card ─────────────────────────────────────────────────────────────
+function StatCard({
+  icon, value, label, labelAr, colors, accent, onClick,
+}: {
+  icon: React.ReactNode;
+  value: any;
+  label: string;
+  labelAr: string;
+  colors: [string, string];
+  accent: string;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="rounded-2xl p-4 flex flex-col items-start gap-3 w-full text-left transition-transform active:scale-95"
+      style={{
+        background: `linear-gradient(135deg, ${colors[0]}, ${colors[1]})`,
+        border: `1px solid ${accent}22`,
+        boxShadow: `0 4px 20px ${colors[0]}80`,
+      }}>
+      <div
+        className="w-9 h-9 rounded-xl flex items-center justify-center"
+        style={{ background: accent + "25" }}>
+        <span style={{ color: accent }}>{icon}</span>
+      </div>
+      <div>
+        <p className="text-2xl font-black leading-none" style={{ color: "#fff" }}>{value}</p>
+        <p className="text-[11px] font-bold mt-1 leading-tight" style={{ color: "#ffffffcc" }}>{label}</p>
+        <p className="text-[9px] mt-0.5" style={{ color: accent + "88" }}>{labelAr}</p>
+      </div>
+    </button>
   );
 }
