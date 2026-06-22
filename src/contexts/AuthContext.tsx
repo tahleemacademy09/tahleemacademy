@@ -171,7 +171,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setMustChangePassword(mustChange);
 
       if (sess?.user) {
-        setLoading(true);
+        // Only show the full-page spinner on FIRST load (profile not yet fetched).
+        // On resume/token-refresh cycles, the profile is already in memory —
+        // setting loading=true here unmounts the entire dashboard and causes the
+        // "reload on minimize" bug on Android WebView.
+        if (!profile) setLoading(true);
         fetchUserData(sess.user.id);
       } else {
         // Signed out — clear everything immediately
