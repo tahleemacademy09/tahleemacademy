@@ -63,6 +63,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Guards against stale state from unmounted component or concurrent fetches
   const mountedRef  = useRef(true);
   const fetchingRef = useRef<string | null>(null); // userId currently being fetched
+  const profileRef  = useRef<UserProfile | null>(null); // mirrors profile state for use in closures
 
   useEffect(() => {
     mountedRef.current = true;
@@ -91,7 +92,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ]));
         if (!mountedRef.current || fetchingRef.current !== userId) return;
         if (rolesRes.data)    setRoles(rolesRes.data.map((r) => r.role));
-        if (profileRes.data)  setProfile(profileRes.data as UserProfile);
+        if (profileRes.data)  {
+          profileRef.current = profileRes.data as UserProfile;
+          setProfile(profileRes.data as UserProfile);
+        }
       } catch (err) {
         console.warn("[AuthContext] fetchUserData error (attempt", tries + 1, "):", err);
         if (tries < 2 && mountedRef.current) {
@@ -175,11 +179,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // On resume/token-refresh cycles, the profile is already in memory —
         // setting loading=true here unmounts the entire dashboard and causes the
         // "reload on minimize" bug on Android WebView.
-        if (!profile) setLoading(true);
+        if (!profileRef.current) setLoading(true);
         fetchUserData(sess.user.id);
       } else {
         // Signed out — clear everything immediately
         fetchingRef.current = null;
+        profileRef.current  = null;
         setRoles([]);
         setProfile(null);
         setMustChangePassword(false);
