@@ -676,25 +676,9 @@ const IslamicDailyFeed: React.FC<Props> = ({ language = "en" }) => {
   const [newsLoad,  setNewsLoad]  = useState(false);
   const [newsError, setNewsError] = useState(false);
   const [aqExp,     setAqExp]     = useState(false);
-  const [paused,    setPaused]    = useState(false);
 
-  // Auto-rotate through all tabs every 7 seconds unless user manually picked one
-  useEffect(() => {
-    if (paused) return;
-    const id = setInterval(() => {
-      setActiveTab(cur => {
-        const idx = TABS_ORDER.indexOf(cur);
-        return TABS_ORDER[(idx + 1) % TABS_ORDER.length];
-      });
-    }, 7000);
-    return () => clearInterval(id);
-  }, [paused]);
-
-  // Tapping a tab manually pauses auto-rotate for 60 seconds then resumes
   const handleTabClick = (id: TabId) => {
     setActiveTab(id);
-    setPaused(true);
-    setTimeout(() => setPaused(false), 60000);
   };
 
   useEffect(() => { setAqExp(false); }, [activeTab]);
