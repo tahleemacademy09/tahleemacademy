@@ -56,6 +56,7 @@ const SEERAH = [
 const Index = () => {
   const navigate = useNavigate();
   const [liveClass, setLiveClass] = useState<{ title: string; room_code: string } | null>(null);
+  const [liveClassChecked, setLiveClassChecked] = useState(false);
   const [showEnrollGuide, setShowEnrollGuide] = useState(false);
   const [activeReflection, setActiveReflection] = useState<"verse"|"hadith"|"seerah">("verse");
   const [upcomingEvent, setUpcomingEvent] = useState<{ event: typeof ISLAMIC_EVENTS[0]; daysAway: number } | null>(null);
@@ -112,6 +113,10 @@ const Index = () => {
   useEffect(() => {
     supabase.from("public_classes").select("title, room_code").eq("status", "live").eq("is_featured", true).limit(1).then(({ data }) => {
       if (data && data.length > 0) setLiveClass(data[0] as { title: string; room_code: string });
+      // Mark checked regardless of result — prevents the banner from flashing
+      // in after mount when the fetch resolves and liveClass jumps null → value,
+      // causing a layout shift that looks like blinking on the web view.
+      setLiveClassChecked(true);
     });
   }, []);
 
@@ -386,8 +391,11 @@ const Index = () => {
   return (
     <div className="ta-root">
 
-      {/* LIVE BANNER */}
-      {liveClass && (
+      {/* LIVE BANNER — only render after fetch resolves to prevent layout-shift
+          flash. Before liveClassChecked is true the banner slot is absent;
+          once checked it either shows (live class found) or stays absent
+          (no live class). This eliminates the null→visible blink on WebView. */}
+      {liveClassChecked && liveClass && (
         <div className="ta-live-banner" onClick={() => navigate(`/live/${liveClass.room_code}`)}>
           <div className="ta-live-dot" />
           <span className="ta-live-text">🔴 LIVE NOW: <span>{liveClass.title}</span> — Tap to Join Free →</span>
