@@ -16,6 +16,7 @@ import {
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
   BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -184,9 +185,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
     // 1 ── Student Pipeline ─────────────────────────────────────
     { type:"group", key:"pipeline", icon:UserPlus, label:t("Student Pipeline","سير التسجيل"), children:[
-      { to:"/admin/level-assignment",      icon:GraduationCap, label:t("New Registrations","الطلاب الجدد") },
-      { to:"/admin/levels",                icon:Layers,        label:t("Manage Levels","إدارة المستويات") },
-      { to:"/admin/tasjeel",               icon:ClipboardList, label:t("Pipeline Tracker","متابعة التسجيل") },
+      { to:"/admin/level-assignment",             icon:GraduationCap, label:t("New Registrations","الطلاب الجدد") },
+      { to:"/admin/levels",                       icon:Layers,        label:t("Manage Levels","إدارة المستويات") },
+      { to:"/admin/tasjeel",                      icon:ClipboardList, label:t("Pipeline Tracker","متابعة التسجيل") },
+      { to:"/admin/registration-diagnostics",     icon:Activity,      label:t("Reg. Diagnostics 🔍","تشخيص التسجيل 🔍") },
     ]},
 
     // 2 ── Students ─────────────────────────────────────────────
