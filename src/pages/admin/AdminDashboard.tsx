@@ -305,6 +305,7 @@ export default function AdminDashboard() {
             <Section title={t("Student Pipeline","سير التسجيل")} ck="pipeline" items={[
               {to:"/admin/level-assignment",      icon:GraduationCap, label:t("New Registrations","الطلاب الجدد"),         sub:t("Review & assign course levels","مراجعة وتعيين المستويات"),        badge:stats.pendingRegistrations},
               {to:"/admin/tasjeel",               icon:ClipboardList, label:t("Pipeline Tracker","متابعة التسجيل"),         sub:t("Full registration state machine","متابعة مسار التسجيل الكامل")},
+              {to:"/admin/student-registration",  icon:UserCheck,     label:t("Student Registration","تسجيل الطلاب"),        sub:t("Manage student registrations","إدارة تسجيل الطلاب")},
               {to:"/admin/registration-settings", icon:Settings,      label:t("Registration Settings","إعدادات التسجيل"),   sub:t("Toggle fees, flow & rules","ضبط الرسوم والقواعد")},
             ]}/>
 
