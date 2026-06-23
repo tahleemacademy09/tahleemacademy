@@ -465,15 +465,19 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
   }, [userId]);
 
   // ═══ Persist session to sessionStorage on every stage/page change ═══════
-  // This ensures refresh restores the exact position the student was at.
   useEffect(() => {
     if (!userId || !plan || stage === "setup") return;
     const key = `qrh_stage_${userId}`;
-    sessionStorage.setItem(key, JSON.stringify({
-      stage,
-      pageIdx: plan.currentIdx,
-    }));
-  }, [stage, plan, userId]);
+    const payload: any = { stage, pageIdx: plan.currentIdx };
+    // Persist exercise state so refresh can resume mid-exercise
+    if (stage === "exercise" && exercises.length > 0) {
+      payload.exercises = exercises;
+      payload.exIdx     = exIdx;
+      payload.exCorrect = exCorrect;
+      payload.exAnswered = exAnswered;
+    }
+    sessionStorage.setItem(key, JSON.stringify(payload));
+  }, [stage, plan, userId, exercises, exIdx, exCorrect, exAnswered]);
 
   // Also persist on visibility change (tab backgrounded on Android)
   useEffect(() => {
@@ -481,15 +485,19 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
     const key = `qrh_stage_${userId}`;
     const handleVisibility = () => {
       if (document.hidden && plan && stage !== "setup") {
-        sessionStorage.setItem(key, JSON.stringify({
-          stage,
-          pageIdx: plan.currentIdx,
-        }));
+        const payload: any = { stage, pageIdx: plan.currentIdx };
+        if (stage === "exercise" && exercises.length > 0) {
+          payload.exercises = exercises;
+          payload.exIdx     = exIdx;
+          payload.exCorrect = exCorrect;
+          payload.exAnswered = exAnswered;
+        }
+        sessionStorage.setItem(key, JSON.stringify(payload));
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [stage, plan, userId]);
+  }, [stage, plan, userId, exercises, exIdx, exCorrect, exAnswered]);
 
   // ═══ Fetch page ════════════════════════════════════════
   const fetchPage = useCallback(async (pageNum: number) => {
@@ -547,11 +555,21 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
           const lsSaved = localStorage.getItem(`revision_plan_${userId}`);
           if (lsSaved) {
             const p: RevisionPlan = JSON.parse(lsSaved);
-            // If sessionStorage has a more recent pageIdx, use it
             const resumeIdx = ss.pageIdx != null ? ss.pageIdx : p.currentIdx;
             console.log("[Hifdh] Restoring from sessionStorage — stage:", ss.stage, "pageIdx:", resumeIdx);
             sessionStorage.removeItem(ssKey); // consume it
+            // Restore exercise state if we were mid-exercise
+            if (ss.stage === "exercise" && ss.exercises?.length > 0) {
+              setExercises(ss.exercises);
+              setExIdx(ss.exIdx ?? 0);
+              setExCorrect(ss.exCorrect ?? 0);
+              setExAnswered(ss.exAnswered ?? 0);
+            }
             startSession(p, resumeIdx);
+            // Override stage to exercise after startSession sets "reciting"
+            if (ss.stage === "exercise") {
+              setTimeout(() => setStage("exercise"), 50);
+            }
             return;
           }
         }
@@ -686,15 +704,22 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
   }, [setPagePlayIdx]);
 
   // ═══ Transcription ════════════════════════════════════
-  // refText kept for post-processing alignment only — NOT passed to Whisper as prompt
-  // (passing the verse as Whisper prompt causes it to hallucinate the reference text)
-  const transcribeAudio = async (blob: Blob, _refText?: string): Promise<string> => {
+  // transcribeAudio: uses Groq Whisper-large-v3 with Quranic context prompt.
+  // The refText (the expected verse) is passed as the prompt so Whisper knows
+  // the vocabulary/diacritics domain — but we use PRECEDING context, not the
+  // exact verse, to avoid Whisper copying it verbatim (hallucination).
+  const transcribeAudio = async (blob: Blob, refText?: string): Promise<string> => {
     const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
 
-    // Short style-setting prompt: establishes Arabic Quranic script and diacritics.
-    // Must NOT be the verse being recited — Whisper treats prompt as "previous speech"
-    // and will try to continue/copy it instead of transcribing the actual audio.
-    const stylePrompt = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ";
+    // Build a Quranic context prompt:
+    // We use Surah Al-Fatiha as a fixed diacritics anchor, then append a few words
+    // of the reference verse to prime Whisper's vocabulary without causing copy-paste.
+    const fatiha = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ ۝ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ ۝ الرَّحْمَٰنِ الرَّحِيمِ ۝ مَالِكِ يَوْمِ الدِّينِ";
+    // Take first 6 words of ref as vocabulary hint (not enough to copy the whole verse)
+    const refHint = refText
+      ? refText.split(/\s+/).slice(0, 6).join(" ")
+      : "";
+    const stylePrompt = refHint ? `${fatiha} ۝ ${refHint}` : fatiha;
 
     // Correct file extension so Groq identifies the codec properly
     const ext = blob.type.includes("mp4") ? "mp4"
@@ -707,9 +732,9 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
         fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
         fd.append("model", "whisper-large-v3");
         fd.append("language", "ar");
-        fd.append("response_format", "verbose_json"); // gives word-level confidence
-        fd.append("temperature", "0");               // deterministic, no hallucination
-        fd.append("prompt", stylePrompt);            // sets script/style only
+        fd.append("response_format", "verbose_json"); // gives segment-level no_speech_prob
+        fd.append("temperature", "0");               // deterministic
+        fd.append("prompt", stylePrompt);            // Quranic vocab/diacritics context
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method: "POST",
           headers: { Authorization: `Bearer ${groqKey}` },
@@ -717,11 +742,10 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
         });
         if (r.ok) {
           const json = await r.json();
-          // verbose_json gives us no_speech_prob to detect silence/noise
           const noSpeech = json.segments?.[0]?.no_speech_prob ?? 0;
           const txt = (json.text ?? "").trim();
-          if (noSpeech < 0.6 && txt.length > 0) return txt;
-          if (noSpeech >= 0.6) return ""; // treat as silence / no speech detected
+          if (noSpeech < 0.65 && txt.length > 0) return txt;
+          if (noSpeech >= 0.65) return ""; // silence / no speech
         }
       } catch { /* fall through to edge function */ }
     }
@@ -1857,8 +1881,24 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
                   {/* Verses */}
                   <div className="px-4 py-4">
                     {surahGroups.map((g, gi) => {
-                      const isNew     = g.ayahs[0].numberInSurah === 1;
-                      const showBism  = isNew && g.surah.number !== 9 && g.surah.number !== 1;
+                      const isNew    = g.ayahs[0].numberInSurah === 1 || g.ayahs[0].numberInSurah === 0;
+                      const showBism = isNew && g.surah.number !== 9 && g.surah.number !== 1;
+
+                      // Filter out standalone Bismillah ayahs (numberInSurah=0) that the
+                      // API returns as a separate entry — we render Bismillah ourselves below.
+                      const BISM_RE = /^بِسْمِ\s+ٱللَّهِ|^بِسۡمِ\s+ٱللَّهِ|^بِسمِ\s+اللَّهِ/;
+                      const visibleAyahs = g.ayahs.filter(a => {
+                        if (a.numberInSurah === 0) return false; // standalone Bismillah ayah
+                        if (showBism && a.numberInSurah === 1 && BISM_RE.test(a.text.trim())) {
+                          // Verse 1 has Bismillah prepended — strip it so it doesn't double
+                          a = { ...a, text: a.text.replace(/^بِسْمِ\s+ٱللَّهِ\s+ٱلرَّحْمَٰنِ\s+ٱلرَّحِيمِ\s*/u, "")
+                                                  .replace(/^بِسۡمِ\s+ٱللَّهِ\s+ٱلرَّحۡمَٰنِ\s+ٱلرَّحِيمِ\s*/u, "")
+                                                  .replace(/^بِسمِ\s+اللَّهِ\s+الرَّحمَنِ\s+الرَّحِيمِ\s*/u, "")
+                                                  .trim() };
+                        }
+                        return a;
+                      });
+
                       return (
                         <div key={gi}>
                           {isNew && (
@@ -1875,7 +1915,7 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
                             </div>
                           )}
                           <p className="qr-mushaf" style={{ fontSize }}>
-                            {g.ayahs.map(a => (
+                            {visibleAyahs.map(a => (
                               <span key={a.number}
                                 onClick={() => { stopAudio(); playAyah(a); }}
                                 className={cn("cursor-pointer transition-all rounded-sm", playing === a.number && "qr-active")}>
