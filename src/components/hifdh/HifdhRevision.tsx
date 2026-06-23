@@ -1318,7 +1318,9 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
 
     .qr-mushaf {
       font-family:'Amiri Quran','Scheherazade New','Amiri',serif;
-      direction:rtl; line-height:3; color:${INK};
+      direction:rtl; line-height:2.6; color:${INK};
+      text-align:justify; text-align-last:right;
+      word-spacing:0.12em; letter-spacing:0.01em;
     }
     .qr-arabic { font-family:'Amiri',serif; direction:rtl; }
     .qr-active  { background:${GOLD}35; border-radius:4px; outline:2px solid ${GOLD}90; }
@@ -1829,14 +1831,14 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
           })()}
           {/* ── MUSHAF ── */}
           {!recording && (
-            <div className="h-full overflow-y-auto px-1 pt-2 pb-1">
+            <div className="h-full overflow-y-auto px-1 pt-1 pb-1">
               {pageLoading ? (
                 <div className="flex flex-col items-center justify-center h-full gap-3">
                   <Loader2 size={28} className="qr-spin" style={{ color: GOLD }} />
                   <p className="text-xs" style={{ color: "#7aad90" }}>Loading page {currentPage}…</p>
                 </div>
               ) : (
-                <div className="qr-frame shadow-2xl">
+                <div className="qr-frame w-full shadow-2xl">
                   {/* Page header */}
                   <div className="flex items-center justify-between px-4 py-2 border-b"
                     style={{ borderColor: GOLD + "44", background: `linear-gradient(to bottom,${GOLD}12,transparent)` }}>
@@ -1853,7 +1855,7 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
                   <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
 
                   {/* Verses */}
-                  <div className="px-2 py-3">
+                  <div className="px-4 py-4">
                     {surahGroups.map((g, gi) => {
                       const isNew     = g.ayahs[0].numberInSurah === 1;
                       const showBism  = isNew && g.surah.number !== 9 && g.surah.number !== 1;
@@ -1873,24 +1875,16 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
                             </div>
                           )}
                           <p className="qr-mushaf" style={{ fontSize }}>
-                            {g.ayahs.map((a, ai) => {
-                              // Strip the basmalah prefix from ayah 1 when we already show it above
-                              const rawText = (showBism && ai === 0 && a.numberInSurah === 1)
-                                ? a.text.replace(/^بِسۡمِ\s+ٱللَّهِ\s+ٱلرَّحۡمَٰنِ\s+ٱلرَّحِيمِ\s*/u, "")
-                                    .replace(/^بِسْمِ\s+اللَّهِ\s+الرَّحْمَٰنِ\s+الرَّحِيمِ\s*/u, "")
-                                    .replace(/^بِسْمِ\s+اللَّهِ\s+الرَّحْمَنِ\s+الرَّحِيمِ\s*/u, "")
-                                : a.text;
-                              return (
-                                <span key={a.number}
-                                  onClick={() => { stopAudio(); playAyah(a); }}
-                                  className={cn("cursor-pointer transition-all rounded-sm", playing === a.number && "qr-active")}>
-                                  {rawText}{" "}
-                                  <span style={{ color: GOLD, fontFamily: "'Amiri',serif", fontSize: "0.65em" }}>
-                                    ۝{toAr(a.numberInSurah)}
-                                  </span>{" "}
-                                </span>
-                              );
-                            })}
+                            {g.ayahs.map(a => (
+                              <span key={a.number}
+                                onClick={() => { stopAudio(); playAyah(a); }}
+                                className={cn("cursor-pointer transition-all rounded-sm", playing === a.number && "qr-active")}>
+                                {a.text}{" "}
+                                <span style={{ color: GOLD, fontFamily: "'Amiri',serif", fontSize: "0.65em" }}>
+                                  ۝{toAr(a.numberInSurah)}
+                                </span>{" "}
+                              </span>
+                            ))}
                           </p>
                         </div>
                       );
@@ -1911,34 +1905,29 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
         {!recording && (
           <div className="flex-none border-t px-3 py-1.5"
             style={{ borderColor: GOLD + "33", background: DG }}>
-            {/* Single compact row: Listen | hint text | mic */}
-            <div className="flex items-center gap-2">
-              {/* Listen button */}
+            {/* ── Pre-recording controls ── */}
+            <div className="flex items-center justify-center gap-3">
+              {/* Listen */}
               <button
                 onClick={isPagePlaying ? stopAudio : playPage}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold qr-btn flex-shrink-0"
-                style={{ background: isPagePlaying ? "#1a3025" : GOLD + "22", color: GOLD, border: `1px solid ${GOLD}44` }}>
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold qr-btn"
+                style={{ background: isPagePlaying ? "#1a3025" : GOLD + "28", color: GOLD, border: `1px solid ${GOLD}44` }}>
                 {isPagePlaying
-                  ? <><StopCircle size={11} /> Stop</>
-                  : <><Headphones size={11} /> Listen</>
+                  ? <><StopCircle size={10} /> Stop</>
+                  : <><Headphones size={10} /> Listen</>
                 }
               </button>
-
-              {/* Hint text */}
-              <p className="flex-1 text-center text-[10px]" style={{ color: "#5a8a6a" }}>
-                Listen then tap mic
-              </p>
 
               {/* Main mic button — compact */}
               <button
                 onClick={startLiveRecording}
                 disabled={pageLoading}
-                className="w-11 h-11 rounded-full flex items-center justify-center shadow-lg qr-btn flex-shrink-0"
+                className="w-10 h-10 rounded-full flex items-center justify-center shadow-lg qr-btn"
                 style={{
                   background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
                   boxShadow: `0 0 0 4px ${GOLD}22`,
                 }}>
-                <Mic size={18} color={DG} />
+                <Mic size={17} color={DG} />
               </button>
             </div>
           </div>
