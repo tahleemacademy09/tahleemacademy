@@ -1318,7 +1318,9 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
 
     .qr-mushaf {
       font-family:'Amiri Quran','Scheherazade New','Amiri',serif;
-      direction:rtl; line-height:3; color:${INK};
+      direction:rtl; line-height:2.6; color:${INK};
+      text-align:justify; text-align-last:right;
+      word-spacing:0.12em; letter-spacing:0.01em;
     }
     .qr-arabic { font-family:'Amiri',serif; direction:rtl; }
     .qr-active  { background:${GOLD}35; border-radius:4px; outline:2px solid ${GOLD}90; }
@@ -1829,14 +1831,14 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
           })()}
           {/* ── MUSHAF ── */}
           {!recording && (
-            <div className="h-full overflow-y-auto px-3 pt-3 pb-2">
+            <div className="h-full overflow-y-auto px-1 pt-1 pb-1">
               {pageLoading ? (
                 <div className="flex flex-col items-center justify-center h-full gap-3">
                   <Loader2 size={28} className="qr-spin" style={{ color: GOLD }} />
                   <p className="text-xs" style={{ color: "#7aad90" }}>Loading page {currentPage}…</p>
                 </div>
               ) : (
-                <div className="qr-frame max-w-lg mx-auto shadow-2xl">
+                <div className="qr-frame w-full shadow-2xl">
                   {/* Page header */}
                   <div className="flex items-center justify-between px-4 py-2 border-b"
                     style={{ borderColor: GOLD + "44", background: `linear-gradient(to bottom,${GOLD}12,transparent)` }}>
@@ -1853,7 +1855,7 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
                   <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
 
                   {/* Verses */}
-                  <div className="px-5 py-5">
+                  <div className="px-4 py-4">
                     {surahGroups.map((g, gi) => {
                       const isNew     = g.ayahs[0].numberInSurah === 1;
                       const showBism  = isNew && g.surah.number !== 9 && g.surah.number !== 1;
@@ -1901,70 +1903,33 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
 
         {/* Footer — only when NOT recording */}
         {!recording && (
-          <div className="flex-none border-t px-3 py-2.5 space-y-2"
+          <div className="flex-none border-t px-3 py-1.5"
             style={{ borderColor: GOLD + "33", background: DG }}>
-            <p className="text-center text-xs" style={{ color: "#5a8a6a" }}>
-              Listen first, then tap the mic to recite from memory
-            </p>
-            {recording ? (
-              /* ── Active Recording UI — full screen, no mushaf ── */
-              <div className="flex flex-col items-center justify-center gap-6 py-8">
-                {/* Pulsing mic indicator */}
-                <div className="relative flex items-center justify-center">
-                  <div className="absolute w-24 h-24 rounded-full animate-ping opacity-30"
-                    style={{ background: "#ef4444" }} />
-                  <div className="w-20 h-20 rounded-full flex items-center justify-center shadow-xl"
-                    style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)" }}>
-                    <Mic size={32} color="#fff" />
-                  </div>
-                </div>
-                <div className="flex flex-col items-center gap-1">
-                  <span className="text-xs font-bold uppercase tracking-widest" style={{ color: "#ef4444" }}>
-                    ● Recording
-                  </span>
-                  <span className="text-2xl font-black tabular-nums" style={{ color: "#fff" }}>
-                    {String(Math.floor(recTime / 60)).padStart(2, "0")}:{String(recTime % 60).padStart(2, "0")}
-                  </span>
-                  <span className="text-xs" style={{ color: "#7aad90" }}>Recite the full page from memory</span>
-                </div>
-                {/* Stop / Done button */}
-                <button
-                  onClick={stopLiveRecording}
-                  className="flex items-center gap-2 px-8 py-3.5 rounded-2xl font-black text-sm qr-btn"
-                  style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)", color: "#fff" }}>
-                  <StopCircle size={16} /> Done — Submit
-                </button>
-              </div>
-            ) : (
-              /* ── Pre-recording controls ── */
-              <div className="flex items-center justify-center gap-4">
-                {/* Listen */}
-                <button
-                  onClick={isPagePlaying ? stopAudio : playPage}
-                  className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold qr-btn"
-                  style={{ background: isPagePlaying ? "#1a3025" : GOLD + "28", color: GOLD, border: `1px solid ${GOLD}44` }}>
-                  {isPagePlaying
-                    ? <><StopCircle size={13} /> Stop</>
-                    : <><Headphones size={13} /> Listen</>
-                  }
-                </button>
+            {/* ── Pre-recording controls ── */}
+            <div className="flex items-center justify-center gap-3">
+              {/* Listen */}
+              <button
+                onClick={isPagePlaying ? stopAudio : playPage}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold qr-btn"
+                style={{ background: isPagePlaying ? "#1a3025" : GOLD + "28", color: GOLD, border: `1px solid ${GOLD}44` }}>
+                {isPagePlaying
+                  ? <><StopCircle size={10} /> Stop</>
+                  : <><Headphones size={10} /> Listen</>
+                }
+              </button>
 
-                {/* Main mic button */}
-                <button
-                  onClick={startLiveRecording}
-                  disabled={pageLoading}
-                  className="w-16 h-16 rounded-full flex items-center justify-center shadow-xl qr-btn"
-                  style={{
-                    background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
-                    boxShadow: `0 0 0 6px ${GOLD}22`,
-                  }}>
-                  <Mic size={26} color={DG} />
-                </button>
-
-                {/* Spacer to balance layout */}
-                <div className="w-[72px]" />
-              </div>
-            )}
+              {/* Main mic button — compact */}
+              <button
+                onClick={startLiveRecording}
+                disabled={pageLoading}
+                className="w-10 h-10 rounded-full flex items-center justify-center shadow-lg qr-btn"
+                style={{
+                  background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                  boxShadow: `0 0 0 4px ${GOLD}22`,
+                }}>
+                <Mic size={17} color={DG} />
+              </button>
+            </div>
           </div>
         )}
       </div>
