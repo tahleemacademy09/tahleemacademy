@@ -90,11 +90,13 @@ const RegisterContinue = () => {
 
   // ── On auth ready, decide what to do ─────────────────────────────────────
   useEffect(() => {
-    // Only wait for authLoading — NOT cfgLoading.
-    // cfgLoading can hang if academy_settings is slow; we only need config
-    // for the payment screen, and useRegistrationSettings now has its own
-    // 6s timeout. We'll check cfgLoading again inside only when needed.
-    if (authLoading) return;
+    // Wait for BOTH authLoading and cfgLoading before proceeding.
+    // Without cfgLoading, the effect can run while config still holds DEFAULTS
+    // (e.g. entrance_fee_amount: 5000, entrance_fee_currency: "NGN"), causing
+    // users to be charged the wrong amount or hit a payment wall incorrectly.
+    // useRegistrationSettings has its own 6s timeout so cfgLoading will always
+    // resolve — it will never block indefinitely.
+    if (authLoading || cfgLoading) return;
 
     (async () => {
       try {
@@ -238,7 +240,7 @@ const RegisterContinue = () => {
         setPhase("error");
       }
     })();
-  }, [authLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authLoading, cfgLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const advanceTasjeel = async (userId: string, nextStep: string) => {
     await supabase
@@ -269,8 +271,20 @@ const RegisterContinue = () => {
     const postPaymentRoute = resolveRoute(postPaymentStep, config) ?? "/student/awaiting-level";
 
     if (!PAYSTACK_KEY) {
-      // Demo mode
-      toast({ title: "⚠️ Demo mode — simulating payment…" });
+      // VITE_PAYSTACK_PUBLIC_KEY is missing from environment variables.
+      // This is the most common cause of "payment not going through" —
+      // check your Vercel / hosting dashboard and ensure the variable is set.
+      // In dev/staging this simulates a successful payment for testing only.
+      console.error(
+        "[RegisterContinue] VITE_PAYSTACK_PUBLIC_KEY is not set. " +
+        "Payment is running in DEMO MODE — no real charge will occur. " +
+        "Set this env var in your hosting dashboard to enable live payments."
+      );
+      toast({
+        title: "⚠️ Demo mode — no real payment",
+        description: "VITE_PAYSTACK_PUBLIC_KEY is not configured. Contact your developer.",
+        variant: "destructive",
+      });
       setPaying(true);
       setTimeout(async () => {
         await recordPayment(userId, ref);
@@ -306,9 +320,17 @@ const RegisterContinue = () => {
               navigate(postPaymentRoute, { replace: true });
             })
             .catch(() => {
-              // Even if recording fails, advance the user
+              // Payment was received by Paystack but DB write failed.
+              // DO NOT silently advance the user — their enrollments row would
+              // remain with registration_paid: false, locking them out forever
+              // with no way to retry payment. Instead show an actionable error
+              // with the Paystack reference so support can manually reconcile.
               setPaying(false);
-              navigate(postPaymentRoute, { replace: true });
+              toast({
+                title: "Payment received — account not updated",
+                description: `Your payment went through (ref: ${res.reference}) but we couldn't update your account. Please contact support with this reference and we'll sort it out immediately.`,
+                variant: "destructive",
+              });
             });
         },
         onClose: () => {
