@@ -90,46 +90,104 @@ export default function HifdhDashboard({
     if (!userId) return;
     setLoading(true);
     Promise.all([
-      supabase.from("hifdh_progress").select("*").eq("user_id", userId).order("last_reviewed", { ascending: true }),
-      supabase.from("hifdh_sessions").select("surah_name,ayah_start,accuracy_score,created_at,duration").eq("student_id", userId).order("created_at", { ascending: false }).limit(6),
-      supabase.from("hifdh_daily_tasks").select("*").eq("user_id", userId).eq("target_date", new Date().toISOString().split("T")[0]).order("created_at", { ascending: true }),
-    ]).then(([prog, sess, taskRes]) => {
-      if (prog.data) {
-        const entries = prog.data as ProgressEntry[];
-        setProgress(entries);
-        const done: number[] = [], partial: number[] = [];
-        entries.forEach(p => {
-          const j = Math.min(30, Math.ceil(p.surah_num / 4.27));
-          if (p.best_accuracy >= 80 && !done.includes(j)) done.push(j);
-          else if (!partial.includes(j) && !done.includes(j)) partial.push(j);
-        });
-        setJuzDone(done);
-        setJuzPartial(partial);
-        const scores = entries.map(p => p.best_accuracy).filter(Boolean);
-        const avg = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
-        setStats(s => ({ ...s, avgAccuracy: avg, juzCount: done.length }));
+      // Revision progress — written by HifdhRevision after each page is completed
+      supabase
+        .from("hifdh_revision_progress")
+        .select("*")
+        .eq("user_id", userId)
+        .order("completed_at", { ascending: false }),
 
-        const weekData: WeeklyData[] = [];
-        for (let i = 6; i >= 0; i--) {
-          const d = new Date(); d.setDate(d.getDate() - i);
-          const dateStr = d.toDateString();
-          const count = sess.data?.filter((s: any) => new Date(s.created_at).toDateString() === dateStr).length || 0;
-          weekData.push({ day: WEEK_DAYS[d.getDay()], count });
-        }
-        setWeeklyData(weekData);
+      // Revision sessions — written after each page recitation
+      supabase
+        .from("hifdh_revision_sessions")
+        .select("page_number,score,duration_seconds,created_at,stage")
+        .eq("student_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(30),
+
+      // Daily tasks
+      supabase
+        .from("hifdh_daily_tasks")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("target_date", new Date().toISOString().split("T")[0])
+        .order("created_at", { ascending: true }),
+
+      // Active assignment — for page count / mode info
+      supabase
+        .from("hifdh_daily_assignments")
+        .select("mode,selected_items,daily_pages")
+        .eq("student_id", userId)
+        .eq("active", true)
+        .maybeSingle(),
+    ]).then(([revProg, revSess, taskRes, assignRes]) => {
+
+      // ── Sessions ──────────────────────────────────────────────────
+      const sessData = (revSess.data ?? []) as any[];
+      setSessions(sessData.map((s: any) => ({
+        surah_name:    `Page ${s.page_number}`,
+        ayah_start:    s.page_number,
+        accuracy_score: s.score ?? 0,
+        created_at:    s.created_at,
+        duration:      s.duration_seconds ?? 0,
+      })));
+
+      // Streak — count consecutive days with at least one session
+      const sessionDates = [...new Set(sessData.map((s: any) => new Date(s.created_at).toDateString()))];
+      let streak = 0;
+      for (let i = 0; i < 90; i++) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        if (sessionDates.includes(d.toDateString())) streak++;
+        else if (i > 0) break;
       }
-      if (sess.data) {
-        setSessions(sess.data as SessionEntry[]);
-        const dates = [...new Set(sess.data.map((s: any) => new Date(s.created_at).toDateString()))];
-        let streak = 0;
-        for (let i = 0; i < 30; i++) {
-          const d = new Date(); d.setDate(d.getDate() - i);
-          if (dates.includes(d.toDateString())) streak++;
-          else if (i > 0) break;
-        }
-        const totalMins = Math.round(sess.data.reduce((a: number, s: any) => a + (s.duration || 0), 0) / 60);
-        setStats(prev => ({ ...prev, streak, totalMins }));
+
+      const totalMins = Math.round(sessData.reduce((a: number, s: any) => a + (s.duration_seconds || 0), 0) / 60);
+
+      // Average accuracy from all recitation sessions
+      const scores = sessData.map((s: any) => s.score).filter((x: any) => x != null && x > 0);
+      const avg = scores.length ? Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length) : 0;
+
+      // ── Revision progress (completed pages) ───────────────────────
+      const progData = (revProg.data ?? []) as any[];
+      const completedPages = progData.filter(p => p.completed).length;
+      const totalPages = (assignRes.data as any)?.selected_items?.length ?? 0;
+
+      // Build fake ProgressEntry list from revision progress for juz/surah display
+      // Map page numbers to juz (rough: pages 1-20 = juz1, etc.)
+      const pageToJuz = (page: number) => Math.min(30, Math.ceil(page / 20));
+      const juzMap = new Map<number, { done: boolean; pages: number }>();
+      progData.forEach((p: any) => {
+        const j = pageToJuz(p.page_number);
+        const ex = juzMap.get(j) ?? { done: false, pages: 0 };
+        juzMap.set(j, { done: ex.done || p.completed, pages: ex.pages + 1 });
+      });
+      const done: number[] = [], partial: number[] = [];
+      juzMap.forEach((v, j) => { if (v.done) done.push(j); else partial.push(j); });
+      setJuzDone(done);
+      setJuzPartial(partial);
+
+      // Build progress entries for display
+      const fakeProgress: ProgressEntry[] = progData.slice(0, 20).map((p: any) => ({
+        surah_num:      p.page_number,
+        surah_name:     `Page ${p.page_number}`,
+        last_reviewed:  p.completed_at ?? new Date().toISOString(),
+        best_accuracy:  p.best_score ?? p.exercise_score ?? 0,
+        times_reviewed: 1,
+        verses_memorized: p.completed ? 20 : 0,
+        total_verses:   20,
+      }));
+      setProgress(fakeProgress);
+
+      // Weekly activity chart
+      const weekData: WeeklyData[] = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(); d.setDate(d.getDate() - i);
+        const count = sessData.filter((s: any) => new Date(s.created_at).toDateString() === d.toDateString()).length;
+        weekData.push({ day: WEEK_DAYS[d.getDay()], count });
       }
+      setWeeklyData(weekData);
+
+      setStats({ streak, avgAccuracy: avg, totalMins, juzCount: done.length });
       if (taskRes.data) setTasks(taskRes.data as DailyTask[]);
       setLoading(false);
     });
