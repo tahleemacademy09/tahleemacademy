@@ -110,7 +110,8 @@ const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment")
 const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
 const LevelManagement       = lazy(() => import("./pages/admin/LevelManagement"));
 const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
-const RegistrationSettings  = lazy(() => import("./pages/admin/RegistrationSettings"));
+const RegistrationSettings      = lazy(() => import("./pages/admin/RegistrationSettings"));
+const RegistrationDiagnostics   = lazy(() => import("./pages/admin/RegistrationDiagnostics"));
 const AdminSettings         = lazy(() => import("./pages/admin/AdminSettings"));
 
 // ── Auth callback ──────────────────────────────────────────────────────────
@@ -308,6 +309,7 @@ const App = () => (
                     <Route path="/admin/payment-settings"            element={<PaymentSettings />} />
                     <Route path="/admin/public-classes"              element={<PublicClassManagement />} />
                     <Route path="/admin/registration-settings"       element={<RegistrationSettings />} />
+                    <Route path="/admin/registration-diagnostics"   element={<RegistrationDiagnostics />} />
                     <Route path="/admin/settings"                    element={<AdminSettings />} />
                     <Route path="/admin/tasjeel"                     element={<TasjeelAdmin />} />
                     {/* Hub: choose between Quiz Arena or Recitation Competition */}
