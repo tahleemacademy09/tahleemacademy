@@ -348,9 +348,9 @@ function makeExercise(currentAyahs: any[], prevAyahs: any[]): ExerciseQ[] {
 //  COMPONENT
 // ═══════════════════════════════════════════════════════════════════════
 
-interface Props { userId: string | null; autoStart?: boolean; }
+interface Props { userId: string | null; autoStart?: boolean; onSessionSaved?: () => void; }
 
-export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
+export default function QuranRevisionHub({ userId, autoStart = false, onSessionSaved }: Props) {
 
   const [stage, setStage]         = useState<Stage>("setup");
 
@@ -1144,6 +1144,7 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
             transcript, duration_seconds: recTime,
             created_at: new Date().toISOString(),
           });
+          onSessionSaved?.();
         } catch { /* ignore */ }
 
         // hifdh_daily_logs is written exclusively by HifdhDailyRevisionPage.
