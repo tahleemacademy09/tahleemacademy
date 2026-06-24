@@ -3,14 +3,17 @@
   ══════════════════════════════════════════════════════════════════════
   Called every minute by pg_cron.
 
-  FIX: Was querying `subject_timetable` with day_of_week/is_active columns
-  that don't exist. Now queries `public_classes` using `scheduled_at`
-  which is the actual table your classes are stored in.
+  Thresholds (reduced from [0,5,15] → [0,10]):
+    0  min → CLASS IS STARTING NOW  (ring push — loud, persistent)
+    10 min → "Class in 10 min" reminder
 
-  Thresholds:
-    0  min → CLASS IS STARTING NOW (ring push — loud, persistent)
-    5  min → "Class in 5 min" reminder
-    15 min → "Class in 15 min" heads-up
+  Changes v2:
+    • Thresholds reduced to [0, 10] — stops duplicate notification flood
+    • Dedup query param separated from the clean join_url in push payload
+    • Push payload url is now always a clean path — no dedup junk in URL
+    • Urgency: "high" added to web-push so Android delivers immediately
+    • Islamic content: starts with Tasleem, proper reminder wording
+    • Notification window widened to 3 min to absorb cron jitter
 ══════════════════════════════════════════════════════════════════════
 */
 
@@ -21,20 +24,28 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const THRESHOLDS    = [0, 5, 15] as const;
+const THRESHOLDS    = [0, 10] as const;
 type Threshold      = typeof THRESHOLDS[number];
 
 const APP_BASE_URL     = "https://tahleemacademy.vercel.app";
 
-// Strips any non-production host from a join_url that may have been saved
-// when the teacher was on a Lovable preview domain. Runs at send-time so
-// old DB records get fixed without needing a migration.
 function sanitiseUrl(raw: string | null | undefined): string {
   if (!raw) return APP_BASE_URL;
   if (raw.startsWith(APP_BASE_URL)) return raw;
   if (raw.startsWith("/")) return APP_BASE_URL + raw;
   try { const { pathname, search } = new URL(raw); return APP_BASE_URL + pathname + search; }
   catch { return APP_BASE_URL; }
+}
+
+// Strip domain from URL — push payloads carry a clean relative path so the
+// service worker can deep-link without re-attaching the Vercel host.
+function toRelativePath(fullUrl: string): string {
+  try {
+    const u = new URL(fullUrl);
+    return u.pathname + u.search + u.hash;
+  } catch {
+    return "/";
+  }
 }
 
 const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram/sendMessage";
@@ -46,7 +57,6 @@ function minutesUntil(scheduledAt: string): number {
 }
 
 function to12hr(isoString: string): string {
-  // Always display in Nigeria/Lagos time (WAT = UTC+1)
   return new Date(isoString).toLocaleTimeString("en-US", {
     timeZone: "Africa/Lagos",
     hour: "numeric",
@@ -119,7 +129,11 @@ async function sendWebPush(
     await wp.sendNotification(
       { endpoint: sub.endpoint, keys: { p256dh: toBase64url(sub.p256dh), auth: toBase64url(sub.auth) } },
       JSON.stringify(payload),
-      { TTL: ttl }
+      {
+        TTL: ttl,
+        urgency: "high",      // ← critical for Android timely delivery
+        topic: (payload as any).tag ?? "tahleem",
+      }
     );
     return {};
   } catch (e: any) {
@@ -164,7 +178,8 @@ async function maybeNotify(
     scheduledAt:  string;
     minsLeft:     number;
     threshold:    Threshold;
-    joinUrl:      string;
+    joinUrl:      string;       // clean URL — no dedup params
+    joinPath:     string;       // relative path for push payload navigation
     teacherName:  string;
     label:        string;
   }
@@ -175,28 +190,27 @@ async function maybeNotify(
     const isRing  = opts.threshold === 0;
     const time12  = to12hr(opts.scheduledAt);
     const key     = dedupKey(opts.classId, opts.threshold);
-    const mins    = Math.round(opts.minsLeft);
+
+    // ── Islamic content ───────────────────────────────────────────────────────
+    // All notifications start with Assalamu Alaikum (tasleem)
 
     const title = isRing
-      ? `📞 ${opts.classTitle} — Starting Now!`
-      : opts.threshold === 5
-        ? `📚 ${opts.label} in 5 min — get ready!`
-        : `📚 ${opts.label} in ${mins} min`;
+      ? `📞 حفظ القرآن — Starting Now!`
+      : `📚 ${opts.classTitle} — Class in 10 min`;
 
     const message = isRing
-      ? `${opts.teacherName} is waiting — tap to join now!`
-      : `${opts.classTitle} starts at ${time12}. ${opts.threshold === 5 ? "Open the app now!" : "Get ready!"}`;
+      ? `Assalamu Alaikum wa Rahmatullah 🌙\n${opts.teacherName} is ready and waiting for you. Tap to join the class now — may Allah bless your learning.`
+      : `Assalamu Alaikum wa Rahmatullah 🌙\nYour class "${opts.classTitle}" begins at ${time12}. Please make wudu, open your Mus-haf, and join on time. Barakallahu feekum.`;
 
     const title_ar = isRing
       ? `📞 ${opts.classTitle} — تبدأ الآن!`
-      : opts.threshold === 5
-        ? `📚 بعد ٥ دقائق — استعد!`
-        : `📚 بعد ${mins} دقيقة`;
+      : `📚 ${opts.classTitle} — الدرس بعد ١٠ دقائق`;
 
     const message_ar = isRing
-      ? `${opts.teacherName} في انتظارك — اضغط للانضمام الآن!`
-      : `تبدأ ${opts.classTitle} الساعة ${time12}. ${opts.threshold === 5 ? "افتح التطبيق الآن!" : "كن مستعداً!"}`;
+      ? `السلام عليكم ورحمة الله 🌙\n${opts.teacherName} في انتظاركم — اضغط للانضمام الآن. بارك الله في علمكم.`
+      : `السلام عليكم ورحمة الله 🌙\nدرسكم "${opts.classTitle}" يبدأ الساعة ${time12}. تهيّأوا وافتحوا المصحف. بارك الله فيكم.`;
 
+    // Bell link carries dedup key (used only for dedup checking, not navigation)
     const link = `${opts.joinUrl}?${key}`;
 
     // 1. Bell
@@ -205,7 +219,7 @@ async function maybeNotify(
       link, type: isRing ? "class_ring" : "class_reminder",
     });
 
-    // 2. Web Push — all devices
+    // 2. Web Push — clean path in url so SW can deep-link without pollution
     const { data: pushSubs } = await sb
       .from("push_subscriptions")
       .select("endpoint, p256dh, auth")
@@ -214,7 +228,8 @@ async function maybeNotify(
     const pushPayload = isRing
       ? {
           type: "ring", title, body: message, message,
-          url: opts.joinUrl, tag: `ring-${opts.classId}`,
+          url: opts.joinPath,   // ← relative path, no dedup params
+          tag: `ring-${opts.classId}`,
           requireInteraction: true,
           vibrate: [800, 400, 800, 400, 800, 1500, 800, 400, 800],
           actions: [
@@ -224,14 +239,15 @@ async function maybeNotify(
         }
       : {
           type: "class_reminder", title, body: message, message,
-          url: opts.joinUrl, tag: `${opts.classId}:${opts.threshold}`,
+          url: opts.joinPath,   // ← relative path, no dedup params
+          tag: `${opts.classId}:${opts.threshold}`,
           minutes_left: opts.threshold,
-          vibrate: [200, 100, 200, 100, 400],
+          vibrate: [300, 100, 300, 100, 600],
         };
 
     for (const sub of (pushSubs ?? []) as any[]) {
       try {
-        const result = await sendWebPush(sub, pushPayload, isRing ? 600 : 1200);
+        const result = await sendWebPush(sub, pushPayload, isRing ? 600 : 900);
         if (result.gone) {
           await sb.from("push_subscriptions").delete()
             .eq("user_id", opts.userId).eq("endpoint", sub.endpoint);
@@ -278,16 +294,15 @@ Deno.serve(async (req) => {
   const stats = { checked: 0, sent: 0, dedup: 0, errors: 0 };
 
   try {
-    // ── Fetch upcoming public classes (scheduled in next 20 min, not ended) ──
     const now       = new Date();
-    const in20min   = new Date(now.getTime() + 21 * 60_000);
+    const in13min   = new Date(now.getTime() + 13 * 60_000); // covers 0 and 10 min thresholds
     const minus1min = new Date(now.getTime() - 60_000);
 
     const { data: classes, error: classErr } = await sb
       .from("public_classes")
       .select("id, title, title_ar, scheduled_at, host_id, join_url, status")
       .gte("scheduled_at", minus1min.toISOString())
-      .lte("scheduled_at", in20min.toISOString())
+      .lte("scheduled_at", in13min.toISOString())
       .not("status", "eq", "ended")
       .not("status", "eq", "cancelled");
 
@@ -299,12 +314,13 @@ Deno.serve(async (req) => {
       const minsLeft = minutesUntil(cls.scheduled_at);
 
       for (const threshold of THRESHOLDS) {
-        const window = 2.5; // wider window catches cron timing variations
+        const window = 3; // 3-min window absorbs cron timing jitter
         if (minsLeft < threshold - window || minsLeft > threshold + window) continue;
 
         stats.checked++;
         const classTitle = cls.title_ar || cls.title || "Class";
         const joinUrl    = sanitiseUrl(cls.join_url ?? `${APP_BASE_URL}/live/${cls.id}`);
+        const joinPath   = toRelativePath(joinUrl);
 
         // Teacher name
         let teacherName = "Your teacher";
@@ -321,6 +337,7 @@ Deno.serve(async (req) => {
             userId: cls.host_id, classId: cls.id, classTitle,
             scheduledAt: cls.scheduled_at, minsLeft, threshold,
             joinUrl: `${APP_BASE_URL}/teacher/live-classes`,
+            joinPath: "/teacher/live-classes",
             teacherName: "You", label: "Your class",
           });
           stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
@@ -336,7 +353,7 @@ Deno.serve(async (req) => {
           const r = await maybeNotify(sb, {
             userId: s.user_id, classId: cls.id, classTitle,
             scheduledAt: cls.scheduled_at, minsLeft, threshold,
-            joinUrl, teacherName, label: "Class",
+            joinUrl, joinPath, teacherName, label: "Class",
           });
           stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
         }
