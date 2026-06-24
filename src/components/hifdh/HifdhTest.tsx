@@ -22,7 +22,7 @@ const LIGHT = "#f0fff4", BORDER = "#d4e8d4";
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface Ayah { numberInSurah: number; text: string; }
-interface Props { reciter?: string; }
+interface Props { reciter?: string; onSessionSaved?: () => void; }
 const DEEPGRAM_KEY = (import.meta as any).env?.VITE_DEEPGRAM_API_KEY || "";
 const GROQ_KEY     = (import.meta as any).env?.VITE_GROQ_API_KEY     || "";
 
@@ -314,7 +314,7 @@ const QMETA: Record<QType, { icon: string; label: string; desc: string; isAudio:
 };
 
 // ── Main component ────────────────────────────────────────────────────
-export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
+export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }: Props) {
   const [surahNum, setSurahNum]   = useState(114);
   const [ayahs, setAyahs]         = useState<Ayah[]>([]);
   const [loading, setLoading]     = useState(false);
@@ -558,16 +558,33 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER }: Props) {
       else             { if (ans[i] === q.correctIdx) correct++; }
     });
     const pct = qs.length > 0 ? Math.round((correct / qs.length) * 100) : 0;
-    // Save result
+    // Save result to both tables for compatibility
     supabase.auth.getUser().then(({ data }) => {
       if (!data?.user) return;
+      const uid = data.user.id;
+      const surahName = SURAHS[surahNum - 1]?.name ?? `Surah ${surahNum}`;
+      const durationSec = qs.length * 50 - timeLeft;
+
+      // Legacy table (hifdh_sessions) — kept for backward compat
       (supabase as any).from("hifdh_sessions").insert({
-        student_id: data.user.id,
-        surah_name: SURAHS[surahNum - 1].name,
+        student_id: uid, surah_name: surahName,
         ayah_start: 1, accuracy_score: pct,
-        duration: qs.length * 50 - timeLeft,
+        duration: durationSec,
         proctoring_session_id: testSessionId || null,
-      }).then(() => {}).catch(() => {});
+      }).catch(() => {});
+
+      // New table (hifdh_test_sessions) — read by Overview dashboard
+      (supabase as any).from("hifdh_test_sessions").insert({
+        student_id:      uid,
+        surah_name:      surahName,
+        surah_number:    surahNum,
+        score:           pct,
+        total_questions: qs.length,
+        correct_answers: correct,
+        duration_seconds: durationSec,
+        proctoring_session_id: testSessionId || null,
+        completed_at:    new Date().toISOString(),
+      }).then(() => { onSessionSaved?.(); }).catch(() => {});
     });
     setStage("results");
   }, [surahNum, timeLeft, testSessionId]);

@@ -41,7 +41,7 @@ const REP_OPTIONS = [5, 7, 10, 15, 20] as const;
 type RepOption = typeof REP_OPTIONS[number];
 
 interface Ayah    { numberInSurah: number; text: string; }
-interface Props   { reciter?: string; }
+interface Props   { reciter?: string; onSessionSaved?: () => void; }
 type StepType     = "overview" | "single" | "pair" | "cumulative";
 interface MemStep { type: StepType; indices: number[]; reps: number; label: string; labelAr: string; }
 interface Saved   {
@@ -134,7 +134,7 @@ const STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; i
   cumulative: { bg: "#f5f3ff", text: "#7c3aed", border: "#ddd6fe", icon: "📚", grad: "linear-gradient(135deg,#7c3aed,#8b5cf6)" },
 };
 
-export default function HifdhMemorization({ reciter: reciterProp }: Props) {
+export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved }: Props) {
 
   const [surahNum,        setSurahNum]        = useState(114);
   const [startVerse,      setStartVerse]      = useState(1);
@@ -481,7 +481,30 @@ export default function HifdhMemorization({ reciter: reciterProp }: Props) {
       setRecitingVerses(new Set()); setMatchProgress(0); setMissingWords([]);
       setIsListening(false); setLiveText(""); stopAudio();
       saveSession({ stepIdx: next, repsDone: 0 });
-    } else { stopAudio(); clearSession(); setCompleted(true); }
+    } else {
+      stopAudio();
+      clearSession();
+      // ── Persist session to DB ─────────────────────────────────────────
+      supabase.auth.getUser().then(({ data }) => {
+        if (!data?.user) return;
+        const surah = SURAHS.find(s => s.number === surahNum);
+        const versesCount = sessionAyahsRef.current.length;
+        const totalReps   = stepsRef.current.reduce((a, s) => a + s.reps, 0);
+        // Estimate score as completion rate (they reached the end = 100)
+        (supabase as any).from("hifdh_memorization_sessions").insert({
+          student_id:     data.user.id,
+          surah_name:     surah?.name ?? `Surah ${surahNum}`,
+          surah_number:   surahNum,
+          verses_count:   versesCount,
+          reps_per_verse: repsPerVerseRef.current,
+          total_reps:     totalReps,
+          score:          100,
+          duration_seconds: 0,
+          completed_at:   new Date().toISOString(),
+        }).then(() => { onSessionSaved?.(); }).catch(() => {});
+      });
+      setCompleted(true);
+    }
   }, [stopAudio, saveSession, clearSession, stopMicFn]);
 
   useEffect(() => { advanceStepRef.current = advanceStep; }, [advanceStep]);
