@@ -31,10 +31,6 @@ const SESSION_KEY = "hifdh_mem_v20";
  * MAX_UTTERANCE_MS     — safety cap in case VAD never sees silence
  * VOICE_ENERGY_MIN    — energy threshold in the 300–3400Hz band counted as "voiced"
  * ────────────────────────────────────────────────── */
-const ONSET_MS            = 60;
-const SILENCE_HANGOVER_MS = 420;
-const MIN_UTTERANCE_MS    = 450;
-const MAX_UTTERANCE_MS    = 25000;
 const VOICE_ENERGY_MIN    = 14;
 
 const REP_OPTIONS = [5, 7, 10, 15, 20] as const;
@@ -175,20 +171,209 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   const repsPerVerseRef    = useRef<number>(5);
   const verseRefs          = useRef<Record<number, HTMLDivElement | null>>({});
 
-  // ── Recording state — VAD-segmented, one Whisper call per repetition ──
-  const mediaStreamRef       = useRef<MediaStream | null>(null);
-  const sessionActiveRef     = useRef(false);     // mic session on/off (the "Start Recording" toggle)
-  const utteranceRecorderRef = useRef<MediaRecorder | null>(null);
-  const utteranceActiveRef   = useRef(false);     // currently capturing one repetition
-  const utteranceStartRef    = useRef(0);
-  const onsetStartRef        = useRef(0);
-  const lastVoiceTimeRef     = useRef(0);
-  const pendingTxnRef        = useRef(0);         // in-flight Groq requests (can overlap across reps)
-  const audioCtxRef          = useRef<AudioContext | null>(null);
-  const analyserRef          = useRef<AnalyserNode | null>(null);
-  const vadRafRef            = useRef<number | null>(null);
-  const micTimerRef          = useRef<ReturnType<typeof setInterval> | null>(null);
-  const mimeRef              = useRef("audio/webm");
+  /* ══════════════════════════════════════════════════════════════════════
+   * STREAMING TRANSCRIPTION
+   * Instead of waiting until you finish speaking to send audio to Groq,
+   * we send a rolling chunk every CHUNK_MS milliseconds WHILE you're still
+   * talking. Each chunk is transcribed in parallel. We accumulate all the
+   * partial transcripts and match against the target verse continuously.
+   * The moment coverage ≥ threshold the rep is counted — usually before
+   * you've even finished the last word.
+   * ══════════════════════════════════════════════════════════════════════ */
+  const CHUNK_MS     = 2500;   // send a new chunk every 2.5 s while speaking
+  const COVERAGE_THR = 0.78;   // 78% word coverage = rep counts
+
+  const sessionActiveRef   = useRef(false);
+  const mediaStreamRef     = useRef<MediaStream | null>(null);
+  const chunkRecorderRef   = useRef<MediaRecorder | null>(null);
+  const audioCtxRef        = useRef<AudioContext | null>(null);
+  const analyserRef        = useRef<AnalyserNode | null>(null);
+  const vadRafRef          = useRef<number | null>(null);
+  const micTimerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mimeRef            = useRef("audio/webm");
+  const pendingTxnRef      = useRef(0);
+
+  // Accumulated transcript for the current rep (reset each time a rep is counted)
+  const repTranscriptRef   = useRef("");
+  // Whether we already counted this rep (prevent double-count while chunks overlap)
+  const repCountedRef      = useRef(false);
+
+  /* ── Send one audio chunk to Groq and fold result into running transcript ── */
+  const sendChunk = useCallback(async (blob: Blob) => {
+    if (!sessionActiveRef.current) return;
+    if (blob.size < 800) return; // too small — silence or noise
+
+    const step    = stepsRef.current[stepIdxRef.current];
+    const targets = step ? step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean) : [];
+    if (!targets.length) return;
+
+    const prompt  = targets.map(a => a.text).join(" ").slice(0, 224);
+    const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
+    pendingTxnRef.current += 1;
+    setTranscribing(true);
+
+    try {
+      let text = "";
+      const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : "webm";
+
+      if (groqKey) {
+        const fd = new FormData();
+        fd.append("file", new File([blob], `chunk.${ext}`, { type: blob.type }));
+        fd.append("model", "whisper-large-v3-turbo");
+        fd.append("language", "ar");
+        fd.append("temperature", "0");
+        fd.append("prompt", prompt);
+        try {
+          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${groqKey}` },
+            body: fd,
+          });
+          if (r.ok) text = ((await r.json()).text ?? "").trim();
+        } catch { /**/ }
+      }
+
+      // Fallback to edge function
+      if (!text) {
+        const fd2 = new FormData();
+        fd2.append("file", blob, `chunk.webm`);
+        fd2.append("prompt", prompt);
+        const { data } = await supabase.functions.invoke("groq-transcribe", { body: fd2 });
+        text = (data?.text ?? "").trim();
+      }
+
+      if (!text || !sessionActiveRef.current) return;
+
+      // Fold into running transcript — append unique words from this chunk
+      const existing = norm(repTranscriptRef.current);
+      const newWords = norm(text).split(" ").filter(w => w.length > 1 && !existing.includes(w));
+      repTranscriptRef.current = (repTranscriptRef.current + " " + text).trim().slice(-600);
+      setLiveText(repTranscriptRef.current.slice(-200));
+
+      // Live match check
+      const { isComplete, progress, missingWords: missing } = isVerseComplete(repTranscriptRef.current, targets);
+      setMatchProgress(progress);
+      setMissingWords(missing.slice(0, 4));
+
+      const tNorm = norm(repTranscriptRef.current);
+      const activeVerses = new Set<number>();
+      targets.forEach(a => {
+        if (tNorm.includes(norm(a.text)) || norm(a.text).split(" ").filter(w=>w.length>2).every(w=>tNorm.includes(w)))
+          activeVerses.add(a.numberInSurah);
+      });
+      setRecitingVerses(activeVerses);
+
+      // Count the rep the moment threshold is hit — don't wait for silence
+      if (isComplete && !repCountedRef.current && repsDoneRef.current < totalRepsRef.current) {
+        repCountedRef.current = true;
+        countOneRep();
+      }
+    } catch (err) {
+      console.warn("sendChunk error:", err);
+    } finally {
+      pendingTxnRef.current = Math.max(0, pendingTxnRef.current - 1);
+      if (pendingTxnRef.current === 0) setTranscribing(false);
+    }
+  }, [countOneRep]);
+
+  /* ── Reset per-rep state when a new rep starts ── */
+  const resetRepState = useCallback(() => {
+    repTranscriptRef.current = "";
+    repCountedRef.current    = false;
+    setLiveText("");
+    setMatchProgress(0);
+    setMissingWords([]);
+    setRecitingVerses(new Set());
+  }, []);
+
+  /* ── Rolling chunk recorder — uses MediaRecorder timeslice ─────────────
+   * MediaRecorder fires ondataavailable every CHUNK_MS ms with a chunk of
+   * audio. Each chunk is sent to Groq immediately, overlapping with the
+   * next chunk being recorded. This is what makes transcription feel live. ─ */
+  const startChunkRecorder = useCallback((stream: MediaStream) => {
+    if (chunkRecorderRef.current) return;
+    const mime = mimeRef.current;
+    try {
+      const rec = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 16000 });
+      rec.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0 && sessionActiveRef.current) {
+          sendChunk(new Blob([e.data], { type: mime }));
+        }
+      };
+      rec.onerror = () => setMicError("Recording error — tap ↺");
+      rec.start(CHUNK_MS); // fires every CHUNK_MS ms automatically
+      chunkRecorderRef.current = rec;
+    } catch (e) { console.warn("chunk recorder failed:", e); }
+  }, [sendChunk]);
+
+  const stopChunkRecorder = useCallback(() => {
+    const rec = chunkRecorderRef.current;
+    if (rec && rec.state !== "inactive") { try { rec.stop(); } catch { /**/ } }
+    chunkRecorderRef.current = null;
+  }, []);
+
+  /* ── VAD — only used to show the "listening" pulse indicator ─────────── */
+  const startVAD = useCallback((stream: MediaStream) => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512; analyser.smoothingTimeConstant = 0.3;
+      src.connect(analyser);
+      audioCtxRef.current = ctx; analyserRef.current = analyser;
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        if (!sessionActiveRef.current) return;
+        analyser.getByteFrequencyData(buf);
+        const binHz = ctx.sampleRate / analyser.fftSize;
+        const lo = Math.floor(300 / binHz), hi = Math.floor(3400 / binHz);
+        let sum = 0;
+        for (let i = lo; i < hi && i < buf.length; i++) sum += buf[i];
+        setIsListening(sum / Math.max(1, hi - lo) > VOICE_ENERGY_MIN);
+        vadRafRef.current = requestAnimationFrame(tick);
+      };
+      vadRafRef.current = requestAnimationFrame(tick);
+    } catch (e) { console.warn("VAD init failed:", e); }
+  }, []);
+
+  /* ── Stop mic completely ── */
+  const stopMicFn = useCallback(() => {
+    sessionActiveRef.current = false;
+    if (vadRafRef.current) { cancelAnimationFrame(vadRafRef.current); vadRafRef.current = null; }
+    if (micTimerRef.current) { clearInterval(micTimerRef.current); micTimerRef.current = null; }
+    stopChunkRecorder();
+    if (audioCtxRef.current) { try { audioCtxRef.current.close(); } catch { /**/ } audioCtxRef.current = null; }
+    analyserRef.current = null;
+    if (mediaStreamRef.current) { mediaStreamRef.current.getTracks().forEach(t => t.stop()); mediaStreamRef.current = null; }
+    pendingTxnRef.current = 0;
+    setMicActive(false); setMicTime(0); setIsListening(false); setTranscribing(false);
+  }, [stopChunkRecorder]);
+
+  /* ── Start mic ── */
+  const startMic = useCallback(async () => {
+    if (sessionActiveRef.current) return;
+    setMicError("");
+    pendingTxnRef.current = 0;
+    mimeRef.current = getBestMime();
+    resetRepState();
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+      mediaStreamRef.current = stream;
+      sessionActiveRef.current = true;
+      setMicActive(true); setMicTime(0);
+      micTimerRef.current = setInterval(() => setMicTime(t => t + 1), 1000);
+      startVAD(stream);
+      startChunkRecorder(stream);
+    } catch (err: any) {
+      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError")
+        setMicError("🎤 Mic access denied — allow microphone in browser settings");
+      else setMicError("Could not start microphone");
+      stopMicFn();
+    }
+  }, [startVAD, startChunkRecorder, stopMicFn, resetRepState]);
 
   const surah = SURAHS[surahNum - 1];
 
@@ -268,6 +453,9 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
     const done = repsDoneRef.current + 1;
     repsDoneRef.current = done;
     setRepsDone(done);
+    // Reset streaming transcript for next rep
+    repTranscriptRef.current = "";
+    repCountedRef.current    = false;
     setLiveText(""); setRecitingVerses(new Set()); setMatchProgress(0);
     setMissingWords([]);
     setJustCounted(true);
@@ -279,200 +467,11 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveSession]);
 
-  /* ── Transcribe one complete repetition (one-shot, full utterance) ──
-   * Called once per repetition when VAD detects the user has stopped
-   * speaking. Sends ONE complete, properly-headed audio file to Groq
-   * Whisper — far more accurate than slicing a stream into fixed-time
-   * fragments (which breaks words across boundaries and causes
-   * hallucination). Calls can overlap: the next repetition starts
-   * recording immediately while this one is still being transcribed,
-   * so the mic is never blocked waiting on the network. ── */
-  const transcribeUtterance = useCallback(async (blob: Blob) => {
-    if (blob.size < 1500) return; // too short to be a real attempt — discard silently
-
-    pendingTxnRef.current += 1; setTranscribing(true);
-    try {
-      const step = stepsRef.current[stepIdxRef.current];
-      const targets = step ? step.indices.map(i => sessionAyahsRef.current[i]).filter(Boolean) : [];
-      const prompt = targets.length
-        ? targets.map(a => a.text).join(" ").slice(0, 224)
-        : "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
-
-      const fd = new FormData();
-      fd.append("file", blob, `rep_${Date.now()}.webm`);
-      fd.append("prompt", prompt);
-
-      const { data, error } = await supabase.functions.invoke("groq-transcribe", { body: fd });
-      if (error || !data?.text) return;
-
-      const text = data.text.trim();
-      if (!text) return;
-      setLiveText(text.slice(-200));
-
-      const tNorm = norm(text);
-      const activeVerses = new Set<number>();
-      targets.forEach(ayah => {
-        if (tNorm.includes(norm(ayah.text)) || norm(ayah.text).includes(tNorm))
-          activeVerses.add(ayah.numberInSurah);
-      });
-      setRecitingVerses(activeVerses);
-
-      const { isComplete, progress, missingWords: missing } = isVerseComplete(text, targets);
-      setMatchProgress(progress);
-      setMissingWords(missing.slice(0, 5));
-
-      if (isComplete && repsDoneRef.current < totalRepsRef.current) {
-        countOneRep();
-      }
-    } catch (err) {
-      console.warn("transcribeUtterance error:", err);
-    } finally {
-      pendingTxnRef.current = Math.max(0, pendingTxnRef.current - 1);
-      if (pendingTxnRef.current === 0) setTranscribing(false);
-    }
-  }, [countOneRep]);
-
-  /* ── Per-repetition recorder ── starts on voice onset, stops on
-   * sustained silence (see VAD tick below). No timeslice is passed to
-   * MediaRecorder, so it fires exactly one ondataavailable + onstop per
-   * repetition, producing a single complete, decodable audio file. ── */
-  const startUtteranceRecorder = useCallback(() => {
-    const stream = mediaStreamRef.current;
-    if (!stream || utteranceActiveRef.current) return;
-    try {
-      const mime = mimeRef.current;
-      const rec = new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 32000 });
-      const chunks: Blob[] = [];
-      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-      rec.onstop = () => {
-        utteranceActiveRef.current = false;
-        utteranceRecorderRef.current = null;
-        if (!sessionActiveRef.current) return; // mic was stopped mid-repetition — discard
-        transcribeUtterance(new Blob(chunks, { type: mime }));
-      };
-      rec.onerror = () => { setMicError("Recording error — tap ↺"); };
-      rec.start();
-      utteranceRecorderRef.current = rec;
-      utteranceActiveRef.current = true;
-      utteranceStartRef.current = performance.now();
-    } catch (e) { console.warn("utterance recorder failed to start:", e); }
-  }, [transcribeUtterance]);
-
-  const stopUtteranceRecorder = useCallback(() => {
-    const rec = utteranceRecorderRef.current;
-    if (rec && rec.state !== "inactive") { try { rec.stop(); } catch { /**/ } }
-  }, []);
-
-  /* ── Continuous VAD — detects the start/end of each spoken repetition
-   * and drives the per-utterance recorder above. Sampling every
-   * animation frame (~60fps) keeps onset/silence detection responsive
-   * (tens of ms); the only built-in delay is SILENCE_HANGOVER_MS — the
-   * minimum pause needed to be confident a repetition has ended. ── */
-  const startVAD = useCallback((stream: MediaStream) => {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const src = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512; analyser.smoothingTimeConstant = 0.3;
-      src.connect(analyser);
-      audioCtxRef.current = ctx; analyserRef.current = analyser;
-
-      const buf = new Uint8Array(analyser.frequencyBinCount);
-      const tick = () => {
-        if (!sessionActiveRef.current) return;
-        analyser.getByteFrequencyData(buf);
-        const binHz = ctx.sampleRate / analyser.fftSize;
-        const lo = Math.floor(300 / binHz), hi = Math.floor(3400 / binHz);
-        let sum = 0;
-        for (let i = lo; i < hi && i < buf.length; i++) sum += buf[i];
-        const voiced = sum / Math.max(1, hi - lo) > VOICE_ENERGY_MIN;
-        const now = performance.now();
-
-        if (voiced) {
-          lastVoiceTimeRef.current = now;
-          setIsListening(true);
-          if (!utteranceActiveRef.current) {
-            if (onsetStartRef.current === 0) onsetStartRef.current = now;
-            if (now - onsetStartRef.current >= ONSET_MS) {
-              onsetStartRef.current = 0;
-              startUtteranceRecorder();
-            }
-          }
-        } else {
-          onsetStartRef.current = 0;
-          if (utteranceActiveRef.current) {
-            const silentFor   = now - lastVoiceTimeRef.current;
-            const recordedFor = now - utteranceStartRef.current;
-            if (silentFor >= SILENCE_HANGOVER_MS && recordedFor >= MIN_UTTERANCE_MS) {
-              setIsListening(false);
-              stopUtteranceRecorder();
-            }
-          } else {
-            setIsListening(false);
-          }
-        }
-
-        // Safety: never let a single repetition run away indefinitely
-        if (utteranceActiveRef.current && now - utteranceStartRef.current > MAX_UTTERANCE_MS) {
-          stopUtteranceRecorder();
-        }
-
-        vadRafRef.current = requestAnimationFrame(tick);
-      };
-      vadRafRef.current = requestAnimationFrame(tick);
-    } catch (e) { console.warn("VAD init failed:", e); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startUtteranceRecorder, stopUtteranceRecorder]);
-
-  /* ── Stop mic completely ── */
-  const stopMicFn = useCallback(() => {
-    sessionActiveRef.current = false;     // set first — any in-flight onstop discards its blob
-    if (vadRafRef.current) { cancelAnimationFrame(vadRafRef.current); vadRafRef.current = null; }
-    if (micTimerRef.current) { clearInterval(micTimerRef.current); micTimerRef.current = null; }
-    if (utteranceRecorderRef.current) {
-      try { if (utteranceRecorderRef.current.state !== "inactive") utteranceRecorderRef.current.stop(); } catch { /**/ }
-      utteranceRecorderRef.current = null;
-    }
-    utteranceActiveRef.current = false;
-    if (audioCtxRef.current) { try { audioCtxRef.current.close(); } catch { /**/ } audioCtxRef.current = null; }
-    analyserRef.current = null;
-    if (mediaStreamRef.current) { mediaStreamRef.current.getTracks().forEach(t => t.stop()); mediaStreamRef.current = null; }
-    pendingTxnRef.current = 0;
-    setMicActive(false); setMicTime(0); setIsListening(false); setTranscribing(false);
-  }, []);
-
-  /* ── Start mic ── */
-  const startMic = useCallback(async () => {
-    if (sessionActiveRef.current) return;
-    setMicError("");
-    onsetStartRef.current = 0; lastVoiceTimeRef.current = 0; pendingTxnRef.current = 0;
-    mimeRef.current = getBestMime();
-
-    // Fire-and-forget warm-up — spins up the edge function isolate while
-    // the user is granting mic permission, so it's already warm by the
-    // time the first repetition is ready to transcribe.
-    supabase.functions.invoke("groq-transcribe", { body: {}, headers: { "x-warmup": "1" } }).catch(() => {});
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
-      mediaStreamRef.current = stream;
-      sessionActiveRef.current = true;
-      setMicActive(true); setMicTime(0);
-      micTimerRef.current = setInterval(() => setMicTime(t => t + 1), 1000);
-      startVAD(stream);
-    } catch (err: any) {
-      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError")
-        setMicError("🎤 Mic access denied — allow microphone in browser settings");
-      else setMicError("Could not start microphone");
-      stopMicFn();
-    }
-  }, [startVAD, stopMicFn]);
-
   /* ── Step navigation ── */
   const advanceStep = useCallback(() => {
     stopMicFn();
+    repTranscriptRef.current = "";
+    repCountedRef.current    = false;
     const idx = stepIdxRef.current, all = stepsRef.current;
     if (idx < all.length - 1) {
       const next = idx + 1;
