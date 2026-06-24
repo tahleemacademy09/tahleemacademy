@@ -609,6 +609,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                     const sessionIdFromLink = linkParts ? linkParts[1] : null;
                     const subjectIdFromLink = linkParts && linkParts[3] ? linkParts[3] : null;
 
+                    // Also handle direct path links like /student/live-classes?subject=<id>
+                    let directPath: string | null = null;
+                    if (!linkParts && n.link && n.link.startsWith("/")) {
+                      directPath = n.link;
+                    }
+
                     return (
                     <div key={n.id}
                       onClick={() => {
@@ -618,6 +624,13 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                           // live class, no intermediate detail screen.
                           setShowNotifPanel(false);
                           navigate(`/student/live-classes?subject=${subjectIdFromLink}&autoJoin=true`);
+                        } else if (isClassType && directPath) {
+                          // Direct path link (e.g. from schedule-class-reminders or ring-live-class)
+                          setShowNotifPanel(false);
+                          // Ensure autoJoin=true is present
+                          const sep = directPath.includes("?") ? "&" : "?";
+                          const path = directPath.includes("autoJoin") ? directPath : `${directPath}${sep}autoJoin=true`;
+                          navigate(path);
                         } else {
                           setSelectedNotif(n);
                         }
