@@ -5,7 +5,7 @@ import {
   BookOpen, TrendingUp, Flame, ChevronRight,
   CheckCircle2, RotateCcw, BookMarked, Headphones, Calendar,
   Star, Plus, Play, BarChart3, Trophy, AlertTriangle,
-  ArrowRight, Brain
+  ArrowRight, Brain, ClipboardCheck
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,7 +15,7 @@ interface Props {
   userId: string | null;
   studentName: string;
   onNavigate: (tab: string) => void;
-  activeTab?: string;
+  refreshKey?: number;
 }
 
 interface ProgressEntry {
@@ -62,7 +62,7 @@ const daysSince = (iso: string) =>
 const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function HifdhDashboard({
-  userId, studentName, onNavigate, activeTab = "overview",
+  userId, studentName, onNavigate, refreshKey = 0,
 }: Props) {
   const [progress,    setProgress]    = useState<ProgressEntry[]>([]);
   const [sessions,    setSessions]    = useState<SessionEntry[]>([]);
@@ -78,6 +78,10 @@ export default function HifdhDashboard({
   const [taskVerses,  setTaskVerses]  = useState("5");
   const [taskPlan,    setTaskPlan]    = useState<"daily"|"weekly"|"biweekly"|"monthly">("daily");
   const [savingTask,  setSavingTask]  = useState(false);
+  // Per-module summary stats shown in Overview cards
+  const [revStats,  setRevStats]  = useState({ sessions: 0, avgScore: 0, pagesRevised: 0 });
+  const [memStats,  setMemStats]  = useState({ sessions: 0, versesMemorized: 0, avgScore: 0 });
+  const [testStats, setTestStats] = useState({ sessions: 0, avgScore: 0, lastScore: 0 });
 
   const overdueCount = progress.filter(p => daysSince(p.last_reviewed) >= 10).length;
   const urgentCount  = progress.filter(p => { const d = daysSince(p.last_reviewed); return d >= 5 && d < 10; }).length;
@@ -89,100 +93,154 @@ export default function HifdhDashboard({
   useEffect(() => {
     if (!userId) return;
     setLoading(true);
-    Promise.all([
-      // Revision progress — written by HifdhRevision after each page is completed
-      supabase
-        .from("hifdh_revision_progress")
-        .select("*")
-        .eq("user_id", userId)
-        .order("completed_at", { ascending: false }),
 
-      // Revision sessions — written after each page recitation
-      supabase
-        .from("hifdh_revision_sessions")
+    Promise.all([
+      // ── Revision sessions (written by HifdhRevision) ─────────────────
+      supabase.from("hifdh_revision_sessions")
         .select("page_number,score,duration_seconds,created_at,stage")
         .eq("student_id", userId)
         .order("created_at", { ascending: false })
-        .limit(30),
+        .limit(90),
 
-      // Daily tasks
-      supabase
-        .from("hifdh_daily_tasks")
+      // ── Revision progress (pages completed) ──────────────────────────
+      supabase.from("hifdh_revision_progress")
+        .select("page_number,completed,best_score,completed_at")
+        .eq("user_id", userId)
+        .order("completed_at", { ascending: false }),
+
+      // ── Memorization sessions (written by HifdhMemorization) ─────────
+      supabase.from("hifdh_memorization_sessions")
+        .select("surah_name,verses_count,score,duration_seconds,created_at")
+        .eq("student_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(90),
+
+      // ── Test sessions (written by HifdhTest) ─────────────────────────
+      supabase.from("hifdh_test_sessions")
+        .select("surah_name,score,duration_seconds,created_at")
+        .eq("student_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(90),
+
+      // ── Daily tasks ───────────────────────────────────────────────────
+      supabase.from("hifdh_daily_tasks")
         .select("*")
         .eq("user_id", userId)
         .eq("target_date", new Date().toISOString().split("T")[0])
         .order("created_at", { ascending: true }),
 
-      // Active assignment — for page count / mode info
-      supabase
-        .from("hifdh_daily_assignments")
-        .select("mode,selected_items,daily_pages")
-        .eq("student_id", userId)
-        .eq("active", true)
-        .maybeSingle(),
-    ]).then(([revProg, revSess, taskRes, assignRes]) => {
+    ]).then(([revSessRes, revProgRes, memSessRes, testSessRes, taskRes]) => {
 
-      // ── Sessions ──────────────────────────────────────────────────
-      const sessData = (revSess.data ?? []) as any[];
-      setSessions(sessData.map((s: any) => ({
-        surah_name:    `Page ${s.page_number}`,
-        ayah_start:    s.page_number,
-        accuracy_score: s.score ?? 0,
-        created_at:    s.created_at,
-        duration:      s.duration_seconds ?? 0,
-      })));
+      const revSessions  = (revSessRes.data  ?? []) as any[];
+      const revProgress  = (revProgRes.data  ?? []) as any[];
+      const memSessions  = (memSessRes.data  ?? []) as any[];
+      const testSessions = (testSessRes.data ?? []) as any[];
 
-      // Streak — count consecutive days with at least one session
-      const sessionDates = [...new Set(sessData.map((s: any) => new Date(s.created_at).toDateString()))];
+      // ── Streak: any session from ANY module counts ─────────────────
+      const allDates = [
+        ...revSessions.map((s: any)  => new Date(s.created_at).toDateString()),
+        ...memSessions.map((s: any)  => new Date(s.created_at).toDateString()),
+        ...testSessions.map((s: any) => new Date(s.created_at).toDateString()),
+      ];
+      const uniqueDates = new Set(allDates);
       let streak = 0;
-      for (let i = 0; i < 90; i++) {
+      for (let i = 0; i < 365; i++) {
         const d = new Date(); d.setDate(d.getDate() - i);
-        if (sessionDates.includes(d.toDateString())) streak++;
+        if (uniqueDates.has(d.toDateString())) streak++;
         else if (i > 0) break;
       }
 
-      const totalMins = Math.round(sessData.reduce((a: number, s: any) => a + (s.duration_seconds || 0), 0) / 60);
+      // ── Total mins across all modules ─────────────────────────────
+      const allDurSec = [
+        ...revSessions.map((s: any)  => s.duration_seconds || 0),
+        ...memSessions.map((s: any)  => s.duration_seconds || 0),
+        ...testSessions.map((s: any) => s.duration_seconds || 0),
+      ];
+      const totalMins = Math.round(allDurSec.reduce((a, b) => a + b, 0) / 60);
 
-      // Average accuracy from all recitation sessions
-      const scores = sessData.map((s: any) => s.score).filter((x: any) => x != null && x > 0);
-      const avg = scores.length ? Math.round(scores.reduce((a: number, b: number) => a + b, 0) / scores.length) : 0;
+      // ── Average accuracy across all modules ───────────────────────
+      const allScores = [
+        ...revSessions.map((s: any)  => s.score).filter(Boolean),
+        ...memSessions.map((s: any)  => s.score).filter(Boolean),
+        ...testSessions.map((s: any) => s.score).filter(Boolean),
+      ];
+      const avg = allScores.length
+        ? Math.round(allScores.reduce((a, b) => a + b, 0) / allScores.length) : 0;
 
-      // ── Revision progress (completed pages) ───────────────────────
-      const progData = (revProg.data ?? []) as any[];
-      const completedPages = progData.filter(p => p.completed).length;
-      const totalPages = (assignRes.data as any)?.selected_items?.length ?? 0;
+      // ── Per-module stats ──────────────────────────────────────────
+      const revScores = revSessions.map((s: any) => s.score).filter(Boolean);
+      const revAvg    = revScores.length ? Math.round(revScores.reduce((a:number,b:number)=>a+b,0)/revScores.length) : 0;
+      const pagesRevised = new Set(revProgress.map((p: any) => p.page_number)).size;
+      setRevStats({ sessions: revSessions.length, avgScore: revAvg, pagesRevised });
 
-      // Build fake ProgressEntry list from revision progress for juz/surah display
-      // Map page numbers to juz (rough: pages 1-20 = juz1, etc.)
-      const pageToJuz = (page: number) => Math.min(30, Math.ceil(page / 20));
-      const juzMap = new Map<number, { done: boolean; pages: number }>();
-      progData.forEach((p: any) => {
+      const memScores = memSessions.map((s: any) => s.score).filter(Boolean);
+      const memAvg    = memScores.length ? Math.round(memScores.reduce((a:number,b:number)=>a+b,0)/memScores.length) : 0;
+      const versesMemorized = memSessions.reduce((a: number, s: any) => a + (s.verses_count || 0), 0);
+      setMemStats({ sessions: memSessions.length, versesMemorized, avgScore: memAvg });
+
+      const testScores = testSessions.map((s: any) => s.score).filter(Boolean);
+      const testAvg    = testScores.length ? Math.round(testScores.reduce((a:number,b:number)=>a+b,0)/testScores.length) : 0;
+      setTestStats({ sessions: testSessions.length, avgScore: testAvg, lastScore: testScores[0] ?? 0 });
+
+      // ── Recent sessions list (all modules, latest 8) ──────────────
+      const combined = [
+        ...revSessions.map((s: any) => ({
+          surah_name:    `Revision · Page ${s.page_number}`,
+          ayah_start:    s.page_number,
+          accuracy_score: s.score ?? 0,
+          created_at:    s.created_at,
+          duration:      s.duration_seconds ?? 0,
+        })),
+        ...memSessions.map((s: any) => ({
+          surah_name:    `Memorize · ${s.surah_name || ""}`,
+          ayah_start:    0,
+          accuracy_score: s.score ?? 0,
+          created_at:    s.created_at,
+          duration:      s.duration_seconds ?? 0,
+        })),
+        ...testSessions.map((s: any) => ({
+          surah_name:    `Test · ${s.surah_name || ""}`,
+          ayah_start:    0,
+          accuracy_score: s.score ?? 0,
+          created_at:    s.created_at,
+          duration:      s.duration_seconds ?? 0,
+        })),
+      ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+       .slice(0, 8);
+      setSessions(combined);
+
+      // ── Revision progress → ProgressEntry list ────────────────────
+      const progEntries: ProgressEntry[] = revProgress.slice(0, 20).map((p: any) => ({
+        surah_num:        p.page_number,
+        surah_name:       `Page ${p.page_number}`,
+        last_reviewed:    p.completed_at ?? new Date().toISOString(),
+        best_accuracy:    p.best_score ?? 0,
+        times_reviewed:   1,
+        verses_memorized: p.completed ? 20 : 0,
+        total_verses:     20,
+      }));
+      setProgress(progEntries);
+
+      // Juz tracking from revision progress
+      const pageToJuz = (pg: number) => Math.min(30, Math.ceil(pg / 20));
+      const juzMap = new Map<number, boolean>();
+      revProgress.forEach((p: any) => {
         const j = pageToJuz(p.page_number);
-        const ex = juzMap.get(j) ?? { done: false, pages: 0 };
-        juzMap.set(j, { done: ex.done || p.completed, pages: ex.pages + 1 });
+        juzMap.set(j, (juzMap.get(j) ?? false) || !!p.completed);
       });
       const done: number[] = [], partial: number[] = [];
-      juzMap.forEach((v, j) => { if (v.done) done.push(j); else partial.push(j); });
-      setJuzDone(done);
-      setJuzPartial(partial);
+      juzMap.forEach((v, j) => { if (v) done.push(j); else partial.push(j); });
+      setJuzDone(done); setJuzPartial(partial);
 
-      // Build progress entries for display
-      const fakeProgress: ProgressEntry[] = progData.slice(0, 20).map((p: any) => ({
-        surah_num:      p.page_number,
-        surah_name:     `Page ${p.page_number}`,
-        last_reviewed:  p.completed_at ?? new Date().toISOString(),
-        best_accuracy:  p.best_score ?? p.exercise_score ?? 0,
-        times_reviewed: 1,
-        verses_memorized: p.completed ? 20 : 0,
-        total_verses:   20,
-      }));
-      setProgress(fakeProgress);
-
-      // Weekly activity chart
+      // ── Weekly activity chart (all modules) ───────────────────────
       const weekData: WeeklyData[] = [];
       for (let i = 6; i >= 0; i--) {
         const d = new Date(); d.setDate(d.getDate() - i);
-        const count = sessData.filter((s: any) => new Date(s.created_at).toDateString() === d.toDateString()).length;
+        const ds = d.toDateString();
+        const count =
+          revSessions.filter((s: any)  => new Date(s.created_at).toDateString() === ds).length +
+          memSessions.filter((s: any)  => new Date(s.created_at).toDateString() === ds).length +
+          testSessions.filter((s: any) => new Date(s.created_at).toDateString() === ds).length;
         weekData.push({ day: WEEK_DAYS[d.getDay()], count });
       }
       setWeeklyData(weekData);
@@ -191,7 +249,7 @@ export default function HifdhDashboard({
       if (taskRes.data) setTasks(taskRes.data as DailyTask[]);
       setLoading(false);
     });
-  }, [userId]);
+  }, [userId, refreshKey]);
 
   const addTask = async () => {
     if (!userId || !taskSurah.trim()) return;
@@ -604,43 +662,119 @@ export default function HifdhDashboard({
           </SectionCard>
         )}
 
-        {/* ── Recent Sessions ── */}
+        {/* ── Per-Module Summary ── */}
+        <SectionCard
+          icon={<BarChart3 size={16} />}
+          title="Module Summary"
+          titleAr="ملخص الأنشطة"
+          iconBg="#1a3d5c">
+          <div className="px-4 pb-4 space-y-2">
+
+            {/* Revision */}
+            <button onClick={() => onNavigate("recitation")}
+              className="w-full flex items-center gap-3 p-3 rounded-xl text-left active:scale-[0.98] transition-all"
+              style={{ background: "#f0faf3", border: "1px solid #b6e5c5" }}>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: "#276749", color: "#fff" }}>
+                <BookOpen size={15} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-black" style={{ color: INK }}>Revision</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#d1f0da" }}>
+                    <div className="h-full rounded-full" style={{ width: `${revStats.avgScore}%`, background: "#276749" }} />
+                  </div>
+                  <span className="text-[10px] font-black shrink-0" style={{ color: "#276749" }}>{revStats.avgScore}%</span>
+                </div>
+                <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                  {revStats.sessions} session{revStats.sessions !== 1 ? "s" : ""} · {revStats.pagesRevised} pages revised
+                </p>
+              </div>
+              <ChevronRight size={13} color={MUTED} />
+            </button>
+
+            {/* Memorization */}
+            <button onClick={() => onNavigate("memorize")}
+              className="w-full flex items-center gap-3 p-3 rounded-xl text-left active:scale-[0.98] transition-all"
+              style={{ background: "#f5f0ff", border: "1px solid #d3bbfa" }}>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: "#5b21b6", color: "#fff" }}>
+                <Brain size={15} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-black" style={{ color: INK }}>Memorization</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#ede9fe" }}>
+                    <div className="h-full rounded-full" style={{ width: `${memStats.avgScore}%`, background: "#5b21b6" }} />
+                  </div>
+                  <span className="text-[10px] font-black shrink-0" style={{ color: "#5b21b6" }}>{memStats.avgScore}%</span>
+                </div>
+                <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                  {memStats.sessions} session{memStats.sessions !== 1 ? "s" : ""} · {memStats.versesMemorized} verses
+                </p>
+              </div>
+              <ChevronRight size={13} color={MUTED} />
+            </button>
+
+            {/* Test */}
+            <button onClick={() => onNavigate("test")}
+              className="w-full flex items-center gap-3 p-3 rounded-xl text-left active:scale-[0.98] transition-all"
+              style={{ background: "#fff7ed", border: "1px solid #fed7aa" }}>
+              <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                style={{ background: "#c2410c", color: "#fff" }}>
+                <ClipboardCheck size={15} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-black" style={{ color: INK }}>Test</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#fed7aa" }}>
+                    <div className="h-full rounded-full" style={{ width: `${testStats.avgScore}%`, background: "#c2410c" }} />
+                  </div>
+                  <span className="text-[10px] font-black shrink-0" style={{ color: "#c2410c" }}>{testStats.avgScore}%</span>
+                </div>
+                <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                  {testStats.sessions} test{testStats.sessions !== 1 ? "s" : ""}{testStats.lastScore ? ` · Last: ${testStats.lastScore}%` : ""}
+                </p>
+              </div>
+              <ChevronRight size={13} color={MUTED} />
+            </button>
+
+          </div>
+        </SectionCard>
+
+        {/* ── Recent Sessions (all modules combined) ── */}
         {sessions.length > 0 && (
           <SectionCard
             icon={<Headphones size={16} />}
             title="Recent Sessions"
             titleAr="الجلسات الأخيرة"
-            iconBg="#312e81"
-            headerRight={
-              <button
-                onClick={() => onNavigate("recitation")}
-                className="flex items-center gap-0.5 text-xs font-bold"
-                style={{ color: GOLD }}>
-                History <ChevronRight size={13} />
-              </button>
-            }>
+            iconBg="#312e81">
             <div className="px-4 pb-4 space-y-2">
-              {sessions.slice(0, 4).map((session, i) => {
+              {sessions.slice(0, 6).map((session, i) => {
                 const score = session.accuracy_score;
                 const color = score >= 80 ? "#15803d" : score >= 60 ? "#b45309" : "#b91c1c";
                 const bg    = score >= 80 ? "#eaf7ee" : score >= 60 ? "#fdf3e0" : "#fdeceb";
+                const isRev = session.surah_name.startsWith("Revision");
+                const isMem = session.surah_name.startsWith("Memorize");
+                const dest  = isRev ? "recitation" : isMem ? "memorize" : "test";
                 return (
                   <button
                     key={i}
-                    onClick={() => onNavigate("recitation")}
+                    onClick={() => onNavigate(dest)}
                     className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
                     style={{ background: "#f7f4ec", border: `1px solid ${CARD_BRD}` }}>
                     <div
                       className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 font-black text-xs"
                       style={{ background: bg, color, border: `1px solid ${color}33` }}>
-                      {score}%
+                      {score > 0 ? `${score}%` : "–"}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-black truncate" style={{ color: INK }}>
                         {session.surah_name}
                       </p>
                       <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
-                        Ayah {session.ayah_start} · {Math.round((session.duration || 0) / 60)}m
+                        {new Date(session.created_at).toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
+                        {session.duration ? ` · ${Math.max(1, Math.round(session.duration / 60))}m` : ""}
                       </p>
                     </div>
                     {score >= 80 && <Star size={14} color={GOLD} fill={GOLD} />}
