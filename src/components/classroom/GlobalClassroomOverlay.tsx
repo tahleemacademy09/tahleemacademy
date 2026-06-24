@@ -38,6 +38,7 @@ import { App as CapApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import ClassroomView from "@/components/classroom/ClassroomView";
 import { useEffect, useRef, useCallback } from "react";
+import { startForegroundService, stopForegroundService } from "@/hooks/useForegroundService";
 import { useLocation } from "react-router-dom";
 
 // Routes where the overlay is allowed to persist.
@@ -145,15 +146,40 @@ export default function GlobalClassroomOverlay() {
     };
   }, [hasConnected, handleReturn, handleLeave]);
 
-  // ── Native foreground service: keeps audio alive when phone home button pressed ──
-  // On Android native (Capacitor), startBackgroundAudio() also starts the
-  // Android foreground service via @capacitor/background-audio (if installed).
-  // The useEffect above already calls startBackgroundAudio, so this block only
-  // handles the Capacitor app lifecycle events.
+  // ── Native Android Foreground Service ───────────────────────────────────
+  // This is the ONLY reliable way to keep a WebView process alive on Samsung
+  // (and other Android OEMs) when the home button is pressed.
+  //
+  // On Samsung S21+ with battery optimisation, Activity.onStop() suspends the
+  // WebView JS thread within 3–7 s of backgrounding — killing LiveKit heartbeat,
+  // WakeLock, and the silence <audio> element simultaneously.
+  //
+  // A real Android Foreground Service (persistent notification) elevates the
+  // process priority so the OS cannot kill it — exactly how WhatsApp, Google
+  // Meet, and Zoom keep calls alive on Android.
+  //
+  // Plugin: npm install capacitor-plugin-foreground-service
+  // (see src/hooks/useForegroundService.ts for bridge + install instructions)
+  useEffect(() => {
+    if (!hasConnected) {
+      stopForegroundService();
+      return;
+    }
+    // Start the foreground service immediately when joining a class
+    startForegroundService({
+      title: `🔴 Live Class — ${title}`,
+      body:  "Tahleem Academy · Tap to return to class",
+      id:    1001,
+      color: "#064E3B",
+    });
+    return () => { stopForegroundService(); };
+  }, [hasConnected, title]);
+
+  // ── Capacitor app lifecycle (back button + foreground/background) ─────────
   useEffect(() => {
     if (!Capacitor.isNativePlatform() || !hasConnected) return;
-    let backHandle: any = null;
-    let stateHandle: any = null;
+    let backHandle: any   = null;
+    let stateHandle: any  = null;
 
     CapApp.addListener("backButton", () => {
       if (!minimized) setMinimized(true);
@@ -163,12 +189,13 @@ export default function GlobalClassroomOverlay() {
     // More reliable than visibilitychange in Android WebView.
     CapApp.addListener("appStateChange", ({ isActive }: { isActive: boolean }) => {
       if (!isActive) {
-        // App went to background — minimize UI but keep LiveKit alive.
+        // App went to background — minimize UI but keep LiveKit alive via
+        // the foreground service (started above). Do NOT stop audio here.
         if (!userMinimizedRef.current) setMinimized(true);
       } else {
-        // App came back to foreground — restore if user didn't explicitly minimize.
+        // App came back to foreground
         if (!userMinimizedRef.current) setMinimized(false);
-        // Restore mic after background (Android suspends mic track during screen lock)
+        // Restore mic — Android releases mic track when app backgrounds
         if (micEnabledRef.current) {
           setTimeout(() => { restoreMicFnRef.current?.(); }, 600);
         }
