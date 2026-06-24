@@ -144,7 +144,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     const teacherName = (teacherProfile as any)?.full_name || "Your teacher";
-    const joinUrl     = `${APP_BASE_URL}/student/live-classes?subject=${subject_id}`;
+    const joinUrl     = `${APP_BASE_URL}/student/live-classes?subject=${subject_id}&autoJoin=true`;
     const ringId      = `ring-${session_id}`;
 
     const ringPayload = {
@@ -249,7 +249,7 @@ Deno.serve(async (req) => {
         title:   `📞 ${subjectTitle} is LIVE now!`,
         message: `${teacherName} has started the class. Join immediately.`,
         type:    "class_ring",
-        link:    `/student/live-classes?subject=${subject_id}`,
+        link:    `/student/live-classes?subject=${subject_id}&autoJoin=true`,
         is_read: false,
       }).catch(() => {});
     }
