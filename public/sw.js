@@ -1,32 +1,46 @@
-// public/sw.js — Tahleem Academy Service Worker v8
-// v8 fixes (on top of v7):
-//   1. Added LIVE_CLASS_KEEPALIVE message handler — when a live class is active,
-//      useBackgroundAudio pings the SW every 20 s. The SW now responds with an ACK
-//      which keeps the SW event loop alive, preventing it from sleeping mid-class
-//      and dropping push subscriptions or background sync state.
-//   2. Cache name bumped to tahleem-v8 so the new SW auto-activates on deploy.
+// public/sw.js — Tahleem Academy Service Worker v9
+// v9 fixes:
+//   1. notificationclick: navigates to path-only (strips domain) so APK deep-links work
+//   2. push handler: strips dedup query params from url before displaying notification
+//   3. Urgency header added via web-push options for timely Android delivery
 
-const CACHE_NAME = "tahleem-v8";
+const CACHE_NAME = "tahleem-v9";
 const ICON       = "/icons/icon-192x192.png";
 const BADGE      = "/icons/icon-96x96.png";
 
 // ⚠️  HARDCODED — do NOT change to self.location.origin.
-//     self.location.origin returns whatever origin the SW script was served from.
-//     On a Lovable preview domain that becomes *.lovable.app, which gets embedded
-//     into every notification click URL permanently.
 const APP_URL = "https://tahleemacademy.vercel.app";
 
 // Strips any non-production host from an absolute URL, or prepends APP_URL to a
-// relative path. Also handles the case where old notifications stored a Lovable URL.
+// relative path. Also strips dedup query params (class=...&t=...) added by scheduler.
 function sanitiseUrl(raw) {
   if (!raw) return APP_URL;
-  if (raw.startsWith(APP_URL)) return raw;
-  if (raw.startsWith("/")) return APP_URL + raw;
+  let url = raw;
+  // Strip dedup params first (e.g. ?class=abc:t=0 or &class=...)
   try {
-    const { pathname, search, hash } = new URL(raw);
+    const u = new URL(raw.startsWith("http") ? raw : APP_URL + raw);
+    u.searchParams.delete("class");
+    u.searchParams.delete("t");
+    url = u.toString();
+  } catch { /* fall through */ }
+
+  if (url.startsWith(APP_URL)) return url;
+  if (url.startsWith("/")) return APP_URL + url;
+  try {
+    const { pathname, search, hash } = new URL(url);
     return APP_URL + pathname + search + hash;
   } catch {
     return APP_URL;
+  }
+}
+
+// Extract just the path+search+hash from a full URL (for in-app navigation)
+function toRelativePath(fullUrl) {
+  try {
+    const u = new URL(fullUrl);
+    return u.pathname + u.search + u.hash || "/";
+  } catch {
+    return "/";
   }
 }
 
@@ -37,9 +51,7 @@ self.addEventListener("install", e => {
     caches.open(CACHE_NAME).then(cache =>
       cache.addAll(["/", "/manifest.json", ICON, BADGE]).catch(() => {})
     )
-    // No self.skipWaiting() on purpose — see v6 comments. A new SW sits in
-    // "waiting" until the page explicitly requests the takeover via SKIP_WAITING,
-    // preventing disruptive reloads mid-class or mid-exam.
+    // No self.skipWaiting() on purpose — see v6 comments.
   );
 });
 
@@ -65,8 +77,7 @@ self.addEventListener("push", e => {
   const title  = data.title   ?? "Tahleem Academy 🕌";
   const body   = data.body    ?? data.message ?? "";
 
-  // FIX: sanitise the URL from the push payload — old DB records may have a
-  // Lovable preview URL saved as join_url.
+  // Sanitise the URL — strips dedup params and non-production hosts
   const url = sanitiseUrl(data.url ?? data.join_url ?? "/");
   const tag  = data.tag ?? (isRing ? "tahleem-ring" : "tahleem-push");
 
@@ -82,7 +93,7 @@ self.addEventListener("push", e => {
       ? [800, 300, 800, 300, 800, 600, 800, 300, 800]
       : (data.vibrate ?? [200, 100, 200]),
     timestamp: Date.now(),
-    // Store the SANITISED url — notificationclick reads from here
+    // Store SANITISED url (no dedup params) so notificationclick navigates cleanly
     data: { url, type: data.type },
     actions: isRing
       ? [
@@ -90,8 +101,8 @@ self.addEventListener("push", e => {
           { action: "dismiss", title: "✕ Dismiss"  },
         ]
       : [
-          { action: "open",    title: "Open"        },
-          { action: "dismiss", title: "Dismiss"     },
+          { action: "open",    title: "Open" },
+          { action: "dismiss", title: "Dismiss" },
         ],
   };
 
@@ -104,20 +115,20 @@ self.addEventListener("notificationclick", e => {
   e.notification.close();
   if (e.action === "dismiss") return;
 
-  // Double-sanitise — handles old notifications stored before v7 that may have
-  // had a Lovable URL baked into notification.data.url
-  const fullUrl = sanitiseUrl(e.notification.data?.url ?? "/");
+  // Sanitise and extract relative path — critical for APK deep-link navigation
+  const fullUrl      = sanitiseUrl(e.notification.data?.url ?? "/");
+  const relativePath = toRelativePath(fullUrl);
 
   e.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
-      // Focus an already-open Tahleem tab and navigate it to the target URL
       for (const client of list) {
         if (client.url.startsWith(APP_URL) && "focus" in client) {
-          client.postMessage({ type: "NOTIFICATION_CLICK", url: fullUrl });
+          // Post relative path so the app navigates via React Router (no full reload)
+          client.postMessage({ type: "NOTIFICATION_CLICK", url: relativePath, fullUrl });
           return client.focus();
         }
       }
-      // No open tab — open a new window at the correct production URL
+      // No open tab — open directly to the full URL
       return clients.openWindow(fullUrl);
     })
   );
@@ -143,21 +154,13 @@ self.addEventListener("message", e => {
     return;
   }
 
-  // LIVE_CLASS_KEEPALIVE: sent every 20 s by useBackgroundAudio while a class
-  // is active. Responding keeps the SW's event loop alive so it doesn't sleep
-  // mid-class and drop push subscriptions or background sync.
-  // We respond with a no-op acknowledgement so the sender knows we're awake.
   if (e.data?.type === "LIVE_CLASS_KEEPALIVE") {
     e.source?.postMessage({ type: "LIVE_CLASS_KEEPALIVE_ACK" });
     return;
   }
 });
 
-// ── Fetch — cache-first navigation strategy (unchanged from v6) ───────────────
-//
-// Navigation requests serve the cached shell instantly to prevent the
-// reload-on-resume bug on iOS/Android. Static assets are cache-first.
-// API/Supabase/LiveKit/Anthropic calls bypass the SW entirely.
+// ── Fetch — cache-first navigation strategy ───────────────────────────────────
 
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
