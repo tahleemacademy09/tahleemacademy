@@ -220,8 +220,27 @@ function listenToSWMessages(userId: string): () => void {
       console.log("[useTimetableNotifications] re-subscribe result:", ok);
     }
 
-    if (msg.type === "NOTIFICATION_CLICK" && msg.url) {
-      window.location.href = msg.url;
+    if (msg.type === "NOTIFICATION_CLICK") {
+      // msg.url is now a relative path (e.g. "/live/abc123") sent by sw v9.
+      // We dispatch a custom event that App.tsx / useAppStateRestore can catch
+      // and navigate with React Router — no full-page reload needed.
+      // Fallback: if for some reason the SW sent a full URL, extract the path.
+      const raw = msg.url ?? msg.fullUrl ?? "/";
+      let path = raw;
+      try {
+        if (raw.startsWith("http")) {
+          const u = new URL(raw);
+          path = u.pathname + u.search + u.hash;
+        }
+      } catch { /* use raw as-is */ }
+      if (!path || path === "") path = "/";
+      // Dispatch a custom DOM event so any mounted React component can listen
+      window.dispatchEvent(new CustomEvent("tahleem:notification-navigate", { detail: { path } }));
+      // Also do a location.assign as fallback (handles cold-start / no listener yet)
+      setTimeout(() => {
+        if (window.__tahleemNotifNavigated) return;
+        window.location.assign(path);
+      }, 300);
     }
   };
 
