@@ -300,7 +300,7 @@ Deno.serve(async (req) => {
 
     const { data: classes, error: classErr } = await sb
       .from("public_classes")
-      .select("id, title, title_ar, scheduled_at, host_id, join_url, status")
+      .select("id, title, title_ar, scheduled_at, host_id, join_url, status, subject_id")
       .gte("scheduled_at", minus1min.toISOString())
       .lte("scheduled_at", in13min.toISOString())
       .not("status", "eq", "ended")
@@ -321,6 +321,11 @@ Deno.serve(async (req) => {
         const classTitle = cls.title_ar || cls.title || "Class";
         const joinUrl    = sanitiseUrl(cls.join_url ?? `${APP_BASE_URL}/live/${cls.id}`);
         const joinPath   = toRelativePath(joinUrl);
+        // For authenticated students: deep-link directly into the live classroom overlay.
+        // LearningHub reads ?subject= and ?autoJoin=true to open ClassroomView immediately.
+        const studentJoinPath = cls.subject_id
+          ? `/student/live-classes?subject=${cls.subject_id}&autoJoin=true`
+          : joinPath; // fallback to public join page if no subject_id
 
         // Teacher name
         let teacherName = "Your teacher";
@@ -353,7 +358,8 @@ Deno.serve(async (req) => {
           const r = await maybeNotify(sb, {
             userId: s.user_id, classId: cls.id, classTitle,
             scheduledAt: cls.scheduled_at, minsLeft, threshold,
-            joinUrl, joinPath, teacherName, label: "Class",
+            joinUrl: `${APP_BASE_URL}${studentJoinPath}`, joinPath: studentJoinPath,
+            teacherName, label: "Class",
           });
           stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
         }
