@@ -1,6 +1,12 @@
-/*  src/pages/teacher/TeacherSettings.tsx — ENHANCED
-    Full-featured settings page for teachers.
-    Tabs: Profile | Teaching | Notifications | Preferences | Security
+/*  src/pages/teacher/TeacherSettings.tsx — ENHANCED v2
+    Tabs: Profile | Teaching | Notifications | Preferences | Payments | Security
+
+    NEW in v2:
+    ─────────────────────────────────────────────────────────────────────────
+    • "Payments" tab — teacher's salary/payment history from admin
+    • Bank Account Details section — input + Paystack account verification
+    • Paystack bank list fetched live from public Paystack API
+    ─────────────────────────────────────────────────────────────────────────
 */
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
@@ -16,6 +22,9 @@ import {
   Camera, Save, Lock, LogOut, Eye, EyeOff,
   Loader2, AlertTriangle, Trash2, Bell, BookOpen,
   User, Shield, Settings2, CheckCircle2,
+  CreditCard, Banknote, CheckCircle, XCircle,
+  Clock, TrendingUp, Download, ChevronDown, ChevronUp,
+  Building2, Phone as PhoneIcon, BadgeCheck,
 } from "lucide-react";
 
 const G    = "#064E3B";
@@ -34,6 +43,7 @@ const TABS = [
   { id: "teaching",      icon: <BookOpen  size={14} />, label: "Teaching"      },
   { id: "notifications", icon: <Bell      size={14} />, label: "Notifications" },
   { id: "preferences",   icon: <Settings2 size={14} />, label: "Preferences"   },
+  { id: "payments",      icon: <CreditCard size={14} />, label: "Payments"     },
   { id: "security",      icon: <Shield    size={14} />, label: "Security"      },
 ];
 
@@ -45,6 +55,17 @@ const SPECIALIZATIONS = [
 const LEVELS_TAUGHT    = ["Beginners","Intermediate","Advanced","Children (5–10)","Teens (11–17)","Adults","All Levels"];
 const AVAIL_DAYS       = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
 const AVAIL_TIMES      = ["Morning (6–12)","Afternoon (12–17)","Evening (17–21)","Night (21–23)"];
+
+const PAYMENT_STATUS_CFG: Record<string, { label: string; bg: string; color: string; icon: any }> = {
+  paid:    { label: "Paid",    bg: "#F0FFF4", color: "#16A34A", icon: CheckCircle },
+  pending: { label: "Pending", bg: "#FFFBEB", color: "#D97706", icon: Clock },
+  failed:  { label: "Failed",  bg: "#FEF2F2", color: "#DC2626", icon: XCircle },
+};
+
+const fmtAmt = (amt: number, currency = "NGN") => {
+  const sym: Record<string, string> = { NGN: "₦", USD: "$", GBP: "£", SAR: "﷼" };
+  return `${sym[currency] || "₦"}${(amt || 0).toLocaleString()}`;
+};
 
 export default function TeacherSettings() {
   const { language, setLanguage } = useLanguage();
@@ -65,6 +86,24 @@ export default function TeacherSettings() {
   const [tgChatId,        setTgChatId]        = useState<string | null>(null);
   const [tgCode,          setTgCode]          = useState<string | null>(null);
   const [tgPolling,       setTgPolling]       = useState(false);
+
+  // ── Payment state ────────────────────────────────────────────────────────
+  const [teacherPayments,  setTeacherPayments]  = useState<any[]>([]);
+  const [paymentLoading,   setPaymentLoading]   = useState(false);
+  const [paymentStats,     setPaymentStats]     = useState({ totalEarned: 0, pending: 0, lastPaid: "" });
+  const [expandedPay,      setExpandedPay]      = useState<string | null>(null);
+
+  // ── Bank account state ───────────────────────────────────────────────────
+  const [bankList,         setBankList]         = useState<any[]>([]);
+  const [bankListLoading,  setBankListLoading]  = useState(false);
+  const [bankForm,         setBankForm]         = useState({
+    bank_code: "", bank_name: "", account_number: "", account_name: "",
+    currency: "NGN",
+  });
+  const [verifying,        setVerifying]        = useState(false);
+  const [verified,         setVerified]         = useState(false);
+  const [savingBank,       setSavingBank]       = useState(false);
+  const [existingBank,     setExistingBank]     = useState<any>(null);
 
   const [form, setForm] = useState({
     full_name: "", full_name_ar: "", phone: "", whatsapp: "",
@@ -110,6 +149,7 @@ export default function TeacherSettings() {
     compact_timetable: false,
   });
 
+  // ── Effects ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (typeof Notification !== "undefined")
       setPushBlocked(Notification.permission === "denied");
@@ -178,8 +218,33 @@ export default function TeacherSettings() {
       const { data: tg } = await supabase.from("profiles")
         .select("telegram_chat_id, telegram_link_code").eq("user_id", user.id).maybeSingle();
       if (tg) { setTgChatId((tg as any).telegram_chat_id ?? null); setTgCode((tg as any).telegram_link_code ?? null); }
+
+      // Load bank details
+      const { data: bank } = await (supabase as any).from("teacher_bank_accounts")
+        .select("*").eq("user_id", user.id).maybeSingle();
+      if (bank) {
+        setExistingBank(bank);
+        setBankForm({
+          bank_code:      bank.bank_code      || "",
+          bank_name:      bank.bank_name      || "",
+          account_number: bank.account_number || "",
+          account_name:   bank.account_name   || "",
+          currency:       bank.currency       || "NGN",
+        });
+        setVerified(bank.is_verified ?? false);
+      }
     })();
   }, [user]);
+
+  // Load payments when switching to payments tab
+  useEffect(() => {
+    if (tab === "payments" && user) loadTeacherPayments();
+  }, [tab, user]);
+
+  // Load bank list when payments tab is active
+  useEffect(() => {
+    if (tab === "payments" && bankList.length === 0) loadBankList();
+  }, [tab]);
 
   useEffect(() => {
     if (!tgPolling || !user || tgChatId) return;
@@ -195,6 +260,134 @@ export default function TeacherSettings() {
     return () => clearInterval(t);
   }, [tgPolling, user, tgChatId, toast]);
 
+  // ── Payment loaders ──────────────────────────────────────────────────────
+  const loadTeacherPayments = async () => {
+    if (!user) return;
+    setPaymentLoading(true);
+    try {
+      const { data } = await (supabase as any)
+        .from("teacher_payments")
+        .select("*, profiles!teacher_payments_paid_by_fkey(full_name)")
+        .eq("teacher_id", user.id)
+        .order("payment_date", { ascending: false });
+
+      const rows = data || [];
+      setTeacherPayments(rows);
+
+      const totalEarned = rows.filter((r: any) => r.status === "paid").reduce((s: number, r: any) => s + (r.amount || 0), 0);
+      const pending     = rows.filter((r: any) => r.status === "pending").reduce((s: number, r: any) => s + (r.amount || 0), 0);
+      const lastPaid    = rows.find((r: any) => r.status === "paid")?.payment_date || "";
+      setPaymentStats({ totalEarned, pending, lastPaid });
+    } finally {
+      setPaymentLoading(false);
+    }
+  };
+
+  const loadBankList = async () => {
+    setBankListLoading(true);
+    try {
+      const res  = await fetch("https://api.paystack.co/bank?currency=NGN&perPage=100");
+      const json = await res.json();
+      if (json.status) setBankList(json.data || []);
+    } catch {
+      // Fallback popular Nigerian banks
+      setBankList([
+        { code: "044", name: "Access Bank" },
+        { code: "050", name: "Ecobank Nigeria" },
+        { code: "011", name: "First Bank of Nigeria" },
+        { code: "214", name: "First City Monument Bank (FCMB)" },
+        { code: "070", name: "Fidelity Bank" },
+        { code: "058", name: "Guaranty Trust Bank (GTB)" },
+        { code: "030", name: "Heritage Bank" },
+        { code: "301", name: "Jaiz Bank" },
+        { code: "082", name: "Keystone Bank" },
+        { code: "526", name: "Moniepoint MFB" },
+        { code: "076", name: "Polaris Bank" },
+        { code: "101", name: "Providus Bank" },
+        { code: "221", name: "Stanbic IBTC Bank" },
+        { code: "068", name: "Standard Chartered" },
+        { code: "232", name: "Sterling Bank" },
+        { code: "100", name: "Suntrust Bank" },
+        { code: "032", name: "Union Bank of Nigeria" },
+        { code: "033", name: "United Bank for Africa (UBA)" },
+        { code: "215", name: "Unity Bank" },
+        { code: "035", name: "Wema Bank" },
+        { code: "057", name: "Zenith Bank" },
+        { code: "000013", name: "GTBank Mobile Money" },
+        { code: "50211", name: "Kuda Bank" },
+        { code: "565", name: "Carbon" },
+        { code: "090115", name: "PalmPay" },
+        { code: "120001", name: "9PSB (9 Payment Service Bank)" },
+        { code: "999992", name: "Opay (OPay Digital Services)" },
+      ]);
+    } finally {
+      setBankListLoading(false);
+    }
+  };
+
+  const verifyAccount = async () => {
+    if (!bankForm.account_number || bankForm.account_number.length < 10 || !bankForm.bank_code) {
+      toast({ title: "Enter a 10-digit account number and select your bank", variant: "destructive" });
+      return;
+    }
+    setVerifying(true);
+    setVerified(false);
+    try {
+      // Use Paystack's public resolve endpoint (needs CORS proxy or backend edge function)
+      // We call our Supabase edge function to keep the secret key server-side
+      const { data, error } = await (supabase as any).functions.invoke("verify-bank-account", {
+        body: { account_number: bankForm.account_number, bank_code: bankForm.bank_code },
+      });
+      if (error || !data?.account_name) {
+        // Fallback: mark as unverified but allow saving with a warning
+        toast({
+          title: "⚠️ Could not auto-verify",
+          description: "Please double-check your account details. Admin will manually verify before payments.",
+          variant: "destructive",
+        });
+        setVerified(false);
+      } else {
+        setBankForm(f => ({ ...f, account_name: data.account_name }));
+        setVerified(true);
+        toast({ title: `✅ Account verified: ${data.account_name}` });
+      }
+    } catch {
+      toast({ title: "Verification failed — check your details and try again", variant: "destructive" });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const saveBank = async () => {
+    if (!user) return;
+    if (!bankForm.account_number || !bankForm.bank_code) {
+      toast({ title: "Fill in all bank details", variant: "destructive" });
+      return;
+    }
+    if (!verified) {
+      toast({ title: "Please verify your account number first", variant: "destructive" });
+      return;
+    }
+    setSavingBank(true);
+    const { error } = await (supabase as any).from("teacher_bank_accounts").upsert({
+      user_id:        user.id,
+      bank_code:      bankForm.bank_code,
+      bank_name:      bankForm.bank_name,
+      account_number: bankForm.account_number,
+      account_name:   bankForm.account_name,
+      currency:       bankForm.currency,
+      is_verified:    verified,
+      updated_at:     new Date().toISOString(),
+    }, { onConflict: "user_id" });
+    setSavingBank(false);
+    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
+    else {
+      setExistingBank({ ...bankForm, is_verified: verified });
+      toast({ title: "✅ Bank details saved! Admin will use this for salary payments." });
+    }
+  };
+
+  // ── Existing save handlers ───────────────────────────────────────────────
   const saveProfile = async () => {
     if (!user) return; setSaving(true);
     const { error } = await supabase.from("profiles").upsert({
@@ -324,7 +517,7 @@ export default function TeacherSettings() {
   const toggleMulti = (arr: string[], val: string, set: (a: string[]) => void) =>
     set(arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val]);
 
-  // ── UI pieces ──────────────────────────────────────────────────────────────
+  // ── UI components ─────────────────────────────────────────────────────────
   const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
       <div style={{ padding: "10px 16px", background: "linear-gradient(90deg,#F9FAFB,#F3F4F6)", borderBottom: "1px solid #E5E7EB" }}>
@@ -374,12 +567,16 @@ export default function TeacherSettings() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "'Cairo', system-ui, sans-serif" }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}`}</style>
+      <style>{`
+        @keyframes spin    { to { transform: rotate(360deg) } }
+        @keyframes fadeUp  { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:none } }
+        @keyframes shimmer { 0% { background-position:-200% 0 } 100% { background-position:200% 0 } }
+        .pay-row:hover     { background: #F9FAFB !important; }
+      `}</style>
 
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <div style={{ background: `linear-gradient(135deg,${G},${GM})`, boxShadow: "0 4px 20px rgba(6,78,59,.3)" }}>
         <div style={{ padding: "20px 16px 16px", display: "flex", alignItems: "center", gap: 14, maxWidth: 680, margin: "0 auto" }}>
-          {/* Avatar */}
           <div style={{ position: "relative", flexShrink: 0 }}>
             <div style={{ width: 62, height: 62, borderRadius: "50%", border: "3px solid rgba(255,255,255,.35)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,.15)" }}>
               {form.avatar_url
@@ -426,7 +623,9 @@ export default function TeacherSettings() {
       {/* ── Body ───────────────────────────────────────────────────────────── */}
       <div style={{ padding: "16px 14px 40px", maxWidth: 680, margin: "0 auto", animation: "fadeUp .3s ease" }}>
 
-        {/* PROFILE */}
+        {/* ════════════════════════════════════════════════════════
+            PROFILE
+        ════════════════════════════════════════════════════════ */}
         {tab === "profile" && <>
           <Sec title="Personal Information">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -470,7 +669,9 @@ export default function TeacherSettings() {
           <SaveBtn fn={saveProfile} />
         </>}
 
-        {/* TEACHING */}
+        {/* ════════════════════════════════════════════════════════
+            TEACHING
+        ════════════════════════════════════════════════════════ */}
         {tab === "teaching" && <>
           <Sec title="Specialisations">
             <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 10px" }}>Select all subjects you teach</p>
@@ -547,7 +748,9 @@ export default function TeacherSettings() {
           <SaveBtn fn={saveTeaching} />
         </>}
 
-        {/* NOTIFICATIONS */}
+        {/* ════════════════════════════════════════════════════════
+            NOTIFICATIONS
+        ════════════════════════════════════════════════════════ */}
         {tab === "notifications" && <>
           {pushBlocked && (
             <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", gap: 10 }}>
@@ -584,7 +787,6 @@ export default function TeacherSettings() {
           </div>
 
           <Sec title="Channels">
-            {/* ── Phone / Web Push toggle ── */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
               <div>
                 <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>Phone &amp; Web Notifications</p>
@@ -633,7 +835,9 @@ export default function TeacherSettings() {
           <SaveBtn fn={saveNotifs} />
         </>}
 
-        {/* PREFERENCES */}
+        {/* ════════════════════════════════════════════════════════
+            PREFERENCES
+        ════════════════════════════════════════════════════════ */}
         {tab === "preferences" && <>
           <Sec title="Language & Display">
             <Fld label="Interface Language">
@@ -668,7 +872,251 @@ export default function TeacherSettings() {
           <SaveBtn fn={savePrefs} />
         </>}
 
-        {/* SECURITY */}
+        {/* ════════════════════════════════════════════════════════
+            PAYMENTS  ← NEW TAB
+        ════════════════════════════════════════════════════════ */}
+        {tab === "payments" && <>
+
+          {/* ── Summary cards ─────────────────────────────────── */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
+            {[
+              {
+                icon: TrendingUp, bg: "#ECFDF5", color: "#16A34A",
+                label: "Total Earned", value: fmtAmt(paymentStats.totalEarned),
+              },
+              {
+                icon: Clock, bg: "#FFFBEB", color: "#D97706",
+                label: "Pending", value: fmtAmt(paymentStats.pending),
+              },
+              {
+                icon: Banknote, bg: "#EFF6FF", color: "#3B82F6",
+                label: "Last Paid", value: paymentStats.lastPaid
+                  ? new Date(paymentStats.lastPaid).toLocaleDateString("en-GB", { day: "numeric", month: "short" })
+                  : "—",
+              },
+            ].map(({ icon: Icon, bg, color, label, value }) => (
+              <div key={label} style={{ background: "#fff", borderRadius: 14, border: "1px solid #E5E7EB", padding: "12px 10px", textAlign: "center" }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: bg, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 6px" }}>
+                  <Icon size={16} color={color} />
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 900, color: "#111" }}>{value}</div>
+                <div style={{ fontSize: 10, color: "#9CA3AF", marginTop: 2 }}>{label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── Bank Account Details ───────────────────────────── */}
+          <Sec title="💳 Bank Account Details">
+            {/* Verified badge */}
+            {existingBank && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "10px 12px",
+                borderRadius: 10, marginBottom: 14,
+                background: existingBank.is_verified ? "#ECFDF5" : "#FFFBEB",
+                border: `1px solid ${existingBank.is_verified ? "#86EFAC" : "#FDE68A"}`,
+              }}>
+                {existingBank.is_verified
+                  ? <><BadgeCheck size={16} color="#16A34A" /><span style={{ fontSize: 12, fontWeight: 700, color: "#15803D" }}>Account Verified — {existingBank.account_name}</span></>
+                  : <><AlertTriangle size={16} color="#D97706" /><span style={{ fontSize: 12, fontWeight: 700, color: "#92400E" }}>Not yet verified — update and verify below</span></>
+                }
+              </div>
+            )}
+
+            <Fld label="Currency">
+              <select style={inp} value={bankForm.currency} onChange={e => setBankForm(f => ({ ...f, currency: e.target.value }))}>
+                <option value="NGN">NGN — Nigerian Naira</option>
+                <option value="USD">USD — US Dollar</option>
+                <option value="GBP">GBP — British Pound</option>
+                <option value="SAR">SAR — Saudi Riyal</option>
+              </select>
+            </Fld>
+
+            <Fld label="Bank">
+              {bankListLoading
+                ? <div style={{ ...inp, display: "flex", alignItems: "center", gap: 8, color: "#9CA3AF" }}><Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> Loading banks…</div>
+                : <select style={inp} value={bankForm.bank_code} onChange={e => {
+                    const selected = bankList.find(b => b.code === e.target.value);
+                    setBankForm(f => ({ ...f, bank_code: e.target.value, bank_name: selected?.name || "" }));
+                    setVerified(false);
+                  }}>
+                    <option value="">Select your bank…</option>
+                    {bankList.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+                  </select>
+              }
+            </Fld>
+
+            <Fld label="Account Number">
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  style={{ ...inp, flex: 1, letterSpacing: 1 }}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={10}
+                  placeholder="10-digit account number"
+                  value={bankForm.account_number}
+                  onChange={e => {
+                    const v = e.target.value.replace(/\D/g, "").slice(0, 10);
+                    setBankForm(f => ({ ...f, account_number: v, account_name: "" }));
+                    setVerified(false);
+                  }}
+                />
+                <button
+                  onClick={verifyAccount}
+                  disabled={verifying || bankForm.account_number.length < 10 || !bankForm.bank_code}
+                  style={{
+                    padding: "0 14px", borderRadius: 10, border: "none", cursor: "pointer",
+                    fontWeight: 700, fontSize: 12, whiteSpace: "nowrap",
+                    background: verifying ? "#9CA3AF" : G, color: "#fff",
+                    display: "flex", alignItems: "center", gap: 6,
+                    opacity: bankForm.account_number.length < 10 || !bankForm.bank_code ? 0.5 : 1,
+                  }}
+                >
+                  {verifying
+                    ? <><Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> Checking…</>
+                    : verified
+                    ? <><CheckCircle size={13} /> Verified</>
+                    : "Verify"}
+                </button>
+              </div>
+            </Fld>
+
+            {/* Account name auto-filled after verification */}
+            {bankForm.account_name && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "10px 12px",
+                borderRadius: 10, background: "#ECFDF5", border: "1px solid #86EFAC", marginBottom: 12,
+              }}>
+                <CheckCircle size={15} color="#16A34A" />
+                <div>
+                  <div style={{ fontSize: 12, color: "#6B7280" }}>Account Name</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: "#15803D" }}>{bankForm.account_name}</div>
+                </div>
+              </div>
+            )}
+
+            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 14px", lineHeight: 1.5 }}>
+              🔒 Your bank details are encrypted and only visible to the academy admin for salary disbursements.
+            </p>
+
+            <button
+              onClick={saveBank}
+              disabled={savingBank || !verified}
+              style={{
+                width: "100%", padding: "12px 0", borderRadius: 12, border: "none",
+                cursor: savingBank || !verified ? "not-allowed" : "pointer",
+                fontWeight: 800, fontSize: 14, color: "#fff",
+                background: savingBank || !verified ? "#9CA3AF" : `linear-gradient(135deg,${G},${GM})`,
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                boxShadow: verified ? "0 4px 16px rgba(6,78,59,.25)" : "none",
+              }}
+            >
+              {savingBank
+                ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</>
+                : <><Building2 size={15} /> Save Bank Details</>}
+            </button>
+          </Sec>
+
+          {/* ── Payment History ────────────────────────────────── */}
+          <Sec title="📋 Payment History">
+            {paymentLoading ? (
+              <div style={{ textAlign: "center", padding: "30px 0", color: "#9CA3AF" }}>
+                <Loader2 size={22} style={{ animation: "spin .8s linear infinite", margin: "0 auto 8px", display: "block" }} />
+                <p style={{ fontSize: 13, margin: 0 }}>Loading payment history…</p>
+              </div>
+            ) : teacherPayments.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "30px 0" }}>
+                <Banknote size={36} color="#D1D5DB" style={{ margin: "0 auto 10px", display: "block" }} />
+                <p style={{ fontSize: 13, color: "#9CA3AF", margin: 0 }}>No payment records yet</p>
+                <p style={{ fontSize: 11, color: "#D1D5DB", margin: "4px 0 0" }}>Payments made by admin will appear here</p>
+              </div>
+            ) : (
+              <div>
+                {teacherPayments.map((pay: any) => {
+                  const cfg = PAYMENT_STATUS_CFG[pay.status] || PAYMENT_STATUS_CFG.pending;
+                  const Icon = cfg.icon;
+                  const isOpen = expandedPay === pay.id;
+                  return (
+                    <div key={pay.id} className="pay-row" style={{
+                      borderRadius: 12, border: "1px solid #E5E7EB", marginBottom: 8,
+                      overflow: "hidden", cursor: "pointer", background: "#fff",
+                      transition: "background .15s",
+                    }}>
+                      {/* Row header */}
+                      <div
+                        onClick={() => setExpandedPay(isOpen ? null : pay.id)}
+                        style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px" }}
+                      >
+                        <div style={{ width: 36, height: 36, borderRadius: 10, background: cfg.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                          <Icon size={16} color={cfg.color} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: "#111" }}>
+                            {pay.description || pay.payment_type || "Salary Payment"}
+                          </div>
+                          <div style={{ fontSize: 11, color: "#9CA3AF" }}>
+                            {pay.payment_date ? new Date(pay.payment_date).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "—"}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", flexShrink: 0 }}>
+                          <div style={{ fontWeight: 900, fontSize: 14, color: "#111" }}>
+                            {fmtAmt(pay.amount, pay.currency)}
+                          </div>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 20, background: cfg.bg, color: cfg.color, fontSize: 10, fontWeight: 700 }}>
+                            <Icon size={9} />{cfg.label}
+                          </span>
+                        </div>
+                        {isOpen ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
+                      </div>
+
+                      {/* Expanded details */}
+                      {isOpen && (
+                        <div style={{ padding: "0 14px 14px", borderTop: "1px solid #F3F4F6" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+                            {[
+                              { label: "Payment Method", val: pay.payment_method || "Bank Transfer" },
+                              { label: "Reference",      val: pay.reference      || "—" },
+                              { label: "Period",         val: pay.period         || "—" },
+                              { label: "Processed by",   val: pay.profiles?.full_name || "Admin" },
+                            ].map(({ label, val }) => (
+                              <div key={label}>
+                                <div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 2 }}>{label}</div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>{val}</div>
+                              </div>
+                            ))}
+                          </div>
+                          {pay.notes && (
+                            <div style={{ marginTop: 10, padding: "8px 10px", background: "#F9FAFB", borderRadius: 8 }}>
+                              <div style={{ fontSize: 10, color: "#9CA3AF", marginBottom: 2 }}>Notes</div>
+                              <div style={{ fontSize: 12, color: "#374151" }}>{pay.notes}</div>
+                            </div>
+                          )}
+                          {pay.receipt_url && (
+                            <a
+                              href={pay.receipt_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{
+                                display: "inline-flex", alignItems: "center", gap: 6, marginTop: 10,
+                                padding: "7px 12px", borderRadius: 8, border: `1px solid ${G}`,
+                                color: G, fontWeight: 700, fontSize: 12, textDecoration: "none",
+                              }}
+                            >
+                              <Download size={12} /> Download Receipt
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Sec>
+        </>}
+
+        {/* ════════════════════════════════════════════════════════
+            SECURITY
+        ════════════════════════════════════════════════════════ */}
         {tab === "security" && <>
           <Sec title="Account Security">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: "1px solid #F3F4F6" }}>
@@ -724,7 +1172,7 @@ export default function TeacherSettings() {
         </>}
       </div>
 
-      {/* Change Password Dialog */}
+      {/* ── Change Password Dialog ──────────────────────────────────────────── */}
       <Dialog open={showPw} onOpenChange={v => !v && setShowPw(false)}>
         <DialogContent style={{ maxWidth: 400, borderRadius: 20, padding: 0, overflow: "hidden" }}>
           <div style={{ background: `linear-gradient(135deg,${G},${GM})`, padding: "18px 20px" }}>
@@ -753,7 +1201,7 @@ export default function TeacherSettings() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Account Dialog */}
+      {/* ── Delete Account Dialog ───────────────────────────────────────────── */}
       <Dialog open={showDelete} onOpenChange={v => !v && setShowDelete(false)}>
         <DialogContent style={{ maxWidth: 360, borderRadius: 20, padding: 24, textAlign: "center" }}>
           <div style={{ width: 52, height: 52, borderRadius: "50%", background: "#FEF2F2", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
