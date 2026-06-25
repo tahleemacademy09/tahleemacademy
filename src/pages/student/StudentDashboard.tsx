@@ -77,12 +77,28 @@ const AssignmentPreview = ({ userId, t, language, navigate }: { userId: string; 
   useEffect(() => {
     if (!userId) return;
     const fetch = async () => {
+      // Get student level first
+      const { data: profileData } = await supabase.from("profiles").select("level").eq("user_id", userId).single();
+      const studentLevel: string | null = (profileData as any)?.level || null;
+
       const { data: enrollments } = await supabase.from("enrollments").select("subject_id").eq("user_id", userId);
-      const { data: ttSlots }     = await supabase.from("subject_timetable" as any).select("subject_id").eq("is_active", true);
-      const ids = [...new Set([...(enrollments||[]).map((e:any)=>e.subject_id), ...(ttSlots||[]).map((s:any)=>s.subject_id)])].filter(Boolean);
+      const { data: ttSlots }     = await supabase.from("subject_timetable" as any).select("subject_id, levels").eq("is_active", true);
+      const ttIds = (ttSlots||[]).filter((s:any) => {
+        if (!s.levels || s.levels.length === 0) return true;
+        if (!studentLevel) return false;
+        return s.levels.includes(studentLevel);
+      }).map((s:any)=>s.subject_id);
+      const ids = [...new Set([...(enrollments||[]).map((e:any)=>e.subject_id), ...ttIds])].filter(Boolean);
       if (!ids.length) { setLoading(false); return; }
-      const { data: asgn } = await supabase.from("subject_assignments").select("*, subjects(id,title,title_ar)").in("subject_id", ids).order("deadline",{ascending:true}).limit(5);
-      const list = asgn || [];
+      const { data: asgn } = await supabase.from("subject_assignments").select("*, subjects(id,title,title_ar,level,levels)").in("subject_id", ids).order("deadline",{ascending:true}).limit(10);
+      const list = (asgn || []).filter((a:any) => {
+        const subj = a.subjects;
+        if (!subj) return true;
+        const sl: string[] = subj.levels || (subj.level ? [subj.level] : []);
+        if (sl.length === 0) return true;
+        if (!studentLevel) return false;
+        return sl.includes(studentLevel);
+      }).slice(0, 5);
       setItems(list);
       if (list.length) {
         const { data: s } = await supabase.from("assignment_submissions").select("*").eq("user_id", userId).in("assignment_id", list.map((a:any)=>a.id));
@@ -301,7 +317,7 @@ const StudentDashboard = () => {
           supabase.from("exam_attempts").select("exam_id, status, percentage").eq("user_id", uid),
           supabase.from("subjects").select("*").eq("is_active", true).limit(4),
           supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
-          supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar)"),
+          supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar, level, levels)"),
           supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar, levels, level, visibility)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
           (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", uid).eq("active", true).maybeSingle(),
           (supabase as any).from("hifdh_daily_logs").select("*").eq("student_id", uid).eq("log_date", new Date().toISOString().split("T")[0]).maybeSingle(),
@@ -320,7 +336,16 @@ const StudentDashboard = () => {
       setNotifications(notifsRes.data || []);
       setLiveSubjects(subjectsRes.data || []);
       setAllExamsForCalendar(calendarExamsRes.data || []);
-      setSubjectAssignments(subAssignmentsRes.data || []);
+      const studentLevelForCalendar = (studentProfileData as any)?.level || (displayProfile as any)?.level || null;
+      const filteredSubjAsgn = (subAssignmentsRes.data || []).filter((a: any) => {
+        const subj = a.subjects;
+        if (!subj) return true;
+        const sl: string[] = subj.levels || (subj.level ? [subj.level] : []);
+        if (sl.length === 0) return true;
+        if (!studentLevelForCalendar) return false;
+        return sl.includes(studentLevelForCalendar);
+      });
+      setSubjectAssignments(filteredSubjAsgn);
 
       // ── Filter timetable slots to only what this student should see ────
       // Get student's level and private subject IDs first
