@@ -99,6 +99,7 @@ const MajlisModeration      = lazy(() => import("./pages/admin/MajlisModeration"
 const TranscriptManagement  = lazy(() => import("./pages/admin/TranscriptManagement"));
 const AttendanceManagement  = lazy(() => import("./pages/admin/AttendanceManagement"));
 const PaymentManagement     = lazy(() => import("./pages/admin/PaymentManagement"));
+const TeacherPayments       = lazy(() => import("./pages/admin/TeacherPayments"));
 const AcademicCalendar      = lazy(() => import("./pages/admin/AcademicCalendar"));
 const PaymentSettings       = lazy(() => import("./pages/admin/PaymentSettings.tsx"));
 const PublicClassManagement = lazy(() => import("./pages/admin/PublicClassManagement"));
@@ -305,6 +306,7 @@ const App = () => (
                     <Route path="/admin/transcripts"                 element={<TranscriptManagement />} />
                     <Route path="/admin/attendance"                  element={<AttendanceManagement />} />
                     <Route path="/admin/payments"                    element={<PaymentManagement />} />
+                    <Route path="/admin/teacher-payments"           element={<TeacherPayments />} />
                     <Route path="/admin/calendar"                    element={<AcademicCalendar />} />
                     <Route path="/admin/payment-settings"            element={<PaymentSettings />} />
                     <Route path="/admin/public-classes"              element={<PublicClassManagement />} />
