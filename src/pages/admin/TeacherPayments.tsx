@@ -81,29 +81,41 @@ export default function TeacherPayments() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Get teacher user_ids from user_roles table
+      // 1. Get teacher user_ids — prefer user_roles, fall back to teacher_profiles
       const { data: roleRows } = await (supabase as any)
         .from("user_roles")
         .select("user_id")
         .eq("role", "teacher");
 
-      const teacherIds: string[] = (roleRows || []).map((r: any) => r.user_id);
+      let teacherIds: string[] = (roleRows || []).map((r: any) => r.user_id);
 
-      // 2. Get their profiles
-      let tList: any[] = [];
-      if (teacherIds.length > 0) {
-        const { data } = await (supabase as any)
-          .from("profiles")
-          .select("user_id, full_name, full_name_ar, email, avatar_url, phone")
-          .in("user_id", teacherIds)
-          .order("full_name");
-        tList = data || [];
+      // Fallback: user_roles has no teachers → pull ids from teacher_profiles
+      if (teacherIds.length === 0) {
+        const { data: tpRows } = await (supabase as any)
+          .from("teacher_profiles")
+          .select("user_id");
+        teacherIds = (tpRows || []).map((r: any) => r.user_id);
       }
 
-      // 3. Bank accounts (keyed by user_id)
+      // 2. Fetch bank accounts (full data) — also use their user_ids as a safety net
+      //    in case a teacher has a bank entry but no role/profile row yet
       const { data: banks } = await (supabase as any)
         .from("teacher_bank_accounts")
         .select("*");
+
+      const bankOwnerIds: string[] = (banks || []).map((r: any) => r.user_id);
+      const allTeacherIds = Array.from(new Set([...teacherIds, ...bankOwnerIds]));
+
+      // 3. Get their profiles
+      let tList: any[] = [];
+      if (allTeacherIds.length > 0) {
+        const { data } = await (supabase as any)
+          .from("profiles")
+          .select("user_id, full_name, full_name_ar, email, avatar_url, phone")
+          .in("user_id", allTeacherIds)
+          .order("full_name");
+        tList = data || [];
+      }
 
       // 4. All payments
       const { data: pays } = await (supabase as any)
