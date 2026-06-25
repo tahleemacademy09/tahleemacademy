@@ -17,19 +17,10 @@ import {
   RefreshCw, Award, RotateCcw,
 } from "lucide-react";
 
-// ═══════════════════════════════════════════════════════════════════════
-//  CONSTANTS & THEME
-// ═══════════════════════════════════════════════════════════════════════
-
-const GOLD       = "#c9a84c";
-const GOLD_LIGHT = "#e8c97a";
-const DG         = "#0f2d1f";
-const DG2        = "#1a4030";
-const PARCHMENT  = "#fffdf6";
-const PARCH2     = "#f9f2dc";
-const INK        = "#1a1007";
-const PASS_SCORE = 70;
-const EXERCISE_PASS = 65;
+import {
+  GOLD, GOLD_LIGHT, DG, DG2, PARCHMENT, PARCH2, INK,
+  PASS_SCORE, EXERCISE_PASS, toAr, fmtTime,
+} from "./hifdhTheme";
 
 const JUZ_PAGES: [number, number][] = [
   [1,21],[22,41],[42,62],[63,81],[82,101],[102,121],[122,141],[142,161],[162,181],[182,201],
@@ -155,9 +146,6 @@ interface SessionStats {
 //  UTILITIES
 // ═══════════════════════════════════════════════════════════════════════
 
-const toAr = (n: number) => String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]);
-const fmtTime = (s: number) =>
-  `${Math.floor(s / 60).toString().padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
 function normalizeArabic(t: string): string {
   return t

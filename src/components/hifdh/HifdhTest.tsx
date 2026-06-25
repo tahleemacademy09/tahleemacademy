@@ -12,13 +12,12 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { SURAHS, audioUrl, DEFAULT_RECITER } from "./surahData";
+import { G, GM, GOLD, LIGHT, BORDER, toAr } from "./hifdhTheme";
 import { supabase } from "@/integrations/supabase/client";
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 
 // ── Brand tokens ──────────────────────────────────────────────────────
-const G = "#1a3d24", GM = "#276749", GOLD = "#b7791f";
-const LIGHT = "#f0fff4", BORDER = "#d4e8d4";
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface Ayah { numberInSurah: number; text: string; }
@@ -54,9 +53,6 @@ interface Question {
   correctIdx: number;
 }
 
-// ── Utilities ─────────────────────────────────────────────────────────
-const toAr = (n: number) =>
-  String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[+d]);
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];

@@ -9,17 +9,8 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, RECITERS, audioUrl, DEFAULT_RECITER } from "./surahData";
+import { G, GM, GOLD, GOLD_L, LIGHT, BORDER, PARCH, PARCH2 } from "./hifdhTheme";
 import { supabase } from "@/integrations/supabase/client";
-
-/* ── Palette ────────────────────────────────────────────────── */
-const G      = "#1a3d24";
-const GM     = "#276749";
-const GOLD   = "#b7791f";
-const GOLD_L = "#fef9ee";
-const LIGHT  = "#f0fff4";
-const BORDER = "#d4e8d4";
-const PARCH  = "#faf6ec";
-const PARCH2 = "#f3ead8";
 
 const SESSION_KEY = "hifdh_mem_v20";
 

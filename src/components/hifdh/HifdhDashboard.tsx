@@ -10,6 +10,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { GOLD, GOLD_LIGHT, G as INK } from "./hifdhTheme";
 
 interface Props {
   userId: string | null;
@@ -49,9 +50,6 @@ interface DailyTask {
 interface WeeklyData { day: string; count: number; }
 
 // ── Light, brand-consistent palette (matches the Revision/Test/Memorize tabs) ──
-const GOLD       = "#b7791f";
-const GOLD_LIGHT = "#e8c96b";
-const INK        = "#1a3d24";   // primary text — dark green
 const MUTED      = "#8a9b85";   // secondary text
 const PAGE_BG    = "#f5f2ec";   // warm cream page background
 const CARD_BG    = "#ffffff";
