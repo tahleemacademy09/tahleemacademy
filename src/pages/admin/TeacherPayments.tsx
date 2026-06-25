@@ -89,14 +89,6 @@ export default function TeacherPayments() {
 
       let teacherIds: string[] = (roleRows || []).map((r: any) => r.user_id);
 
-      // Fallback: user_roles has no teachers → pull ids from teacher_profiles
-      if (teacherIds.length === 0) {
-        const { data: tpRows } = await (supabase as any)
-          .from("teacher_profiles")
-          .select("user_id");
-        teacherIds = (tpRows || []).map((r: any) => r.user_id);
-      }
-
       // 2. Fetch bank accounts (full data) — also use their user_ids as a safety net
       //    in case a teacher has a bank entry but no role/profile row yet
       const { data: banks } = await (supabase as any)
