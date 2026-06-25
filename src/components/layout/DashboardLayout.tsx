@@ -233,7 +233,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
     // 7 ── Finance ──────────────────────────────────────────────
     { type:"group", key:"finance", icon:CreditCard, label:t("Finance","المالية"), children:[
-      { to:"/admin/payments", icon:CreditCard, label:t("All Payments","جميع المدفوعات") },
+      { to:"/admin/payments",         icon:CreditCard, label:t("All Payments","جميع المدفوعات") },
+      { to:"/admin/teacher-payments", icon:CreditCard, label:t("Teacher Salaries","رواتب المعلمين") },
+      { to:"/admin/payment-settings", icon:Settings,   label:t("Payment Settings","إعدادات الدفع") },
     ]},
 
     // 8 ── Communication ────────────────────────────────────────
