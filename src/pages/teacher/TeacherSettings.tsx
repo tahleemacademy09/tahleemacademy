@@ -980,19 +980,27 @@ export default function TeacherSettings() {
               </div>
             </Fld>
 
-            {/* Account name auto-filled after verification */}
-            {bankForm.account_name && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8, padding: "10px 12px",
-                borderRadius: 10, background: "#ECFDF5", border: "1px solid #86EFAC", marginBottom: 12,
-              }}>
-                <CheckCircle size={15} color="#16A34A" />
-                <div>
-                  <div style={{ fontSize: 12, color: "#6B7280" }}>Account Name</div>
-                  <div style={{ fontSize: 14, fontWeight: 800, color: "#15803D" }}>{bankForm.account_name}</div>
-                </div>
+            {/* Account Name — auto-filled by Verify, or entered manually */}
+            <Fld label="Account Name">
+              <div style={{ position: "relative" }}>
+                <input
+                  style={{ ...inp, paddingRight: bankForm.account_name ? 36 : 13 }}
+                  type="text"
+                  placeholder="e.g. MUHAMMED ABDULLAHI (auto-filled or enter manually)"
+                  value={bankForm.account_name}
+                  onChange={e => setBankForm(f => ({ ...f, account_name: e.target.value }))}
+                />
+                {verified && bankForm.account_name && (
+                  <CheckCircle size={14} color="#16A34A"
+                    style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)" }} />
+                )}
               </div>
-            )}
+              {!verified && bankForm.account_number.length === 10 && bankForm.bank_code && !bankForm.account_name && (
+                <p style={{ fontSize: 11, color: "#D97706", margin: "4px 0 0" }}>
+                  ⚠ Click Verify to auto-fill, or type your account name manually
+                </p>
+              )}
+            </Fld>
 
             <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 14px", lineHeight: 1.5 }}>
               🔒 Your bank details are encrypted and only visible to the academy admin for salary disbursements.
