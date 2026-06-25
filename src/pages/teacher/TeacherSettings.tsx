@@ -67,6 +67,52 @@ const fmtAmt = (amt: number, currency = "NGN") => {
   return `${sym[currency] || "₦"}${(amt || 0).toLocaleString()}`;
 };
 
+/* ── Stable sub-components (defined outside to prevent remount on every render) ── */
+const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
+    <div style={{ padding: "10px 16px", background: "linear-gradient(90deg,#F9FAFB,#F3F4F6)", borderBottom: "1px solid #E5E7EB" }}>
+      <p style={{ fontWeight: 800, fontSize: 11, color: "#6B7280", margin: 0, textTransform: "uppercase", letterSpacing: .8 }}>{title}</p>
+    </div>
+    <div style={{ padding: "14px 16px" }}>{children}</div>
+  </div>
+);
+const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <div style={{ marginBottom: 12 }}>
+    <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
+    {children}
+  </div>
+);
+const Tog = ({ label, sub, checked, onChange }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: "1px solid #F9FAFB" }}>
+    <div>
+      <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{label}</p>
+      {sub && <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{sub}</p>}
+    </div>
+    <Switch checked={checked} onCheckedChange={onChange} />
+  </div>
+);
+const Chip = ({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) => (
+  <button onClick={onClick} style={{
+    padding: "7px 13px", borderRadius: 20, border: `1.5px solid ${active ? G : "#E5E7EB"}`,
+    background: active ? G : "#fff", color: active ? "#fff" : "#555",
+    fontSize: 12, fontWeight: active ? 700 : 500, cursor: "pointer", transition: "all .15s",
+    display: "flex", alignItems: "center", gap: 5,
+  }}>
+    {active && <CheckCircle2 size={11} />}{label}
+  </button>
+);
+const SaveBtn = ({ fn, saving }: { fn: () => void; saving: boolean }) => (
+  <button onClick={fn} disabled={saving} style={{
+    width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
+    cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14,
+    color: "#fff", background: saving ? "#9CA3AF" : `linear-gradient(135deg,${G},${GM})`,
+    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+    boxShadow: saving ? "none" : "0 4px 16px rgba(6,78,59,.25)",
+  }}>
+    {saving ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><Save size={15} /> Save Changes</>}
+  </button>
+);
+
 export default function TeacherSettings() {
   const { language, setLanguage } = useLanguage();
   const { user, signOut }          = useAuth();
@@ -520,52 +566,6 @@ export default function TeacherSettings() {
   const toggleMulti = (arr: string[], val: string, set: (a: string[]) => void) =>
     set(arr.includes(val) ? arr.filter(x => x !== val) : [...arr, val]);
 
-  // ── UI components ─────────────────────────────────────────────────────────
-  const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
-      <div style={{ padding: "10px 16px", background: "linear-gradient(90deg,#F9FAFB,#F3F4F6)", borderBottom: "1px solid #E5E7EB" }}>
-        <p style={{ fontWeight: 800, fontSize: 11, color: "#6B7280", margin: 0, textTransform: "uppercase", letterSpacing: .8 }}>{title}</p>
-      </div>
-      <div style={{ padding: "14px 16px" }}>{children}</div>
-    </div>
-  );
-  const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
-      {children}
-    </div>
-  );
-  const Tog = ({ label, sub, checked, onChange }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void }) => (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 0", borderBottom: "1px solid #F9FAFB" }}>
-      <div>
-        <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{label}</p>
-        {sub && <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{sub}</p>}
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
-    </div>
-  );
-  const Chip = ({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) => (
-    <button onClick={onClick} style={{
-      padding: "7px 13px", borderRadius: 20, border: `1.5px solid ${active ? G : "#E5E7EB"}`,
-      background: active ? G : "#fff", color: active ? "#fff" : "#555",
-      fontSize: 12, fontWeight: active ? 700 : 500, cursor: "pointer", transition: "all .15s",
-      display: "flex", alignItems: "center", gap: 5,
-    }}>
-      {active && <CheckCircle2 size={11} />}{label}
-    </button>
-  );
-  const SaveBtn = ({ fn }: { fn: () => void }) => (
-    <button onClick={fn} disabled={saving} style={{
-      width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
-      cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14,
-      color: "#fff", background: saving ? "#9CA3AF" : `linear-gradient(135deg,${G},${GM})`,
-      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-      boxShadow: saving ? "none" : "0 4px 16px rgba(6,78,59,.25)",
-    }}>
-      {saving ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><Save size={15} /> Save Changes</>}
-    </button>
-  );
-
   const initials = (form.full_name || user?.email || "T")[0].toUpperCase();
 
   return (
@@ -666,7 +666,7 @@ export default function TeacherSettings() {
                 placeholder="Brief introduction about yourself, your background, and teaching style…" />
             </Fld>
           </Sec>
-          <SaveBtn fn={saveProfile} />
+          <SaveBtn fn={saveProfile} saving={saving} />
         </>}
 
         {/* ════════════════════════════════════════════════════════
@@ -745,7 +745,7 @@ export default function TeacherSettings() {
             <Tog label="Accept Group Classes" sub="Multiple students in one session"
               checked={teaching.accepts_group} onChange={v => setTeaching(t => ({ ...t, accepts_group: v }))} />
           </Sec>
-          <SaveBtn fn={saveTeaching} />
+          <SaveBtn fn={saveTeaching} saving={saving} />
         </>}
 
         {/* ════════════════════════════════════════════════════════
@@ -832,7 +832,7 @@ export default function TeacherSettings() {
             <Tog label="New Recordings" sub="When a recording is uploaded to your class"
               checked={notifs.new_recording_alert} onChange={v => setNotifs(n => ({ ...n, new_recording_alert: v }))} />
           </Sec>
-          <SaveBtn fn={saveNotifs} />
+          <SaveBtn fn={saveNotifs} saving={saving} />
         </>}
 
         {/* ════════════════════════════════════════════════════════
@@ -869,7 +869,7 @@ export default function TeacherSettings() {
             <Tog label="Compact Timetable View" sub="Condensed rows in the timetable"
               checked={prefs.compact_timetable} onChange={v => setPrefs(p => ({ ...p, compact_timetable: v }))} />
           </Sec>
-          <SaveBtn fn={savePrefs} />
+          <SaveBtn fn={savePrefs} saving={saving} />
         </>}
 
         {/* ════════════════════════════════════════════════════════
