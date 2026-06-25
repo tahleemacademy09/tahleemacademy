@@ -45,6 +45,26 @@ const fmtAmt = (amt: number, currency = "NGN") => {
   return `${sym[currency] || "₦"}${(amt || 0).toLocaleString()}`;
 };
 
+/* Stable sub-components — defined outside to prevent keyboard dismiss on re-render */
+const StatCard = ({ icon: Icon, bg, color, label, value, sub }: any) => (
+  <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
+    <div style={{ width: 42, height: 42, borderRadius: 12, background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <Icon size={18} color={color} />
+    </div>
+    <div>
+      <div style={{ fontSize: 10, color: "#7a9e88", fontWeight: 600 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 900, color: G }}>{value}</div>
+      {sub && <div style={{ fontSize: 10, color: "#9CA3AF" }}>{sub}</div>}
+    </div>
+  </div>
+);
+const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <div style={{ marginBottom: 12 }}>
+    <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
+    {children}
+  </div>
+);
+
 const EMPTY_PAYMENT = {
   teacher_id: "", amount: "", currency: "NGN", payment_type: "Monthly Salary",
   payment_method: "Bank Transfer", reference: "", period: "", notes: "",
@@ -165,27 +185,6 @@ export default function TeacherPayments() {
   const filteredTeachers = teachers.filter(t =>
     !search || (t.full_name || "").toLowerCase().includes(search.toLowerCase()) ||
     (t.email || "").toLowerCase().includes(search.toLowerCase()),
-  );
-
-  // UI pieces
-  const StatCard = ({ icon: Icon, bg, color, label, value, sub }: any) => (
-    <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: "14px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-      <div style={{ width: 42, height: 42, borderRadius: 12, background: bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <Icon size={18} color={color} />
-      </div>
-      <div>
-        <div style={{ fontSize: 10, color: "#7a9e88", fontWeight: 600 }}>{label}</div>
-        <div style={{ fontSize: 18, fontWeight: 900, color: G }}>{value}</div>
-        {sub && <div style={{ fontSize: 10, color: "#9CA3AF" }}>{sub}</div>}
-      </div>
-    </div>
-  );
-
-  const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
-      {children}
-    </div>
   );
 
   if (loading) return (
