@@ -154,6 +154,39 @@ function StableSelect({ value, onChange, children, style }: StableSelectProps) {
   );
 }
 
+type Theme = ReturnType<typeof useTheme>;
+
+/* Stable sub-components — defined outside to prevent keyboard dismiss on re-render */
+const PSec = ({ title, children, T }: { title: string; children: React.ReactNode; T: Theme }) => (
+  <div style={{ background: T.surface, borderRadius: 16, border: `1px solid ${T.border}`, overflow: "hidden", marginBottom: 14 }}>
+    <div style={{ padding: "10px 16px", background: T.surface2, borderBottom: `1px solid ${T.border}` }}>
+      <p style={{ fontWeight: 700, fontSize: 12, color: T.text2, margin: 0, textTransform: "uppercase", letterSpacing: .5 }}>{title}</p>
+    </div>
+    <div style={{ padding: "14px 16px" }}>{children}</div>
+  </div>
+);
+const PFld = ({ label, children, T }: { label: string; children: React.ReactNode; T: Theme }) => (
+  <div style={{ marginBottom: 12 }}>
+    <label style={{ fontSize: 11, fontWeight: 700, color: T.text2, display: "block", marginBottom: 4 }}>{label}</label>
+    {children}
+  </div>
+);
+const PTog = ({ label, sub, checked, onChange, T }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void; T: Theme }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${T.surface2}` }}>
+    <div>
+      <p style={{ fontWeight: 600, fontSize: 13, color: T.text3, margin: 0 }}>{label}</p>
+      {sub && <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>{sub}</p>}
+    </div>
+    <Switch checked={checked} onCheckedChange={onChange} />
+  </div>
+);
+const PSaveBtn = ({ fn, saving }: { fn: () => void; saving: boolean }) => (
+  <button onClick={fn} disabled={saving}
+    style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, color: "#fff", background: saving ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4 }}>
+    {saving ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><Save size={15} /> Save Changes</>}
+  </button>
+);
+
 export default function ProfileSettings() {
   const { language, setLanguage } = useLanguage();
   const { user, signOut }          = useAuth();
@@ -162,6 +195,12 @@ export default function ProfileSettings() {
   const avatarRef                  = useRef<HTMLInputElement>(null);
   const [dark, setDark]            = useDarkMode();
   const T                          = useTheme(dark);
+  const inp: React.CSSProperties = {
+    width: "100%", padding: "9px 12px", borderRadius: 10,
+    border: `1.5px solid ${T.inputBdr}`, fontSize: 13, outline: "none",
+    background: T.inputBg, boxSizing: "border-box" as const,
+    color: T.text, transition: "border-color .15s",
+  };
 
   const [tab,             setTab]             = useState("profile");
   const [saving,          setSaving]          = useState(false);
@@ -447,48 +486,6 @@ export default function ProfileSettings() {
     toast({ title: "✅ Photo updated!" });
   };
 
-  // ── Styled input (theme-aware) ────────────────────────────────────
-  const inp: React.CSSProperties = {
-    width: "100%", padding: "9px 12px", borderRadius: 10,
-    border: `1.5px solid ${T.inputBdr}`, fontSize: 13, outline: "none",
-    background: T.inputBg, boxSizing: "border-box" as const,
-    color: T.text, transition: "border-color .15s",
-  };
-
-  // ── Reusable layout components (receive T via closure) ────────────
-  const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <div style={{ background: T.surface, borderRadius: 16, border: `1px solid ${T.border}`, overflow: "hidden", marginBottom: 14 }}>
-      <div style={{ padding: "10px 16px", background: T.surface2, borderBottom: `1px solid ${T.border}` }}>
-        <p style={{ fontWeight: 700, fontSize: 12, color: T.text2, margin: 0, textTransform: "uppercase", letterSpacing: .5 }}>{title}</p>
-      </div>
-      <div style={{ padding: "14px 16px" }}>{children}</div>
-    </div>
-  );
-
-  const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{ fontSize: 11, fontWeight: 700, color: T.text2, display: "block", marginBottom: 4 }}>{label}</label>
-      {children}
-    </div>
-  );
-
-  const Tog = ({ label, sub, checked, onChange }: any) => (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${T.surface2}` }}>
-      <div>
-        <p style={{ fontWeight: 600, fontSize: 13, color: T.text3, margin: 0 }}>{label}</p>
-        {sub && <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>{sub}</p>}
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
-    </div>
-  );
-
-  const SaveBtn = ({ fn }: { fn: () => void }) => (
-    <button onClick={fn} disabled={saving}
-      style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: saving ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, color: "#fff", background: saving ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 4 }}>
-      {saving ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><Save size={15} /> Save Changes</>}
-    </button>
-  );
-
   // ── Render ────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: "100vh", background: T.bg, transition: "background .25s" }}>
@@ -556,65 +553,65 @@ export default function ProfileSettings() {
 
         {/* ── PROFILE TAB ─────────────────────────────────────────── */}
         {tab === "profile" && <>
-          <Sec title="Personal Information">
+          <PSec title="Personal Information" T={T}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Full Name (English)">
+              <PFld label="Full Name (English)" T={T}>
                 {/* StableInput: onCommit fires on blur/Enter — keyboard stays open while typing */}
                 <StableInput value={form.full_name} onCommit={updateField("full_name")} style={inp} />
-              </Fld>
-              <Fld label="الاسم (عربي)">
+              </PFld>
+              <PFld label="الاسم (عربي)" T={T}>
                 <StableInput value={form.full_name_ar} onCommit={updateField("full_name_ar")} dir="rtl" style={inp} />
-              </Fld>
+              </PFld>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Phone">
+              <PFld label="Phone" T={T}>
                 <StableInput value={form.phone} onCommit={updateField("phone")} type="tel" style={inp} />
-              </Fld>
-              <Fld label="WhatsApp">
+              </PFld>
+              <PFld label="WhatsApp" T={T}>
                 <StableInput value={form.whatsapp} onCommit={updateField("whatsapp")} type="tel" placeholder="+44 7700 000000" style={inp} />
-              </Fld>
+              </PFld>
             </div>
             <p style={{ fontSize: 11, color: T.text2, margin: "-6px 0 10px" }}>
               📱 Add your WhatsApp number with country code (e.g. +44 7700…) to receive class reminders via WhatsApp.
             </p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Date of Birth">
+              <PFld label="Date of Birth" T={T}>
                 {/* Date inputs are fine with onChange — no keyboard involved */}
                 <input style={inp} type="date" value={form.date_of_birth}
                   onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} />
-              </Fld>
-              <Fld label="Gender">
+              </PFld>
+              <PFld label="Gender" T={T}>
                 <StableSelect style={inp} value={form.gender} onChange={v => setForm(f => ({ ...f, gender: v }))}>
                   <option value="">Prefer not to say</option>
                   <option value="male">Male / ذكر</option>
                   <option value="female">Female / أنثى</option>
                 </StableSelect>
-              </Fld>
+              </PFld>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-              <Fld label="Country">
+              <PFld label="Country" T={T}>
                 <StableInput value={form.country} onCommit={updateField("country")} style={inp} />
-              </Fld>
-              <Fld label="City">
+              </PFld>
+              <PFld label="City" T={T}>
                 <StableInput value={form.city} onCommit={updateField("city")} style={inp} />
-              </Fld>
-              <Fld label="Nationality">
+              </PFld>
+              <PFld label="Nationality" T={T}>
                 <StableInput value={form.nationality} onCommit={updateField("nationality")} style={inp} />
-              </Fld>
+              </PFld>
             </div>
-          </Sec>
+          </PSec>
 
-          <Sec title="Parent / Guardian">
+          <PSec title="Parent / Guardian" T={T}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Parent Name">
+              <PFld label="Parent Name" T={T}>
                 <StableInput value={form.parent_name} onCommit={updateField("parent_name")} style={inp} />
-              </Fld>
-              <Fld label="Parent Phone">
+              </PFld>
+              <PFld label="Parent Phone" T={T}>
                 <StableInput value={form.parent_phone} onCommit={updateField("parent_phone")} type="tel" style={inp} />
-              </Fld>
+              </PFld>
             </div>
-          </Sec>
-          <SaveBtn fn={saveProfile} />
+          </PSec>
+          <PSaveBtn fn={saveProfile} saving={saving} />
         </>}
 
         {/* ── NOTIFICATIONS TAB ───────────────────────────────────── */}
@@ -672,7 +669,7 @@ export default function ProfileSettings() {
             )}
           </div>
 
-          <Sec title="Channels">
+          <PSec title="Channels" T={T}>
             {/* ── Phone / Web Push toggle ── */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${T.surface2}` }}>
               <div>
@@ -693,37 +690,37 @@ export default function ProfileSettings() {
                 onCheckedChange={handlePushToggle}
               />
             </div>
-            <Tog label="Email Notifications" sub="Updates via email"
-              checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} />
-            <Tog label="WhatsApp Notifications"
+            <PTog label="Email Notifications" sub="Updates via email"
+              checked={notifs.email_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, email_notifications: v }))} T={T} />
+            <PTog label="WhatsApp Notifications"
               sub={form.whatsapp || form.phone ? `Will message: ${form.whatsapp || form.phone}` : "Add your number in the Profile tab first"}
               checked={notifs.whatsapp_notifications}
-              onChange={(v: boolean) => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} />
-            <Tog label="Announcements" sub="Academy-wide messages"
-              checked={notifs.announcement_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, announcement_notifications: v }))} />
-          </Sec>
-          <Sec title="Classes & Exams">
-            <Tog label="Class Reminders" sub="15 min + 5 min before class starts"
-              checked={notifs.class_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, class_reminder: v }))} />
-            <Tog label="Exam Reminders"
-              checked={notifs.exam_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, exam_reminder: v }))} />
-            <Tog label="Results Released" sub="When exam results are ready"
-              checked={notifs.results_notification} onChange={(v: boolean) => setNotifs(n => ({ ...n, results_notification: v }))} />
-            <Tog label="New Recordings" sub="When class recordings are uploaded"
-              checked={notifs.new_recording_alert} onChange={(v: boolean) => setNotifs(n => ({ ...n, new_recording_alert: v }))} />
-          </Sec>
-          <SaveBtn fn={saveNotifs} />
+              onChange={(v: boolean) => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} T={T} />
+            <PTog label="Announcements" sub="Academy-wide messages"
+              checked={notifs.announcement_notifications} onChange={(v: boolean) => setNotifs(n => ({ ...n, announcement_notifications: v }))} T={T} />
+          </PSec>
+          <PSec title="Classes & Exams" T={T}>
+            <PTog label="Class Reminders" sub="15 min + 5 min before class starts"
+              checked={notifs.class_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, class_reminder: v }))} T={T} />
+            <PTog label="Exam Reminders"
+              checked={notifs.exam_reminder} onChange={(v: boolean) => setNotifs(n => ({ ...n, exam_reminder: v }))} T={T} />
+            <PTog label="Results Released" sub="When exam results are ready"
+              checked={notifs.results_notification} onChange={(v: boolean) => setNotifs(n => ({ ...n, results_notification: v }))} T={T} />
+            <PTog label="New Recordings" sub="When class recordings are uploaded"
+              checked={notifs.new_recording_alert} onChange={(v: boolean) => setNotifs(n => ({ ...n, new_recording_alert: v }))} T={T} />
+          </PSec>
+          <PSaveBtn fn={saveNotifs} saving={saving} />
         </>}
 
         {/* ── PREFERENCES TAB ─────────────────────────────────────── */}
         {tab === "preferences" && <>
-          <Sec title="Language & Display">
-            <Fld label="Interface Language">
+          <PSec title="Language & Display" T={T}>
+            <PFld label="Interface Language" T={T}>
               <StableSelect style={inp} value={prefs.language} onChange={v => setPrefs(p => ({ ...p, language: v }))}>
                 <option value="en">English</option>
                 <option value="ar">العربية</option>
               </StableSelect>
-            </Fld>
+            </PFld>
 
             {/* Dark Mode — FULLY FUNCTIONAL */}
             <div style={{
@@ -753,29 +750,29 @@ export default function ProfileSettings() {
                 }}
               />
             </div>
-          </Sec>
+          </PSec>
 
-          <Sec title="Learning">
-            <Tog label="Autoplay Recordings" checked={prefs.autoplay_recordings} onChange={(v: boolean) => setPrefs(p => ({ ...p, autoplay_recordings: v }))} />
-            <Tog label="Show Subtitles" checked={prefs.show_subtitles} onChange={(v: boolean) => setPrefs(p => ({ ...p, show_subtitles: v }))} />
-            <Fld label="Playback Speed">
+          <PSec title="Learning" T={T}>
+            <PTog label="Autoplay Recordings" checked={prefs.autoplay_recordings} onChange={(v: boolean) => setPrefs(p => ({ ...p, autoplay_recordings: v }))}  T={T}/>
+            <PTog label="Show Subtitles" checked={prefs.show_subtitles} onChange={(v: boolean) => setPrefs(p => ({ ...p, show_subtitles: v }))}  T={T}/>
+            <PFld label="Playback Speed" T={T}>
               <StableSelect style={inp} value={prefs.playback_speed} onChange={v => setPrefs(p => ({ ...p, playback_speed: v }))}>
                 {["0.75x","1x","1.25x","1.5x","2x"].map(s => <option key={s} value={s}>{s}</option>)}
               </StableSelect>
-            </Fld>
-            <Fld label="Default View">
+            </PFld>
+            <PFld label="Default View" T={T}>
               <StableSelect style={inp} value={prefs.default_subject_view} onChange={v => setPrefs(p => ({ ...p, default_subject_view: v }))}>
                 <option value="grid">Grid</option>
                 <option value="list">List</option>
               </StableSelect>
-            </Fld>
-          </Sec>
-          <SaveBtn fn={savePrefs} />
+            </PFld>
+          </PSec>
+          <PSaveBtn fn={savePrefs} saving={saving} />
         </>}
 
         {/* ── SECURITY TAB ────────────────────────────────────────── */}
         {tab === "security" && <>
-          <Sec title="Account Security">
+          <PSec title="Account Security" T={T}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "11px 0", borderBottom: `1px solid ${T.border}` }}>
               <div>
                 <p style={{ fontWeight: 600, fontSize: 13, color: T.text3, margin: 0 }}>Password</p>
@@ -792,8 +789,8 @@ export default function ProfileSettings() {
               </div>
               <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#DCFCE7", color: "#166534", fontWeight: 700 }}>✓ Verified</span>
             </div>
-          </Sec>
-          <Sec title="Session">
+          </PSec>
+          <PSec title="Session" T={T}>
             <button onClick={async () => { await signOut(); navigate("/login"); }}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, background: dark ? "rgba(217,119,6,.12)" : "#FFF7ED", border: `1px solid ${dark ? "rgba(217,119,6,.3)" : "#FED7AA"}`, cursor: "pointer", width: "100%", marginBottom: 8 }}>
               <LogOut size={16} color="#D97706" />
@@ -804,7 +801,7 @@ export default function ProfileSettings() {
               <Trash2 size={16} color="#DC2626" />
               <p style={{ fontWeight: 700, fontSize: 13, color: "#DC2626", margin: 0 }}>Delete Account</p>
             </button>
-          </Sec>
+          </PSec>
         </>}
       </div>
 
