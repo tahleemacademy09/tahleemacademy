@@ -65,6 +65,52 @@ const TERMS = [
 ];
 
 /* ════════════════════════════════════════════════════════════════ */
+/* Stable sub-components — defined outside to prevent keyboard dismiss on re-render */
+const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
+    <div style={{ padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
+      <p style={{ fontWeight: 700, fontSize: 12, color: "#6B7280", margin: 0, textTransform: "uppercase", letterSpacing: .5 }}>{title}</p>
+    </div>
+    <div style={{ padding: "14px 16px" }}>{children}</div>
+  </div>
+);
+const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
+  <div style={{ marginBottom: 12 }}>
+    <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
+    {children}
+  </div>
+);
+const Tog = ({ label, sub, checked, onChange }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
+    <div>
+      <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{label}</p>
+      {sub && <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{sub}</p>}
+    </div>
+    <Switch checked={checked} onCheckedChange={onChange} />
+  </div>
+);
+const SaveBtn = ({ fn, saving, busy }: { fn: () => void; saving: boolean; busy?: boolean }) => (
+  <button onClick={fn} disabled={busy ?? saving}
+    style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: (busy ?? saving) ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, color: "#fff", background: (busy ?? saving) ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "'Cairo', sans-serif" }}>
+    {(busy ?? saving)
+      ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</>
+      : <><Save size={15} /> Save Changes</>}
+  </button>
+);
+const QuickLink = ({ icon: Icon, label, to, onNavigate, color = G }: { icon: any; label: string; to: string; onNavigate: (path: string) => void; color?: string }) => (
+  <button onClick={() => onNavigate(to)}
+    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "12px 14px", borderRadius: 12, background: "#F9FAFB", border: "1.5px solid #E5E7EB", cursor: "pointer", marginBottom: 8 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ width: 34, height: 34, borderRadius: 10, background: color + "15", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Icon size={16} color={color} />
+      </div>
+      <span style={{ fontWeight: 700, fontSize: 13, color: "#374151", fontFamily: "'Cairo', sans-serif" }}>{label}</span>
+    </div>
+    <ChevronRight size={15} color="#9CA3AF" />
+  </button>
+);
+
+/* ════════════════════════════════════════════════════════════════ */
 export default function AdminSettings() {
   const { language, setLanguage } = useLanguage();
   const { user, signOut }          = useAuth();
@@ -283,55 +329,6 @@ export default function AdminSettings() {
     toast({ title: "✅ Photo updated!" });
   };
 
-  /* ── Reusable sub-components ─────────────────────────────────── */
-  const Sec = ({ title, children }: { title: string; children: React.ReactNode }) => (
-    <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", overflow: "hidden", marginBottom: 14 }}>
-      <div style={{ padding: "10px 16px", background: "#F9FAFB", borderBottom: "1px solid #E5E7EB" }}>
-        <p style={{ fontWeight: 700, fontSize: 12, color: "#6B7280", margin: 0, textTransform: "uppercase", letterSpacing: .5 }}>{title}</p>
-      </div>
-      <div style={{ padding: "14px 16px" }}>{children}</div>
-    </div>
-  );
-
-  const Fld = ({ label, children }: { label: string; children: React.ReactNode }) => (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>{label}</label>
-      {children}
-    </div>
-  );
-
-  const Tog = ({ label, sub, checked, onChange }: { label: string; sub?: string; checked: boolean; onChange: (v: boolean) => void }) => (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
-      <div>
-        <p style={{ fontWeight: 600, fontSize: 13, color: "#374151", margin: 0 }}>{label}</p>
-        {sub && <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>{sub}</p>}
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} />
-    </div>
-  );
-
-  const SaveBtn = ({ fn, busy }: { fn: () => void; busy?: boolean }) => (
-    <button onClick={fn} disabled={busy ?? saving}
-      style={{ width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: (busy ?? saving) ? "not-allowed" : "pointer", fontWeight: 800, fontSize: 14, color: "#fff", background: (busy ?? saving) ? "#9CA3AF" : G, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, fontFamily: "'Cairo', sans-serif" }}>
-      {(busy ?? saving)
-        ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</>
-        : <><Save size={15} /> Save Changes</>}
-    </button>
-  );
-
-  const QuickLink = ({ icon: Icon, label, to, color = G }: { icon: any; label: string; to: string; color?: string }) => (
-    <button onClick={() => navigate(to)}
-      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", padding: "12px 14px", borderRadius: 12, background: "#F9FAFB", border: "1.5px solid #E5E7EB", cursor: "pointer", marginBottom: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 34, height: 34, borderRadius: 10, background: color + "15", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <Icon size={16} color={color} />
-        </div>
-        <span style={{ fontWeight: 700, fontSize: 13, color: "#374151", fontFamily: "'Cairo', sans-serif" }}>{label}</span>
-      </div>
-      <ChevronRight size={15} color="#9CA3AF" />
-    </button>
-  );
-
   /* ── Derived ─────────────────────────────────────────────────── */
   const initials = (form.full_name || user?.email || "A")[0].toUpperCase();
   const activeStatus = STATUS_OPTIONS.find(s => s.value === academy.academy_status) ?? STATUS_OPTIONS[0];
@@ -426,7 +423,7 @@ export default function AdminSettings() {
                 value={form.bio} onChange={e => setForm(f => ({ ...f, bio: e.target.value }))} />
             </Fld>
           </Sec>
-          <SaveBtn fn={saveProfile} />
+          <SaveBtn fn={saveProfile} saving={saving} />
         </>}
 
         {/* ════════ ACADEMY TAB ════════ */}
@@ -482,14 +479,14 @@ export default function AdminSettings() {
             </Fld>
           </Sec>
 
-          <SaveBtn fn={saveAcademy} busy={acSaving} />
+          <SaveBtn fn={saveAcademy} saving={saving} busy={acSaving} />
 
           {/* Quick links to specialised settings */}
           <div style={{ marginTop: 20, marginBottom: 4 }}>
             <p style={{ fontWeight: 700, fontSize: 12, color: "#6B7280", textTransform: "uppercase", letterSpacing: .5, margin: "0 0 10px" }}>Specialised Settings</p>
-            <QuickLink icon={CreditCard}  label="Payment Settings"      to="/admin/payment-settings"      color="#D97706" />
-            <QuickLink icon={UserCog}     label="Registration Settings"  to="/admin/registration-settings"  color="#7C3AED" />
-            <QuickLink icon={Calendar}    label="Academic Calendar"       to="/admin/calendar"               color="#0891B2" />
+            <QuickLink icon={CreditCard}  label="Payment Settings"      to="/admin/payment-settings"      color="#D97706" onNavigate={navigate} />
+            <QuickLink icon={UserCog}     label="Registration Settings"  to="/admin/registration-settings"  color="#7C3AED" onNavigate={navigate} />
+            <QuickLink icon={Calendar}    label="Academic Calendar"       to="/admin/calendar"               color="#0891B2" onNavigate={navigate} />
           </div>
         </>}
 
@@ -570,7 +567,7 @@ export default function AdminSettings() {
               checked={notifs.daily_summary_email} onChange={v => setNotifs(n => ({ ...n, daily_summary_email: v }))} />
           </Sec>
 
-          <SaveBtn fn={saveNotifs} />
+          <SaveBtn fn={saveNotifs} saving={saving} />
         </>}
 
         {/* ════════ SECURITY TAB ════════ */}
