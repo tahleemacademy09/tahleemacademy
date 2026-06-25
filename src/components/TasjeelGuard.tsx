@@ -1,6 +1,10 @@
 // src/components/TasjeelGuard.tsx
 // Wraps student dashboard — redirects to correct pipeline step if not completed.
 // Students at level_assignment step are blocked until admin approves.
+//
+// Fix: also guard against the race where authLoading=false but roles=[] because
+// the profiles RLS fetch is still in-flight or failed. We check roles.length > 0
+// OR wait for profile to confirm the user is fully loaded before bypassing.
 
 import { Navigate } from "react-router-dom";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
@@ -9,9 +13,10 @@ import { useAuth } from "@/contexts/AuthContext";
 interface TasjeelGuardProps { children: React.ReactNode; }
 
 const TasjeelGuard = ({ children }: TasjeelGuardProps) => {
-  const { hasRole, loading: authLoading } = useAuth();
+  const { hasRole, loading: authLoading, roles, user } = useAuth();
   const { currentStep, loading: tasjeelLoading, refresh } = useTasjeel();
 
+  // Wait for both auth AND tasjeel to finish loading
   if (authLoading || tasjeelLoading) {
     return (
       <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
@@ -22,13 +27,30 @@ const TasjeelGuard = ({ children }: TasjeelGuardProps) => {
     );
   }
 
-  // Admins / teachers bypass pipeline entirely
-  if (hasRole("admin") || hasRole("teacher")) return <>{children}</>;
+  // ── Role bypass: admins and teachers skip the student pipeline entirely ──
+  // We check roles.length > 0 to guard against the race where authLoading=false
+  // but fetchUserData hasn't written roles yet (e.g. RLS error or slow network).
+  // If user is authenticated but roles is still empty after auth finishes,
+  // we do NOT assume "student" — we wait. The tasjeelLoading guard above
+  // handles this for the tasjeel step; here we handle the role bypass.
+  if (user && roles.length > 0 && (hasRole("admin") || hasRole("teacher"))) {
+    return <>{children}</>;
+  }
+
+  // ── If user is authenticated but roles haven't loaded yet, show spinner ──
+  // This prevents a teacher/admin from being incorrectly sent to the student pipeline
+  // during a brief window where auth is done but the user_roles fetch is still pending.
+  if (user && roles.length === 0) {
+    return (
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
+        <div style={{ width:32, height:32, borderRadius:"50%", border:"3px solid #064E3B",
+          borderTopColor:"transparent", animation:"spin .7s linear infinite" }} />
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
 
   // ── Timeout / network error ──────────────────────────────────────────────
-  // Show a retry screen rather than silently granting dashboard access.
-  // This prevents students who haven't finished the pipeline from bypassing it
-  // during a slow connection on iOS/poor networks.
   if (currentStep === "timeout") {
     return (
       <div style={{
@@ -68,15 +90,10 @@ const TasjeelGuard = ({ children }: TasjeelGuardProps) => {
 
   // Student: redirect to correct pipeline step if not completed
   if (!currentStep) {
-    // Should not happen — resolveTasjeelStep() (shared with Login.tsx) always
-    // resolves to a real step once loading is false, even for brand-new users
-    // with no row yet. Guard defensively anyway, pointing at the same resume
-    // page the rest of the pipeline uses rather than a separate fresh-signup page.
     return <Navigate to="/auth/register-continue" replace />;
   }
 
   if (currentStep !== "completed") {
-    // level_assignment = waiting for admin approval → show waiting page
     const route = TASJEEL_ROUTES[currentStep] ?? "/student/awaiting-level";
     return <Navigate to={route} replace />;
   }
