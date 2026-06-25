@@ -348,9 +348,9 @@ function makeExercise(currentAyahs: any[], prevAyahs: any[]): ExerciseQ[] {
 //  COMPONENT
 // ═══════════════════════════════════════════════════════════════════════
 
-interface Props { userId: string | null; autoStart?: boolean; }
+interface Props { userId: string | null; autoStart?: boolean; onSessionSaved?: () => void; }
 
-export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
+export default function QuranRevisionHub({ userId, autoStart = false, onSessionSaved }: Props) {
 
   const [stage, setStage]         = useState<Stage>("setup");
 
@@ -465,15 +465,19 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
   }, [userId]);
 
   // ═══ Persist session to sessionStorage on every stage/page change ═══════
-  // This ensures refresh restores the exact position the student was at.
   useEffect(() => {
     if (!userId || !plan || stage === "setup") return;
     const key = `qrh_stage_${userId}`;
-    sessionStorage.setItem(key, JSON.stringify({
-      stage,
-      pageIdx: plan.currentIdx,
-    }));
-  }, [stage, plan, userId]);
+    const payload: any = { stage, pageIdx: plan.currentIdx };
+    // Persist exercise state so refresh can resume mid-exercise
+    if (stage === "exercise" && exercises.length > 0) {
+      payload.exercises = exercises;
+      payload.exIdx     = exIdx;
+      payload.exCorrect = exCorrect;
+      payload.exAnswered = exAnswered;
+    }
+    sessionStorage.setItem(key, JSON.stringify(payload));
+  }, [stage, plan, userId, exercises, exIdx, exCorrect, exAnswered]);
 
   // Also persist on visibility change (tab backgrounded on Android)
   useEffect(() => {
@@ -481,15 +485,19 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
     const key = `qrh_stage_${userId}`;
     const handleVisibility = () => {
       if (document.hidden && plan && stage !== "setup") {
-        sessionStorage.setItem(key, JSON.stringify({
-          stage,
-          pageIdx: plan.currentIdx,
-        }));
+        const payload: any = { stage, pageIdx: plan.currentIdx };
+        if (stage === "exercise" && exercises.length > 0) {
+          payload.exercises = exercises;
+          payload.exIdx     = exIdx;
+          payload.exCorrect = exCorrect;
+          payload.exAnswered = exAnswered;
+        }
+        sessionStorage.setItem(key, JSON.stringify(payload));
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [stage, plan, userId]);
+  }, [stage, plan, userId, exercises, exIdx, exCorrect, exAnswered]);
 
   // ═══ Fetch page ════════════════════════════════════════
   const fetchPage = useCallback(async (pageNum: number) => {
@@ -547,11 +555,21 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
           const lsSaved = localStorage.getItem(`revision_plan_${userId}`);
           if (lsSaved) {
             const p: RevisionPlan = JSON.parse(lsSaved);
-            // If sessionStorage has a more recent pageIdx, use it
             const resumeIdx = ss.pageIdx != null ? ss.pageIdx : p.currentIdx;
             console.log("[Hifdh] Restoring from sessionStorage — stage:", ss.stage, "pageIdx:", resumeIdx);
             sessionStorage.removeItem(ssKey); // consume it
+            // Restore exercise state if we were mid-exercise
+            if (ss.stage === "exercise" && ss.exercises?.length > 0) {
+              setExercises(ss.exercises);
+              setExIdx(ss.exIdx ?? 0);
+              setExCorrect(ss.exCorrect ?? 0);
+              setExAnswered(ss.exAnswered ?? 0);
+            }
             startSession(p, resumeIdx);
+            // Override stage to exercise after startSession sets "reciting"
+            if (ss.stage === "exercise") {
+              setTimeout(() => setStage("exercise"), 50);
+            }
             return;
           }
         }
@@ -686,15 +704,22 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
   }, [setPagePlayIdx]);
 
   // ═══ Transcription ════════════════════════════════════
-  // refText kept for post-processing alignment only — NOT passed to Whisper as prompt
-  // (passing the verse as Whisper prompt causes it to hallucinate the reference text)
-  const transcribeAudio = async (blob: Blob, _refText?: string): Promise<string> => {
+  // transcribeAudio: uses Groq Whisper-large-v3 with Quranic context prompt.
+  // The refText (the expected verse) is passed as the prompt so Whisper knows
+  // the vocabulary/diacritics domain — but we use PRECEDING context, not the
+  // exact verse, to avoid Whisper copying it verbatim (hallucination).
+  const transcribeAudio = async (blob: Blob, refText?: string): Promise<string> => {
     const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
 
-    // Short style-setting prompt: establishes Arabic Quranic script and diacritics.
-    // Must NOT be the verse being recited — Whisper treats prompt as "previous speech"
-    // and will try to continue/copy it instead of transcribing the actual audio.
-    const stylePrompt = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ";
+    // Build a Quranic context prompt:
+    // We use Surah Al-Fatiha as a fixed diacritics anchor, then append a few words
+    // of the reference verse to prime Whisper's vocabulary without causing copy-paste.
+    const fatiha = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ ۝ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ ۝ الرَّحْمَٰنِ الرَّحِيمِ ۝ مَالِكِ يَوْمِ الدِّينِ";
+    // Take first 6 words of ref as vocabulary hint (not enough to copy the whole verse)
+    const refHint = refText
+      ? refText.split(/\s+/).slice(0, 6).join(" ")
+      : "";
+    const stylePrompt = refHint ? `${fatiha} ۝ ${refHint}` : fatiha;
 
     // Correct file extension so Groq identifies the codec properly
     const ext = blob.type.includes("mp4") ? "mp4"
@@ -707,9 +732,9 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
         fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
         fd.append("model", "whisper-large-v3");
         fd.append("language", "ar");
-        fd.append("response_format", "verbose_json"); // gives word-level confidence
-        fd.append("temperature", "0");               // deterministic, no hallucination
-        fd.append("prompt", stylePrompt);            // sets script/style only
+        fd.append("response_format", "verbose_json"); // gives segment-level no_speech_prob
+        fd.append("temperature", "0");               // deterministic
+        fd.append("prompt", stylePrompt);            // Quranic vocab/diacritics context
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method: "POST",
           headers: { Authorization: `Bearer ${groqKey}` },
@@ -717,11 +742,10 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
         });
         if (r.ok) {
           const json = await r.json();
-          // verbose_json gives us no_speech_prob to detect silence/noise
           const noSpeech = json.segments?.[0]?.no_speech_prob ?? 0;
           const txt = (json.text ?? "").trim();
-          if (noSpeech < 0.6 && txt.length > 0) return txt;
-          if (noSpeech >= 0.6) return ""; // treat as silence / no speech detected
+          if (noSpeech < 0.65 && txt.length > 0) return txt;
+          if (noSpeech >= 0.65) return ""; // silence / no speech
         }
       } catch { /* fall through to edge function */ }
     }
@@ -1120,6 +1144,7 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
             transcript, duration_seconds: recTime,
             created_at: new Date().toISOString(),
           });
+          onSessionSaved?.();
         } catch { /* ignore */ }
 
         // hifdh_daily_logs is written exclusively by HifdhDailyRevisionPage.
@@ -1712,123 +1737,51 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
         {/* Content area */}
         <div className="flex-1 overflow-hidden relative">
 
-          {/* ── LIVE MUSHAF RECITATION SCREEN ── */}
-          {recording && (() => {
-            const ayahs: any[] = pageDataRef.current?.ayahs ?? [];
-            const total   = liveWords.reduce((s,ws) => s + ws.length, 0);
-            const correct = liveWords.reduce((s,ws) => s + ws.filter(w=>w.status==="correct").length, 0);
-            const pct = total ? Math.round(correct/total*100) : 0;
+          {/* ── RECORDING SCREEN — clean mic indicator only ── */}
+          {recording && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center"
+              style={{ background: "#050f08" }}>
 
-            return (
-              <div className="absolute inset-0 z-20 flex flex-col" style={{ background: "#050f08" }}>
-
-                {/* ── Top bar ── */}
-                <div className="flex-none flex items-center gap-2 px-3 py-2"
-                  style={{ background: DG, borderBottom: `1px solid ${GOLD}33` }}>
-                  {/* Pulse mic */}
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 qr-recordpulse"
-                    style={{ background:"#dc262618", border:"2px solid #dc2626" }}>
-                    <Mic size={14} color="#ef4444" />
-                  </div>
-                  <span className="font-black text-sm tabular-nums" style={{ color:"#ef4444" }}>
-                    {fmtTime(recTime)}
-                  </span>
-                  {/* Progress bar */}
-                  <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background:"#1a3025" }}>
-                    <div className="h-full rounded-full transition-all duration-500"
-                      style={{ width:`${pct}%`, background:`linear-gradient(to right,${GOLD},#22c55e)` }} />
-                  </div>
-                  <span className="text-xs font-bold tabular-nums" style={{ color: GOLD }}>{pct}%</span>
-                  {/* Done */}
-                  <button onClick={() => {
-                      setStage("evaluating"); setEvaluating(true);
-                      setEvalResult(null); setPageVisible(true);
-                      stopLiveRecording();
-                    }}
-                    className="px-3 py-1.5 rounded-xl font-black text-xs qr-btn flex-shrink-0"
-                    style={{ background:`linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color:DG }}>
-                    ✓ Done
-                  </button>
-                </div>
-
-                {/* ── Mushaf page ── */}
-                <div className="flex-1 overflow-y-auto" style={{ background: PARCHMENT }}>
-                  <div className="px-4 py-5">
-
-                    {/* Surah name */}
-                    {ayahs[0]?.surah && (
-                      <div className="text-center mb-4">
-                        <p style={{ fontFamily:"'Amiri',serif", fontSize:15, fontWeight:800, color:"#5a3e1b" }}>
-                          سورة {ayahs[0].surah.nameAr}
-                        </p>
-                        <p style={{ fontFamily:"'Amiri Quran','Amiri',serif", fontSize:14, color:"#8a6030", marginTop:2 }}>
-                          بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
-                        </p>
-                      </div>
-                    )}
-
-                    {/* All words in one continuous flow — no cards */}
-                    <div style={{
-                      fontFamily: "'Amiri Quran','Amiri',serif",
-                      fontSize: fontSize,
-                      lineHeight: 2.7,
-                      direction: "rtl",
-                      textAlign: "justify",
-                    }}>
-                      {liveWords.length === 0 && (
-                        <p className="text-center text-xs" style={{ color:"#4a6d58" }}>Loading…</p>
-                      )}
-
-                      {liveWords.map((ws, ai) => {
-                        const ayah = ayahs[ai];
-                        if (!ayah) return null;
-                        return (
-                          <span key={ai}>
-                            {ws.map((w, wi) => (
-                              <span key={wi} style={{
-                                color: w.status === "correct" ? "#16a34a"
-                                     : w.status === "missing"  ? "#dc2626"
-                                     : "transparent",
-                                // Hidden: show the glyph shape as a blurred silhouette
-                                // so the page looks like a real mushaf but unreadable
-                                textShadow: w.status === "hidden"
-                                  ? "0 0 8px #1c1c1c"
-                                  : "none",
-                                WebkitTextStroke: w.status === "hidden" ? "0px" : "0px",
-                                filter: w.status === "hidden" ? "blur(3.5px)" : "none",
-                                textDecoration: "none",
-                                transition: "color 0.12s, filter 0.12s",
-                                display: "inline",
-                              }}>
-                                {w.word}{" "}
-                              </span>
-                            ))}
-                            {/* Verse number circle */}
-                            <span style={{
-                              display: "inline-block",
-                              width: "1.5em", height: "1.5em",
-                              lineHeight: "1.5em",
-                              textAlign: "center",
-                              borderRadius: "50%",
-                              border: `1.5px solid ${GOLD}`,
-                              color: GOLD,
-                              fontSize: "0.5em",
-                              fontFamily: "'Amiri',serif",
-                              verticalAlign: "middle",
-                              margin: "0 0.2em",
-                            }}>
-                              {toAr(ayah.numberInSurah)}
-                            </span>
-                            {" "}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </div>
+              {/* Pulsing mic ring */}
+              <div className="relative flex items-center justify-center mb-6">
+                <div className="absolute w-32 h-32 rounded-full animate-ping opacity-20"
+                  style={{ background: "#ef4444" }} />
+                <div className="absolute w-24 h-24 rounded-full animate-pulse opacity-30"
+                  style={{ background: "#ef4444" }} />
+                <div className="w-20 h-20 rounded-full flex items-center justify-center shadow-2xl"
+                  style={{ background: "linear-gradient(135deg,#dc2626,#ef4444)", boxShadow: "0 0 40px #ef444455" }}>
+                  <Mic size={34} color="#fff" />
                 </div>
               </div>
-            );
-          })()}
+
+              {/* Timer */}
+              <span className="text-4xl font-black tabular-nums mb-2" style={{ color: "#fff", letterSpacing: 2 }}>
+                {fmtTime(recTime)}
+              </span>
+              <span className="text-xs font-bold uppercase tracking-widest mb-8" style={{ color: "#ef4444" }}>
+                ● Recording
+              </span>
+
+              {/* Hint */}
+              <p className="text-xs text-center px-8 mb-10" style={{ color: "#4a7a5a", lineHeight: 1.7 }}>
+                Recite the full page from memory.{"\n"}Tap Done when you finish.
+              </p>
+
+              {/* Done button */}
+              <button
+                onClick={() => {
+                  setStage("evaluating");
+                  setEvaluating(true);
+                  setEvalResult(null);
+                  setPageVisible(true);
+                  stopLiveRecording();
+                }}
+                className="flex items-center gap-2 px-10 py-4 rounded-2xl font-black text-sm qr-btn"
+                style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG, fontSize: 15 }}>
+                <StopCircle size={18} /> Done — Submit
+              </button>
+            </div>
+          )}
           {/* ── MUSHAF ── */}
           {!recording && (
             <div className="h-full overflow-y-auto px-1 pt-1 pb-1">
@@ -1857,8 +1810,24 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
                   {/* Verses */}
                   <div className="px-4 py-4">
                     {surahGroups.map((g, gi) => {
-                      const isNew     = g.ayahs[0].numberInSurah === 1;
-                      const showBism  = isNew && g.surah.number !== 9 && g.surah.number !== 1;
+                      const isNew    = g.ayahs[0].numberInSurah === 1 || g.ayahs[0].numberInSurah === 0;
+                      const showBism = isNew && g.surah.number !== 9 && g.surah.number !== 1;
+
+                      // Filter out standalone Bismillah ayahs (numberInSurah=0) that the
+                      // API returns as a separate entry — we render Bismillah ourselves below.
+                      const BISM_RE = /^بِسْمِ\s+ٱللَّهِ|^بِسۡمِ\s+ٱللَّهِ|^بِسمِ\s+اللَّهِ/;
+                      const visibleAyahs = g.ayahs.filter(a => {
+                        if (a.numberInSurah === 0) return false; // standalone Bismillah ayah
+                        if (showBism && a.numberInSurah === 1 && BISM_RE.test(a.text.trim())) {
+                          // Verse 1 has Bismillah prepended — strip it so it doesn't double
+                          a = { ...a, text: a.text.replace(/^بِسْمِ\s+ٱللَّهِ\s+ٱلرَّحْمَٰنِ\s+ٱلرَّحِيمِ\s*/u, "")
+                                                  .replace(/^بِسۡمِ\s+ٱللَّهِ\s+ٱلرَّحۡمَٰنِ\s+ٱلرَّحِيمِ\s*/u, "")
+                                                  .replace(/^بِسمِ\s+اللَّهِ\s+الرَّحمَنِ\s+الرَّحِيمِ\s*/u, "")
+                                                  .trim() };
+                        }
+                        return a;
+                      });
+
                       return (
                         <div key={gi}>
                           {isNew && (
@@ -1875,7 +1844,7 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
                             </div>
                           )}
                           <p className="qr-mushaf" style={{ fontSize }}>
-                            {g.ayahs.map(a => (
+                            {visibleAyahs.map(a => (
                               <span key={a.number}
                                 onClick={() => { stopAudio(); playAyah(a); }}
                                 className={cn("cursor-pointer transition-all rounded-sm", playing === a.number && "qr-active")}>
