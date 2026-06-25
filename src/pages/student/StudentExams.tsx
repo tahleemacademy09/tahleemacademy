@@ -23,120 +23,37 @@ type Tab        = "available" | "completed" | "history";
 type TermFilter = "all" | "first" | "second" | "third";
 type TypeFilter = "all" | "exam" | "test";
 
-const StudentExams = () => {
-  const { t, language } = useLanguage();
-  const { user }        = useAuth();
-  const { toast }       = useToast();
-  const navigate        = useNavigate();
-  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
+/* ── Stable sub-components — defined outside to prevent keyboard dismiss on re-render ── */
+const Chip = ({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) => (
+  <button onClick={onClick} style={{
+    padding:"7px 15px", borderRadius:20, fontSize:12, fontWeight:700,
+    cursor:"pointer", transition:"all .2s",
+    background: active ? G : "#fff",
+    color: active ? "#fff" : G,
+    border: `1.5px solid ${active ? G : BORDER}`,
+    boxShadow: active ? "0 2px 8px rgba(15,45,31,.2)" : "none",
+  }}>{label}</button>
+);
 
-  const [assignedExams, setAssignedExams] = useState<any[]>([]);
-  const [pastAttempts,  setPastAttempts]  = useState<any[]>([]);
-  const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
-  const [loading,       setLoading]       = useState(true);
-  const [tab,           setTab]           = useState<Tab>("available");
-  const [termFilter,    setTermFilter]    = useState<TermFilter>("all");
-  const [typeFilter,    setTypeFilter]    = useState<TypeFilter>("all");
-  // Student's own level — used to filter exams by level
-  const [studentLevel,  setStudentLevel]  = useState<string>("");
+const Empty = ({ msg }: { msg: string }) => (
+  <div style={{ textAlign:"center", padding:"48px 20px", background:"#fff", borderRadius:18, border:`1px dashed ${BORDER}` }}>
+    <div style={{ fontSize:40, marginBottom:12, opacity:.4 }}>📋</div>
+    <p style={{ fontSize:14, color:TL, margin:0 }}>{msg}</p>
+  </div>
+);
 
-  useEffect(() => {
-    if (!user) return;
-    load();
-    const iv = setInterval(load, 30000);
-    return () => clearInterval(iv);
-  }, [user]);
+interface ExamCardProps {
+  exam: any;
+  attemptCounts: Record<string, number>;
+  pastAttempts: any[];
+  language: string;
+  t: (en: string, ar: string) => string;
+  navigate: (path: string) => void;
+  handleStart: (exam: any) => void;
+  getStatus: (exam: any) => string;
+}
+const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, handleStart, getStatus }: ExamCardProps) => {
 
-  const load = async () => {
-    try {
-      // Fetch student's profile level first
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("level")
-        .eq("user_id", user!.id)
-        .maybeSingle();
-      const myLevel = profile?.level || "";
-      setStudentLevel(myLevel);
-
-      const { data: asn } = await supabase
-        .from("exam_assignments").select("exam_id, exams(*)")
-        .eq("user_id", user!.id);
-
-      // Filter: show exam if exam has no level set (all levels) OR matches student's level
-      const list = (asn || [])
-        .map((a: any) => a.exams)
-        .filter((e: any) => {
-          if (!e?.is_published) return false;
-          if (!e.level || e.level === "") return true;      // exam is for all levels
-          if (!myLevel) return true;                         // student has no level, show all
-          return e.level === myLevel;                        // match
-        });
-      setAssignedExams(list);
-
-      const { data: att } = await supabase
-        .from("exam_attempts").select("*, exams(title,title_ar,max_attempts,type)")
-        .eq("user_id", user!.id).order("created_at", { ascending: false });
-      setPastAttempts(att || []);
-
-      const counts: Record<string, number> = {};
-      (att || []).forEach((a: any) => { if (a.status !== "in_progress") counts[a.exam_id] = (counts[a.exam_id] || 0) + 1; });
-      setAttemptCounts(counts);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getStatus = (exam: any) => {
-    const max  = exam.max_attempts || 1;
-    const done = attemptCounts[exam.id] || 0;
-    if (pastAttempts.some(a => a.exam_id === exam.id && a.status === "in_progress")) return "in_progress";
-    if (done >= max) return "exhausted";
-    const now = Date.now();
-    if (exam.start_date && new Date(exam.start_date).getTime() > now) return "not_started";
-    if (exam.end_date   && new Date(exam.end_date).getTime()   < now) return "expired";
-    return "available";
-  };
-
-  const handleStart = async (exam: any) => {
-    const max  = exam.max_attempts || 1;
-    const done = attemptCounts[exam.id] || 0;
-    if (done >= max) { toast({ title: t("No attempts left","لا محاولات متبقية"), variant:"destructive" }); return; }
-    const now = new Date();
-    if (exam.start_date && new Date(exam.start_date) > now) { toast({ title: t("Not started yet","لم يبدأ بعد"), variant:"destructive" }); return; }
-    if (exam.end_date   && new Date(exam.end_date)   < now) { toast({ title: t("Expired","منتهي"), variant:"destructive" }); return; }
-    const { data: existing } = await supabase.from("exam_attempts").select("id")
-      .eq("exam_id", exam.id).eq("user_id", user!.id).eq("status","in_progress").maybeSingle();
-    if (existing) { navigate(`/student/exam/${existing.id}`); return; }
-    navigate(`/student/exam-verify/${exam.id}`);
-  };
-
-  const applyFilters = (list: any[]) => list.filter(e => {
-    if (typeFilter !== "all" && (e.type || "exam") !== typeFilter) return false;
-    if (termFilter !== "all" && (e.term || "first") !== termFilter) return false;
-    return true;
-  });
-
-  const available = applyFilters(assignedExams.filter(e => !["exhausted","expired"].includes(getStatus(e))));
-  const completed = applyFilters(assignedExams.filter(e => getStatus(e) === "exhausted"));
-  const counts    = { available: available.length, completed: completed.length, history: pastAttempts.length };
-
-  const totalDone      = assignedExams.filter(e => getStatus(e) === "exhausted").length;
-  const gradedAttempts = pastAttempts.filter(a => a.status === "graded" || a.status === "released");
-  const avgPct         = gradedAttempts.length ? Math.round(gradedAttempts.reduce((s,a) => s + (a.percentage||0), 0) / gradedAttempts.length) : 0;
-  const passedCount    = gradedAttempts.filter(a => a.passed).length;
-
-  const Chip = ({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) => (
-    <button onClick={onClick} style={{
-      padding:"7px 15px", borderRadius:20, fontSize:12, fontWeight:700,
-      cursor:"pointer", transition:"all .2s",
-      background: active ? G : "#fff",
-      color: active ? "#fff" : G,
-      border: `1.5px solid ${active ? G : BORDER}`,
-      boxShadow: active ? "0 2px 8px rgba(15,45,31,.2)" : "none",
-    }}>{label}</button>
-  );
-
-  const ExamCard = ({ exam }: { exam: any }) => {
     const status  = getStatus(exam);
     const done    = attemptCounts[exam.id] || 0;
     const max     = exam.max_attempts || 1;
@@ -288,9 +205,16 @@ const StudentExams = () => {
         </div>
       </div>
     );
-  };
+};
 
-  const HistoryRow = ({ attempt }: { attempt: any }) => {
+interface HistoryRowProps {
+  attempt: any;
+  language: string;
+  t: (en: string, ar: string) => string;
+  navigate: (path: string) => void;
+}
+const HistoryRow = ({ attempt, language, t, navigate }: HistoryRowProps) => {
+
     const title  = language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title;
     const isTest = (attempt.exams?.type || "exam") === "test";
     const graded = attempt.status === "graded" || attempt.status === "released";
@@ -338,14 +262,111 @@ const StudentExams = () => {
         </div>
       </div>
     );
+};
+
+
+const StudentExams = () => {
+  const { t, language } = useLanguage();
+  const { user }        = useAuth();
+  const { toast }       = useToast();
+  const navigate        = useNavigate();
+  const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
+
+  const [assignedExams, setAssignedExams] = useState<any[]>([]);
+  const [pastAttempts,  setPastAttempts]  = useState<any[]>([]);
+  const [attemptCounts, setAttemptCounts] = useState<Record<string, number>>({});
+  const [loading,       setLoading]       = useState(true);
+  const [tab,           setTab]           = useState<Tab>("available");
+  const [termFilter,    setTermFilter]    = useState<TermFilter>("all");
+  const [typeFilter,    setTypeFilter]    = useState<TypeFilter>("all");
+  // Student's own level — used to filter exams by level
+  const [studentLevel,  setStudentLevel]  = useState<string>("");
+
+  useEffect(() => {
+    if (!user) return;
+    load();
+    const iv = setInterval(load, 30000);
+    return () => clearInterval(iv);
+  }, [user]);
+
+  const load = async () => {
+    try {
+      // Fetch student's profile level first
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("level")
+        .eq("user_id", user!.id)
+        .maybeSingle();
+      const myLevel = profile?.level || "";
+      setStudentLevel(myLevel);
+
+      const { data: asn } = await supabase
+        .from("exam_assignments").select("exam_id, exams(*)")
+        .eq("user_id", user!.id);
+
+      // Filter: show exam if exam has no level set (all levels) OR matches student's level
+      const list = (asn || [])
+        .map((a: any) => a.exams)
+        .filter((e: any) => {
+          if (!e?.is_published) return false;
+          if (!e.level || e.level === "") return true;      // exam is for all levels
+          if (!myLevel) return true;                         // student has no level, show all
+          return e.level === myLevel;                        // match
+        });
+      setAssignedExams(list);
+
+      const { data: att } = await supabase
+        .from("exam_attempts").select("*, exams(title,title_ar,max_attempts,type)")
+        .eq("user_id", user!.id).order("created_at", { ascending: false });
+      setPastAttempts(att || []);
+
+      const counts: Record<string, number> = {};
+      (att || []).forEach((a: any) => { if (a.status !== "in_progress") counts[a.exam_id] = (counts[a.exam_id] || 0) + 1; });
+      setAttemptCounts(counts);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const Empty = ({ msg }: { msg: string }) => (
-    <div style={{ textAlign:"center", padding:"48px 20px", background:"#fff", borderRadius:18, border:`1px dashed ${BORDER}` }}>
-      <div style={{ fontSize:40, marginBottom:12, opacity:.4 }}>📋</div>
-      <p style={{ fontSize:14, color:TL, margin:0 }}>{msg}</p>
-    </div>
-  );
+  const getStatus = (exam: any) => {
+    const max  = exam.max_attempts || 1;
+    const done = attemptCounts[exam.id] || 0;
+    if (pastAttempts.some(a => a.exam_id === exam.id && a.status === "in_progress")) return "in_progress";
+    if (done >= max) return "exhausted";
+    const now = Date.now();
+    if (exam.start_date && new Date(exam.start_date).getTime() > now) return "not_started";
+    if (exam.end_date   && new Date(exam.end_date).getTime()   < now) return "expired";
+    return "available";
+  };
+
+  const handleStart = async (exam: any) => {
+    const max  = exam.max_attempts || 1;
+    const done = attemptCounts[exam.id] || 0;
+    if (done >= max) { toast({ title: t("No attempts left","لا محاولات متبقية"), variant:"destructive" }); return; }
+    const now = new Date();
+    if (exam.start_date && new Date(exam.start_date) > now) { toast({ title: t("Not started yet","لم يبدأ بعد"), variant:"destructive" }); return; }
+    if (exam.end_date   && new Date(exam.end_date)   < now) { toast({ title: t("Expired","منتهي"), variant:"destructive" }); return; }
+    const { data: existing } = await supabase.from("exam_attempts").select("id")
+      .eq("exam_id", exam.id).eq("user_id", user!.id).eq("status","in_progress").maybeSingle();
+    if (existing) { navigate(`/student/exam/${existing.id}`); return; }
+    navigate(`/student/exam-verify/${exam.id}`);
+  };
+
+  const applyFilters = (list: any[]) => list.filter(e => {
+    if (typeFilter !== "all" && (e.type || "exam") !== typeFilter) return false;
+    if (termFilter !== "all" && (e.term || "first") !== termFilter) return false;
+    return true;
+  });
+
+  const available = applyFilters(assignedExams.filter(e => !["exhausted","expired"].includes(getStatus(e))));
+  const completed = applyFilters(assignedExams.filter(e => getStatus(e) === "exhausted"));
+  const counts    = { available: available.length, completed: completed.length, history: pastAttempts.length };
+
+  const totalDone      = assignedExams.filter(e => getStatus(e) === "exhausted").length;
+  const gradedAttempts = pastAttempts.filter(a => a.status === "graded" || a.status === "released");
+  const avgPct         = gradedAttempts.length ? Math.round(gradedAttempts.reduce((s,a) => s + (a.percentage||0), 0) / gradedAttempts.length) : 0;
+  const passedCount    = gradedAttempts.filter(a => a.passed).length;
+
 
   if (loading) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:CREAM }}>
@@ -455,17 +476,17 @@ const StudentExams = () => {
         {tab === "available" && (
           available.length === 0
             ? <Empty msg={t("No available exams at the moment.","لا توجد امتحانات متاحة الآن.")}/>
-            : available.map(e => <ExamCard key={e.id} exam={e}/>)
+            : available.map(e => <ExamCard key={e.id} exam={e} attemptCounts={attemptCounts} pastAttempts={pastAttempts} language={language} t={t} navigate={navigate} handleStart={handleStart} getStatus={getStatus}/>)
         )}
         {tab === "completed" && (
           completed.length === 0
             ? <Empty msg={t("No completed exams yet.","لا توجد امتحانات مكتملة بعد.")}/>
-            : completed.map(e => <ExamCard key={e.id} exam={e}/>)
+            : completed.map(e => <ExamCard key={e.id} exam={e} attemptCounts={attemptCounts} pastAttempts={pastAttempts} language={language} t={t} navigate={navigate} handleStart={handleStart} getStatus={getStatus}/>)
         )}
         {tab === "history" && (
           pastAttempts.length === 0
             ? <Empty msg={t("No exam history yet.","لا يوجد سجل امتحانات بعد.")}/>
-            : pastAttempts.map(a => <HistoryRow key={a.id} attempt={a}/>)
+            : pastAttempts.map(a => <HistoryRow key={a.id} attempt={a} language={language} t={t} navigate={navigate}/>)
         )}
 
       </div>
