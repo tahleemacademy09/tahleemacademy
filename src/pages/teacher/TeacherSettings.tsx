@@ -364,10 +364,6 @@ export default function TeacherSettings() {
       toast({ title: "Fill in all bank details", variant: "destructive" });
       return;
     }
-    if (!verified) {
-      toast({ title: "Please verify your account number first", variant: "destructive" });
-      return;
-    }
     setSavingBank(true);
     const { error } = await (supabase as any).from("teacher_bank_accounts").upsert({
       user_id:        user.id,
@@ -383,7 +379,14 @@ export default function TeacherSettings() {
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
     else {
       setExistingBank({ ...bankForm, is_verified: verified });
-      toast({ title: "✅ Bank details saved! Admin will use this for salary payments." });
+      if (verified) {
+        toast({ title: "✅ Bank details saved! Admin will use this for salary payments." });
+      } else {
+        toast({
+          title: "✅ Bank details saved",
+          description: "Auto-verification failed — admin will manually verify your account before payments.",
+        });
+      }
     }
   };
 
@@ -642,9 +645,6 @@ export default function TeacherSettings() {
             </div>
             <p style={{ fontSize: 11, color: "#9CA3AF", margin: "-6px 0 10px" }}>📱 Include country code — used for class reminders via WhatsApp</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-              <Fld label="Date of Birth">
-                <input style={inp} type="date" value={form.date_of_birth} onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} />
-              </Fld>
               <Fld label="Gender">
                 <select style={inp} value={form.gender} onChange={e => setForm(f => ({ ...f, gender: e.target.value }))}>
                   <option value="">Prefer not to say</option>
@@ -1000,14 +1000,14 @@ export default function TeacherSettings() {
 
             <button
               onClick={saveBank}
-              disabled={savingBank || !verified}
+              disabled={savingBank || !bankForm.account_number || !bankForm.bank_code}
               style={{
                 width: "100%", padding: "12px 0", borderRadius: 12, border: "none",
-                cursor: savingBank || !verified ? "not-allowed" : "pointer",
+                cursor: savingBank || !bankForm.account_number || !bankForm.bank_code ? "not-allowed" : "pointer",
                 fontWeight: 800, fontSize: 14, color: "#fff",
-                background: savingBank || !verified ? "#9CA3AF" : `linear-gradient(135deg,${G},${GM})`,
+                background: savingBank || !bankForm.account_number || !bankForm.bank_code ? "#9CA3AF" : `linear-gradient(135deg,${G},${GM})`,
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                boxShadow: verified ? "0 4px 16px rgba(6,78,59,.25)" : "none",
+                boxShadow: bankForm.account_number && bankForm.bank_code ? "0 4px 16px rgba(6,78,59,.25)" : "none",
               }}
             >
               {savingBank
