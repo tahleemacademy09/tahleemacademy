@@ -150,6 +150,7 @@ export default function TeacherSettings() {
   const [verified,         setVerified]         = useState(false);
   const [savingBank,       setSavingBank]       = useState(false);
   const [existingBank,     setExistingBank]     = useState<any>(null);
+  const [editingBank,      setEditingBank]      = useState(false);
 
   const [form, setForm] = useState({
     full_name: "", full_name_ar: "", phone: "", whatsapp: "",
@@ -278,6 +279,9 @@ export default function TeacherSettings() {
           currency:       bank.currency       || "NGN",
         });
         setVerified(bank.is_verified ?? false);
+        setEditingBank(false);
+      } else {
+        setEditingBank(true);
       }
     })();
   }, [user]);
@@ -406,8 +410,8 @@ export default function TeacherSettings() {
 
   const saveBank = async () => {
     if (!user) return;
-    if (!bankForm.account_number || !bankForm.bank_code) {
-      toast({ title: "Fill in all bank details", variant: "destructive" });
+    if (!bankForm.account_number || !bankForm.bank_code || !bankForm.account_name.trim()) {
+      toast({ title: "Fill in all bank details", description: "Bank, account number, and account name are all required.", variant: "destructive" });
       return;
     }
     setSavingBank(true);
@@ -424,7 +428,9 @@ export default function TeacherSettings() {
     setSavingBank(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
     else {
-      setExistingBank({ ...bankForm, is_verified: verified });
+      const saved = { ...bankForm, is_verified: verified };
+      setExistingBank(saved);
+      setEditingBank(false);
       if (verified) {
         toast({ title: "✅ Bank details saved! Admin will use this for salary payments." });
       } else {
@@ -907,121 +913,182 @@ export default function TeacherSettings() {
 
           {/* ── Bank Account Details ───────────────────────────── */}
           <Sec title="💳 Bank Account Details">
-            {/* Verified badge */}
-            {existingBank && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8, padding: "10px 12px",
-                borderRadius: 10, marginBottom: 14,
-                background: existingBank.is_verified ? "#ECFDF5" : "#FFFBEB",
-                border: `1px solid ${existingBank.is_verified ? "#86EFAC" : "#FDE68A"}`,
-              }}>
-                {existingBank.is_verified
-                  ? <><BadgeCheck size={16} color="#16A34A" /><span style={{ fontSize: 12, fontWeight: 700, color: "#15803D" }}>Account Verified — {existingBank.account_name}</span></>
-                  : <><AlertTriangle size={16} color="#D97706" /><span style={{ fontSize: 12, fontWeight: 700, color: "#92400E" }}>Not yet verified — update and verify below</span></>
-                }
-              </div>
-            )}
+            {/* ── READ-ONLY VIEW (when saved bank exists and not editing) ── */}
+            {existingBank && !editingBank ? (
+              <div>
+                {/* Verification status badge */}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, padding: "10px 12px",
+                  borderRadius: 10, marginBottom: 14,
+                  background: existingBank.is_verified ? "#ECFDF5" : "#FFFBEB",
+                  border: `1px solid ${existingBank.is_verified ? "#86EFAC" : "#FDE68A"}`,
+                }}>
+                  {existingBank.is_verified
+                    ? <><BadgeCheck size={16} color="#16A34A" /><span style={{ fontSize: 12, fontWeight: 700, color: "#15803D" }}>Account Verified</span></>
+                    : <><AlertTriangle size={16} color="#D97706" /><span style={{ fontSize: 12, fontWeight: 700, color: "#92400E" }}>Not yet verified — admin will confirm before payments</span></>
+                  }
+                </div>
 
-            <Fld label="Currency">
-              <select style={inp} value={bankForm.currency} onChange={e => setBankForm(f => ({ ...f, currency: e.target.value }))}>
-                <option value="NGN">NGN — Nigerian Naira</option>
-                <option value="USD">USD — US Dollar</option>
-                <option value="GBP">GBP — British Pound</option>
-                <option value="SAR">SAR — Saudi Riyal</option>
-              </select>
-            </Fld>
+                {/* Detail rows */}
+                {[
+                  { label: "Bank", value: existingBank.bank_name || existingBank.bank_code },
+                  { label: "Account Number", value: existingBank.account_number },
+                  { label: "Account Name", value: existingBank.account_name },
+                  { label: "Currency", value: existingBank.currency || "NGN" },
+                ].map(({ label, value }) => (
+                  <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid #F3F4F6" }}>
+                    <span style={{ fontSize: 12, color: "#6B7280", fontWeight: 600 }}>{label}</span>
+                    <span style={{ fontSize: 13, color: "#111", fontWeight: 700 }}>{value || "—"}</span>
+                  </div>
+                ))}
 
-            <Fld label="Bank">
-              {bankListLoading
-                ? <div style={{ ...inp, display: "flex", alignItems: "center", gap: 8, color: "#9CA3AF" }}><Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> Loading banks…</div>
-                : <select style={inp} value={bankForm.bank_code} onChange={e => {
-                    const selected = bankList.find(b => b.code === e.target.value);
-                    setBankForm(f => ({ ...f, bank_code: e.target.value, bank_name: selected?.name || "" }));
-                    setVerified(false);
-                  }}>
-                    <option value="">Select your bank…</option>
-                    {bankList.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
-                  </select>
-              }
-            </Fld>
-
-            <Fld label="Account Number">
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  style={{ ...inp, flex: 1, letterSpacing: 1 }}
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={10}
-                  placeholder="10-digit account number"
-                  value={bankForm.account_number}
-                  onChange={e => {
-                    const v = e.target.value.replace(/\D/g, "").slice(0, 10);
-                    setBankForm(f => ({ ...f, account_number: v, account_name: "" }));
-                    setVerified(false);
-                  }}
-                />
                 <button
-                  onClick={verifyAccount}
-                  disabled={verifying || bankForm.account_number.length < 10 || !bankForm.bank_code}
+                  onClick={() => setEditingBank(true)}
                   style={{
-                    padding: "0 14px", borderRadius: 10, border: "none", cursor: "pointer",
-                    fontWeight: 700, fontSize: 12, whiteSpace: "nowrap",
-                    background: verifying ? "#9CA3AF" : G, color: "#fff",
-                    display: "flex", alignItems: "center", gap: 6,
-                    opacity: bankForm.account_number.length < 10 || !bankForm.bank_code ? 0.5 : 1,
+                    marginTop: 14, width: "100%", padding: "11px 0", borderRadius: 11,
+                    border: `1.5px solid ${G}`, background: "#fff", color: G,
+                    fontWeight: 700, fontSize: 13, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
                   }}
                 >
-                  {verifying
-                    ? <><Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> Checking…</>
-                    : verified
-                    ? <><CheckCircle size={13} /> Verified</>
-                    : "Verify"}
+                  ✏️ Edit Bank Details
                 </button>
               </div>
-            </Fld>
-
-            {/* Account Name — auto-filled by Verify, or entered manually */}
-            <Fld label="Account Name">
-              <div style={{ position: "relative" }}>
-                <input
-                  style={{ ...inp, paddingRight: bankForm.account_name ? 36 : 13 }}
-                  type="text"
-                  placeholder="e.g. MUHAMMED ABDULLAHI (auto-filled or enter manually)"
-                  value={bankForm.account_name}
-                  onChange={e => setBankForm(f => ({ ...f, account_name: e.target.value }))}
-                />
-                {verified && bankForm.account_name && (
-                  <CheckCircle size={14} color="#16A34A"
-                    style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)" }} />
+            ) : (
+              /* ── EDIT FORM ── */
+              <div>
+                {/* Cancel button if editing existing */}
+                {existingBank && (
+                  <button
+                    onClick={() => {
+                      setBankForm({
+                        bank_code:      existingBank.bank_code      || "",
+                        bank_name:      existingBank.bank_name      || "",
+                        account_number: existingBank.account_number || "",
+                        account_name:   existingBank.account_name   || "",
+                        currency:       existingBank.currency       || "NGN",
+                      });
+                      setVerified(existingBank.is_verified ?? false);
+                      setEditingBank(false);
+                    }}
+                    style={{
+                      marginBottom: 12, padding: "6px 14px", borderRadius: 8,
+                      border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer",
+                      fontSize: 12, fontWeight: 600, color: "#6B7280",
+                    }}
+                  >
+                    ← Cancel
+                  </button>
                 )}
-              </div>
-              {!verified && bankForm.account_number.length === 10 && bankForm.bank_code && !bankForm.account_name && (
-                <p style={{ fontSize: 11, color: "#D97706", margin: "4px 0 0" }}>
-                  ⚠ Click Verify to auto-fill, or type your account name manually
+
+                <Fld label="Currency">
+                  <select style={inp} value={bankForm.currency} onChange={e => setBankForm(f => ({ ...f, currency: e.target.value }))}>
+                    <option value="NGN">NGN — Nigerian Naira</option>
+                    <option value="USD">USD — US Dollar</option>
+                    <option value="GBP">GBP — British Pound</option>
+                    <option value="SAR">SAR — Saudi Riyal</option>
+                  </select>
+                </Fld>
+
+                <Fld label="Bank">
+                  {bankListLoading
+                    ? <div style={{ ...inp, display: "flex", alignItems: "center", gap: 8, color: "#9CA3AF" }}><Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> Loading banks…</div>
+                    : <select style={inp} value={bankForm.bank_code} onChange={e => {
+                        const selected = bankList.find(b => b.code === e.target.value);
+                        setBankForm(f => ({ ...f, bank_code: e.target.value, bank_name: selected?.name || "" }));
+                        setVerified(false);
+                      }}>
+                        <option value="">Select your bank…</option>
+                        {bankList.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
+                      </select>
+                  }
+                </Fld>
+
+                <Fld label="Account Number">
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <input
+                      style={{ ...inp, flex: 1, letterSpacing: 1 }}
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={10}
+                      placeholder="10-digit account number"
+                      value={bankForm.account_number}
+                      onChange={e => {
+                        const v = e.target.value.replace(/\D/g, "").slice(0, 10);
+                        setBankForm(f => ({ ...f, account_number: v, account_name: "" }));
+                        setVerified(false);
+                      }}
+                    />
+                    <button
+                      onClick={verifyAccount}
+                      disabled={verifying || bankForm.account_number.length < 10 || !bankForm.bank_code}
+                      style={{
+                        padding: "0 14px", borderRadius: 10, border: "none", cursor: "pointer",
+                        fontWeight: 700, fontSize: 12, whiteSpace: "nowrap",
+                        background: verifying ? "#9CA3AF" : G, color: "#fff",
+                        display: "flex", alignItems: "center", gap: 6,
+                        opacity: bankForm.account_number.length < 10 || !bankForm.bank_code ? 0.5 : 1,
+                      }}
+                    >
+                      {verifying
+                        ? <><Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> Checking…</>
+                        : verified
+                        ? <><CheckCircle size={13} /> Verified</>
+                        : "Verify"}
+                    </button>
+                  </div>
+                </Fld>
+
+                {/* Account Name — auto-filled by Verify, or entered manually */}
+                <Fld label="Account Name">
+                  <div style={{ position: "relative" }}>
+                    <input
+                      style={{ ...inp, paddingRight: bankForm.account_name ? 36 : 13 }}
+                      type="text"
+                      placeholder="e.g. MUHAMMED ABDULLAHI (auto-filled or enter manually)"
+                      value={bankForm.account_name}
+                      onChange={e => setBankForm(f => ({ ...f, account_name: e.target.value }))}
+                    />
+                    {verified && bankForm.account_name && (
+                      <CheckCircle size={14} color="#16A34A"
+                        style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)" }} />
+                    )}
+                  </div>
+                  {!verified && bankForm.account_number.length === 10 && bankForm.bank_code && !bankForm.account_name && (
+                    <p style={{ fontSize: 11, color: "#D97706", margin: "4px 0 0" }}>
+                      ⚠ Click Verify to auto-fill, or type your account name manually
+                    </p>
+                  )}
+                </Fld>
+
+                <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 14px", lineHeight: 1.5 }}>
+                  🔒 Your bank details are encrypted and only visible to the academy admin for salary disbursements.
                 </p>
-              )}
-            </Fld>
 
-            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 14px", lineHeight: 1.5 }}>
-              🔒 Your bank details are encrypted and only visible to the academy admin for salary disbursements.
-            </p>
-
-            <button
-              onClick={saveBank}
-              disabled={savingBank || !bankForm.account_number || !bankForm.bank_code}
-              style={{
-                width: "100%", padding: "12px 0", borderRadius: 12, border: "none",
-                cursor: savingBank || !bankForm.account_number || !bankForm.bank_code ? "not-allowed" : "pointer",
-                fontWeight: 800, fontSize: 14, color: "#fff",
-                background: savingBank || !bankForm.account_number || !bankForm.bank_code ? "#9CA3AF" : `linear-gradient(135deg,${G},${GM})`,
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                boxShadow: bankForm.account_number && bankForm.bank_code ? "0 4px 16px rgba(6,78,59,.25)" : "none",
-              }}
-            >
-              {savingBank
-                ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</>
-                : <><Building2 size={15} /> Save Bank Details</>}
-            </button>
+                {/* Save disabled until all 3 fields filled */}
+                {(() => {
+                  const canSave = !!bankForm.account_number && !!bankForm.bank_code && !!bankForm.account_name.trim();
+                  return (
+                    <button
+                      onClick={saveBank}
+                      disabled={savingBank || !canSave}
+                      style={{
+                        width: "100%", padding: "12px 0", borderRadius: 12, border: "none",
+                        cursor: savingBank || !canSave ? "not-allowed" : "pointer",
+                        fontWeight: 800, fontSize: 14, color: "#fff",
+                        background: savingBank || !canSave ? "#9CA3AF" : `linear-gradient(135deg,${G},${GM})`,
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                        boxShadow: canSave ? "0 4px 16px rgba(6,78,59,.25)" : "none",
+                      }}
+                    >
+                      {savingBank
+                        ? <><Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> Saving…</>
+                        : <><Building2 size={15} /> Save Bank Details</>}
+                    </button>
+                  );
+                })()}
+              </div>
+            )}
           </Sec>
 
           {/* ── Payment History ────────────────────────────────── */}
