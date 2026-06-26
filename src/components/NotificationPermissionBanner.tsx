@@ -34,8 +34,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
 const SESSION_KEY = "tahleem_notif_banner_dismissed";
-const G    = "#064E3B";
-const GM   = "#075E54";
+const NB_G    = "#064E3B";
+const NB_GM   = "#075E54";
 
 type PermState = "unknown" | "default" | "granted" | "denied" | "unsupported" | "ios-needs-install";
 
@@ -178,8 +178,8 @@ export default function NotificationPermissionBanner() {
   // ── Default: not yet asked ──────────────────────────────────────────────────
   return (
     <div style={{
-      background: `linear-gradient(135deg, ${G}08, ${GM}12)`,
-      border: `1px solid ${G}25`,
+      background: `linear-gradient(135deg, ${NB_G}08, ${NB_GM}12)`,
+      border: `1px solid ${NB_G}25`,
       borderRadius: 16, padding: "16px 18px",
       display: "flex", alignItems: "center", gap: 14,
       fontFamily: "'Cairo',system-ui,sans-serif",
@@ -188,14 +188,14 @@ export default function NotificationPermissionBanner() {
     }}>
       <div style={{
         width: 44, height: 44, borderRadius: 12,
-        background: `linear-gradient(135deg, ${G}, ${GM})`,
+        background: `linear-gradient(135deg, ${NB_G}, ${NB_GM})`,
         display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
       }}>
         <Bell size={22} color="#fff" />
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: G, marginBottom: 2 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: NB_G, marginBottom: 2 }}>
           Get class reminders on your phone
         </div>
         <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5 }}>
@@ -215,7 +215,7 @@ export default function NotificationPermissionBanner() {
           disabled={subscribing}
           style={{
             padding: "8px 16px", borderRadius: 10, border: "none",
-            background: subscribing ? "#9CA3AF" : `linear-gradient(135deg, ${G}, ${GM})`,
+            background: subscribing ? "#9CA3AF" : `linear-gradient(135deg, ${NB_G}, ${NB_GM})`,
             color: "#fff", fontSize: 12, fontWeight: 700,
             cursor: subscribing ? "not-allowed" : "pointer",
             display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap",
