@@ -5,7 +5,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { LayoutDashboard, BookOpen, ClipboardCheck, Brain } from "lucide-react";
 import HifdhDashboard    from "@/components/hifdh/HifdhDashboard";
-import HifdhRevision     from "@/components/hifdh/HifdhRevision";
+import HifdhRevision     from "@/pages/student/HifdhRevision";
 import HifdhTest         from "@/components/hifdh/HifdhTest";
 import HifdhMemorization from "@/components/hifdh/HifdhMemorization";
 
