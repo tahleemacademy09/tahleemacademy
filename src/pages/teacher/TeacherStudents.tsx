@@ -41,9 +41,8 @@ const TeacherStudents = () => {
   useEffect(() => {
     if (!user) return;
     const fetch = async () => {
-      // Teacher's subjects
-      const { data: subs } = await supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id);
-      // Also grab subjects assigned via timetable
+      // Teacher's subjects (owned + timetable assigned)
+      const { data: subs } = await supabase.from("subjects").select("id, title, title_ar, level, levels").eq("teacher_id", user.id);
       const { data: ttSlots } = await supabase
         .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
       const ttIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
@@ -52,7 +51,7 @@ const TeacherStudents = () => {
         const ownedIds = (subs || []).map((s: any) => s.id);
         const missing = ttIds.filter((id: string) => !ownedIds.includes(id));
         if (missing.length > 0) {
-          const { data: es } = await supabase.from("subjects").select("id, title, title_ar").in("id", missing);
+          const { data: es } = await supabase.from("subjects").select("id, title, title_ar, level, levels").in("id", missing);
           extraSubs = es || [];
         }
       }
@@ -61,22 +60,37 @@ const TeacherStudents = () => {
       const subjectIds = allSubs.map((s: any) => s.id);
       if (subjectIds.length === 0) { setLoading(false); return; }
 
+      // Collect ALL levels covered by this teacher's subjects
+      const teacherLevels = [...new Set(
+        allSubs.flatMap((s: any) => s.levels?.length ? s.levels : (s.level ? [s.level] : []))
+      )].filter(Boolean) as string[];
+
+      // Path A: courses → enrollments (structured enrollments)
       const { data: courses } = await supabase.from("courses").select("id, subject_id").in("subject_id", subjectIds);
       const courseIds = (courses || []).map(c => c.id);
-      if (courseIds.length === 0) { setLoading(false); return; }
+      let enrolledUserIds: string[] = [];
+      if (courseIds.length > 0) {
+        const { data: enrollments } = await supabase.from("enrollments").select("user_id, course_id").in("course_id", courseIds);
+        enrolledUserIds = [...new Set((enrollments || []).map(e => e.user_id))];
+      }
 
-      const { data: enrollments } = await supabase.from("enrollments").select("user_id, course_id").in("course_id", courseIds);
-      const userIds = [...new Set((enrollments || []).map(e => e.user_id))];
-      
-      // Also include private students assigned to this teacher
+      // Path B: level-based students (students whose level matches teacher's subjects)
+      let levelUserIds: string[] = [];
+      if (teacherLevels.length > 0) {
+        const { data: lvlStudents } = await supabase
+          .from("profiles").select("user_id").eq("role", "student").in("level", teacherLevels);
+        levelUserIds = (lvlStudents || []).map((p: any) => p.user_id);
+      }
+
+      // Path C: private students explicitly assigned to this teacher
       const { data: privateStudents } = await supabase.from("profiles").select("user_id")
         .eq("assigned_teacher_id", user.id).eq("student_type", "private");
       const privateIds = (privateStudents || []).map(p => p.user_id);
-      const allUserIds = [...new Set([...userIds, ...privateIds])];
       
+      const allUserIds = [...new Set([...enrolledUserIds, ...levelUserIds, ...privateIds])];
       if (allUserIds.length === 0) { setLoading(false); return; }
 
-      const { data: profiles } = await supabase.from("profiles").select("*").in("user_id", allUserIds);
+      const { data: profiles } = await supabase.from("profiles").select("*").in("user_id", allUserIds).eq("role", "student");
 
       // Get attendance stats
       const { data: attendance } = await supabase.from("manual_attendance").select("student_id, status")
@@ -92,10 +106,10 @@ const TeacherStudents = () => {
       }
 
       const enriched = (profiles || []).map(p => {
-        const pEnrollments = (enrollments || []).filter(e => e.user_id === p.user_id);
-        const pSubjects = pEnrollments.map(e => {
-          const course = (courses || []).find(c => c.id === e.course_id);
-          return (subs || []).find(s => s.id === course?.subject_id);
+        const pEnrollments = (enrollments || []).filter((e: any) => e.user_id === p.user_id);
+        const pSubjects = pEnrollments.map((e: any) => {
+          const course = (courses || []).find((c: any) => c.id === e.course_id);
+          return allSubs.find((s: any) => s.id === course?.subject_id);
         }).filter(Boolean);
 
         // Attendance %
