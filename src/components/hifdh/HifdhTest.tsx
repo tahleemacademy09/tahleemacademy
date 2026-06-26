@@ -17,14 +17,14 @@ import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 
 // ── Brand tokens ──────────────────────────────────────────────────────
-const HT_G = "#1a3d24", HT_GM = "#276749", HT_GOLD = "#b7791f";
-const HT_LIGHT = "#f0fff4", HT_BORDER = "#d4e8d4";
+const G = "#1a3d24", GM = "#276749", GOLD = "#b7791f";
+const LIGHT = "#f0fff4", BORDER = "#d4e8d4";
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface Ayah { numberInSurah: number; text: string; }
 interface Props { reciter?: string; onSessionSaved?: () => void; }
-const HT_DEEPGRAM_KEY = (import.meta as any).env?.VITE_DEEPGRAM_API_KEY || "";
-const HT_GROQ_KEY     = (import.meta as any).env?.VITE_GROQ_API_KEY     || "";
+const DEEPGRAM_KEY = (import.meta as any).env?.VITE_DEEPGRAM_API_KEY || "";
+const GROQ_KEY     = (import.meta as any).env?.VITE_GROQ_API_KEY     || "";
 
 // 8 question types for comprehensive testing
 type QType =
@@ -116,7 +116,7 @@ function getGrade(pct: number) {
   if (pct >= 90) return { letter: "A+", color: "#22c55e", label: "Excellent · ممتاز" };
   if (pct >= 80) return { letter: "A",  color: "#16a34a", label: "Very Good · جيد جداً" };
   if (pct >= 70) return { letter: "B",  color: "#2563eb", label: "Good · جيد" };
-  if (pct >= 60) return { letter: "C",  color: HT_GOLD,      label: "Satisfactory · مقبول" };
+  if (pct >= 60) return { letter: "C",  color: GOLD,      label: "Satisfactory · مقبول" };
   if (pct >= 50) return { letter: "D",  color: "#ea580c", label: "Pass · ناجح" };
   return             { letter: "F",  color: "#ef4444", label: "Fail · راسب" };
 }
@@ -302,7 +302,7 @@ function buildQuestions(ayahs: Ayah[], surahName: string): Question[] {
 }
 
 // ── Question metadata ─────────────────────────────────────────────────
-const HT_QMETA: Record<QType, { icon: string; label: string; desc: string; isAudio: boolean; isMCQ: boolean }> = {
+const QMETA: Record<QType, { icon: string; label: string; desc: string; isAudio: boolean; isMCQ: boolean }> = {
   missing_word_mcq:       { icon:"🔍", label:"Fill the blank",           desc:"Choose the correct missing word",            isAudio:false, isMCQ:true  },
   last_word_mcq:          { icon:"✏️",  label:"What's the last word?",    desc:"Choose the word that ends this phrase",       isAudio:false, isMCQ:true  },
   next_fragment_mcq:      { icon:"➡️", label:"What comes next?",          desc:"Choose the word that follows this fragment",  isAudio:false, isMCQ:true  },
@@ -492,15 +492,15 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
     let tx = "";
     try {
       // Primary: Deepgram
-      if (HT_DEEPGRAM_KEY) {
+      if (DEEPGRAM_KEY) {
         const r = await fetch(
           "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false",
-          { method:"POST", headers:{ Authorization:`Token ${HT_DEEPGRAM_KEY}`, "Content-Type": blob.type || "audio/webm" }, body: blob }
+          { method:"POST", headers:{ Authorization:`Token ${DEEPGRAM_KEY}`, "Content-Type": blob.type || "audio/webm" }, body: blob }
         );
         if (r.ok) tx = (await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
       }
       // Fallback: Groq Whisper
-      if (!tx && HT_GROQ_KEY) {
+      if (!tx && GROQ_KEY) {
         const ext = blob.type.includes("mp4") ? "mp4" : "webm";
         const fd  = new FormData();
         fd.append("file", new File([blob], `r.${ext}`, { type: blob.type }));
@@ -509,7 +509,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
         fd.append("response_format", "verbose_json");
         fd.append("temperature", "0");
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
-          { method:"POST", headers:{ Authorization:`Bearer ${HT_GROQ_KEY}` }, body: fd });
+          { method:"POST", headers:{ Authorization:`Bearer ${GROQ_KEY}` }, body: fd });
         if (r.ok) {
           const data = await r.json();
           // Reject near-silence (no_speech_prob > 0.8)
@@ -553,7 +553,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
     const qs = questionsRef.current, ans = answersRef.current, asc = audioScoresRef.current;
     let correct = 0;
     qs.forEach((q, i) => {
-      const meta = HT_QMETA[q.type];
+      const meta = QMETA[q.type];
       if (!meta.isMCQ) { if ((asc[i] ?? 0) >= 60) correct++; }
       else             { if (ans[i] === q.correctIdx) correct++; }
     });
@@ -606,7 +606,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
   };
 
   const card = (ex?: React.CSSProperties): React.CSSProperties => ({
-    background: "#fff", border: `1px solid ${HT_BORDER}`, borderRadius: 18,
+    background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18,
     boxShadow: "0 2px 12px rgba(26,61,36,.07)", ...ex,
   });
 
@@ -618,38 +618,38 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
 
         {/* Header */}
         <div style={{ background:"#fff", borderBottom:`1px solid #e8ddd0`, padding:"16px", position:"relative" }}>
-          <div style={{ position:"absolute", top:0, left:0, right:0, height:3, background:`linear-gradient(90deg,${HT_G},${HT_GM},${HT_GOLD})` }}/>
+          <div style={{ position:"absolute", top:0, left:0, right:0, height:3, background:`linear-gradient(90deg,${G},${GM},${GOLD})` }}/>
           <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-            <div style={{ width:46, height:46, borderRadius:12, background:`linear-gradient(135deg,${HT_G},#5b21b6)`,
+            <div style={{ width:46, height:46, borderRadius:12, background:`linear-gradient(135deg,${G},#5b21b6)`,
               display:"flex", alignItems:"center", justifyContent:"center", fontSize:22 }}>✍️</div>
             <div>
-              <div style={{ fontFamily:"'Amiri',serif", fontSize:20, color:HT_G, fontWeight:700 }}>Hifdh Test</div>
-              <div style={{ fontSize:11, color:HT_GOLD }}>اختبار الحفظ</div>
+              <div style={{ fontFamily:"'Amiri',serif", fontSize:20, color:G, fontWeight:700 }}>Hifdh Test</div>
+              <div style={{ fontSize:11, color:GOLD }}>اختبار الحفظ</div>
             </div>
             <div style={{ marginLeft:"auto", padding:"4px 10px", borderRadius:10,
-              background:`${HT_G}10`, border:`1px solid ${HT_G}25`,
-              fontSize:10, fontWeight:700, color:HT_G }}>8 Question Types</div>
+              background:`${G}10`, border:`1px solid ${G}25`,
+              fontSize:10, fontWeight:700, color:G }}>8 Question Types</div>
           </div>
         </div>
 
         <div style={{ padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
           {/* Surah selector */}
           <div style={card({ padding:"16px" })}>
-            <div style={{ fontSize:10, fontWeight:800, color:HT_GOLD, letterSpacing:1, marginBottom:10 }}>
+            <div style={{ fontSize:10, fontWeight:800, color:GOLD, letterSpacing:1, marginBottom:10 }}>
               SELECT SURAH · اختر السورة
             </div>
             <select value={surahNum} onChange={e => setSurahNum(Number(e.target.value))}
               style={{ width:"100%", padding:"11px 12px", borderRadius:10,
-                border:`1.5px solid #e8ddd0`, fontSize:13, color:HT_G, background:"#faf8f4",
+                border:`1.5px solid #e8ddd0`, fontSize:13, color:G, background:"#faf8f4",
                 fontWeight:600, appearance:"none", cursor:"pointer", marginBottom:12 }}>
               {SURAHS.map(s => <option key={s.num} value={s.num}>{s.num}. {s.name} · {s.nameAr}</option>)}
             </select>
             <div style={{ display:"flex", gap:8, padding:"10px 14px", borderRadius:12,
-              background:`${HT_G}08`, border:`1px solid ${HT_G}18`, alignItems:"center" }}>
-              <div style={{ width:32, height:32, borderRadius:8, background:`${HT_G}15`,
+              background:`${G}08`, border:`1px solid ${G}18`, alignItems:"center" }}>
+              <div style={{ width:32, height:32, borderRadius:8, background:`${G}15`,
                 display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>📖</div>
               <div>
-                <div style={{ fontSize:12, fontWeight:700, color:HT_G }}>
+                <div style={{ fontSize:12, fontWeight:700, color:G }}>
                   {loading ? "Loading verses…" : `${ayahs.length} verses available`}
                 </div>
                 <div style={{ fontSize:10, color:"#9aab94" }}>
@@ -675,10 +675,10 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
 
           <button onClick={() => setStage("intro")} disabled={loading || ayahs.length < 4}
             style={{ padding:"16px 0", borderRadius:14, border:"none",
-              background: ayahs.length >= 4 ? `linear-gradient(135deg,${HT_G},${HT_GM})` : "#f0f0ee",
+              background: ayahs.length >= 4 ? `linear-gradient(135deg,${G},${GM})` : "#f0f0ee",
               color: ayahs.length >= 4 ? "#fff" : "#9aab94",
               fontSize:16, fontWeight:800, cursor: ayahs.length >= 4 ? "pointer":"not-allowed",
-              boxShadow: ayahs.length >= 4 ? `0 4px 16px ${HT_G}40` : "none" }}>
+              boxShadow: ayahs.length >= 4 ? `0 4px 16px ${G}40` : "none" }}>
             {loading ? "Loading…" : ayahs.length < 4 ? "Need at least 4 verses" : "Continue →"}
           </button>
         </div>
@@ -699,14 +699,14 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
     return (
       <div style={{ background:"#faf8f4", minHeight:"100%", display:"flex", flexDirection:"column" }}>
         <div style={{ background:"#fff", borderBottom:`1px solid #e8ddd0`, padding:"16px", position:"relative" }}>
-          <div style={{ position:"absolute", top:0, left:0, right:0, height:3, background:`linear-gradient(90deg,${HT_G},${HT_GM},${HT_GOLD})` }}/>
-          <div style={{ fontSize:18, fontWeight:800, color:HT_G }}>📋 Before You Begin</div>
-          <div style={{ fontSize:12, color:HT_GOLD, marginTop:2 }}>اقرأ التعليمات بعناية</div>
+          <div style={{ position:"absolute", top:0, left:0, right:0, height:3, background:`linear-gradient(90deg,${G},${GM},${GOLD})` }}/>
+          <div style={{ fontSize:18, fontWeight:800, color:G }}>📋 Before You Begin</div>
+          <div style={{ fontSize:12, color:GOLD, marginTop:2 }}>اقرأ التعليمات بعناية</div>
         </div>
 
         <div style={{ padding:"16px", display:"flex", flexDirection:"column", gap:12 }}>
           <div style={card({ padding:"16px" })}>
-            <div style={{ fontSize:12, fontWeight:800, color:HT_GOLD, letterSpacing:.5, marginBottom:12 }}>
+            <div style={{ fontSize:12, fontWeight:800, color:GOLD, letterSpacing:.5, marginBottom:12 }}>
               TEST RULES · قواعد الاختبار
             </div>
             {rules.map((r, i) => (
@@ -718,15 +718,15 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
           </div>
 
           <div style={card({ padding:"16px" })}>
-            <div style={{ fontSize:12, fontWeight:800, color:HT_G, letterSpacing:.5, marginBottom:10 }}>
+            <div style={{ fontSize:12, fontWeight:800, color:G, letterSpacing:.5, marginBottom:10 }}>
               QUESTION TYPES YOU'LL ENCOUNTER
             </div>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
               {(["missing_word_mcq","hear_and_choose","recite_from_words","continue_partial_audio"] as QType[]).map(t => (
-                <div key={t} style={{ padding:"8px 10px", borderRadius:10, background:HT_LIGHT, border:`1px solid ${HT_BORDER}` }}>
-                  <div style={{ fontSize:14 }}>{HT_QMETA[t].icon}</div>
-                  <div style={{ fontSize:11, fontWeight:700, color:HT_G, marginTop:2 }}>{HT_QMETA[t].label}</div>
-                  <div style={{ fontSize:10, color:"#7a9e88", marginTop:1 }}>{HT_QMETA[t].desc}</div>
+                <div key={t} style={{ padding:"8px 10px", borderRadius:10, background:LIGHT, border:`1px solid ${BORDER}` }}>
+                  <div style={{ fontSize:14 }}>{QMETA[t].icon}</div>
+                  <div style={{ fontSize:11, fontWeight:700, color:G, marginTop:2 }}>{QMETA[t].label}</div>
+                  <div style={{ fontSize:10, color:"#7a9e88", marginTop:1 }}>{QMETA[t].desc}</div>
                 </div>
               ))}
             </div>
@@ -741,14 +741,14 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
             <button onClick={() => setStage("setup")}
               style={{ padding:"13px 0", borderRadius:12, border:`1px solid #e8ddd0`,
-                background:"#f8fafb", color:HT_G, fontSize:14, fontWeight:700, cursor:"pointer" }}>
+                background:"#f8fafb", color:G, fontSize:14, fontWeight:700, cursor:"pointer" }}>
               ← Back
             </button>
             <button onClick={startTest}
               style={{ padding:"13px 0", borderRadius:12, border:"none",
-                background:`linear-gradient(135deg,${HT_G},${HT_GM})`,
+                background:`linear-gradient(135deg,${G},${GM})`,
                 color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer",
-                boxShadow:`0 4px 14px ${HT_G}40` }}>
+                boxShadow:`0 4px 14px ${G}40` }}>
               ✍️ Begin Test
             </button>
           </div>
@@ -761,7 +761,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
   if (stage === "results" && questions.length > 0) {
     let correct = 0;
     questions.forEach((q, i) => {
-      const meta = HT_QMETA[q.type];
+      const meta = QMETA[q.type];
       if (!meta.isMCQ) { if ((audioScores[i] ?? 0) >= 60) correct++; }
       else             { if (answers[i] === q.correctIdx) correct++; }
     });
@@ -771,8 +771,8 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
       <div style={{ padding:"16px", display:"flex", flexDirection:"column", gap:14 }}>
         <div style={card({ padding:"28px 20px", textAlign:"center" })}>
           <div style={{ fontSize:52, marginBottom:10 }}>{pct >= 70 ? "🎉" : pct >= 50 ? "💪" : "📖"}</div>
-          <div style={{ fontFamily:"'Amiri',serif", fontSize:26, color:HT_G, fontWeight:700 }}>Test Complete!</div>
-          <div style={{ fontFamily:"'Amiri',serif", fontSize:14, color:HT_GOLD, marginTop:4 }}>اكتمل الاختبار</div>
+          <div style={{ fontFamily:"'Amiri',serif", fontSize:26, color:G, fontWeight:700 }}>Test Complete!</div>
+          <div style={{ fontFamily:"'Amiri',serif", fontSize:14, color:GOLD, marginTop:4 }}>اكتمل الاختبار</div>
 
           <div style={{ position:"relative", width:130, height:130, margin:"20px auto" }}>
             <svg width={130} height={130} style={{ transform:"rotate(-90deg)" }}>
@@ -781,7 +781,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
                 strokeDasharray={`${(pct/100)*2*Math.PI*52} ${2*Math.PI*52}`} strokeLinecap="round"/>
             </svg>
             <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
-              <div style={{ fontSize:26, fontWeight:900, color:HT_G }}>{pct}%</div>
+              <div style={{ fontSize:26, fontWeight:900, color:G }}>{pct}%</div>
               <div style={{ fontSize:18, fontWeight:900, color:grade.color }}>{grade.letter}</div>
             </div>
           </div>
@@ -791,8 +791,8 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
             {correct} / {questions.length} correct · Score saved ✓
           </div>
           {testSessionId && (
-            <div style={{ marginTop:6, padding:"4px 12px", borderRadius:8, background:HT_LIGHT, display:"inline-block" }}>
-              <span style={{ fontSize:10, color:HT_G, fontWeight:700 }}>🔒 Proctored session saved</span>
+            <div style={{ marginTop:6, padding:"4px 12px", borderRadius:8, background:LIGHT, display:"inline-block" }}>
+              <span style={{ fontSize:10, color:G, fontWeight:700 }}>🔒 Proctored session saved</span>
             </div>
           )}
         </div>
@@ -803,17 +803,17 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
             REVIEW · مراجعة
           </div>
           {questions.map((q, i) => {
-            const meta = HT_QMETA[q.type];
+            const meta = QMETA[q.type];
             const sc = audioScores[i] ?? 0;
             const ok = meta.isMCQ ? (answers[i] === q.correctIdx) : (sc >= 60);
             return (
               <div key={q.id} style={{ padding:"10px 12px", borderRadius:12, marginBottom:8,
-                background: ok ? HT_LIGHT : "#fff5f5", border:`1px solid ${ok ? HT_BORDER : "#fca5a5"}` }}>
+                background: ok ? LIGHT : "#fff5f5", border:`1px solid ${ok ? BORDER : "#fca5a5"}` }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <div style={{ fontSize:11, color:"#7a9e88" }}>
                     Q{i+1} {meta.icon} {meta.label}
                   </div>
-                  <div style={{ fontSize:15, fontWeight:700, color: ok ? HT_GM : "#c0392b" }}>
+                  <div style={{ fontSize:15, fontWeight:700, color: ok ? GM : "#c0392b" }}>
                     {ok ? "✓" : "✗"}{!meta.isMCQ && ` ${sc}%`}
                   </div>
                 </div>
@@ -822,11 +822,11 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
                     fontFamily:"'Amiri',serif", marginTop:4, lineHeight:1.7 }}>
                     <span style={{ color:"#c0392b" }}>Your: {answers[i] != null ? q.options[answers[i]!] : "—"}</span>
                     <span style={{ margin:"0 6px" }}>·</span>
-                    <span style={{ color:HT_GM, fontWeight:700 }}>Correct: {q.correctText}</span>
+                    <span style={{ color:GM, fontWeight:700 }}>Correct: {q.correctText}</span>
                   </div>
                 )}
                 {!ok && !meta.isMCQ && (
-                  <div style={{ fontSize:11, color:HT_G, direction:"rtl",
+                  <div style={{ fontSize:11, color:G, direction:"rtl",
                     fontFamily:"'Amiri',serif", marginTop:4, lineHeight:1.7 }}>
                     ✔ Expected: {q.correctText.split(" ").slice(0, 8).join(" ")}…
                   </div>
@@ -838,13 +838,13 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
 
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
           <button onClick={() => { setStage("setup"); setTestSessionId(""); }}
-            style={{ padding:"13px 0", borderRadius:12, border:`1px solid ${HT_BORDER}`,
-              background:"#f8fafb", color:HT_G, fontSize:14, fontWeight:700, cursor:"pointer" }}>
+            style={{ padding:"13px 0", borderRadius:12, border:`1px solid ${BORDER}`,
+              background:"#f8fafb", color:G, fontSize:14, fontWeight:700, cursor:"pointer" }}>
             ← New Test
           </button>
           <button onClick={startTest}
             style={{ padding:"13px 0", borderRadius:12, border:"none",
-              background:`linear-gradient(135deg,${HT_G},${HT_GM})`,
+              background:`linear-gradient(135deg,${G},${GM})`,
               color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
             🔁 Retry
           </button>
@@ -860,13 +860,13 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
         <div style={{ fontSize:13, color:"#7a9e88", marginBottom:12 }}>Building questions…</div>
         <button onClick={() => setStage("setup")}
           style={{ padding:"10px 20px", borderRadius:10, border:"none",
-            background:HT_G, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>← Back</button>
+            background:G, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>← Back</button>
       </div>
     );
   }
 
   const q        = questions[Math.min(qIdx, questions.length - 1)];
-  const meta     = HT_QMETA[q.type];
+  const meta     = QMETA[q.type];
   const progress = (qIdx / questions.length) * 100;
   const timerPct = questions.length > 0 ? (timeLeft / (questions.length * 50)) * 100 : 0;
 
@@ -896,10 +896,10 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
             <div style={{ fontSize:12, color:"#7a9e88" }}>
-              Q <strong style={{ color:HT_G }}>{qIdx + 1}</strong>/{questions.length}
+              Q <strong style={{ color:G }}>{qIdx + 1}</strong>/{questions.length}
             </div>
-            <div style={{ padding:"2px 8px", borderRadius:6, background:HT_LIGHT,
-              fontSize:10, fontWeight:700, color:HT_G }}>
+            <div style={{ padding:"2px 8px", borderRadius:6, background:LIGHT,
+              fontSize:10, fontWeight:700, color:G }}>
               {SURAHS[surahNum-1]?.name}
             </div>
           </div>
@@ -908,25 +908,25 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
             <svg width={40} height={40} style={{ transform:"rotate(-90deg)" }}>
               <circle cx={20} cy={20} r={16} fill="none" stroke="#f0f4f0" strokeWidth={4}/>
               <circle cx={20} cy={20} r={16} fill="none"
-                stroke={timeLeft < 30 ? "#ef4444" : HT_G} strokeWidth={4}
+                stroke={timeLeft < 30 ? "#ef4444" : G} strokeWidth={4}
                 strokeDasharray={`${(timerPct/100)*2*Math.PI*16} ${2*Math.PI*16}`} strokeLinecap="round"/>
             </svg>
             <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <span style={{ fontSize:9, fontWeight:900, color: timeLeft < 30 ? "#ef4444" : HT_G }}>{timeLeft}s</span>
+              <span style={{ fontSize:9, fontWeight:900, color: timeLeft < 30 ? "#ef4444" : G }}>{timeLeft}s</span>
             </div>
           </div>
         </div>
         <div style={{ height:5, borderRadius:3, background:"#f0f4f0", overflow:"hidden" }}>
           <div style={{ width:`${progress}%`, height:"100%", borderRadius:3,
-            background:`linear-gradient(90deg,${HT_G},${HT_GOLD})`, transition:"width .3s" }}/>
+            background:`linear-gradient(90deg,${G},${GOLD})`, transition:"width .3s" }}/>
         </div>
       </div>
 
       {/* Question type badge */}
       <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 14px",
-        borderRadius:10, background:HT_LIGHT, border:`1px solid ${HT_BORDER}`, alignSelf:"flex-start" }}>
+        borderRadius:10, background:LIGHT, border:`1px solid ${BORDER}`, alignSelf:"flex-start" }}>
         <span style={{ fontSize:14 }}>{meta.icon}</span>
-        <span style={{ fontSize:12, fontWeight:700, color:HT_G }}>{meta.label}</span>
+        <span style={{ fontSize:12, fontWeight:700, color:G }}>{meta.label}</span>
         <span style={{ fontSize:10, color:"#7a9e88" }}>· {meta.desc}</span>
       </div>
 
@@ -947,8 +947,8 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
         {q.cueText && (
           <div style={{ direction:"rtl", fontFamily:"'Amiri Quran', 'Amiri', serif",
             fontSize: q.type === "recite_after_text" ? 20 : 18,
-            color:HT_G, lineHeight:2.1, textAlign:"right",
-            padding:"10px 12px", borderRadius:12, background:HT_LIGHT, border:`1px solid ${HT_BORDER}` }}>
+            color:G, lineHeight:2.1, textAlign:"right",
+            padding:"10px 12px", borderRadius:12, background:LIGHT, border:`1px solid ${BORDER}` }}>
             {q.cueText}
           </div>
         )}
@@ -960,7 +960,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
             {q.cuePartial ? (
               <>
                 <div style={{ fontSize:26, marginBottom:6 }}>⏯</div>
-                <div style={{ fontSize:13, color:HT_GOLD, fontWeight:700, marginBottom:4 }}>
+                <div style={{ fontSize:13, color:GOLD, fontWeight:700, marginBottom:4 }}>
                   Audio will stop midway — recite from that point
                 </div>
                 <div style={{ fontSize:11, color:"#7a9e88" }}>
@@ -970,7 +970,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
             ) : (
               <>
                 <div style={{ fontSize:26, marginBottom:6 }}>🔊</div>
-                <div style={{ fontSize:13, color:HT_GOLD, fontWeight:700, marginBottom:4 }}>
+                <div style={{ fontSize:13, color:GOLD, fontWeight:700, marginBottom:4 }}>
                   {q.type === "hear_and_choose"
                     ? "Listen to the verse — then choose what comes after"
                     : "Listen to this verse — then recite the next one"}
@@ -998,9 +998,9 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
                 }
               }}
               style={{ width:"100%", padding:"10px 0", borderRadius:10,
-                border:`1px solid ${isPlaying ? "#ef4444" : HT_GOLD}`,
+                border:`1px solid ${isPlaying ? "#ef4444" : GOLD}`,
                 background: isPlaying ? "#fee2e2" : "#fffbeb",
-                color: isPlaying ? "#c0392b" : HT_GOLD,
+                color: isPlaying ? "#c0392b" : GOLD,
                 fontSize:13, fontWeight:700, cursor:"pointer" }}>
               {isPlaying
                 ? (q.cuePartial ? "⏹ Playing (first half)…" : "⏹ Stop")
@@ -1021,12 +1021,12 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
               return (
                 <button key={i} onClick={() => !confirmed && setSelected(i)}
                   style={{ padding:"12px 14px", borderRadius:12, cursor: confirmed ? "default" : "pointer",
-                    background: isCorr ? HT_LIGHT : isWrong ? "#fff5f5" : isSel ? "#eff6ff" : "#fafafa",
-                    border:`1.5px solid ${isCorr ? HT_BORDER : isWrong ? "#fca5a5" : isSel ? "#93c5fd" : "#f0f4f0"}`,
+                    background: isCorr ? LIGHT : isWrong ? "#fff5f5" : isSel ? "#eff6ff" : "#fafafa",
+                    border:`1.5px solid ${isCorr ? BORDER : isWrong ? "#fca5a5" : isSel ? "#93c5fd" : "#f0f4f0"}`,
                     display:"flex", gap:10, alignItems:"center", direction:"rtl", textAlign:"right",
                     transition:"all .15s" }}>
                   <div style={{ width:28, height:28, borderRadius:"50%", flexShrink:0,
-                    background: isCorr ? HT_GM : isWrong ? "#ef4444" : isSel ? "#2563eb" : "#e5e7eb",
+                    background: isCorr ? GM : isWrong ? "#ef4444" : isSel ? "#2563eb" : "#e5e7eb",
                     display:"flex", alignItems:"center", justifyContent:"center",
                     fontSize:12, fontWeight:700, color: isCorr||isWrong||isSel ? "#fff" : "#6b7280",
                     fontFamily:"'Cairo',sans-serif" }}>
@@ -1034,7 +1034,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
                   </div>
                   <div style={{ flex:1, fontFamily:"'Amiri Quran','Amiri',serif",
                     fontSize: opt.length > 20 ? 15 : 17,
-                    color: isCorr ? HT_GM : isWrong ? "#c0392b" : isSel ? "#1d4ed8" : HT_G,
+                    color: isCorr ? GM : isWrong ? "#c0392b" : isSel ? "#1d4ed8" : G,
                     lineHeight:1.8 }}>
                     {opt}
                   </div>
@@ -1046,7 +1046,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
           {!confirmed ? (
             <button onClick={confirmAnswer} disabled={selected === null}
               style={{ padding:"13px 0", borderRadius:12, border:"none",
-                background: selected === null ? "#f0f4f0" : `linear-gradient(135deg,${HT_G},${HT_GM})`,
+                background: selected === null ? "#f0f4f0" : `linear-gradient(135deg,${G},${GM})`,
                 color: selected === null ? "#7a9e88" : "#fff",
                 fontSize:14, fontWeight:800, cursor: selected === null ? "not-allowed" : "pointer" }}>
               ✓ Confirm Answer · تأكيد
@@ -1055,7 +1055,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
             <button onClick={nextQuestion}
               style={{ padding:"13px 0", borderRadius:12, border:"none",
                 background: answers[qIdx] === q.correctIdx
-                  ? `linear-gradient(135deg,${HT_GM},${HT_G})`
+                  ? `linear-gradient(135deg,${GM},${G})`
                   : "linear-gradient(135deg,#b91c1c,#ef4444)",
                 color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer" }}>
               {qIdx < questions.length - 1 ? "Next Question →" : "See Results 🎉"}
@@ -1078,7 +1078,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
           {/* If partial audio, must play first */}
           {q.cuePartial && !partialReady && micState === "idle" && (
             <div style={{ padding:"12px", borderRadius:12, background:"#fffbeb",
-              border:`1px solid #fde68a`, textAlign:"center", fontSize:12, color:HT_GOLD, fontWeight:700 }}>
+              border:`1px solid #fde68a`, textAlign:"center", fontSize:12, color:GOLD, fontWeight:700 }}>
               ⬆ Press "Play" above to hear the first half, then record your continuation
             </div>
           )}
@@ -1086,7 +1086,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
           {micState === "idle" && (q.cuePartial ? partialReady : true) && (
             <button onClick={startRecording}
               style={{ width:"100%", padding:"13px 0", borderRadius:12, border:"none",
-                background:`linear-gradient(135deg,${HT_G},${HT_GM})`,
+                background:`linear-gradient(135deg,${G},${GM})`,
                 color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}>
               🎙 Start Reciting
             </button>
@@ -1114,21 +1114,21 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
 
           {micState === "evaluating" && (
             <div style={{ textAlign:"center", padding:"14px" }}>
-              <div style={{ fontSize:13, color:HT_GOLD, fontWeight:700 }}>🤖 Evaluating recitation…</div>
+              <div style={{ fontSize:13, color:GOLD, fontWeight:700 }}>🤖 Evaluating recitation…</div>
             </div>
           )}
 
           {micState === "done" && audioResult && (
             <div style={{ padding:"12px", borderRadius:12,
-              background: audioResult.score >= 60 ? HT_LIGHT : "#fff5f5",
-              border:`1px solid ${audioResult.score >= 60 ? HT_BORDER : "#fca5a5"}` }}>
+              background: audioResult.score >= 60 ? LIGHT : "#fff5f5",
+              border:`1px solid ${audioResult.score >= 60 ? BORDER : "#fca5a5"}` }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
                 <span style={{ fontSize:14, fontWeight:800,
-                  color: audioResult.score >= 60 ? HT_GM : "#c0392b" }}>
+                  color: audioResult.score >= 60 ? GM : "#c0392b" }}>
                   {audioResult.score >= 60 ? "✓ Good recitation!" : "✗ Needs more practice"}
                 </span>
                 <span style={{ fontSize:20, fontWeight:900,
-                  color: audioResult.score >= 60 ? HT_GM : "#c0392b" }}>
+                  color: audioResult.score >= 60 ? GM : "#c0392b" }}>
                   {audioResult.score}%
                 </span>
               </div>
@@ -1145,13 +1145,13 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
                    q.type === "recite_from_words" ? "EXPECTED CONTINUATION" : "CORRECT VERSE"}
                 </div>
                 <div style={{ direction:"rtl", fontFamily:"'Amiri Quran','Amiri',serif",
-                  fontSize:17, color:HT_G, lineHeight:2.1, textAlign:"right" }}>
+                  fontSize:17, color:G, lineHeight:2.1, textAlign:"right" }}>
                   {q.correctText}
                 </div>
               </div>
               <button onClick={nextQuestion}
                 style={{ marginTop:10, width:"100%", padding:"11px 0", borderRadius:10, border:"none",
-                  background:`linear-gradient(135deg,${HT_G},${HT_GM})`,
+                  background:`linear-gradient(135deg,${G},${GM})`,
                   color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
                 {qIdx < questions.length - 1 ? "Next Question →" : "See Results 🎉"}
               </button>
