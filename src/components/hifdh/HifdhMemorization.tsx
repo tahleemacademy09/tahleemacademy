@@ -114,14 +114,15 @@ function getBestMime(): string {
   return "audio/webm";
 }
 
-const STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; icon: string; grad: string }> = {
-  overview:   { bg: GOLD_L,    text: GOLD,     border: "#f6d860", icon: "📖", grad: `linear-gradient(135deg,${GOLD},#e09b2f)` },
-  single:     { bg: LIGHT,     text: G,        border: BORDER,    icon: "🎯", grad: `linear-gradient(135deg,${G},${GM})` },
-  pair:       { bg: "#eff6ff", text: "#2563eb", border: "#bfdbfe", icon: "🔗", grad: "linear-gradient(135deg,#2563eb,#3b82f6)" },
-  cumulative: { bg: "#f5f3ff", text: "#7c3aed", border: "#ddd6fe", icon: "📚", grad: "linear-gradient(135deg,#7c3aed,#8b5cf6)" },
-};
-
 export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved }: Props) {
+  // Moved inside component to avoid module-scope TDZ when bundled with HifdhPage
+  // which defines its own const GOLD — Rollup mangles both and init order breaks.
+  const STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; icon: string; grad: string }> = {
+    overview:   { bg: GOLD_L,    text: GOLD,     border: "#f6d860", icon: "📖", grad: `linear-gradient(135deg,${GOLD},#e09b2f)` },
+    single:     { bg: LIGHT,     text: G,        border: BORDER,    icon: "🎯", grad: `linear-gradient(135deg,${G},${GM})` },
+    pair:       { bg: "#eff6ff", text: "#2563eb", border: "#bfdbfe", icon: "🔗", grad: "linear-gradient(135deg,#2563eb,#3b82f6)" },
+    cumulative: { bg: "#f5f3ff", text: "#7c3aed", border: "#ddd6fe", icon: "📚", grad: "linear-gradient(135deg,#7c3aed,#8b5cf6)" },
+  };
 
   const [surahNum,        setSurahNum]        = useState(114);
   const [startVerse,      setStartVerse]      = useState(1);
