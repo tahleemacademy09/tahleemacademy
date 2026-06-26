@@ -307,7 +307,7 @@ const StudentDashboard = () => {
 
         const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
           recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes, ttRes,
-          hifdhAssignRes, hifdhLogRes, privateSubjectsRes] = await withTimeout(Promise.all([
+          hifdhAssignRes, hifdhLogRes, privateSubjectsRes, studentProfileRes] = await withTimeout(Promise.all([
           supabase.from("enrollments").select("id").eq("user_id", uid),
           supabase.from("exam_attempts").select("percentage").eq("user_id", uid).eq("status", "graded"),
           supabase.from("exam_attempts").select("id").eq("user_id", uid).eq("status", "submitted"),
@@ -322,6 +322,7 @@ const StudentDashboard = () => {
           (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", uid).eq("active", true).maybeSingle(),
           (supabase as any).from("hifdh_daily_logs").select("*").eq("student_id", uid).eq("log_date", new Date().toISOString().split("T")[0]).maybeSingle(),
           (supabase as any).from("private_student_subjects").select("subject_id").eq("student_id", uid),
+          supabase.from("profiles").select("level, student_type, assigned_teacher_id").eq("user_id", uid).maybeSingle(),
         ]));
       const gradedAttempts = gradedAttemptsRes.data || [];
       const avg = gradedAttempts.length > 0 ? gradedAttempts.reduce((s, a) => s + (Number(a.percentage) || 0), 0) / gradedAttempts.length : 0;
@@ -336,6 +337,7 @@ const StudentDashboard = () => {
       setNotifications(notifsRes.data || []);
       setLiveSubjects(subjectsRes.data || []);
       setAllExamsForCalendar(calendarExamsRes.data || []);
+      const studentProfileData = studentProfileRes?.data ?? null;
       const studentLevelForCalendar = (studentProfileData as any)?.level || (displayProfile as any)?.level || null;
       const filteredSubjAsgn = (subAssignmentsRes.data || []).filter((a: any) => {
         const subj = a.subjects;
@@ -352,10 +354,6 @@ const StudentDashboard = () => {
       const privateIds = new Set((privateSubjectsRes?.data || []).map((r: any) => r.subject_id));
       setPrivateSubjectIds(privateIds);
 
-      // Fetch student profile level (may differ from auth profile during impersonation)
-      const { data: studentProfileData } = await supabase
-        .from("profiles").select("level, student_type, assigned_teacher_id")
-        .eq("user_id", uid).maybeSingle();
       const studentLevel     = (studentProfileData as any)?.level || (displayProfile as any)?.level || null;
       const studentType      = (studentProfileData as any)?.student_type || "group";
 
