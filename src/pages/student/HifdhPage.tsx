@@ -17,7 +17,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "test",         label: "Test",     icon: <ClipboardCheck  size={12} /> },
   { id: "memorization", label: "Memorize", icon: <Brain           size={12} /> },
 ];
-const GOLD = "#b7791f";
+const HP_GOLD = "#b7791f";
 
 export default function HifdhPage() {
   const [tab, setTab] = useState<Tab>(() => {
@@ -69,8 +69,8 @@ export default function HifdhPage() {
               onClick={() => setTab(t.id)}
               className="flex-1 flex flex-row items-center justify-center gap-1 py-1 text-[10px] font-bold transition-all"
               style={{
-                color:        active ? GOLD : "#9aab94",
-                borderBottom: active ? `2px solid ${GOLD}` : "2px solid transparent",
+                color:        active ? HP_GOLD : "#9aab94",
+                borderBottom: active ? `2px solid ${HP_GOLD}` : "2px solid transparent",
                 background:   active ? "#fdf6e3" : "transparent",
               }}>
               {t.icon}{t.label}
