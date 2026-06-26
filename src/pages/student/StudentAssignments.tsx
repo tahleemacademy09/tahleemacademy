@@ -78,10 +78,35 @@ export default function StudentAssignments() {
         .from("enrollments").select("subject_id").eq("user_id", user.id);
       const subjectIds = (enrollments || []).map((e: any) => e.subject_id).filter(Boolean);
 
-      // Also pull from subject_timetable (student sees class subjects even without formal enrollment)
-      const { data: ttSlots } = await supabase
-        .from("subject_timetable" as any).select("subject_id").eq("is_active", true);
-      const ttSubjectIds = (ttSlots || []).map((s: any) => s.subject_id).filter(Boolean);
+      // Also pull from subject_timetable — but only slots this student is eligible for.
+      // Fetch the student's profile (level + student_type) and private subject IDs in parallel.
+      const [ttRes, profileRes, privateSubjectsRes] = await Promise.all([
+        supabase.from("subject_timetable" as any)
+          .select("subject_id, levels, subjects(id, level, levels)")
+          .eq("is_active", true),
+        supabase.from("profiles").select("level, student_type").eq("user_id", user.id).maybeSingle(),
+        (supabase as any).from("private_student_subjects").select("subject_id").eq("student_id", user.id),
+      ]);
+
+      const studentLevel = (profileRes.data as any)?.level ?? null;
+      const studentType  = (profileRes.data as any)?.student_type ?? "group";
+      const privateIds   = new Set(((privateSubjectsRes as any)?.data || []).map((r: any) => r.subject_id));
+
+      const ttSubjectIds = ((ttRes.data || []) as any[]).filter((slot: any) => {
+        // Private student: only show their assigned private subjects
+        if (studentType === "private") {
+          return privateIds.has(slot.subject_id);
+        }
+        // Group student: filter by slot-level and subject-level restrictions
+        const slotLevels: string[] = slot.levels || [];
+        const subj = slot.subjects as any;
+        const subjLevels: string[] = subj?.levels || (subj?.level ? [subj.level] : []);
+        const allLevels = [...new Set([...slotLevels, ...subjLevels])];
+        if (allLevels.length > 0 && studentLevel) {
+          return allLevels.includes(studentLevel);
+        }
+        return true; // no level restriction → visible to all group students
+      }).map((s: any) => s.subject_id).filter(Boolean);
 
       const allSubjectIds = [...new Set([...subjectIds, ...ttSubjectIds])];
 
