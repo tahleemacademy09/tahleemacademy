@@ -1,37 +1,47 @@
 // src/pages/student/HifdhPage.tsx
 // Tabbed shell — ALL tabs remain mounted (CSS visibility) so state is never lost on tab switch.
 // onSessionSaved callback flows from child tabs → Overview to trigger instant re-fetch.
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { LayoutDashboard, BookOpen, ClipboardCheck, Brain } from "lucide-react";
-import HifdhDashboard    from "@/components/hifdh/HifdhDashboard";
-import HifdhRevision     from "@/pages/student/HifdhRevision";
-import HifdhTest         from "@/components/hifdh/HifdhTest";
-import HifdhMemorization from "@/components/hifdh/HifdhMemorization";
+import { LayoutDashboard, BookOpen, ClipboardCheck, Brain, Loader2 } from "lucide-react";
+
+// ── Lazy-load each tab so Vite puts them in separate chunks ──────────────────
+// This eliminates the TDZ "Cannot access 'Xt' before initialization" crash
+// caused by duplicate module-level const names colliding inside one shared chunk.
+const HifdhDashboard    = lazy(() => import("@/components/hifdh/HifdhDashboard"));
+const HifdhRevision     = lazy(() => import("@/pages/student/HifdhRevision"));
+const HifdhTest         = lazy(() => import("@/components/hifdh/HifdhTest"));
+const HifdhMemorization = lazy(() => import("@/components/hifdh/HifdhMemorization"));
 
 type Tab = "overview" | "revision" | "test" | "memorization";
 const TAB_KEY = "hifdh_active_tab";
-const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
+const HP_GOLD = "#b7791f";
+
+const HP_TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "overview",     label: "Overview", icon: <LayoutDashboard size={12} /> },
   { id: "revision",     label: "Revision", icon: <BookOpen        size={12} /> },
   { id: "test",         label: "Test",     icon: <ClipboardCheck  size={12} /> },
   { id: "memorization", label: "Memorize", icon: <Brain           size={12} /> },
 ];
-const HP_GOLD = "#b7791f";
+
+function TabLoader() {
+  return (
+    <div className="flex items-center justify-center h-full">
+      <Loader2 size={28} className="animate-spin" style={{ color: HP_GOLD }} />
+    </div>
+  );
+}
 
 export default function HifdhPage() {
   const [tab, setTab] = useState<Tab>(() => {
     const s = localStorage.getItem(TAB_KEY) as Tab | null;
-    return s && TABS.some(t => t.id === s) ? s : "overview";
+    return s && HP_TABS.some(t => t.id === s) ? s : "overview";
   });
   const [userId,      setUserId]      = useState<string | null>(null);
   const [studentName, setStudentName] = useState("");
-  // Incrementing counter → passed as `refreshKey` prop to HifdhDashboard
-  // so it re-fetches data whenever any child tab saves a session.
   const [refreshKey, setRefreshKey] = useState(0);
   const triggerRefresh = useCallback(() => setRefreshKey(k => k + 1), []);
 
-  // Also refresh whenever user switches back to Overview tab
   const prevTab = useRef<Tab>(tab);
   useEffect(() => {
     if (tab === "overview" && prevTab.current !== "overview") triggerRefresh();
@@ -62,7 +72,7 @@ export default function HifdhPage() {
       {/* ── Tab Bar ── */}
       <div className="flex items-center shrink-0 border-b"
         style={{ background: "#ffffff", borderColor: "#e8ddd0", boxShadow: "0 1px 6px rgba(26,61,36,.06)" }}>
-        {TABS.map(t => {
+        {HP_TABS.map(t => {
           const active = tab === t.id;
           return (
             <button key={t.id}
@@ -83,24 +93,32 @@ export default function HifdhPage() {
       <div className="flex-1 overflow-hidden" style={{ background: "#f5f2ec" }}>
 
         <div className="h-full overflow-y-auto" style={{ display: tab === "overview" ? "block" : "none" }}>
-          <HifdhDashboard
-            userId={userId}
-            studentName={studentName}
-            onNavigate={navigate}
-            refreshKey={refreshKey}
-          />
+          <Suspense fallback={<TabLoader />}>
+            <HifdhDashboard
+              userId={userId}
+              studentName={studentName}
+              onNavigate={navigate}
+              refreshKey={refreshKey}
+            />
+          </Suspense>
         </div>
 
         <div className="h-full overflow-hidden" style={{ display: tab === "revision" ? "flex" : "none", flexDirection: "column" }}>
-          <HifdhRevision userId={userId} autoStart={false} onSessionSaved={triggerRefresh} />
+          <Suspense fallback={<TabLoader />}>
+            <HifdhRevision userId={userId} autoStart={false} onSessionSaved={triggerRefresh} />
+          </Suspense>
         </div>
 
         <div className="h-full overflow-y-auto" style={{ display: tab === "test" ? "block" : "none" }}>
-          <HifdhTest onSessionSaved={triggerRefresh} />
+          <Suspense fallback={<TabLoader />}>
+            <HifdhTest onSessionSaved={triggerRefresh} />
+          </Suspense>
         </div>
 
         <div className="h-full overflow-y-auto" style={{ display: tab === "memorization" ? "block" : "none" }}>
-          <HifdhMemorization onSessionSaved={triggerRefresh} />
+          <Suspense fallback={<TabLoader />}>
+            <HifdhMemorization onSessionSaved={triggerRefresh} />
+          </Suspense>
         </div>
 
       </div>
