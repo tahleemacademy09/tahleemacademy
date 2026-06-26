@@ -28,21 +28,21 @@ const HR_DG2        = "#1a4030";
 const HR_PARCHMENT  = "#fffdf6";
 const HR_PARCH2     = "#f9f2dc";
 const HR_INK        = "#1a1007";
-const PASS_SCORE = 70;
-const EXERCISE_PASS = 65;
+const HR_PASS_SCORE = 70;
+const HR_EXERCISE_PASS = 65;
 
-const JUZ_PAGES: [number, number][] = [
+const HR_JUZ_PAGES: [number, number][] = [
   [1,21],[22,41],[42,62],[63,81],[82,101],[102,121],[122,141],[142,161],[162,181],[182,201],
   [202,221],[222,241],[242,261],[262,281],[282,301],[302,321],[322,341],[342,361],[362,381],[382,401],
   [402,421],[422,441],[442,461],[462,481],[482,501],[502,521],[522,541],[542,561],[562,581],[582,604],
 ];
 
-const HIZB_PAGES: [number, number][] = JUZ_PAGES.flatMap(([s, e]) => {
+const HR_HIZB_PAGES: [number, number][] = HR_JUZ_PAGES.flatMap(([s, e]) => {
   const mid = Math.floor((s + e) / 2);
   return [[s, mid], [mid + 1, e]] as [number, number][];
 });
 
-const SURAH_START: Record<number, number> = {
+const HR_SURAH_START: Record<number, number> = {
   1:1,2:2,3:50,4:77,5:106,6:128,7:151,8:177,9:187,10:208,
   11:221,12:235,13:249,14:255,15:262,16:267,17:282,18:293,19:305,20:312,
   21:322,22:332,23:342,24:350,25:359,26:367,27:377,28:385,29:396,30:404,
@@ -57,17 +57,17 @@ const SURAH_START: Record<number, number> = {
   110:603,111:603,112:604,113:604,114:604,
 };
 
-const SURAH_END: Record<number, number> = (() => {
+const HR_SURAH_END: Record<number, number> = (() => {
   const ends: Record<number, number> = {};
-  const nums = Object.keys(SURAH_START).map(Number).sort((a, b) => a - b);
+  const nums = Object.keys(HR_SURAH_START).map(Number).sort((a, b) => a - b);
   for (let i = 0; i < nums.length; i++) {
     const s = nums[i];
-    ends[s] = nums[i + 1] ? SURAH_START[nums[i + 1]] - 1 : 604;
+    ends[s] = nums[i + 1] ? HR_SURAH_START[nums[i + 1]] - 1 : 604;
   }
   return ends;
 })();
 
-const SURAHS_AR: Record<number, string> = {
+const HR_SURAHS_AR: Record<number, string> = {
   1:"الفاتحة",2:"البقرة",3:"آل عمران",4:"النساء",5:"المائدة",
   6:"الأنعام",7:"الأعراف",8:"الأنفال",9:"التوبة",10:"يونس",
   11:"هود",12:"يوسف",13:"الرعد",14:"إبراهيم",15:"الحجر",
@@ -93,7 +93,7 @@ const SURAHS_AR: Record<number, string> = {
   111:"المسد",112:"الإخلاص",113:"الفلق",114:"الناس",
 };
 
-const RECITERS = [
+const HR_RECITERS = [
   { id: "Alafasy_128kbps",               name: "مشاري العفاسي"   },
   { id: "Abdurrahmaan_As-Sudais_192kbps",name: "السديس"           },
   { id: "Husary_128kbps",                name: "الحصري"           },
@@ -221,7 +221,7 @@ function wordsMatch(rw: string, gw: string): boolean {
   return false;
 }
 
-const HAS_ARABIC_LETTER = /[\u0621-\u063A\u0641-\u064A\u0671-\u06D3]/;
+const HR_HAS_ARABIC_LETTER = /[\u0621-\u063A\u0641-\u064A\u0671-\u06D3]/;
 
 // ── compareWords — global DP/LCS alignment ─────────────────────────────────
 // FIX 1: Replaced the greedy sliding-window approach with a true global
@@ -242,7 +242,7 @@ function compareWords(refText: string, gotText: string): WordResult[] {
   const normRef: string[] = [];
   for (const w of refText.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean)) {
     const n = normalizeArabic(w);
-    if (n.length >= 1 && HAS_ARABIC_LETTER.test(n)) { origRef.push(w); normRef.push(n); }
+    if (n.length >= 1 && HR_HAS_ARABIC_LETTER.test(n)) { origRef.push(w); normRef.push(n); }
   }
   const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
   if (!normGot.length) return origRef.map(w => ({ word: w, status: "missing" as const }));
@@ -286,18 +286,18 @@ function buildPages(mode: SelectMode, selected: number[]): number[] {
   const ps = new Set<number>();
   if (mode === "juz") {
     for (const j of selected) {
-      const [s, e] = JUZ_PAGES[j - 1] ?? [1, 20];
+      const [s, e] = HR_JUZ_PAGES[j - 1] ?? [1, 20];
       for (let p = s; p <= e; p++) ps.add(p);
     }
   } else if (mode === "hizb") {
     for (const h of selected) {
-      const [s, e] = HIZB_PAGES[h - 1] ?? [1, 10];
+      const [s, e] = HR_HIZB_PAGES[h - 1] ?? [1, 10];
       for (let p = s; p <= e; p++) ps.add(p);
     }
   } else {
     for (const s of selected) {
-      const start = SURAH_START[s] ?? 1;
-      const end   = SURAH_END[s] ?? start;
+      const start = HR_SURAH_START[s] ?? 1;
+      const end   = HR_SURAH_END[s] ?? start;
       for (let p = start; p <= end; p++) ps.add(p);
     }
   }
@@ -767,7 +767,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
   // ═══ AI Feedback ══════════════════════════════════════
   const getAIFeedback = async (refText: string, gotText: string, score: number): Promise<string> => {
     const key = (import.meta as any).env?.VITE_ANTHROPIC_API_KEY;
-    if (!key) return score >= PASS_SCORE
+    if (!key) return score >= HR_PASS_SCORE
       ? "Good recitation! Your memorisation is solid. Continue to the exercise."
       : "Keep practising — focus on the highlighted words and recite again.";
     try {
@@ -790,7 +790,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
       });
       if (r.ok) return (await r.json()).content?.[0]?.text ?? "";
     } catch { /* ignore */ }
-    return score >= PASS_SCORE
+    return score >= HR_PASS_SCORE
       ? "Excellent recitation! Proceed to the exercise."
       : "Practise the highlighted verses and try again.";
   };
@@ -1301,7 +1301,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
       attempts: recitationAttempts, errorCount: ayahErrors.length,
       timeSeconds: elapsed, exerciseScore: score,
     });
-    if (score >= EXERCISE_PASS) {
+    if (score >= HR_EXERCISE_PASS) {
       const newDone = new Set(completedPages);
       newDone.add(curPage);
       setCompletedPages(newDone);
@@ -1583,7 +1583,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               )}
               {selectMode === "surah" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {Object.entries(SURAHS_AR).map(([num, name]) => {
+                  {Object.entries(HR_SURAHS_AR).map(([num, name]) => {
                     const n = Number(num);
                     return (
                       <button key={n} className="rv-btn"
@@ -1649,7 +1649,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               style={{ width: "100%", fontSize: 14, borderRadius: 10, padding: "10px 12px",
                 border: `1.5px solid ${BRD}`, background: WARM, color: HR_DG, fontWeight: 600,
                 appearance: "none" as const, cursor: "pointer" }}>
-              {RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              {HR_RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
 
@@ -1717,7 +1717,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
           <select value={reciter} onChange={e => { stopAudio(); setReciter(e.target.value); }}
             className="text-[9px] rounded-lg px-2 py-1 outline-none qr-arabic max-w-[90px]"
             style={{ background: "#1a3025", color: HR_GOLD, border: `1px solid ${HR_GOLD}22` }}>
-            {RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            {HR_RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
 
           {/* Font size */}
@@ -2085,7 +2085,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
             {/* Actions */}
             <div className="space-y-2 pb-4">
-              {result.score >= PASS_SCORE && ayahErrors.length === 0 ? (
+              {result.score >= HR_PASS_SCORE && ayahErrors.length === 0 ? (
                 <button onClick={() => { buildExercise(); setStage("exercise"); }}
                   className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
                   style={{ background: `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`, color: HR_DG }}>
@@ -2098,7 +2098,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                     style={{ background: "linear-gradient(135deg,#c2410c,#ea580c)", color: "#fff" }}>
                     📖 Practise Error Verses ({ayahErrors.length})
                   </button>
-                  {result.score >= PASS_SCORE && (
+                  {result.score >= HR_PASS_SCORE && (
                     <button onClick={() => { buildExercise(); setStage("exercise"); }}
                       className="w-full py-3 rounded-2xl font-bold text-sm qr-btn"
                       style={{ background: "#1a3025", color: HR_GOLD, border: `1px solid ${HR_GOLD}44` }}>
