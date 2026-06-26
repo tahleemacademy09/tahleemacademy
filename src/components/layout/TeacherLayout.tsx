@@ -1,6 +1,5 @@
 // src/components/layout/TeacherLayout.tsx
-// Navbar now matches student DashboardLayout: dark green top bar on mobile,
-// dark green sidebar on desktop. Same colour system as the student portal.
+// Fully rebuilt: 5 nav groups, all 20 teacher pages linked, badge counts, notification bell.
 
 import { useState, useEffect } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -16,71 +15,126 @@ import {
 } from "lucide-react";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
 
-// ── Match student sidebar exactly ──────────────────────────────────────
-const G    = "#0f2d1f";   // dark green — same as student sidebar
-const GM   = "#1a4731";   // mid green
-const GOLD = "#C9A84C";   // gold accent
+const TL_G    = "#064E3B";
+const TL_GM   = "#0a5c3e";
+const TL_GOLD = "#C9A84C";
 
-const isActive   = (pathname: string, to: string, exact = false) =>
+// ── Helpers ──────────────────────────────────────────────────────────
+const isActive = (pathname: string, to: string, exact = false) =>
   exact ? pathname === to : pathname === to || pathname.startsWith(to + "/");
+
 const groupActive = (pathname: string, paths: string[]) =>
   paths.some(p => pathname === p || pathname.startsWith(p + "/"));
 
+// ── Nav definition ───────────────────────────────────────────────────
 type NavLink  = { to: string; icon: any; label: string; badge?: number };
 type NavGroup = { key: string; icon: any; label: string; children: NavLink[] };
 type NavItem  = { type: "link"; link: NavLink } | { type: "group"; group: NavGroup };
 
 const buildNav = (t: (a: string, b: string) => string, badges: Record<string, number>): NavItem[] => [
-  { type: "link", link: { to: "/teacher", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") } },
+  {
+    type: "link",
+    link: { to: "/teacher", icon: LayoutDashboard, label: t("Dashboard", "لوحة التحكم") },
+  },
 
-  { type: "group", group: { key: "teaching", icon: Video, label: t("Teaching", "التدريس"), children: [
-    { to: "/teacher/classes",       icon: Video,      label: t("My Classes",     "فصولي الحية") },
-    { to: "/teacher/timetable",     icon: Clock,      label: t("Timetable",      "جدولي الدراسي") },
-    { to: "/teacher/subjects",      icon: BookOpen,   label: t("Subjects",       "موادي") },
-    { to: "/teacher/recordings",    icon: Headphones, label: t("Recordings",     "التسجيلات") },
-    { to: "/teacher/public-classes",icon: Radio,      label: t("Public Classes", "الدروس العامة") },
-  ]}},
+  // ── Teaching ─────────────────────────────────────────────────────
+  {
+    type: "group",
+    group: {
+      key: "teaching",
+      icon: Video,
+      label: t("Teaching", "التدريس"),
+      children: [
+        { to: "/teacher/classes",      icon: Video,      label: t("My Classes",      "فصولي الحية") },
+        { to: "/teacher/timetable",    icon: Clock,      label: t("Timetable",       "جدولي الدراسي") },
+        { to: "/teacher/subjects",     icon: BookOpen,   label: t("Subjects",        "موادي") },
+        { to: "/teacher/recordings",   icon: Headphones, label: t("Recordings",      "التسجيلات") },
+        { to: "/teacher/public-classes", icon: Radio,    label: t("Public Classes",  "الدروس العامة") },
+      ],
+    },
+  },
 
-  { type: "group", group: { key: "students", icon: Users, label: t("Students", "الطلاب"), children: [
-    { to: "/teacher/students",          icon: Users,      label: t("All Students",     "جميع الطلاب") },
-    { to: "/teacher/private-students",  icon: UserCheck,  label: t("Private Students", "الطلاب الخاصون") },
-    { to: "/teacher/private-sessions",  icon: BookMarked, label: t("Private Sessions", "الجلسات الخاصة") },
-    { to: "/teacher/attendance",        icon: Calendar,   label: t("Attendance",       "الحضور والغياب") },
-    { to: "/teacher/announcements",     icon: Megaphone,  label: t("Announcements",    "الإعلانات") },
-  ]}},
+  // ── Students ─────────────────────────────────────────────────────
+  {
+    type: "group",
+    group: {
+      key: "students",
+      icon: Users,
+      label: t("Students", "الطلاب"),
+      children: [
+        { to: "/teacher/students",         icon: Users,      label: t("All Students",      "جميع الطلاب") },
+        { to: "/teacher/private-students", icon: UserCheck,  label: t("Private Students",  "الطلاب الخاصون") },
+        { to: "/teacher/private-sessions", icon: BookMarked, label: t("Private Sessions",  "الجلسات الخاصة") },
+        { to: "/teacher/attendance",       icon: Calendar,   label: t("Attendance",        "الحضور والغياب") },
+        { to: "/teacher/announcements",    icon: Megaphone,  label: t("Announcements",     "الإعلانات") },
+      ],
+    },
+  },
 
-  { type: "group", group: { key: "assessments", icon: ClipboardList, label: t("Assessments", "التقييمات"), children: [
-    { to: "/teacher/exams",       icon: ClipboardList, label: t("Exams & Tests", "الامتحانات والتمارين") },
-    { to: "/teacher/grading",     icon: CheckSquare,   label: t("Grading",       "التصحيح"), badge: badges.grading },
-    { to: "/teacher/results",     icon: BarChart2,     label: t("Results",       "النتائج") },
-    { to: "/teacher/transcripts", icon: GraduationCap, label: t("Transcripts",   "السجلات الأكاديمية") },
-  ]}},
+  // ── Assessments ──────────────────────────────────────────────────
+  {
+    type: "group",
+    group: {
+      key: "assessments",
+      icon: ClipboardList,
+      label: t("Assessments", "التقييمات"),
+      children: [
+        { to: "/teacher/exams",       icon: ClipboardList, label: t("Exams & Tests",  "الامتحانات والتمارين") },
+        { to: "/teacher/grading",     icon: CheckSquare,   label: t("Grading",        "التصحيح"),           badge: badges.grading },
+        { to: "/teacher/results",     icon: BarChart2,     label: t("Results",        "النتائج") },
+        { to: "/teacher/transcripts", icon: GraduationCap, label: t("Transcripts",    "السجلات الأكاديمية") },
+      ],
+    },
+  },
 
-  { type: "group", group: { key: "recitation", icon: Mic, label: t("Recitation & Ḥifẓ", "التلاوة والحفظ"), children: [
-    { to: "/teacher/recitation", icon: Mic,     label: t("My Recitations", "تسجيلات التلاوة") },
-    { to: "/teacher/hifdh",      icon: BookOpen, label: t("Ḥifẓ Review",   "مراجعة الحفظ") },
-  ]}},
+  // ── Recitation & Ḥifẓ ────────────────────────────────────────────
+  {
+    type: "group",
+    group: {
+      key: "recitation",
+      icon: Mic,
+      label: t("Recitation & Ḥifẓ", "التلاوة والحفظ"),
+      children: [
+        { to: "/teacher/recitation", icon: Mic,    label: t("My Recitations", "تسجيلات التلاوة") },
+        { to: "/teacher/hifdh",      icon: BookOpen,label: t("Ḥifẓ Review",   "مراجعة الحفظ") },
+      ],
+    },
+  },
 
-  { type: "link", link: { to: "/teacher/majlis",   icon: MessageSquare, label: t("Al-Majlis",      "المجلس") } },
-  { type: "link", link: { to: "/live-quiz",         icon: Trophy,        label: t("Al-Musābaqah 🏆","المسابقة 🏆") } },
-  { type: "link", link: { to: "/teacher/settings",  icon: Settings,      label: t("Settings",       "الإعدادات") } },
+  // ── Communication ────────────────────────────────────────────────
+  {
+    type: "link",
+    link: { to: "/teacher/majlis", icon: MessageSquare, label: t("Al-Majlis", "المجلس") },
+  },
+
+  // ── Al-Musābaqah ─────────────────────────────────────────────────
+  {
+    type: "link",
+    link: { to: "/live-quiz", icon: Trophy, label: t("Al-Musābaqah 🏆", "المسابقة 🏆") },
+  },
+
+  // ── Settings ─────────────────────────────────────────────────────
+  {
+    type: "link",
+    link: { to: "/teacher/settings", icon: Settings, label: t("Settings", "الإعدادات") },
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────
 const TeacherLayout = () => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile, user } = useAuth();
-  const location  = useLocation();
-  const navigate  = useNavigate();
+  const location = useLocation();
 
-  const [sidebarOpen,  setSidebarOpen]  = useState(false);
-  const [isMobile,     setIsMobile]     = useState(false);
-  const [expanded,     setExpanded]     = useState<Record<string, boolean>>({});
-  const [gradingBadge, setGradingBadge] = useState(0);
-  const [unreadNotifs, setUnreadNotifs] = useState(0);
-  const [showNotifs,   setShowNotifs]   = useState(false);
-  const [notifList,    setNotifList]    = useState<any[]>([]);
+  const [sidebarOpen,   setSidebarOpen]   = useState(false);
+  const [isMobile,      setIsMobile]      = useState(false);
+  const [expanded,      setExpanded]      = useState<Record<string, boolean>>({});
+  const [gradingBadge,  setGradingBadge]  = useState(0);
+  const [unreadNotifs,  setUnreadNotifs]  = useState(0);
+  const [showNotifs,    setShowNotifs]    = useState(false);
+  const [notifList,     setNotifList]     = useState<any[]>([]);
 
+  // ── Responsive ─────────────────────────────────────────────────
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
     check();
@@ -89,14 +143,15 @@ const TeacherLayout = () => {
   }, []);
 
   useEffect(() => { setSidebarOpen(false); }, [location.pathname]);
+
   useEffect(() => {
     document.body.style.overflow = (isMobile && sidebarOpen) ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
   }, [sidebarOpen, isMobile]);
 
-  // Auto-expand active group
+  // ── Auto-expand active group ────────────────────────────────────
   useEffect(() => {
-    const defs: Record<string, string[]> = {
+    const groupDefs: Record<string, string[]> = {
       teaching:    ["/teacher/classes","/teacher/timetable","/teacher/subjects","/teacher/recordings","/teacher/public-classes"],
       students:    ["/teacher/students","/teacher/private-students","/teacher/private-sessions","/teacher/attendance","/teacher/announcements"],
       assessments: ["/teacher/exams","/teacher/grading","/teacher/results","/teacher/transcripts"],
@@ -104,35 +159,45 @@ const TeacherLayout = () => {
     };
     setExpanded(prev => {
       const next = { ...prev };
-      for (const [key, paths] of Object.entries(defs))
+      for (const [key, paths] of Object.entries(groupDefs)) {
         if (groupActive(location.pathname, paths)) next[key] = true;
+      }
       return next;
     });
   }, [location.pathname]);
 
-  // Grading badge
+  // ── Grading badge ───────────────────────────────────────────────
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const { data: subs }   = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
+      const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
       const subIds = (subs || []).map((s: any) => s.id);
       if (!subIds.length) return;
       const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subIds);
       const cIds = (courses || []).map((c: any) => c.id);
       if (!cIds.length) return;
-      const { data: exams }   = await supabase.from("exams").select("id").in("course_id", cIds);
+      const { data: exams } = await supabase.from("exams").select("id").in("course_id", cIds);
       const eIds = (exams || []).map((e: any) => e.id);
       if (!eIds.length) return;
-      const { count } = await supabase.from("exam_attempts").select("id", { count: "exact", head: true }).in("exam_id", eIds).eq("status", "submitted");
+      const { count } = await supabase
+        .from("exam_attempts")
+        .select("id", { count: "exact", head: true })
+        .in("exam_id", eIds)
+        .eq("status", "submitted");
       setGradingBadge(count || 0);
     })();
   }, [user]);
 
-  // Notifications
+  // ── Notifications ───────────────────────────────────────────────
   useEffect(() => {
     if (!user) return;
     const load = async () => {
-      const { data } = await supabase.from("notifications").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(30);
+      const { data } = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(30);
       const list = data || [];
       setNotifList(list);
       setUnreadNotifs(list.filter((n: any) => !n.is_read).length);
@@ -152,21 +217,21 @@ const TeacherLayout = () => {
     setUnreadNotifs(p => Math.max(0, p - 1));
   };
 
-  const badges   = { grading: gradingBadge };
+  const badges = { grading: gradingBadge };
   const navItems = buildNav(t, badges);
-  const toggle   = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
+  const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
 
-  // ── Sidebar ──────────────────────────────────────────────────────
+  // ── Sidebar content ─────────────────────────────────────────────
   const SidebarContent = () => (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: G }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: TL_G }}>
       {/* Header */}
       <div style={{ padding: "16px 14px 12px", borderBottom: "1px solid rgba(255,255,255,.1)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: GOLD, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <BookOpen size={17} color={G} />
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: TL_GOLD, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <BookOpen size={17} color={TL_G} />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 900, color: "#fff", fontFamily: "serif" }}>{t("Tahleem", "تعليم")}</div>
-          <div style={{ fontSize: 9, color: GOLD, fontWeight: 800, letterSpacing: "0.09em" }}>{t("TEACHER PORTAL", "بوابة المعلم")}</div>
+          <div style={{ fontSize: 9, color: TL_GOLD, fontWeight: 800, letterSpacing: "0.09em" }}>{t("TEACHER PORTAL", "بوابة المعلم")}</div>
         </div>
         {isMobile && (
           <button onClick={() => setSidebarOpen(false)}
@@ -180,12 +245,12 @@ const TeacherLayout = () => {
       {profile?.full_name && (
         <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,.08)", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 34, height: 34, borderRadius: "50%", background: GOLD, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 900, color: G, flexShrink: 0 }}>
+            <div style={{ width: 34, height: 34, borderRadius: "50%", background: TL_GOLD, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 900, color: TL_G, flexShrink: 0 }}>
               {(profile.full_name || "T")[0].toUpperCase()}
             </div>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.full_name}</div>
-              <div style={{ fontSize: 10, color: GOLD }}>{t("Teacher", "معلم")}</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,.4)" }}>{t("Teacher", "معلم")}</div>
             </div>
           </div>
         </div>
@@ -193,15 +258,15 @@ const TeacherLayout = () => {
 
       {/* Nav */}
       <nav style={{ flex: 1, overflowY: "auto", padding: "8px 8px 4px" }}>
-        {navItems.map((item) => {
+        {navItems.map((item, idx) => {
           if (item.type === "link") {
-            const lnk    = item.link;
+            const lnk = item.link;
             const active = isActive(location.pathname, lnk.to, lnk.to === "/teacher");
             return (
               <Link key={lnk.to} to={lnk.to}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 11px", borderRadius: 10, marginBottom: 2, textDecoration: "none", background: active ? "rgba(201,168,76,.18)" : "transparent", borderLeft: `3px solid ${active ? GOLD : "transparent"}` }}>
-                <lnk.icon size={15} color={active ? GOLD : "rgba(255,255,255,.6)"} style={{ flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: active ? 700 : 400, color: active ? GOLD : "rgba(255,255,255,.75)", flex: 1 }}>{lnk.label}</span>
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 11px", borderRadius: 10, marginBottom: 2, textDecoration: "none", background: active ? "rgba(201,168,76,.18)" : "transparent", borderLeft: `3px solid ${active ? TL_GOLD : "transparent"}` }}>
+                <lnk.icon size={15} color={active ? TL_GOLD : "rgba(255,255,255,.6)"} style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: active ? 700 : 400, color: active ? TL_GOLD : "rgba(255,255,255,.75)", flex: 1 }}>{lnk.label}</span>
                 {!!lnk.badge && (
                   <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 9, fontWeight: 900, padding: "2px 7px", flexShrink: 0 }}>{lnk.badge}</span>
                 )}
@@ -209,21 +274,25 @@ const TeacherLayout = () => {
             );
           }
 
-          const grp     = item.group;
-          const gActive = groupActive(location.pathname, grp.children.map(c => c.to));
-          const gOpen   = expanded[grp.key] ?? gActive;
-          const totalBadge = grp.children.reduce((s, c) => s + (c.badge || 0), 0);
+          // group
+          const grp = item.group;
+          const gActive  = groupActive(location.pathname, grp.children.map(c => c.to));
+          const gOpen    = expanded[grp.key] ?? gActive;
           return (
             <div key={grp.key} style={{ marginBottom: 2 }}>
               <button onClick={() => toggle(grp.key)}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 11px", borderRadius: 10, background: gActive ? "rgba(201,168,76,.10)" : "transparent", borderLeft: `3px solid ${gActive ? GOLD + "88" : "transparent"}`, border: "none", cursor: "pointer", textAlign: "left" }}>
-                <grp.icon size={15} color={gActive ? GOLD : "rgba(255,255,255,.6)"} style={{ flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: gActive ? 700 : 400, color: gActive ? GOLD : "rgba(255,255,255,.75)", flex: 1 }}>{grp.label}</span>
-                {totalBadge > 0 && !gOpen && (
-                  <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 9, fontWeight: 900, padding: "2px 7px", flexShrink: 0 }}>{totalBadge}</span>
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 11px", borderRadius: 10, background: gActive ? "rgba(201,168,76,.10)" : "transparent", borderLeft: `3px solid ${gActive ? TL_GOLD + "88" : "transparent"}`, border: "none", cursor: "pointer", textAlign: "left" }}>
+                <grp.icon size={15} color={gActive ? TL_GOLD : "rgba(255,255,255,.6)"} style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: 13, fontWeight: gActive ? 700 : 400, color: gActive ? TL_GOLD : "rgba(255,255,255,.75)", flex: 1 }}>{grp.label}</span>
+                {/* total badge for group */}
+                {grp.children.reduce((s, c) => s + (c.badge || 0), 0) > 0 && !gOpen && (
+                  <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 9, fontWeight: 900, padding: "2px 7px", flexShrink: 0 }}>
+                    {grp.children.reduce((s, c) => s + (c.badge || 0), 0)}
+                  </span>
                 )}
-                {gOpen ? <ChevronDown size={13} color="rgba(255,255,255,.4)" style={{ flexShrink: 0 }} />
-                       : <ChevronRight size={13} color="rgba(255,255,255,.4)" style={{ flexShrink: 0 }} />}
+                {gOpen
+                  ? <ChevronDown size={13} color="rgba(255,255,255,.4)" style={{ flexShrink: 0 }} />
+                  : <ChevronRight size={13} color="rgba(255,255,255,.4)" style={{ flexShrink: 0 }} />}
               </button>
               {gOpen && (
                 <div style={{ marginLeft: 20, paddingLeft: 10, borderLeft: "1px solid rgba(255,255,255,.1)" }}>
@@ -232,8 +301,8 @@ const TeacherLayout = () => {
                     return (
                       <Link key={child.to} to={child.to}
                         style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 10px", borderRadius: 9, marginBottom: 1, textDecoration: "none", background: ca ? "rgba(201,168,76,.18)" : "transparent" }}>
-                        <child.icon size={13} color={ca ? GOLD : "rgba(255,255,255,.5)"} style={{ flexShrink: 0 }} />
-                        <span style={{ fontSize: 12, fontWeight: ca ? 700 : 400, color: ca ? GOLD : "rgba(255,255,255,.65)", flex: 1 }}>{child.label}</span>
+                        <child.icon size={13} color={ca ? TL_GOLD : "rgba(255,255,255,.5)"} style={{ flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, fontWeight: ca ? 700 : 400, color: ca ? TL_GOLD : "rgba(255,255,255,.65)", flex: 1 }}>{child.label}</span>
                         {!!child.badge && (
                           <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 9, fontWeight: 900, padding: "2px 7px", flexShrink: 0 }}>{child.badge}</span>
                         )}
@@ -270,117 +339,86 @@ const TeacherLayout = () => {
         </aside>
       )}
 
-      {/* Mobile drawer overlay */}
+      {/* Mobile overlay */}
       {isMobile && sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)}
           style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(0,0,0,.52)" }} />
       )}
       {isMobile && (
-        <aside style={{
-          position: "fixed", top: 0, bottom: 0,
-          [dir === "rtl" ? "right" : "left"]: 0,
-          width: 255, zIndex: 50,
-          transform: sidebarOpen ? "translateX(0)" : dir === "rtl" ? "translateX(260px)" : "translateX(-260px)",
-          transition: "transform .26s ease",
-          boxShadow: sidebarOpen ? "6px 0 30px rgba(0,0,0,.28)" : "none",
-        }}>
+        <aside style={{ position: "fixed", top: 0, bottom: 0, [dir === "rtl" ? "right" : "left"]: 0, width: 255, zIndex: 50, transform: sidebarOpen ? "translateX(0)" : dir === "rtl" ? "translateX(260px)" : "translateX(-260px)", transition: "transform .26s ease", boxShadow: sidebarOpen ? "6px 0 30px rgba(0,0,0,.28)" : "none" }}>
           <SidebarContent />
         </aside>
       )}
 
       {/* Main area */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: "100vh" }}>
-
-        {/* ── Mobile top bar — MATCHES STUDENT NAVBAR exactly ── */}
+        {/* Mobile top bar */}
         {isMobile && (
-          <div style={{
-            height: 48, flexShrink: 0,
-            display: "flex", alignItems: "center",
-            padding: "0 14px", gap: 10,
-            background: G,                              // dark green — same as student
-            borderBottom: `2px solid ${GOLD}33`,        // subtle gold underline like student
-            position: "sticky", top: 0, zIndex: 30,
-          }}>
-            {/* Hamburger */}
+          <div style={{ height: 54, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 14px", gap: 10, background: "#fff", borderBottom: `3px solid ${TL_G}`, position: "sticky", top: 0, zIndex: 30 }}>
             <button onClick={() => setSidebarOpen(v => !v)}
-              style={{ width: 34, height: 34, borderRadius: 9, border: "none", cursor: "pointer", background: "rgba(255,255,255,.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Menu size={18} color="#fff" />
+              style={{ width: 36, height: 36, borderRadius: 9, border: "none", cursor: "pointer", background: sidebarOpen ? `${TL_G}18` : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Menu size={20} color={TL_G} />
             </button>
-
-            {/* Logo — centred */}
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-              <div style={{ width: 26, height: 26, borderRadius: 7, background: GOLD, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <BookOpen size={13} color={G} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: TL_GOLD, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <BookOpen size={14} color={TL_G} />
               </div>
-              <span style={{ fontWeight: 900, fontSize: 15, color: "#fff", fontFamily: "serif" }}>
-                {t("Tahleem", "تعليم")}
-                <span style={{ color: GOLD, fontSize: 11, fontFamily: "system-ui", fontWeight: 700, marginLeft: 4 }}>
-                  {t("Academy", "أكاديمية")}
-                </span>
+              <span style={{ fontWeight: 900, fontSize: 15, color: TL_G, fontFamily: "serif" }}>
+                {t("Tahleem", "تعليم")}{" "}
+                <span style={{ color: TL_GOLD, fontSize: 11, fontFamily: "system-ui" }}>{t("Teacher", "المعلم")}</span>
               </span>
             </div>
-
-            {/* Right icons */}
-            <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-              {/* Grading badge shortcut */}
-              {gradingBadge > 0 && (
-                <Link to="/teacher/grading" style={{ textDecoration: "none" }}>
-                  <div style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "3px 9px", display: "flex", alignItems: "center", gap: 3 }}>
-                    <CheckSquare size={10} />{gradingBadge}
-                  </div>
-                </Link>
+            {/* Notification bell */}
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setShowNotifs(v => !v)}
+                style={{ width: 36, height: 36, borderRadius: 9, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Bell size={18} color={TL_G} />
+              </button>
+              {unreadNotifs > 0 && (
+                <span style={{ position: "absolute", top: 4, right: 4, width: 16, height: 16, borderRadius: "50%", background: "#EF4444", color: "#fff", fontSize: 9, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>
+                  {unreadNotifs > 9 ? "9+" : unreadNotifs}
+                </span>
               )}
-              {/* Bell */}
-              <div style={{ position: "relative" }}>
-                <button onClick={() => setShowNotifs(v => !v)}
-                  style={{ width: 34, height: 34, borderRadius: 9, border: "none", background: "rgba(255,255,255,.1)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Bell size={17} color="#fff" />
-                </button>
-                {unreadNotifs > 0 && (
-                  <span style={{ position: "absolute", top: 4, right: 4, width: 15, height: 15, borderRadius: "50%", background: "#EF4444", color: "#fff", fontSize: 9, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid ${G}` }}>
-                    {unreadNotifs > 9 ? "9+" : unreadNotifs}
-                  </span>
-                )}
-              </div>
             </div>
+            {/* Grading shortcut */}
+            {gradingBadge > 0 && (
+              <Link to="/teacher/grading" style={{ textDecoration: "none" }}>
+                <div style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "3px 9px", display: "flex", alignItems: "center", gap: 4 }}>
+                  <CheckSquare size={10} />{gradingBadge}
+                </div>
+              </Link>
+            )}
           </div>
         )}
 
-        {/* ── Desktop top bar ── */}
+        {/* Desktop top notification bar */}
         {!isMobile && (
-          <div style={{
-            height: 50, flexShrink: 0,
-            display: "flex", alignItems: "center", justifyContent: "flex-end",
-            padding: "0 20px", gap: 10,
-            background: G,                              // dark green — matches student
-            borderBottom: `2px solid ${GOLD}33`,
-            position: "sticky", top: 0, zIndex: 30,
-          }}>
+          <div style={{ height: 50, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "flex-end", padding: "0 20px", gap: 10, background: "#fff", borderBottom: "1px solid #e5e7eb", position: "sticky", top: 0, zIndex: 30 }}>
             {gradingBadge > 0 && (
-              <Link to="/teacher/grading" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 6, background: "rgba(239,68,68,.18)", border: "1px solid rgba(239,68,68,.3)", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700, color: "#FCA5A5" }}>
+              <Link to="/teacher/grading" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 6, background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700, color: "#DC2626" }}>
                 <CheckSquare size={13} />
                 {gradingBadge} {t("to grade", "ينتظر التصحيح")}
               </Link>
             )}
             <div style={{ position: "relative" }}>
               <button onClick={() => setShowNotifs(v => !v)}
-                style={{ width: 36, height: 36, borderRadius: 10, border: "1px solid rgba(255,255,255,.15)", background: "rgba(255,255,255,.08)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Bell size={17} color="#fff" />
+                style={{ width: 38, height: 38, borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Bell size={17} color={TL_G} />
               </button>
               {unreadNotifs > 0 && (
-                <span style={{ position: "absolute", top: 4, right: 4, width: 15, height: 15, borderRadius: "50%", background: "#EF4444", color: "#fff", fontSize: 9, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid ${G}` }}>
+                <span style={{ position: "absolute", top: 4, right: 4, width: 16, height: 16, borderRadius: "50%", background: "#EF4444", color: "#fff", fontSize: 9, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>
                   {unreadNotifs > 9 ? "9+" : unreadNotifs}
                 </span>
               )}
             </div>
             {profile?.full_name && (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 32, height: 32, borderRadius: "50%", background: GOLD, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 900, color: G }}>
+                <div style={{ width: 34, height: 34, borderRadius: "50%", background: TL_GOLD, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 900, color: TL_G }}>
                   {profile.full_name[0].toUpperCase()}
                 </div>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>{profile.full_name}</div>
-                  <div style={{ fontSize: 10, color: GOLD }}>{t("Teacher", "معلم")}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: TL_G }}>{profile.full_name}</div>
+                  <div style={{ fontSize: 10, color: "#9CA3AF" }}>{t("Teacher", "معلم")}</div>
                 </div>
               </div>
             )}
@@ -392,9 +430,9 @@ const TeacherLayout = () => {
           <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.5)" }} onClick={() => setShowNotifs(false)}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, maxHeight: "80vh", background: "#fff", borderRadius: "0 0 24px 24px", boxShadow: "0 8px 40px rgba(0,0,0,.18)", display: "flex", flexDirection: "column", overflow: "hidden" }}
               onClick={e => e.stopPropagation()}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: G }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: TL_G }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <Bell size={16} color={GOLD} />
+                  <Bell size={16} color={TL_GOLD} />
                   <span style={{ fontWeight: 800, color: "#fff", fontSize: 15 }}>{t("Notifications", "الإشعارات")}</span>
                   {unreadNotifs > 0 && (
                     <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "2px 8px" }}>{unreadNotifs}</span>
@@ -409,7 +447,7 @@ const TeacherLayout = () => {
                     <div key={n.id}
                       onClick={() => { if (!n.is_read) markRead(n.id); if (n.link) { setShowNotifs(false); window.location.href = n.link; } }}
                       style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 20px", borderBottom: "1px solid #F9FAFB", cursor: "pointer", background: n.is_read ? "#fff" : "#FFFBEB" }}>
-                      <div style={{ width: 36, height: 36, borderRadius: "50%", background: n.is_read ? "#F3F4F6" : "#FEF9EE", border: `1.5px solid ${n.is_read ? "#E5E7EB" : GOLD + "88"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 15 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: "50%", background: n.is_read ? "#F3F4F6" : "#FEF9EE", border: `1.5px solid ${n.is_read ? "#E5E7EB" : TL_GOLD + "88"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 15 }}>
                         {n.type === "class_reminder" ? "📚" : n.type === "warning" ? "⚠️" : n.type === "payment" ? "💳" : "🔔"}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
