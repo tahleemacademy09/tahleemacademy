@@ -53,13 +53,13 @@ const HD_GOLD       = "#b7791f";
 const HD_GOLD_LIGHT = "#e8c96b";
 const HD_INK        = "#1a3d24";   // primary text — dark green
 const HD_MUTED      = "#8a9b85";   // secondary text
-const PAGE_BG    = "#f5f2ec";   // warm cream page background
-const CARD_BG    = "#ffffff";
-const CARD_BRD   = "#e8ddd0";
+const HD_PAGE_BG    = "#f5f2ec";   // warm cream page background
+const HD_CARD_BG    = "#ffffff";
+const HD_CARD_BRD   = "#e8ddd0";
 
 const daysSince = (iso: string) =>
   Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const HD_WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function HifdhDashboard({
   userId, studentName, onNavigate, refreshKey = 0,
@@ -241,7 +241,7 @@ export default function HifdhDashboard({
           revSessions.filter((s: any)  => new Date(s.created_at).toDateString() === ds).length +
           memSessions.filter((s: any)  => new Date(s.created_at).toDateString() === ds).length +
           testSessions.filter((s: any) => new Date(s.created_at).toDateString() === ds).length;
-        weekData.push({ day: WEEK_DAYS[d.getDay()], count });
+        weekData.push({ day: HD_WEEK_DAYS[d.getDay()], count });
       }
       setWeeklyData(weekData);
 
@@ -293,7 +293,7 @@ export default function HifdhDashboard({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[500px]" style={{ background: PAGE_BG }}>
+      <div className="flex items-center justify-center min-h-[500px]" style={{ background: HD_PAGE_BG }}>
         <div className="flex flex-col items-center gap-4">
           <div className="w-14 h-14 rounded-full border-4 border-t-transparent animate-spin"
             style={{ borderColor: HD_GOLD + "33", borderTopColor: HD_GOLD }} />
@@ -304,7 +304,7 @@ export default function HifdhDashboard({
   }
 
   return (
-    <div className="min-h-screen pb-24 overflow-y-auto" style={{ background: PAGE_BG }}>
+    <div className="min-h-screen pb-24 overflow-y-auto" style={{ background: HD_PAGE_BG }}>
 
       {/* ── Welcome header ── */}
       <div style={{ background: `linear-gradient(160deg,${HD_INK} 0%,#276749 100%)`, padding: "20px 16px 22px", position: "relative", overflow: "hidden" }}>
@@ -469,7 +469,7 @@ export default function HifdhDashboard({
                     className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
                     style={{
                       background: task.completed ? HD_GOLD + "10" : "#f7f4ec",
-                      border: `1px solid ${task.completed ? HD_GOLD + "44" : CARD_BRD}`,
+                      border: `1px solid ${task.completed ? HD_GOLD + "44" : HD_CARD_BRD}`,
                     }}>
                     <div
                       onClick={(e) => toggleTask(task, e)}
@@ -494,7 +494,7 @@ export default function HifdhDashboard({
                       style={{
                         background: task.completed ? HD_GOLD + "1f" : "#ffffff",
                         color:       task.completed ? HD_GOLD    : HD_MUTED,
-                        border: `1px solid ${task.completed ? HD_GOLD + "33" : CARD_BRD}`,
+                        border: `1px solid ${task.completed ? HD_GOLD + "33" : HD_CARD_BRD}`,
                       }}>
                       {task.completed ? "Done" : "Start"}
                     </span>
@@ -762,7 +762,7 @@ export default function HifdhDashboard({
                     key={i}
                     onClick={() => onNavigate(dest)}
                     className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
-                    style={{ background: "#f7f4ec", border: `1px solid ${CARD_BRD}` }}>
+                    style={{ background: "#f7f4ec", border: `1px solid ${HD_CARD_BRD}` }}>
                     <div
                       className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 font-black text-xs"
                       style={{ background: bg, color, border: `1px solid ${color}33` }}>
@@ -790,7 +790,7 @@ export default function HifdhDashboard({
       <Dialog open={showAddTask} onOpenChange={setShowAddTask}>
         <DialogContent
           className="max-w-sm mx-4 rounded-2xl"
-          style={{ background: CARD_BG, border: `1px solid ${CARD_BRD}` }}>
+          style={{ background: HD_CARD_BG, border: `1px solid ${HD_CARD_BRD}` }}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base font-black" style={{ color: HD_INK }}>
               <Plus size={16} /> Add New Task
@@ -808,7 +808,7 @@ export default function HifdhDashboard({
                   style={{
                     background: taskType === t ? HD_GOLD : "#f7f4ec",
                     color:      taskType === t ? "#fff" : HD_MUTED,
-                    border: `1px solid ${taskType === t ? HD_GOLD : CARD_BRD}`,
+                    border: `1px solid ${taskType === t ? HD_GOLD : HD_CARD_BRD}`,
                   }}>
                   {t === "revise" ? "🔄 Revise" : "📖 Memorize"}
                 </button>
@@ -825,7 +825,7 @@ export default function HifdhDashboard({
                 onChange={e => setTaskSurah(e.target.value)}
                 placeholder="e.g. Al-Baqarah"
                 className="h-10 text-sm rounded-xl font-medium"
-                style={{ background: "#f7f4ec", color: HD_INK, border: `1px solid ${CARD_BRD}` }}
+                style={{ background: "#f7f4ec", color: HD_INK, border: `1px solid ${HD_CARD_BRD}` }}
               />
             </div>
 
@@ -839,7 +839,7 @@ export default function HifdhDashboard({
                 value={taskVerses}
                 onChange={e => setTaskVerses(e.target.value)}
                 className="h-10 text-sm rounded-xl font-bold"
-                style={{ background: "#f7f4ec", color: HD_INK, border: `1px solid ${CARD_BRD}` }}
+                style={{ background: "#f7f4ec", color: HD_INK, border: `1px solid ${HD_CARD_BRD}` }}
               />
             </div>
 
@@ -857,7 +857,7 @@ export default function HifdhDashboard({
                     style={{
                       background: taskPlan === p ? HD_GOLD : "#f7f4ec",
                       color:      taskPlan === p ? "#fff" : HD_MUTED,
-                      border: `1px solid ${taskPlan === p ? HD_GOLD : CARD_BRD}`,
+                      border: `1px solid ${taskPlan === p ? HD_GOLD : HD_CARD_BRD}`,
                     }}>
                     {p === "daily" ? "Daily" : p === "weekly" ? "Weekly" : p === "biweekly" ? "2 Wks" : "Monthly"}
                   </button>
@@ -869,7 +869,7 @@ export default function HifdhDashboard({
               <button
                 onClick={() => setShowAddTask(false)}
                 className="flex-1 py-2.5 rounded-xl text-xs font-bold"
-                style={{ background: "#f7f4ec", color: HD_MUTED, border: `1px solid ${CARD_BRD}` }}>
+                style={{ background: "#f7f4ec", color: HD_MUTED, border: `1px solid ${HD_CARD_BRD}` }}>
                 Cancel
               </button>
               <button
@@ -901,9 +901,9 @@ function SectionCard({
   return (
     <div
       className="rounded-2xl overflow-hidden"
-      style={{ background: CARD_BG, border: `1px solid ${CARD_BRD}`, boxShadow: "0 2px 10px rgba(26,61,36,.06)" }}>
+      style={{ background: HD_CARD_BG, border: `1px solid ${HD_CARD_BRD}`, boxShadow: "0 2px 10px rgba(26,61,36,.06)" }}>
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderBottom: `1px solid ${CARD_BRD}` }}>
+      <div className="flex items-center gap-3 px-4 py-3.5" style={{ borderBottom: `1px solid ${HD_CARD_BRD}` }}>
         <div
           className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0"
           style={{ background: iconBg }}>

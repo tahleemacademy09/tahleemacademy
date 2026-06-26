@@ -23,8 +23,8 @@ const HT_LIGHT = "#f0fff4", HT_BORDER = "#d4e8d4";
 // ── Types ─────────────────────────────────────────────────────────────
 interface Ayah { numberInSurah: number; text: string; }
 interface Props { reciter?: string; onSessionSaved?: () => void; }
-const DEEPGRAM_KEY = (import.meta as any).env?.VITE_DEEPGRAM_API_KEY || "";
-const GROQ_KEY     = (import.meta as any).env?.VITE_GROQ_API_KEY     || "";
+const HT_DEEPGRAM_KEY = (import.meta as any).env?.VITE_DEEPGRAM_API_KEY || "";
+const HT_GROQ_KEY     = (import.meta as any).env?.VITE_GROQ_API_KEY     || "";
 
 // 8 question types for comprehensive testing
 type QType =
@@ -302,7 +302,7 @@ function buildQuestions(ayahs: Ayah[], surahName: string): Question[] {
 }
 
 // ── Question metadata ─────────────────────────────────────────────────
-const QMETA: Record<QType, { icon: string; label: string; desc: string; isAudio: boolean; isMCQ: boolean }> = {
+const HT_QMETA: Record<QType, { icon: string; label: string; desc: string; isAudio: boolean; isMCQ: boolean }> = {
   missing_word_mcq:       { icon:"🔍", label:"Fill the blank",           desc:"Choose the correct missing word",            isAudio:false, isMCQ:true  },
   last_word_mcq:          { icon:"✏️",  label:"What's the last word?",    desc:"Choose the word that ends this phrase",       isAudio:false, isMCQ:true  },
   next_fragment_mcq:      { icon:"➡️", label:"What comes next?",          desc:"Choose the word that follows this fragment",  isAudio:false, isMCQ:true  },
@@ -492,15 +492,15 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
     let tx = "";
     try {
       // Primary: Deepgram
-      if (DEEPGRAM_KEY) {
+      if (HT_DEEPGRAM_KEY) {
         const r = await fetch(
           "https://api.deepgram.com/v1/listen?model=nova-2&language=ar&punctuate=false",
-          { method:"POST", headers:{ Authorization:`Token ${DEEPGRAM_KEY}`, "Content-Type": blob.type || "audio/webm" }, body: blob }
+          { method:"POST", headers:{ Authorization:`Token ${HT_DEEPGRAM_KEY}`, "Content-Type": blob.type || "audio/webm" }, body: blob }
         );
         if (r.ok) tx = (await r.json())?.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
       }
       // Fallback: Groq Whisper
-      if (!tx && GROQ_KEY) {
+      if (!tx && HT_GROQ_KEY) {
         const ext = blob.type.includes("mp4") ? "mp4" : "webm";
         const fd  = new FormData();
         fd.append("file", new File([blob], `r.${ext}`, { type: blob.type }));
@@ -509,7 +509,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
         fd.append("response_format", "verbose_json");
         fd.append("temperature", "0");
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions",
-          { method:"POST", headers:{ Authorization:`Bearer ${GROQ_KEY}` }, body: fd });
+          { method:"POST", headers:{ Authorization:`Bearer ${HT_GROQ_KEY}` }, body: fd });
         if (r.ok) {
           const data = await r.json();
           // Reject near-silence (no_speech_prob > 0.8)
@@ -553,7 +553,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
     const qs = questionsRef.current, ans = answersRef.current, asc = audioScoresRef.current;
     let correct = 0;
     qs.forEach((q, i) => {
-      const meta = QMETA[q.type];
+      const meta = HT_QMETA[q.type];
       if (!meta.isMCQ) { if ((asc[i] ?? 0) >= 60) correct++; }
       else             { if (ans[i] === q.correctIdx) correct++; }
     });
@@ -724,9 +724,9 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
               {(["missing_word_mcq","hear_and_choose","recite_from_words","continue_partial_audio"] as QType[]).map(t => (
                 <div key={t} style={{ padding:"8px 10px", borderRadius:10, background:HT_LIGHT, border:`1px solid ${HT_BORDER}` }}>
-                  <div style={{ fontSize:14 }}>{QMETA[t].icon}</div>
-                  <div style={{ fontSize:11, fontWeight:700, color:HT_G, marginTop:2 }}>{QMETA[t].label}</div>
-                  <div style={{ fontSize:10, color:"#7a9e88", marginTop:1 }}>{QMETA[t].desc}</div>
+                  <div style={{ fontSize:14 }}>{HT_QMETA[t].icon}</div>
+                  <div style={{ fontSize:11, fontWeight:700, color:HT_G, marginTop:2 }}>{HT_QMETA[t].label}</div>
+                  <div style={{ fontSize:10, color:"#7a9e88", marginTop:1 }}>{HT_QMETA[t].desc}</div>
                 </div>
               ))}
             </div>
@@ -761,7 +761,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
   if (stage === "results" && questions.length > 0) {
     let correct = 0;
     questions.forEach((q, i) => {
-      const meta = QMETA[q.type];
+      const meta = HT_QMETA[q.type];
       if (!meta.isMCQ) { if ((audioScores[i] ?? 0) >= 60) correct++; }
       else             { if (answers[i] === q.correctIdx) correct++; }
     });
@@ -803,7 +803,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
             REVIEW · مراجعة
           </div>
           {questions.map((q, i) => {
-            const meta = QMETA[q.type];
+            const meta = HT_QMETA[q.type];
             const sc = audioScores[i] ?? 0;
             const ok = meta.isMCQ ? (answers[i] === q.correctIdx) : (sc >= 60);
             return (
@@ -866,7 +866,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
   }
 
   const q        = questions[Math.min(qIdx, questions.length - 1)];
-  const meta     = QMETA[q.type];
+  const meta     = HT_QMETA[q.type];
   const progress = (qIdx / questions.length) * 100;
   const timerPct = questions.length > 0 ? (timeLeft / (questions.length * 50)) * 100 : 0;
 

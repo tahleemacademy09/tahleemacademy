@@ -21,7 +21,7 @@ const HM_BORDER = "#d4e8d4";
 const HM_PARCH  = "#faf6ec";
 const HM_PARCH2 = "#f3ead8";
 
-const SESSION_KEY = "hifdh_mem_v20";
+const HM_SESSION_KEY = "hifdh_mem_v20";
 
 /* ── VAD / utterance-segmentation tuning ──────────────────────
  * One Whisper call per spoken repetition (not per fixed timeslice).
@@ -29,12 +29,12 @@ const SESSION_KEY = "hifdh_mem_v20";
  * SILENCE_HANGOVER_MS — sustained silence needed before we consider the repetition finished
  * MIN_UTTERANCE_MS    — discard anything shorter (breath/mic bump)
  * MAX_UTTERANCE_MS     — safety cap in case VAD never sees silence
- * VOICE_ENERGY_MIN    — energy threshold in the 300–3400Hz band counted as "voiced"
+ * HM_VOICE_ENERGY_MIN    — energy threshold in the 300–3400Hz band counted as "voiced"
  * ────────────────────────────────────────────────── */
-const VOICE_ENERGY_MIN    = 14;
+const HM_VOICE_ENERGY_MIN    = 14;
 
-const REP_OPTIONS = [5, 7, 10, 15, 20] as const;
-type RepOption = typeof REP_OPTIONS[number];
+const HM_REP_OPTIONS = [5, 7, 10, 15, 20] as const;
+type RepOption = typeof HM_REP_OPTIONS[number];
 
 interface Ayah    { numberInSurah: number; text: string; }
 interface Props   { reciter?: string; onSessionSaved?: () => void; }
@@ -123,7 +123,7 @@ function getBestMime(): string {
   return "audio/webm";
 }
 
-const STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; icon: string; grad: string }> = {
+const HM_STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; icon: string; grad: string }> = {
   overview:   { bg: HM_GOLD_L,    text: HM_GOLD,     border: "#f6d860", icon: "📖", grad: `linear-gradient(135deg,${HM_GOLD},#e09b2f)` },
   single:     { bg: HM_LIGHT,     text: HM_G,        border: HM_BORDER,    icon: "🎯", grad: `linear-gradient(135deg,${HM_G},${HM_GM})` },
   pair:       { bg: "#eff6ff", text: "#2563eb", border: "#bfdbfe", icon: "🔗", grad: "linear-gradient(135deg,#2563eb,#3b82f6)" },
@@ -329,7 +329,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
         const lo = Math.floor(300 / binHz), hi = Math.floor(3400 / binHz);
         let sum = 0;
         for (let i = lo; i < hi && i < buf.length; i++) sum += buf[i];
-        setIsListening(sum / Math.max(1, hi - lo) > VOICE_ENERGY_MIN);
+        setIsListening(sum / Math.max(1, hi - lo) > HM_VOICE_ENERGY_MIN);
         vadRafRef.current = requestAnimationFrame(tick);
       };
       vadRafRef.current = requestAnimationFrame(tick);
@@ -382,20 +382,20 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
     try {
       const s: Saved = { surahNum, startVerse, endVerse, repsPerVerse,
         stepIdx: stepIdxRef.current, repsDone: repsDoneRef.current, started: true, ...patch };
-      localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+      localStorage.setItem(HM_SESSION_KEY, JSON.stringify(s));
     } catch { /**/ }
   }, [surahNum, startVerse, endVerse, repsPerVerse]);
 
-  const clearSession = useCallback(() => { try { localStorage.removeItem(SESSION_KEY); } catch { /**/ } }, []);
+  const clearSession = useCallback(() => { try { localStorage.removeItem(HM_SESSION_KEY); } catch { /**/ } }, []);
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(SESSION_KEY);
+      const raw = localStorage.getItem(HM_SESSION_KEY);
       if (!raw) return;
       const saved: Saved = JSON.parse(raw);
       if (!saved.started) return;
       setSurahNum(saved.surahNum); setStartVerse(saved.startVerse); setEndVerse(saved.endVerse);
-      if (saved.repsPerVerse && REP_OPTIONS.includes(saved.repsPerVerse as RepOption)) {
+      if (saved.repsPerVerse && HM_REP_OPTIONS.includes(saved.repsPerVerse as RepOption)) {
         setRepsPerVerse(saved.repsPerVerse as RepOption);
         repsPerVerseRef.current = saved.repsPerVerse;
       }
@@ -416,7 +416,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
         const restore = pendingRestoreRef.current;
         if (restore && restore.surahNum === num && restore.started) {
           pendingRestoreRef.current = null;
-          const rpv   = REP_OPTIONS.includes(restore.repsPerVerse as RepOption) ? restore.repsPerVerse : repsPerVerseRef.current;
+          const rpv   = HM_REP_OPTIONS.includes(restore.repsPerVerse as RepOption) ? restore.repsPerVerse : repsPerVerseRef.current;
           const slice = loaded.filter(a => a.numberInSurah >= restore.startVerse && a.numberInSurah <= restore.endVerse);
           if (slice.length > 0) {
             sessionAyahsRef.current = slice;
@@ -662,7 +662,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
               <span style={{ fontSize:10, fontWeight:800, color:GL, letterSpacing:1, textTransform:"uppercase" }}>Repetitions</span>
             </div>
             <div style={{ display:"flex", gap:6 }}>
-              {REP_OPTIONS.map(opt => (
+              {HM_REP_OPTIONS.map(opt => (
                 <button key={opt} className="mem-btn" onClick={() => { setRepsPerVerse(opt); repsPerVerseRef.current = opt; }}
                   style={{ flex:1, padding:"10px 0", borderRadius:10, cursor:"pointer", transition:"all .2s",
                     border:`2px solid ${repsPerVerse===opt?HM_G:B}`, background:repsPerVerse===opt?HM_G:W,
@@ -717,7 +717,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
     </div>
   );
 
-  const col          = STEP_STYLE[currentStep.type];
+  const col          = HM_STEP_STYLE[currentStep.type];
   const progress     = steps.length > 1 ? (stepIdx / (steps.length - 1)) * 100 : 100;
   const pool         = sessionAyahsRef.current;
   const isOverview   = currentStep.type === "overview";
