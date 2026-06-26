@@ -154,6 +154,45 @@ const DateSep = ({ date }:{ date:string }) => {
 const WAVE_H = [4,8,14,10,18,12,6,16,9,13,7,15,11,5,17,8,12,6,14,10,7,16,9,13,5,18,11,8];
 
 // ── AudioMsg ─────────────────────────────────────────────────────
+// ── VideoMsg ─────────────────────────────────────────────────────────────────
+const VideoMsg = ({ path }:{ path?:string|null }) => {
+  const [url,setUrl]   = useState<string|null>(null);
+  const [err,setErr]   = useState(false);
+  const [full,setFull] = useState(false);
+  useEffect(()=>{
+    if(!path){setErr(true);return;}
+    if(path.startsWith("http")||path.startsWith("blob:")){setUrl(path);return;}
+    resolveMedia(path).then(u=>u?setUrl(u):setErr(true));
+  },[path]);
+  if(err||!url) return <div style={{width:200,height:120,borderRadius:10,background:"#222",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#999",fontSize:11}}>Video unavailable</span></div>;
+  return (
+    <>
+      <video src={url} style={{maxWidth:240,maxHeight:200,borderRadius:10,cursor:"pointer",display:"block"}} preload="metadata" onClick={()=>setFull(true)}/>
+      {full&&(
+        <div onClick={()=>setFull(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.96)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <video src={url} controls autoPlay style={{maxWidth:"100vw",maxHeight:"90vh"}}/>
+          <button onClick={()=>setFull(false)} style={{position:"absolute",top:16,right:16,background:"rgba(255,255,255,.2)",border:"none",borderRadius:"50%",width:40,height:40,color:"#fff",fontSize:22,cursor:"pointer"}}>✕</button>
+        </div>
+      )}
+    </>
+  );
+};
+
+// ── LinkPreview ───────────────────────────────────────────────────────────────
+const URL_RE = /(https?:\/\/[^\s<>"]+)/g;
+const extractUrl = (text:string):string|null => { const m=text.match(URL_RE); return m?m[0]:null; };
+const LinkPreview = ({ url }:{ url:string }) => {
+  const host = (() => { try{ return new URL(url).hostname.replace(/^www\./, ""); }catch{return url.slice(0,40);} })();
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" style={{display:"block",border:"1px solid rgba(0,0,0,.1)",borderRadius:8,overflow:"hidden",marginBottom:4,textDecoration:"none",background:"rgba(0,0,0,.03)"}}>
+      <div style={{padding:"8px 10px"}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#075E54",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{host}</div>
+        <div style={{fontSize:11,color:"#888",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2}}>{url.slice(0,60)}</div>
+      </div>
+    </a>
+  );
+};
+
 const AudioMsg = ({ path, text }:{ path?:string|null; text?:string|null }) => {
   const [url,setUrl]           = useState<string|null>(null);
   const [err,setErr]           = useState(false);
@@ -548,6 +587,13 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       setMemberCounts(counts);
       setChannelMemberNames(memberNames);
 
+      // Load muted channels from DB (merges with localStorage)
+      const {data:mutedRows}=await supabase.from("chat_members" as any).select("channel_id,is_muted").eq("user_id",user.id).eq("is_muted",true);
+      if(mutedRows&&mutedRows.length>0){
+        const dbMuted=new Set((mutedRows as any[]).map((r:any)=>r.channel_id));
+        setMutedChannels(prev=>{const merged=new Set([...prev,...dbMuted]);localStorage.setItem("majlis-muted",JSON.stringify([...merged]));return merged;});
+      }
+
       const unread:Record<string,number>={};
       await Promise.all(all.map(async ch=>{
         const {data:mem}=await supabase.from("chat_members" as any).select("last_read_at").eq("channel_id",ch.id).eq("user_id",user.id).maybeSingle();
@@ -613,6 +659,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       }
       if(cancelled) return;
       setPinnedMessages(msgs.filter(m=>(m as any).is_pinned));
+      // Load starred from DB
+      setStarredMessages(new Set(msgs.filter(m=>(m as any).is_starred).map(m=>m.id)));
       setLoadingMessages(false);
     };
     load();
@@ -848,8 +896,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     if(activeChannel?.type==="announcement"&&!canModerate){toast({title:"Only admins can post here",variant:"destructive"});return;}
 
     if(editingMsg){
-      await supabase.from("chat_messages").update({text:input.trim(),is_edited:true} as any).eq("id",editingMsg.id);
-      setMessages(prev=>prev.map(m=>m.id===editingMsg.id?{...m,text:input.trim(),is_edited:true} as any:m));
+      await supabase.from("chat_messages").update({text:input.trim(),edited_at:new Date().toISOString(),edited_by:user.id} as any).eq("id",editingMsg.id);
+      setMessages(prev=>prev.map(m=>m.id===editingMsg.id?{...m,text:input.trim(),edited_at:new Date().toISOString()} as any:m));
       setEditingMsg(null); setInput(""); return;
     }
 
@@ -1034,7 +1082,13 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     setPinnedMessages(prev=>ip?[...prev,m]:prev.filter(x=>x.id!==m.id));
     setShowMessageMenu(null);toast({title:ip?"Pinned":"Unpinned"});
   };
-  const starMsg  =(id:string)=>{ setStarredMessages(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;}); setShowMessageMenu(null); };
+  const starMsg  =async(id:string)=>{ 
+    const isNowStarred=!starredMessages.has(id);
+    setStarredMessages(prev=>{const n=new Set(prev);isNowStarred?n.add(id):n.delete(id);return n;});
+    await supabase.from("chat_messages").update({is_starred:isNowStarred} as any).eq("id",id);
+    setMessages(prev=>prev.map(m=>m.id===id?{...m,is_starred:isNowStarred} as any:m));
+    setShowMessageMenu(null);
+  };
   const copyMsg  =(text:string)=>{ navigator.clipboard?.writeText(text); setShowMessageMenu(null); toast({title:"Copied!"}); };
   const jumpTo   =(id:string)=>{ document.getElementById(`msg-${id}`)?.scrollIntoView({behavior:"smooth",block:"center"}); };
 
@@ -1064,7 +1118,13 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     if(activeChannelId===chId){setActiveChannelId(null);setMobileShowChat(false);}
     toast({title:"Left group"});
   };
-  const toggleMuteCh =(id:string)=>{ setMutedChannels(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);localStorage.setItem("majlis-muted",JSON.stringify([...n]));return n;}); setChannelMenu(null);setSwipedChannel(null); };
+  const toggleMuteCh =async(id:string)=>{ 
+    const willMute=!mutedChannels.has(id);
+    setMutedChannels(prev=>{const n=new Set(prev);willMute?n.add(id):n.delete(id);localStorage.setItem("majlis-muted",JSON.stringify([...n]));return n;});
+    // Sync to DB so other devices also mute
+    await supabase.from("chat_members" as any).update({is_muted:willMute}).eq("channel_id",id).eq("user_id",user?.id||"");
+    setChannelMenu(null);setSwipedChannel(null);
+  };
   const togglePinCh  =(id:string)=>{ setPinnedChannels(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);localStorage.setItem("majlis-pinned-ch",JSON.stringify([...n]));return n;}); setChannelMenu(null); };
   const toggleArchive=(id:string)=>{ setArchivedChannels(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);localStorage.setItem("majlis-archived",JSON.stringify([...n]));return n;}); setChannelMenu(null);setSwipedChannel(null); };
 
@@ -1299,10 +1359,16 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             {/* Content */}
             {m.content_type==="image"&&<ImageMsg path={m.media_path} text={m.text}/>}
             {m.content_type==="audio"&&<AudioMsg path={m.media_path} text={m.text}/>}
+            {m.content_type==="video"&&<VideoMsg path={m.media_path}/>}
             {m.content_type==="file"&&m.media_path&&<FileMsg path={m.media_path} text={m.text}/>}
-            {(m.content_type==="text"||!m.content_type)&&m.text&&<FormattedText text={m.text} sz={msgFontSz}/>}
+            {(m.content_type==="text"||!m.content_type)&&m.text&&(
+              <>
+                <FormattedText text={m.text} sz={msgFontSz}/>
+                {extractUrl(m.text)&&<LinkPreview url={extractUrl(m.text)!}/>}
+              </>
+            )}
             {(m as any).is_deleted&&<span style={{fontSize:12,color:"#9e9e9e",fontStyle:"italic"}}>🚫 This message was deleted</span>}
-            {(m as any).is_edited&&<span style={{fontSize:10,color:"#9e9e9e",marginLeft:4}}>edited</span>}
+            {(m as any).edited_at&&<span style={{fontSize:10,color:"#9e9e9e",marginLeft:4}}>edited</span>}
 
             {/* Time + ticks */}
             <div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"flex-end",marginTop:2}}>
@@ -1316,7 +1382,16 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           {Object.keys(rxns).length>0&&(
             <div style={{display:"flex",gap:4,marginTop:3,flexWrap:"wrap",justifyContent:isMe?"flex-end":"flex-start"}}>
               {Object.entries(rxns).map(([emoji,uids])=>(
-                <button key={emoji} onClick={()=>supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji},{onConflict:"message_id,user_id"}).then(reloadReactions)} style={{background:isDark?"#2a3942":"#f0f2f5",border:`1px solid ${uids.includes(user?.id||"")?"#25D366":"rgba(0,0,0,.1)"}`,borderRadius:12,padding:"1px 7px",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:3}}>
+                <button key={emoji} onClick={async()=>{
+                  const alreadyR=uids.includes(user?.id||"");
+                  if(alreadyR){
+                    await supabase.from("message_reactions" as any).delete().eq("message_id",m.id).eq("user_id",user!.id).eq("emoji",emoji);
+                  } else {
+                    await supabase.from("message_reactions" as any).delete().eq("message_id",m.id).eq("user_id",user!.id);
+                    await supabase.from("message_reactions" as any).insert({message_id:m.id,user_id:user!.id,emoji});
+                  }
+                  reloadReactions();
+                }} style={{background:uids.includes(user?.id||"")?(isDark?"#1a4a3a":"#d9f7be"):(isDark?"#2a3942":"#f0f2f5"),border:`1px solid ${uids.includes(user?.id||"")?"#25D366":"rgba(0,0,0,.1)"}`,borderRadius:12,padding:"1px 7px",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:3}}>
                   {emoji} <span style={{fontSize:10,color:textSub,fontWeight:700}}>{uids.length}</span>
                 </button>
               ))}
@@ -1331,7 +1406,13 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               <div style={{display:"flex",justifyContent:"space-around",padding:"14px 16px",borderBottom:`1px solid ${divider}`}}>
                 {QUICK_EMOJIS.map(e=>(
                   <button key={e} onClick={async()=>{
-                    await supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji:e},{onConflict:"message_id,user_id"});
+                    const already2=(reactions[m.id]?.[e]||[]).includes(user!.id);
+                    if(already2){
+                      await supabase.from("message_reactions" as any).delete().eq("message_id",m.id).eq("user_id",user!.id).eq("emoji",e);
+                    } else {
+                      await supabase.from("message_reactions" as any).delete().eq("message_id",m.id).eq("user_id",user!.id);
+                      await supabase.from("message_reactions" as any).insert({message_id:m.id,user_id:user!.id,emoji:e});
+                    }
                     reloadReactions();setShowMessageMenu(null);
                   }} style={{background:"none",border:"none",cursor:"pointer",fontSize:24,padding:"2px 3px",borderRadius:8,transition:"transform .1s"}}>{e}</button>
                 ))}
@@ -1342,9 +1423,19 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 {icon:<Forward size={16}/>,label:"Forward",fn:()=>{setForwardMsg(m);setShowForwardSheet(true);setShowMessageMenu(null);}},
                 {icon:<Star size={16}/>,label:isStarred?"Unstar":"Star",fn:()=>starMsg(m.id)},
                 {icon:<Pin size={16}/>,label:(m as any).is_pinned?"Unpin":"Pin",fn:()=>pinMessage(m)},
-                ...(isMe&&Date.now()-new Date(m.created_at).getTime()<EDIT_WINDOW&&m.content_type==="text"?[{icon:<Edit2 size={16}/>,label:"Edit",fn:()=>{setEditingMsg(m);setInput(m.text||"");setShowMessageMenu(null);inputRef.current?.focus();}}]:[]),
+                ...(isMe&&!(m as any).edited_at&&Date.now()-new Date(m.created_at).getTime()<EDIT_WINDOW&&m.content_type==="text"?[{icon:<Edit2 size={16}/>,label:"Edit",fn:()=>{setEditingMsg(m);setInput(m.text||"");setShowMessageMenu(null);inputRef.current?.focus();}}]:[]),
                 {icon:<CheckSquare size={16}/>,label:"Select",fn:()=>{setSelectMode(true);setSelectedIds(new Set([m.id]));setShowMessageMenu(null);}},
                 {icon:<Trash2 size={16}/>,label:"Delete",fn:()=>{setShowMessageMenu(null);setShowDeleteSheet(m.id);}},
+                ...(isMe&&((m as any).seen_by||[]).filter((id:string)=>id!==user?.id).length>0?[{
+                  icon:<Eye size={16}/>,
+                  label:`Read by ${((m as any).seen_by||[]).filter((id:string)=>id!==user?.id).length}`,
+                  fn:()=>{
+                    const readers=((m as any).seen_by||[]).filter((id:string)=>id!==user?.id);
+                    const names=readers.map((id:string)=>profiles[id]?.full_name||id).join(", ");
+                    toast({title:"Read by",description:names});
+                    setShowMessageMenu(null);
+                  }
+                }]:[]),
               ].map((item,i)=>(
                 <button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:textMain,fontSize:14,borderBottom:`1px solid ${divider}`}}>
                   <span style={{color:WA_GREEN}}>{item.icon}</span>{item.label}
@@ -1769,7 +1860,15 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                     if(!oldest||!activeChannelId) return;
                     const {data}=await supabase.from("chat_messages").select("*").eq("channel_id",activeChannelId).order("created_at",{ascending:false}).lt("created_at",oldest.created_at).limit(40);
                     const older=((data||[]) as unknown as ChatMessage[]).reverse();
-                    if(older.length>0) setMessages(prev=>[...older,...prev]);
+                    if(older.length>0){
+                      const el=scrollRef.current;
+                      const prevH=el?el.scrollHeight:0;
+                      setMessages(prev=>[...older,...prev]);
+                      // Restore scroll position after prepend
+                      requestAnimationFrame(()=>{
+                        if(el) el.scrollTop=el.scrollHeight-prevH;
+                      });
+                    }
                   }} style={{background:"rgba(255,255,255,.9)",border:"none",borderRadius:20,padding:"6px 16px",fontSize:12,color:"#555",cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.1)",fontWeight:600}}>
                     Load older messages
                   </button>
@@ -1942,7 +2041,10 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
             {/* FIXED hidden file inputs — separated gallery/camera/file/audio */}
             {/* Gallery: no capture — shows gallery on mobile */}
-            <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
+            <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>{
+              const f=e.target.files?.[0]; if(!f) return;
+              handleFileUpload(f, f.type.startsWith("video/")?"video":"image");
+            }}/>
             {/* Camera: capture="camera" — opens camera directly */}
             <input ref={cameraInputRef} id="majlis-camera-input" type="file" accept="image/*" capture="environment" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
             {/* Document: any file type */}
@@ -1968,6 +2070,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 {icon:<Image size={24} color="#fff"/>,    bg:"#9b59b6", label:"Gallery",  action:()=>{setShowAttachSheet(false);setTimeout(()=>galleryInputRef.current?.click(),100);}},
                 {icon:<File size={24} color="#fff"/>,     bg:"#3498db", label:"Document", action:()=>{setShowAttachSheet(false);setTimeout(()=>fileInputRef.current?.click(),100);}},
                 {icon:<Music size={24} color="#fff"/>,    bg:"#e67e22", label:"Audio",    action:()=>{setShowAttachSheet(false);setTimeout(()=>audioFileRef.current?.click(),100);}},
+                {icon:<MapPin size={24} color="#fff"/>,  bg:"#e74c3c", label:"Location",  action:()=>{setShowAttachSheet(false);if(navigator.geolocation){navigator.geolocation.getCurrentPosition(pos=>{const url=`https://maps.google.com/?q=${pos.coords.latitude},${pos.coords.longitude}`;setInput(url);inputRef.current?.focus();},()=>toast({title:"Location unavailable",variant:"destructive"}));}else toast({title:"Location not supported",variant:"destructive"});}},
               ].map(item=>(
                 <div key={item.label} className="attach-btn-item" onClick={item.action}>
                   <div className="attach-icon-circle" style={{background:item.bg,boxShadow:`0 4px 12px ${item.bg}55`}}>{item.icon}</div>
@@ -2178,8 +2281,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                       }
                     }
                     // Create new DM channel
+                    const otherName=selectedMember?.full_name||"Student";
                     const {data:newCh,error}=await supabase.from("chat_channels" as any)
-                      .insert({name:`DM`,type:"dm",created_by:user.id,is_private:true}).select().single();
+                      .insert({name:`${otherName}`,type:"dm",created_by:user.id,is_private:true}).select().single();
                     if(!error&&newCh){
                       await supabase.from("chat_members" as any).insert([
                         {channel_id:(newCh as any).id,user_id:user.id,role:"admin"},
