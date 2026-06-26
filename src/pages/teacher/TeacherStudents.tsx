@@ -77,19 +77,38 @@ const TeacherStudents = () => {
         enrolledUserIds = [...new Set(enrollments.map(e => e.user_id))];
       }
 
-      // Path B: level-based students (students whose level matches teacher's subjects)
+      // Path B: level-based GROUP students only (never picks up private students — they must be admin-assigned)
       let levelUserIds: string[] = [];
       if (teacherLevels.length > 0) {
         const { data: lvlStudents } = await supabase
-          .from("profiles").select("user_id").eq("role", "student").in("level", teacherLevels);
+          .from("profiles").select("user_id")
+          .eq("role", "student")
+          .neq("student_type", "private")
+          .in("level", teacherLevels);
         levelUserIds = (lvlStudents || []).map((p: any) => p.user_id);
       }
 
-      // Path C: private students explicitly assigned to this teacher
-      const { data: privateStudents } = await supabase.from("profiles").select("user_id")
-        .eq("assigned_teacher_id", user.id).eq("student_type", "private");
+      // Path C: private students ONLY if admin explicitly assigned this teacher
+      const { data: privateStudents } = await supabase
+        .from("profiles").select("user_id")
+        .eq("assigned_teacher_id", user.id)
+        .eq("student_type", "private");
       const privateIds = (privateStudents || []).map(p => p.user_id);
-      
+
+      // Fetch private_student_subjects so private students show their subjects
+      let privateSubjectMap: Record<string, any[]> = {};
+      if (privateIds.length > 0) {
+        const { data: pss } = await supabase
+          .from("private_student_subjects")
+          .select("student_id, subject_id")
+          .in("student_id", privateIds);
+        (pss || []).forEach((row: any) => {
+          if (!privateSubjectMap[row.student_id]) privateSubjectMap[row.student_id] = [];
+          const sub = allSubs.find((s: any) => s.id === row.subject_id);
+          if (sub) privateSubjectMap[row.student_id].push(sub);
+        });
+      }
+
       const allUserIds = [...new Set([...enrolledUserIds, ...levelUserIds, ...privateIds])];
       if (allUserIds.length === 0) { return; }
 
@@ -109,11 +128,18 @@ const TeacherStudents = () => {
       }
 
       const enriched = (profiles || []).map(p => {
-        const pEnrollments = (enrollments || []).filter((e: any) => e.user_id === p.user_id);
-        const pSubjects = pEnrollments.map((e: any) => {
-          const course = (courses || []).find((c: any) => c.id === e.course_id);
-          return allSubs.find((s: any) => s.id === course?.subject_id);
-        }).filter(Boolean);
+        // Private students: use admin-assigned private_student_subjects
+        // Group students: use courses → enrollments path
+        let pSubjects: any[];
+        if (p.student_type === "private") {
+          pSubjects = privateSubjectMap[p.user_id] || [];
+        } else {
+          const pEnrollments = (enrollments || []).filter((e: any) => e.user_id === p.user_id);
+          pSubjects = pEnrollments.map((e: any) => {
+            const course = (courses || []).find((c: any) => c.id === e.course_id);
+            return allSubs.find((s: any) => s.id === course?.subject_id);
+          }).filter(Boolean);
+        }
 
         // Attendance %
         const studentAtt = (attendance || []).filter(a => a.student_id === p.user_id);
