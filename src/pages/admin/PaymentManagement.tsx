@@ -81,6 +81,8 @@ const PaymentManagement = () => {
   const [activeTab, setActiveTab]       = useState<"students"|"transactions"|"plans"|"international">("students");
   const [loading, setLoading]           = useState(true);
   const [refreshing, setRefreshing]     = useState(false);
+  const [syncing, setSyncing]           = useState(false);
+  const [syncResult, setSyncResult]     = useState<{synced:number;failed:number;total:number}|null>(null);
 
   // Manual payment dialog
   const [manualOpen, setManualOpen]     = useState(false);
@@ -350,6 +352,29 @@ const PaymentManagement = () => {
     loadData(true);
   };
 
+  // ── Sync pending payments from Paystack ────────────────────
+  const syncFromPaystack = async () => {
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await supabase.functions.invoke("paystack-sync", {
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      const result = res.data as any;
+      setSyncResult({ synced: result?.synced ?? 0, failed: result?.failed ?? 0, total: result?.total ?? 0 });
+      if ((result?.synced ?? 0) > 0) {
+        toast({ title: `✅ Synced ${result.synced} payment${result.synced !== 1 ? "s" : ""} from Paystack` });
+        loadData(true);
+      } else {
+        toast({ title: t("No pending payments found", "لا توجد مدفوعات معلقة") });
+      }
+    } catch (e: any) {
+      toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+    }
+    setSyncing(false);
+  };
+
   // ── Export CSV ──────────────────────────────────────────────
   const exportCSV = () => {
     const rows = [
@@ -401,6 +426,11 @@ const PaymentManagement = () => {
           <button onClick={()=>loadData(true)} style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 12px", borderRadius:10, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:12, fontWeight:600, cursor:"pointer" }}>
             <RefreshCw style={{ width:13, height:13, animation:refreshing?"spin .8s linear infinite":"none" }} />
             {t("Refresh","تحديث")}
+          </button>
+          <button onClick={syncFromPaystack} disabled={syncing} title="Verify pending payments against Paystack API and update student statuses"
+            style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 12px", borderRadius:10, background:syncing?"#f0fff4":"#ecfdf5", border:"1px solid rgba(34,197,94,.3)", color:"#16a34a", fontSize:12, fontWeight:700, cursor:syncing?"wait":"pointer", opacity:syncing?.7:1 }}>
+            <RefreshCw style={{ width:13, height:13, animation:syncing?"spin .8s linear infinite":"none", color:"#16a34a" }} />
+            {syncing ? t("Syncing…","جارٍ المزامنة…") : t("Sync Paystack","مزامنة Paystack")}
           </button>
           <button onClick={exportCSV} style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 12px", borderRadius:10, background:"#f8fafb", border:`1px solid ${BORDER}`, color:G, fontSize:12, fontWeight:600, cursor:"pointer" }}>
             <Download style={{ width:13, height:13 }} />{t("Export","تصدير")}
