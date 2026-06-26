@@ -271,6 +271,23 @@ Deno.serve(async (req) => {
     const fullUrl = absUrl(link);
     const results: Record<string, string> = {};
 
+    // ── Class notifications: skip ALL push + Telegram here ────────────────────
+    // schedule-class-reminders already sends web push + Telegram directly
+    // before inserting the bell row. If we also send here (fired by the DB
+    // trigger on every notifications INSERT) the user gets duplicate phone
+    // notifications and duplicate Telegram messages for every class.
+    // Solution: for class_reminder and class_ring, only the bell (DB row) is
+    // needed from this function — push and Telegram are already done.
+    const CLASS_TYPES = ["class_reminder", "class_ring"];
+    if (CLASS_TYPES.includes(type ?? "")) {
+      results.push     = "skipped_class_type (push sent by scheduler)";
+      results.telegram = "skipped_class_type (telegram sent by scheduler)";
+      console.log("[dispatch-notification] class type — skipping push+telegram, bell already inserted");
+      return new Response(JSON.stringify({ ok: true, results }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // ── FCM config (for native Capacitor tokens) ──────────────────────────────
     const SERVICE_ACCOUNT_JSON = Deno.env.get("FIREBASE_SERVICE_ACCOUNT");
     const FCM_PROJECT_ID       = (() => {
@@ -408,6 +425,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Telegram ──────────────────────────────────────────────────────────────
+    // (class_reminder / class_ring already exited above — safe to send here)
     const { data: prof } = await supabase
       .from("profiles")
       .select("telegram_chat_id")
