@@ -21,28 +21,28 @@ import {
 //  CONSTANTS & THEME
 // ═══════════════════════════════════════════════════════════════════════
 
-const HR_GOLD       = "#c9a84c";
-const HR_GOLD_LIGHT = "#e8c97a";
-const HR_DG         = "#0f2d1f";
-const HR_DG2        = "#1a4030";
-const HR_PARCHMENT  = "#fffdf6";
-const HR_PARCH2     = "#f9f2dc";
-const HR_INK        = "#1a1007";
-const HR_PASS_SCORE = 70;
-const HR_EXERCISE_PASS = 65;
+const GOLD       = "#c9a84c";
+const GOLD_LIGHT = "#e8c97a";
+const DG         = "#0f2d1f";
+const DG2        = "#1a4030";
+const PARCHMENT  = "#fffdf6";
+const PARCH2     = "#f9f2dc";
+const INK        = "#1a1007";
+const PASS_SCORE = 70;
+const EXERCISE_PASS = 65;
 
-const HR_JUZ_PAGES: [number, number][] = [
+const JUZ_PAGES: [number, number][] = [
   [1,21],[22,41],[42,62],[63,81],[82,101],[102,121],[122,141],[142,161],[162,181],[182,201],
   [202,221],[222,241],[242,261],[262,281],[282,301],[302,321],[322,341],[342,361],[362,381],[382,401],
   [402,421],[422,441],[442,461],[462,481],[482,501],[502,521],[522,541],[542,561],[562,581],[582,604],
 ];
 
-const HR_HIZB_PAGES: [number, number][] = HR_JUZ_PAGES.flatMap(([s, e]) => {
+const HIZB_PAGES: [number, number][] = JUZ_PAGES.flatMap(([s, e]) => {
   const mid = Math.floor((s + e) / 2);
   return [[s, mid], [mid + 1, e]] as [number, number][];
 });
 
-const HR_SURAH_START: Record<number, number> = {
+const SURAH_START: Record<number, number> = {
   1:1,2:2,3:50,4:77,5:106,6:128,7:151,8:177,9:187,10:208,
   11:221,12:235,13:249,14:255,15:262,16:267,17:282,18:293,19:305,20:312,
   21:322,22:332,23:342,24:350,25:359,26:367,27:377,28:385,29:396,30:404,
@@ -57,17 +57,17 @@ const HR_SURAH_START: Record<number, number> = {
   110:603,111:603,112:604,113:604,114:604,
 };
 
-const HR_SURAH_END: Record<number, number> = (() => {
+const SURAH_END: Record<number, number> = (() => {
   const ends: Record<number, number> = {};
-  const nums = Object.keys(HR_SURAH_START).map(Number).sort((a, b) => a - b);
+  const nums = Object.keys(SURAH_START).map(Number).sort((a, b) => a - b);
   for (let i = 0; i < nums.length; i++) {
     const s = nums[i];
-    ends[s] = nums[i + 1] ? HR_SURAH_START[nums[i + 1]] - 1 : 604;
+    ends[s] = nums[i + 1] ? SURAH_START[nums[i + 1]] - 1 : 604;
   }
   return ends;
 })();
 
-const HR_SURAHS_AR: Record<number, string> = {
+const SURAHS_AR: Record<number, string> = {
   1:"الفاتحة",2:"البقرة",3:"آل عمران",4:"النساء",5:"المائدة",
   6:"الأنعام",7:"الأعراف",8:"الأنفال",9:"التوبة",10:"يونس",
   11:"هود",12:"يوسف",13:"الرعد",14:"إبراهيم",15:"الحجر",
@@ -93,7 +93,7 @@ const HR_SURAHS_AR: Record<number, string> = {
   111:"المسد",112:"الإخلاص",113:"الفلق",114:"الناس",
 };
 
-const HR_RECITERS = [
+const RECITERS = [
   { id: "Alafasy_128kbps",               name: "مشاري العفاسي"   },
   { id: "Abdurrahmaan_As-Sudais_192kbps",name: "السديس"           },
   { id: "Husary_128kbps",                name: "الحصري"           },
@@ -221,7 +221,7 @@ function wordsMatch(rw: string, gw: string): boolean {
   return false;
 }
 
-const HR_HAS_ARABIC_LETTER = /[\u0621-\u063A\u0641-\u064A\u0671-\u06D3]/;
+const HAS_ARABIC_LETTER = /[\u0621-\u063A\u0641-\u064A\u0671-\u06D3]/;
 
 // ── compareWords — global DP/LCS alignment ─────────────────────────────────
 // FIX 1: Replaced the greedy sliding-window approach with a true global
@@ -242,7 +242,7 @@ function compareWords(refText: string, gotText: string): WordResult[] {
   const normRef: string[] = [];
   for (const w of refText.replace(/﴿[^﴾]*﴾/g, "").split(/\s+/).filter(Boolean)) {
     const n = normalizeArabic(w);
-    if (n.length >= 1 && HR_HAS_ARABIC_LETTER.test(n)) { origRef.push(w); normRef.push(n); }
+    if (n.length >= 1 && HAS_ARABIC_LETTER.test(n)) { origRef.push(w); normRef.push(n); }
   }
   const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
   if (!normGot.length) return origRef.map(w => ({ word: w, status: "missing" as const }));
@@ -286,18 +286,18 @@ function buildPages(mode: SelectMode, selected: number[]): number[] {
   const ps = new Set<number>();
   if (mode === "juz") {
     for (const j of selected) {
-      const [s, e] = HR_JUZ_PAGES[j - 1] ?? [1, 20];
+      const [s, e] = JUZ_PAGES[j - 1] ?? [1, 20];
       for (let p = s; p <= e; p++) ps.add(p);
     }
   } else if (mode === "hizb") {
     for (const h of selected) {
-      const [s, e] = HR_HIZB_PAGES[h - 1] ?? [1, 10];
+      const [s, e] = HIZB_PAGES[h - 1] ?? [1, 10];
       for (let p = s; p <= e; p++) ps.add(p);
     }
   } else {
     for (const s of selected) {
-      const start = HR_SURAH_START[s] ?? 1;
-      const end   = HR_SURAH_END[s] ?? start;
+      const start = SURAH_START[s] ?? 1;
+      const end   = SURAH_END[s] ?? start;
       for (let p = start; p <= end; p++) ps.add(p);
     }
   }
@@ -767,7 +767,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
   // ═══ AI Feedback ══════════════════════════════════════
   const getAIFeedback = async (refText: string, gotText: string, score: number): Promise<string> => {
     const key = (import.meta as any).env?.VITE_ANTHROPIC_API_KEY;
-    if (!key) return score >= HR_PASS_SCORE
+    if (!key) return score >= PASS_SCORE
       ? "Good recitation! Your memorisation is solid. Continue to the exercise."
       : "Keep practising — focus on the highlighted words and recite again.";
     try {
@@ -790,7 +790,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
       });
       if (r.ok) return (await r.json()).content?.[0]?.text ?? "";
     } catch { /* ignore */ }
-    return score >= HR_PASS_SCORE
+    return score >= PASS_SCORE
       ? "Excellent recitation! Proceed to the exercise."
       : "Practise the highlighted verses and try again.";
   };
@@ -1301,7 +1301,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
       attempts: recitationAttempts, errorCount: ayahErrors.length,
       timeSeconds: elapsed, exerciseScore: score,
     });
-    if (score >= HR_EXERCISE_PASS) {
+    if (score >= EXERCISE_PASS) {
       const newDone = new Set(completedPages);
       newDone.add(curPage);
       setCompletedPages(newDone);
@@ -1343,36 +1343,36 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
     .qr-mushaf {
       font-family:'Amiri Quran','Scheherazade New','Amiri',serif;
-      direction:rtl; line-height:2.6; color:${HR_INK};
+      direction:rtl; line-height:2.6; color:${INK};
       text-align:justify; text-align-last:right;
       word-spacing:0.12em; letter-spacing:0.01em;
     }
     .qr-arabic { font-family:'Amiri',serif; direction:rtl; }
-    .qr-active  { background:${HR_GOLD}35; border-radius:4px; outline:2px solid ${HR_GOLD}90; }
+    .qr-active  { background:${GOLD}35; border-radius:4px; outline:2px solid ${GOLD}90; }
     .qr-missing { background:#fee2e2; border-radius:3px; color:#dc2626; }
     .qr-correct { background:#dcfce7; border-radius:3px; color:#16a34a; }
 
     .qr-nameplate {
       margin:10px 0 4px; padding:6px 16px;
-      background:linear-gradient(to right,transparent,${HR_GOLD}22,${HR_GOLD}44,${HR_GOLD}22,transparent);
-      border-top:1.5px solid ${HR_GOLD}99; border-bottom:1.5px solid ${HR_GOLD}99;
+      background:linear-gradient(to right,transparent,${GOLD}22,${GOLD}44,${GOLD}22,transparent);
+      border-top:1.5px solid ${GOLD}99; border-bottom:1.5px solid ${GOLD}99;
       text-align:center; font-family:'Amiri',serif; direction:rtl;
-      color:${HR_DG}; font-size:1.05em; font-weight:700;
+      color:${DG}; font-size:1.05em; font-weight:700;
     }
     .qr-bismillah {
       font-family:'Amiri Quran','Amiri',serif; direction:rtl; text-align:center;
-      color:${HR_INK}; margin:4px 0 12px; line-height:2;
+      color:${INK}; margin:4px 0 12px; line-height:2;
     }
     .qr-frame {
-      background:${HR_PARCHMENT};
-      border:2px solid ${HR_GOLD}77;
+      background:${PARCHMENT};
+      border:2px solid ${GOLD}77;
       border-radius:6px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 0 0 1px ${HR_GOLD}22;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.35), inset 0 0 0 1px ${GOLD}22;
       position:relative;
     }
     .qr-frame::before {
       content:''; position:absolute; inset:8px;
-      border:1px solid ${HR_GOLD}33; border-radius:3px;
+      border:1px solid ${GOLD}33; border-radius:3px;
       pointer-events:none; z-index:1;
     }
     .qr-btn { transition:transform 0.1s, opacity 0.12s; cursor:pointer; }
@@ -1395,7 +1395,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
     .qr-fadein { animation:qr-fadein 0.35s ease-out forwards; }
     .qr-spin   { animation:qr-spin 1s linear infinite; }
     .qr-shimmer {
-      background:linear-gradient(90deg,${HR_DG} 25%,${HR_DG2} 50%,${HR_DG} 75%);
+      background:linear-gradient(90deg,${DG} 25%,${DG2} 50%,${DG} 75%);
       background-size:200% 100%; animation:qr-shimmer 1.5s infinite;
     }
     .qr-recordpulse { animation:qr-recordpulse 1.2s ease-in-out infinite; }
@@ -1456,7 +1456,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
     const WARM = "#faf8f4";
     const BRD  = "#e8ddd0";
     const MUT  = "#9aab94";
-    const GL   = HR_GOLD;
+    const GL   = GOLD;
 
     return (
       <div className="h-full overflow-y-auto" style={{ background: "#f5f2ec" }}>
@@ -1516,7 +1516,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                     setStage("reciting");
                   }}
                   style={{ fontSize: 12, fontWeight: 800, padding: "7px 14px", borderRadius: 10, border: "none", cursor: "pointer",
-                    background: `linear-gradient(135deg,${HR_DG},${HR_DG2})`, color: W, boxShadow: `0 2px 8px ${HR_DG}35` }}>
+                    background: `linear-gradient(135deg,${DG},${DG2})`, color: W, boxShadow: `0 2px 8px ${DG}35` }}>
                   Resume →
                 </button>
               </div>
@@ -1527,7 +1527,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               </p>
               <div style={{ height: 6, borderRadius: 3, background: BRD, overflow: "hidden" }}>
                 <div style={{ width: `${Math.round((plan.currentIdx / Math.max(1, plan.allPages.length - 1)) * 100)}%`, height: "100%",
-                  borderRadius: 3, background: `linear-gradient(to right,${HR_DG},${GL})` }} />
+                  borderRadius: 3, background: `linear-gradient(to right,${DG},${GL})` }} />
               </div>
             </div>
           )}
@@ -1542,12 +1542,12 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               {(["juz", "hizb", "surah"] as SelectMode[]).map(m => (
                 <button key={m} className="rv-btn" onClick={() => { setSelectMode(m); setSelected([]); }}
                   style={{ padding: "11px 4px", borderRadius: 12,
-                    border: `2px solid ${selectMode === m ? HR_DG : BRD}`,
-                    background: selectMode === m ? HR_DG : "#faf8f4",
+                    border: `2px solid ${selectMode === m ? DG : BRD}`,
+                    background: selectMode === m ? DG : "#faf8f4",
                     color: selectMode === m ? W : "#6b7a6b",
                     fontWeight: 800, cursor: "pointer", transition: "all .2s",
-                    boxShadow: selectMode === m ? `0 3px 10px ${HR_DG}35` : "none" }}>
-                  <div style={{ fontSize: 14, fontFamily: "'Amiri',serif", color: selectMode === m ? GL : HR_DG, lineHeight: 1.4 }}>
+                    boxShadow: selectMode === m ? `0 3px 10px ${DG}35` : "none" }}>
+                  <div style={{ fontSize: 14, fontFamily: "'Amiri',serif", color: selectMode === m ? GL : DG, lineHeight: 1.4 }}>
                     {m === "juz" ? "بالجزء" : m === "hizb" ? "بالحزب" : "بالسورة"}
                   </div>
                   <div style={{ fontSize: 9, marginTop: 2, fontWeight: 700, letterSpacing: .5,
@@ -1583,21 +1583,21 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               )}
               {selectMode === "surah" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {Object.entries(HR_SURAHS_AR).map(([num, name]) => {
+                  {Object.entries(SURAHS_AR).map(([num, name]) => {
                     const n = Number(num);
                     return (
                       <button key={n} className="rv-btn"
                         onClick={() => setSelected(p => p.includes(n) ? p.filter(x => x !== n) : [...p, n])}
                         style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
                           padding: "8px 12px", borderRadius: 10, cursor: "pointer", transition: "all .15s",
-                          border: `1.5px solid ${selected.includes(n) ? HR_DG : BRD}`,
-                          background: selected.includes(n) ? `${HR_DG}0d` : W }}>
+                          border: `1.5px solid ${selected.includes(n) ? DG : BRD}`,
+                          background: selected.includes(n) ? `${DG}0d` : W }}>
                         <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'Amiri',serif",
-                          color: selected.includes(n) ? HR_DG : "#374141" }}>{name}</span>
+                          color: selected.includes(n) ? DG : "#374141" }}>{name}</span>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                           <span style={{ fontSize: 10, color: MUT }}>{n}</span>
                           {selected.includes(n) && (
-                            <div style={{ width: 16, height: 16, borderRadius: "50%", background: HR_DG,
+                            <div style={{ width: 16, height: 16, borderRadius: "50%", background: DG,
                               display: "flex", alignItems: "center", justifyContent: "center" }}>
                               <Check size={10} color={GL} />
                             </div>
@@ -1610,8 +1610,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               )}
             </div>
             {selected.length > 0 && (
-              <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 10, background: `${HR_DG}08`, border: `1px solid ${HR_DG}18`,
-                fontSize: 11, color: HR_DG, fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
+              <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 10, background: `${DG}08`, border: `1px solid ${DG}18`,
+                fontSize: 11, color: DG, fontWeight: 700, display: "flex", justifyContent: "space-between" }}>
                 <span>✓ {selected.length} {selectMode}(s) selected</span>
                 <span style={{ color: GL }}>~{buildPages(selectMode, selected).length} pages</span>
               </div>
@@ -1628,9 +1628,9 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               {dailyOptions.map(o => (
                 <button key={o.val} className="rv-btn" onClick={() => setDailyPages(o.val)}
                   style={{ padding: "10px 4px", borderRadius: 12, cursor: "pointer", transition: "all .2s",
-                    border: `2px solid ${dailyPages === o.val ? HR_DG : BRD}`,
-                    background: dailyPages === o.val ? HR_DG : W,
-                    boxShadow: dailyPages === o.val ? `0 2px 8px ${HR_DG}30` : "none" }}>
+                    border: `2px solid ${dailyPages === o.val ? DG : BRD}`,
+                    background: dailyPages === o.val ? DG : W,
+                    boxShadow: dailyPages === o.val ? `0 2px 8px ${DG}30` : "none" }}>
                   <div style={{ fontSize: 12, fontWeight: 800, fontFamily: "'Amiri',serif",
                     color: dailyPages === o.val ? GL : MUT }}>{o.ar}</div>
                   <div style={{ fontSize: 9, marginTop: 2, color: dailyPages === o.val ? `${GL}cc` : "#c0c0b0" }}>{o.en}</div>
@@ -1647,9 +1647,9 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             </div>
             <select value={reciter} className="rv-sel rv-arabic" onChange={e => setReciter(e.target.value)}
               style={{ width: "100%", fontSize: 14, borderRadius: 10, padding: "10px 12px",
-                border: `1.5px solid ${BRD}`, background: WARM, color: HR_DG, fontWeight: 600,
+                border: `1.5px solid ${BRD}`, background: WARM, color: DG, fontWeight: 600,
                 appearance: "none" as const, cursor: "pointer" }}>
-              {HR_RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              {RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
 
@@ -1668,9 +1668,9 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             disabled={selected.length === 0}
             style={{ width: "100%", padding: "16px 0", borderRadius: 14, border: "none",
               cursor: selected.length > 0 ? "pointer" : "not-allowed",
-              background: selected.length > 0 ? `linear-gradient(135deg,${HR_DG} 0%,${HR_DG2} 100%)` : "#f0f0ee",
+              background: selected.length > 0 ? `linear-gradient(135deg,${DG} 0%,${DG2} 100%)` : "#f0f0ee",
               color: selected.length > 0 ? W : MUT, fontSize: 16, fontWeight: 800,
-              boxShadow: selected.length > 0 ? `0 4px 16px ${HR_DG}40` : "none",
+              boxShadow: selected.length > 0 ? `0 4px 16px ${DG}40` : "none",
               letterSpacing: .3, transition: "all .2s" }}>
             {selected.length > 0 ? "بسم الله — Start Revision ✨" : "Select content to revise"}
           </button>
@@ -1691,44 +1691,44 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
         <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
         {/* Header */}
-        <div className="flex-none border-b" style={{ borderColor: HR_GOLD + "33", background: HR_DG }}>
+        <div className="flex-none border-b" style={{ borderColor: GOLD + "33", background: DG }}>
           <div className="px-3 py-2 flex items-center gap-2">
           {!assignment && (
             <button onClick={() => setStage("setup")} className="p-1.5 rounded-lg qr-btn" style={{ background: "#1a3025" }}>
-              <ChevronLeft size={14} color={HR_GOLD} />
+              <ChevronLeft size={14} color={GOLD} />
             </button>
           )}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-black" style={{ color: HR_GOLD }}>
+              <span className="text-xs font-black" style={{ color: GOLD }}>
                 Page {currentPage} · Juz {toAr(juzNum)}
               </span>
               <span className="text-[10px] rounded px-1.5 py-0.5 font-bold"
-                style={{ background: HR_GOLD + "22", color: HR_GOLD }}>
+                style={{ background: GOLD + "22", color: GOLD }}>
                 {(plan?.currentIdx ?? 0) + 1}/{totalPages}
               </span>
             </div>
             <div className="h-1 mt-1 rounded-full overflow-hidden" style={{ background: "#1a3025" }}>
-              <div className="h-full rounded-full" style={{ width: `${progressPct}%`, background: HR_GOLD, transition: "width 0.3s" }} />
+              <div className="h-full rounded-full" style={{ width: `${progressPct}%`, background: GOLD, transition: "width 0.3s" }} />
             </div>
           </div>
 
           {/* Reciter */}
           <select value={reciter} onChange={e => { stopAudio(); setReciter(e.target.value); }}
             className="text-[9px] rounded-lg px-2 py-1 outline-none qr-arabic max-w-[90px]"
-            style={{ background: "#1a3025", color: HR_GOLD, border: `1px solid ${HR_GOLD}22` }}>
-            {HR_RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            style={{ background: "#1a3025", color: GOLD, border: `1px solid ${GOLD}22` }}>
+            {RECITERS.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
 
           {/* Font size */}
           <div className="flex items-center gap-1">
             <button onClick={() => setFontSize(f => Math.max(18, f - 2))}
               className="w-6 h-6 rounded flex items-center justify-center qr-btn" style={{ background: "#1a3025" }}>
-              <span style={{ color: HR_GOLD, fontSize: 9, fontWeight: 900 }}>A-</span>
+              <span style={{ color: GOLD, fontSize: 9, fontWeight: 900 }}>A-</span>
             </button>
             <button onClick={() => setFontSize(f => Math.min(40, f + 2))}
               className="w-6 h-6 rounded flex items-center justify-center qr-btn" style={{ background: "#1a3025" }}>
-              <span style={{ color: HR_GOLD, fontSize: 11, fontWeight: 900 }}>A+</span>
+              <span style={{ color: GOLD, fontSize: 11, fontWeight: 900 }}>A+</span>
             </button>
           </div>
           </div>{/* end inner row */}
@@ -1777,7 +1777,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                   stopLiveRecording();
                 }}
                 className="flex items-center gap-2 px-10 py-4 rounded-2xl font-black text-sm qr-btn"
-                style={{ background: `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`, color: HR_DG, fontSize: 15 }}>
+                style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG, fontSize: 15 }}>
                 <StopCircle size={18} /> Done — Submit
               </button>
             </div>
@@ -1787,25 +1787,25 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             <div className="h-full overflow-y-auto px-1 pt-1 pb-1">
               {pageLoading ? (
                 <div className="flex flex-col items-center justify-center h-full gap-3">
-                  <Loader2 size={28} className="qr-spin" style={{ color: HR_GOLD }} />
+                  <Loader2 size={28} className="qr-spin" style={{ color: GOLD }} />
                   <p className="text-xs" style={{ color: "#7aad90" }}>Loading page {currentPage}…</p>
                 </div>
               ) : (
                 <div className="qr-frame w-full shadow-2xl">
                   {/* Page header */}
                   <div className="flex items-center justify-between px-4 py-2 border-b"
-                    style={{ borderColor: HR_GOLD + "44", background: `linear-gradient(to bottom,${HR_GOLD}12,transparent)` }}>
-                    <span className="qr-arabic text-xs font-bold" style={{ color: HR_DG }}>
+                    style={{ borderColor: GOLD + "44", background: `linear-gradient(to bottom,${GOLD}12,transparent)` }}>
+                    <span className="qr-arabic text-xs font-bold" style={{ color: DG }}>
                       {pageAyahs[0]?.surah?.nameAr ?? ""}
                     </span>
-                    <span className="text-[10px] font-bold" style={{ color: HR_GOLD, fontFamily: "'Amiri',serif" }}>
+                    <span className="text-[10px] font-bold" style={{ color: GOLD, fontFamily: "'Amiri',serif" }}>
                       الجزء {toAr(juzNum)}
                     </span>
                     <span className="text-[9px]" style={{ color: "#8a6830", fontFamily: "Georgia,serif" }}>
                       {pageAyahs[0]?.surah?.englishName ?? ""}
                     </span>
                   </div>
-                  <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${HR_GOLD}88,transparent)` }} />
+                  <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
 
                   {/* Verses */}
                   <div className="px-4 py-4">
@@ -1849,7 +1849,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                                 onClick={() => { stopAudio(); playAyah(a); }}
                                 className={cn("cursor-pointer transition-all rounded-sm", playing === a.number && "qr-active")}>
                                 {a.text}{" "}
-                                <span style={{ color: HR_GOLD, fontFamily: "'Amiri',serif", fontSize: "0.65em" }}>
+                                <span style={{ color: GOLD, fontFamily: "'Amiri',serif", fontSize: "0.65em" }}>
                                   ۝{toAr(a.numberInSurah)}
                                 </span>{" "}
                               </span>
@@ -1860,8 +1860,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                     })}
                   </div>
 
-                  <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${HR_GOLD}88,transparent)` }} />
-                  <div className="py-3 text-center" style={{ fontFamily: "'Amiri',serif", color: HR_GOLD, fontSize: "0.8em" }}>
+                  <div className="mx-4 h-px" style={{ background: `linear-gradient(to right,transparent,${GOLD}88,transparent)` }} />
+                  <div className="py-3 text-center" style={{ fontFamily: "'Amiri',serif", color: GOLD, fontSize: "0.8em" }}>
                     ─── {toAr(currentPage)} ───
                   </div>
                 </div>
@@ -1873,14 +1873,14 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
         {/* Footer — only when NOT recording */}
         {!recording && (
           <div className="flex-none border-t px-3 py-1.5"
-            style={{ borderColor: HR_GOLD + "33", background: HR_DG }}>
+            style={{ borderColor: GOLD + "33", background: DG }}>
             {/* ── Pre-recording controls ── */}
             <div className="flex items-center justify-center gap-3">
               {/* Listen */}
               <button
                 onClick={isPagePlaying ? stopAudio : playPage}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold qr-btn"
-                style={{ background: isPagePlaying ? "#1a3025" : HR_GOLD + "28", color: HR_GOLD, border: `1px solid ${HR_GOLD}44` }}>
+                style={{ background: isPagePlaying ? "#1a3025" : GOLD + "28", color: GOLD, border: `1px solid ${GOLD}44` }}>
                 {isPagePlaying
                   ? <><StopCircle size={10} /> Stop</>
                   : <><Headphones size={10} /> Listen</>
@@ -1893,10 +1893,10 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                 disabled={pageLoading}
                 className="w-10 h-10 rounded-full flex items-center justify-center shadow-lg qr-btn"
                 style={{
-                  background: `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`,
-                  boxShadow: `0 0 0 4px ${HR_GOLD}22`,
+                  background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                  boxShadow: `0 0 0 4px ${GOLD}22`,
                 }}>
-                <Mic size={17} color={HR_DG} />
+                <Mic size={17} color={DG} />
               </button>
             </div>
           </div>
@@ -1913,23 +1913,23 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
     const sc = result && result.score >= 0 ? scoreColor(result.score) : null;
 
     return (
-      <div className="h-full overflow-y-auto" style={{ background: `linear-gradient(160deg,${HR_DG} 0%,#0b1a12 100%)` }}>
+      <div className="h-full overflow-y-auto" style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
         <style>{globalCSS}</style>
         <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
         {evaluating ? (
           <div className="flex flex-col items-center justify-center h-full gap-5 px-6">
             <div className="w-20 h-20 rounded-full flex items-center justify-center qr-shimmer">
-              <Brain size={32} color={HR_GOLD} />
+              <Brain size={32} color={GOLD} />
             </div>
-            <p className="font-black text-sm" style={{ color: HR_GOLD }}>Analysing Your Recitation…</p>
+            <p className="font-black text-sm" style={{ color: GOLD }}>Analysing Your Recitation…</p>
             <p className="text-xs text-center" style={{ color: "#7aad90" }}>
               Comparing your recitation with the reference text word by word
             </p>
             <div className="flex gap-2 mt-1">
               {[0, 1, 2].map(i => (
                 <div key={i} className="w-2.5 h-2.5 rounded-full" style={{
-                  background: HR_GOLD,
+                  background: GOLD,
                   animation: `qr-bounce 0.8s ${i * 0.22}s ease-in-out infinite`,
                 }} />
               ))}
@@ -1946,7 +1946,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             </div>
             <button onClick={() => { setStage("reciting"); setEvalResult(null); }}
               className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
-              style={{ background: `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`, color: HR_DG }}>
+              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
               🔄 Try Again
             </button>
           </div>
@@ -1971,10 +1971,10 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
             {/* AI Feedback */}
             {result.feedback && (
-              <div className="rounded-2xl p-4" style={{ background: HR_GOLD + "12", border: `1px solid ${HR_GOLD}33` }}>
+              <div className="rounded-2xl p-4" style={{ background: GOLD + "12", border: `1px solid ${GOLD}33` }}>
                 <div className="flex items-center gap-2 mb-2">
-                  <Sparkles size={13} style={{ color: HR_GOLD }} />
-                  <span className="text-xs font-black" style={{ color: HR_GOLD }}>Teacher Feedback</span>
+                  <Sparkles size={13} style={{ color: GOLD }} />
+                  <span className="text-xs font-black" style={{ color: GOLD }}>Teacher Feedback</span>
                 </div>
                 <p className="text-xs leading-relaxed" style={{ color: "#d4c08a" }}>{result.feedback}</p>
               </div>
@@ -1982,10 +1982,10 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
             {/* Playback your recording */}
             {recordedBlobUrl && (
-              <div className="rounded-2xl p-4" style={{ background: "#ffffff08", border: `1px solid ${HR_GOLD}22` }}>
+              <div className="rounded-2xl p-4" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
                 <div className="flex items-center gap-2 mb-3">
-                  <Headphones size={13} style={{ color: HR_GOLD }} />
-                  <span className="text-xs font-black" style={{ color: HR_GOLD }}>Your Recording</span>
+                  <Headphones size={13} style={{ color: GOLD }} />
+                  <span className="text-xs font-black" style={{ color: GOLD }}>Your Recording</span>
                 </div>
                 <audio
                   ref={playbackAudioRef}
@@ -2005,7 +2005,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                     else { a.currentTime = 0; a.play(); }
                   }}
                   className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl font-bold text-xs qr-btn"
-                  style={{ background: playingRecording ? "#1a3025" : HR_GOLD + "22", color: HR_GOLD, border: `1px solid ${HR_GOLD}44` }}>
+                  style={{ background: playingRecording ? "#1a3025" : GOLD + "22", color: GOLD, border: `1px solid ${GOLD}44` }}>
                   {playingRecording
                     ? <><StopCircle size={13} /> Stop Playback</>
                     : <><Volume2 size={13} /> Play My Recording</>
@@ -2016,9 +2016,9 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
             {/* Word analysis */}
             {result.words.length > 0 && (
-              <div className="rounded-2xl p-4" style={{ background: "#ffffff08", border: `1px solid ${HR_GOLD}22` }}>
-                <p className="text-xs font-black mb-3" style={{ color: HR_GOLD }}>Word-by-Word Analysis</p>
-                <div className="flex flex-wrap gap-1.5 p-3 rounded-xl" style={{ background: HR_PARCHMENT, direction: "rtl" }}>
+              <div className="rounded-2xl p-4" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <p className="text-xs font-black mb-3" style={{ color: GOLD }}>Word-by-Word Analysis</p>
+                <div className="flex flex-wrap gap-1.5 p-3 rounded-xl" style={{ background: PARCHMENT, direction: "rtl" }}>
                   {result.words.filter(w => w.status !== "wrong").map((w, i) => (
                     <span key={i}
                       className={cn("px-1.5 py-0.5 rounded text-sm font-semibold",
@@ -2052,8 +2052,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                   <div key={i} className="mb-2 p-3 rounded-xl" style={{ background: "#ffffff08" }}>
                     <div className="flex items-center gap-2 mb-1.5">
                       <button onClick={() => playAyah(ae.ayah)}
-                        className="p-1.5 rounded-lg qr-btn" style={{ background: HR_GOLD + "22" }}>
-                        <Volume2 size={11} color={HR_GOLD} />
+                        className="p-1.5 rounded-lg qr-btn" style={{ background: GOLD + "22" }}>
+                        <Volume2 size={11} color={GOLD} />
                       </button>
                       <span className="text-[10px]" style={{ color: "#7aad90" }}>
                         {ae.ayah.surah?.nameAr} · آية {toAr(ae.ayah.numberInSurah)}
@@ -2074,10 +2074,10 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
             {/* Transcript */}
             {result.transcript && (
-              <div className="rounded-2xl p-4" style={{ background: "#ffffff08", border: `1px solid ${HR_GOLD}22` }}>
-                <p className="text-xs font-black mb-2" style={{ color: HR_GOLD }}>Your Recitation (transcribed)</p>
+              <div className="rounded-2xl p-4" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <p className="text-xs font-black mb-2" style={{ color: GOLD }}>Your Recitation (transcribed)</p>
                 <p className="text-sm qr-arabic leading-relaxed"
-                  style={{ color: HR_PARCHMENT + "bb", fontFamily: "'Amiri',serif", direction: "rtl", lineHeight: 2 }}>
+                  style={{ color: PARCHMENT + "bb", fontFamily: "'Amiri',serif", direction: "rtl", lineHeight: 2 }}>
                   {result.transcript}
                 </p>
               </div>
@@ -2085,10 +2085,10 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
             {/* Actions */}
             <div className="space-y-2 pb-4">
-              {result.score >= HR_PASS_SCORE && ayahErrors.length === 0 ? (
+              {result.score >= PASS_SCORE && ayahErrors.length === 0 ? (
                 <button onClick={() => { buildExercise(); setStage("exercise"); }}
                   className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
-                  style={{ background: `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`, color: HR_DG }}>
+                  style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
                   ✓ Proceed to Exercise →
                 </button>
               ) : ayahErrors.length > 0 ? (
@@ -2098,10 +2098,10 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                     style={{ background: "linear-gradient(135deg,#c2410c,#ea580c)", color: "#fff" }}>
                     📖 Practise Error Verses ({ayahErrors.length})
                   </button>
-                  {result.score >= HR_PASS_SCORE && (
+                  {result.score >= PASS_SCORE && (
                     <button onClick={() => { buildExercise(); setStage("exercise"); }}
                       className="w-full py-3 rounded-2xl font-bold text-sm qr-btn"
-                      style={{ background: "#1a3025", color: HR_GOLD, border: `1px solid ${HR_GOLD}44` }}>
+                      style={{ background: "#1a3025", color: GOLD, border: `1px solid ${GOLD}44` }}>
                       Skip Practice → Exercise
                     </button>
                   )}
@@ -2109,13 +2109,13 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               ) : (
                 <button onClick={() => setStage("reciting")}
                   className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
-                  style={{ background: "#1a3025", color: HR_GOLD, border: `1px solid ${HR_GOLD}44` }}>
+                  style={{ background: "#1a3025", color: GOLD, border: `1px solid ${GOLD}44` }}>
                   🔄 Try Again
                 </button>
               )}
               <button onClick={() => { setStage("reciting"); setRecordedBlobUrl(null); setPlayingRecording(false); }}
                 className="w-full py-2.5 rounded-2xl text-xs font-bold qr-btn"
-                style={{ background: "transparent", color: "#4a6d58", border: `1px solid ${HR_GOLD}15` }}>
+                style={{ background: "transparent", color: "#4a6d58", border: `1px solid ${GOLD}15` }}>
                 ← Back to Page
               </button>
             </div>
@@ -2142,39 +2142,39 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
     return (
       <div className="h-full flex flex-col overflow-hidden"
-        style={{ background: `linear-gradient(160deg,${HR_DG} 0%,#0b1a12 100%)` }}>
+        style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
         <style>{globalCSS}</style>
         <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
         {/* Header */}
-        <div className="flex-none px-4 py-3 border-b" style={{ borderColor: HR_GOLD + "33", background: HR_DG }}>
+        <div className="flex-none px-4 py-3 border-b" style={{ borderColor: GOLD + "33", background: DG }}>
           <div className="flex items-center gap-2">
             <AlertTriangle size={14} color="#f59e0b" />
             <span className="font-black text-sm" style={{ color: "#f59e0b" }}>Error Practice</span>
             <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full"
-              style={{ background: HR_GOLD + "22", color: HR_GOLD }}>
+              style={{ background: GOLD + "22", color: GOLD }}>
               {masteredCount}/{ayahErrors.length} mastered
             </span>
           </div>
           <div className="mt-2 h-1.5 rounded-full overflow-hidden" style={{ background: "#1a3025" }}>
             <div className="h-full rounded-full transition-all" style={{
               width: `${Math.round((masteredCount / Math.max(1, ayahErrors.length)) * 100)}%`,
-              background: `linear-gradient(to right,${HR_GOLD},${HR_GOLD_LIGHT})`,
+              background: `linear-gradient(to right,${GOLD},${GOLD_LIGHT})`,
             }} />
           </div>
         </div>
 
         {/* Ayah navigator */}
         <div className="flex-none px-4 py-2 flex gap-2 overflow-x-auto border-b"
-          style={{ borderColor: HR_GOLD + "22" }}>
+          style={{ borderColor: GOLD + "22" }}>
           {ayahErrors.map((ae, i) => (
             <button key={i}
               onClick={() => { setRemediationIdx(i); setRemResult(null); setRevealVerse(false); }}
               className="flex-none w-8 h-8 rounded-full text-xs font-black qr-btn flex items-center justify-center"
               style={{
-                background: ae.mastered ? "#16a34a" : remediationIdx === i ? HR_GOLD : "#1a3025",
-                color: ae.mastered ? "#fff" : remediationIdx === i ? HR_DG : "#7aad90",
-                boxShadow: remediationIdx === i ? `0 0 0 3px ${HR_GOLD}44` : "none",
+                background: ae.mastered ? "#16a34a" : remediationIdx === i ? GOLD : "#1a3025",
+                color: ae.mastered ? "#fff" : remediationIdx === i ? DG : "#7aad90",
+                boxShadow: remediationIdx === i ? `0 0 0 3px ${GOLD}44` : "none",
               }}>
               {ae.mastered ? <Check size={12} /> : toAr(i + 1)}
             </button>
@@ -2186,23 +2186,23 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
             {/* Context verse — the verse BEFORE the error verse */}
             {contextAyah && (
-              <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${HR_GOLD}33` }}>
-                <div className="px-4 py-2 flex items-center gap-2" style={{ background: HR_GOLD + "15" }}>
-                  <BookOpen size={12} color={HR_GOLD} />
-                  <span className="text-xs font-bold" style={{ color: HR_GOLD }}>
+              <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${GOLD}33` }}>
+                <div className="px-4 py-2 flex items-center gap-2" style={{ background: GOLD + "15" }}>
+                  <BookOpen size={12} color={GOLD} />
+                  <span className="text-xs font-bold" style={{ color: GOLD }}>
                     The verse before — use it as your starting point:
                   </span>
                 </div>
-                <div className="px-5 py-4" style={{ background: HR_PARCHMENT }}>
+                <div className="px-5 py-4" style={{ background: PARCHMENT }}>
                   <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
                     {contextAyah.text}{" "}
-                    <span style={{ color: HR_GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
+                    <span style={{ color: GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
                       ۝{toAr(contextAyah.numberInSurah)}
                     </span>
                   </p>
                   <button onClick={() => playAyah(contextAyah)}
                     className="mt-2 mx-auto flex items-center gap-1.5 text-xs qr-btn px-3 py-1.5 rounded-lg"
-                    style={{ background: HR_GOLD + "22", color: HR_GOLD, display: "flex" }}>
+                    style={{ background: GOLD + "22", color: GOLD, display: "flex" }}>
                     <Volume2 size={11} /> Listen to this verse
                   </button>
                 </div>
@@ -2220,16 +2220,16 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                 </span>
               </div>
               {revealVerse ? (
-                <div className="px-5 py-4" style={{ background: HR_PARCHMENT }}>
+                <div className="px-5 py-4" style={{ background: PARCHMENT }}>
                   <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
                     {errAyah.ayah.text}{" "}
-                    <span style={{ color: HR_GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
+                    <span style={{ color: GOLD, fontSize: "0.7em", fontFamily: "'Amiri',serif" }}>
                       ۝{toAr(errAyah.ayah.numberInSurah)}
                     </span>
                   </p>
                 </div>
               ) : (
-                <div className="px-5 py-4 flex items-center justify-center gap-2" style={{ background: HR_PARCHMENT }}>
+                <div className="px-5 py-4 flex items-center justify-center gap-2" style={{ background: PARCHMENT }}>
                   <p className="text-xs font-semibold" style={{ color: "#92400e" }}>Hidden —</p>
                   <button onClick={() => setRevealVerse(true)}
                     className="qr-btn flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold"
@@ -2308,7 +2308,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                 <div className="flex flex-col items-center justify-center gap-1 rounded-2xl"
                   style={{ flex: 1, padding: "12px 8px", background: "#1a3025",
                     border: "1.5px solid #c9a84c22" }}>
-                  <Loader2 size={18} className="qr-spin" style={{ color: HR_GOLD }} />
+                  <Loader2 size={18} className="qr-spin" style={{ color: GOLD }} />
                   <span style={{ fontSize: 9, color: "#7aad90", fontWeight: 700 }}>Checking…</span>
                 </div>
               ) : (
@@ -2317,8 +2317,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                   className={cn("qr-btn flex flex-col items-center justify-center gap-1 rounded-2xl font-bold",
                     remRecording && "qr-recordpulse")}
                   style={{ flex: 1, padding: "12px 8px", fontSize: 10,
-                    background: remRecording ? "#dc2626" : `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`,
-                    color: remRecording ? "#fff" : HR_DG,
+                    background: remRecording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                    color: remRecording ? "#fff" : DG,
                     border: remRecording ? "1.5px solid #dc262688" : "none",
                     boxShadow: remRecording ? "0 0 12px rgba(220,38,38,.4)" : `0 2px 8px rgba(201,168,76,.35)` }}>
                   {remRecording
@@ -2331,26 +2331,26 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
         )}
 
         {/* Footer nav */}
-        <div className="flex-none px-4 py-3 border-t space-y-2" style={{ borderColor: HR_GOLD + "33", background: HR_DG }}>
+        <div className="flex-none px-4 py-3 border-t space-y-2" style={{ borderColor: GOLD + "33", background: DG }}>
           <div className="flex gap-2">
             <button onClick={() => { setRemediationIdx(i => Math.max(0, i - 1)); setRemResult(null); setRevealVerse(false); }}
               disabled={remediationIdx === 0}
               className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold qr-btn"
-              style={{ background: "#1a3025", color: HR_GOLD, opacity: remediationIdx === 0 ? 0.4 : 1 }}>
+              style={{ background: "#1a3025", color: GOLD, opacity: remediationIdx === 0 ? 0.4 : 1 }}>
               <ChevronLeft size={14} /> Prev
             </button>
             {remediationIdx < ayahErrors.length - 1 ? (
               <button onClick={() => { setRemediationIdx(i => i + 1); setRemResult(null); setRevealVerse(false); }}
                 className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-bold qr-btn"
-                style={{ background: "#1a3025", color: HR_GOLD }}>
+                style={{ background: "#1a3025", color: GOLD }}>
                 Next <ChevronRight size={14} />
               </button>
             ) : (
               <button onClick={() => { buildExercise(); setStage("exercise"); }}
                 className="flex-1 py-2.5 rounded-xl flex items-center justify-center gap-1 text-xs font-black qr-btn"
                 style={{
-                  background: allMastered ? `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})` : HR_GOLD + "44",
-                  color: allMastered ? HR_DG : HR_GOLD,
+                  background: allMastered ? `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})` : GOLD + "44",
+                  color: allMastered ? DG : GOLD,
                 }}>
                 {allMastered ? "Exercise →" : "Skip to Exercise →"}
               </button>
@@ -2380,19 +2380,19 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
         <audio ref={audioRef} playsInline preload="none" style={{ display: "none" }} />
 
         {/* Header */}
-        <div className="flex-none px-4 py-3 border-b" style={{ borderColor: HR_GOLD + "33", background: "#0a0f18" }}>
+        <div className="flex-none px-4 py-3 border-b" style={{ borderColor: GOLD + "33", background: "#0a0f18" }}>
           <div className="flex items-center gap-2 mb-2">
-            <Target size={14} style={{ color: HR_GOLD }} />
-            <span className="font-black text-sm" style={{ color: HR_GOLD }}>Recitation Exercise</span>
+            <Target size={14} style={{ color: GOLD }} />
+            <span className="font-black text-sm" style={{ color: GOLD }}>Recitation Exercise</span>
             <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full"
-              style={{ background: HR_GOLD + "22", color: HR_GOLD }}>
+              style={{ background: GOLD + "22", color: GOLD }}>
               {exAnswered}/{exercises.length}
             </span>
           </div>
           <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "#1a1a2e" }}>
             <div className="h-full rounded-full transition-all" style={{
               width: `${progress}%`,
-              background: `linear-gradient(to right,#6366f1,${HR_GOLD})`,
+              background: `linear-gradient(to right,#6366f1,${GOLD})`,
             }} />
           </div>
         </div>
@@ -2404,8 +2404,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             <div className="flex items-center gap-2">
               <span className="text-xs font-black px-2.5 py-1 rounded-full"
                 style={{
-                  background: q.isPrevPage ? "#6366f122" : HR_GOLD + "22",
-                  color: q.isPrevPage ? "#a78bfa" : HR_GOLD,
+                  background: q.isPrevPage ? "#6366f122" : GOLD + "22",
+                  color: q.isPrevPage ? "#a78bfa" : GOLD,
                 }}>
                 {q.isPrevPage ? "📎 Previous Page Review" : "📖 Complete the Verse"}
               </span>
@@ -2413,20 +2413,20 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             </div>
 
             {/* Verse beginning */}
-            <div className="rounded-2xl overflow-hidden" style={{ border: `2px solid ${HR_GOLD}44` }}>
-              <div className="px-4 py-2 border-b" style={{ background: HR_GOLD + "15", borderColor: HR_GOLD + "33" }}>
-                <p className="text-[10px] font-bold" style={{ color: HR_GOLD }}>
+            <div className="rounded-2xl overflow-hidden" style={{ border: `2px solid ${GOLD}44` }}>
+              <div className="px-4 py-2 border-b" style={{ background: GOLD + "15", borderColor: GOLD + "33" }}>
+                <p className="text-[10px] font-bold" style={{ color: GOLD }}>
                   {q.ayah.surah?.nameAr} · آية {toAr(q.ayah.numberInSurah)}
                 </p>
               </div>
-              <div className="px-5 py-4" style={{ background: HR_PARCHMENT }}>
+              <div className="px-5 py-4" style={{ background: PARCHMENT }}>
                 <p className="qr-mushaf text-center leading-loose" style={{ fontSize: fontSize - 2 }}>
                   {q.displayText}{" "}
                   <span className="inline-block px-3 py-0.5 rounded-lg border-b-2 mx-1"
                     style={{
-                      borderColor: HR_GOLD,
-                      background: HR_GOLD + "20",
-                      color: HR_GOLD,
+                      borderColor: GOLD,
+                      background: GOLD + "20",
+                      color: GOLD,
                       fontFamily: "'Amiri Quran','Amiri',serif",
                       minWidth: 60,
                     }}>
@@ -2443,8 +2443,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
             {/* Instruction */}
             {!q.answered && !exRecording && !exEvaluating && (
-              <div className="rounded-xl px-4 py-3 text-center" style={{ background: "#1a3025", border: `1px solid ${HR_GOLD}22` }}>
-                <p className="text-sm font-bold" style={{ color: HR_GOLD }}>Complete the verse above</p>
+              <div className="rounded-xl px-4 py-3 text-center" style={{ background: "#1a3025", border: `1px solid ${GOLD}22` }}>
+                <p className="text-sm font-bold" style={{ color: GOLD }}>Complete the verse above</p>
                 <p className="text-xs mt-1" style={{ color: "#5a8a6a" }}>
                   Listen to the beginning, then tap the mic to recite what comes next from memory
                 </p>
@@ -2455,7 +2455,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             {!q.answered && (
               <button onClick={() => playAyah(q.ayah)}
                 className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-xs font-bold qr-btn"
-                style={{ background: HR_GOLD + "18", color: HR_GOLD, border: `1px solid ${HR_GOLD}33` }}>
+                style={{ background: GOLD + "18", color: GOLD, border: `1px solid ${GOLD}33` }}>
                 <Headphones size={13} /> Listen to Full Verse (reference)
               </button>
             )}
@@ -2464,7 +2464,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             {!q.answered && (
               exEvaluating ? (
                 <div className="flex flex-col items-center gap-2 py-4">
-                  <Loader2 size={22} className="qr-spin" style={{ color: HR_GOLD }} />
+                  <Loader2 size={22} className="qr-spin" style={{ color: GOLD }} />
                   <span className="text-xs" style={{ color: "#7aad90" }}>Evaluating your recitation…</span>
                 </div>
               ) : (
@@ -2475,8 +2475,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                     exRecording && "qr-recordpulse"
                   )}
                   style={{
-                    background: exRecording ? "#dc2626" : `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`,
-                    color: exRecording ? "#fff" : HR_DG,
+                    background: exRecording ? "#dc2626" : `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`,
+                    color: exRecording ? "#fff" : DG,
                   }}>
                   {exRecording
                     ? <><MicOff size={18} /> Stop · {fmtTime(exRecTime)}</>
@@ -2500,7 +2500,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                 </div>
 
                 {/* Correct answer reveal */}
-                <div className="rounded-xl p-3 mt-2" style={{ background: HR_PARCHMENT, border: `1px solid ${HR_GOLD}33` }}>
+                <div className="rounded-xl p-3 mt-2" style={{ background: PARCHMENT, border: `1px solid ${GOLD}33` }}>
                   <p className="text-[10px] font-bold mb-1.5" style={{ color: "#8a6030" }}>Correct continuation:</p>
                   <p className="qr-mushaf text-center" style={{ fontSize: fontSize - 4 }}>
                     <span style={{ color: "#aaa" }}>{q.displayText}</span>{" "}
@@ -2528,10 +2528,10 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
         {/* Next button */}
         {q?.answered && (
-          <div className="flex-none px-4 py-3 border-t" style={{ borderColor: HR_GOLD + "33" }}>
+          <div className="flex-none px-4 py-3 border-t" style={{ borderColor: GOLD + "33" }}>
             <button onClick={nextExercise}
               className="w-full py-3.5 rounded-2xl font-black text-sm qr-btn"
-              style={{ background: `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`, color: HR_DG }}>
+              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
               {exIdx + 1 < exercises.length
                 ? `Next Question (${exIdx + 2}/${exercises.length}) →`
                 : "Finish Exercise ✓"}
@@ -2552,14 +2552,14 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
     const isPlanDone = plan ? plan.currentIdx >= plan.allPages.length - 1 : false;
 
     return (
-      <div className="h-full overflow-y-auto qr-geo" style={{ background: `linear-gradient(160deg,${HR_DG} 0%,#0b1a12 100%)` }}>
+      <div className="h-full overflow-y-auto qr-geo" style={{ background: `linear-gradient(160deg,${DG} 0%,#0b1a12 100%)` }}>
         <style>{globalCSS}</style>
 
         <div className="px-4 pt-10 pb-10 space-y-4 qr-fadein">
 
           <div className="text-center space-y-2">
             <div className="text-5xl qr-bounce">{isPlanDone ? "🏆" : "⭐"}</div>
-            <h2 className="font-black text-lg" style={{ color: HR_GOLD }}>
+            <h2 className="font-black text-lg" style={{ color: GOLD }}>
               {isPlanDone ? "Plan Complete! أحسنت 🎉" : `Page ${currentPage} Complete!`}
             </h2>
             <p className="text-xs" style={{ color: "#7aad90" }}>
@@ -2569,8 +2569,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             </p>
           </div>
 
-          <div className="rounded-2xl p-4 text-center" style={{ background: HR_GOLD + "15", border: `1px solid ${HR_GOLD}33` }}>
-            <div className="text-2xl font-black" style={{ color: HR_GOLD }}>+{earnedXP} XP</div>
+          <div className="rounded-2xl p-4 text-center" style={{ background: GOLD + "15", border: `1px solid ${GOLD}33` }}>
+            <div className="text-2xl font-black" style={{ color: GOLD }}>+{earnedXP} XP</div>
             <p className="text-xs" style={{ color: "#d4c08a" }}>Revision Points Earned</p>
           </div>
 
@@ -2584,12 +2584,12 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                 <div className="text-2xl font-black" style={{ color: excSc.text }}>{stats.exerciseScore}%</div>
                 <p className="text-xs font-bold" style={{ color: excSc.text + "aa" }}>Exercise</p>
               </div>
-              <div className="rounded-2xl p-4 text-center" style={{ background: "#ffffff08", border: `1px solid ${HR_GOLD}22` }}>
-                <div className="text-2xl font-black" style={{ color: HR_GOLD }}>{stats.attempts}</div>
+              <div className="rounded-2xl p-4 text-center" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <div className="text-2xl font-black" style={{ color: GOLD }}>{stats.attempts}</div>
                 <p className="text-xs font-bold" style={{ color: "#7aad90" }}>Attempts</p>
               </div>
-              <div className="rounded-2xl p-4 text-center" style={{ background: "#ffffff08", border: `1px solid ${HR_GOLD}22` }}>
-                <div className="text-2xl font-black" style={{ color: HR_GOLD }}>{fmtTime(stats.timeSeconds)}</div>
+              <div className="rounded-2xl p-4 text-center" style={{ background: "#ffffff08", border: `1px solid ${GOLD}22` }}>
+                <div className="text-2xl font-black" style={{ color: GOLD }}>{fmtTime(stats.timeSeconds)}</div>
                 <p className="text-xs font-bold" style={{ color: "#7aad90" }}>Time</p>
               </div>
             </div>
@@ -2600,9 +2600,9 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               {/* Attempts progress — 3 required */}
               <div style={{ borderRadius: 14, padding: "12px 14px",
                 background: recitationAttempts >= 3 ? "#16a34a18" : "#ffffff08",
-                border: `1px solid ${recitationAttempts >= 3 ? "#16a34a44" : HR_GOLD + "22"}` }}>
+                border: `1px solid ${recitationAttempts >= 3 ? "#16a34a44" : GOLD + "22"}` }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: recitationAttempts >= 3 ? "#16a34a" : HR_GOLD }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: recitationAttempts >= 3 ? "#16a34a" : GOLD }}>
                     {recitationAttempts >= 3 ? "✅ 3 attempts complete — ready!" : `Attempt ${recitationAttempts}/3 — revise ${3 - recitationAttempts} more time${3 - recitationAttempts !== 1 ? "s" : ""}`}
                   </span>
                   <span style={{ fontSize: 10, color: "#7aad90" }}>{recitationAttempts}/3</span>
@@ -2612,20 +2612,20 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
                     width: `${Math.min(100, (recitationAttempts / 3) * 100)}%`,
                     background: recitationAttempts >= 3
                       ? "linear-gradient(to right,#16a34a,#22c55e)"
-                      : `linear-gradient(to right,${HR_GOLD},${HR_GOLD_LIGHT})` }} />
+                      : `linear-gradient(to right,${GOLD},${GOLD_LIGHT})` }} />
                 </div>
               </div>
               {recitationAttempts < 3 ? (
                 <button onClick={() => { setStage("reciting"); setEvalResult(null); setAyahErrors([]); setPageVisible(true); }}
                   className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
-                  style={{ background: `linear-gradient(135deg,${HR_DG},${HR_DG2})`,
-                    color: HR_GOLD, border: `2px solid ${HR_GOLD}44` }}>
+                  style={{ background: `linear-gradient(135deg,${DG},${DG2})`,
+                    color: GOLD, border: `2px solid ${GOLD}44` }}>
                   🔄 Revise Again ({recitationAttempts}/3)
                 </button>
               ) : (
                 <button onClick={nextPage}
                   className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
-                  style={{ background: `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`, color: HR_DG }}>
+                  style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
                   Next Page →
                 </button>
               )}
@@ -2640,7 +2640,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
               setStage("setup");
             }}
               className="w-full py-4 rounded-2xl font-black text-sm qr-btn"
-              style={{ background: `linear-gradient(135deg,${HR_GOLD},${HR_GOLD_LIGHT})`, color: HR_DG }}>
+              style={{ background: `linear-gradient(135deg,${GOLD},${GOLD_LIGHT})`, color: DG }}>
               🔄 Start New Revision Plan
             </button>
           )}
