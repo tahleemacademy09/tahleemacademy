@@ -241,7 +241,7 @@ const TeacherDashboard = () => {
       {/* ── Hero — same structure as student ─────────────────────── */}
       <div style={{
         background: `linear-gradient(160deg,${G} 0%,${GM} 60%,#1e5c3b 100%)`,
-        padding: "22px 18px 72px", position: "relative", overflow: "hidden",
+        padding: "22px 18px 28px", position: "relative", overflow: "hidden",
       }}>
         {/* decorative circle */}
         <div style={{ position: "absolute", top: -40, right: -40, width: 180, height: 180, borderRadius: "50%", background: "rgba(201,168,76,.06)", pointerEvents: "none" }} />
@@ -293,7 +293,7 @@ const TeacherDashboard = () => {
       </div>
 
       {/* ── Quick Actions — same grid as student ──────────────────── */}
-      <div style={{ padding: "0 16px", marginTop: -44, position: "relative", zIndex: 2 }}>
+      <div style={{ padding: "20px 16px 0" }}>
         <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
           <Star size={13} color={GOLD} fill={GOLD} />
           <span style={{ fontSize: 15, fontWeight: 800, color: G, fontFamily: "'Playfair Display',serif" }}>
