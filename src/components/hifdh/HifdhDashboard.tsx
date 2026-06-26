@@ -10,7 +10,6 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { GOLD, GOLD_LIGHT, G as INK } from "./hifdhTheme";
 
 interface Props {
   userId: string | null;
@@ -50,7 +49,10 @@ interface DailyTask {
 interface WeeklyData { day: string; count: number; }
 
 // ── Light, brand-consistent palette (matches the Revision/Test/Memorize tabs) ──
-const MUTED      = "#8a9b85";   // secondary text
+const HD_GOLD       = "#b7791f";
+const HD_GOLD_LIGHT = "#e8c96b";
+const HD_INK        = "#1a3d24";   // primary text — dark green
+const HD_MUTED      = "#8a9b85";   // secondary text
 const PAGE_BG    = "#f5f2ec";   // warm cream page background
 const CARD_BG    = "#ffffff";
 const CARD_BRD   = "#e8ddd0";
@@ -294,8 +296,8 @@ export default function HifdhDashboard({
       <div className="flex items-center justify-center min-h-[500px]" style={{ background: PAGE_BG }}>
         <div className="flex flex-col items-center gap-4">
           <div className="w-14 h-14 rounded-full border-4 border-t-transparent animate-spin"
-            style={{ borderColor: GOLD + "33", borderTopColor: GOLD }} />
-          <p className="text-sm font-semibold" style={{ color: MUTED }}>Loading your Hifdh…</p>
+            style={{ borderColor: HD_GOLD + "33", borderTopColor: HD_GOLD }} />
+          <p className="text-sm font-semibold" style={{ color: HD_MUTED }}>Loading your Hifdh…</p>
         </div>
       </div>
     );
@@ -305,9 +307,9 @@ export default function HifdhDashboard({
     <div className="min-h-screen pb-24 overflow-y-auto" style={{ background: PAGE_BG }}>
 
       {/* ── Welcome header ── */}
-      <div style={{ background: `linear-gradient(160deg,${INK} 0%,#276749 100%)`, padding: "20px 16px 22px", position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${GOLD},${GOLD_LIGHT},${GOLD})` }} />
-        <p style={{ fontFamily: "'Amiri',serif", fontSize: 13, color: GOLD, marginBottom: 2 }}>السلام عليكم</p>
+      <div style={{ background: `linear-gradient(160deg,${HD_INK} 0%,#276749 100%)`, padding: "20px 16px 22px", position: "relative", overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg,${HD_GOLD},${HD_GOLD_LIGHT},${HD_GOLD})` }} />
+        <p style={{ fontFamily: "'Amiri',serif", fontSize: 13, color: HD_GOLD, marginBottom: 2 }}>السلام عليكم</p>
         <p style={{ fontSize: 20, fontWeight: 800, color: "#fff" }}>
           {studentName ? `Welcome, ${studentName.split(" ")[0]}` : "Welcome back"}
         </p>
@@ -351,16 +353,16 @@ export default function HifdhDashboard({
             onClick={() => onNavigate("recitation")}
             className="w-full rounded-2xl p-4 flex items-center gap-4 transition-transform active:scale-[0.98]"
             style={{
-              background: `linear-gradient(135deg, ${INK}, #276749)`,
-              border: `1px solid ${GOLD}33`,
-              boxShadow: `0 4px 24px ${GOLD}18`,
+              background: `linear-gradient(135deg, ${HD_INK}, #276749)`,
+              border: `1px solid ${HD_GOLD}33`,
+              boxShadow: `0 4px 24px ${HD_GOLD}18`,
             }}>
             <div className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0"
-              style={{ background: GOLD + "25" }}>
-              <Play size={22} fill={GOLD} color={GOLD} />
+              style={{ background: HD_GOLD + "25" }}>
+              <Play size={22} fill={HD_GOLD} color={HD_GOLD} />
             </div>
             <div className="flex-1 text-left">
-              <p className="text-xs font-bold uppercase tracking-wider" style={{ color: GOLD + "cc" }}>
+              <p className="text-xs font-bold uppercase tracking-wider" style={{ color: HD_GOLD + "cc" }}>
                 Continue Learning
               </p>
               <p className="text-sm font-black mt-0.5" style={{ color: "#fff" }}>
@@ -370,7 +372,7 @@ export default function HifdhDashboard({
                 {currentSurah.verses_memorized || 0} of {currentSurah.total_verses || "???"} verses
               </p>
             </div>
-            <ArrowRight size={18} color={GOLD} />
+            <ArrowRight size={18} color={HD_GOLD} />
           </button>
         )}
 
@@ -400,7 +402,7 @@ export default function HifdhDashboard({
             label="Day Streak"
             labelAr="الأيام"
             colors={["#4a2008", "#7c3005"]}
-            accent={GOLD}
+            accent={HD_GOLD}
             onClick={() => onNavigate("recitation")}
           />
           <StatCard
@@ -422,7 +424,7 @@ export default function HifdhDashboard({
           iconBg="#276749"
           headerRight={
             <div className="flex items-center gap-2">
-              <span className="text-xs font-black" style={{ color: GOLD }}>
+              <span className="text-xs font-black" style={{ color: HD_GOLD }}>
                 {completedToday}/{totalToday}
               </span>
             </div>
@@ -434,7 +436,7 @@ export default function HifdhDashboard({
                 className="h-full rounded-full transition-all duration-700"
                 style={{
                   width: `${progressPercent}%`,
-                  background: `linear-gradient(90deg, ${GOLD}, ${GOLD_LIGHT})`,
+                  background: `linear-gradient(90deg, ${HD_GOLD}, ${HD_GOLD_LIGHT})`,
                 }}
               />
             </div>
@@ -444,17 +446,17 @@ export default function HifdhDashboard({
             {tasks.length === 0 ? (
               <div className="py-8 flex flex-col items-center gap-3">
                 <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
-                  style={{ background: GOLD + "15" }}>
-                  <Calendar size={24} color={GOLD} />
+                  style={{ background: HD_GOLD + "15" }}>
+                  <Calendar size={24} color={HD_GOLD} />
                 </div>
                 <div className="text-center">
-                  <p className="text-sm font-bold" style={{ color: INK }}>No tasks today</p>
-                  <p className="text-xs mt-0.5" style={{ color: MUTED }}>لا توجد مهام اليوم بعد</p>
+                  <p className="text-sm font-bold" style={{ color: HD_INK }}>No tasks today</p>
+                  <p className="text-xs mt-0.5" style={{ color: HD_MUTED }}>لا توجد مهام اليوم بعد</p>
                 </div>
                 <button
                   onClick={() => setShowAddTask(true)}
                   className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold"
-                  style={{ background: GOLD + "15", color: GOLD, border: `1px solid ${GOLD}44` }}>
+                  style={{ background: HD_GOLD + "15", color: HD_GOLD, border: `1px solid ${HD_GOLD}44` }}>
                   <Plus size={13} /> Add First Task
                 </button>
               </div>
@@ -466,33 +468,33 @@ export default function HifdhDashboard({
                     onClick={() => startTask(task)}
                     className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
                     style={{
-                      background: task.completed ? GOLD + "10" : "#f7f4ec",
-                      border: `1px solid ${task.completed ? GOLD + "44" : CARD_BRD}`,
+                      background: task.completed ? HD_GOLD + "10" : "#f7f4ec",
+                      border: `1px solid ${task.completed ? HD_GOLD + "44" : CARD_BRD}`,
                     }}>
                     <div
                       onClick={(e) => toggleTask(task, e)}
                       className="w-5 h-5 rounded-full shrink-0 flex items-center justify-center border-2 transition-all"
                       style={{
-                        background:   task.completed ? GOLD : "transparent",
-                        borderColor:  task.completed ? GOLD : "#c9bda3",
+                        background:   task.completed ? HD_GOLD : "transparent",
+                        borderColor:  task.completed ? HD_GOLD : "#c9bda3",
                       }}>
                       {task.completed && <CheckCircle2 size={11} color="#fff" />}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-black truncate"
-                        style={{ color: task.completed ? GOLD : INK, textDecoration: task.completed ? "line-through" : "none" }}>
+                        style={{ color: task.completed ? HD_GOLD : HD_INK, textDecoration: task.completed ? "line-through" : "none" }}>
                         {task.task_type === "memorize" ? "📖" : "🔄"} {task.surah_name}
                       </p>
-                      <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                      <p className="text-[10px] mt-0.5" style={{ color: HD_MUTED }}>
                         {task.verses_count} verses · {task.task_type} · tap to start
                       </p>
                     </div>
                     <span
                       className="text-[10px] font-black px-2 py-0.5 rounded-lg shrink-0"
                       style={{
-                        background: task.completed ? GOLD + "1f" : "#ffffff",
-                        color:       task.completed ? GOLD    : MUTED,
-                        border: `1px solid ${task.completed ? GOLD + "33" : CARD_BRD}`,
+                        background: task.completed ? HD_GOLD + "1f" : "#ffffff",
+                        color:       task.completed ? HD_GOLD    : HD_MUTED,
+                        border: `1px solid ${task.completed ? HD_GOLD + "33" : CARD_BRD}`,
                       }}>
                       {task.completed ? "Done" : "Start"}
                     </span>
@@ -501,7 +503,7 @@ export default function HifdhDashboard({
                 <button
                   onClick={() => setShowAddTask(true)}
                   className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-bold border-dashed border"
-                  style={{ color: GOLD, borderColor: GOLD + "44" }}>
+                  style={{ color: HD_GOLD, borderColor: HD_GOLD + "44" }}>
                   <Plus size={13} /> Add Task
                 </button>
               </>
@@ -529,15 +531,15 @@ export default function HifdhDashboard({
                         style={{
                           height: `${Math.max(pct, day.count > 0 ? 18 : 4)}%`,
                           background: isToday
-                            ? `linear-gradient(180deg, ${GOLD}, ${GOLD_LIGHT})`
+                            ? `linear-gradient(180deg, ${HD_GOLD}, ${HD_GOLD_LIGHT})`
                             : day.count > 0
                               ? `linear-gradient(180deg, #276749cc, #27674944)`
                               : "#eee7d8",
-                          boxShadow: isToday ? `0 0 8px ${GOLD}55` : "none",
+                          boxShadow: isToday ? `0 0 8px ${HD_GOLD}55` : "none",
                         }}
                       />
                     </div>
-                    <span className="text-[9px] font-bold" style={{ color: isToday ? GOLD : MUTED }}>
+                    <span className="text-[9px] font-bold" style={{ color: isToday ? HD_GOLD : HD_MUTED }}>
                       {day.day}
                     </span>
                   </div>
@@ -558,20 +560,20 @@ export default function HifdhDashboard({
               <button
                 onClick={() => onNavigate("recitation")}
                 className="flex items-center gap-0.5 text-xs font-bold"
-                style={{ color: GOLD }}>
+                style={{ color: HD_GOLD }}>
                 View All <ChevronRight size={13} />
               </button>
             }>
             <div className="px-4 pb-4">
-              <div className="rounded-xl p-4" style={{ background: "#fdf6e3", border: `1px solid ${GOLD}33` }}>
+              <div className="rounded-xl p-4" style={{ background: "#fdf6e3", border: `1px solid ${HD_GOLD}33` }}>
                 <div className="flex items-start justify-between mb-3">
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-wider" style={{ color: GOLD }}>Juz {currentJuz}</p>
-                    <p className="text-base font-black mt-0.5" style={{ color: INK }}>
+                    <p className="text-xs font-bold uppercase tracking-wider" style={{ color: HD_GOLD }}>Juz {currentJuz}</p>
+                    <p className="text-base font-black mt-0.5" style={{ color: HD_INK }}>
                       Surah {currentSurah.surah_name}
                     </p>
                   </div>
-                  <Trophy size={20} color={GOLD} />
+                  <Trophy size={20} color={HD_GOLD} />
                 </div>
                 {/* Progress bar */}
                 <div className="h-2 rounded-full overflow-hidden" style={{ background: "#eee0bd" }}>
@@ -579,7 +581,7 @@ export default function HifdhDashboard({
                     className="h-full rounded-full transition-all duration-700"
                     style={{
                       width: `${Math.round((currentSurah.verses_memorized || 0) / (currentSurah.total_verses || 1) * 100)}%`,
-                      background: `linear-gradient(90deg,${GOLD},${GOLD_LIGHT})`,
+                      background: `linear-gradient(90deg,${HD_GOLD},${HD_GOLD_LIGHT})`,
                     }}
                   />
                 </div>
@@ -587,7 +589,7 @@ export default function HifdhDashboard({
                   <span className="text-[10px]" style={{ color: "#8a6030" }}>
                     {currentSurah.verses_memorized || 0} verses
                   </span>
-                  <span className="text-[10px] font-black" style={{ color: GOLD }}>
+                  <span className="text-[10px] font-black" style={{ color: HD_GOLD }}>
                     {Math.round((currentSurah.verses_memorized || 0) / (currentSurah.total_verses || 1) * 100)}%
                   </span>
                 </div>
@@ -607,7 +609,7 @@ export default function HifdhDashboard({
               <button
                 onClick={() => onNavigate("test")}
                 className="flex items-center gap-0.5 text-xs font-bold"
-                style={{ color: GOLD }}>
+                style={{ color: HD_GOLD }}>
                 View All <ChevronRight size={13} />
               </button>
             }>
@@ -632,12 +634,12 @@ export default function HifdhDashboard({
                         style={{ background: isUrgent ? "#d97706" : "#16a34a" }}
                       />
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-black truncate" style={{ color: INK }}>
+                        <p className="text-xs font-black truncate" style={{ color: HD_INK }}>
                           {item.surah_name}
                         </p>
-                        <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                        <p className="text-[10px] mt-0.5" style={{ color: HD_MUTED }}>
                           {days === 0 ? "Today" : `${days}d ago`} · Best:{" "}
-                          <span style={{ color: GOLD }}>{item.best_accuracy}%</span>
+                          <span style={{ color: HD_GOLD }}>{item.best_accuracy}%</span>
                         </p>
                       </div>
                       <span
@@ -653,7 +655,7 @@ export default function HifdhDashboard({
                 })}
               {progress.filter(p => daysSince(p.last_reviewed) < 10).length === 0 && (
                 <div className="py-6 text-center">
-                  <p className="text-xs font-bold" style={{ color: MUTED }}>No urgent revisions — great job! 🎉</p>
+                  <p className="text-xs font-bold" style={{ color: HD_MUTED }}>No urgent revisions — great job! 🎉</p>
                 </div>
               )}
             </div>
@@ -677,18 +679,18 @@ export default function HifdhDashboard({
                 <BookOpen size={15} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-black" style={{ color: INK }}>Revision</p>
+                <p className="text-xs font-black" style={{ color: HD_INK }}>Revision</p>
                 <div className="flex items-center gap-2 mt-1">
                   <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#d1f0da" }}>
                     <div className="h-full rounded-full" style={{ width: `${revStats.avgScore}%`, background: "#276749" }} />
                   </div>
                   <span className="text-[10px] font-black shrink-0" style={{ color: "#276749" }}>{revStats.avgScore}%</span>
                 </div>
-                <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                <p className="text-[10px] mt-0.5" style={{ color: HD_MUTED }}>
                   {revStats.sessions} session{revStats.sessions !== 1 ? "s" : ""} · {revStats.pagesRevised} pages revised
                 </p>
               </div>
-              <ChevronRight size={13} color={MUTED} />
+              <ChevronRight size={13} color={HD_MUTED} />
             </button>
 
             {/* Memorization */}
@@ -700,18 +702,18 @@ export default function HifdhDashboard({
                 <Brain size={15} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-black" style={{ color: INK }}>Memorization</p>
+                <p className="text-xs font-black" style={{ color: HD_INK }}>Memorization</p>
                 <div className="flex items-center gap-2 mt-1">
                   <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#ede9fe" }}>
                     <div className="h-full rounded-full" style={{ width: `${memStats.avgScore}%`, background: "#5b21b6" }} />
                   </div>
                   <span className="text-[10px] font-black shrink-0" style={{ color: "#5b21b6" }}>{memStats.avgScore}%</span>
                 </div>
-                <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                <p className="text-[10px] mt-0.5" style={{ color: HD_MUTED }}>
                   {memStats.sessions} session{memStats.sessions !== 1 ? "s" : ""} · {memStats.versesMemorized} verses
                 </p>
               </div>
-              <ChevronRight size={13} color={MUTED} />
+              <ChevronRight size={13} color={HD_MUTED} />
             </button>
 
             {/* Test */}
@@ -723,18 +725,18 @@ export default function HifdhDashboard({
                 <ClipboardCheck size={15} />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-black" style={{ color: INK }}>Test</p>
+                <p className="text-xs font-black" style={{ color: HD_INK }}>Test</p>
                 <div className="flex items-center gap-2 mt-1">
                   <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#fed7aa" }}>
                     <div className="h-full rounded-full" style={{ width: `${testStats.avgScore}%`, background: "#c2410c" }} />
                   </div>
                   <span className="text-[10px] font-black shrink-0" style={{ color: "#c2410c" }}>{testStats.avgScore}%</span>
                 </div>
-                <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                <p className="text-[10px] mt-0.5" style={{ color: HD_MUTED }}>
                   {testStats.sessions} test{testStats.sessions !== 1 ? "s" : ""}{testStats.lastScore ? ` · Last: ${testStats.lastScore}%` : ""}
                 </p>
               </div>
-              <ChevronRight size={13} color={MUTED} />
+              <ChevronRight size={13} color={HD_MUTED} />
             </button>
 
           </div>
@@ -767,15 +769,15 @@ export default function HifdhDashboard({
                       {score > 0 ? `${score}%` : "–"}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-black truncate" style={{ color: INK }}>
+                      <p className="text-xs font-black truncate" style={{ color: HD_INK }}>
                         {session.surah_name}
                       </p>
-                      <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
+                      <p className="text-[10px] mt-0.5" style={{ color: HD_MUTED }}>
                         {new Date(session.created_at).toLocaleDateString("en-GB", { day:"numeric", month:"short" })}
                         {session.duration ? ` · ${Math.max(1, Math.round(session.duration / 60))}m` : ""}
                       </p>
                     </div>
-                    {score >= 80 && <Star size={14} color={GOLD} fill={GOLD} />}
+                    {score >= 80 && <Star size={14} color={HD_GOLD} fill={HD_GOLD} />}
                   </button>
                 );
               })}
@@ -790,7 +792,7 @@ export default function HifdhDashboard({
           className="max-w-sm mx-4 rounded-2xl"
           style={{ background: CARD_BG, border: `1px solid ${CARD_BRD}` }}>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base font-black" style={{ color: INK }}>
+            <DialogTitle className="flex items-center gap-2 text-base font-black" style={{ color: HD_INK }}>
               <Plus size={16} /> Add New Task
             </DialogTitle>
           </DialogHeader>
@@ -804,9 +806,9 @@ export default function HifdhDashboard({
                   onClick={() => setTaskType(t)}
                   className="py-2.5 rounded-xl text-xs font-black transition-all"
                   style={{
-                    background: taskType === t ? GOLD : "#f7f4ec",
-                    color:      taskType === t ? "#fff" : MUTED,
-                    border: `1px solid ${taskType === t ? GOLD : CARD_BRD}`,
+                    background: taskType === t ? HD_GOLD : "#f7f4ec",
+                    color:      taskType === t ? "#fff" : HD_MUTED,
+                    border: `1px solid ${taskType === t ? HD_GOLD : CARD_BRD}`,
                   }}>
                   {t === "revise" ? "🔄 Revise" : "📖 Memorize"}
                 </button>
@@ -815,7 +817,7 @@ export default function HifdhDashboard({
 
             {/* Surah */}
             <div>
-              <label className="text-[10px] font-black uppercase tracking-wider mb-1.5 block" style={{ color: GOLD }}>
+              <label className="text-[10px] font-black uppercase tracking-wider mb-1.5 block" style={{ color: HD_GOLD }}>
                 Surah Name
               </label>
               <Input
@@ -823,13 +825,13 @@ export default function HifdhDashboard({
                 onChange={e => setTaskSurah(e.target.value)}
                 placeholder="e.g. Al-Baqarah"
                 className="h-10 text-sm rounded-xl font-medium"
-                style={{ background: "#f7f4ec", color: INK, border: `1px solid ${CARD_BRD}` }}
+                style={{ background: "#f7f4ec", color: HD_INK, border: `1px solid ${CARD_BRD}` }}
               />
             </div>
 
             {/* Verses */}
             <div>
-              <label className="text-[10px] font-black uppercase tracking-wider mb-1.5 block" style={{ color: GOLD }}>
+              <label className="text-[10px] font-black uppercase tracking-wider mb-1.5 block" style={{ color: HD_GOLD }}>
                 Verses per day
               </label>
               <Input
@@ -837,13 +839,13 @@ export default function HifdhDashboard({
                 value={taskVerses}
                 onChange={e => setTaskVerses(e.target.value)}
                 className="h-10 text-sm rounded-xl font-bold"
-                style={{ background: "#f7f4ec", color: INK, border: `1px solid ${CARD_BRD}` }}
+                style={{ background: "#f7f4ec", color: HD_INK, border: `1px solid ${CARD_BRD}` }}
               />
             </div>
 
             {/* Plan */}
             <div>
-              <label className="text-[10px] font-black uppercase tracking-wider mb-2 block" style={{ color: GOLD }}>
+              <label className="text-[10px] font-black uppercase tracking-wider mb-2 block" style={{ color: HD_GOLD }}>
                 Duration
               </label>
               <div className="grid grid-cols-4 gap-1.5">
@@ -853,9 +855,9 @@ export default function HifdhDashboard({
                     onClick={() => setTaskPlan(p)}
                     className="py-2 rounded-xl text-[10px] font-black transition-all"
                     style={{
-                      background: taskPlan === p ? GOLD : "#f7f4ec",
-                      color:      taskPlan === p ? "#fff" : MUTED,
-                      border: `1px solid ${taskPlan === p ? GOLD : CARD_BRD}`,
+                      background: taskPlan === p ? HD_GOLD : "#f7f4ec",
+                      color:      taskPlan === p ? "#fff" : HD_MUTED,
+                      border: `1px solid ${taskPlan === p ? HD_GOLD : CARD_BRD}`,
                     }}>
                     {p === "daily" ? "Daily" : p === "weekly" ? "Weekly" : p === "biweekly" ? "2 Wks" : "Monthly"}
                   </button>
@@ -867,14 +869,14 @@ export default function HifdhDashboard({
               <button
                 onClick={() => setShowAddTask(false)}
                 className="flex-1 py-2.5 rounded-xl text-xs font-bold"
-                style={{ background: "#f7f4ec", color: MUTED, border: `1px solid ${CARD_BRD}` }}>
+                style={{ background: "#f7f4ec", color: HD_MUTED, border: `1px solid ${CARD_BRD}` }}>
                 Cancel
               </button>
               <button
                 onClick={addTask}
                 disabled={savingTask || !taskSurah.trim()}
                 className="flex-1 py-2.5 rounded-xl text-xs font-black disabled:opacity-40"
-                style={{ background: GOLD, color: "#fff" }}>
+                style={{ background: HD_GOLD, color: "#fff" }}>
                 {savingTask ? "Saving…" : "Add Task"}
               </button>
             </div>
@@ -908,8 +910,8 @@ function SectionCard({
           <span style={{ color: "#fff" }}>{icon}</span>
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-black leading-tight" style={{ color: INK }}>{title}</p>
-          <p className="text-[10px] leading-tight mt-0.5" style={{ color: MUTED }}>{titleAr}</p>
+          <p className="text-xs font-black leading-tight" style={{ color: HD_INK }}>{title}</p>
+          <p className="text-[10px] leading-tight mt-0.5" style={{ color: HD_MUTED }}>{titleAr}</p>
         </div>
         {headerRight}
       </div>

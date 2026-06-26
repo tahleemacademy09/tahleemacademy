@@ -9,8 +9,17 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, RECITERS, audioUrl, DEFAULT_RECITER } from "./surahData";
-import { G, GM, GOLD, GOLD_L, LIGHT, BORDER, PARCH, PARCH2 } from "./hifdhTheme";
 import { supabase } from "@/integrations/supabase/client";
+
+/* ── Palette ────────────────────────────────────────────────── */
+const HM_G      = "#1a3d24";
+const HM_GM     = "#276749";
+const HM_GOLD   = "#b7791f";
+const HM_GOLD_L = "#fef9ee";
+const HM_LIGHT  = "#f0fff4";
+const HM_BORDER = "#d4e8d4";
+const HM_PARCH  = "#faf6ec";
+const HM_PARCH2 = "#f3ead8";
 
 const SESSION_KEY = "hifdh_mem_v20";
 
@@ -114,15 +123,14 @@ function getBestMime(): string {
   return "audio/webm";
 }
 
+const STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; icon: string; grad: string }> = {
+  overview:   { bg: HM_GOLD_L,    text: HM_GOLD,     border: "#f6d860", icon: "📖", grad: `linear-gradient(135deg,${HM_GOLD},#e09b2f)` },
+  single:     { bg: HM_LIGHT,     text: HM_G,        border: HM_BORDER,    icon: "🎯", grad: `linear-gradient(135deg,${HM_G},${HM_GM})` },
+  pair:       { bg: "#eff6ff", text: "#2563eb", border: "#bfdbfe", icon: "🔗", grad: "linear-gradient(135deg,#2563eb,#3b82f6)" },
+  cumulative: { bg: "#f5f3ff", text: "#7c3aed", border: "#ddd6fe", icon: "📚", grad: "linear-gradient(135deg,#7c3aed,#8b5cf6)" },
+};
+
 export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved }: Props) {
-  // Moved inside component to avoid module-scope TDZ when bundled with HifdhPage
-  // which defines its own const GOLD — Rollup mangles both and init order breaks.
-  const STEP_STYLE: Record<StepType, { bg: string; text: string; border: string; icon: string; grad: string }> = {
-    overview:   { bg: GOLD_L,    text: GOLD,     border: "#f6d860", icon: "📖", grad: `linear-gradient(135deg,${GOLD},#e09b2f)` },
-    single:     { bg: LIGHT,     text: G,        border: BORDER,    icon: "🎯", grad: `linear-gradient(135deg,${G},${GM})` },
-    pair:       { bg: "#eff6ff", text: "#2563eb", border: "#bfdbfe", icon: "🔗", grad: "linear-gradient(135deg,#2563eb,#3b82f6)" },
-    cumulative: { bg: "#f5f3ff", text: "#7c3aed", border: "#ddd6fe", icon: "📚", grad: "linear-gradient(135deg,#7c3aed,#8b5cf6)" },
-  };
 
   const [surahNum,        setSurahNum]        = useState(114);
   const [startVerse,      setStartVerse]      = useState(1);
@@ -562,23 +570,23 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   };
 
   const card = (ex?: React.CSSProperties): React.CSSProperties => ({
-    background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12,
+    background: "#fff", border: `1px solid ${HM_BORDER}`, borderRadius: 12,
     boxShadow: "0 2px 10px rgba(26,61,36,.06)", ...ex,
   });
 
   /* ── COMPLETED ── */
   if (completed) return (
-    <div style={{ height:"100%", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", padding:"16px", background:LIGHT }}>
+    <div style={{ height:"100%", display:"flex", flexDirection:"column", justifyContent:"center", alignItems:"center", padding:"16px", background:HM_LIGHT }}>
       <div style={card({ padding:"28px 20px", textAlign:"center", maxWidth:340 })}>
         <div style={{ fontSize:52, marginBottom:8 }}>🎉</div>
-        <div style={{ fontFamily:"'Amiri',serif", fontSize:24, color:G, fontWeight:700 }}>Session Complete!</div>
-        <div style={{ fontFamily:"'Amiri',serif", fontSize:16, color:GOLD, marginTop:4 }}>أحسنت! أكملت الجلسة</div>
+        <div style={{ fontFamily:"'Amiri',serif", fontSize:24, color:HM_G, fontWeight:700 }}>Session Complete!</div>
+        <div style={{ fontFamily:"'Amiri',serif", fontSize:16, color:HM_GOLD, marginTop:4 }}>أحسنت! أكملت الجلسة</div>
       </div>
       <div style={{ display:"flex", gap:8, marginTop:16, width:"100%", maxWidth:340 }}>
         <button onClick={() => { clearSession(); setStarted(false); setCompleted(false); }}
-          style={{ flex:1, padding:"12px 0", borderRadius:10, border:`1px solid ${BORDER}`, background:"#f8fafb", color:G, fontSize:13, fontWeight:700, cursor:"pointer" }}>← New</button>
+          style={{ flex:1, padding:"12px 0", borderRadius:10, border:`1px solid ${HM_BORDER}`, background:"#f8fafb", color:HM_G, fontSize:13, fontWeight:700, cursor:"pointer" }}>← New</button>
         <button onClick={() => { clearSession(); setStarted(false); setCompleted(false); setTimeout(startSession, 100); }}
-          style={{ flex:1, padding:"12px 0", borderRadius:10, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>🔁 Repeat</button>
+          style={{ flex:1, padding:"12px 0", borderRadius:10, border:"none", background:`linear-gradient(135deg,${HM_G},${HM_GM})`, color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>🔁 Repeat</button>
       </div>
     </div>
   );
@@ -601,15 +609,15 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
           .mem-input:focus{outline:2px solid #1a3d24;outline-offset:1px;border-color:#1a3d24!important;}
         `}</style>
         <div style={{ background:W, borderBottom:`1px solid ${B}`, padding:"16px 16px 14px", flexShrink:0, position:"relative", overflow:"hidden" }}>
-          <div style={{ position:"absolute", top:0, left:0, right:0, height:3, background:`linear-gradient(90deg,${G},${GM},${GOLD})` }} />
+          <div style={{ position:"absolute", top:0, left:0, right:0, height:3, background:`linear-gradient(90deg,${HM_G},${HM_GM},${HM_GOLD})` }} />
           <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-            <div style={{ width:44, height:44, borderRadius:12, background:`linear-gradient(135deg,${G},${GM})`,
+            <div style={{ width:44, height:44, borderRadius:12, background:`linear-gradient(135deg,${HM_G},${HM_GM})`,
               display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, flexShrink:0, boxShadow:"0 2px 8px rgba(26,61,36,.25)" }}>🧠</div>
             <div>
-              <div style={{ fontFamily:"'Amiri',serif", fontSize:20, color:G, fontWeight:700, lineHeight:1.2 }}>Memorization</div>
-              <div style={{ fontFamily:"'Amiri',serif", fontSize:12, color:GOLD, marginTop:1 }}>نظام الحفظ المنهجي</div>
+              <div style={{ fontFamily:"'Amiri',serif", fontSize:20, color:HM_G, fontWeight:700, lineHeight:1.2 }}>Memorization</div>
+              <div style={{ fontFamily:"'Amiri',serif", fontSize:12, color:HM_GOLD, marginTop:1 }}>نظام الحفظ المنهجي</div>
             </div>
-            <div style={{ marginLeft:"auto", padding:"3px 9px", borderRadius:10, background:`${G}10`, border:`1px solid ${G}30`, fontSize:10, fontWeight:700, color:G }}>
+            <div style={{ marginLeft:"auto", padding:"3px 9px", borderRadius:10, background:`${HM_G}10`, border:`1px solid ${HM_G}30`, fontSize:10, fontWeight:700, color:HM_G }}>
               🎙 Groq Whisper
             </div>
           </div>
@@ -624,7 +632,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
             <select value={surahNum} className="mem-select"
               onChange={e => { setSurahNum(Number(e.target.value)); setStartVerse(1); setEndVerse(1); }}
               style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`1.5px solid ${B}`,
-                fontSize:13, color:G, background:WARM, marginBottom:10, fontWeight:600, appearance:"none", cursor:"pointer" }}>
+                fontSize:13, color:HM_G, background:WARM, marginBottom:10, fontWeight:600, appearance:"none", cursor:"pointer" }}>
               {SURAHS.map(s => <option key={s.num} value={s.num}>{s.num}. {s.name} ({s.verses}v)</option>)}
             </select>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
@@ -636,13 +644,13 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
                   <input type="number" min={min as number} max={max as number} value={val as number} className="mem-input"
                     onChange={e => (setter as Function)(Number(e.target.value))}
                     style={{ width:"100%", padding:"9px 12px", borderRadius:10, border:`1.5px solid ${B}`,
-                      fontSize:15, color:G, background:WARM, fontWeight:800, textAlign:"center" }} />
+                      fontSize:15, color:HM_G, background:WARM, fontWeight:800, textAlign:"center" }} />
                 </div>
               ))}
             </div>
             {verseCount > 0 && (
-              <div style={{ marginTop:10, padding:"8px 12px", borderRadius:10, background:`${G}08`, border:`1px solid ${G}20`,
-                fontSize:11, color:G, fontWeight:700, textAlign:"center" }}>
+              <div style={{ marginTop:10, padding:"8px 12px", borderRadius:10, background:`${HM_G}08`, border:`1px solid ${HM_G}20`,
+                fontSize:11, color:HM_G, fontWeight:700, textAlign:"center" }}>
                 📖 {verseCount} verse{verseCount!==1?"s":""} · {buildSteps(verseCount, repsPerVerse).length} steps
               </div>
             )}
@@ -657,9 +665,9 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
               {REP_OPTIONS.map(opt => (
                 <button key={opt} className="mem-btn" onClick={() => { setRepsPerVerse(opt); repsPerVerseRef.current = opt; }}
                   style={{ flex:1, padding:"10px 0", borderRadius:10, cursor:"pointer", transition:"all .2s",
-                    border:`2px solid ${repsPerVerse===opt?G:B}`, background:repsPerVerse===opt?G:W,
+                    border:`2px solid ${repsPerVerse===opt?HM_G:B}`, background:repsPerVerse===opt?HM_G:W,
                     color:repsPerVerse===opt?"#fff":MUT, fontSize:14, fontWeight:800,
-                    boxShadow:repsPerVerse===opt?`0 2px 8px ${G}30`:"none" }}>{opt}</button>
+                    boxShadow:repsPerVerse===opt?`0 2px 8px ${HM_G}30`:"none" }}>{opt}</button>
               ))}
             </div>
           </div>
@@ -673,9 +681,9 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
               {RECITERS.map(r => (
                 <button key={r.id} className="mem-btn" onClick={() => setSelectedReciter(r.id)}
                   style={{ flexShrink:0, padding:"7px 12px", borderRadius:20, cursor:"pointer", transition:"all .2s",
-                    border:`2px solid ${selectedReciter===r.id?G:B}`, background:selectedReciter===r.id?G:W,
+                    border:`2px solid ${selectedReciter===r.id?HM_G:B}`, background:selectedReciter===r.id?HM_G:W,
                     color:selectedReciter===r.id?"#fff":TXT, fontSize:11, fontWeight:700,
-                    boxShadow:selectedReciter===r.id?`0 2px 8px ${G}30`:"none" }}>{r.label}</button>
+                    boxShadow:selectedReciter===r.id?`0 2px 8px ${HM_G}30`:"none" }}>{r.label}</button>
               ))}
             </div>
           </div>
@@ -683,9 +691,9 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
           <button className="mem-btn" onClick={startSession} disabled={!canStart}
             style={{ width:"100%", padding:"16px 0", borderRadius:14, border:"none",
               cursor:canStart?"pointer":"not-allowed", transition:"all .2s",
-              background:canStart?`linear-gradient(135deg,${G} 0%,${GM} 100%)`:"#f0f0ee",
+              background:canStart?`linear-gradient(135deg,${HM_G} 0%,${HM_GM} 100%)`:"#f0f0ee",
               color:canStart?"#fff":MUT, fontSize:16, fontWeight:800,
-              boxShadow:canStart?`0 4px 16px ${G}40`:"none", letterSpacing:.3 }}>
+              boxShadow:canStart?`0 4px 16px ${HM_G}40`:"none", letterSpacing:.3 }}>
             {loading?"Loading…":!canStart?"Adjust range":"🧠 Begin Memorization · ابدأ"}
           </button>
 
@@ -704,7 +712,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   /* ── ACTIVE SESSION ── */
   const currentStep = steps[stepIdx] ?? steps[0];
   if (!currentStep) return (
-    <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", background:LIGHT }}>
+    <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center", background:HM_LIGHT }}>
       <div style={{ fontSize:12, color:"#7a9e88" }}>Starting…</div>
     </div>
   );
@@ -717,7 +725,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   const isMultiVerse = currentStep.indices.length > 1;
 
   return (
-    <div style={{ height:"100%", display:"flex", flexDirection:"column", background:PARCH, overflow:"hidden" }}>
+    <div style={{ height:"100%", display:"flex", flexDirection:"column", background:HM_PARCH, overflow:"hidden" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&display=swap');
         @keyframes wavePulse{0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1.6)}}
@@ -731,7 +739,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
       `}</style>
 
       {/* HEADER */}
-      <div style={{ background:"#fff", borderBottom:`2px solid ${BORDER}`, padding:"6px 12px", flexShrink:0 }}>
+      <div style={{ background:"#fff", borderBottom:`2px solid ${HM_BORDER}`, padding:"6px 12px", flexShrink:0 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:5 }}>
           <div style={{ display:"flex", alignItems:"center", gap:6 }}>
             <span style={{ fontSize:18 }}>{col.icon}</span>
@@ -745,28 +753,28 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
           <div style={{ display:"flex", alignItems:"center", gap:6 }}>
             <span style={{ fontSize:11, color:"#7a9e88", fontWeight:700 }}>{stepIdx+1}/{steps.length}</span>
             <button onClick={() => { stopAudio(); stopMicFn(); clearSession(); setStarted(false); setStepIdx(0); setRepsDone(0); }}
-              style={{ fontSize:11, padding:"4px 8px", borderRadius:6, border:`1px solid ${BORDER}`, background:"#f8fafb", color:"#7a9e88", cursor:"pointer" }}>✕</button>
+              style={{ fontSize:11, padding:"4px 8px", borderRadius:6, border:`1px solid ${HM_BORDER}`, background:"#f8fafb", color:"#7a9e88", cursor:"pointer" }}>✕</button>
           </div>
         </div>
         <div style={{ height:4, borderRadius:2, background:"#f0f4f0", overflow:"hidden" }}>
-          <div style={{ width:`${progress}%`, height:"100%", borderRadius:2, background:`linear-gradient(90deg,${G},${GOLD})`, transition:"width .3s ease" }} />
+          <div style={{ width:`${progress}%`, height:"100%", borderRadius:2, background:`linear-gradient(90deg,${HM_G},${HM_GOLD})`, transition:"width .3s ease" }} />
         </div>
       </div>
 
       {/* MUSHAF */}
-      <div style={{ flex:1, overflowY:"auto", background:`linear-gradient(180deg,${PARCH} 0%,${PARCH2} 100%)`, padding:"10px 8px 16px" }}>
-        <div style={{ background:"#fdf6e3", border:`2px solid ${GOLD}88`, borderRadius:4, position:"relative",
+      <div style={{ flex:1, overflowY:"auto", background:`linear-gradient(180deg,${HM_PARCH} 0%,${HM_PARCH2} 100%)`, padding:"10px 8px 16px" }}>
+        <div style={{ background:"#fdf6e3", border:`2px solid ${HM_GOLD}88`, borderRadius:4, position:"relative",
           maxWidth:420, margin:"0 auto", boxShadow:"0 4px 20px rgba(26,61,36,0.15)" }}>
-          <div style={{ position:"absolute", inset:7, border:`1px solid ${GOLD}44`, borderRadius:1, pointerEvents:"none", zIndex:1 }} />
+          <div style={{ position:"absolute", inset:7, border:`1px solid ${HM_GOLD}44`, borderRadius:1, pointerEvents:"none", zIndex:1 }} />
 
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-            padding:"8px 16px", background:`linear-gradient(to bottom,${GOLD}18,transparent)`, borderBottom:`1px solid ${GOLD}55` }}>
+            padding:"8px 16px", background:`linear-gradient(to bottom,${HM_GOLD}18,transparent)`, borderBottom:`1px solid ${HM_GOLD}55` }}>
             <span style={{ fontFamily:"'Amiri',serif", color:"#1c1208", fontSize:"0.8em", fontWeight:700, direction:"rtl" }}>
               {SURAHS[surahNum-1]?.nameAr}
             </span>
             <button onClick={() => isPlaying ? stopAudio() : playCurrentStep()}
-              style={{ padding:"3px 9px", borderRadius:12, border:`1.5px solid ${isPlaying?"#dc2626":GOLD+"88"}`,
-                background:isPlaying?"#fee2e2":`${GOLD}18`, color:isPlaying?"#dc2626":GOLD,
+              style={{ padding:"3px 9px", borderRadius:12, border:`1.5px solid ${isPlaying?"#dc2626":HM_GOLD+"88"}`,
+                background:isPlaying?"#fee2e2":`${HM_GOLD}18`, color:isPlaying?"#dc2626":HM_GOLD,
                 fontSize:10, fontWeight:700, cursor:"pointer" }}>
               {isPlaying ? "⏹ Stop" : "🔊 Listen"}
             </button>
@@ -792,9 +800,9 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
                       pointerEvents: isHidden ? "none" : "auto",
                       opacity: isActive ? 1 : 0,
                       filter: hideText ? "blur(9px)" : "none",
-                      background: isActive ? (isReciting ? `${GOLD}22` : `${GOLD}0d`) : "transparent",
+                      background: isActive ? (isReciting ? `${HM_GOLD}22` : `${HM_GOLD}0d`) : "transparent",
                       borderRadius: isActive ? 3 : 0,
-                      outline: isActive ? `1.5px solid ${GOLD}55` : "none",
+                      outline: isActive ? `1.5px solid ${HM_GOLD}55` : "none",
                       padding: isActive ? "0 3px" : undefined,
                       transition: "all .35s ease",
                       cursor: isActive ? "pointer" : "default",
@@ -802,7 +810,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
                     } as React.CSSProperties}
                     onClick={() => isActive && playVerse(surahNum, ayah.numberInSurah, selectedReciter)}>
                     {ayah.text}{" "}
-                    <span style={{ fontFamily:"'Amiri',serif", color:isActive?GOLD:"#b0956a",
+                    <span style={{ fontFamily:"'Amiri',serif", color:isActive?HM_GOLD:"#b0956a",
                       fontSize:"0.68em", margin:"0 1px", opacity:isActive?1:0.5 }}>
                       ۝{toAr(ayah.numberInSurah)}
                     </span>{" "}
@@ -818,16 +826,16 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
                 onPointerDown={() => setPeeking(true)} onPointerUp={() => setPeeking(false)}
                 onPointerLeave={() => setPeeking(false)} onPointerCancel={() => setPeeking(false)}
                 style={{ width:"100%", padding:"8px 0", borderRadius:10,
-                  border:`1.5px solid ${peeking?G:BORDER}`, background:peeking?LIGHT:"#fdf6e3",
-                  color:peeking?G:"#7a9e88", fontSize:11, fontWeight:700, cursor:"pointer" }}>
+                  border:`1.5px solid ${peeking?HM_G:HM_BORDER}`, background:peeking?HM_LIGHT:"#fdf6e3",
+                  color:peeking?HM_G:"#7a9e88", fontSize:11, fontWeight:700, cursor:"pointer" }}>
                 {peeking ? "👁 Showing…" : "👁 Hold to Reveal"}
               </button>
             </div>
           )}
 
-          <div style={{ borderTop:`1px solid ${GOLD}55`, padding:"4px 16px", textAlign:"center",
-            fontFamily:"'Amiri',serif", color:GOLD, fontSize:"0.78em",
-            background:`linear-gradient(to top,${GOLD}12,transparent)` }}>
+          <div style={{ borderTop:`1px solid ${HM_GOLD}55`, padding:"4px 16px", textAlign:"center",
+            fontFamily:"'Amiri',serif", color:HM_GOLD, fontSize:"0.78em",
+            background:`linear-gradient(to top,${HM_GOLD}12,transparent)` }}>
             ─── {toAr(startVerse)}–{toAr(endVerse)} ───
           </div>
         </div>
@@ -835,8 +843,8 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
         {/* Recognized speech — plain, no color coding */}
         {liveText.trim().length > 0 && (
           <div style={{ margin:"10px auto 6px", maxWidth:420, padding:"10px 14px", borderRadius:10,
-            background:"#f8fafb", border:`2px solid ${BORDER}`, direction:"rtl",
-            fontFamily:"'Amiri Quran','Amiri',serif", fontSize:19, color:G,
+            background:"#f8fafb", border:`2px solid ${HM_BORDER}`, direction:"rtl",
+            fontFamily:"'Amiri Quran','Amiri',serif", fontSize:19, color:HM_G,
             lineHeight:2, textAlign:"right", animation:"slideIn .2s ease" }}>
             {liveText}
           </div>
@@ -856,11 +864,11 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
                     : "⏸"}
                 {transcribing ? "Transcribing…" : isListening ? "Listening… Recite now" : "Waiting for voice…"}
               </span>
-              {matchProgress >= 100 && <span style={{ fontSize:11, color:G, fontWeight:700 }}>✅ All matched</span>}
+              {matchProgress >= 100 && <span style={{ fontSize:11, color:HM_G, fontWeight:700 }}>✅ All matched</span>}
             </div>
             <div style={{ height:6, borderRadius:3, background:"rgba(0,0,0,0.1)", overflow:"hidden" }}>
               <div style={{ width:`${matchProgress}%`, height:"100%", borderRadius:3,
-                background:matchProgress===100?GOLD:col.text, transition:"width .3s ease" }} />
+                background:matchProgress===100?HM_GOLD:col.text, transition:"width .3s ease" }} />
             </div>
           </div>
         )}
@@ -875,9 +883,9 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
       </div>
 
       {/* FOOTER */}
-      <div style={{ background:"#fff", borderTop:`2px solid ${BORDER}`, flexShrink:0 }}>
+      <div style={{ background:"#fff", borderTop:`2px solid ${HM_BORDER}`, flexShrink:0 }}>
         {!isOverview && (
-          <div style={{ padding:"5px 10px", display:"flex", alignItems:"center", gap:6, borderBottom:`1px solid ${BORDER}` }}>
+          <div style={{ padding:"5px 10px", display:"flex", alignItems:"center", gap:6, borderBottom:`1px solid ${HM_BORDER}` }}>
             {micActive && (
               <div style={{ display:"flex", alignItems:"center", gap:2, marginRight:2, flexShrink:0 }}>
                 {[4,8,6,12,7,10,5].map((h,i) => (
@@ -905,7 +913,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
               })}
             </div>
             <div style={{ textAlign:"center", minWidth:30, flexShrink:0 }}>
-              <div style={{ fontSize:16, fontWeight:900, color:G, lineHeight:1,
+              <div style={{ fontSize:16, fontWeight:900, color:HM_G, lineHeight:1,
                 animation:justCounted?"flashGreen .4s ease":"none" }}>{repsDone}</div>
               <div style={{ fontSize:9, color:"#7a9e88" }}>/ {currentStep.reps}</div>
             </div>
@@ -933,14 +941,14 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
                     background:"#fee2e2", color:"#c0392b", fontSize:12, fontWeight:700, cursor:"pointer" }}>⏹ Stop</button>
                 <button onClick={() => { stopMicFn(); setTimeout(() => startMic(), 400); }}
                   title="Restart recording"
-                  style={{ width:38, height:38, borderRadius:10, border:`1px solid ${BORDER}`,
+                  style={{ width:38, height:38, borderRadius:10, border:`1px solid ${HM_BORDER}`,
                     background:"#f8fafb", color:"#7a9e88", fontSize:16, cursor:"pointer",
                     display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>↺</button>
               </>
             ) : (
               <button onClick={startMic}
                 style={{ flex:1, padding:"9px 0", borderRadius:10, border:"none",
-                  background:`linear-gradient(135deg,${G},${GM})`, color:"#fff",
+                  background:`linear-gradient(135deg,${HM_G},${HM_GM})`, color:"#fff",
                   fontSize:12, fontWeight:700, cursor:"pointer" }}>🎙 Start Recording</button>
             )
           )}
@@ -963,7 +971,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
             saveSession({ stepIdx: prev, repsDone: 0 });
           } else { clearSession(); setStarted(false); }
         }}
-          style={{ margin:"0 10px 6px", padding:"6px 0", borderRadius:8, border:`1px solid ${BORDER}`,
+          style={{ margin:"0 10px 6px", padding:"6px 0", borderRadius:8, border:`1px solid ${HM_BORDER}`,
             background:"#f8fafb", color:"#7a9e88", fontSize:10, cursor:"pointer", width:"calc(100% - 20px)" }}>
           ← {stepIdx === 0 ? "Back to Setup" : "Previous Step"}
         </button>
