@@ -149,6 +149,35 @@ const PaymentManagement = () => {
 
   useEffect(() => { loadData(); }, []);
 
+  // ── Realtime: auto-refresh when a payment is confirmed ───────
+  // Listens to payments, profiles (payment_status), and student_subscriptions.
+  // When the Paystack webhook fires and updates any of these, the admin page
+  // refreshes silently — no manual reload needed.
+  useEffect(() => {
+    const channel = supabase
+      .channel("admin-payment-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "payments" },
+        (payload: any) => {
+          // Show a toast when a payment is confirmed so the admin knows immediately
+          if (payload.eventType === "UPDATE" && payload.new?.status === "success" && payload.old?.status !== "success") {
+            toast({ title: "✅ Payment Confirmed", description: `Reference: ${payload.new.paystack_reference || "—"}` });
+          } else if (payload.eventType === "INSERT" && payload.new?.status === "success") {
+            toast({ title: "✅ New Payment Received", description: `Reference: ${payload.new.paystack_reference || "—"}` });
+          }
+          loadData(true);
+        })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles",
+          filter: "role=eq.student" },
+        () => loadData(true))
+      .on("postgres_changes", { event: "*", schema: "public", table: "student_subscriptions" },
+        () => loadData(true))
+      .on("postgres_changes", { event: "*", schema: "public", table: "enrollments" },
+        () => loadData(true))
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [loadData]);
+
   // ── Record manual payment ───────────────────────────────────
   const recordManual = async () => {
     if (!manualForm.student_id || !manualForm.plan_id || !manualForm.amount) {
