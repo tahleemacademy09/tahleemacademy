@@ -18,9 +18,9 @@ import { useEffect, useState, useRef } from "react";
 import { X, Share, Plus, Smartphone, Download } from "lucide-react";
 
 const DISMISS_KEY = "tahleem_install_dismissed_until";
-const G    = "#064E3B";
-const GM   = "#075E54";
-const GOLD = "#C9A84C";
+const IP_G    = "#064E3B";
+const IP_GM   = "#075E54";
+const IP_GOLD = "#C9A84C";
 
 type Platform = "android" | "ios" | "desktop" | "installed" | "unsupported";
 
@@ -179,11 +179,11 @@ export default function InstallPWAPrompt() {
           {/* iOS step-by-step instructions */}
           {platform === "ios" && iosStep > 0 && (
             <div style={{ background:"#F0FDF4", borderRadius:16, padding:"16px", border:"1px solid #86EFAC", marginBottom:20 }}>
-              <div style={{ fontSize:13, fontWeight:800, color:G, marginBottom:14 }}>Follow these steps:</div>
+              <div style={{ fontSize:13, fontWeight:800, color:IP_G, marginBottom:14 }}>Follow these steps:</div>
               {[
-                { icon: <Share size={18} color={G}/>, text: <>Tap the <strong>Share</strong> button at the bottom of Safari</>, active: iosStep === 1 },
-                { icon: <Plus size={18} color={G}/>,  text: <>Scroll down and tap <strong>"Add to Home Screen"</strong></>,         active: iosStep === 2 },
-                { icon: <Smartphone size={18} color={G}/>, text: <>Tap <strong>Add</strong> in the top right corner</>,             active: iosStep === 3 },
+                { icon: <Share size={18} color={IP_G}/>, text: <>Tap the <strong>Share</strong> button at the bottom of Safari</>, active: iosStep === 1 },
+                { icon: <Plus size={18} color={IP_G}/>,  text: <>Scroll down and tap <strong>"Add to Home Screen"</strong></>,         active: iosStep === 2 },
+                { icon: <Smartphone size={18} color={IP_G}/>, text: <>Tap <strong>Add</strong> in the top right corner</>,             active: iosStep === 3 },
               ].map((step, i) => (
                 <div
                   key={i}
@@ -191,12 +191,12 @@ export default function InstallPWAPrompt() {
                   style={{
                     display: "flex", alignItems: "center", gap: 12, marginBottom: i<2?12:0,
                     padding: "10px 12px", borderRadius: 12, cursor:"pointer",
-                    background: step.active ? `${G}12` : "transparent",
-                    border: `1.5px solid ${step.active ? G+"40" : "transparent"}`,
+                    background: step.active ? `${IP_G}12` : "transparent",
+                    border: `1.5px solid ${step.active ? IP_G+"40" : "transparent"}`,
                     animation: step.active ? "iosBounce 1.2s ease infinite" : "none",
                   }}
                 >
-                  <div style={{ width:32, height:32, borderRadius:"50%", background: step.active ? `${G}20` : "#E5E7EB", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                  <div style={{ width:32, height:32, borderRadius:"50%", background: step.active ? `${IP_G}20` : "#E5E7EB", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
                     {step.icon}
                   </div>
                   <div style={{ fontSize:13, color:"#374151", lineHeight:1.5 }}>{step.text}</div>
@@ -204,7 +204,7 @@ export default function InstallPWAPrompt() {
                 </div>
               ))}
               {iosStep >= 4 && (
-                <div style={{ marginTop:12, textAlign:"center", fontSize:14, fontWeight:700, color:G }}>
+                <div style={{ marginTop:12, textAlign:"center", fontSize:14, fontWeight:700, color:IP_G }}>
                   🎉 Open from your home screen to enjoy the app!
                 </div>
               )}
@@ -217,10 +217,10 @@ export default function InstallPWAPrompt() {
               onClick={handleInstall}
               style={{
                 width:"100%", padding:"16px", borderRadius:16, border:"none",
-                background:`linear-gradient(135deg,${G},${GM})`,
+                background:`linear-gradient(135deg,${IP_G},${IP_GM})`,
                 color:"#fff", fontSize:15, fontWeight:800, cursor:"pointer",
                 display:"flex", alignItems:"center", justifyContent:"center", gap:10,
-                boxShadow:`0 8px 32px ${G}40`,
+                boxShadow:`0 8px 32px ${IP_G}40`,
                 animation:"pwaPulse 2s ease-in-out infinite",
               }}
             >
@@ -231,14 +231,14 @@ export default function InstallPWAPrompt() {
           ) : iosStep < 4 ? (
             <button
               onClick={() => setIosStep(s => Math.min(s+1, 4))}
-              style={{ width:"100%", padding:"16px", borderRadius:16, border:`2px solid ${G}`, background:"#fff", color:G, fontSize:14, fontWeight:700, cursor:"pointer" }}
+              style={{ width:"100%", padding:"16px", borderRadius:16, border:`2px solid ${IP_G}`, background:"#fff", color:IP_G, fontSize:14, fontWeight:700, cursor:"pointer" }}
             >
               Next Step →
             </button>
           ) : (
             <button
               onClick={() => hide(true)}
-              style={{ width:"100%", padding:"16px", borderRadius:16, border:"none", background:`linear-gradient(135deg,${G},${GM})`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}
+              style={{ width:"100%", padding:"16px", borderRadius:16, border:"none", background:`linear-gradient(135deg,${IP_G},${IP_GM})`, color:"#fff", fontSize:14, fontWeight:700, cursor:"pointer" }}
             >
               ✅ Done — enjoy the app!
             </button>
