@@ -613,8 +613,17 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
                     // Also handle direct path links like /student/live-classes?subject=<id>
                     let directPath: string | null = null;
-                    if (!linkParts && n.link && n.link.startsWith("/")) {
-                      directPath = n.link;
+                    if (!linkParts && n.link) {
+                      if (n.link.startsWith("/")) {
+                        // Relative path — strip any #hash dedup key (e.g. #class=abc:t=0)
+                        directPath = n.link.split("#")[0];
+                      } else if (n.link.startsWith("http")) {
+                        // Full URL (legacy rows) — extract path+search only
+                        try {
+                          const u = new URL(n.link);
+                          directPath = u.pathname + u.search;
+                        } catch { /* ignore */ }
+                      }
                     }
 
                     return (
