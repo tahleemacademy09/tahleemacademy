@@ -65,6 +65,11 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
+        // Prevents Rollup from reordering transitive imports across chunks,
+        // which causes "Cannot access 'Xt' before initialization" TDZ crashes
+        // when multiple modules declare identically-named module-level consts
+        // (e.g. `const GOLD`, `const GM`) and get scope-hoisted into one bundle.
+        hoistTransitiveImports: false,
         manualChunks: {
           // LiveKit WebRTC — heavy, only needed inside classroom sessions
           "vendor-livekit": [
