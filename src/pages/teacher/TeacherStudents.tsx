@@ -41,6 +41,7 @@ const TeacherStudents = () => {
   useEffect(() => {
     if (!user) return;
     const fetch = async () => {
+      try {
       // Teacher's subjects (owned + timetable assigned)
       const { data: subs } = await supabase.from("subjects").select("id, title, title_ar, level, levels").eq("teacher_id", user.id);
       const { data: ttSlots } = await supabase
@@ -58,7 +59,7 @@ const TeacherStudents = () => {
       const allSubs = [...(subs || []), ...extraSubs];
       setSubjects(allSubs);
       const subjectIds = allSubs.map((s: any) => s.id);
-      if (subjectIds.length === 0) { setLoading(false); return; }
+      if (subjectIds.length === 0) { return; }
 
       // Collect ALL levels covered by this teacher's subjects
       const teacherLevels = [...new Set(
@@ -68,10 +69,12 @@ const TeacherStudents = () => {
       // Path A: courses → enrollments (structured enrollments)
       const { data: courses } = await supabase.from("courses").select("id, subject_id").in("subject_id", subjectIds);
       const courseIds = (courses || []).map(c => c.id);
+      let enrollments: any[] = [];
       let enrolledUserIds: string[] = [];
       if (courseIds.length > 0) {
-        const { data: enrollments } = await supabase.from("enrollments").select("user_id, course_id").in("course_id", courseIds);
-        enrolledUserIds = [...new Set((enrollments || []).map(e => e.user_id))];
+        const { data: enrData } = await supabase.from("enrollments").select("user_id, course_id").in("course_id", courseIds);
+        enrollments = enrData || [];
+        enrolledUserIds = [...new Set(enrollments.map(e => e.user_id))];
       }
 
       // Path B: level-based students (students whose level matches teacher's subjects)
@@ -88,7 +91,7 @@ const TeacherStudents = () => {
       const privateIds = (privateStudents || []).map(p => p.user_id);
       
       const allUserIds = [...new Set([...enrolledUserIds, ...levelUserIds, ...privateIds])];
-      if (allUserIds.length === 0) { setLoading(false); return; }
+      if (allUserIds.length === 0) { return; }
 
       const { data: profiles } = await supabase.from("profiles").select("*").in("user_id", allUserIds).eq("role", "student");
 
@@ -131,7 +134,11 @@ const TeacherStudents = () => {
       });
 
       setStudents(enriched);
-      setLoading(false);
+      } catch (err: any) {
+        console.error("[TeacherStudents] fetch error:", err.message);
+      } finally {
+        setLoading(false);
+      }
     };
     fetch();
   }, [user]);
