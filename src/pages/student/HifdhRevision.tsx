@@ -520,6 +520,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
   // ═══ Unified assignment + resume effect ══════════════════════════════
   const didStartRef = useRef(false);
+  // Reset guard when userId changes (e.g. login/logout)
+  useEffect(() => { didStartRef.current = false; }, [userId]);
   useEffect(() => {
     if (!userId || didStartRef.current) return;
 
@@ -654,7 +656,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
           }
         }
       });
-  }, [userId, fetchPage, fetchPrevPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [userId, autoStart, fetchPage, fetchPrevPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ═══ Audio ═════════════════════════════════════════════
   const playAyah = useCallback((ayah: {surah: {number: number}; numberInSurah: number; number: number}) => {
@@ -1248,7 +1250,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
     setExResult(null);
     try {
       const q = exercises[exIdx];
-      const transcript = await transcribeAudio(blob, q?.missingText ?? q?.promptText);
+      const transcript = await transcribeAudio(blob, q?.missingText);
       if (!q) { setExEvaluating(false); return; }
 
       let score = 0;
