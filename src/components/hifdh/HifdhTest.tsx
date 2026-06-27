@@ -412,9 +412,12 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
     return () => clearTimeout(timerRef.current);
   }, [timerOn, timeLeft]);
 
+  const doFinishRef = useRef<() => void>(() => {});
+  useEffect(() => { doFinishRef.current = doFinish; }, [doFinish]);
+
   useEffect(() => {
-    if (timerOn && timeLeft === 0 && stage === "active") doFinish();
-  });
+    if (timerOn && timeLeft === 0 && stage === "active") doFinishRef.current();
+  }, [timerOn, timeLeft, stage]);
 
   // ── Audio playback ─────────────────────────────────────────────────
   const stopAudio = () => {
@@ -587,7 +590,7 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
       }).then(() => { onSessionSaved?.(); }).catch(() => {});
     });
     setStage("results");
-  }, [surahNum, timeLeft, testSessionId]);
+  }, [surahNum, timeLeft, testSessionId, onSessionSaved]);
 
   const confirmAnswer = () => {
     if (selected === null) return;
