@@ -15,10 +15,11 @@ import { SURAHS, audioUrl, DEFAULT_RECITER } from "./surahData";
 import { supabase } from "@/integrations/supabase/client";
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
+import { H_G, H_GM, H_GOLD, H_LIGHT, H_BORDER } from "./hifdhTokens";
 
 // ── Brand tokens ──────────────────────────────────────────────────────
-const G = "#1a3d24", GM = "#276749", GOLD = "#b7791f";
-const LIGHT = "#f0fff4", BORDER = "#d4e8d4";
+const G = H_G, GM = H_GM, GOLD = H_GOLD;
+const LIGHT = H_LIGHT, BORDER = H_BORDER;
 
 // ── Types ─────────────────────────────────────────────────────────────
 interface Ayah { numberInSurah: number; text: string; }
