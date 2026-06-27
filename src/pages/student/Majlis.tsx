@@ -5,7 +5,7 @@
     seen_by guard, scroll FAB positioning, desktop layout.
     UI: Full WhatsApp-grade redesign.
 */
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -154,45 +154,6 @@ const DateSep = ({ date }:{ date:string }) => {
 const WAVE_H = [4,8,14,10,18,12,6,16,9,13,7,15,11,5,17,8,12,6,14,10,7,16,9,13,5,18,11,8];
 
 // ── AudioMsg ─────────────────────────────────────────────────────
-// ── VideoMsg ─────────────────────────────────────────────────────────────────
-const VideoMsg = ({ path }:{ path?:string|null }) => {
-  const [url,setUrl]   = useState<string|null>(null);
-  const [err,setErr]   = useState(false);
-  const [full,setFull] = useState(false);
-  useEffect(()=>{
-    if(!path){setErr(true);return;}
-    if(path.startsWith("http")||path.startsWith("blob:")){setUrl(path);return;}
-    resolveMedia(path).then(u=>u?setUrl(u):setErr(true));
-  },[path]);
-  if(err||!url) return <div style={{width:200,height:120,borderRadius:10,background:"#222",display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#999",fontSize:11}}>Video unavailable</span></div>;
-  return (
-    <>
-      <video src={url} style={{maxWidth:240,maxHeight:200,borderRadius:10,cursor:"pointer",display:"block"}} preload="metadata" onClick={()=>setFull(true)}/>
-      {full&&(
-        <div onClick={()=>setFull(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.96)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <video src={url} controls autoPlay style={{maxWidth:"100vw",maxHeight:"90vh"}}/>
-          <button onClick={()=>setFull(false)} style={{position:"absolute",top:16,right:16,background:"rgba(255,255,255,.2)",border:"none",borderRadius:"50%",width:40,height:40,color:"#fff",fontSize:22,cursor:"pointer"}}>✕</button>
-        </div>
-      )}
-    </>
-  );
-};
-
-// ── LinkPreview ───────────────────────────────────────────────────────────────
-const URL_RE = /(https?:\/\/[^\s<>"]+)/g;
-const extractUrl = (text:string):string|null => { const m=text.match(URL_RE); return m?m[0]:null; };
-const LinkPreview = ({ url }:{ url:string }) => {
-  const host = (() => { try{ return new URL(url).hostname.replace(/^www\./, ""); }catch{return url.slice(0,40);} })();
-  return (
-    <a href={url} target="_blank" rel="noopener noreferrer" style={{display:"block",border:"1px solid rgba(0,0,0,.1)",borderRadius:8,overflow:"hidden",marginBottom:4,textDecoration:"none",background:"rgba(0,0,0,.03)"}}>
-      <div style={{padding:"8px 10px"}}>
-        <div style={{fontSize:12,fontWeight:700,color:"#075E54",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{host}</div>
-        <div style={{fontSize:11,color:"#888",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:2}}>{url.slice(0,60)}</div>
-      </div>
-    </a>
-  );
-};
-
 const AudioMsg = ({ path, text }:{ path?:string|null; text?:string|null }) => {
   const [url,setUrl]           = useState<string|null>(null);
   const [err,setErr]           = useState(false);
@@ -405,26 +366,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const [sidebarSearch,setSidebarSearch]             = useState("");
   const [searchTab,setSearchTab]                     = useState<"messages"|"contacts"|"groups">("contacts");
   const [showMessageMenu,setShowMessageMenu]         = useState<string|null>(null);
-  const [showMsgTimestamp,setShowMsgTimestamp]       = useState<string|null>(null);
-  const [showEmojiKeyboard,setShowEmojiKeyboard]     = useState(false);
-  const [showPollSheet,setShowPollSheet]             = useState(false);
-  const [pollQuestion,setPollQuestion]               = useState("");
-  const [pollOptions,setPollOptions]                 = useState(["",""]);
-  const [pollMulti,setPollMulti]                     = useState(false);
-  const [emojiCat,setEmojiCat]                       = useState(0);
-  const swipeStartX = React.useRef<number>(0);
-  const swipeEl    = React.useRef<string|null>(null);
-  const handleSwipeStart=(e:React.TouchEvent,msg:ChatMessage)=>{
-    swipeStartX.current=e.touches[0].clientX; swipeEl.current=msg.id;
-  };
-  const handleSwipeEnd=(e:React.TouchEvent,msg:ChatMessage)=>{
-    const diff=e.changedTouches[0].clientX - swipeStartX.current;
-    if(diff>60&&swipeEl.current===msg.id){ // swipe right ≥60px → reply
-      setReplyTo(msg); inputRef.current?.focus();
-      if(navigator.vibrate) navigator.vibrate(30);
-    }
-    swipeEl.current=null;
-  };
   const [showDeleteSheet,setShowDeleteSheet]         = useState<string|null>(null);
   const [showPinnedBar,setShowPinnedBar]             = useState(true);
   const [showEmojiBar,setShowEmojiBar]               = useState(false);
@@ -476,14 +417,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     return { background:WP.bg, backgroundImage:WP.pattern||undefined } as React.CSSProperties;
   };
 
-  const getCN = (ch:ChatChannel)=>{
-    // For DMs show the other person's real name, not the channel name
-    if((ch as any).type==="dm"){
-      const otherUid = (ch as any).dm_other_user_id || Object.keys(profiles).find(uid=>uid!==user?.id&&(ch as any).member_ids?.includes(uid));
-      if(otherUid&&profiles[otherUid]) return profiles[otherUid].full_name||profiles[otherUid].full_name_ar||ch.name||"";
-    }
-    return language==="ar"?((ch as any).name_ar||ch.name||""):(ch.name||"");
-  };
+  const getCN = (ch:ChatChannel)=>language==="ar"?((ch as any).name_ar||ch.name||""):(ch.name||"");
   const ft  = (d:string)=>new Date(d).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
   const fr  = (s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
   const canSend = ()=>{ if(!activeChannel||(channelLocked&&!canModerate)) return false; if(activeChannel.type==="announcement") return canModerate; return true; };
@@ -614,13 +548,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       setMemberCounts(counts);
       setChannelMemberNames(memberNames);
 
-      // Load muted channels from DB (merges with localStorage)
-      const {data:mutedRows}=await supabase.from("chat_members" as any).select("channel_id,is_muted").eq("user_id",user.id).eq("is_muted",true);
-      if(mutedRows&&mutedRows.length>0){
-        const dbMuted=new Set((mutedRows as any[]).map((r:any)=>r.channel_id));
-        setMutedChannels(prev=>{const merged=new Set([...prev,...dbMuted]);localStorage.setItem("majlis-muted",JSON.stringify([...merged]));return merged;});
-      }
-
       const unread:Record<string,number>={};
       await Promise.all(all.map(async ch=>{
         const {data:mem}=await supabase.from("chat_members" as any).select("last_read_at").eq("channel_id",ch.id).eq("user_id",user.id).maybeSingle();
@@ -686,8 +613,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       }
       if(cancelled) return;
       setPinnedMessages(msgs.filter(m=>(m as any).is_pinned));
-      // Load starred from DB
-      setStarredMessages(new Set(msgs.filter(m=>(m as any).is_starred).map(m=>m.id)));
       setLoadingMessages(false);
     };
     load();
@@ -923,8 +848,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     if(activeChannel?.type==="announcement"&&!canModerate){toast({title:"Only admins can post here",variant:"destructive"});return;}
 
     if(editingMsg){
-      await supabase.from("chat_messages").update({text:input.trim(),edited_at:new Date().toISOString(),edited_by:user.id} as any).eq("id",editingMsg.id);
-      setMessages(prev=>prev.map(m=>m.id===editingMsg.id?{...m,text:input.trim(),edited_at:new Date().toISOString()} as any:m));
+      await supabase.from("chat_messages").update({text:input.trim(),is_edited:true} as any).eq("id",editingMsg.id);
+      setMessages(prev=>prev.map(m=>m.id===editingMsg.id?{...m,text:input.trim(),is_edited:true} as any:m));
       setEditingMsg(null); setInput(""); return;
     }
 
@@ -1109,13 +1034,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     setPinnedMessages(prev=>ip?[...prev,m]:prev.filter(x=>x.id!==m.id));
     setShowMessageMenu(null);toast({title:ip?"Pinned":"Unpinned"});
   };
-  const starMsg  =async(id:string)=>{ 
-    const isNowStarred=!starredMessages.has(id);
-    setStarredMessages(prev=>{const n=new Set(prev);isNowStarred?n.add(id):n.delete(id);return n;});
-    await supabase.from("chat_messages").update({is_starred:isNowStarred} as any).eq("id",id);
-    setMessages(prev=>prev.map(m=>m.id===id?{...m,is_starred:isNowStarred} as any:m));
-    setShowMessageMenu(null);
-  };
+  const starMsg  =(id:string)=>{ setStarredMessages(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);return n;}); setShowMessageMenu(null); };
   const copyMsg  =(text:string)=>{ navigator.clipboard?.writeText(text); setShowMessageMenu(null); toast({title:"Copied!"}); };
   const jumpTo   =(id:string)=>{ document.getElementById(`msg-${id}`)?.scrollIntoView({behavior:"smooth",block:"center"}); };
 
@@ -1125,15 +1044,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([lines.join("\n")],{type:"text/plain"}));a.download=`${getCN(activeChannel)}.txt`;a.click();
     toast({title:"Exported!"});
   };
-  const sendPoll=async()=>{
-    if(!user||!activeChannelId||!pollQuestion.trim()) return;
-    const validOpts=pollOptions.filter(o=>o.trim());
-    if(validOpts.length<2){toast({title:"Add at least 2 options",variant:"destructive"});return;}
-    const pollData={question:pollQuestion.trim(),options:validOpts.map(o=>({text:o,votes:[]})),multi:pollMulti,created_by:user.id,created_at:new Date().toISOString()};
-    await sendMessage("poll",undefined,JSON.stringify(pollData));
-    setPollQuestion("");setPollOptions(["",""]);setPollMulti(false);setShowPollSheet(false);
-  };
-
   const clearChat=async()=>{
     if(!activeChannelId||!canModerate||!confirm("Clear all messages?")) return;
     await supabase.from("chat_messages").delete().eq("channel_id",activeChannelId);
@@ -1154,13 +1064,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     if(activeChannelId===chId){setActiveChannelId(null);setMobileShowChat(false);}
     toast({title:"Left group"});
   };
-  const toggleMuteCh =async(id:string)=>{ 
-    const willMute=!mutedChannels.has(id);
-    setMutedChannels(prev=>{const n=new Set(prev);willMute?n.add(id):n.delete(id);localStorage.setItem("majlis-muted",JSON.stringify([...n]));return n;});
-    // Sync to DB so other devices also mute
-    await supabase.from("chat_members" as any).update({is_muted:willMute}).eq("channel_id",id).eq("user_id",user?.id||"");
-    setChannelMenu(null);setSwipedChannel(null);
-  };
+  const toggleMuteCh =(id:string)=>{ setMutedChannels(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);localStorage.setItem("majlis-muted",JSON.stringify([...n]));return n;}); setChannelMenu(null);setSwipedChannel(null); };
   const togglePinCh  =(id:string)=>{ setPinnedChannels(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);localStorage.setItem("majlis-pinned-ch",JSON.stringify([...n]));return n;}); setChannelMenu(null); };
   const toggleArchive=(id:string)=>{ setArchivedChannels(prev=>{const n=new Set(prev);n.has(id)?n.delete(id):n.add(id);localStorage.setItem("majlis-archived",JSON.stringify([...n]));return n;}); setChannelMenu(null);setSwipedChannel(null); };
 
@@ -1373,16 +1277,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           onMouseDown={()=>!selectMode&&startLongPress(m.id)}
           onMouseUp={cancelLongPress}
           onMouseLeave={cancelLongPress}
-          onClick={()=>{if(!selectMode) setShowMsgTimestamp(p=>p===m.id?null:m.id);}}
-          onTouchStart={e=>{if(!selectMode){swipeStartX.current=e.touches[0].clientX;swipeEl.current=m.id;startLongPress(m.id);}}}
-          onTouchEnd={e=>{
-            cancelLongPress();
-            if(!selectMode&&swipeEl.current===m.id){
-              const diff=e.changedTouches[0].clientX-swipeStartX.current;
-              if(diff>60){setReplyTo(m);inputRef.current?.focus();if(navigator.vibrate)navigator.vibrate(30);}
-            }
-            swipeEl.current=null;
-          }}
+          onTouchStart={()=>!selectMode&&startLongPress(m.id)}
+          onTouchEnd={cancelLongPress}
         >
           <div className={tailClass} style={{background:bubbleBg,borderRadius:isMe?"10px 2px 10px 10px":"2px 10px 10px 10px",padding:"6px 10px 4px 10px",boxShadow:"0 1px 2px rgba(0,0,0,.1)",position:"relative"}}>
             {/* Sender name */}
@@ -1403,53 +1299,10 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             {/* Content */}
             {m.content_type==="image"&&<ImageMsg path={m.media_path} text={m.text}/>}
             {m.content_type==="audio"&&<AudioMsg path={m.media_path} text={m.text}/>}
-            {m.content_type==="video"&&<VideoMsg path={m.media_path}/>}
-            {m.content_type==="poll"&&(()=>{
-              let poll:any={};
-              try{poll=JSON.parse(m.text||"{}");}catch{}
-              const totalVotes=(poll.options||[]).reduce((a:number,o:any)=>a+(o.votes||[]).length,0);
-              const hasVoted=(poll.options||[]).some((o:any)=>(o.votes||[]).includes(user?.id||""));
-              return(
-                <div style={{minWidth:200,maxWidth:280}}>
-                  <div style={{fontSize:14,fontWeight:700,color:textMain,marginBottom:8}}>{poll.question||"Poll"}</div>
-                  {(poll.options||[]).map((opt:any,oi:number)=>{
-                    const pct=totalVotes>0?Math.round(((opt.votes||[]).length/totalVotes)*100):0;
-                    const voted=(opt.votes||[]).includes(user?.id||"");
-                    return(
-                      <div key={oi} onClick={async()=>{
-                        if(!user||hasVoted) return;
-                        // Record vote
-                        const updated={...poll,options:poll.options.map((o:any,i:number)=>i===oi?{...o,votes:[...(o.votes||[]),user.id]}:o)};
-                        await supabase.from("chat_messages").update({text:JSON.stringify(updated)} as any).eq("id",m.id);
-                        setMessages(prev=>prev.map(msg=>msg.id===m.id?{...msg,text:JSON.stringify(updated)}:msg));
-                      }} style={{margin:"4px 0",cursor:hasVoted?"default":"pointer",position:"relative",borderRadius:8,overflow:"hidden",border:`2px solid ${voted?"#25D366":"rgba(0,0,0,.15)"}`,background:voted?"rgba(37,211,102,.1)":"transparent"}}>
-                        <div style={{position:"absolute",left:0,top:0,bottom:0,width:`${pct}%`,background:"rgba(37,211,102,.15)",transition:"width .4s"}}/>
-                        <div style={{position:"relative",display:"flex",justifyContent:"space-between",padding:"8px 10px",fontSize:13}}>
-                          <span style={{color:textMain,fontWeight:voted?700:400}}>{opt.text}</span>
-                          {hasVoted&&<span style={{color:textSub,fontSize:12}}>{pct}% · {(opt.votes||[]).length}</span>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div style={{fontSize:11,color:textSub,marginTop:6}}>{totalVotes} vote{totalVotes!==1?"s":""}{poll.multi?" · Multiple choice":""}</div>
-                </div>
-              );
-            })()}
             {m.content_type==="file"&&m.media_path&&<FileMsg path={m.media_path} text={m.text}/>}
-            {(m.content_type==="text"||!m.content_type)&&m.text&&(
-              <>
-                <FormattedText text={m.text} sz={msgFontSz}/>
-                {extractUrl(m.text)&&<LinkPreview url={extractUrl(m.text)!}/>}
-              </>
-            )}
+            {(m.content_type==="text"||!m.content_type)&&m.text&&<FormattedText text={m.text} sz={msgFontSz}/>}
             {(m as any).is_deleted&&<span style={{fontSize:12,color:"#9e9e9e",fontStyle:"italic"}}>🚫 This message was deleted</span>}
-            {(m as any).edited_at&&<span style={{fontSize:10,color:"#9e9e9e",marginLeft:4}}>edited</span>}
-            {showMsgTimestamp===m.id&&(
-              <div style={{fontSize:11,color:"#8696a0",textAlign:isMe?"right":"left",padding:"2px 4px",marginTop:2}}>
-                {new Date(m.created_at).toLocaleString([],{weekday:"short",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
-                {(m as any).expires_at&&<span style={{color:"#e74c3c",marginLeft:8}}>⏱ Disappears {new Date((m as any).expires_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>}
-              </div>
-            )}
+            {(m as any).is_edited&&<span style={{fontSize:10,color:"#9e9e9e",marginLeft:4}}>edited</span>}
 
             {/* Time + ticks */}
             <div style={{display:"flex",alignItems:"center",gap:3,justifyContent:"flex-end",marginTop:2}}>
@@ -1463,16 +1316,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           {Object.keys(rxns).length>0&&(
             <div style={{display:"flex",gap:4,marginTop:3,flexWrap:"wrap",justifyContent:isMe?"flex-end":"flex-start"}}>
               {Object.entries(rxns).map(([emoji,uids])=>(
-                <button key={emoji} onClick={async()=>{
-                  const alreadyR=uids.includes(user?.id||"");
-                  if(alreadyR){
-                    await supabase.from("message_reactions" as any).delete().eq("message_id",m.id).eq("user_id",user!.id).eq("emoji",emoji);
-                  } else {
-                    await supabase.from("message_reactions" as any).delete().eq("message_id",m.id).eq("user_id",user!.id);
-                    await supabase.from("message_reactions" as any).insert({message_id:m.id,user_id:user!.id,emoji});
-                  }
-                  reloadReactions();
-                }} style={{background:uids.includes(user?.id||"")?(isDark?"#1a4a3a":"#d9f7be"):(isDark?"#2a3942":"#f0f2f5"),border:`1px solid ${uids.includes(user?.id||"")?"#25D366":"rgba(0,0,0,.1)"}`,borderRadius:12,padding:"1px 7px",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:3}}>
+                <button key={emoji} onClick={()=>supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji},{onConflict:"message_id,user_id"}).then(reloadReactions)} style={{background:isDark?"#2a3942":"#f0f2f5",border:`1px solid ${uids.includes(user?.id||"")?"#25D366":"rgba(0,0,0,.1)"}`,borderRadius:12,padding:"1px 7px",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:3}}>
                   {emoji} <span style={{fontSize:10,color:textSub,fontWeight:700}}>{uids.length}</span>
                 </button>
               ))}
@@ -1487,13 +1331,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               <div style={{display:"flex",justifyContent:"space-around",padding:"14px 16px",borderBottom:`1px solid ${divider}`}}>
                 {QUICK_EMOJIS.map(e=>(
                   <button key={e} onClick={async()=>{
-                    const already2=(reactions[m.id]?.[e]||[]).includes(user!.id);
-                    if(already2){
-                      await supabase.from("message_reactions" as any).delete().eq("message_id",m.id).eq("user_id",user!.id).eq("emoji",e);
-                    } else {
-                      await supabase.from("message_reactions" as any).delete().eq("message_id",m.id).eq("user_id",user!.id);
-                      await supabase.from("message_reactions" as any).insert({message_id:m.id,user_id:user!.id,emoji:e});
-                    }
+                    await supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji:e},{onConflict:"message_id,user_id"});
                     reloadReactions();setShowMessageMenu(null);
                   }} style={{background:"none",border:"none",cursor:"pointer",fontSize:24,padding:"2px 3px",borderRadius:8,transition:"transform .1s"}}>{e}</button>
                 ))}
@@ -1504,19 +1342,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 {icon:<Forward size={16}/>,label:"Forward",fn:()=>{setForwardMsg(m);setShowForwardSheet(true);setShowMessageMenu(null);}},
                 {icon:<Star size={16}/>,label:isStarred?"Unstar":"Star",fn:()=>starMsg(m.id)},
                 {icon:<Pin size={16}/>,label:(m as any).is_pinned?"Unpin":"Pin",fn:()=>pinMessage(m)},
-                ...(isMe&&!(m as any).edited_at&&Date.now()-new Date(m.created_at).getTime()<EDIT_WINDOW&&m.content_type==="text"?[{icon:<Edit2 size={16}/>,label:"Edit",fn:()=>{setEditingMsg(m);setInput(m.text||"");setShowMessageMenu(null);inputRef.current?.focus();}}]:[]),
+                ...(isMe&&Date.now()-new Date(m.created_at).getTime()<EDIT_WINDOW&&m.content_type==="text"?[{icon:<Edit2 size={16}/>,label:"Edit",fn:()=>{setEditingMsg(m);setInput(m.text||"");setShowMessageMenu(null);inputRef.current?.focus();}}]:[]),
                 {icon:<CheckSquare size={16}/>,label:"Select",fn:()=>{setSelectMode(true);setSelectedIds(new Set([m.id]));setShowMessageMenu(null);}},
                 {icon:<Trash2 size={16}/>,label:"Delete",fn:()=>{setShowMessageMenu(null);setShowDeleteSheet(m.id);}},
-                ...(isMe&&((m as any).seen_by||[]).filter((id:string)=>id!==user?.id).length>0?[{
-                  icon:<Eye size={16}/>,
-                  label:`Read by ${((m as any).seen_by||[]).filter((id:string)=>id!==user?.id).length}`,
-                  fn:()=>{
-                    const readers=((m as any).seen_by||[]).filter((id:string)=>id!==user?.id);
-                    const names=readers.map((id:string)=>profiles[id]?.full_name||id).join(", ");
-                    toast({title:"Read by",description:names});
-                    setShowMessageMenu(null);
-                  }
-                }]:[]),
               ].map((item,i)=>(
                 <button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:textMain,fontSize:14,borderBottom:`1px solid ${divider}`}}>
                   <span style={{color:WA_GREEN}}>{item.icon}</span>{item.label}
@@ -1853,18 +1681,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                   {typingUsers.length>0
                     ?<span style={{fontStyle:"italic"}}>{typingUsers[0]} is typing…</span>
                     :(()=>{
-                        if((activeChannel as any).type==="dm"){
-                          const otherUid=(activeChannel as any).dm_other_user_id||Object.keys(profiles).find(uid=>uid!==user?.id);
-                          if(otherUid&&onlineUsers.has(otherUid)) return "Online";
-                          if(otherUid&&(profiles[otherUid] as any)?.last_seen_at){
-                            const d=new Date((profiles[otherUid] as any).last_seen_at);
-                            const diff=Date.now()-d.getTime();
-                            if(diff<60000) return "Last seen just now";
-                            if(diff<3600000) return `Last seen ${Math.floor(diff/60000)}m ago`;
-                            return `Last seen ${d.toLocaleDateString()}`;
-                          }
-                          return "Tap for info";
-                        }
                         const total=memberCounts[activeChannel.id]||0;
                         const online=Object.values(profiles).filter(p=>onlineUsers.has(p.user_id)).length;
                         return online>0?`${total} members, ${online} online`:`${total} members`;
@@ -1872,11 +1688,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                   }
                 </div>
               </div>
-              <div style={{display:"flex",gap:2,alignItems:"center"}}>
-                {/* Voice call */}
-                <button title="Voice call" onClick={()=>toast({title:"Voice call",description:"Coming soon — use Live Classes for calls"})} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,display:"flex"}}><Phone size={18}/></button>
-                {/* Video call */}
-                <button title="Video call" onClick={()=>toast({title:"Video call",description:"Coming soon — use Live Classes for video calls"})} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6,display:"flex"}}><Video size={18}/></button>
+              <div style={{display:"flex",gap:2}}>
                 <button onClick={()=>{setShowChatSearch(p=>!p);setChatSearchQuery("");}} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><Search size={18}/></button>
                 <button onClick={()=>setShowHeaderMenu(p=>!p)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><MoreVertical size={18}/></button>
               </div>
@@ -1957,15 +1769,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                     if(!oldest||!activeChannelId) return;
                     const {data}=await supabase.from("chat_messages").select("*").eq("channel_id",activeChannelId).order("created_at",{ascending:false}).lt("created_at",oldest.created_at).limit(40);
                     const older=((data||[]) as unknown as ChatMessage[]).reverse();
-                    if(older.length>0){
-                      const el=scrollRef.current;
-                      const prevH=el?el.scrollHeight:0;
-                      setMessages(prev=>[...older,...prev]);
-                      // Restore scroll position after prepend
-                      requestAnimationFrame(()=>{
-                        if(el) el.scrollTop=el.scrollHeight-prevH;
-                      });
-                    }
+                    if(older.length>0) setMessages(prev=>[...older,...prev]);
                   }} style={{background:"rgba(255,255,255,.9)",border:"none",borderRadius:20,padding:"6px 16px",fontSize:12,color:"#555",cursor:"pointer",boxShadow:"0 1px 4px rgba(0,0,0,.1)",fontWeight:600}}>
                     Load older messages
                   </button>
@@ -2083,34 +1887,10 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 </div>
               )}
 
-              {/* Emoji toggle — opens full keyboard */}
-              <button onClick={()=>{setShowEmojiKeyboard(p=>!p);setShowEmojiBar(false);}} style={{background:"none",border:"none",cursor:"pointer",padding:6,color:showEmojiKeyboard?WA_GREEN:textSub,display:"flex",marginBottom:4,transition:"color .15s"}}>
+              {/* Emoji toggle */}
+              <button onClick={()=>setShowEmojiBar(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",padding:6,color:showEmojiBar?WA_GREEN:textSub,display:"flex",marginBottom:4,transition:"color .15s"}}>
                 <Smile size={22}/>
               </button>
-
-              {/* ── Full emoji keyboard ─────────────────────────────────── */}
-              {showEmojiKeyboard&&(
-                <div style={{position:"absolute",bottom:"100%",left:0,right:0,background:isDark?"#1e2d35":"#fff",boxShadow:"0 -4px 20px rgba(0,0,0,.15)",borderRadius:"16px 16px 0 0",zIndex:200,display:"flex",flexDirection:"column",maxHeight:300}}>
-                  {/* Category tabs */}
-                  <div style={{display:"flex",overflowX:"auto",borderBottom:"1px solid rgba(0,0,0,.08)",padding:"4px 8px",gap:4,scrollbarWidth:"none"}}>
-                    {EMOJI_CATS.map((cat,i)=>(
-                      <button key={i} onClick={()=>setEmojiCat(i)} style={{fontSize:20,background:emojiCat===i?(isDark?"#2a3942":"#e8f5e9"):"none",border:"none",borderRadius:8,padding:"4px 8px",cursor:"pointer",flexShrink:0,opacity:emojiCat===i?1:0.6,transition:"all .15s"}}>
-                        {cat.label}
-                      </button>
-                    ))}
-                  </div>
-                  {/* Emoji grid */}
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:2,padding:8,overflowY:"auto",flex:1}}>
-                    {EMOJI_CATS[emojiCat].emojis.map(em=>(
-                      <button key={em} onClick={()=>{setInput(p=>p+em);inputRef.current?.focus();}} style={{fontSize:22,background:"none",border:"none",cursor:"pointer",padding:4,borderRadius:6,lineHeight:1.2,transition:"background .1s"}}
-                        onMouseEnter={e=>(e.currentTarget.style.background=isDark?"#2a3942":"#f0f0f0")}
-                        onMouseLeave={e=>(e.currentTarget.style.background="none")}>
-                        {em}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Text input bubble */}
               <div style={{flex:1,background:isDark?"#2a3942":"#fff",borderRadius:22,display:"flex",alignItems:"flex-end",padding:"6px 10px",gap:4,minHeight:44,boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
@@ -2162,10 +1942,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
             {/* FIXED hidden file inputs — separated gallery/camera/file/audio */}
             {/* Gallery: no capture — shows gallery on mobile */}
-            <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>{
-              const f=e.target.files?.[0]; if(!f) return;
-              handleFileUpload(f, f.type.startsWith("video/")?"video":"image");
-            }}/>
+            <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
             {/* Camera: capture="camera" — opens camera directly */}
             <input ref={cameraInputRef} id="majlis-camera-input" type="file" accept="image/*" capture="environment" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
             {/* Document: any file type */}
@@ -2191,8 +1968,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 {icon:<Image size={24} color="#fff"/>,    bg:"#9b59b6", label:"Gallery",  action:()=>{setShowAttachSheet(false);setTimeout(()=>galleryInputRef.current?.click(),100);}},
                 {icon:<File size={24} color="#fff"/>,     bg:"#3498db", label:"Document", action:()=>{setShowAttachSheet(false);setTimeout(()=>fileInputRef.current?.click(),100);}},
                 {icon:<Music size={24} color="#fff"/>,    bg:"#e67e22", label:"Audio",    action:()=>{setShowAttachSheet(false);setTimeout(()=>audioFileRef.current?.click(),100);}},
-                {icon:<MapPin size={24} color="#fff"/>,  bg:"#e74c3c", label:"Location",  action:()=>{setShowAttachSheet(false);if(navigator.geolocation){navigator.geolocation.getCurrentPosition(pos=>{const url=`https://maps.google.com/?q=${pos.coords.latitude},${pos.coords.longitude}`;setInput(url);inputRef.current?.focus();},()=>toast({title:"Location unavailable",variant:"destructive"}));}else toast({title:"Location not supported",variant:"destructive"});}},
-                {icon:<BarChart2 size={24} color="#fff"/>, bg:"#8e44ad", label:"Poll",       action:()=>{setShowAttachSheet(false);setShowPollSheet(true);}},
               ].map(item=>(
                 <div key={item.label} className="attach-btn-item" onClick={item.action}>
                   <div className="attach-icon-circle" style={{background:item.bg,boxShadow:`0 4px 12px ${item.bg}55`}}>{item.icon}</div>
@@ -2403,9 +2178,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                       }
                     }
                     // Create new DM channel
-                    const otherName=selectedMember?.full_name||"Student";
                     const {data:newCh,error}=await supabase.from("chat_channels" as any)
-                      .insert({name:`${otherName}`,type:"dm",created_by:user.id,is_private:true}).select().single();
+                      .insert({name:`DM`,type:"dm",created_by:user.id,is_private:true}).select().single();
                     if(!error&&newCh){
                       await supabase.from("chat_members" as any).insert([
                         {channel_id:(newCh as any).id,user_id:user.id,role:"admin"},
@@ -2444,61 +2218,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           </div>
         </div>
       )}
-
-      {/* ── Poll creation sheet ───────────────────────────────────────────────── */}
-      {showPollSheet&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:500,display:"flex",alignItems:"flex-end"}} onClick={e=>{if(e.target===e.currentTarget)setShowPollSheet(false);}}>
-          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#1e2d35":"#fff",borderRadius:"20px 20px 0 0",overflow:"hidden",maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:"1px solid rgba(0,0,0,.08)"}}>
-              <span style={{fontWeight:700,fontSize:17,color:textMain}}>New Poll</span>
-              <button onClick={()=>setShowPollSheet(false)} style={{background:"none",border:"none",cursor:"pointer",color:textSub,fontSize:22}}>✕</button>
-            </div>
-            <div style={{padding:20,overflowY:"auto",flex:1}}>
-              <div style={{marginBottom:16}}>
-                <div style={{fontSize:12,color:WA_GREEN,fontWeight:700,marginBottom:6}}>QUESTION</div>
-                <input value={pollQuestion} onChange={e=>setPollQuestion(e.target.value)} placeholder="Ask a question…" style={{width:"100%",border:"none",borderBottom:"2px solid "+WA_GREEN,outline:"none",fontSize:16,color:textMain,background:"transparent",paddingBottom:6,boxSizing:"border-box"}}/>
-              </div>
-              <div style={{marginBottom:12}}>
-                <div style={{fontSize:12,color:WA_GREEN,fontWeight:700,marginBottom:8}}>OPTIONS</div>
-                {pollOptions.map((opt,i)=>(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                    <input value={opt} onChange={e=>{const n=[...pollOptions];n[i]=e.target.value;setPollOptions(n);}} placeholder={`Option ${i+1}`} style={{flex:1,border:"none",borderBottom:"1px solid rgba(0,0,0,.15)",outline:"none",fontSize:15,color:textMain,background:"transparent",paddingBottom:4}}/>
-                    {pollOptions.length>2&&<button onClick={()=>setPollOptions(p=>p.filter((_,j)=>j!==i))} style={{background:"none",border:"none",cursor:"pointer",color:"#e74c3c",fontSize:18}}>✕</button>}
-                  </div>
-                ))}
-                {pollOptions.length<10&&(
-                  <button onClick={()=>setPollOptions(p=>[...p,""])} style={{color:WA_GREEN,background:"none",border:"none",cursor:"pointer",fontSize:14,fontWeight:600,padding:"4px 0"}}>+ Add option</button>
-                )}
-              </div>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"12px 0",borderTop:"1px solid rgba(0,0,0,.08)"}}>
-                <span style={{fontSize:14,color:textMain}}>Allow multiple answers</span>
-                <div onClick={()=>setPollMulti(p=>!p)} style={{width:44,height:24,borderRadius:12,background:pollMulti?WA_GREEN:"#ccc",cursor:"pointer",position:"relative",transition:"background .2s"}}>
-                  <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",position:"absolute",top:2,left:pollMulti?22:2,transition:"left .2s"}}/>
-                </div>
-              </div>
-            </div>
-            <div style={{padding:"12px 20px",borderTop:"1px solid rgba(0,0,0,.08)"}}>
-              <button onClick={sendPoll} disabled={!pollQuestion.trim()||pollOptions.filter(o=>o.trim()).length<2} style={{width:"100%",background:WA_GREEN,color:"#fff",border:"none",borderRadius:12,padding:"14px",fontSize:16,fontWeight:700,cursor:"pointer",opacity:(!pollQuestion.trim()||pollOptions.filter(o=>o.trim()).length<2)?0.5:1}}>
-                Send Poll
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
-
-// ── Emoji keyboard categories ────────────────────────────────────────────────
-const EMOJI_CATS = [
-  {label:"😀",name:"Smileys",emojis:["😀","😃","😄","😁","😆","😅","🤣","😂","🙂","🙃","😉","😊","😇","🥰","😍","🤩","😘","😗","😚","😙","🥲","😋","😛","😜","🤪","😝","🤑","🤗","🤭","🤫","🤔","🤐","🤨","😐","😑","😶","😏","😒","🙄","😬","🤥","😌","😔","😪","🤤","😴","😷","🤒","🤕","🤢","🤮","🤧","🥵","🥶","🥴","😵","🤯","🤠","🥳","🥸","😎","🤓","🧐","😕","😟","🙁","😮","😯","😲","😳","🥺","😦","😧","😨","😰","😥","😢","😭","😱","😖","😣","😞","😓","😩","😫","🥱","😤","😡","😠","🤬","😈","👿"]},
-  {label:"👋",name:"People",emojis:["👋","🤚","🖐","✋","🖖","👌","🤌","🤏","✌","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝","👍","👎","✊","👊","🤛","🤜","👏","🙌","👐","🤲","🤝","🙏","💅","🤳","💪","🦾","🦵","🦶","👂","🦻","👃","🧠","🦷","🦴","👀","👅","👄","💋","👶","🧒","👦","👧","🧑","👱","👨","🧔","👩","🧓","👴","👵","👮","🕵","💂","🥷","👷","🤴","👸","👳","👲","🧕","🤵","👰","🤰","🤱","👼","🎅","🤶","🦸","🦹","🧙","🧚","🧛","🧜","🧝","🧞","🧟","💆","💇","🚶","🧍","🧎","🏃","💃","🕺","🧖","🧗","🏇","🏋","🤼","🤸","⛹","🤺","🏊","🚴","🧘"]},
-  {label:"🐶",name:"Animals",emojis:["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐔","🐧","🐦","🐤","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝","🐛","🦋","🐌","🐞","🐜","🦟","🦗","🕷","🦂","🐢","🦎","🐍","🦕","🦖","🦈","🐬","🐳","🐋","🦭","🐅","🐆","🦓","🦍","🐘","🦛","🦏","🐪","🦒","🦘","🐃","🐂","🐄","🐎","🐖","🐏","🐑","🦙","🐐","🦌","🐕","🐩","🦮","🐈","🐓","🦃","🦤","🦚","🦜","🦢","🕊","🐇","🦝","🦨","🦡","🦫","🦦","🦥","🐁","🐀","🦔"]},
-  {label:"🍎",name:"Food",emojis:["🍎","🍊","🍋","🍇","🍓","🫐","🍈","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🍆","🥑","🥦","🥬","🥒","🌶","🧄","🧅","🥔","🌽","🥕","🥜","🌰","🍞","🥐","🥖","🫓","🥨","🥯","🧀","🥚","🍳","🧈","🥞","🧇","🥓","🥩","🍗","🍖","🌭","🍔","🍟","🍕","🌮","🌯","🥙","🧆","🍿","🧂","🥫","🍱","🍘","🍙","🍚","🍛","🍜","🍝","🍠","🍣","🍤","🍥","🥮","🍡","🥟","🥠","🥡","🦪","🍦","🍧","🍨","🍩","🍪","🎂","🍰","🧁","🥧","🍫","🍬","🍭","🍮","🍯","☕","🍵","🧃","🥤","🧋","🍶","🍾","🍷","🍸","🍹","🍺","🍻","🥂","🥃","🫗","🧊"]},
-  {label:"⚽",name:"Sports",emojis:["⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🥏","🎱","🏓","🏸","🏒","🥊","🥋","🎽","🛹","🛼","🛷","⛸","🥌","🎿","⛷","🏂","🪂","🏋","🤼","🤸","⛹","🤺","🏇","🧘","🏄","🏊","🚣","🧗","🚴","🏆","🥇","🥈","🥉","🏅","🎖","🏵","🎗","🎫","🎟","🎪","🤹","🎭","🩰","🎨","🎬","🎤","🎧","🎼","🎵","🎶","🎷","🪗","🎸","🎹","🪘","🎺","🎻","🥁","🎮","🕹","🎲","🎯","🎳","🎰","🧩","🪄","🎭","🎨"]},
-  {label:"🚗",name:"Travel",emojis:["🚗","🚕","🚙","🚌","🏎","🚓","🚑","🚒","🚐","🛻","🚚","🚛","🚜","🏍","🛵","🚲","🛴","✈","🛩","🛫","🛬","🪂","💺","🚁","🛸","🚀","🛶","⛵","🚤","🛥","🛳","🚢","🗺","🧭","🏔","⛰","🌋","🗻","🏕","🏖","🏜","🏝","🏟","🏛","🏗","🏘","🏠","🏡","🏢","🏣","🏤","🏥","🏦","🏨","🏩","🏪","🏫","🏬","🏭","🏯","🏰","💒","🗼","🗽","⛪","🕌","🛕","🕍","🕋","⛩","🌅","🌄","🌠","🎇","🎆","🌇","🌆","🏙","🌃","🌌","🌉","🌁","🌏","🌍","🌎","🗾","🧭"]},
-  {label:"💡",name:"Objects",emojis:["⌚","📱","📲","💻","⌨","🖥","🖨","🖱","🕹","💾","💿","📷","📸","📹","🎥","📺","📻","🧭","⏱","⏲","⏰","⌛","⏳","💡","🔦","🕯","💰","💵","💳","💹","✉","📧","📝","📁","📂","📌","📍","📎","✂","🔒","🔓","🔑","🗝","🔨","⚒","🛠","⚔","🔫","🛡","🔧","🔩","⚙","⚖","🧲","🪜","🧪","🧫","🧬","🔭","🔬","🩺","🩻","🩹","💊","💉","🩸","🔑","🗺","🏮","🧲","🪝","🪜","🛒","🚪","🪞","🪟","🛏","🛋","🚿","🛁","🪠","🧹","🧺","🧻","🪣","🧼","🪒","🧴","🪤","🧷","🧹","🧺","🧻","📦","📫","📮","📯","📢","📣","🔔","🔕","🎵","🎶","💤"]},
-  {label:"❤️",name:"Symbols",emojis:["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖","💘","💝","💟","☮️","✝️","☪️","🕉️","☸️","✡️","🔯","🕎","☯️","☦️","🛐","♈","♉","♊","♋","♌","♍","♎","♏","♐","♑","♒","♓","⛎","🆔","⚛️","🉑","☢️","☣️","📴","📳","🈶","🈚","🈸","🈺","🈷️","✴️","🆚","💮","🉐","㊙️","㊗️","🈴","🈵","🈹","🈲","🅰️","🅱️","🆎","🆑","🅾️","🆘","❌","⭕","🛑","⛔","📛","🚫","💯","💢","♨️","🚷","🚯","🚳","🚱","🔞","📵","🚭","❗","❕","❓","❔","‼️","⁉️","🔅","🔆","〽️","⚠️","🚸","🔱","⚜️","🔰","♻️","✅","❎","🌐","💠","Ⓜ️","🌀","💤","🏧","🚾","♿","🅿️","🈳","⬛","⬜","◼️","◻️","◾","◽","▪️","▫️","🔲","🔳","🔴","🟠","🟡","🟢","🔵","🟣","⚫","⚪","🟤","🔺","🔻","🔸","🔹","🔷","🔶","▶️","⏩","⏫","⏬","◀️","⏪","🔼","🔽","⏭","⏮","⏸","⏹","⏺","🎦","🔅","📶","📳","📴","📵","🔇","🔈","🔉","🔊"]},
-];
 
 export default Majlis;
