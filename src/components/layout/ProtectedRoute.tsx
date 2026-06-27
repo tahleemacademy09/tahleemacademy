@@ -1,12 +1,17 @@
+// src/components/layout/ProtectedRoute.tsx
+// CRITICAL FIX: Teacher/admin on /student/* routes must ALWAYS be redirected —
+// even when roles[] is still loading. Added a direct user_roles fallback query
+// so that a teacher is never shown the student pipeline even if AuthContext
+// roles hasn't populated yet (e.g. after RLS error or slow network).
+
+import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
   requiredRole?: string;
-  // Note: TasjeelGuard lives inside DashboardLayout, so any route rendered
-  // outside DashboardLayout (e.g. exam-taking, awaiting-level) is already
-  // outside the guard boundary. No extra prop is needed here.
 }
 
 const ROLE_FALLBACKS: Record<string, string> = {
@@ -15,37 +20,68 @@ const ROLE_FALLBACKS: Record<string, string> = {
   admin:   "/admin",
 };
 
+const Spinner = () => (
+  <div style={{ display:"flex", alignItems:"center", justifyContent:"center", minHeight:"100vh" }}>
+    <div style={{ width:32, height:32, borderRadius:"50%", border:"3px solid #064E3B", borderTopColor:"transparent", animation:"spin .7s linear infinite" }}/>
+    <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+  </div>
+);
+
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   const { user, loading: authLoading, hasRole, roles, mustChangePassword } = useAuth();
   const location = useLocation();
 
-  // Wait for auth to finish loading before making any decision
-  if (authLoading) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
-        <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #064E3B", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      </div>
-    );
-  }
+  // ── Direct role fallback ─────────────────────────────────────────────────
+  // If AuthContext roles is still empty after auth finishes (e.g. RLS bug),
+  // query user_roles directly so we can still protect routes correctly.
+  const [fallbackRole, setFallbackRole] = useState<string | null>(null);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
 
-  // Not logged in → send to login, preserving current URL so we can restore it after sign-in
+  useEffect(() => {
+    if (authLoading || roles.length > 0 || !user) return;
+    // roles is empty after auth — check directly
+    setFallbackLoading(true);
+    supabase
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", user.id)
+      .then(({ data }) => {
+        const r = (data || []).map((d: any) => d.role);
+        if (r.includes("admin"))        setFallbackRole("admin");
+        else if (r.includes("teacher")) setFallbackRole("teacher");
+        else                            setFallbackRole("student");
+        setFallbackLoading(false);
+      });
+  }, [authLoading, roles, user]);
+
+  if (authLoading || fallbackLoading) return <Spinner />;
+
   if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
 
-  // Admin created this account → force password change before anything else
   if (mustChangePassword && location.pathname !== "/change-password") {
     return <Navigate to="/change-password" replace />;
   }
 
-  // ── Admins must not land on /student/* UNLESS impersonating ───────────
+  // Effective role — prefer live AuthContext roles, fall back to direct query result
+  const effectiveHasRole = (role: string) =>
+    hasRole(role) || fallbackRole === role;
+
   const isImpersonating = !!sessionStorage.getItem("admin_impersonate_student");
-  if (hasRole("admin") && location.pathname.startsWith("/student") && !isImpersonating) {
+
+  // ── Admin must not land on /student/* unless impersonating ──────────────
+  if (effectiveHasRole("admin") && location.pathname.startsWith("/student") && !isImpersonating) {
     return <Navigate to="/admin" replace />;
   }
 
-  // Wrong role → redirect to the user's own dashboard (not always /student)
-  if (requiredRole && !hasRole(requiredRole) && !hasRole("admin")) {
-    const myRole = ["admin", "teacher"].find(r => hasRole(r)) || "student";
+  // ── Teacher must not land on /student/* ever ─────────────────────────────
+  // This is the primary fix — even if TasjeelGuard fails, this catches it.
+  if (effectiveHasRole("teacher") && location.pathname.startsWith("/student") && !isImpersonating) {
+    return <Navigate to="/teacher" replace />;
+  }
+
+  // ── Wrong role for this route ─────────────────────────────────────────────
+  if (requiredRole && !effectiveHasRole(requiredRole) && !effectiveHasRole("admin")) {
+    const myRole = ["admin", "teacher"].find(r => effectiveHasRole(r)) || "student";
     return <Navigate to={ROLE_FALLBACKS[myRole]} replace />;
   }
 
