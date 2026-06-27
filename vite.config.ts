@@ -65,10 +65,26 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        // Prevents Rollup from reordering transitive imports across chunks,
-        // which causes "Cannot access 'Xt' before initialization" TDZ crashes
-        // when multiple modules declare identically-named module-level consts
-        // (e.g. `const GOLD`, `const GM`) and get scope-hoisted into one bundle.
+        // ── TDZ FIX (PRIMARY) ─────────────────────────────────────────────
+        // The app has 60+ files each declaring `const G`, `const GOLD`,
+        // `const GM` etc. at module level. When Rollup scope-hoists these
+        // into a single chunk it renames duplicates (e.g. to `le`, `ne`,
+        // `re`) but the initialization ORDER can put a usage before the
+        // declaration → "Cannot access 'le' before initialization".
+        //
+        // `generatedCode.constBindings: false` tells Rollup to emit `var`
+        // instead of `const`/`let` for module-level bindings in the output.
+        // `var` is hoisted to function scope, so there is NO TDZ — the
+        // variable exists (as undefined) from the start of the chunk's
+        // execution, and is assigned when the initializer runs.
+        // This is the canonical Rollup fix for this exact class of error.
+        generatedCode: {
+          constBindings: false,
+        },
+        // ── TDZ FIX (SECONDARY) ──────────────────────────────────────────
+        // Prevents Rollup from reordering transitive imports across chunks.
+        // Works together with constBindings:false for belt-and-suspenders
+        // coverage of both intra-chunk and cross-chunk TDZ scenarios.
         hoistTransitiveImports: false,
         manualChunks: {
           // LiveKit WebRTC — heavy, only needed inside classroom sessions
