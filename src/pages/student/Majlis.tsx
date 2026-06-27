@@ -5,7 +5,7 @@
     seen_by guard, scroll FAB positioning, desktop layout.
     UI: Full WhatsApp-grade redesign.
 */
-import React, { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -18,7 +18,8 @@ import {
   Edit2, CheckSquare, Square, AtSign, ChevronRight,
   Menu, Settings, User, Bell, HelpCircle, Bookmark,
   ChevronDown, Archive, Eye, Moon, LayoutDashboard, Users,
-  Music, MapPin, Phone, File
+  Music, MapPin, Phone, File, Info, Video, UserCheck,
+  SmilePlus, ChevronLeft, PlayCircle
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
@@ -236,34 +237,40 @@ const AudioMsg = ({ path, text }:{ path?:string|null; text?:string|null }) => {
 
 // ── ImageMsg ─────────────────────────────────────────────────────
 const ImageMsg = ({ path, text }:{ path?:string|null; text?:string|null }) => {
-  const [url,setUrl]           = useState<string|null>(null);
+  // Resolve URL immediately for data: and http: sources — no spinner
+  const [url, setUrl] = useState<string|null>(()=>{
+    const s = text || "";
+    if (s.startsWith("data:") || s.startsWith("http") || s.startsWith("blob:")) return s;
+    return null;
+  });
   const [err,setErr]           = useState(false);
-  const [loading,setLoading]   = useState(true);
+  const [revealed,setRevealed] = useState(false);
   const [fullscreen,setFullscreen] = useState(false);
 
   useEffect(()=>{
-    if (text?.startsWith("data:image")) { setUrl(text); setLoading(false); return; }
-    const src=path||text||"";
-    if (!src) { setErr(true); setLoading(false); return; }
-    if (src.startsWith("http")) { setUrl(src); setLoading(false); return; }
-    resolveMedia(src).then(u=>{ u?setUrl(u):setErr(true); setLoading(false); });
-  },[path,text]);
+    const s = path || text || "";
+    if (!s) { setErr(true); return; }
+    if (s.startsWith("data:") || s.startsWith("http") || s.startsWith("blob:")) { setUrl(s); return; }
+    resolveMedia(s).then(u => u ? setUrl(u) : setErr(true));
+  },[path, text]);
 
-  if(loading) return (
-    <div style={{width:200,height:140,borderRadius:10,background:"#e8e8e8",display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <Loader2 style={{width:22,height:22,color:"#aaa",animation:"spin .8s linear infinite"}}/>
-    </div>
-  );
-  if(err||!url) return (
+  if (err) return (
     <div style={{width:160,height:100,borderRadius:10,background:"#f0f0f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6}}>
       <Image style={{width:24,height:24,color:"#bbb"}}/>
       <span style={{fontSize:10,color:"#bbb"}}>Image unavailable</span>
     </div>
   );
+  if (!url) return (
+    <div style={{width:200,height:140,borderRadius:10,background:"linear-gradient(135deg,#e8e8e8,#f0f0f0)",animation:"skeletonPulse 1.4s ease infinite"}}/>
+  );
   return (
     <>
-      <img src={url} style={{maxWidth:240,maxHeight:280,borderRadius:10,cursor:"pointer",display:"block",objectFit:"cover",width:"100%"}} alt="" loading="lazy"
+      <img src={url}
+        style={{maxWidth:240,maxHeight:280,borderRadius:10,cursor:"pointer",display:"block",objectFit:"cover",width:"100%",opacity:revealed?1:0,transition:"opacity .18s ease"}}
+        alt="" loading="lazy"
+        onLoad={()=>setRevealed(true)}
         onClick={()=>setFullscreen(true)} onError={()=>setErr(true)}/>
+      {!revealed && <div style={{width:200,height:140,borderRadius:10,background:"linear-gradient(135deg,#e8e8e8,#f0f0f0)",animation:"skeletonPulse 1.4s ease infinite",position:"absolute",top:0,left:0}}/>}
       {fullscreen&&(
         <div onClick={()=>setFullscreen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.95)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
           <img src={url} style={{maxWidth:"100vw",maxHeight:"100vh",objectFit:"contain"}} alt=""/>
@@ -386,6 +393,21 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const [editProfileAr,setEditProfileAr]             = useState("");
   const [savingProfile,setSavingProfile]             = useState(false);
   const [channelMemberNames,setChannelMemberNames]   = useState<Record<string,string>>({});
+
+  // ── NEW WhatsApp features state ───────────────────────────────────
+  const [showMsgInfo,setShowMsgInfo]               = useState<string|null>(null);
+  const [msgInfoData,setMsgInfoData]               = useState<{readBy:any[];deliveredTo:any[]}>({readBy:[],deliveredTo:[]});
+  const [showEmojiPicker,setShowEmojiPicker]       = useState(false);
+  const [emojiCategory,setEmojiCategory]           = useState(0);
+  const [showReactionDetail,setShowReactionDetail] = useState<{msgId:string;emoji:string}|null>(null);
+  const [swipeReplyId,setSwipeReplyId]             = useState<string|null>(null);
+  const [imgPreview,setImgPreview]                 = useState<{file:File;dataUrl:string}|null>(null);
+  const [imgCaption,setImgCaption]                 = useState("");
+  const [showDisappearSheet,setShowDisappearSheet] = useState(false);
+  const [showChannelLockBanner,setShowChannelLockBanner] = useState(channelLocked);
+  const [showBroadcastSheet,setShowBroadcastSheet] = useState(false);
+  const [broadcastMsg,setBroadcastMsg]             = useState("");
+  const [broadcastTargets,setBroadcastTargets]     = useState<Set<string>>(new Set());
 
   // ── Refs ──────────────────────────────────────────────────
   const scrollRef        = useRef<HTMLDivElement>(null);
@@ -567,53 +589,72 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     // ── FIX: cancelled flag prevents stale async state updates (React error #310) ──
     let cancelled = false;
 
-    setLoadingMessages(true); setMessages([]); setSelectMode(false); setSelectedIds(new Set());
-    const load=async()=>{
-      const {data:memData}=await supabase.from("chat_members" as any).select("user_id").eq("channel_id",activeChannelId);
-      if(cancelled) return;
-      if(memData&&memData.length>0){
-        const memberUids=[...new Set((memData as any[]).map((m:any)=>m.user_id))];
-        const {data:memberProfs}=await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id",memberUids);
-        if(cancelled) return;
-        if(memberProfs){
-          const map:Record<string,UserProfile>={};
-          (memberProfs as any[]).forEach((p:any)=>{map[p.user_id]=p;});
-          setProfiles(prev=>({...prev,...map}));
+    // ── INSTANT CACHE: show previous messages immediately from localStorage ──
+    const CACHE_KEY = `majlis_msgs_${activeChannelId}`;
+    const deletedForMeSet = new Set<string>(
+      (()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})()
+    );
+    try {
+      const cached = localStorage.getItem(CACHE_KEY);
+      if (cached) {
+        const cachedMsgs: ChatMessage[] = JSON.parse(cached).filter((m: ChatMessage) => !deletedForMeSet.has(m.id));
+        if (cachedMsgs.length > 0) {
+          setMessages(cachedMsgs);           // show instantly — no spinner
+          setLoadingMessages(false);
         }
       }
-      const {data}=await supabase.from("chat_messages").select("*").eq("channel_id",activeChannelId).order("created_at",{ascending:false}).limit(80);
-      if(cancelled) return;
-      // Filter out messages the user deleted "for me" from localStorage
-      const deletedForMeSet=new Set<string>(
-        (()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})()
-      );
-      const msgs=((data||[]) as unknown as ChatMessage[]).reverse().filter(m=>!deletedForMeSet.has(m.id));
+    } catch {}
+
+    setSelectMode(false); setSelectedIds(new Set());
+    // Only show loading if no cache at all
+    if (!localStorage.getItem(CACHE_KEY)) setLoadingMessages(true);
+
+    const load = async () => {
+      // ── Fetch messages + member profiles IN PARALLEL ──
+      const [msgRes, memRes] = await Promise.all([
+        supabase.from("chat_messages").select("*").eq("channel_id", activeChannelId).order("created_at", {ascending: false}).limit(80),
+        supabase.from("chat_members" as any).select("user_id").eq("channel_id", activeChannelId),
+      ]);
+      if (cancelled) return;
+
+      const msgs = ((msgRes.data || []) as unknown as ChatMessage[]).reverse().filter(m => !deletedForMeSet.has(m.id));
+
+      // Cache for next open
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify(msgs.slice(-80))); } catch {}
+
       setMessages(msgs);
-
-      const uids=[...new Set(msgs.map(m=>m.user_id))];
-      if(uids.length>0){
-        const {data:profs}=await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id",uids);
-        if(cancelled) return;
-        const map:Record<string,UserProfile>={};
-        (profs||[]).forEach((p:any)=>{map[p.user_id]=p;});
-        setProfiles(prev=>({...prev,...map}));
-      }
-
-      await supabase.from("chat_members" as any).update({last_read_at:new Date().toISOString()}).eq("channel_id",activeChannelId).eq("user_id",user!.id);
-      if(cancelled) return;
-      setUnreadCounts(prev=>({...prev,[activeChannelId]:0}));
-
-      const ids=msgs.map(m=>m.id);
-      if(ids.length>0){
-        const {data:rd}=await supabase.from("message_reactions" as any).select("message_id,user_id,emoji").in("message_id",ids);
-        if(cancelled) return;
-        const rm:Record<string,Record<string,string[]>>={};
-        (rd||[]).forEach((r:any)=>{if(!rm[r.message_id])rm[r.message_id]={};if(!rm[r.message_id][r.emoji])rm[r.message_id][r.emoji]=[];rm[r.message_id][r.emoji].push(r.user_id);});
-        setReactions(rm);
-      }
-      if(cancelled) return;
-      setPinnedMessages(msgs.filter(m=>(m as any).is_pinned));
       setLoadingMessages(false);
+
+      // ── Fetch profiles for all visible users in parallel ──
+      const allUids = [...new Set([
+        ...msgs.map(m => m.user_id),
+        ...((memRes.data || []) as any[]).map((m: any) => m.user_id),
+      ])];
+      if (allUids.length > 0) {
+        const {data: profs} = await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id", allUids);
+        if (cancelled) return;
+        const map: Record<string, UserProfile> = {};
+        (profs || []).forEach((p: any) => { map[p.user_id] = p; });
+        setProfiles(prev => ({...prev, ...map}));
+      }
+
+      // ── Mark read + fetch reactions in parallel ──
+      const ids = msgs.map(m => m.id);
+      const [, rdRes] = await Promise.all([
+        supabase.from("chat_members" as any).update({last_read_at: new Date().toISOString()}).eq("channel_id", activeChannelId).eq("user_id", user!.id),
+        ids.length > 0 ? supabase.from("message_reactions" as any).select("message_id,user_id,emoji").in("message_id", ids) : Promise.resolve({data: []}),
+      ]);
+      if (cancelled) return;
+
+      setUnreadCounts(prev => ({...prev, [activeChannelId]: 0}));
+      const rm: Record<string, Record<string, string[]>> = {};
+      ((rdRes as any).data || []).forEach((r: any) => {
+        if (!rm[r.message_id]) rm[r.message_id] = {};
+        if (!rm[r.message_id][r.emoji]) rm[r.message_id][r.emoji] = [];
+        rm[r.message_id][r.emoji].push(r.user_id);
+      });
+      setReactions(rm);
+      setPinnedMessages(msgs.filter(m => (m as any).is_pinned));
     };
     load();
 
@@ -621,6 +662,15 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       .on("postgres_changes",{event:"*",schema:"public",table:"chat_messages",filter:`channel_id=eq.${activeChannelId}`},p=>{
         if(p.eventType==="INSERT"){
           const nm=p.new as unknown as ChatMessage;
+          // Update localStorage cache with new message
+          try {
+            const ckey=`majlis_msgs_${activeChannelId}`;
+            const cached:ChatMessage[]=JSON.parse(localStorage.getItem(ckey)||"[]");
+            if(!cached.find(m=>m.id===nm.id)){
+              const updated=[...cached, nm].slice(-80);
+              localStorage.setItem(ckey,JSON.stringify(updated));
+            }
+          } catch {}
           // Skip if this user deleted this message locally
           const dmSet=new Set<string>((()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})());
           if(dmSet.has(nm.id)) return;
@@ -634,9 +684,13 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level").eq("user_id",nm.user_id).maybeSingle()
               .then(({data})=>{if(data)setProfiles(prev=>({...prev,[(data as any).user_id]:data as unknown as UserProfile}));});
         } else if(p.eventType==="UPDATE"){
-          setMessages(prev=>prev.map(m=>m.id===(p.new as any).id?p.new as unknown as ChatMessage:m));
+          const updated=p.new as unknown as ChatMessage;
+          setMessages(prev=>prev.map(m=>m.id===updated.id?updated:m));
+          try{const ck=`majlis_msgs_${activeChannelId}`;const c:ChatMessage[]=JSON.parse(localStorage.getItem(ck)||"[]");localStorage.setItem(ck,JSON.stringify(c.map(m=>m.id===updated.id?updated:m)));}catch{}
         } else if(p.eventType==="DELETE"){
-          setMessages(prev=>prev.filter(m=>m.id!==(p.old as any).id));
+          const delId=(p.old as any).id;
+          setMessages(prev=>prev.filter(m=>m.id!==delId));
+          try{const ck=`majlis_msgs_${activeChannelId}`;const c:ChatMessage[]=JSON.parse(localStorage.getItem(ck)||"[]");localStorage.setItem(ck,JSON.stringify(c.filter(m=>m.id!==delId)));}catch{}
         }
       })
       .on("broadcast",{event:"typing"},p=>{
@@ -682,6 +736,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       @keyframes waveBar { from{transform:scaleY(0.4);}to{transform:scaleY(1);} }
       @keyframes pulse { 0%,100%{opacity:1;}50%{opacity:.4;} }
       @keyframes bounce { 0%,80%,100%{transform:scaleY(1);}40%{transform:scaleY(1.5);} }
+      @keyframes skeletonPulse { 0%,100%{opacity:1;}50%{opacity:.45;} }
       @keyframes popIn { 0%{transform:scale(.5);opacity:0;}100%{transform:scale(1);opacity:1;} }
       @keyframes msgIn { from{opacity:0;transform:scale(.96) translateY(4px);}to{opacity:1;transform:none;} }
       @keyframes onlinePulse { 0%,100%{box-shadow:0 0 0 0 rgba(37,211,102,.4);}50%{box-shadow:0 0 0 4px rgba(37,211,102,0);} }
@@ -1123,7 +1178,94 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
   const QUICK_EMOJIS=["👍","❤️","😂","😮","😢","🙏","🔥","✅"];
 
+  // Full emoji picker categories
+  const EMOJI_CATS = [
+    { label:"😊", name:"Smileys", emojis:["😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚","😋","😛","😝","😜","🤪","🤨","🧐","🤓","😎","🤩","🥳","😏","😒","😞","😔","😟","😕","🙁","☹️","😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","😓","🤗","🤔","🤭","🤫","🤥","😶","😐","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕","🤑","🤠","😈","👿","👹","👺","🤡","💩","👻","💀","☠️","👽","👾","🤖","🎃","😺","😸","😹","😻","😼","😽","🙀","😿","😾"] },
+    { label:"👋", name:"People", emojis:["👋","🤚","🖐️","✋","🖖","👌","🤌","🤏","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","🖕","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","🫶","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦿","🦵","🦶","👂","🦻","👃","🧠","🫀","🫁","🦷","🦴","👀","👁️","👅","👄","🫦","💋","🩸","🧬","🦠","💉","💊","🩹","🩺","🚑"] },
+    { label:"🐶", name:"Animals", emojis:["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐔","🐧","🐦","🐤","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝","🐛","🦋","🐌","🐞","🐜","🦟","🦗","🕷️","🦂","🐢","🐍","🦎","🦖","🦕","🐙","🦑","🦐","🦞","🦀","🐡","🐠","🐟","🐬","🐳","🐋","🦈","🌊"] },
+    { label:"🍎", name:"Food", emojis:["🍏","🍎","🍐","🍊","🍋","🍌","🍉","🍇","🍓","🫐","🍈","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🍆","🥑","🫒","🥦","🥬","🥒","🌶️","🫑","🥕","🧄","🧅","🥔","🍠","🫚","🥐","🥯","🍞","🥖","🥨","🧀","🥚","🍳","🧈","🥞","🧇","🥓","🥩","🍗","🍖","🦴","🌭","🍔","🍟","🍕","🫓","🥪","🥙","🧆","🌮","🌯","🫔","🥗","🥘","🫕","🍝","🍜","🍲","🍛","🍣","🍱","🥟","🦪","🍤","🍙","🍚","🍘","🍥","🥮","🍢","🧁","🍰","🎂","🍮","🍭","🍬","🍫","🍿","🍩","🍪","🌰","🥜","🫘","🍯","🧃","🥤","🧋","🍵","☕","🫖","🍺","🍻","🥂","🍷","🫗","🥃","🍸","🍹","🧉"] },
+    { label:"⚽", name:"Activity", emojis:["⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🥏","🎱","🪀","🏓","🏸","🏒","🥍","🏑","🎿","⛷️","🏂","🪂","🤺","🤼","🤸","⛹️","🤺","🏊","🚴","🏋️","🤾","🧘","🧗","🤸","🏇","⛷️","🤿","🥊","🥋","🎽","🏆","🥇","🥈","🥉","🏅","🎖️","🏵️","🎗️","🎫","🎟️","🎪","🤹","🎭","🎨","🖼️","🎰","🚂","🚢","✈️","🚀","🛸"] },
+    { label:"🌍", name:"Travel", emojis:["🚗","🚕","🚙","🚌","🚎","🏎️","🚓","🚑","🚒","🚐","🛻","🚚","🚛","🚜","🏍️","🛵","🛺","🚲","🛴","🛹","🚏","⛽","🛣️","🗺️","🧭","🏔️","⛰️","🌋","🗻","🏕️","🏖️","🏜️","🏝️","🏞️","🏟️","🏛️","🏗️","🧱","🏘️","🏚️","🏠","🏡","🏢","🏣","🏤","🏥","🏦","🏨","🏩","🏪","🏫","🏬","🏭","🏯","🏰","🗼","🗽","⛪","🕌","🛕","🕍","⛩️","🕋","⛲","⛺","🌁","🌃","🌄","🌅","🌆","🌇","🌉","♾️","🌌","🌠","🎇","🎆","🗺️"] },
+    { label:"💡", name:"Objects", emojis:["⌚","📱","💻","⌨️","🖥️","🖨️","🖱️","🖲️","💽","💾","💿","📀","📺","📷","📸","📹","🎥","📽️","🎞️","📞","☎️","📟","📠","📡","🔋","🔌","💡","🔦","🕯️","🗑️","🛢️","💸","💵","💴","💶","💷","💴","💰","💳","🪙","💎","⚖️","🧰","🔧","🔨","⚒️","🛠️","⛏️","🔩","🗜️","🔗","🧲","🪜","🧺","🪣","🧹","🧻","🚿","🛁","🪥","🪒","🧴","🧷","🧹","🧺","🧻","📦","📫","📪","📬","📭","📮","🗳️","✏️","✒️","🖊️","🖋️","📝","📁","📂","🗂️","📅","📆","🗒️","🗓️","📇","📈","📉","📊","📋","📌","📍","🗺️","✂️","🗃️","🗄️","🗑️","🔒","🔓","🔏","🔐","🔑","🗝️","🔨","⛏️","⚒️","🛠️","🗡️","⚔️","🛡️","🚬","⚰️","⚱️","🏺","🔮","📿","🧿","💈","⚗️","🔭","🔬","🩺","🩻","🩹","💊","🩸"] },
+    { label:"🔣", name:"Symbols", emojis:["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖","💘","💝","💟","☮️","✝️","☪️","🕉️","☸️","✡️","🔯","🕎","☯️","☦️","🛐","⛎","♈","♉","♊","♋","♌","♍","♎","♏","♐","♑","♒","♓","🆔","⚛️","🉑","☢️","☣️","📴","📳","🈶","🈚","🈸","🈺","🈷️","✴️","🆚","💮","🉐","㊙️","㊗️","🈴","🈵","🈹","🈲","🅰️","🅱️","🆎","🆑","🅾️","🆘","❌","⭕","🛑","⛔","📛","🚫","💯","💢","♨️","🚷","🚯","🚳","🚱","🔞","📵","❗","❕","❓","❔","‼️","⁉️","🔅","🔆","〽️","⚠️","🚸","🔱","⚜️","🔰","♻️","✅","🈯","💹","❎","🌐","💠","Ⓜ️","🌀","💤","🏧","🚾","♿","🅿️","🛗","🈳","🈹","🛂","🛃","🛄","🛅","🚹","🚺","🚻","⚧️"] },
+  ];
+
+  // ── Message Info fetch ────────────────────────────────────────────
+  const fetchMsgInfo=async(msgId:string)=>{
+    const msg=messages.find(m=>m.id===msgId);
+    if(!msg) return;
+    const seenBy:string[]=(msg as any).seen_by||[];
+    const readProfiles=await Promise.all(seenBy.filter(id=>id!==user?.id).map(async id=>{
+      if(profiles[id]) return profiles[id];
+      const {data}=await supabase.from("profiles").select("user_id,full_name,avatar_url").eq("user_id",id).maybeSingle();
+      return data;
+    }));
+    setMsgInfoData({readBy:readProfiles.filter(Boolean) as any[],deliveredTo:readProfiles.filter(Boolean) as any[]});
+    setShowMsgInfo(msgId);
+  };
+
+  // ── Image preview before send ─────────────────────────────────────
+  const handleImageFileSelected=async(file:File)=>{
+    const dataUrl=await new Promise<string>(res=>{const r=new FileReader();r.onloadend=()=>res(r.result as string);r.readAsDataURL(file);});
+    setImgPreview({file,dataUrl});
+    setImgCaption("");
+  };
+  const sendImageWithCaption=async()=>{
+    if(!imgPreview) return;
+    const {file}=imgPreview;
+    setImgPreview(null);
+    setUploading(true);
+    const ext=file.name.split(".").pop()||"jpg";
+    const path=`images/${activeChannelId}/${user!.id}/${Date.now()}.${ext}`;
+    const {error}=await supabase.storage.from(BUCKET).upload(path,file,{upsert:true,contentType:file.type});
+    if(!error){
+      await sendMessage("image",path,imgCaption||null);
+    } else {
+      const b64=imgPreview.dataUrl;
+      const tempId=`temp-${Date.now()}`;
+      setMessages(prev=>[...prev,{id:tempId,channel_id:activeChannelId!,user_id:user!.id,content_type:"image",text:imgCaption?`${b64}||CAPTION||${imgCaption}`:b64,media_path:null,created_at:new Date().toISOString()} as any]);
+      const {data:ins,error:insE}=await supabase.from("chat_messages").insert({class_level_id:activeChannelId,channel_id:activeChannelId,user_id:user!.id,content_type:"image",text:imgCaption?`${b64}||CAPTION||${imgCaption}`:b64}).select().single();
+      if(insE) setMessages(prev=>prev.filter(m=>m.id!==tempId));
+      else setMessages(prev=>prev.map(m=>m.id===tempId?ins as unknown as ChatMessage:m));
+    }
+    setUploading(false);
+    setImgCaption("");
+  };
+
+  // ── Broadcast to multiple channels ───────────────────────────────
+  const sendBroadcast=async()=>{
+    if(!user||!broadcastMsg.trim()||broadcastTargets.size===0) return;
+    for(const chId of broadcastTargets){
+      await supabase.from("chat_messages").insert({class_level_id:chId,channel_id:chId,user_id:user.id,content_type:"text",text:`📢 ${broadcastMsg.trim()}`});
+      await supabase.from("chat_channels" as any).update({last_message:`📢 ${broadcastMsg.slice(0,50)}`,last_message_at:new Date().toISOString()}).eq("id",chId);
+    }
+    toast({title:`Broadcast sent to ${broadcastTargets.size} group${broadcastTargets.size>1?"s":""}!`});
+    setBroadcastMsg("");setBroadcastTargets(new Set());setShowBroadcastSheet(false);
+  };
+
+  // ── Disappearing messages set ─────────────────────────────────────
+  const setDisappearingMessages=(mins:number)=>{
+    setDisappearTimer(mins);
+    setShowDisappearSheet(false);
+    toast({title:mins===0?"Disappearing messages off":`Messages disappear after ${mins>=1440?`${mins/1440}d`:mins>=60?`${mins/60}h`:`${mins}m`}`});
+  };
+
+  // ── Video render helper ───────────────────────────────────────────
+  const VideoMsg=({path,text}:{path?:string|null;text?:string|null})=>{
+    const [url,setUrl]=useState<string|null>(null);
+    const [err,setErr]=useState(false);
+    useEffect(()=>{
+      const src=path||text||"";
+      if(!src){setErr(true);return;}
+      if(src.startsWith("http")||src.startsWith("blob:")||src.startsWith("data:")){setUrl(src);return;}
+      resolveMedia(src).then(u=>u?setUrl(u):setErr(true));
+    },[path,text]);
+    if(err||!url) return <div style={{width:200,height:120,borderRadius:10,background:"#111",display:"flex",alignItems:"center",justifyContent:"center"}}><PlayCircle size={40} color="#fff" style={{opacity:.6}}/></div>;
+    return <video src={url} controls style={{maxWidth:240,maxHeight:200,borderRadius:10,display:"block"}} preload="metadata"/>;
+  };
+
   // Group messages by date
+
   const msgsWithSeps:Array<{type:"date";date:string}|{type:"msg";msg:ChatMessage}>=[];
   let lastDate="";
   for(const m of filteredMessages){
@@ -1242,8 +1384,24 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
     return (
       <div id={`msg-${m.id}`} key={m.id} className="msg-bubble"
-        style={{display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"flex-end",gap:4,padding:"1px 12px",background:isSelected?"rgba(37,211,102,0.12)":"transparent"}}
+        style={{display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"flex-end",gap:4,padding:"1px 12px",background:swipeReplyId===m.id?"rgba(37,211,102,0.15)":isSelected?"rgba(37,211,102,0.12)":"transparent",transition:"background .15s"}}
         onClick={()=>{ if(selectMode){setSelectedIds(prev=>{const n=new Set(prev);n.has(m.id)?n.delete(m.id):n.add(m.id);return n;});} }}
+        onTouchStart={(e)=>{
+          if(selectMode) return;
+          const sx=e.touches[0].clientX; let swiped=false;
+          const onMove=(me:TouchEvent)=>{
+            const dx=me.touches[0].clientX-sx;
+            if(!swiped&&dx>50){swiped=true;setSwipeReplyId(m.id);if(navigator.vibrate)navigator.vibrate(30);}
+          };
+          const onEnd=()=>{
+            if(swiped){setReplyTo(m);inputRef.current?.focus();}
+            setTimeout(()=>setSwipeReplyId(null),300);
+            document.removeEventListener("touchmove",onMove);
+            document.removeEventListener("touchend",onEnd);
+          };
+          document.addEventListener("touchmove",onMove,{passive:true});
+          document.addEventListener("touchend",onEnd);
+        }}
       >
         {selectMode&&(
           <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
@@ -1297,7 +1455,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
             )}
             {/* Content */}
-            {m.content_type==="image"&&<ImageMsg path={m.media_path} text={m.text}/>}
+            {m.content_type==="image"&&(()=>{const parts=(m.text||"").split("||CAPTION||");const isB64=parts[0].startsWith("data:");return(<><ImageMsg path={isB64?null:m.media_path} text={isB64?parts[0]:m.text}/>{parts[1]&&<div style={{fontSize:13,marginTop:4,color:isMe?(isDark?"#e9edef":"#222"):(isDark?"#e9edef":"#111")}}>{parts[1]}</div>}</>);})()}
+            {m.content_type==="video"&&<VideoMsg path={m.media_path} text={m.text}/>}
             {m.content_type==="audio"&&<AudioMsg path={m.media_path} text={m.text}/>}
             {m.content_type==="file"&&m.media_path&&<FileMsg path={m.media_path} text={m.text}/>}
             {(m.content_type==="text"||!m.content_type)&&m.text&&<FormattedText text={m.text} sz={msgFontSz}/>}
@@ -1316,7 +1475,11 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           {Object.keys(rxns).length>0&&(
             <div style={{display:"flex",gap:4,marginTop:3,flexWrap:"wrap",justifyContent:isMe?"flex-end":"flex-start"}}>
               {Object.entries(rxns).map(([emoji,uids])=>(
-                <button key={emoji} onClick={()=>supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji},{onConflict:"message_id,user_id"}).then(reloadReactions)} style={{background:isDark?"#2a3942":"#f0f2f5",border:`1px solid ${uids.includes(user?.id||"")?"#25D366":"rgba(0,0,0,.1)"}`,borderRadius:12,padding:"1px 7px",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:3}}>
+                <button key={emoji}
+                  onClick={()=>supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji},{onConflict:"message_id,user_id"}).then(reloadReactions)}
+                  onContextMenu={e=>{e.preventDefault();setShowReactionDetail({msgId:m.id,emoji});}}
+                  onLongPress={()=>setShowReactionDetail({msgId:m.id,emoji})}
+                  style={{background:isDark?"#2a3942":"#f0f2f5",border:`1px solid ${uids.includes(user?.id||"")?"#25D366":"rgba(0,0,0,.1)"}`,borderRadius:12,padding:"1px 7px",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:3}}>
                   {emoji} <span style={{fontSize:10,color:textSub,fontWeight:700}}>{uids.length}</span>
                 </button>
               ))}
@@ -1343,6 +1506,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 {icon:<Star size={16}/>,label:isStarred?"Unstar":"Star",fn:()=>starMsg(m.id)},
                 {icon:<Pin size={16}/>,label:(m as any).is_pinned?"Unpin":"Pin",fn:()=>pinMessage(m)},
                 ...(isMe&&Date.now()-new Date(m.created_at).getTime()<EDIT_WINDOW&&m.content_type==="text"?[{icon:<Edit2 size={16}/>,label:"Edit",fn:()=>{setEditingMsg(m);setInput(m.text||"");setShowMessageMenu(null);inputRef.current?.focus();}}]:[]),
+                ...(isMe?[{icon:<Info size={16}/>,label:"Info",fn:()=>{setShowMessageMenu(null);fetchMsgInfo(m.id);}}]:[]),
                 {icon:<CheckSquare size={16}/>,label:"Select",fn:()=>{setSelectMode(true);setSelectedIds(new Set([m.id]));setShowMessageMenu(null);}},
                 {icon:<Trash2 size={16}/>,label:"Delete",fn:()=>{setShowMessageMenu(null);setShowDeleteSheet(m.id);}},
               ].map((item,i)=>(
@@ -1704,8 +1868,10 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                       {icon:"⭐",label:"Starred Messages",     fn:()=>{setShowHeaderMenu(false);toast({title:`${starredMessages.size} starred`});}},
                       {icon:"🔕",label:mutedChannels.has(activeChannel.id)?"Unmute":"Mute Notifications",fn:()=>{toggleMuteCh(activeChannel.id);setShowHeaderMenu(false);}},
                       {icon:"🖼️",label:"Wallpaper & Sound",   fn:()=>{setSettingsTab("chats");setShowSettings(true);setShowHeaderMenu(false);}},
+                      {icon:"⏱️",label:`Disappearing: ${disappearTimer===0?"Off":disappearTimer>=1440?`${disappearTimer/1440}d`:disappearTimer>=60?`${disappearTimer/60}h`:`${disappearTimer}m`}`,fn:()=>{setShowDisappearSheet(true);setShowHeaderMenu(false);}},
                       {icon:"📤",label:"Export Chat",          fn:()=>{exportChat();setShowHeaderMenu(false);}},
                       ...(canModerate?[
+                        {icon:"📢",label:"Broadcast Message",  fn:()=>{setShowBroadcastSheet(true);setShowHeaderMenu(false);}},
                         {icon:"🗑️",label:"Clear Chat",        fn:()=>{clearChat();setShowHeaderMenu(false);},danger:true},
                         {icon:"💥",label:"Delete Group",       fn:()=>{deleteGroup();setShowHeaderMenu(false);},danger:true},
                       ]:[]),
@@ -1743,6 +1909,30 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
             )}
 
+            {/* Channel lock banner */}
+            {channelLocked&&!canModerate&&(
+              <div style={{background:isDark?"#1a2e1a":"#fff9e6",borderBottom:`1px solid #ffd700`,padding:"8px 16px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                <span style={{fontSize:16}}>🔒</span>
+                <span style={{fontSize:12,color:isDark?"#e9c46a":"#7a6000",fontWeight:600}}>This group has been locked by the admin. Only admins can send messages.</span>
+              </div>
+            )}
+
+            {/* Channel lock banner */}
+            {channelLocked&&!canModerate&&(
+              <div style={{background:isDark?"#1a2e1a":"#fff9e6",borderBottom:"1px solid #ffd700",padding:"8px 16px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                <span style={{fontSize:16}}>🔒</span>
+                <span style={{fontSize:12,color:isDark?"#e9c46a":"#7a6000",fontWeight:600}}>This group has been locked by the admin. Only admins can send messages.</span>
+              </div>
+            )}
+
+            {/* Channel lock banner */}
+            {channelLocked&&!canModerate&&(
+              <div style={{background:isDark?"#1a2e1a":"#fff9e6",borderBottom:"1px solid #ffd700",padding:"8px 16px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+                <span style={{fontSize:16}}>&#x1F512;</span>
+                <span style={{fontSize:12,color:isDark?"#e9c46a":"#7a6000",fontWeight:600}}>This group has been locked by the admin. Only admins can send messages.</span>
+              </div>
+            )}
+
             {/* Select mode bar */}
             {selectMode&&(
               <div style={{background:isDark?"#202c33":"#fff",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${divider}`}}>
@@ -1758,8 +1948,22 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             {/* Message list */}
             <div ref={scrollRef} onScroll={handleScrollMessages} style={{flex:1,overflowY:"auto",padding:"6px 0 4px"}}>
               {loadingMessages&&(
-                <div style={{display:"flex",justifyContent:"center",padding:20}}>
-                  <Loader2 style={{width:28,height:28,color:WA_GREEN,animation:"spin .8s linear infinite"}}/>
+                <div style={{padding:"12px 16px",display:"flex",flexDirection:"column",gap:14}}>
+                  {[...Array(6)].map((_,i)=>{
+                    const isMe = i%3===2;
+                    const w = [55,72,40,65,80,48][i];
+                    return (
+                      <div key={i} style={{display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"flex-end",gap:6}}>
+                        {!isMe && <div style={{width:30,height:30,borderRadius:"50%",background:"#e0e0e0",flexShrink:0,animation:"skeletonPulse 1.4s ease infinite",animationDelay:`${i*0.1}s`}}/>}
+                        <div style={{background:isMe?"#d9fdd3":"#fff",borderRadius:isMe?"12px 12px 2px 12px":"12px 12px 12px 2px",padding:"10px 14px",maxWidth:`${w}%`,boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
+                          {!isMe&&<div style={{width:60,height:8,borderRadius:4,background:"#e0e0e0",marginBottom:8,animation:"skeletonPulse 1.4s ease infinite",animationDelay:`${i*0.1}s`}}/>}
+                          <div style={{height:10,borderRadius:4,background:"#e0e0e0",animation:"skeletonPulse 1.4s ease infinite",animationDelay:`${i*0.15}s`}}/>
+                          {i%2===0&&<div style={{height:10,borderRadius:4,background:"#e0e0e0",marginTop:6,width:"70%",animation:"skeletonPulse 1.4s ease infinite",animationDelay:`${i*0.2}s`}}/>}
+                          <div style={{height:8,borderRadius:4,background:"#e8e8e8",marginTop:8,width:40,marginLeft:"auto",animation:"skeletonPulse 1.4s ease infinite"}}/>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
               {!loadingMessages&&messages.length===80&&(
@@ -1847,12 +2051,24 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
             )}
 
-            {/* Quick emoji bar */}
-            {showEmojiBar&&(
-              <div style={{background:isDark?"#202c33":"#fff",borderTop:`1px solid ${divider}`,padding:"8px 16px",display:"flex",gap:10,overflowX:"auto"}}>
-                {["😊","😂","❤️","👍","🙏","🔥","😢","😮","🎉","✅","💯","🤔","👏","😍","🥺","😅","🌹","☀️","🤲","📖"].map(e=>(
-                  <button key={e} onClick={()=>setInput(input+e)} style={{background:"none",border:"none",cursor:"pointer",fontSize:26,padding:4,lineHeight:1}}>{e}</button>
-                ))}
+            {/* Full categorized emoji picker */}
+            {showEmojiPicker&&(
+              <div style={{background:isDark?"#202c33":"#fff",borderTop:`1px solid ${divider}`,display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
+                {/* Category tabs */}
+                <div style={{display:"flex",overflowX:"auto",borderBottom:`1px solid ${divider}`,flexShrink:0}}>
+                  {EMOJI_CATS.map((cat,i)=>(
+                    <button key={i} onClick={()=>setEmojiCategory(i)} style={{padding:"8px 12px",background:"none",border:"none",cursor:"pointer",fontSize:18,borderBottom:emojiCategory===i?`2px solid ${WA_GREEN}`:"2px solid transparent",flexShrink:0,opacity:emojiCategory===i?1:.55}}>
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+                <div style={{fontSize:11,fontWeight:700,color:textSub,padding:"6px 14px 2px",letterSpacing:"0.08em"}}>{EMOJI_CATS[emojiCategory].name.toUpperCase()}</div>
+                {/* Emoji grid */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:2,padding:"4px 8px 10px",maxHeight:180,overflowY:"auto"}}>
+                  {EMOJI_CATS[emojiCategory].emojis.map((e,i)=>(
+                    <button key={i} onClick={()=>setInput(p=>p+e)} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,padding:"6px 0",borderRadius:8,transition:"background .1s",lineHeight:1}} onMouseEnter={ev=>(ev.currentTarget.style.background=isDark?"#2a3942":"#f0f2f5")} onMouseLeave={ev=>(ev.currentTarget.style.background="none")}>{e}</button>
+                  ))}
+                </div>
               </div>
             )}
 
@@ -1887,8 +2103,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 </div>
               )}
 
-              {/* Emoji toggle */}
-              <button onClick={()=>setShowEmojiBar(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",padding:6,color:showEmojiBar?WA_GREEN:textSub,display:"flex",marginBottom:4,transition:"color .15s"}}>
+              {/* Emoji toggle — opens full categorized picker */}
+              <button onClick={()=>{setShowEmojiPicker(p=>!p);setShowEmojiBar(false);}} style={{background:"none",border:"none",cursor:"pointer",padding:6,color:showEmojiPicker?WA_GREEN:textSub,display:"flex",marginBottom:4,transition:"color .15s"}}>
                 <Smile size={22}/>
               </button>
 
@@ -1942,9 +2158,14 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
             {/* FIXED hidden file inputs — separated gallery/camera/file/audio */}
             {/* Gallery: no capture — shows gallery on mobile */}
-            <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
+            <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>{
+              const f=e.target.files?.[0]; if(!f) return;
+              if(f.type.startsWith("video/")) handleFileUpload(f,"file");
+              else handleImageFileSelected(f);
+              e.target.value="";
+            }}/>
             {/* Camera: capture="camera" — opens camera directly */}
-            <input ref={cameraInputRef} id="majlis-camera-input" type="file" accept="image/*" capture="environment" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
+            <input ref={cameraInputRef} id="majlis-camera-input" type="file" accept="image/*" capture="environment" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>{const f=e.target.files?.[0];if(f){handleImageFileSelected(f);}e.target.value="";}}/>
             {/* Document: any file type */}
             <input ref={fileInputRef} id="majlis-file-input" type="file" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"file")}/>
             {/* Audio files */}
@@ -1965,7 +2186,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:20}}>
               {[
                 {icon:<Camera size={24} color="#fff"/>,   bg:"#2ecc71", label:"Camera",   action:()=>{setShowAttachSheet(false);setTimeout(()=>cameraInputRef.current?.click(),100);}},
-                {icon:<Image size={24} color="#fff"/>,    bg:"#9b59b6", label:"Gallery",  action:()=>{setShowAttachSheet(false);setTimeout(()=>galleryInputRef.current?.click(),100);}},
+                {icon:<Video size={24} color="#fff"/>,    bg:"#9b59b6", label:"Gallery",  action:()=>{setShowAttachSheet(false);setTimeout(()=>galleryInputRef.current?.click(),100);}},
                 {icon:<File size={24} color="#fff"/>,     bg:"#3498db", label:"Document", action:()=>{setShowAttachSheet(false);setTimeout(()=>fileInputRef.current?.click(),100);}},
                 {icon:<Music size={24} color="#fff"/>,    bg:"#e67e22", label:"Audio",    action:()=>{setShowAttachSheet(false);setTimeout(()=>audioFileRef.current?.click(),100);}},
               ].map(item=>(
@@ -2195,6 +2416,172 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── IMAGE PREVIEW WITH CAPTION (WhatsApp-exact) ─────────── */}
+      {imgPreview&&(
+        <div style={{position:"fixed",inset:0,zIndex:600,background:"#000",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:"rgba(0,0,0,.5)"}}>
+            <button onClick={()=>setImgPreview(null)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><X size={22}/></button>
+            <span style={{color:"#fff",fontWeight:600,fontSize:16,flex:1}}>Send to {activeChannel?getCN(activeChannel):""}</span>
+            <button onClick={sendImageWithCaption} style={{background:WA_GREEN,border:"none",borderRadius:"50%",width:44,height:44,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+              <Send size={20} color="#fff"/>
+            </button>
+          </div>
+          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+            <img src={imgPreview.dataUrl} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}} alt=""/>
+          </div>
+          <div style={{padding:"12px 16px 24px",background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",gap:10}}>
+            <Smile size={22} color="rgba(255,255,255,.7)" style={{cursor:"pointer",flexShrink:0}}/>
+            <input
+              value={imgCaption} onChange={e=>setImgCaption(e.target.value)}
+              placeholder="Add a caption…"
+              autoFocus
+              style={{flex:1,background:"rgba(255,255,255,.15)",border:"none",borderRadius:22,padding:"10px 16px",color:"#fff",fontSize:14,outline:"none"}}
+              onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();sendImageWithCaption();}}}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* ── MESSAGE INFO PANEL ──────────────────────────────────── */}
+      {showMsgInfo&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowMsgInfo(null)}>
+          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"70vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{background:WA_GREEN,padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
+              <button onClick={()=>setShowMsgInfo(null)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><ArrowLeft size={20}/></button>
+              <span style={{color:"#fff",fontWeight:700,fontSize:17}}>Message Info</span>
+            </div>
+            <div style={{flex:1,overflowY:"auto"}}>
+              <div style={{padding:"16px 20px",borderBottom:`1px solid ${divider}`}}>
+                <div style={{fontSize:12,color:WA_GREEN,fontWeight:700,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
+                  <CheckCheck size={14} color="#53BDEB"/> READ BY
+                </div>
+                {msgInfoData.readBy.length===0
+                  ? <div style={{fontSize:13,color:textSub}}>No one has read this yet</div>
+                  : msgInfoData.readBy.map((p:any,i:number)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:`1px solid ${divider}`}}>
+                      {p?.avatar_url
+                        ? <img src={p.avatar_url} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover"}} alt=""/>
+                        : <div style={{width:40,height:40,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:16}}>{(p?.full_name||"?")[0].toUpperCase()}</div>
+                      }
+                      <div>
+                        <div style={{fontWeight:600,fontSize:14,color:textMain}}>{p?.full_name||"Student"}</div>
+                        <div style={{fontSize:11,color:"#53BDEB"}}>Read ✓✓</div>
+                      </div>
+                    </div>
+                  ))
+                }
+              </div>
+              <div style={{padding:"16px 20px"}}>
+                <div style={{fontSize:12,color:textSub,fontWeight:700,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
+                  <CheckCheck size={14} color={textSub}/> DELIVERED TO
+                </div>
+                {msgInfoData.deliveredTo.length===0
+                  ? <div style={{fontSize:13,color:textSub}}>Message sent</div>
+                  : msgInfoData.deliveredTo.map((p:any,i:number)=>(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:`1px solid ${divider}`}}>
+                      {p?.avatar_url
+                        ? <img src={p.avatar_url} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover"}} alt=""/>
+                        : <div style={{width:40,height:40,borderRadius:"50%",background:"#8696a0",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:16}}>{(p?.full_name||"?")[0].toUpperCase()}</div>
+                      }
+                      <div>
+                        <div style={{fontWeight:600,fontSize:14,color:textMain}}>{p?.full_name||"Student"}</div>
+                        <div style={{fontSize:11,color:textSub}}>Delivered ✓✓</div>
+                      </div>
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── REACTION DETAIL SHEET ───────────────────────────────── */}
+      {showReactionDetail&&(()=>{
+        const {msgId,emoji}=showReactionDetail;
+        const uids=reactions[msgId]?.[emoji]||[];
+        const reacters=uids.map(id=>profiles[id]).filter(Boolean);
+        return (
+          <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowReactionDetail(null)}>
+            <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"60vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+              <div style={{padding:"14px 20px",borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:28}}>{emoji}</span>
+                <span style={{fontWeight:700,fontSize:16,color:textMain}}>{uids.length} reaction{uids.length!==1?"s":""}</span>
+                <button onClick={()=>setShowReactionDetail(null)} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",color:textSub}}><X size={18}/></button>
+              </div>
+              <div style={{flex:1,overflowY:"auto"}}>
+                {reacters.map((p:any,i:number)=>(
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",borderBottom:`1px solid ${divider}`}}>
+                    {p?.avatar_url
+                      ? <img src={p.avatar_url} style={{width:44,height:44,borderRadius:"50%",objectFit:"cover"}} alt=""/>
+                      : <div style={{width:44,height:44,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:18}}>{(p?.full_name||"?")[0].toUpperCase()}</div>
+                    }
+                    <div>
+                      <div style={{fontWeight:600,fontSize:15,color:textMain}}>{p?.full_name||"Student"}</div>
+                      <div style={{fontSize:12,color:textSub}}>{(p as any)?.level||"Student"}</div>
+                    </div>
+                    <span style={{marginLeft:"auto",fontSize:22}}>{emoji}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+
+      {/* ── DISAPPEARING MESSAGES SHEET ─────────────────────────── */}
+      {showDisappearSheet&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowDisappearSheet(false)}>
+          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{background:WA_GREEN,padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
+              <button onClick={()=>setShowDisappearSheet(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><ArrowLeft size={20}/></button>
+              <span style={{color:"#fff",fontWeight:700,fontSize:17}}>Disappearing Messages</span>
+            </div>
+            <div style={{padding:"12px 20px",fontSize:13,color:textSub,lineHeight:1.5}}>When enabled, new messages sent in this chat will disappear after the selected duration.</div>
+            {[{label:"Off",mins:0},{label:"24 hours",mins:1440},{label:"7 days",mins:10080},{label:"90 days",mins:129600}].map(opt=>(
+              <div key={opt.label} onClick={()=>setDisappearingMessages(opt.mins)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
+                <span style={{fontSize:15,color:textMain}}>{opt.label}</span>
+                {disappearTimer===opt.mins&&<Check size={18} color={WA_GREEN}/>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── BROADCAST SHEET (admin/teacher) ─────────────────────── */}
+      {showBroadcastSheet&&canModerate&&(
+        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowBroadcastSheet(false)}>
+          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{background:WA_GREEN,padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
+              <button onClick={()=>setShowBroadcastSheet(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><ArrowLeft size={20}/></button>
+              <span style={{color:"#fff",fontWeight:700,fontSize:17}}>Broadcast Message</span>
+            </div>
+            <div style={{padding:"14px 16px",borderBottom:`1px solid ${divider}`}}>
+              <textarea value={broadcastMsg} onChange={e=>setBroadcastMsg(e.target.value)} placeholder="Type your broadcast message…" rows={3} style={{width:"100%",border:`1px solid ${divider}`,borderRadius:12,padding:"10px 14px",fontSize:14,color:textMain,background:inputBg,outline:"none",resize:"none",boxSizing:"border-box",fontFamily:"inherit"}} autoFocus/>
+            </div>
+            <div style={{padding:"10px 16px 4px",fontSize:12,color:textSub,fontWeight:700,letterSpacing:"0.06em"}}>SELECT GROUPS</div>
+            <div style={{flex:1,overflowY:"auto"}}>
+              {channels.map(ch=>{
+                const sel=broadcastTargets.has(ch.id);
+                return (
+                  <div key={ch.id} onClick={()=>setBroadcastTargets(prev=>{const n=new Set(prev);sel?n.delete(ch.id):n.add(ch.id);return n;})} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderBottom:`1px solid ${divider}`,cursor:"pointer",background:sel?"rgba(37,211,102,.07)":"transparent"}}>
+                    <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${sel?WA_GREEN:divider}`,background:sel?WA_GREEN:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>{sel&&<Check size={14} color="#fff"/>}</div>
+                    {chAvatarEl(ch,40)}
+                    <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:14,color:textMain,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getCN(ch)}</div><div style={{fontSize:11,color:textSub}}>{memberCounts[ch.id]||0} members</div></div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{padding:"12px 16px 24px",borderTop:`1px solid ${divider}`}}>
+              <button onClick={sendBroadcast} disabled={!broadcastMsg.trim()||broadcastTargets.size===0} style={{width:"100%",padding:"14px",borderRadius:12,background:broadcastMsg.trim()&&broadcastTargets.size>0?WA_GREEN:"#ccc",border:"none",color:"#fff",fontSize:15,fontWeight:700,cursor:broadcastMsg.trim()&&broadcastTargets.size>0?"pointer":"not-allowed",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                <Send size={18}/> Broadcast to {broadcastTargets.size} group{broadcastTargets.size!==1?"s":""}
+              </button>
             </div>
           </div>
         </div>
