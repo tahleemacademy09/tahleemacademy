@@ -8,6 +8,7 @@ import HifdhDashboard    from "@/components/hifdh/HifdhDashboard";
 import HifdhRevision     from "@/pages/student/HifdhRevision";
 import HifdhTest         from "@/components/hifdh/HifdhTest";
 import HifdhMemorization from "@/components/hifdh/HifdhMemorization";
+import { H_GOLD } from "@/components/hifdh/hifdhTokens";
 
 type Tab = "overview" | "revision" | "test" | "memorization";
 const TAB_KEY = "hifdh_active_tab";
@@ -17,7 +18,7 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "test",         label: "Test",     icon: <ClipboardCheck  size={12} /> },
   { id: "memorization", label: "Memorize", icon: <Brain           size={12} /> },
 ];
-const GOLD = "#b7791f";
+const GOLD = H_GOLD;
 
 export default function HifdhPage() {
   const [tab, setTab] = useState<Tab>(() => {
