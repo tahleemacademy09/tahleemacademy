@@ -5,7 +5,7 @@
     seen_by guard, scroll FAB positioning, desktop layout.
     UI: Full WhatsApp-grade redesign.
 */
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -18,8 +18,7 @@ import {
   Edit2, CheckSquare, Square, AtSign, ChevronRight,
   Menu, Settings, User, Bell, HelpCircle, Bookmark,
   ChevronDown, Archive, Eye, Moon, LayoutDashboard, Users,
-  Music, MapPin, Phone, File, Info, Video, UserCheck,
-  SmilePlus, ChevronLeft, PlayCircle
+  Music, MapPin, Phone, File
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
@@ -237,40 +236,34 @@ const AudioMsg = ({ path, text }:{ path?:string|null; text?:string|null }) => {
 
 // ── ImageMsg ─────────────────────────────────────────────────────
 const ImageMsg = ({ path, text }:{ path?:string|null; text?:string|null }) => {
-  // Resolve URL immediately for data: and http: sources — no spinner
-  const [url, setUrl] = useState<string|null>(()=>{
-    const s = text || "";
-    if (s.startsWith("data:") || s.startsWith("http") || s.startsWith("blob:")) return s;
-    return null;
-  });
+  const [url,setUrl]           = useState<string|null>(null);
   const [err,setErr]           = useState(false);
-  const [revealed,setRevealed] = useState(false);
+  const [loading,setLoading]   = useState(true);
   const [fullscreen,setFullscreen] = useState(false);
 
   useEffect(()=>{
-    const s = path || text || "";
-    if (!s) { setErr(true); return; }
-    if (s.startsWith("data:") || s.startsWith("http") || s.startsWith("blob:")) { setUrl(s); return; }
-    resolveMedia(s).then(u => u ? setUrl(u) : setErr(true));
-  },[path, text]);
+    if (text?.startsWith("data:image")) { setUrl(text); setLoading(false); return; }
+    const src=path||text||"";
+    if (!src) { setErr(true); setLoading(false); return; }
+    if (src.startsWith("http")) { setUrl(src); setLoading(false); return; }
+    resolveMedia(src).then(u=>{ u?setUrl(u):setErr(true); setLoading(false); });
+  },[path,text]);
 
-  if (err) return (
+  if(loading) return (
+    <div style={{width:200,height:140,borderRadius:10,background:"#e8e8e8",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <Loader2 style={{width:22,height:22,color:"#aaa",animation:"spin .8s linear infinite"}}/>
+    </div>
+  );
+  if(err||!url) return (
     <div style={{width:160,height:100,borderRadius:10,background:"#f0f0f0",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:6}}>
       <Image style={{width:24,height:24,color:"#bbb"}}/>
       <span style={{fontSize:10,color:"#bbb"}}>Image unavailable</span>
     </div>
   );
-  if (!url) return (
-    <div style={{width:200,height:140,borderRadius:10,background:"linear-gradient(135deg,#e8e8e8,#f0f0f0)",animation:"skeletonPulse 1.4s ease infinite"}}/>
-  );
   return (
     <>
-      <img src={url}
-        style={{maxWidth:240,maxHeight:280,borderRadius:10,cursor:"pointer",display:"block",objectFit:"cover",width:"100%",opacity:revealed?1:0,transition:"opacity .18s ease"}}
-        alt="" loading="lazy"
-        onLoad={()=>setRevealed(true)}
+      <img src={url} style={{maxWidth:240,maxHeight:280,borderRadius:10,cursor:"pointer",display:"block",objectFit:"cover",width:"100%"}} alt="" loading="lazy"
         onClick={()=>setFullscreen(true)} onError={()=>setErr(true)}/>
-      {!revealed && <div style={{width:200,height:140,borderRadius:10,background:"linear-gradient(135deg,#e8e8e8,#f0f0f0)",animation:"skeletonPulse 1.4s ease infinite",position:"absolute",top:0,left:0}}/>}
       {fullscreen&&(
         <div onClick={()=>setFullscreen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.95)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
           <img src={url} style={{maxWidth:"100vw",maxHeight:"100vh",objectFit:"contain"}} alt=""/>
@@ -303,6 +296,69 @@ const FileMsg = ({ path, text }:{ path:string; text:string|null }) => {
     </button>
   );
 };
+
+// ── SwipeBubble: swipe right on a message to reply ──────────
+interface SwipeBubbleProps {
+  children: React.ReactNode;
+  onReply: () => void;
+  disabled?: boolean;
+  isMe: boolean;
+}
+const SwipeBubble = ({ children, onReply, disabled, isMe }:SwipeBubbleProps) => {
+  const wrapRef  = useRef<HTMLDivElement>(null);
+  const startX   = useRef(0);
+  const startY   = useRef(0);
+  const dragging = useRef(false);
+  const triggered= useRef(false);
+  const THRESHOLD = 55;
+
+  const onTouchStart = (e:React.TouchEvent) => {
+    if (disabled) return;
+    startX.current=e.touches[0].clientX;
+    startY.current=e.touches[0].clientY;
+    dragging.current=false; triggered.current=false;
+  };
+  const onTouchMove = (e:React.TouchEvent) => {
+    if (disabled) return;
+    const dx=e.touches[0].clientX - startX.current;
+    const dy=Math.abs(e.touches[0].clientY - startY.current);
+    if (!dragging.current) {
+      if (Math.abs(dx)>8 && dy<12) dragging.current=true;
+      else if (dy>12) return;
+    }
+    if (!dragging.current) return;
+    // Only swipe right (positive dx) to reply
+    const clamped=Math.max(0, Math.min(THRESHOLD+12, dx));
+    if (wrapRef.current) wrapRef.current.style.transform=`translateX(${clamped}px)`;
+    if (clamped>=THRESHOLD && !triggered.current) {
+      triggered.current=true;
+      if (navigator.vibrate) navigator.vibrate(35);
+    }
+  };
+  const onTouchEnd = () => {
+    if (!dragging.current) return;
+    if (wrapRef.current) {
+      wrapRef.current.style.transition="transform .2s cubic-bezier(.25,.46,.45,.94)";
+      wrapRef.current.style.transform="translateX(0)";
+      setTimeout(()=>{ if(wrapRef.current) wrapRef.current.style.transition=""; },220);
+    }
+    if (triggered.current) onReply();
+    dragging.current=false;
+  };
+  return (
+    <div ref={wrapRef} style={{position:"relative",display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"center"}}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+      {/* Reply hint icon that appears as you swipe */}
+      <div style={{position:"absolute",left:isMe?"auto":"100%",right:isMe?"100%":"auto",padding:"0 6px",opacity:0,transform:"scale(.5)",transition:"opacity .15s,transform .15s",pointerEvents:"none"}}
+        id={`swipe-hint-${Math.random()}`}
+      >
+        <Reply size={18} color={WA_GREEN}/>
+      </div>
+      {children}
+    </div>
+  );
+};
+
 
 // ════════════════════════════════════════════════════════════════
 const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) => {
@@ -372,8 +428,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const [chatSearchQuery,setChatSearchQuery]         = useState("");
   const [sidebarSearch,setSidebarSearch]             = useState("");
   const [searchTab,setSearchTab]                     = useState<"messages"|"contacts"|"groups">("contacts");
-  const [showMessageMenu,setShowMessageMenu]         = useState<string|null>(null);
-  const [showDeleteSheet,setShowDeleteSheet]         = useState<string|null>(null);
+  const [showMessageMenu,setShowMessageMenu]         = useState<{id:string;x:number;y:number}|null>(null);
+  const [showDeleteSheet,setShowDeleteSheet]         = useState<{id:string;isOwner:boolean}|null>(null);
   const [showPinnedBar,setShowPinnedBar]             = useState(true);
   const [showEmojiBar,setShowEmojiBar]               = useState(false);
   // ── FIXED: Attachment sheet replaces bare camera/paperclip labels ──
@@ -389,25 +445,12 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const [swipedChannel,setSwipedChannel]             = useState<string|null>(null);
   const [channelMenu,setChannelMenu]                 = useState<string|null>(null);
   const [showScrollFab,setShowScrollFab]             = useState(false);
+  const [floatingDate,setFloatingDate]               = useState<string|null>(null);
+  const floatingDateTimerRef                         = useRef<any>(null);
   const [editProfileName,setEditProfileName]         = useState("");
   const [editProfileAr,setEditProfileAr]             = useState("");
   const [savingProfile,setSavingProfile]             = useState(false);
   const [channelMemberNames,setChannelMemberNames]   = useState<Record<string,string>>({});
-
-  // ── NEW WhatsApp features state ───────────────────────────────────
-  const [showMsgInfo,setShowMsgInfo]               = useState<string|null>(null);
-  const [msgInfoData,setMsgInfoData]               = useState<{readBy:any[];deliveredTo:any[]}>({readBy:[],deliveredTo:[]});
-  const [showEmojiPicker,setShowEmojiPicker]       = useState(false);
-  const [emojiCategory,setEmojiCategory]           = useState(0);
-  const [showReactionDetail,setShowReactionDetail] = useState<{msgId:string;emoji:string}|null>(null);
-  const [swipeReplyId,setSwipeReplyId]             = useState<string|null>(null);
-  const [imgPreview,setImgPreview]                 = useState<{file:File;dataUrl:string}|null>(null);
-  const [imgCaption,setImgCaption]                 = useState("");
-  const [showDisappearSheet,setShowDisappearSheet] = useState(false);
-  const [showChannelLockBanner,setShowChannelLockBanner] = useState(channelLocked);
-  const [showBroadcastSheet,setShowBroadcastSheet] = useState(false);
-  const [broadcastMsg,setBroadcastMsg]             = useState("");
-  const [broadcastTargets,setBroadcastTargets]     = useState<Set<string>>(new Set());
 
   // ── Refs ──────────────────────────────────────────────────
   const scrollRef        = useRef<HTMLDivElement>(null);
@@ -423,7 +466,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const chunksRef        = useRef<Blob[]>([]);
   const recTimerRef      = useRef<any>(null);
   const typingTimerRef   = useRef<any>(null);
-  const lpTimerRef       = useRef<any>(null);
+  const lpTimerRef           = useRef<any>(null);
+  const micTouchStartX       = useRef(0);
+  const micTouchStartY       = useRef(0);
 
   const isAdmin     = hasRole("admin");
   const isTeacher   = hasRole("teacher");
@@ -439,10 +484,43 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     return { background:WP.bg, backgroundImage:WP.pattern||undefined } as React.CSSProperties;
   };
 
-  const getCN = (ch:ChatChannel)=>language==="ar"?((ch as any).name_ar||ch.name||""):(ch.name||"");
+  // For DM channels, show the OTHER person's name, not the generic "DM" string
+  const getDMPartner = (ch:ChatChannel): UserProfile|null => {
+    if(ch.type!=="dm") return null;
+    // Find the member who is NOT the current user
+    // We stored members in profiles during channel load
+    const memberIds = Object.keys(profiles).filter(uid =>
+      uid !== user?.id &&
+      channels.find(c => c.id === ch.id) // channel exists
+    );
+    // Check channelMemberNames to find the partner's uid
+    // The DM name is stored as the partner's name during creation
+    // Fall back: parse from channel name or description
+    const partnerName = (ch as any).dm_partner_name || (ch as any).description || ch.name || "DM";
+    const partnerId = (ch as any).dm_partner_id || null;
+    if(partnerId && profiles[partnerId]) return profiles[partnerId];
+    return null;
+  };
+  const getCN = (ch:ChatChannel)=>{
+    if(ch.type==="dm"){
+      // Try to resolve DM partner name from profiles
+      const dmPartnerId = (ch as any).dm_partner_id;
+      if(dmPartnerId && profiles[dmPartnerId]) return profiles[dmPartnerId].full_name || "Direct Message";
+      // Fallback: stored name (not "DM")
+      const stored = language==="ar" ? ((ch as any).name_ar||ch.name||"") : (ch.name||"");
+      return stored === "DM" ? "Direct Message" : (stored||"Direct Message");
+    }
+    return language==="ar"?((ch as any).name_ar||ch.name||""):(ch.name||"");
+  };
   const ft  = (d:string)=>new Date(d).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
   const fr  = (s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
-  const canSend = ()=>{ if(!activeChannel||(channelLocked&&!canModerate)) return false; if(activeChannel.type==="announcement") return canModerate; return true; };
+  const canSend = ()=>{
+    if(!activeChannel) return false;
+    if(activeChannel.type==="dm") return true; // DMs are always open between the two members
+    if(channelLocked&&!canModerate) return false;
+    if(activeChannel.type==="announcement") return canModerate;
+    return true;
+  };
 
   // ── Channel sorting ───────────────────────────────────────
   const sortedChannels = [...channels]
@@ -467,6 +545,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
   const grouped = {
     pinned: filterChannels(filteredForSidebar.filter(c=>pinnedChannels.has(c.id))),
+    dms:    filterChannels(filteredForSidebar.filter(c=>c.type==="dm"&&!pinnedChannels.has(c.id))),
     groups: filterChannels(filteredForSidebar.filter(c=>c.type==="group"&&!pinnedChannels.has(c.id))),
     level:  filterChannels(filteredForSidebar.filter(c=>c.type==="level"&&!pinnedChannels.has(c.id)&&(!profile?.level||getCN(c).toLowerCase().includes((profile.level||"").toLowerCase())))),
     anns:   filterChannels(filteredForSidebar.filter(c=>c.type==="announcement"&&!pinnedChannels.has(c.id))),
@@ -500,8 +579,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       // If this pop came from the live-class back-button guard, ignore it —
       // LiveClassContext handles minimizing the classroom and re-pushes its guard.
       if(e.state?.["tahleem-live-class"]) return;
-      if(showMessageMenu){setShowMessageMenu(null);window.history.pushState({layer:"chat"},"",window.location.href);return;}
-      if(showDeleteSheet){setShowDeleteSheet(null);window.history.pushState({layer:"chat"},"",window.location.href);return;}
+      if(showMessageMenu){setShowMessageMenu(null);window.history.pushState({layer:"chat"},"",window.location.href);return;}  // showMessageMenu is now {id,x,y}|null
+      if(showDeleteSheet){setShowDeleteSheet(null);window.history.pushState({layer:"chat"},"",window.location.href);return;}  // showDeleteSheet is now {id,isOwner}|null
       if(showAttachSheet){setShowAttachSheet(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
       if(showNewSheet){setShowNewSheet(false);window.history.pushState({layer:"sidebar"},"",window.location.href);return;}
       if(showStudentProfile){setShowStudentProfile(false);window.history.pushState({layer:"chat"},"",window.location.href);return;}
@@ -548,11 +627,29 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       for(const ch of defs)
         await supabase.from("chat_members" as any).upsert({channel_id:ch.id,user_id:user.id,role:"member"},{onConflict:"channel_id,user_id"});
 
-      setChannels(all);
+      // Enrich DM channels with partner's user_id for name/avatar resolution
+      const enrichedAll = await Promise.all(all.map(async ch => {
+        if(ch.type!=="dm") return ch;
+        const {data:members}=await supabase.from("chat_members" as any)
+          .select("user_id").eq("channel_id",ch.id);
+        const partnerRow=(members||[]).find((m:any)=>m.user_id!==user!.id);
+        if(!partnerRow) return ch;
+        const partnerId=partnerRow.user_id;
+        const {data:partnerProf}=await supabase.from("profiles")
+          .select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id")
+          .eq("user_id",partnerId).maybeSingle();
+        if(partnerProf){
+          setProfiles(prev=>({...prev,[partnerId]:partnerProf as unknown as UserProfile}));
+          return {...ch, dm_partner_id:partnerId, dm_partner_name:(partnerProf as any).full_name||"DM"};
+        }
+        return {...ch, dm_partner_id:partnerId};
+      }));
+      setChannels(enrichedAll as unknown as ChatChannel[]);
+      const all2=enrichedAll as unknown as ChatChannel[];
 
       const counts:Record<string,number>={};
       const memberNames:Record<string,string>={};
-      await Promise.all(all.map(async ch=>{
+      await Promise.all(all2.map(async ch=>{
         const {data:memRows}=await supabase.from("chat_members" as any).select("user_id").eq("channel_id",ch.id).limit(5);
         counts[ch.id]=memRows?.length||0;
         if(memRows&&memRows.length>0){
@@ -571,14 +668,14 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       setChannelMemberNames(memberNames);
 
       const unread:Record<string,number>={};
-      await Promise.all(all.map(async ch=>{
+      await Promise.all(all2.map(async ch=>{
         const {data:mem}=await supabase.from("chat_members" as any).select("last_read_at").eq("channel_id",ch.id).eq("user_id",user.id).maybeSingle();
         const lastRead=(mem as any)?.last_read_at||"1970-01-01";
         const {count:uc}=await supabase.from("chat_messages").select("*",{count:"exact",head:true}).eq("channel_id",ch.id).gt("created_at",lastRead).neq("user_id",user.id);
         unread[ch.id]=uc||0;
       }));
       setUnreadCounts(unread);
-      if(!activeChannelId&&all.length>0) setActiveChannelId(all[0].id);
+      if(!activeChannelId&&all2.length>0) setActiveChannelId(all2[0].id);
     };
     load();
   },[user,profile?.level]);
@@ -589,72 +686,75 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     // ── FIX: cancelled flag prevents stale async state updates (React error #310) ──
     let cancelled = false;
 
-    // ── INSTANT CACHE: show previous messages immediately from localStorage ──
-    const CACHE_KEY = `majlis_msgs_${activeChannelId}`;
-    const deletedForMeSet = new Set<string>(
-      (()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})()
-    );
-    try {
-      const cached = localStorage.getItem(CACHE_KEY);
-      if (cached) {
-        const cachedMsgs: ChatMessage[] = JSON.parse(cached).filter((m: ChatMessage) => !deletedForMeSet.has(m.id));
-        if (cachedMsgs.length > 0) {
-          setMessages(cachedMsgs);           // show instantly — no spinner
-          setLoadingMessages(false);
+    setSelectMode(false); setSelectedIds(new Set());
+
+    // ── ZERO FLASH: load from cache instantly, refresh in background ──
+    const cacheKey = `majlis_msgs_${activeChannelId}`;
+    const dmKeyLocal = `majlis_deleted_${user?.id||"anon"}`;
+    const getDeletedSetLocal = ():Set<string> => {
+      try{ return new Set(JSON.parse(localStorage.getItem(dmKeyLocal)||"[]")); }catch{ return new Set(); }
+    };
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        const cachedMsgs = JSON.parse(cached) as ChatMessage[];
+        const deleted = getDeletedSetLocal();
+        setMessages(cachedMsgs.filter(m => !deleted.has(m.id)));
+        setTimeout(()=>{ if(scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, 50);
+      } catch {}
+    } else {
+      setMessages([]);
+    }
+    setLoadingMessages(false); // never show spinner — stale cache or empty is fine
+
+    const load=async()=>{
+      const {data:memData}=await supabase.from("chat_members" as any).select("user_id").eq("channel_id",activeChannelId);
+      if(cancelled) return;
+      if(memData&&memData.length>0){
+        const memberUids=[...new Set((memData as any[]).map((m:any)=>m.user_id))];
+        const {data:memberProfs}=await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id",memberUids);
+        if(cancelled) return;
+        if(memberProfs){
+          const map:Record<string,UserProfile>={};
+          (memberProfs as any[]).forEach((p:any)=>{map[p.user_id]=p;});
+          setProfiles(prev=>({...prev,...map}));
         }
       }
-    } catch {}
-
-    setSelectMode(false); setSelectedIds(new Set());
-    // Only show loading if no cache at all
-    if (!localStorage.getItem(CACHE_KEY)) setLoadingMessages(true);
-
-    const load = async () => {
-      // ── Fetch messages + member profiles IN PARALLEL ──
-      const [msgRes, memRes] = await Promise.all([
-        supabase.from("chat_messages").select("*").eq("channel_id", activeChannelId).order("created_at", {ascending: false}).limit(80),
-        supabase.from("chat_members" as any).select("user_id").eq("channel_id", activeChannelId),
-      ]);
-      if (cancelled) return;
-
-      const msgs = ((msgRes.data || []) as unknown as ChatMessage[]).reverse().filter(m => !deletedForMeSet.has(m.id));
-
-      // Cache for next open
-      try { localStorage.setItem(CACHE_KEY, JSON.stringify(msgs.slice(-80))); } catch {}
-
+      const {data}=await supabase.from("chat_messages").select("*").eq("channel_id",activeChannelId).order("created_at",{ascending:false}).limit(80);
+      if(cancelled) return;
+      // Filter out messages the user deleted "for me" from localStorage
+      const deletedForMeSet=new Set<string>(
+        (()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})()
+      );
+      const msgs=((data||[]) as unknown as ChatMessage[]).reverse().filter(m=>!deletedForMeSet.has(m.id));
       setMessages(msgs);
-      setLoadingMessages(false);
+      // Update cache so next visit is instant
+      try { sessionStorage.setItem(cacheKey, JSON.stringify(msgs)); } catch {}
 
-      // ── Fetch profiles for all visible users in parallel ──
-      const allUids = [...new Set([
-        ...msgs.map(m => m.user_id),
-        ...((memRes.data || []) as any[]).map((m: any) => m.user_id),
-      ])];
-      if (allUids.length > 0) {
-        const {data: profs} = await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id", allUids);
-        if (cancelled) return;
-        const map: Record<string, UserProfile> = {};
-        (profs || []).forEach((p: any) => { map[p.user_id] = p; });
-        setProfiles(prev => ({...prev, ...map}));
+      const uids=[...new Set(msgs.map(m=>m.user_id))];
+      if(uids.length>0){
+        const {data:profs}=await supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level,email,student_id").in("user_id",uids);
+        if(cancelled) return;
+        const map:Record<string,UserProfile>={};
+        (profs||[]).forEach((p:any)=>{map[p.user_id]=p;});
+        setProfiles(prev=>({...prev,...map}));
       }
 
-      // ── Mark read + fetch reactions in parallel ──
-      const ids = msgs.map(m => m.id);
-      const [, rdRes] = await Promise.all([
-        supabase.from("chat_members" as any).update({last_read_at: new Date().toISOString()}).eq("channel_id", activeChannelId).eq("user_id", user!.id),
-        ids.length > 0 ? supabase.from("message_reactions" as any).select("message_id,user_id,emoji").in("message_id", ids) : Promise.resolve({data: []}),
-      ]);
-      if (cancelled) return;
+      await supabase.from("chat_members" as any).update({last_read_at:new Date().toISOString()}).eq("channel_id",activeChannelId).eq("user_id",user!.id);
+      if(cancelled) return;
+      setUnreadCounts(prev=>({...prev,[activeChannelId]:0}));
 
-      setUnreadCounts(prev => ({...prev, [activeChannelId]: 0}));
-      const rm: Record<string, Record<string, string[]>> = {};
-      ((rdRes as any).data || []).forEach((r: any) => {
-        if (!rm[r.message_id]) rm[r.message_id] = {};
-        if (!rm[r.message_id][r.emoji]) rm[r.message_id][r.emoji] = [];
-        rm[r.message_id][r.emoji].push(r.user_id);
-      });
-      setReactions(rm);
-      setPinnedMessages(msgs.filter(m => (m as any).is_pinned));
+      const ids=msgs.map(m=>m.id);
+      if(ids.length>0){
+        const {data:rd}=await supabase.from("message_reactions" as any).select("message_id,user_id,emoji").in("message_id",ids);
+        if(cancelled) return;
+        const rm:Record<string,Record<string,string[]>>={};
+        (rd||[]).forEach((r:any)=>{if(!rm[r.message_id])rm[r.message_id]={};if(!rm[r.message_id][r.emoji])rm[r.message_id][r.emoji]=[];rm[r.message_id][r.emoji].push(r.user_id);});
+        setReactions(rm);
+      }
+      if(cancelled) return;
+      setPinnedMessages(msgs.filter(m=>(m as any).is_pinned));
+      setLoadingMessages(false);
     };
     load();
 
@@ -662,19 +762,14 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       .on("postgres_changes",{event:"*",schema:"public",table:"chat_messages",filter:`channel_id=eq.${activeChannelId}`},p=>{
         if(p.eventType==="INSERT"){
           const nm=p.new as unknown as ChatMessage;
-          // Update localStorage cache with new message
-          try {
-            const ckey=`majlis_msgs_${activeChannelId}`;
-            const cached:ChatMessage[]=JSON.parse(localStorage.getItem(ckey)||"[]");
-            if(!cached.find(m=>m.id===nm.id)){
-              const updated=[...cached, nm].slice(-80);
-              localStorage.setItem(ckey,JSON.stringify(updated));
-            }
-          } catch {}
           // Skip if this user deleted this message locally
           const dmSet=new Set<string>((()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})());
           if(dmSet.has(nm.id)) return;
-          setMessages(prev=>prev.find(m=>m.id===nm.id)?prev:[...prev,nm]);
+          setMessages(prev=>{
+            const updated=prev.find(m=>m.id===nm.id)?prev:[...prev,nm];
+            try { sessionStorage.setItem(`majlis_msgs_${nm.channel_id}`, JSON.stringify(updated)); } catch {}
+            return updated;
+          });
           if(nm.user_id!==user?.id){
             playSound("receive",settings.notifSound);
             if(navigator.vibrate&&settings.notifVibration) navigator.vibrate(100);
@@ -684,13 +779,17 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level").eq("user_id",nm.user_id).maybeSingle()
               .then(({data})=>{if(data)setProfiles(prev=>({...prev,[(data as any).user_id]:data as unknown as UserProfile}));});
         } else if(p.eventType==="UPDATE"){
-          const updated=p.new as unknown as ChatMessage;
-          setMessages(prev=>prev.map(m=>m.id===updated.id?updated:m));
-          try{const ck=`majlis_msgs_${activeChannelId}`;const c:ChatMessage[]=JSON.parse(localStorage.getItem(ck)||"[]");localStorage.setItem(ck,JSON.stringify(c.map(m=>m.id===updated.id?updated:m)));}catch{}
+          setMessages(prev=>{
+            const updated=prev.map(m=>m.id===(p.new as any).id?p.new as unknown as ChatMessage:m);
+            try { sessionStorage.setItem(cacheKey, JSON.stringify(updated)); } catch {}
+            return updated;
+          });
         } else if(p.eventType==="DELETE"){
-          const delId=(p.old as any).id;
-          setMessages(prev=>prev.filter(m=>m.id!==delId));
-          try{const ck=`majlis_msgs_${activeChannelId}`;const c:ChatMessage[]=JSON.parse(localStorage.getItem(ck)||"[]");localStorage.setItem(ck,JSON.stringify(c.filter(m=>m.id!==delId)));}catch{}
+          setMessages(prev=>{
+            const updated=prev.filter(m=>m.id!==(p.old as any).id);
+            try { sessionStorage.setItem(cacheKey, JSON.stringify(updated)); } catch {}
+            return updated;
+          });
         }
       })
       .on("broadcast",{event:"typing"},p=>{
@@ -736,7 +835,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       @keyframes waveBar { from{transform:scaleY(0.4);}to{transform:scaleY(1);} }
       @keyframes pulse { 0%,100%{opacity:1;}50%{opacity:.4;} }
       @keyframes bounce { 0%,80%,100%{transform:scaleY(1);}40%{transform:scaleY(1.5);} }
-      @keyframes skeletonPulse { 0%,100%{opacity:1;}50%{opacity:.45;} }
       @keyframes popIn { 0%{transform:scale(.5);opacity:0;}100%{transform:scale(1);opacity:1;} }
       @keyframes msgIn { from{opacity:0;transform:scale(.96) translateY(4px);}to{opacity:1;transform:none;} }
       @keyframes onlinePulse { 0%,100%{box-shadow:0 0 0 0 rgba(37,211,102,.4);}50%{box-shadow:0 0 0 4px rgba(37,211,102,0);} }
@@ -870,6 +968,19 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const handleScrollMessages=(e:React.UIEvent<HTMLDivElement>)=>{
     const el=e.currentTarget;
     setShowScrollFab(el.scrollHeight-el.scrollTop-el.clientHeight>200);
+    // Floating date: find topmost visible message date
+    const containerTop=el.getBoundingClientRect().top;
+    const msgEls=el.querySelectorAll("[data-msg-date]");
+    let topDate:string|null=null;
+    for(const msgEl of Array.from(msgEls)){
+      const rect=(msgEl as HTMLElement).getBoundingClientRect();
+      if(rect.top-containerTop>-30){ topDate=(msgEl as HTMLElement).dataset.msgDate||null; break; }
+    }
+    if(topDate){
+      setFloatingDate(topDate);
+      clearTimeout(floatingDateTimerRef.current);
+      floatingDateTimerRef.current=setTimeout(()=>setFloatingDate(null),1200);
+    }
   };
   const scrollToBottom=()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; };
 
@@ -887,9 +998,14 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     setTimeout(()=>inputRef.current?.focus(),50);
   };
 
-  const startLongPress=(id:string)=>{
+  const startLongPress=(id:string, e?: React.TouchEvent|React.MouseEvent)=>{
     lpTimerRef.current=setTimeout(()=>{
-      setShowMessageMenu(id); setShowDeleteSheet(null);
+      let x=window.innerWidth/2, y=window.innerHeight/2;
+      if(e){
+        if("touches" in e && e.touches.length>0){ x=e.touches[0].clientX; y=e.touches[0].clientY; }
+        else if("clientX" in e){ x=(e as React.MouseEvent).clientX; y=(e as React.MouseEvent).clientY; }
+      }
+      setShowMessageMenu({id,x,y}); setShowDeleteSheet(null);
       if(navigator.vibrate) navigator.vibrate(50);
       window.history.pushState({layer:"messageMenu"},"",window.location.href);
     },LP_DELAY);
@@ -1048,39 +1164,63 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
   const deleteForMe=(id:string)=>{
     persistDeletedForMe(id);
-    setMessages(prev=>prev.filter(m=>m.id!==id));
+    setMessages(prev=>{
+      const updated=prev.filter(m=>m.id!==id);
+      if(activeChannelId){ try{sessionStorage.setItem(`majlis_msgs_${activeChannelId}`,JSON.stringify(updated));}catch{} }
+      return updated;
+    });
     setShowDeleteSheet(null);
-    toast({title:"Message deleted"});
+    setShowMessageMenu(null);
+    toast({title:"Message removed from your view"});
   };
 
   const deleteForAll=async(id:string)=>{
     setShowDeleteSheet(null);
-    // Optimistically remove locally first for instant feedback
+    // Save the message in case we need to rollback
+    const msgToDelete = messages.find(m=>m.id===id);
+    // Optimistically remove
     setMessages(prev=>prev.filter(m=>m.id!==id));
     const {error}=await supabase.from("chat_messages").delete().eq("id",id);
     if(error){
-      // Rollback and show error
-      setMessages(prev=>{
-        // Re-fetch would be ideal but just show toast since realtime will reconcile
-        return prev;
+      // Rollback — restore the deleted message
+      if(msgToDelete) setMessages(prev=>{
+        // Insert back in chronological position
+        const idx=prev.findIndex(m=>new Date(m.created_at)>new Date(msgToDelete.created_at));
+        if(idx===-1) return [...prev,msgToDelete];
+        return [...prev.slice(0,idx),msgToDelete,...prev.slice(idx)];
       });
-      toast({title:"Failed to delete message",description:"You may not have permission",variant:"destructive"});
+      toast({title:"Could not delete",description:error.code=="42501"?"You can only delete your own messages":error.message,variant:"destructive"});
       return;
     }
-    toast({title:"Message deleted for everyone"});
+    setShowMessageMenu(null);
+    toast({title:"Deleted for everyone"});
   };
 
   const deleteSelected=async()=>{
     const ids=[...selectedIds];
+    const savedMsgs=messages.filter(m=>selectedIds.has(m.id)); // save for rollback
     // Optimistically remove first
-    setMessages(prev=>prev.filter(m=>!selectedIds.has(m.id)));
+    setMessages(prev=>{
+      const updated=prev.filter(m=>!selectedIds.has(m.id));
+      if(activeChannelId){ try{sessionStorage.setItem(`majlis_msgs_${activeChannelId}`,JSON.stringify(updated));}catch{} }
+      return updated;
+    });
     setSelectedIds(new Set()); setSelectMode(false);
     let failed=0;
+    const failedMsgs:ChatMessage[]=[];
     for(const id of ids){
       const {error}=await supabase.from("chat_messages").delete().eq("id",id);
-      if(error) failed++;
+      if(error){ failed++; const m=savedMsgs.find(x=>x.id===id); if(m)failedMsgs.push(m); }
     }
-    toast({title:failed===0?`${ids.length} message${ids.length>1?"s":""} deleted`:`${ids.length-failed} deleted, ${failed} failed`});
+    if(failed>0){
+      // Rollback failed ones
+      setMessages(prev=>{
+        const updated=[...prev,...failedMsgs].sort((a,b)=>new Date(a.created_at).getTime()-new Date(b.created_at).getTime());
+        if(activeChannelId){ try{sessionStorage.setItem(`majlis_msgs_${activeChannelId}`,JSON.stringify(updated));}catch{} }
+        return updated;
+      });
+    }
+    toast({title:failed===0?`${ids.length} message${ids.length>1?"s":""} deleted`:`${ids.length-failed} deleted, ${failed} failed (permission denied)`});
   };
   const pinMessage=async(m:ChatMessage)=>{
     const ip=!(m as any).is_pinned;
@@ -1178,94 +1318,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
   const QUICK_EMOJIS=["👍","❤️","😂","😮","😢","🙏","🔥","✅"];
 
-  // Full emoji picker categories
-  const EMOJI_CATS = [
-    { label:"😊", name:"Smileys", emojis:["😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚","😋","😛","😝","😜","🤪","🤨","🧐","🤓","😎","🤩","🥳","😏","😒","😞","😔","😟","😕","🙁","☹️","😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","😓","🤗","🤔","🤭","🤫","🤥","😶","😐","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕","🤑","🤠","😈","👿","👹","👺","🤡","💩","👻","💀","☠️","👽","👾","🤖","🎃","😺","😸","😹","😻","😼","😽","🙀","😿","😾"] },
-    { label:"👋", name:"People", emojis:["👋","🤚","🖐️","✋","🖖","👌","🤌","🤏","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","🖕","👇","☝️","👍","👎","✊","👊","🤛","🤜","👏","🙌","🫶","👐","🤲","🤝","🙏","✍️","💅","🤳","💪","🦾","🦿","🦵","🦶","👂","🦻","👃","🧠","🫀","🫁","🦷","🦴","👀","👁️","👅","👄","🫦","💋","🩸","🧬","🦠","💉","💊","🩹","🩺","🚑"] },
-    { label:"🐶", name:"Animals", emojis:["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐔","🐧","🐦","🐤","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝","🐛","🦋","🐌","🐞","🐜","🦟","🦗","🕷️","🦂","🐢","🐍","🦎","🦖","🦕","🐙","🦑","🦐","🦞","🦀","🐡","🐠","🐟","🐬","🐳","🐋","🦈","🌊"] },
-    { label:"🍎", name:"Food", emojis:["🍏","🍎","🍐","🍊","🍋","🍌","🍉","🍇","🍓","🫐","🍈","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🍆","🥑","🫒","🥦","🥬","🥒","🌶️","🫑","🥕","🧄","🧅","🥔","🍠","🫚","🥐","🥯","🍞","🥖","🥨","🧀","🥚","🍳","🧈","🥞","🧇","🥓","🥩","🍗","🍖","🦴","🌭","🍔","🍟","🍕","🫓","🥪","🥙","🧆","🌮","🌯","🫔","🥗","🥘","🫕","🍝","🍜","🍲","🍛","🍣","🍱","🥟","🦪","🍤","🍙","🍚","🍘","🍥","🥮","🍢","🧁","🍰","🎂","🍮","🍭","🍬","🍫","🍿","🍩","🍪","🌰","🥜","🫘","🍯","🧃","🥤","🧋","🍵","☕","🫖","🍺","🍻","🥂","🍷","🫗","🥃","🍸","🍹","🧉"] },
-    { label:"⚽", name:"Activity", emojis:["⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🥏","🎱","🪀","🏓","🏸","🏒","🥍","🏑","🎿","⛷️","🏂","🪂","🤺","🤼","🤸","⛹️","🤺","🏊","🚴","🏋️","🤾","🧘","🧗","🤸","🏇","⛷️","🤿","🥊","🥋","🎽","🏆","🥇","🥈","🥉","🏅","🎖️","🏵️","🎗️","🎫","🎟️","🎪","🤹","🎭","🎨","🖼️","🎰","🚂","🚢","✈️","🚀","🛸"] },
-    { label:"🌍", name:"Travel", emojis:["🚗","🚕","🚙","🚌","🚎","🏎️","🚓","🚑","🚒","🚐","🛻","🚚","🚛","🚜","🏍️","🛵","🛺","🚲","🛴","🛹","🚏","⛽","🛣️","🗺️","🧭","🏔️","⛰️","🌋","🗻","🏕️","🏖️","🏜️","🏝️","🏞️","🏟️","🏛️","🏗️","🧱","🏘️","🏚️","🏠","🏡","🏢","🏣","🏤","🏥","🏦","🏨","🏩","🏪","🏫","🏬","🏭","🏯","🏰","🗼","🗽","⛪","🕌","🛕","🕍","⛩️","🕋","⛲","⛺","🌁","🌃","🌄","🌅","🌆","🌇","🌉","♾️","🌌","🌠","🎇","🎆","🗺️"] },
-    { label:"💡", name:"Objects", emojis:["⌚","📱","💻","⌨️","🖥️","🖨️","🖱️","🖲️","💽","💾","💿","📀","📺","📷","📸","📹","🎥","📽️","🎞️","📞","☎️","📟","📠","📡","🔋","🔌","💡","🔦","🕯️","🗑️","🛢️","💸","💵","💴","💶","💷","💴","💰","💳","🪙","💎","⚖️","🧰","🔧","🔨","⚒️","🛠️","⛏️","🔩","🗜️","🔗","🧲","🪜","🧺","🪣","🧹","🧻","🚿","🛁","🪥","🪒","🧴","🧷","🧹","🧺","🧻","📦","📫","📪","📬","📭","📮","🗳️","✏️","✒️","🖊️","🖋️","📝","📁","📂","🗂️","📅","📆","🗒️","🗓️","📇","📈","📉","📊","📋","📌","📍","🗺️","✂️","🗃️","🗄️","🗑️","🔒","🔓","🔏","🔐","🔑","🗝️","🔨","⛏️","⚒️","🛠️","🗡️","⚔️","🛡️","🚬","⚰️","⚱️","🏺","🔮","📿","🧿","💈","⚗️","🔭","🔬","🩺","🩻","🩹","💊","🩸"] },
-    { label:"🔣", name:"Symbols", emojis:["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💔","❣️","💕","💞","💓","💗","💖","💘","💝","💟","☮️","✝️","☪️","🕉️","☸️","✡️","🔯","🕎","☯️","☦️","🛐","⛎","♈","♉","♊","♋","♌","♍","♎","♏","♐","♑","♒","♓","🆔","⚛️","🉑","☢️","☣️","📴","📳","🈶","🈚","🈸","🈺","🈷️","✴️","🆚","💮","🉐","㊙️","㊗️","🈴","🈵","🈹","🈲","🅰️","🅱️","🆎","🆑","🅾️","🆘","❌","⭕","🛑","⛔","📛","🚫","💯","💢","♨️","🚷","🚯","🚳","🚱","🔞","📵","❗","❕","❓","❔","‼️","⁉️","🔅","🔆","〽️","⚠️","🚸","🔱","⚜️","🔰","♻️","✅","🈯","💹","❎","🌐","💠","Ⓜ️","🌀","💤","🏧","🚾","♿","🅿️","🛗","🈳","🈹","🛂","🛃","🛄","🛅","🚹","🚺","🚻","⚧️"] },
-  ];
-
-  // ── Message Info fetch ────────────────────────────────────────────
-  const fetchMsgInfo=async(msgId:string)=>{
-    const msg=messages.find(m=>m.id===msgId);
-    if(!msg) return;
-    const seenBy:string[]=(msg as any).seen_by||[];
-    const readProfiles=await Promise.all(seenBy.filter(id=>id!==user?.id).map(async id=>{
-      if(profiles[id]) return profiles[id];
-      const {data}=await supabase.from("profiles").select("user_id,full_name,avatar_url").eq("user_id",id).maybeSingle();
-      return data;
-    }));
-    setMsgInfoData({readBy:readProfiles.filter(Boolean) as any[],deliveredTo:readProfiles.filter(Boolean) as any[]});
-    setShowMsgInfo(msgId);
-  };
-
-  // ── Image preview before send ─────────────────────────────────────
-  const handleImageFileSelected=async(file:File)=>{
-    const dataUrl=await new Promise<string>(res=>{const r=new FileReader();r.onloadend=()=>res(r.result as string);r.readAsDataURL(file);});
-    setImgPreview({file,dataUrl});
-    setImgCaption("");
-  };
-  const sendImageWithCaption=async()=>{
-    if(!imgPreview) return;
-    const {file}=imgPreview;
-    setImgPreview(null);
-    setUploading(true);
-    const ext=file.name.split(".").pop()||"jpg";
-    const path=`images/${activeChannelId}/${user!.id}/${Date.now()}.${ext}`;
-    const {error}=await supabase.storage.from(BUCKET).upload(path,file,{upsert:true,contentType:file.type});
-    if(!error){
-      await sendMessage("image",path,imgCaption||null);
-    } else {
-      const b64=imgPreview.dataUrl;
-      const tempId=`temp-${Date.now()}`;
-      setMessages(prev=>[...prev,{id:tempId,channel_id:activeChannelId!,user_id:user!.id,content_type:"image",text:imgCaption?`${b64}||CAPTION||${imgCaption}`:b64,media_path:null,created_at:new Date().toISOString()} as any]);
-      const {data:ins,error:insE}=await supabase.from("chat_messages").insert({class_level_id:activeChannelId,channel_id:activeChannelId,user_id:user!.id,content_type:"image",text:imgCaption?`${b64}||CAPTION||${imgCaption}`:b64}).select().single();
-      if(insE) setMessages(prev=>prev.filter(m=>m.id!==tempId));
-      else setMessages(prev=>prev.map(m=>m.id===tempId?ins as unknown as ChatMessage:m));
-    }
-    setUploading(false);
-    setImgCaption("");
-  };
-
-  // ── Broadcast to multiple channels ───────────────────────────────
-  const sendBroadcast=async()=>{
-    if(!user||!broadcastMsg.trim()||broadcastTargets.size===0) return;
-    for(const chId of broadcastTargets){
-      await supabase.from("chat_messages").insert({class_level_id:chId,channel_id:chId,user_id:user.id,content_type:"text",text:`📢 ${broadcastMsg.trim()}`});
-      await supabase.from("chat_channels" as any).update({last_message:`📢 ${broadcastMsg.slice(0,50)}`,last_message_at:new Date().toISOString()}).eq("id",chId);
-    }
-    toast({title:`Broadcast sent to ${broadcastTargets.size} group${broadcastTargets.size>1?"s":""}!`});
-    setBroadcastMsg("");setBroadcastTargets(new Set());setShowBroadcastSheet(false);
-  };
-
-  // ── Disappearing messages set ─────────────────────────────────────
-  const setDisappearingMessages=(mins:number)=>{
-    setDisappearTimer(mins);
-    setShowDisappearSheet(false);
-    toast({title:mins===0?"Disappearing messages off":`Messages disappear after ${mins>=1440?`${mins/1440}d`:mins>=60?`${mins/60}h`:`${mins}m`}`});
-  };
-
-  // ── Video render helper ───────────────────────────────────────────
-  const VideoMsg=({path,text}:{path?:string|null;text?:string|null})=>{
-    const [url,setUrl]=useState<string|null>(null);
-    const [err,setErr]=useState(false);
-    useEffect(()=>{
-      const src=path||text||"";
-      if(!src){setErr(true);return;}
-      if(src.startsWith("http")||src.startsWith("blob:")||src.startsWith("data:")){setUrl(src);return;}
-      resolveMedia(src).then(u=>u?setUrl(u):setErr(true));
-    },[path,text]);
-    if(err||!url) return <div style={{width:200,height:120,borderRadius:10,background:"#111",display:"flex",alignItems:"center",justifyContent:"center"}}><PlayCircle size={40} color="#fff" style={{opacity:.6}}/></div>;
-    return <video src={url} controls style={{maxWidth:240,maxHeight:200,borderRadius:10,display:"block"}} preload="metadata"/>;
-  };
-
   // Group messages by date
-
   const msgsWithSeps:Array<{type:"date";date:string}|{type:"msg";msg:ChatMessage}>=[];
   let lastDate="";
   for(const m of filteredMessages){
@@ -1383,25 +1436,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     const tailClass=isMe?(isDark?"bubble-tail-me-dark":"bubble-tail-me"):(isDark?"bubble-tail-other-dark":"bubble-tail-other");
 
     return (
-      <div id={`msg-${m.id}`} key={m.id} className="msg-bubble"
-        style={{display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"flex-end",gap:4,padding:"1px 12px",background:swipeReplyId===m.id?"rgba(37,211,102,0.15)":isSelected?"rgba(37,211,102,0.12)":"transparent",transition:"background .15s"}}
+      <div id={`msg-${m.id}`} key={m.id} data-msg-date={new Date(m.created_at).toDateString()} className="msg-bubble"
+        style={{display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"flex-end",gap:4,padding:"1px 12px",background:isSelected?"rgba(37,211,102,0.12)":"transparent"}}
         onClick={()=>{ if(selectMode){setSelectedIds(prev=>{const n=new Set(prev);n.has(m.id)?n.delete(m.id):n.add(m.id);return n;});} }}
-        onTouchStart={(e)=>{
-          if(selectMode) return;
-          const sx=e.touches[0].clientX; let swiped=false;
-          const onMove=(me:TouchEvent)=>{
-            const dx=me.touches[0].clientX-sx;
-            if(!swiped&&dx>50){swiped=true;setSwipeReplyId(m.id);if(navigator.vibrate)navigator.vibrate(30);}
-          };
-          const onEnd=()=>{
-            if(swiped){setReplyTo(m);inputRef.current?.focus();}
-            setTimeout(()=>setSwipeReplyId(null),300);
-            document.removeEventListener("touchmove",onMove);
-            document.removeEventListener("touchend",onEnd);
-          };
-          document.addEventListener("touchmove",onMove,{passive:true});
-          document.addEventListener("touchend",onEnd);
-        }}
       >
         {selectMode&&(
           <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
@@ -1430,12 +1467,13 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
         {/* Spacer for "me" bubbles so they don't touch avatar column */}
         {isMe&&!selectMode&&<div style={{width:28}}/>}
 
+        <SwipeBubble disabled={selectMode||!canSend()} onReply={()=>{setReplyTo(m);setTimeout(()=>inputRef.current?.focus(),50);}} isMe={isMe}>
         <div
           style={{maxWidth:"72%",minWidth:60}}
-          onMouseDown={()=>!selectMode&&startLongPress(m.id)}
+          onMouseDown={(e)=>!selectMode&&startLongPress(m.id,e)}
           onMouseUp={cancelLongPress}
           onMouseLeave={cancelLongPress}
-          onTouchStart={()=>!selectMode&&startLongPress(m.id)}
+          onTouchStart={(e)=>!selectMode&&startLongPress(m.id,e)}
           onTouchEnd={cancelLongPress}
         >
           <div className={tailClass} style={{background:bubbleBg,borderRadius:isMe?"10px 2px 10px 10px":"2px 10px 10px 10px",padding:"6px 10px 4px 10px",boxShadow:"0 1px 2px rgba(0,0,0,.1)",position:"relative"}}>
@@ -1455,8 +1493,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
             )}
             {/* Content */}
-            {m.content_type==="image"&&(()=>{const parts=(m.text||"").split("||CAPTION||");const isB64=parts[0].startsWith("data:");return(<><ImageMsg path={isB64?null:m.media_path} text={isB64?parts[0]:m.text}/>{parts[1]&&<div style={{fontSize:13,marginTop:4,color:isMe?(isDark?"#e9edef":"#222"):(isDark?"#e9edef":"#111")}}>{parts[1]}</div>}</>);})()}
-            {m.content_type==="video"&&<VideoMsg path={m.media_path} text={m.text}/>}
+            {m.content_type==="image"&&<ImageMsg path={m.media_path} text={m.text}/>}
             {m.content_type==="audio"&&<AudioMsg path={m.media_path} text={m.text}/>}
             {m.content_type==="file"&&m.media_path&&<FileMsg path={m.media_path} text={m.text}/>}
             {(m.content_type==="text"||!m.content_type)&&m.text&&<FormattedText text={m.text} sz={msgFontSz}/>}
@@ -1475,22 +1512,27 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           {Object.keys(rxns).length>0&&(
             <div style={{display:"flex",gap:4,marginTop:3,flexWrap:"wrap",justifyContent:isMe?"flex-end":"flex-start"}}>
               {Object.entries(rxns).map(([emoji,uids])=>(
-                <button key={emoji}
-                  onClick={()=>supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji},{onConflict:"message_id,user_id"}).then(reloadReactions)}
-                  onContextMenu={e=>{e.preventDefault();setShowReactionDetail({msgId:m.id,emoji});}}
-                  onLongPress={()=>setShowReactionDetail({msgId:m.id,emoji})}
-                  style={{background:isDark?"#2a3942":"#f0f2f5",border:`1px solid ${uids.includes(user?.id||"")?"#25D366":"rgba(0,0,0,.1)"}`,borderRadius:12,padding:"1px 7px",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:3}}>
+                <button key={emoji} onClick={()=>supabase.from("message_reactions" as any).upsert({message_id:m.id,user_id:user!.id,emoji},{onConflict:"message_id,user_id"}).then(reloadReactions)} style={{background:isDark?"#2a3942":"#f0f2f5",border:`1px solid ${uids.includes(user?.id||"")?"#25D366":"rgba(0,0,0,.1)"}`,borderRadius:12,padding:"1px 7px",cursor:"pointer",fontSize:12,display:"flex",alignItems:"center",gap:3}}>
                   {emoji} <span style={{fontSize:10,color:textSub,fontWeight:700}}>{uids.length}</span>
                 </button>
               ))}
             </div>
           )}
         </div>
+        </SwipeBubble>
 
         {/* Long-press message menu */}
-        {showMessageMenu===m.id&&(
-          <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setShowMessageMenu(null)}>
-            <div style={{background:isDark?"#233138":"#fff",borderRadius:16,overflow:"hidden",width:270,boxShadow:"0 8px 32px rgba(0,0,0,.35)",animation:"popIn .15s ease"}} onClick={e=>e.stopPropagation()}>
+        {showMessageMenu?.id===m.id&&(()=>{
+          const vw=window.innerWidth, vh=window.innerHeight;
+          const menuW=270, menuH=400;
+          let left=showMessageMenu.x-menuW/2;
+          let top=showMessageMenu.y-menuH-10;
+          if(left+menuW>vw-10) left=vw-menuW-10;
+          if(left<10) left=10;
+          if(top<60) top=showMessageMenu.y+20;
+          return (
+          <div style={{position:"fixed",inset:0,zIndex:300,background:"rgba(0,0,0,.45)"}} onClick={()=>setShowMessageMenu(null)}>
+            <div style={{position:"fixed",left,top,background:isDark?"#233138":"#fff",borderRadius:16,overflow:"hidden",width:menuW,boxShadow:"0 8px 32px rgba(0,0,0,.35)",animation:"popIn .15s ease"}} onClick={e=>e.stopPropagation()}>
               <div style={{display:"flex",justifyContent:"space-around",padding:"14px 16px",borderBottom:`1px solid ${divider}`}}>
                 {QUICK_EMOJIS.map(e=>(
                   <button key={e} onClick={async()=>{
@@ -1506,7 +1548,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 {icon:<Star size={16}/>,label:isStarred?"Unstar":"Star",fn:()=>starMsg(m.id)},
                 {icon:<Pin size={16}/>,label:(m as any).is_pinned?"Unpin":"Pin",fn:()=>pinMessage(m)},
                 ...(isMe&&Date.now()-new Date(m.created_at).getTime()<EDIT_WINDOW&&m.content_type==="text"?[{icon:<Edit2 size={16}/>,label:"Edit",fn:()=>{setEditingMsg(m);setInput(m.text||"");setShowMessageMenu(null);inputRef.current?.focus();}}]:[]),
-                ...(isMe?[{icon:<Info size={16}/>,label:"Info",fn:()=>{setShowMessageMenu(null);fetchMsgInfo(m.id);}}]:[]),
                 {icon:<CheckSquare size={16}/>,label:"Select",fn:()=>{setSelectMode(true);setSelectedIds(new Set([m.id]));setShowMessageMenu(null);}},
                 {icon:<Trash2 size={16}/>,label:"Delete",fn:()=>{setShowMessageMenu(null);setShowDeleteSheet(m.id);}},
               ].map((item,i)=>(
@@ -1517,7 +1558,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               <button onClick={()=>setShowMessageMenu(null)} style={{width:"100%",padding:"13px",background:"none",border:"none",cursor:"pointer",color:"#E74C3C",fontSize:14,fontWeight:600}}>Cancel</button>
             </div>
           </div>
-        )}
+          );
+        })()}
       </div>
     );
   };
@@ -1840,7 +1882,11 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 {chAvatarEl(activeChannel,38)}
               </div>
               <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>setShowGroupInfo(true)}>
-                <div style={{color:"#fff",fontWeight:700,fontSize:16,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getCN(activeChannel)}</div>
+                <div style={{color:"#fff",fontWeight:700,fontSize:16,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                  {activeChannel.type==="dm"?(
+                    (()=>{const pid=(activeChannel as any).dm_partner_id;return pid&&profiles[pid]?profiles[pid].full_name||"Direct Message":"Direct Message";})()
+                  ):getCN(activeChannel)}
+                </div>
                 <div style={{color:"rgba(255,255,255,.8)",fontSize:11}}>
                   {typingUsers.length>0
                     ?<span style={{fontStyle:"italic"}}>{typingUsers[0]} is typing…</span>
@@ -1852,7 +1898,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                   }
                 </div>
               </div>
-              <div style={{display:"flex",gap:2}}>
+              <div style={{display:"flex",gap:2,alignItems:"center"}}>
+                {loadingMessages&&<div style={{width:8,height:8,borderRadius:"50%",border:"2px solid rgba(255,255,255,.4)",borderTopColor:"#fff",animation:"spin .8s linear infinite",marginRight:4,flexShrink:0}}/>}
                 <button onClick={()=>{setShowChatSearch(p=>!p);setChatSearchQuery("");}} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><Search size={18}/></button>
                 <button onClick={()=>setShowHeaderMenu(p=>!p)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><MoreVertical size={18}/></button>
               </div>
@@ -1868,10 +1915,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                       {icon:"⭐",label:"Starred Messages",     fn:()=>{setShowHeaderMenu(false);toast({title:`${starredMessages.size} starred`});}},
                       {icon:"🔕",label:mutedChannels.has(activeChannel.id)?"Unmute":"Mute Notifications",fn:()=>{toggleMuteCh(activeChannel.id);setShowHeaderMenu(false);}},
                       {icon:"🖼️",label:"Wallpaper & Sound",   fn:()=>{setSettingsTab("chats");setShowSettings(true);setShowHeaderMenu(false);}},
-                      {icon:"⏱️",label:`Disappearing: ${disappearTimer===0?"Off":disappearTimer>=1440?`${disappearTimer/1440}d`:disappearTimer>=60?`${disappearTimer/60}h`:`${disappearTimer}m`}`,fn:()=>{setShowDisappearSheet(true);setShowHeaderMenu(false);}},
                       {icon:"📤",label:"Export Chat",          fn:()=>{exportChat();setShowHeaderMenu(false);}},
                       ...(canModerate?[
-                        {icon:"📢",label:"Broadcast Message",  fn:()=>{setShowBroadcastSheet(true);setShowHeaderMenu(false);}},
                         {icon:"🗑️",label:"Clear Chat",        fn:()=>{clearChat();setShowHeaderMenu(false);},danger:true},
                         {icon:"💥",label:"Delete Group",       fn:()=>{deleteGroup();setShowHeaderMenu(false);},danger:true},
                       ]:[]),
@@ -1909,30 +1954,6 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
             )}
 
-            {/* Channel lock banner */}
-            {channelLocked&&!canModerate&&(
-              <div style={{background:isDark?"#1a2e1a":"#fff9e6",borderBottom:`1px solid #ffd700`,padding:"8px 16px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                <span style={{fontSize:16}}>🔒</span>
-                <span style={{fontSize:12,color:isDark?"#e9c46a":"#7a6000",fontWeight:600}}>This group has been locked by the admin. Only admins can send messages.</span>
-              </div>
-            )}
-
-            {/* Channel lock banner */}
-            {channelLocked&&!canModerate&&(
-              <div style={{background:isDark?"#1a2e1a":"#fff9e6",borderBottom:"1px solid #ffd700",padding:"8px 16px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                <span style={{fontSize:16}}>🔒</span>
-                <span style={{fontSize:12,color:isDark?"#e9c46a":"#7a6000",fontWeight:600}}>This group has been locked by the admin. Only admins can send messages.</span>
-              </div>
-            )}
-
-            {/* Channel lock banner */}
-            {channelLocked&&!canModerate&&(
-              <div style={{background:isDark?"#1a2e1a":"#fff9e6",borderBottom:"1px solid #ffd700",padding:"8px 16px",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-                <span style={{fontSize:16}}>&#x1F512;</span>
-                <span style={{fontSize:12,color:isDark?"#e9c46a":"#7a6000",fontWeight:600}}>This group has been locked by the admin. Only admins can send messages.</span>
-              </div>
-            )}
-
             {/* Select mode bar */}
             {selectMode&&(
               <div style={{background:isDark?"#202c33":"#fff",padding:"10px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:`1px solid ${divider}`}}>
@@ -1946,26 +1967,17 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             )}
 
             {/* Message list */}
-            <div ref={scrollRef} onScroll={handleScrollMessages} style={{flex:1,overflowY:"auto",padding:"6px 0 4px"}}>
-              {loadingMessages&&(
-                <div style={{padding:"12px 16px",display:"flex",flexDirection:"column",gap:14}}>
-                  {[...Array(6)].map((_,i)=>{
-                    const isMe = i%3===2;
-                    const w = [55,72,40,65,80,48][i];
-                    return (
-                      <div key={i} style={{display:"flex",flexDirection:isMe?"row-reverse":"row",alignItems:"flex-end",gap:6}}>
-                        {!isMe && <div style={{width:30,height:30,borderRadius:"50%",background:"#e0e0e0",flexShrink:0,animation:"skeletonPulse 1.4s ease infinite",animationDelay:`${i*0.1}s`}}/>}
-                        <div style={{background:isMe?"#d9fdd3":"#fff",borderRadius:isMe?"12px 12px 2px 12px":"12px 12px 12px 2px",padding:"10px 14px",maxWidth:`${w}%`,boxShadow:"0 1px 2px rgba(0,0,0,.08)"}}>
-                          {!isMe&&<div style={{width:60,height:8,borderRadius:4,background:"#e0e0e0",marginBottom:8,animation:"skeletonPulse 1.4s ease infinite",animationDelay:`${i*0.1}s`}}/>}
-                          <div style={{height:10,borderRadius:4,background:"#e0e0e0",animation:"skeletonPulse 1.4s ease infinite",animationDelay:`${i*0.15}s`}}/>
-                          {i%2===0&&<div style={{height:10,borderRadius:4,background:"#e0e0e0",marginTop:6,width:"70%",animation:"skeletonPulse 1.4s ease infinite",animationDelay:`${i*0.2}s`}}/>}
-                          <div style={{height:8,borderRadius:4,background:"#e8e8e8",marginTop:8,width:40,marginLeft:"auto",animation:"skeletonPulse 1.4s ease infinite"}}/>
-                        </div>
-                      </div>
-                    );
-                  })}
+            <div ref={scrollRef} onScroll={handleScrollMessages} style={{flex:1,overflowY:"auto",padding:"6px 0 4px",position:"relative"}}>
+              {/* Floating date pill — appears while scrolling through history */}
+              {floatingDate&&(
+                <div style={{position:"sticky",top:8,display:"flex",justifyContent:"center",zIndex:20,pointerEvents:"none",marginBottom:-28}}>
+                  <span style={{background:"rgba(255,255,255,.9)",color:"#555",fontSize:11,padding:"4px 12px",borderRadius:12,boxShadow:"0 1px 4px rgba(0,0,0,.15)",backdropFilter:"blur(4px)",animation:"fadeIn .15s ease"}}>
+                    {(()=>{const d=new Date(floatingDate);const today=new Date();const yesterday=new Date();yesterday.setDate(today.getDate()-1);if(d.toDateString()===today.toDateString())return"Today";if(d.toDateString()===yesterday.toDateString())return"Yesterday";return d.toLocaleDateString([],{day:"2-digit",month:"long",year:"numeric"});})()}
+                  </span>
                 </div>
               )}
+              {/* No loading spinner — stale cache shown instantly.
+                  Background refresh indicator is a tiny dot in the chat header. */}
               {!loadingMessages&&messages.length===80&&(
                 <div style={{display:"flex",justifyContent:"center",padding:"8px 0"}}>
                   <button onClick={async()=>{
@@ -2051,24 +2063,12 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
             )}
 
-            {/* Full categorized emoji picker */}
-            {showEmojiPicker&&(
-              <div style={{background:isDark?"#202c33":"#fff",borderTop:`1px solid ${divider}`,display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
-                {/* Category tabs */}
-                <div style={{display:"flex",overflowX:"auto",borderBottom:`1px solid ${divider}`,flexShrink:0}}>
-                  {EMOJI_CATS.map((cat,i)=>(
-                    <button key={i} onClick={()=>setEmojiCategory(i)} style={{padding:"8px 12px",background:"none",border:"none",cursor:"pointer",fontSize:18,borderBottom:emojiCategory===i?`2px solid ${WA_GREEN}`:"2px solid transparent",flexShrink:0,opacity:emojiCategory===i?1:.55}}>
-                      {cat.label}
-                    </button>
-                  ))}
-                </div>
-                <div style={{fontSize:11,fontWeight:700,color:textSub,padding:"6px 14px 2px",letterSpacing:"0.08em"}}>{EMOJI_CATS[emojiCategory].name.toUpperCase()}</div>
-                {/* Emoji grid */}
-                <div style={{display:"grid",gridTemplateColumns:"repeat(8,1fr)",gap:2,padding:"4px 8px 10px",maxHeight:180,overflowY:"auto"}}>
-                  {EMOJI_CATS[emojiCategory].emojis.map((e,i)=>(
-                    <button key={i} onClick={()=>setInput(p=>p+e)} style={{background:"none",border:"none",cursor:"pointer",fontSize:22,padding:"6px 0",borderRadius:8,transition:"background .1s",lineHeight:1}} onMouseEnter={ev=>(ev.currentTarget.style.background=isDark?"#2a3942":"#f0f2f5")} onMouseLeave={ev=>(ev.currentTarget.style.background="none")}>{e}</button>
-                  ))}
-                </div>
+            {/* Quick emoji bar */}
+            {showEmojiBar&&(
+              <div style={{background:isDark?"#202c33":"#fff",borderTop:`1px solid ${divider}`,padding:"8px 16px",display:"flex",gap:10,overflowX:"auto"}}>
+                {["😊","😂","❤️","👍","🙏","🔥","😢","😮","🎉","✅","💯","🤔","👏","😍","🥺","😅","🌹","☀️","🤲","📖"].map(e=>(
+                  <button key={e} onClick={()=>setInput(input+e)} style={{background:"none",border:"none",cursor:"pointer",fontSize:26,padding:4,lineHeight:1}}>{e}</button>
+                ))}
               </div>
             )}
 
@@ -2103,8 +2103,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 </div>
               )}
 
-              {/* Emoji toggle — opens full categorized picker */}
-              <button onClick={()=>{setShowEmojiPicker(p=>!p);setShowEmojiBar(false);}} style={{background:"none",border:"none",cursor:"pointer",padding:6,color:showEmojiPicker?WA_GREEN:textSub,display:"flex",marginBottom:4,transition:"color .15s"}}>
+              {/* Emoji toggle */}
+              <button onClick={()=>setShowEmojiBar(p=>!p)} style={{background:"none",border:"none",cursor:"pointer",padding:6,color:showEmojiBar?WA_GREEN:textSub,display:"flex",marginBottom:4,transition:"color .15s"}}>
                 <Smile size={22}/>
               </button>
 
@@ -2140,13 +2140,15 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 <button
                   onMouseDown={e=>{e.preventDefault();if(!isRecording)startRecording();}}
                   onMouseUp={e=>{e.preventDefault();if(isRecording&&!recordingLocked)stopRecording();}}
-                  onTouchStart={e=>{e.preventDefault();if(!isRecording)startRecording();}}
+                  onTouchStart={e=>{e.preventDefault();micTouchStartX.current=e.touches[0].clientX;micTouchStartY.current=e.touches[0].clientY;if(!isRecording)startRecording();}}
                   onTouchMove={e=>{
                     if(!isRecording) return;
                     const t=e.touches[0];
-                    const btn=e.currentTarget.getBoundingClientRect();
-                    if(btn.left-t.clientX>80) cancelRecording();
-                    if(btn.top-t.clientY>60) setRecordingLocked(true);
+                    // micStartX/Y set on touchStart; slide LEFT >80px to cancel, UP >70px to lock
+                    const dx = micTouchStartX.current - t.clientX;
+                    const dy = micTouchStartY.current - t.clientY;
+                    if(dx>80 && !recordingLocked) { cancelRecording(); return; }
+                    if(dy>70 && !recordingLocked) { setRecordingLocked(true); if(navigator.vibrate)navigator.vibrate(30); }
                   }}
                   onTouchEnd={e=>{e.preventDefault();if(isRecording&&!recordingLocked)stopRecording();}}
                   style={{width:46,height:46,borderRadius:"50%",background:isRecording?"#E74C3C":WA_GREEN,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,boxShadow:isRecording?"0 0 0 8px rgba(231,76,60,.2)":"0 2px 8px rgba(7,94,84,.35)",transition:"all .2s"}}
@@ -2158,14 +2160,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
 
             {/* FIXED hidden file inputs — separated gallery/camera/file/audio */}
             {/* Gallery: no capture — shows gallery on mobile */}
-            <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>{
-              const f=e.target.files?.[0]; if(!f) return;
-              if(f.type.startsWith("video/")) handleFileUpload(f,"file");
-              else handleImageFileSelected(f);
-              e.target.value="";
-            }}/>
+            <input ref={galleryInputRef} id="majlis-gallery-input" type="file" accept="image/*,video/*" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
             {/* Camera: capture="camera" — opens camera directly */}
-            <input ref={cameraInputRef} id="majlis-camera-input" type="file" accept="image/*" capture="environment" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>{const f=e.target.files?.[0];if(f){handleImageFileSelected(f);}e.target.value="";}}/>
+            <input ref={cameraInputRef} id="majlis-camera-input" type="file" accept="image/*" capture="environment" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"image")}/>
             {/* Document: any file type */}
             <input ref={fileInputRef} id="majlis-file-input" type="file" style={{position:"absolute",width:1,height:1,opacity:0,overflow:"hidden"}} onChange={e=>e.target.files?.[0]&&handleFileUpload(e.target.files[0],"file")}/>
             {/* Audio files */}
@@ -2186,7 +2183,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:20}}>
               {[
                 {icon:<Camera size={24} color="#fff"/>,   bg:"#2ecc71", label:"Camera",   action:()=>{setShowAttachSheet(false);setTimeout(()=>cameraInputRef.current?.click(),100);}},
-                {icon:<Video size={24} color="#fff"/>,    bg:"#9b59b6", label:"Gallery",  action:()=>{setShowAttachSheet(false);setTimeout(()=>galleryInputRef.current?.click(),100);}},
+                {icon:<Image size={24} color="#fff"/>,    bg:"#9b59b6", label:"Gallery",  action:()=>{setShowAttachSheet(false);setTimeout(()=>galleryInputRef.current?.click(),100);}},
                 {icon:<File size={24} color="#fff"/>,     bg:"#3498db", label:"Document", action:()=>{setShowAttachSheet(false);setTimeout(()=>fileInputRef.current?.click(),100);}},
                 {icon:<Music size={24} color="#fff"/>,    bg:"#e67e22", label:"Audio",    action:()=>{setShowAttachSheet(false);setTimeout(()=>audioFileRef.current?.click(),100);}},
               ].map(item=>(
@@ -2293,9 +2290,15 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
           <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#202c33":"#fff",borderRadius:"20px 20px 0 0",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
             <div style={{width:36,height:4,borderRadius:2,background:isDark?"#444":"#ddd",margin:"12px auto 10px"}}/>
             <div style={{padding:"8px 20px 14px",fontSize:14,color:textSub,textAlign:"center",fontWeight:600}}>Delete Message?</div>
-            <button onClick={()=>deleteForMe(showDeleteSheet)} style={{width:"100%",padding:"16px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontSize:15,color:textMain,borderBottom:`1px solid ${divider}`}}>Delete for me</button>
-            {messages.find(m=>m.id===showDeleteSheet)?.user_id===user?.id&&(
-              <button onClick={()=>deleteForAll(showDeleteSheet)} style={{width:"100%",padding:"16px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontSize:15,color:"#E74C3C",borderBottom:`1px solid ${divider}`}}>Delete for everyone</button>
+            <button onClick={()=>deleteForMe(showDeleteSheet.id)} style={{width:"100%",padding:"16px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontSize:15,color:textMain,borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",gap:12}}>
+              <span style={{fontSize:18}}>👁️</span>
+              <div><div style={{fontWeight:600}}>Delete for me</div><div style={{fontSize:12,color:textSub,marginTop:2}}>Removes from your chat only</div></div>
+            </button>
+            {(showDeleteSheet.isOwner || canModerate)&&(
+              <button onClick={()=>deleteForAll(showDeleteSheet.id)} style={{width:"100%",padding:"16px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"left",fontSize:15,color:"#E74C3C",borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",gap:12}}>
+                <span style={{fontSize:18}}>🗑️</span>
+                <div><div style={{fontWeight:600}}>Delete for everyone</div><div style={{fontSize:12,color:"rgba(231,76,60,.7)",marginTop:2}}>Removes for all members</div></div>
+              </button>
             )}
             <button onClick={()=>setShowDeleteSheet(null)} style={{width:"100%",padding:"16px 20px",background:"none",border:"none",cursor:"pointer",textAlign:"center",fontSize:15,color:textSub}}>Cancel</button>
           </div>
@@ -2369,9 +2372,9 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 </div>
               ))}
               <div style={{padding:"14px 20px",borderBottom:`1px solid ${divider}`}}>
-                <div style={{fontSize:13,color:textSub,marginBottom:6}}>Groups in common</div>
+                <div style={{fontSize:13,color:textSub,marginBottom:6}}>Shared groups</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {channels.filter(c=>c.type!=="dm").slice(0,4).map(c=>(
+                  {channels.filter(c=>c.type!=="dm"&&c.type!=="announcement").slice(0,5).map(c=>(
                     <span key={c.id} style={{fontSize:12,background:inputBg,color:textMain,padding:"3px 10px",borderRadius:20}}>{getCN(c)}</span>
                   ))}
                 </div>
@@ -2398,190 +2401,35 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                         return;
                       }
                     }
-                    // Create new DM channel
+                    // Create new DM channel — store partner info for display
+                    const partnerName = selectedMember.full_name || "Student";
                     const {data:newCh,error}=await supabase.from("chat_channels" as any)
-                      .insert({name:`DM`,type:"dm",created_by:user.id,is_private:true}).select().single();
+                      .insert({
+                        name: partnerName,
+                        description: user.id, // store creator id for partner resolution
+                        type:"dm",
+                        created_by:user.id,
+                        is_private:true,
+                      }).select().single();
                     if(!error&&newCh){
                       await supabase.from("chat_members" as any).insert([
                         {channel_id:(newCh as any).id,user_id:user.id,role:"admin"},
                         {channel_id:(newCh as any).id,user_id:selectedMember.user_id,role:"member"},
                       ]);
+                      // Attach partner id locally for avatar resolution
+                      const enriched = {...(newCh as any), dm_partner_id: selectedMember.user_id, dm_partner_name: partnerName};
                       setShowStudentProfile(false);
-                      setChannels(prev=>[newCh as unknown as ChatChannel,...prev]);
+                      setChannels(prev=>[enriched as unknown as ChatChannel,...prev]);
+                      // Ensure partner is in profiles map
+                      setProfiles(prev=>({...prev,[selectedMember.user_id]:{...selectedMember}}));
                       selectChannel((newCh as any).id);
-                      toast({title:`Chat started with ${selectedMember.full_name||"student"}!`});
+                      toast({title:`Chat started with ${partnerName}!`});
                     }
                   }} style={{flex:1,padding:"12px",borderRadius:12,background:WA_GREEN,border:"none",color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
                     <MessageCircle size={16}/> Message
                   </button>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── IMAGE PREVIEW WITH CAPTION (WhatsApp-exact) ─────────── */}
-      {imgPreview&&(
-        <div style={{position:"fixed",inset:0,zIndex:600,background:"#000",display:"flex",flexDirection:"column"}}>
-          <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:"rgba(0,0,0,.5)"}}>
-            <button onClick={()=>setImgPreview(null)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><X size={22}/></button>
-            <span style={{color:"#fff",fontWeight:600,fontSize:16,flex:1}}>Send to {activeChannel?getCN(activeChannel):""}</span>
-            <button onClick={sendImageWithCaption} style={{background:WA_GREEN,border:"none",borderRadius:"50%",width:44,height:44,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
-              <Send size={20} color="#fff"/>
-            </button>
-          </div>
-          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-            <img src={imgPreview.dataUrl} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}} alt=""/>
-          </div>
-          <div style={{padding:"12px 16px 24px",background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",gap:10}}>
-            <Smile size={22} color="rgba(255,255,255,.7)" style={{cursor:"pointer",flexShrink:0}}/>
-            <input
-              value={imgCaption} onChange={e=>setImgCaption(e.target.value)}
-              placeholder="Add a caption…"
-              autoFocus
-              style={{flex:1,background:"rgba(255,255,255,.15)",border:"none",borderRadius:22,padding:"10px 16px",color:"#fff",fontSize:14,outline:"none"}}
-              onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();sendImageWithCaption();}}}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* ── MESSAGE INFO PANEL ──────────────────────────────────── */}
-      {showMsgInfo&&(
-        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowMsgInfo(null)}>
-          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"70vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
-            <div style={{background:WA_GREEN,padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
-              <button onClick={()=>setShowMsgInfo(null)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><ArrowLeft size={20}/></button>
-              <span style={{color:"#fff",fontWeight:700,fontSize:17}}>Message Info</span>
-            </div>
-            <div style={{flex:1,overflowY:"auto"}}>
-              <div style={{padding:"16px 20px",borderBottom:`1px solid ${divider}`}}>
-                <div style={{fontSize:12,color:WA_GREEN,fontWeight:700,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
-                  <CheckCheck size={14} color="#53BDEB"/> READ BY
-                </div>
-                {msgInfoData.readBy.length===0
-                  ? <div style={{fontSize:13,color:textSub}}>No one has read this yet</div>
-                  : msgInfoData.readBy.map((p:any,i:number)=>(
-                    <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:`1px solid ${divider}`}}>
-                      {p?.avatar_url
-                        ? <img src={p.avatar_url} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover"}} alt=""/>
-                        : <div style={{width:40,height:40,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:16}}>{(p?.full_name||"?")[0].toUpperCase()}</div>
-                      }
-                      <div>
-                        <div style={{fontWeight:600,fontSize:14,color:textMain}}>{p?.full_name||"Student"}</div>
-                        <div style={{fontSize:11,color:"#53BDEB"}}>Read ✓✓</div>
-                      </div>
-                    </div>
-                  ))
-                }
-              </div>
-              <div style={{padding:"16px 20px"}}>
-                <div style={{fontSize:12,color:textSub,fontWeight:700,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
-                  <CheckCheck size={14} color={textSub}/> DELIVERED TO
-                </div>
-                {msgInfoData.deliveredTo.length===0
-                  ? <div style={{fontSize:13,color:textSub}}>Message sent</div>
-                  : msgInfoData.deliveredTo.map((p:any,i:number)=>(
-                    <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:`1px solid ${divider}`}}>
-                      {p?.avatar_url
-                        ? <img src={p.avatar_url} style={{width:40,height:40,borderRadius:"50%",objectFit:"cover"}} alt=""/>
-                        : <div style={{width:40,height:40,borderRadius:"50%",background:"#8696a0",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:16}}>{(p?.full_name||"?")[0].toUpperCase()}</div>
-                      }
-                      <div>
-                        <div style={{fontWeight:600,fontSize:14,color:textMain}}>{p?.full_name||"Student"}</div>
-                        <div style={{fontSize:11,color:textSub}}>Delivered ✓✓</div>
-                      </div>
-                    </div>
-                  ))
-                }
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── REACTION DETAIL SHEET ───────────────────────────────── */}
-      {showReactionDetail&&(()=>{
-        const {msgId,emoji}=showReactionDetail;
-        const uids=reactions[msgId]?.[emoji]||[];
-        const reacters=uids.map(id=>profiles[id]).filter(Boolean);
-        return (
-          <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowReactionDetail(null)}>
-            <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"60vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
-              <div style={{padding:"14px 20px",borderBottom:`1px solid ${divider}`,display:"flex",alignItems:"center",gap:10}}>
-                <span style={{fontSize:28}}>{emoji}</span>
-                <span style={{fontWeight:700,fontSize:16,color:textMain}}>{uids.length} reaction{uids.length!==1?"s":""}</span>
-                <button onClick={()=>setShowReactionDetail(null)} style={{marginLeft:"auto",background:"none",border:"none",cursor:"pointer",color:textSub}}><X size={18}/></button>
-              </div>
-              <div style={{flex:1,overflowY:"auto"}}>
-                {reacters.map((p:any,i:number)=>(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:14,padding:"12px 20px",borderBottom:`1px solid ${divider}`}}>
-                    {p?.avatar_url
-                      ? <img src={p.avatar_url} style={{width:44,height:44,borderRadius:"50%",objectFit:"cover"}} alt=""/>
-                      : <div style={{width:44,height:44,borderRadius:"50%",background:WA_GREEN,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:18}}>{(p?.full_name||"?")[0].toUpperCase()}</div>
-                    }
-                    <div>
-                      <div style={{fontWeight:600,fontSize:15,color:textMain}}>{p?.full_name||"Student"}</div>
-                      <div style={{fontSize:12,color:textSub}}>{(p as any)?.level||"Student"}</div>
-                    </div>
-                    <span style={{marginLeft:"auto",fontSize:22}}>{emoji}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-
-      {/* ── DISAPPEARING MESSAGES SHEET ─────────────────────────── */}
-      {showDisappearSheet&&(
-        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowDisappearSheet(false)}>
-          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
-            <div style={{background:WA_GREEN,padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
-              <button onClick={()=>setShowDisappearSheet(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><ArrowLeft size={20}/></button>
-              <span style={{color:"#fff",fontWeight:700,fontSize:17}}>Disappearing Messages</span>
-            </div>
-            <div style={{padding:"12px 20px",fontSize:13,color:textSub,lineHeight:1.5}}>When enabled, new messages sent in this chat will disappear after the selected duration.</div>
-            {[{label:"Off",mins:0},{label:"24 hours",mins:1440},{label:"7 days",mins:10080},{label:"90 days",mins:129600}].map(opt=>(
-              <div key={opt.label} onClick={()=>setDisappearingMessages(opt.mins)} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",cursor:"pointer",borderBottom:`1px solid ${divider}`}}>
-                <span style={{fontSize:15,color:textMain}}>{opt.label}</span>
-                {disappearTimer===opt.mins&&<Check size={18} color={WA_GREEN}/>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ── BROADCAST SHEET (admin/teacher) ─────────────────────── */}
-      {showBroadcastSheet&&canModerate&&(
-        <div style={{position:"fixed",inset:0,zIndex:500,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"flex-end"}} onClick={()=>setShowBroadcastSheet(false)}>
-          <div style={{width:"100%",maxWidth:480,margin:"0 auto",background:isDark?"#111b21":"#fff",borderRadius:"20px 20px 0 0",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden",animation:"slideUp .2s ease"}} onClick={e=>e.stopPropagation()}>
-            <div style={{background:WA_GREEN,padding:"16px 20px",display:"flex",alignItems:"center",gap:12}}>
-              <button onClick={()=>setShowBroadcastSheet(false)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer"}}><ArrowLeft size={20}/></button>
-              <span style={{color:"#fff",fontWeight:700,fontSize:17}}>Broadcast Message</span>
-            </div>
-            <div style={{padding:"14px 16px",borderBottom:`1px solid ${divider}`}}>
-              <textarea value={broadcastMsg} onChange={e=>setBroadcastMsg(e.target.value)} placeholder="Type your broadcast message…" rows={3} style={{width:"100%",border:`1px solid ${divider}`,borderRadius:12,padding:"10px 14px",fontSize:14,color:textMain,background:inputBg,outline:"none",resize:"none",boxSizing:"border-box",fontFamily:"inherit"}} autoFocus/>
-            </div>
-            <div style={{padding:"10px 16px 4px",fontSize:12,color:textSub,fontWeight:700,letterSpacing:"0.06em"}}>SELECT GROUPS</div>
-            <div style={{flex:1,overflowY:"auto"}}>
-              {channels.map(ch=>{
-                const sel=broadcastTargets.has(ch.id);
-                return (
-                  <div key={ch.id} onClick={()=>setBroadcastTargets(prev=>{const n=new Set(prev);sel?n.delete(ch.id):n.add(ch.id);return n;})} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 16px",borderBottom:`1px solid ${divider}`,cursor:"pointer",background:sel?"rgba(37,211,102,.07)":"transparent"}}>
-                    <div style={{width:22,height:22,borderRadius:6,border:`2px solid ${sel?WA_GREEN:divider}`,background:sel?WA_GREEN:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all .15s"}}>{sel&&<Check size={14} color="#fff"/>}</div>
-                    {chAvatarEl(ch,40)}
-                    <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:14,color:textMain,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{getCN(ch)}</div><div style={{fontSize:11,color:textSub}}>{memberCounts[ch.id]||0} members</div></div>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{padding:"12px 16px 24px",borderTop:`1px solid ${divider}`}}>
-              <button onClick={sendBroadcast} disabled={!broadcastMsg.trim()||broadcastTargets.size===0} style={{width:"100%",padding:"14px",borderRadius:12,background:broadcastMsg.trim()&&broadcastTargets.size>0?WA_GREEN:"#ccc",border:"none",color:"#fff",fontSize:15,fontWeight:700,cursor:broadcastMsg.trim()&&broadcastTargets.size>0?"pointer":"not-allowed",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                <Send size={18}/> Broadcast to {broadcastTargets.size} group{broadcastTargets.size!==1?"s":""}
-              </button>
             </div>
           </div>
         </div>
