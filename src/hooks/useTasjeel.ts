@@ -160,6 +160,26 @@ export function useTasjeel() {
       return;
     }
 
+    // ── CRITICAL: Teachers and admins are NEVER in the student pipeline ──
+    // Check user_roles first — if they are admin/teacher, short-circuit to
+    // "completed" immediately without querying tasjeel_progress at all.
+    // This prevents stale tasjeel rows (e.g. from accidental student enrollment)
+    // from ever routing a teacher to the student registration screens.
+    try {
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId);
+      const userRoles = (roleData || []).map((r: any) => r.role);
+      if (userRoles.includes("admin") || userRoles.includes("teacher")) {
+        setCurrentStep("completed");
+        setLoading(false);
+        return;
+      }
+    } catch {
+      // Non-fatal — continue to tasjeel_progress check
+    }
+
     setLoading(true);
 
     // ── iOS timeout guard ──────────────────────────────────────────────────
