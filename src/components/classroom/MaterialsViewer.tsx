@@ -27,7 +27,7 @@ import {
 interface Props { materials: any[]; sessions?: any[]; recordings?: any[]; }
 type FileKind = "pdf"|"image"|"video"|"audio"|"youtube"|"link"|"office"|"text"|"other";
 
-interface OpenEntry { mat: any; kind: FileKind; }
+interface OpenEntry { mat: any; kind: FileKind; prefetchedUrl?: string; }
 
 /* ── Resume-position helpers ─────────────────────────────────── */
 const POS_PREFIX = "tahleem-viewer-pos-";
@@ -271,25 +271,29 @@ function RecordingMiniPlayer({ recordings, materialId }: { recordings: any[]; ma
    FILE VIEWER — onMinimize added alongside onClose
 ══════════════════════════════════════════════════════════════ */
 function FileViewer({
-  mat, kind, recordings = [], onClose, onMinimize,
+  mat, kind, recordings = [], onClose, onMinimize, prefetchedUrl,
 }: {
   mat: any; kind: FileKind; recordings?: any[];
   onClose: () => void;
   onMinimize: () => void;
+  prefetchedUrl?: string;
 }) {
   const materialId = mat.id || "";
-  const [url, setUrl]         = useState("");
-  const [loading, setLoading] = useState(true);
+  // If a pre-fetched URL was passed in, start ready immediately — no loading spinner
+  const [url, setUrl]         = useState(prefetchedUrl || "");
+  const [loading, setLoading] = useState(!prefetchedUrl);
   const [error, setError]     = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
+    // Already have a good URL — nothing to do
+    if (prefetchedUrl) { setUrl(prefetchedUrl); setLoading(false); return; }
     setLoading(true); setError("");
     resolveUrl(mat.file_url || "")
       .then(u => { setUrl(u); setLoading(false); })
       .catch(() => { setError("Could not load file."); setLoading(false); });
-  }, [mat.file_url]);
+  }, [mat.file_url, prefetchedUrl]);
 
   const handleMediaLoaded = (el: HTMLVideoElement | HTMLAudioElement) => {
     const t = readPos(materialId).time ?? 0;
@@ -442,6 +446,7 @@ function ViewerPanel({
           recordings={recordings}
           onMinimize={onMinimize}
           onClose={onClose}
+          prefetchedUrl={entry.prefetchedUrl}
         />
       </div>
     </div>
@@ -536,6 +541,21 @@ const MaterialsViewer = ({ materials, sessions = [], recordings = [] }: Props) =
   // The one currently displayed full-screen (null = all minimized)
   const [activeId, setActiveId]       = useState<string|null>(null);
 
+  // ── Prefetch cache: resolve signed URLs in the background as soon
+  //    as the material list is available so tapping Open is instant.
+  const urlCache = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    // Resolve URLs for all materials that have a file_url and aren't
+    // already cached. Fire-and-forget — we don't block anything.
+    materials.forEach(mat => {
+      if (!mat.file_url || urlCache.current[mat.id]) return;
+      resolveUrl(mat.file_url).then(resolved => {
+        if (resolved) urlCache.current[mat.id] = resolved;
+      }).catch(() => { /* silent */ });
+    });
+  }, [materials]);
+
   // Inject shared CSS once
   useEffect(() => {
     const id = "mv-global-css";
@@ -566,8 +586,9 @@ const MaterialsViewer = ({ materials, sessions = [], recordings = [] }: Props) =
       setActiveId(id);
       return;
     }
-    // New material — add to entries, auto-minimize current active
-    setOpenEntries(prev => [...prev, { mat, kind: detectKind(mat) }]);
+    // New material — use cached URL if available so viewer opens instantly
+    const prefetchedUrl = urlCache.current[id] || undefined;
+    setOpenEntries(prev => [...prev, { mat, kind: detectKind(mat), prefetchedUrl }]);
     setActiveId(id);
   };
 
