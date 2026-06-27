@@ -167,6 +167,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   const stepIdxRef         = useRef(0);
   const prevStepIdxRef     = useRef(-1);
   const advanceStepRef     = useRef<() => void>(() => {});
+  const countOneRepRef     = useRef<() => void>(() => {});
   const pendingRestoreRef  = useRef<Saved | null>(null);
   const repsPerVerseRef    = useRef<number>(5);
   const verseRefs          = useRef<Record<number, HTMLDivElement | null>>({});
@@ -233,13 +234,20 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
         } catch { /**/ }
       }
 
-      // Fallback to edge function
+      // Fallback to edge function (transcribe-hifdh expects JSON { audio: base64, mimeType })
       if (!text) {
-        const fd2 = new FormData();
-        fd2.append("file", blob, `chunk.webm`);
-        fd2.append("prompt", prompt);
-        const { data } = await supabase.functions.invoke("groq-transcribe", { body: fd2 });
-        text = (data?.text ?? "").trim();
+        try {
+          const b64 = await new Promise<string>((res, rej) => {
+            const reader = new FileReader();
+            reader.onload = () => res((reader.result as string).split(",")[1]);
+            reader.onerror = () => rej(new Error("read failed"));
+            reader.readAsDataURL(blob);
+          });
+          const { data: edgeData } = await supabase.functions.invoke("transcribe-hifdh", {
+            body: { audio: b64, mimeType: blob.type || "audio/webm" },
+          });
+          text = (edgeData?.text ?? edgeData?.transcript ?? "").trim();
+        } catch { /**/ }
       }
 
       if (!text || !sessionActiveRef.current) return;
@@ -266,7 +274,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
       // Count the rep the moment threshold is hit — don't wait for silence
       if (isComplete && !repCountedRef.current && repsDoneRef.current < totalRepsRef.current) {
         repCountedRef.current = true;
-        countOneRep();
+        countOneRepRef.current(); // use ref to avoid forward-reference / TDZ crash
       }
     } catch (err) {
       console.warn("sendChunk error:", err);
@@ -274,7 +282,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
       pendingTxnRef.current = Math.max(0, pendingTxnRef.current - 1);
       if (pendingTxnRef.current === 0) setTranscribing(false);
     }
-  }, [countOneRep]);
+  }, []); // no dep on countOneRep — accessed via stable ref
 
   /* ── Reset per-rep state when a new rep starts ── */
   const resetRepState = useCallback(() => {
@@ -507,6 +515,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   }, [stopAudio, saveSession, clearSession, stopMicFn]);
 
   useEffect(() => { advanceStepRef.current = advanceStep; }, [advanceStep]);
+  useEffect(() => { countOneRepRef.current = countOneRep; }, [countOneRep]);
 
   /* ── Auto-start mic on step change ── */
   useEffect(() => {
