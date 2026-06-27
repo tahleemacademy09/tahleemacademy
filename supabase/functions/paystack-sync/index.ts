@@ -1,10 +1,9 @@
-// supabase/functions/paystack-sync/index.ts
+// supabase/functions/paystack-sync/index.ts  v2
 // ═══════════════════════════════════════════════════════════════════════════
-// Admin-triggered backfill: verifies every pending/unmatched payment against
-// the Paystack API and applies the same logic as the webhook handler.
-//
-// Called by the admin via: POST /functions/v1/paystack-sync
-// Secured by: Supabase anon key + admin role check via JWT
+// Two-pass sync:
+//   Pass 1 — verify existing payments table rows that are NOT "success"
+//   Pass 2 — fetch recent Paystack transactions and backfill any that are
+//             missing from the payments table entirely (callback never fired)
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -14,86 +13,128 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// ── Verify a single Paystack reference ───────────────────────────────────────
+const PAYSTACK_BASE = "https://api.paystack.co";
 
-async function verifyPaystackReference(
-  reference: string,
-  secretKey: string
-): Promise<{ verified: boolean; data?: any }> {
-  try {
-    const res = await fetch(
-      `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
-      { headers: { Authorization: `Bearer ${secretKey}` } }
-    );
-    if (!res.ok) return { verified: false };
-    const json = await res.json();
-    if (!json.status || json.data?.status !== "success") return { verified: false };
-    return { verified: true, data: json.data };
-  } catch {
-    return { verified: false };
-  }
+// ── Paystack helpers ──────────────────────────────────────────────────────────
+
+async function paystackGet(path: string, secretKey: string): Promise<any> {
+  const res = await fetch(`${PAYSTACK_BASE}${path}`, {
+    headers: { Authorization: `Bearer ${secretKey}` },
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.status ? json.data : null;
 }
 
-// ── Apply confirmed payment to DB (mirrors paystack-webhook logic) ────────────
+async function verifyReference(ref: string, secretKey: string): Promise<any | null> {
+  const data = await paystackGet(`/transaction/verify/${encodeURIComponent(ref)}`, secretKey);
+  return data?.status === "success" ? data : null;
+}
 
-async function applyConfirmedPayment(
+// Fetch all successful transactions from Paystack (paginated, last 500)
+async function fetchRecentSuccessful(secretKey: string): Promise<any[]> {
+  const results: any[] = [];
+  let page = 1;
+  while (page <= 5) { // max 5 pages × 100 = 500 transactions
+    const data = await paystackGet(
+      `/transaction?status=success&perPage=100&page=${page}`,
+      secretKey
+    );
+    if (!data || !Array.isArray(data) || data.length === 0) break;
+    results.push(...data);
+    if (data.length < 100) break;
+    page++;
+  }
+  return results;
+}
+
+// ── Apply confirmed payment to DB ─────────────────────────────────────────────
+
+async function applyPayment(
   supabase: any,
-  paymentRow: any,
-  paystackData: any
+  studentId: string,
+  planId: string | null,
+  psData: any,
+  currency: string
 ): Promise<void> {
-  const transactionId = String(paystackData.id);
-  const amountKobo    = paystackData.amount || 0;
-  const currency      = paystackData.currency || "NGN";
+  const transactionId      = String(psData.id);
+  const ref                = psData.reference;
+  const amountKobo         = psData.amount || 0;
+  const amountMain         = amountKobo / 100;
+  const paidAt             = psData.paid_at || new Date().toISOString();
 
-  // 1. Mark payment as success
-  await supabase
+  // 1. Upsert into payments table (insert if missing, update if pending)
+  const { data: existing } = await supabase
     .from("payments")
-    .update({
-      status:                  "success",
+    .select("id, status")
+    .eq("paystack_reference", ref)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.status !== "success") {
+      await supabase.from("payments").update({
+        status: "success",
+        paystack_transaction_id: transactionId,
+        payment_method: psData.channel || "paystack",
+        paid_at: paidAt,
+      }).eq("id", existing.id);
+    }
+    // Already success — skip rest (idempotent)
+    if (existing.status === "success") return;
+  } else {
+    // No row at all — insert fresh
+    await supabase.from("payments").insert({
+      student_id: studentId,
+      plan_id:    planId,
+      amount:     amountMain,
+      status:     "success",
+      type:       "subscription",
+      paystack_reference:      ref,
       paystack_transaction_id: transactionId,
-      payment_method:          paystackData.channel || "paystack",
-      paid_at:                 paystackData.paid_at || new Date().toISOString(),
-    })
-    .eq("id", paymentRow.id);
+      payment_method: psData.channel || "paystack",
+      paid_at:    paidAt,
+      currency,
+    });
+  }
 
   // 2. Activate enrollment
   await supabase
     .from("enrollments")
-    .update({ status: "active", paid_at: new Date().toISOString() })
-    .eq("user_id", paymentRow.student_id);
+    .update({ status: "active", paid_at: paidAt })
+    .eq("user_id", studentId);
 
-  // 3. Update profiles.payment_status + subscription_end_date
-  const planDurationMonths = paymentRow.payment_plans?.duration_months || 1;
+  // 3. Update profiles
+  const { data: plan } = planId
+    ? await supabase.from("payment_plans").select("duration_months").eq("id", planId).maybeSingle()
+    : { data: null };
+  const durationMonths = plan?.duration_months || 1;
 
-  const { data: currentProfile } = await supabase
+  const { data: prof } = await supabase
     .from("profiles")
     .select("subscription_end_date, payment_status")
-    .eq("user_id", paymentRow.student_id)
+    .eq("user_id", studentId)
     .single();
 
   const baseDate =
-    currentProfile?.subscription_end_date &&
-    currentProfile.payment_status === "paid" &&
-    new Date(currentProfile.subscription_end_date) > new Date()
-      ? new Date(currentProfile.subscription_end_date)
+    prof?.subscription_end_date &&
+    prof.payment_status === "paid" &&
+    new Date(prof.subscription_end_date) > new Date()
+      ? new Date(prof.subscription_end_date)
       : new Date();
 
   const subEnd = new Date(baseDate);
-  subEnd.setMonth(subEnd.getMonth() + planDurationMonths);
+  subEnd.setMonth(subEnd.getMonth() + durationMonths);
 
-  await supabase
-    .from("profiles")
-    .update({
-      payment_status:        "paid",
-      subscription_end_date: subEnd.toISOString().split("T")[0],
-    })
-    .eq("user_id", paymentRow.student_id);
+  await supabase.from("profiles").update({
+    payment_status:        "paid",
+    subscription_end_date: subEnd.toISOString().split("T")[0],
+  }).eq("user_id", studentId);
 
   // 4. Upsert student_subscriptions
   const { data: existingSub } = await supabase
     .from("student_subscriptions")
     .select("id, end_date, status")
-    .eq("student_id", paymentRow.student_id)
+    .eq("student_id", studentId)
     .eq("status", "active")
     .maybeSingle();
 
@@ -103,93 +144,71 @@ async function applyConfirmedPayment(
         ? new Date(existingSub.end_date)
         : new Date();
     const extendEnd = new Date(extendBase);
-    extendEnd.setMonth(extendEnd.getMonth() + planDurationMonths);
-    await supabase
-      .from("student_subscriptions")
+    extendEnd.setMonth(extendEnd.getMonth() + durationMonths);
+    await supabase.from("student_subscriptions")
       .update({ end_date: extendEnd.toISOString().split("T")[0], status: "active" })
       .eq("id", existingSub.id);
   } else {
     await supabase.from("student_subscriptions").insert({
-      student_id: paymentRow.student_id,
-      plan_id:    paymentRow.plan_id,
+      student_id: studentId,
+      plan_id:    planId,
       status:     "active",
       start_date: new Date().toISOString().split("T")[0],
       end_date:   subEnd.toISOString().split("T")[0],
     });
   }
 
-  // 5. Advance tasjeel step if stuck on payment/enrollment
-  const { data: tasjeelRow } = await supabase
-    .from("tasjeel_progress")
-    .select("current_step, payment_status")
-    .eq("user_id", paymentRow.student_id)
+  // 5. Upsert payment_history
+  const { data: existingHist } = await supabase
+    .from("payment_history")
+    .select("id")
+    .eq("payment_ref", ref)
     .maybeSingle();
 
-  const advanceable = ["payment", "enrollment"].includes(tasjeelRow?.current_step ?? "");
-  const alreadyPaid = tasjeelRow?.payment_status === "paid";
+  if (!existingHist) {
+    await supabase.from("payment_history").insert({
+      user_id:      studentId,
+      amount:       Math.round(amountMain),
+      status:       "success",
+      payment_type: "subscription",
+      payment_ref:  ref,
+      receipt_id:   `RCPT-${ref}`,
+      paid_at:      paidAt,
+    });
+  }
 
-  if (advanceable && !alreadyPaid) {
+  // 6. Advance tasjeel
+  const { data: tj } = await supabase
+    .from("tasjeel_progress")
+    .select("current_step, payment_status")
+    .eq("user_id", studentId)
+    .maybeSingle();
+
+  if (["payment", "enrollment"].includes(tj?.current_step ?? "") && tj?.payment_status !== "paid") {
     const { data: settings } = await supabase
-      .from("academy_settings")
-      .select("key, value")
+      .from("academy_settings").select("key, value")
       .in("key", ["onboarding_required", "entrance_exam_required"]);
-
     const sm: Record<string, string> = {};
     (settings ?? []).forEach((r: any) => { sm[r.key] = r.value; });
-
     let nextStep = "onboarding";
     if (sm["onboarding_required"] === "false") {
       nextStep = sm["entrance_exam_required"] !== "false" ? "exam" : "completed";
     }
-
     const now = new Date().toISOString();
-    await supabase.from("tasjeel_progress").upsert(
-      {
-        user_id:          paymentRow.student_id,
-        current_step:     nextStep,
-        payment_ref:      paymentRow.paystack_reference,
-        payment_status:   "paid",
-        payment_amount:   amountKobo / 100,
-        payment_currency: currency,
-        payment_paid_at:  now,
-        updated_at:       now,
-        ...(nextStep === "completed" ? { completed_at: now } : {}),
-      },
-      { onConflict: "user_id" }
-    );
-  }
-
-  // 6. Upsert payment_history
-  const { data: existingHist } = await supabase
-    .from("payment_history")
-    .select("id")
-    .eq("payment_ref", paymentRow.paystack_reference)
-    .maybeSingle();
-
-  if (existingHist) {
-    await supabase
-      .from("payment_history")
-      .update({ status: "success" })
-      .eq("payment_ref", paymentRow.paystack_reference);
-  } else {
-    await supabase.from("payment_history").insert({
-      user_id:      paymentRow.student_id,
-      amount:       Math.round(amountKobo / 100),
-      status:       "success",
-      payment_type: "subscription",
-      payment_ref:  paymentRow.paystack_reference,
-      receipt_id:   `RCPT-${paymentRow.paystack_reference}`,
-      paid_at:      new Date().toISOString(),
-    });
+    await supabase.from("tasjeel_progress").upsert({
+      user_id: studentId, current_step: nextStep,
+      payment_ref: ref, payment_status: "paid",
+      payment_amount: amountMain, payment_currency: currency,
+      payment_paid_at: now, updated_at: now,
+      ...(nextStep === "completed" ? { completed_at: now } : {}),
+    }, { onConflict: "user_id" });
   }
 }
 
-// ── Main handler ──────────────────────────────────────────────────────────────
+// ── Main ──────────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   const secretKey = Deno.env.get("PAYSTACK_SECRET_KEY") || "";
   if (!secretKey) {
@@ -198,22 +217,17 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Admin-only: use service role for full DB access
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
   );
 
-  // Verify caller is an admin via their JWT
-  const authHeader = req.headers.get("authorization") || "";
-  const token = authHeader.replace("Bearer ", "");
+  // Admin-only gate
+  const token = (req.headers.get("authorization") || "").replace("Bearer ", "");
   if (token) {
     const { data: { user } } = await supabase.auth.getUser(token);
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("user_id", user?.id ?? "")
-      .maybeSingle();
+    const { data: profile } = await supabase.from("profiles")
+      .select("role").eq("user_id", user?.id ?? "").maybeSingle();
     if (profile?.role !== "admin") {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -221,48 +235,100 @@ Deno.serve(async (req) => {
     }
   }
 
+  const stats = { pass1_verified: 0, pass2_backfilled: 0, skipped: 0, errors: 0, details: [] as any[] };
+
   try {
-    // Fetch all non-success payments that have a Paystack reference
-    const { data: pendingPayments, error } = await supabase
+    // ── PASS 1: verify existing pending rows ─────────────────────────────────
+    const { data: pendingRows } = await supabase
       .from("payments")
       .select("*, payment_plans(*)")
       .not("status", "eq", "success")
       .not("paystack_reference", "is", null)
-      .not("paystack_reference", "like", "TAH-MANUAL-%"); // skip manual entries
+      .not("paystack_reference", "like", "TAH-MANUAL-%");
 
-    if (error) throw error;
-
-    const results = {
-      total:    (pendingPayments ?? []).length,
-      synced:   0,
-      failed:   0,
-      skipped:  0,
-      details:  [] as any[],
-    };
-
-    for (const payment of (pendingPayments ?? []) as any[]) {
-      const ref = payment.paystack_reference;
-      if (!ref) { results.skipped++; continue; }
-
-      const { verified, data: psData } = await verifyPaystackReference(ref, secretKey);
-
-      if (verified && psData) {
-        await applyConfirmedPayment(supabase, payment, psData);
-        results.synced++;
-        results.details.push({ ref, student_id: payment.student_id, status: "synced" });
-        console.log(`[paystack-sync] ✅ synced ref=${ref} student=${payment.student_id}`);
+    for (const row of (pendingRows ?? []) as any[]) {
+      const psData = await verifyReference(row.paystack_reference, secretKey);
+      if (psData) {
+        const currency = row.payment_plans?.currency || psData.currency || "NGN";
+        await applyPayment(supabase, row.student_id, row.plan_id, psData, currency);
+        stats.pass1_verified++;
+        stats.details.push({ pass: 1, ref: row.paystack_reference, student: row.student_id, result: "synced" });
       } else {
-        results.failed++;
-        results.details.push({ ref, student_id: payment.student_id, status: "not_confirmed_by_paystack" });
-        console.log(`[paystack-sync] ⚠️ not confirmed ref=${ref}`);
+        stats.skipped++;
       }
-
-      // Small delay to avoid Paystack rate limits
-      await new Promise(r => setTimeout(r, 150));
+      await new Promise(r => setTimeout(r, 120));
     }
 
-    console.log("[paystack-sync] done", results);
-    return new Response(JSON.stringify({ ok: true, ...results }), {
+    // ── PASS 2: pull all Paystack transactions, backfill missing ones ─────────
+    const psTxns = await fetchRecentSuccessful(secretKey);
+    console.log(`[paystack-sync] pass2: ${psTxns.length} successful txns from Paystack`);
+
+    // Load all student profiles (email → user_id map)
+    const { data: allProfiles } = await supabase
+      .from("profiles")
+      .select("user_id, email, role")
+      .eq("role", "student");
+
+    const emailToUserId: Record<string, string> = {};
+    for (const p of (allProfiles ?? []) as any[]) {
+      if (p.email) emailToUserId[p.email.toLowerCase()] = p.user_id;
+    }
+
+    // Load existing successful references to skip them
+    const { data: existingSuccess } = await supabase
+      .from("payments")
+      .select("paystack_reference")
+      .eq("status", "success");
+    const successRefs = new Set((existingSuccess ?? []).map((r: any) => r.paystack_reference));
+
+    // Load payment plans for amount→plan matching
+    const { data: allPlans } = await supabase.from("payment_plans").select("*");
+
+    for (const tx of psTxns) {
+      const ref = tx.reference;
+      if (!ref || successRefs.has(ref)) continue;          // already synced
+      if (!ref.startsWith("TAH-")) continue;               // only our refs
+
+      // Resolve student from metadata.user_id or customer email
+      const metaUserId = tx.metadata?.user_id || tx.metadata?.custom_fields?.find((f: any) => f.variable_name === "user_id")?.value;
+      const email = tx.customer?.email?.toLowerCase();
+
+      let studentId: string | null = metaUserId || null;
+      if (!studentId && email) studentId = emailToUserId[email] || null;
+      if (!studentId) {
+        stats.skipped++;
+        stats.details.push({ pass: 2, ref, result: "no_student_match", email });
+        continue;
+      }
+
+      // Match plan by metadata or amount
+      const metaPlanId = tx.metadata?.plan_id;
+      let planId: string | null = null;
+      if (metaPlanId) {
+        planId = metaPlanId;
+      } else {
+        // Match by amount (kobo)
+        const matchPlan = (allPlans ?? []).find((p: any) => p.amount * 100 === tx.amount);
+        planId = matchPlan?.id || null;
+      }
+
+      const currency = tx.currency || "NGN";
+      try {
+        await applyPayment(supabase, studentId, planId, tx, currency);
+        stats.pass2_backfilled++;
+        stats.details.push({ pass: 2, ref, student: studentId, result: "backfilled" });
+        console.log(`[paystack-sync] ✅ backfilled ref=${ref} student=${studentId}`);
+      } catch (e: any) {
+        stats.errors++;
+        stats.details.push({ pass: 2, ref, student: studentId, result: "error", error: e.message });
+        console.error(`[paystack-sync] ❌ backfill error ref=${ref}:`, e.message);
+      }
+      await new Promise(r => setTimeout(r, 120));
+    }
+
+    const total = stats.pass1_verified + stats.pass2_backfilled;
+    console.log("[paystack-sync] done", stats);
+    return new Response(JSON.stringify({ ok: true, synced: total, ...stats }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {
