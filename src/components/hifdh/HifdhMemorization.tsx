@@ -10,16 +10,17 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { SURAHS, RECITERS, audioUrl, DEFAULT_RECITER } from "./surahData";
 import { supabase } from "@/integrations/supabase/client";
+import { H_G, H_GM, H_GOLD, H_GOLD_L2, H_LIGHT, H_BORDER, H_PARCH3, H_PARCH4 } from "./hifdhTokens";
 
 /* ── Palette ────────────────────────────────────────────────── */
-const G      = "#1a3d24";
-const GM     = "#276749";
-const GOLD   = "#b7791f";
-const GOLD_L = "#fef9ee";
-const LIGHT  = "#f0fff4";
-const BORDER = "#d4e8d4";
-const PARCH  = "#faf6ec";
-const PARCH2 = "#f3ead8";
+const G      = H_G;
+const GM     = H_GM;
+const GOLD   = H_GOLD;
+const GOLD_L = H_GOLD_L2;
+const LIGHT  = H_LIGHT;
+const BORDER = H_BORDER;
+const PARCH  = H_PARCH3;
+const PARCH2 = H_PARCH4;
 
 const SESSION_KEY = "hifdh_mem_v20";
 
