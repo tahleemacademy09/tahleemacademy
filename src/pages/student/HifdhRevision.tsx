@@ -8,6 +8,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
 import { cn } from "@/lib/utils";
+import { H_GM, H_GOLD2, H_GOLD_L, H_GM2, H_PARCHMENT, H_PARCH2, H_INK } from "@/components/hifdh/hifdhTokens";
 import {
   Mic, MicOff, ChevronRight, ChevronLeft,
   CheckCircle2, XCircle, AlertTriangle, BookOpen,
@@ -21,13 +22,13 @@ import {
 //  CONSTANTS & THEME
 // ═══════════════════════════════════════════════════════════════════════
 
-const GOLD       = "#c9a84c";
-const GOLD_LIGHT = "#e8c97a";
-const DG         = "#0f2d1f";
-const DG2        = "#1a4030";
-const PARCHMENT  = "#fffdf6";
-const PARCH2     = "#f9f2dc";
-const INK        = "#1a1007";
+const GOLD       = H_GOLD2;
+const GOLD_LIGHT = H_GOLD_L;
+const DG         = H_GM2;
+const DG2        = H_GM;
+const PARCHMENT  = H_PARCHMENT;
+const PARCH2     = H_PARCH2;
+const INK        = H_INK;
 const PASS_SCORE = 70;
 const EXERCISE_PASS = 65;
 
