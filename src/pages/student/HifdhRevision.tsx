@@ -5,6 +5,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
 import { cn } from "@/lib/utils";
@@ -519,6 +520,11 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
     } catch { /* ignore */ }
   }, []);
 
+  // Read assignmentId from URL query param (?assignmentId=xxx)
+  // This lets the dashboard navigate to a specific assignment when multiple exist.
+  const [searchParams] = useSearchParams();
+  const urlAssignmentId = searchParams.get("assignmentId");
+
   // ═══ Unified assignment + resume effect ══════════════════════════════
   const didStartRef = useRef(false);
   // Reset guard when userId changes (e.g. login/logout)
@@ -580,12 +586,13 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
       sessionStorage.removeItem(ssKey);
     }
 
-    (supabase as any)
-      .from("hifdh_daily_assignments")
-      .select("*")
-      .eq("student_id", userId)
-      .eq("active", true)
-      .maybeSingle()
+    // If a specific assignmentId was passed in the URL, fetch that one.
+    // Otherwise fall back to the first active assignment (legacy behaviour).
+    const assignmentQuery = urlAssignmentId
+      ? (supabase as any).from("hifdh_daily_assignments").select("*").eq("id", urlAssignmentId).eq("student_id", userId).maybeSingle()
+      : (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", userId).eq("active", true).order("created_at", {ascending: true}).limit(1).then(({data, error}: any) => ({data: data?.[0] ?? null, error}));
+
+    assignmentQuery
       .then(({ data, error }: any) => {
         console.log("[Hifdh] Assignment fetch →", { data, error });
 
