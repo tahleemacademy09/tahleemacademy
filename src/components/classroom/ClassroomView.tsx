@@ -748,19 +748,18 @@ const VolumeBooster = () => {
 
 const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
   const room = useRoomContext();
-  // FIX BUG 5: Capture the latest lobby values in a ref so the async effect always
+  // Capture the latest lobby values in a ref so the async effect always
   // reads the current state even if React batches the prop update after mount.
-  // The empty dependency array is intentional — we only want this to run once on
-  // join, but we read from the ref (not the closure) to get fresh values.
   const optsRef = useRef({ lobbyMic, lobbyCam });
   optsRef.current = { lobbyMic, lobbyCam }; // keep ref fresh every render
 
   useEffect(() => {
-    let cancelled = false;
-    const init = async () => {
-      // Slightly longer delay so LiveKit finishes its own track setup first
-      await new Promise(r => setTimeout(r, 450));
-      if (cancelled) return;
+    let applied = false;
+    const apply = async () => {
+      if (applied) return;
+      applied = true;
+      // Small delay so LiveKit finishes its own internal track setup first
+      await new Promise(r => setTimeout(r, 600));
       try {
         const lp = room.localParticipant;
         const { lobbyMic: mic, lobbyCam: cam } = optsRef.current; // read latest via ref
@@ -769,8 +768,16 @@ const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: b
         if (lp.isCameraEnabled     !== cam) await lp.setCameraEnabled(cam);
       } catch {}
     };
-    init();
-    return () => { cancelled = true; };
+
+    // If the room is already connected (e.g. re-mount), apply immediately.
+    // Otherwise wait for the Connected event so we don't race LiveKit's setup.
+    if (room.state === ConnectionState.Connected) {
+      apply();
+    } else {
+      room.once(RoomEvent.Connected, apply);
+    }
+
+    return () => { room.off(RoomEvent.Connected, apply); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // safe: reads optsRef which is always up-to-date
   return null;
@@ -3774,21 +3781,19 @@ const useNetworkQuality=()=>{
   return quality;
 };
 
-/* Badge shown in the top bar — icon only, compact */
+/* Badge shown in the top bar — always visible: green=good, yellow=poor, red=lost */
 const NetworkQualityBadge=()=>{
   const quality=useNetworkQuality();
-  // Only show badge when network is degraded OR still checking
-  // When excellent/good: no badge — don't clutter the header
-  const showBadge = quality!=="excellent"&&quality!=="good";
-  if(!showBadge) return null;
-  const bg  = quality==="poor" ?"rgba(251,191,36,.15)"
-             :quality==="lost" ?"rgba(239,68,68,.18)"
-             :"rgba(255,255,255,.07)";
-  const bdr = quality==="poor" ?"rgba(251,191,36,.4)"
-             :quality==="lost" ?"rgba(239,68,68,.45)"
-             :"rgba(255,255,255,.12)";
+  const bg  = quality==="excellent"||quality==="good" ? "rgba(34,197,94,.15)"
+             : quality==="poor"                        ? "rgba(251,191,36,.15)"
+             : quality==="lost"                        ? "rgba(239,68,68,.18)"
+             :                                           "rgba(255,255,255,.07)";
+  const bdr = quality==="excellent"||quality==="good" ? "rgba(34,197,94,.4)"
+             : quality==="poor"                        ? "rgba(251,191,36,.4)"
+             : quality==="lost"                        ? "rgba(239,68,68,.45)"
+             :                                           "rgba(255,255,255,.12)";
   return(
-    <div title={`Network: ${QUALITY_LABELS[quality]||"Unknown"}`} style={{
+    <div title={`Network: ${QUALITY_LABELS[quality]||"Checking…"}`} style={{
       display:"flex",alignItems:"center",
       background:bg,border:`1px solid ${bdr}`,
       borderRadius:20,padding:"4px 6px",flexShrink:0,cursor:"default",
@@ -4798,7 +4803,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(!autoJoin)return;
     const t=setTimeout(()=>{
       if(phase==="lobby"&&!loading&&!error){
-        connect(isPrivileged?"start_session":"join");
+        connect(isPrivileged?"start_session":"join", undefined, { micOn: lobbyMic, cameraOn: lobbyCam });
       }
     },120);
     return()=>clearTimeout(t);
