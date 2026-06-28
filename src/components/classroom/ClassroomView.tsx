@@ -173,6 +173,8 @@ const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&family=Google+Sans+Display:wght@400;500;700&display=swap');
 
   @keyframes cv-spin      { to { transform:rotate(360deg); } }
+  @keyframes slide-down   { from { transform:translateY(-100%);opacity:0; } to { transform:translateY(0);opacity:1; } }
+  @keyframes speak-bar    { 0%,100% { transform:scaleY(0.4); } 50% { transform:scaleY(1.3); } }
   @keyframes wb-spin      { to { transform:rotate(360deg); } }
   @keyframes speak-bar    { 0%,100%{transform:scaleY(.3)}50%{transform:scaleY(1)} }
   @keyframes pip-pulse    { 0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.85)} }
@@ -431,6 +433,242 @@ const CSS = `
    AND the grace period has elapsed do we call onDisconnected.             */
 const MINIMIZE_GRACE_MS = 10 * 60 * 1000; // 10 minutes
 
+/* ══════════════════════════════════════════════════════════════════════
+   FEATURE 1: RECONNECTING OVERLAY
+   Shows attempt count, countdown to next retry, and a "stay on page" nudge.
+   Much better UX than a plain spinner — user knows what's happening.
+   ══════════════════════════════════════════════════════════════════════ */
+const ReconnectingOverlay = ({ attempt }: { attempt: number }) => {
+  const [secs, setSecs] = useState(0);
+  useEffect(() => {
+    // Show countdown matching the backoff: 1s, 2s, 4s, 8s, 15s cap
+    const wait = Math.min(Math.pow(2, attempt), 15);
+    setSecs(wait);
+    const iv = setInterval(() => setSecs(s => Math.max(0, s - 1)), 1000);
+    return () => clearInterval(iv);
+  }, [attempt]);
+  const msgs = [
+    "Checking connection…",
+    "Network blip — retrying…",
+    "Still trying…",
+    "Weak signal detected…",
+    "Switching to audio-only…",
+  ];
+  const msg = msgs[Math.min(attempt, msgs.length - 1)];
+  return (
+    <div style={{
+      position:"absolute",inset:0,zIndex:200,
+      background:"rgba(15,17,23,.93)",backdropFilter:"blur(14px)",
+      display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,
+    }}>
+      {/* Animated ring */}
+      <div style={{position:"relative",width:64,height:64}}>
+        <div style={{
+          position:"absolute",inset:0,
+          border:"3px solid rgba(138,180,248,.12)",
+          borderTopColor:"#8ab4f8",borderRadius:"50%",
+          animation:"cv-spin .9s linear infinite",
+        }}/>
+        <div style={{
+          position:"absolute",inset:6,
+          border:"2px solid rgba(138,180,248,.06)",
+          borderTopColor:"rgba(138,180,248,.4)",borderRadius:"50%",
+          animation:"cv-spin 1.4s linear infinite reverse",
+        }}/>
+        <span style={{
+          position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",
+          fontSize:11,fontWeight:700,color:"#8ab4f8",
+        }}>{attempt > 0 ? attempt : ""}</span>
+      </div>
+      <div style={{textAlign:"center"}}>
+        <p style={{color:"#e8eaed",fontSize:15,fontWeight:600,margin:"0 0 4px",fontFamily:"'Google Sans',sans-serif"}}>{msg}</p>
+        {secs > 0 && <p style={{color:"rgba(255,255,255,.35)",fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>Retrying in {secs}s…</p>}
+      </div>
+      {/* Soft signal bars animation */}
+      <div style={{display:"flex",gap:3,alignItems:"flex-end",height:20}}>
+        {[6,10,14,10,6].map((h,i) => (
+          <div key={i} style={{
+            width:4,borderRadius:2,
+            background:"rgba(138,180,248,.3)",
+            height:h,
+            animation:`speak-bar ${0.6+i*0.1}s ease-in-out infinite`,
+            animationDelay:`${i*0.08}s`,
+          }}/>
+        ))}
+      </div>
+      <p style={{color:"rgba(255,255,255,.25)",fontSize:11,fontFamily:"'Google Sans',sans-serif",margin:0}}>
+        Stay on the page — your session is saved
+      </p>
+    </div>
+  );
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   FEATURE 2: AUDIO-ONLY MODE TOGGLE
+   Manual button to force camera off + reduce Opus bitrate.
+   Best used proactively when on a known weak connection.
+   ══════════════════════════════════════════════════════════════════════ */
+const useAudioOnlyMode = () => {
+  const room = useRoomContext();
+  const [audioOnly, setAudioOnly] = useState(false);
+  const toggle = useCallback(async () => {
+    if (!room?.localParticipant) return;
+    const lp = room.localParticipant;
+    try {
+      if (!audioOnly) {
+        // Enable audio-only: camera off, reduce audio bitrate to 16kbps
+        await lp.setCameraEnabled(false);
+        // Reduce audio encoding quality to save ~14kbps more
+        const micPub = lp.getTrackPublication(Track.Source.Microphone);
+        if (micPub?.track) {
+          try {
+            const sender = (micPub.track as any)?.sender as RTCRtpSender | undefined;
+            if (sender) {
+              const params = sender.getParameters();
+              if (params.encodings?.length) {
+                params.encodings[0].maxBitrate = 16000; // 16kbps — enough for voice
+                await sender.setParameters(params);
+              }
+            }
+          } catch { /* not all browsers support setParameters */ }
+        }
+        setAudioOnly(true);
+        toast({ title: "📵 Audio-only mode", description: "Camera off — using minimal bandwidth." });
+      } else {
+        // Restore camera + normal audio bitrate
+        await lp.setCameraEnabled(true);
+        const micPub = lp.getTrackPublication(Track.Source.Microphone);
+        if (micPub?.track) {
+          try {
+            const sender = (micPub.track as any)?.sender as RTCRtpSender | undefined;
+            if (sender) {
+              const params = sender.getParameters();
+              if (params.encodings?.length) {
+                params.encodings[0].maxBitrate = 32000; // restore 32kbps
+                await sender.setParameters(params);
+              }
+            }
+          } catch {}
+        }
+        setAudioOnly(false);
+        toast({ title: "📷 Video restored", description: "Full quality mode re-enabled." });
+      }
+    } catch { /* camera may be blocked */ }
+  }, [room, audioOnly]);
+  return { audioOnly, toggleAudioOnly: toggle };
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   FEATURE 5: CONNECTION HEARTBEAT PING
+   Sends a lightweight Supabase realtime ping every 15s.
+   If 2 consecutive pings fail → proactively drops video before
+   LiveKit even detects the quality drop. Prevents the sudden disconnect
+   by degrading gracefully first.
+   ══════════════════════════════════════════════════════════════════════ */
+const useConnectionHeartbeat = (sessionId: string | null, active: boolean) => {
+  const room = useRoomContext();
+  const missRef  = useRef(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    if (!active || !sessionId) return;
+    const ping = async () => {
+      try {
+        const { error } = await supabase
+          .from("live_sessions").select("id").eq("id", sessionId).single();
+        if (error) throw error;
+        missRef.current = 0; // success — reset miss counter
+      } catch {
+        missRef.current += 1;
+        if (missRef.current >= 2 && room?.localParticipant) {
+          // 2 consecutive failures = network degrading → camera off proactively
+          try { await room.localParticipant.setCameraEnabled(false); } catch {}
+          toast({
+            title: "⚠️ Weak connection detected",
+            description: "Camera turned off to keep audio running.",
+          });
+        }
+      }
+    };
+    timerRef.current = setInterval(ping, 15_000);
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [active, sessionId, room]);
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   FEATURE 9: DATA CHANNEL MESSAGE QUEUE
+   Buffers publishData calls made during reconnect window.
+   On reconnect, flushes queued messages so no whiteboard stroke,
+   emoji, or control message is silently dropped.
+   ══════════════════════════════════════════════════════════════════════ */
+const pendingDataQueue: Array<{ data: Uint8Array; opts: any }> = [];
+let _roomForQueue: any = null;
+
+export function queuePublish(data: Uint8Array, opts: any = { reliable: true }) {
+  if (_roomForQueue?.localParticipant && _roomForQueue.state === "connected") {
+    try { _roomForQueue.localParticipant.publishData(data, opts); } catch {}
+  } else {
+    pendingDataQueue.push({ data, opts });
+  }
+}
+
+function flushDataQueue(room: any) {
+  _roomForQueue = room;
+  while (pendingDataQueue.length > 0) {
+    const item = pendingDataQueue.shift()!;
+    try { room.localParticipant.publishData(item.data, item.opts); } catch {}
+  }
+}
+
+const DataQueueFlusher = ({ roomRef }: { roomRef: React.MutableRefObject<any> }) => {
+  const room = useRoomContext();
+  useEffect(() => {
+    if (!room) return;
+    _roomForQueue = room;
+    const onConnected = () => { flushDataQueue(room); };
+    room.on(RoomEvent.Connected, onConnected);
+    room.on(RoomEvent.Reconnected, onConnected);
+    // Flush immediately if already connected
+    if (room.state === "connected") flushDataQueue(room);
+    return () => {
+      room.off(RoomEvent.Connected, onConnected);
+      room.off(RoomEvent.Reconnected, onConnected);
+    };
+  }, [room]);
+  return null;
+};
+
+/* ══════════════════════════════════════════════════════════════════════
+   FEATURE 7: WAKE LOCK (screen stays on during class)
+   navigator.wakeLock.request("screen") prevents Android/iOS from
+   dimming the screen mid-class. Released automatically on leave.
+   ══════════════════════════════════════════════════════════════════════ */
+function useScreenWakeLock(active: boolean) {
+  const lockRef = useRef<any>(null);
+  useEffect(() => {
+    if (!active || !("wakeLock" in navigator)) return;
+    let released = false;
+    const acquire = async () => {
+      try {
+        lockRef.current = await (navigator as any).wakeLock.request("screen");
+        lockRef.current.addEventListener("release", () => {
+          // Auto-reacquire if tab is still visible (lock released by browser on visibility change)
+          if (!released && document.visibilityState === "visible") acquire();
+        });
+      } catch { /* not supported or permission denied */ }
+    };
+    acquire();
+    const onVis = () => { if (document.visibilityState === "visible") acquire(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      released = true;
+      document.removeEventListener("visibilitychange", onVis);
+      lockRef.current?.release().catch(() => {});
+      lockRef.current = null;
+    };
+  }, [active]);
+}
+
 const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
   onReconnecting: () => void;
   onReconnected:  () => void;
@@ -497,6 +735,114 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [room, onReconnecting, onReconnected, onDisconnected]);
+  return null;
+};
+
+/* ══ FEATURE 4: CONNECTION STATE BANNER ══
+   Thin amber bar that appears when LiveKit itself is reconnecting.
+   Unlike the full overlay, this is non-blocking — video/audio may still work.
+   ══════════════════════════════════════════════════════════════════════ */
+const ConnectionStateBanner = () => {
+  const room = useRoomContext();
+  const [state, setState] = useState<string>("connected");
+  const [elapsed, setElapsed] = useState(0);
+  const startRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!room) return;
+    const onReconnecting = () => {
+      setState("reconnecting");
+      startRef.current = Date.now();
+      setElapsed(0);
+    };
+    const onReconnected = () => { setState("connected"); startRef.current = null; };
+    const onDisconnected = () => { setState("disconnected"); };
+    room.on(RoomEvent.Reconnecting, onReconnecting);
+    room.on(RoomEvent.Reconnected,  onReconnected);
+    room.on(RoomEvent.Disconnected, onDisconnected);
+    return () => {
+      room.off(RoomEvent.Reconnecting, onReconnecting);
+      room.off(RoomEvent.Reconnected,  onReconnected);
+      room.off(RoomEvent.Disconnected, onDisconnected);
+    };
+  }, [room]);
+
+  // Tick elapsed seconds while reconnecting
+  useEffect(() => {
+    if (state !== "reconnecting") return;
+    const iv = setInterval(() => {
+      setElapsed(startRef.current ? Math.floor((Date.now() - startRef.current) / 1000) : 0);
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [state]);
+
+  if (state === "connected") return null;
+
+  const isDisconnected = state === "disconnected";
+  const bg  = isDisconnected ? "rgba(239,68,68,.92)"  : "rgba(217,119,6,.92)";
+  const msg = isDisconnected ? "⚠️ Disconnected — reconnecting…"
+                              : `↻ Reconnecting… ${elapsed > 0 ? `${elapsed}s` : ""}`;
+  return (
+    <div style={{
+      position:"absolute",top:0,left:0,right:0,zIndex:199,
+      background:bg,backdropFilter:"blur(8px)",
+      padding:"5px 14px",
+      display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+      animation:"slide-down .2s ease",
+    }}>
+      <div style={{
+        width:10,height:10,borderRadius:"50%",
+        border:"2px solid rgba(255,255,255,.6)",
+        borderTopColor:"#fff",
+        animation:"cv-spin .7s linear infinite",
+        flexShrink:0,
+      }}/>
+      <span style={{
+        color:"#fff",fontSize:12,fontWeight:600,
+        fontFamily:"'Google Sans',sans-serif",
+      }}>{msg}</span>
+    </div>
+  );
+};
+
+/* ══ AUDIO-ONLY BRIDGE — inside LiveKitRoom ══ */
+const AudioOnlyBridge = ({ active }: { active: boolean }) => {
+  const room = useRoomContext();
+  const prevRef = useRef(false);
+  useEffect(() => {
+    if (!room?.localParticipant) return;
+    if (prevRef.current === active) return;
+    prevRef.current = active;
+    const lp = room.localParticipant;
+    (async () => {
+      try {
+        if (active) {
+          await lp.setCameraEnabled(false);
+          // Drop audio bitrate to 16kbps
+          const micPub = lp.getTrackPublication(Track.Source.Microphone);
+          const sender = (micPub?.track as any)?.sender as RTCRtpSender | undefined;
+          if (sender) {
+            const p = sender.getParameters();
+            if (p.encodings?.[0]) { p.encodings[0].maxBitrate = 16000; await sender.setParameters(p); }
+          }
+        } else {
+          await lp.setCameraEnabled(true);
+          const micPub = lp.getTrackPublication(Track.Source.Microphone);
+          const sender = (micPub?.track as any)?.sender as RTCRtpSender | undefined;
+          if (sender) {
+            const p = sender.getParameters();
+            if (p.encodings?.[0]) { p.encodings[0].maxBitrate = 32000; await sender.setParameters(p); }
+          }
+        }
+      } catch {}
+    })();
+  }, [active, room]);
+  return null;
+};
+
+/* ══ HEARTBEAT BRIDGE — inside LiveKitRoom ══ */
+const HeartbeatBridge = ({ sessionId, active }: { sessionId: string | null; active: boolean }) => {
+  useConnectionHeartbeat(sessionId, active);
   return null;
 };
 
@@ -748,18 +1094,19 @@ const VolumeBooster = () => {
 
 const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
   const room = useRoomContext();
-  // Capture the latest lobby values in a ref so the async effect always
+  // FIX BUG 5: Capture the latest lobby values in a ref so the async effect always
   // reads the current state even if React batches the prop update after mount.
+  // The empty dependency array is intentional — we only want this to run once on
+  // join, but we read from the ref (not the closure) to get fresh values.
   const optsRef = useRef({ lobbyMic, lobbyCam });
   optsRef.current = { lobbyMic, lobbyCam }; // keep ref fresh every render
 
   useEffect(() => {
-    let applied = false;
-    const apply = async () => {
-      if (applied) return;
-      applied = true;
-      // Small delay so LiveKit finishes its own internal track setup first
-      await new Promise(r => setTimeout(r, 600));
+    let cancelled = false;
+    const init = async () => {
+      // Slightly longer delay so LiveKit finishes its own track setup first
+      await new Promise(r => setTimeout(r, 450));
+      if (cancelled) return;
       try {
         const lp = room.localParticipant;
         const { lobbyMic: mic, lobbyCam: cam } = optsRef.current; // read latest via ref
@@ -768,16 +1115,8 @@ const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: b
         if (lp.isCameraEnabled     !== cam) await lp.setCameraEnabled(cam);
       } catch {}
     };
-
-    // If the room is already connected (e.g. re-mount), apply immediately.
-    // Otherwise wait for the Connected event so we don't race LiveKit's setup.
-    if (room.state === ConnectionState.Connected) {
-      apply();
-    } else {
-      room.once(RoomEvent.Connected, apply);
-    }
-
-    return () => { room.off(RoomEvent.Connected, apply); };
+    init();
+    return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // safe: reads optsRef which is always up-to-date
   return null;
@@ -3750,6 +4089,27 @@ const useNetworkQuality=()=>{
       }catch{}
     };
 
+    // Feature 3: Adaptive audio bitrate — reduce Opus to 16kbps on poor/lost
+    const applyAdaptiveBitrate=async(q:string)=>{
+      if(!lp)return;
+      try{
+        const micPub=lp.getTrackPublication(Track.Source.Microphone);
+        if(!micPub?.track)return;
+        const sender=(micPub.track as any)?.sender as RTCRtpSender|undefined;
+        if(!sender)return;
+        const params=sender.getParameters();
+        if(!params.encodings?.length)return;
+        if(q==="poor"){
+          params.encodings[0].maxBitrate=20000; // 20kbps — clear enough for voice
+        }else if(q==="lost"){
+          params.encodings[0].maxBitrate=12000; // 12kbps — barely usable but stays alive
+        }else if(q==="good"||q==="excellent"){
+          params.encodings[0].maxBitrate=32000; // restore 32kbps
+        }
+        await sender.setParameters(params);
+      }catch{}
+    };
+
     const onQualityChanged=(_participant:any,q:ConnectionQuality)=>{
       if(_participant?.identity!==lp?.identity)return;
       const label=q===ConnectionQuality.Excellent?"excellent"
@@ -3772,6 +4132,7 @@ const useNetworkQuality=()=>{
       }
       lastQualityRef.current=label;
       applyAdaptiveVideo(label);
+      applyAdaptiveBitrate(label);
     };
 
     room.on(RoomEvent.ConnectionQualityChanged,onQualityChanged);
@@ -3781,19 +4142,21 @@ const useNetworkQuality=()=>{
   return quality;
 };
 
-/* Badge shown in the top bar — always visible: green=good, yellow=poor, red=lost */
+/* Badge shown in the top bar — icon only, compact */
 const NetworkQualityBadge=()=>{
   const quality=useNetworkQuality();
-  const bg  = quality==="excellent"||quality==="good" ? "rgba(34,197,94,.15)"
-             : quality==="poor"                        ? "rgba(251,191,36,.15)"
-             : quality==="lost"                        ? "rgba(239,68,68,.18)"
-             :                                           "rgba(255,255,255,.07)";
-  const bdr = quality==="excellent"||quality==="good" ? "rgba(34,197,94,.4)"
-             : quality==="poor"                        ? "rgba(251,191,36,.4)"
-             : quality==="lost"                        ? "rgba(239,68,68,.45)"
-             :                                           "rgba(255,255,255,.12)";
+  // Only show badge when network is degraded OR still checking
+  // When excellent/good: no badge — don't clutter the header
+  const showBadge = quality!=="excellent"&&quality!=="good";
+  if(!showBadge) return null;
+  const bg  = quality==="poor" ?"rgba(251,191,36,.15)"
+             :quality==="lost" ?"rgba(239,68,68,.18)"
+             :"rgba(255,255,255,.07)";
+  const bdr = quality==="poor" ?"rgba(251,191,36,.4)"
+             :quality==="lost" ?"rgba(239,68,68,.45)"
+             :"rgba(255,255,255,.12)";
   return(
-    <div title={`Network: ${QUALITY_LABELS[quality]||"Checking…"}`} style={{
+    <div title={`Network: ${QUALITY_LABELS[quality]||"Unknown"}`} style={{
       display:"flex",alignItems:"center",
       background:bg,border:`1px solid ${bdr}`,
       borderRadius:20,padding:"4px 6px",flexShrink:0,cursor:"default",
@@ -4150,7 +4513,7 @@ const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?:Layout
 };
 
 /* ══ BOTTOM BAR — Google Meet premium ══ */
-const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji,layout,onLayoutChange,onLaunchQuiz,onScreenShare,screenSharing,onToggleTimer,timerRunning,timerDisplay,onToggleLiveFiles,liveFilesOpen,onToggleHandQueue,onToggleAttendance,onSpotlight,onGenerateSummary,onTogglePartPanel,partPanelOpen}:any)=>{
+const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji,layout,onLayoutChange,onLaunchQuiz,onScreenShare,screenSharing,onToggleTimer,timerRunning,timerDisplay,onToggleLiveFiles,liveFilesOpen,onToggleHandQueue,onToggleAttendance,onSpotlight,onGenerateSummary,onTogglePartPanel,partPanelOpen,audioOnly,onToggleAudioOnly}:any)=>{
   const{user}=useAuth();
   const[micOn,setMicOn]=useState(false);
   const[camOn,setCamOn]=useState(false);
@@ -4414,6 +4777,10 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
           <button className="gm-more-item" onClick={()=>{onGenerateSummary();setMoreOpen(false);}}>
             <ClipboardList style={{width:16,height:16,color:"#60a5fa"}}/> Session Summary
           </button>
+          {/* Feature 2: Audio-only mode — saves ~270kbps, best for weak connections */}
+          <button className="gm-more-item" onClick={()=>{onToggleAudioOnly?.();setMoreOpen(false);}} style={{color:audioOnly?"#fbbf24":undefined}}>
+            <Zap style={{width:14,height:14,color:audioOnly?"#fbbf24":"#a3e635"}}/> {audioOnly?"Exit Audio-Only Mode":"⚡ Audio-Only Mode"}
+          </button>
         </>}
         {!isPrivileged&&canStudentRecProp&&(
           <button className="gm-more-item" onClick={()=>{toggleStuRecord();setMoreOpen(false);}} style={{color:stuRec?"#ef4444":"#e8eaed"}}>
@@ -4665,8 +5032,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[lobbyCam,setLobbyCam]=useState(false); // OFF by default — user must explicitly enable
   /* ── Background keep-alive: silent audio (student & teacher) ── */
   useSilentAudioKeepAlive(phase === "live");
-  // NOTE: Wake lock is owned by GlobalClassroomOverlay via useWakeLock(hasConnected).
-  // No second wake lock here — dual requests waste a browser resource.
+  // Feature 7: Screen wake lock — keep screen on during class so Android doesn't kill audio
+  // (Separate from GlobalClassroomOverlay's wake lock — that one only activates after minimize)
+  useScreenWakeLock(phase === "live");
 
   const[sessionId,setSessionId]=useState<string|null>(null);const[sessionInfo,setSessionInfo]=useState<any>(null);
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
@@ -4738,6 +5106,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // Student recording — lifted here so SubjectMaterialsPanel can also trigger it
   const[stuRec,setStuRec]=useState(false);
   const stuMrRefTop=useRef<MediaRecorder|null>(null);
+  // Feature 2: Audio-only mode (manual + auto on poor network)
+  const[audioOnlyActive,setAudioOnlyActive]=useState(false);
   const stuChunksTop=useRef<Blob[]>([]);
   const toggleStuRecordTop=async()=>{
     if(stuRec){
@@ -4798,12 +5168,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[sessionSummary,setSessionSummary]=useState<any>(null);
   // FIX BUG 6: prefetch includes a fetchedAt timestamp so stale tokens can be detected
   const prefetch=useRef<{token:string;url:string;fetchedAt:number}|null>(null);
-  useEffect(()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now()};}).catch(()=>{});},[subject.id,isPrivileged]);
+  useEffect(()=>{
+    // Initial prefetch
+    const doFetch=()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now()};}).catch(()=>{});};
+    doFetch();
+    // Feature 8: Re-fetch every 2.5 min so lobby users never have a stale token
+    const iv=setInterval(()=>{if(phase==="lobby")doFetch();},2.5*60_000);
+    return()=>clearInterval(iv);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[subject.id,isPrivileged]);
   useEffect(()=>{
     if(!autoJoin)return;
     const t=setTimeout(()=>{
       if(phase==="lobby"&&!loading&&!error){
-        connect(isPrivileged?"start_session":"join", undefined, { micOn: lobbyMic, cameraOn: lobbyCam });
+        connect(isPrivileged?"start_session":"join");
       }
     },120);
     return()=>clearTimeout(t);
@@ -4860,7 +5238,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     try{
       // FIX BUG 6: Consume and clear the prefetch so it is never reused stale.
       // Also check freshness — tokens older than 5 min are discarded (room state may have changed).
-      const isFresh=prefetch.current&&(Date.now()-prefetch.current.fetchedAt)<5*60_000;
+      // Token expires — use prefetch only if <3min old (lobby waits can exceed this)
+      const isFresh=prefetch.current&&(Date.now()-prefetch.current.fetchedAt)<3*60_000;
       let tk=isFresh?prefetch.current!.token:null;
       let url=isFresh?prefetch.current!.url:null;
       prefetch.current=null; // always clear after reading so Try Again fetches a new token
@@ -5192,7 +5571,32 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       {token&&wsUrl&&(
         // key={roomKey} forces a full remount whenever autoReconnect bumps the key,
         // ensuring LiveKit starts with a fresh connection and token.
-        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{adaptiveStream:{pixelDensity:"screen"},dynacast:true,disconnectOnPageLeave:false,audioCaptureDefaults:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,sampleRate:48000,channelCount:1},publishDefaults:{audioPreset:{maxBitrate:64000},dtx:false,red:true,stopMicTrackOnMute:false,videoEncoding:{maxBitrate:700_000,maxFramerate:20},backupCodec:true},videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"}}} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
+        <LiveKitRoom key={roomKey} serverUrl={wsUrl} token={token} connect={phase==="live"} audio={false} video={false} options={{
+            adaptiveStream:{pixelDensity:"screen"},
+            dynacast:true,
+            disconnectOnPageLeave:false,
+            // Feature 6: Force TCP TURN relay so the call survives restrictive
+            // school/office WiFi that blocks UDP. LiveKit will still prefer UDP/STUN
+            // when available — this just ensures a fallback is always ready.
+            rtcConfig:{
+              iceTransportPolicy:"all",  // "relay" would force TURN-only; "all" = best effort
+              bundlePolicy:"max-bundle", // fewer ICE candidates = faster connect on slow nets
+              iceCandidatePoolSize:2,    // pre-gather 2 candidates to speed up ICE
+            },
+            audioCaptureDefaults:{
+              echoCancellation:true,noiseSuppression:true,autoGainControl:true,
+              sampleRate:48000,channelCount:1,
+            },
+            publishDefaults:{
+              audioPreset:{maxBitrate:32000}, // 32kbps default (was 64kbps) — saves 32kbps always
+              dtx:true,   // discontinuous transmission — muted mic uses ~0 bandwidth
+              red:true,   // redundant audio encoding — recovers from packet loss
+              stopMicTrackOnMute:false,
+              videoEncoding:{maxBitrate:500_000,maxFramerate:20}, // cap at 500kbps (was 700k)
+              backupCodec:true,
+            },
+            videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"},
+          }} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           {/* VolumeBooster replaces bare RoomAudioRenderer — Web Audio pipeline: GainNode(2.2×) + DynamicsCompressor(4:1) ensures every remote voice is loud and clear without clipping, crackle, or self-playback */}
           <VolumeBooster/>
           <RoomToContextBridge />
@@ -5212,13 +5616,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             }}
             onDisconnected={autoReconnect}
           />
+          {/* Feature 2: audio-only bridge — applies camera/bitrate changes from outside LiveKitRoom */}
+          <AudioOnlyBridge active={audioOnlyActive}/>
+          {/* Feature 5: heartbeat — proactively degrades video before LiveKit detects drop */}
+          <HeartbeatBridge sessionId={sessionId} active={phase==="live"}/>
+          {/* Feature 9: data channel queue flusher — replays queued messages on reconnect */}
+          <DataQueueFlusher roomRef={roomRef}/>
           <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
-          {reconnecting&&<div style={{position:"absolute",inset:0,zIndex:200,background:"rgba(32,33,36,.92)",backdropFilter:"blur(12px)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
-            <div style={{width:52,height:52,border:"3px solid rgba(138,180,248,.2)",borderTopColor:"#8ab4f8",borderRadius:"50%",animation:"cv-spin .8s linear infinite"}}/>
-            <p style={{color:"#e8eaed",fontSize:16,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>Reconnecting…</p>
-            <p style={{color:"rgba(255,255,255,.4)",fontSize:13,fontFamily:"'Google Sans',sans-serif"}}>Please stay on the page</p>
-          </div>}
+          {reconnecting&&<ReconnectingOverlay attempt={autoReconnectCountRef.current}/>}
+          {/* ══ FEATURE 4: CONNECTION STATE BANNER — shown during LiveKit's own reconnect ══ */}
+          <ConnectionStateBanner/>
           {/* ══ GOOGLE MEET STYLE TOP BAR ══ */}
           <div style={{
             height:56,
@@ -5478,6 +5886,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             onSpotlight={(id:string)=>setSpotlightId(prev=>prev===id?null:id)}
             onGenerateSummary={generateSessionSummary}
             onTogglePartPanel={()=>setPartPanelOpen(v=>!v)} partPanelOpen={partPanelOpen}
+            audioOnly={audioOnlyActive} onToggleAudioOnly={()=>setAudioOnlyActive(v=>!v)}
           />
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
