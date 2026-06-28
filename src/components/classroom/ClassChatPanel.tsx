@@ -36,7 +36,8 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
   const recTimer    = useRef<any>(null);
   const scrollRef   = useRef<HTMLDivElement>(null);
   const fileRef     = useRef<HTMLInputElement>(null);
-  const fetchingIds = useRef(new Set<string>());
+  const fetchingIds   = useRef(new Set<string>());
+  const optimisticIds = useRef(new Set<string>());
 
   /* ── profile cache ── */
   const loadProfiles = async (userIds: string[]) => {
@@ -73,7 +74,13 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "class_chat_messages", filter: `session_id=eq.${sessionId}` },
         (payload) => {
           if (sessionStartedAt && payload.new.created_at < sessionStartedAt) return;
-          setMessages(prev => [...prev, payload.new]);
+          // Skip if we already added this row optimistically (sendMessage replaces temp with real row)
+          if (optimisticIds.current.has(payload.new.id)) return;
+          // Also skip if it's already in state (duplicate Realtime delivery)
+          setMessages(prev => {
+            if (prev.some(m => m.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          });
           if (payload.new.sender_id) loadProfiles([payload.new.sender_id]);
         })
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "class_chat_messages", filter: `session_id=eq.${sessionId}` },
@@ -84,19 +91,48 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
 
-  /* ── send text ── */
+  /* ── send text — optimistic UI so messages appear instantly ── */
   const sendMessage = async (text?: string, type = "text", attachmentUrl?: string, attachmentName?: string) => {
     const msg = text || input.trim();
     if ((!msg && !attachmentUrl) || !user || !sessionId) return;
-    await supabase.from("class_chat_messages").insert({
+
+    // Clear input immediately — feels instant
+    if (!text && !attachmentUrl) setInput("");
+    setShowEmoji(false);
+
+    // Show message locally right away with a temp id
+    const tempId = `optimistic-${Date.now()}-${Math.random()}`;
+    const optimisticMsg: any = {
+      id: tempId,
+      session_id: sessionId,
+      sender_id: user.id,
+      message: msg || attachmentName || "📎 File",
+      type,
+      created_at: new Date().toISOString(),
+      is_pinned: false,
+      ...(attachmentUrl ? { attachment_url: attachmentUrl, attachment_name: attachmentName || "" } : {}),
+    };
+    optimisticIds.current.add(tempId);
+    setMessages(prev => [...prev, optimisticMsg]);
+
+    // Persist to DB in background
+    const { data, error } = await supabase.from("class_chat_messages").insert({
       session_id: sessionId,
       sender_id: user.id,
       message: msg || attachmentName || "📎 File",
       type,
       ...(attachmentUrl ? { attachment_url: attachmentUrl, attachment_name: attachmentName || "" } : {}),
-    });
-    if (!text && !attachmentUrl) setInput("");
-    setShowEmoji(false);
+    }).select().single();
+
+    if (error) {
+      // Rollback on failure
+      optimisticIds.current.delete(tempId);
+      setMessages(prev => prev.filter(m => m.id !== tempId));
+    } else if (data) {
+      // Swap temp message for the real DB row (has correct id & created_at)
+      optimisticIds.current.delete(tempId);
+      setMessages(prev => prev.map(m => m.id === tempId ? data : m));
+    }
   };
 
   /* ── image paste ── */
