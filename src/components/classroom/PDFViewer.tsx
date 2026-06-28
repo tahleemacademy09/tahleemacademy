@@ -233,9 +233,10 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 2 || !touch1.current) return;
       e.preventDefault();
+      keepNavAlive();
       applyZoom(pinchStartZoom.current * (dist(e.touches[0], e.touches[1]) / pinchStartDist.current));
     };
-    const onTouchEnd = () => { touch1.current = null; touch2.current = null; };
+    const onTouchEnd = () => { touch1.current = null; touch2.current = null; releaseNavAlive(); };
     el.addEventListener("touchstart",  onTouchStart, { passive: false });
     el.addEventListener("touchmove",   onTouchMove,  { passive: false });
     el.addEventListener("touchend",    onTouchEnd,   { passive: true });
@@ -489,7 +490,7 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
         </div>
       )}
 
-      {/* ── Zoom / Rotate toolbar ─────────────────────────────────────────── */}
+      {/* ── Zoom / Rotate toolbar — fades with the page navigator ──────────── */}
       {(phase === "rendering" || phase === "done") && (
         <div style={{
           position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)", zIndex:8,
@@ -497,7 +498,16 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
           background:"rgba(15,17,23,.88)", border:"1px solid rgba(255,255,255,.12)",
           borderRadius:30, padding:"5px 8px", boxShadow:"0 4px 16px rgba(0,0,0,.5)",
           backdropFilter:"blur(8px)",
-        }}>
+          opacity: navVisible ? 1 : 0,
+          pointerEvents: navVisible ? "auto" : "none",
+          transition:"opacity .25s ease",
+        }}
+          onPointerDown={keepNavAlive}
+          onPointerUp={releaseNavAlive}
+          onPointerLeave={releaseNavAlive}
+          onTouchStart={keepNavAlive}
+          onTouchEnd={releaseNavAlive}
+        >
           {/* Zoom out */}
           <button title="Zoom out" onClick={zoomOut} disabled={zoom <= 0.5} style={btnStyle(zoom <= 0.5)}>－</button>
           {/* Zoom % — tap to reset to 100% */}
@@ -530,21 +540,23 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
         style={{
           flex:1, overflowY:"auto", overflowX: zoom > 1 ? "auto" : "hidden",
           padding:"8px", display: phase === "error" ? "none" : "block",
-          // Let the browser handle two-finger scroll normally when not pinching
           touchAction: "pan-x pan-y",
         }}
       >
-        <div
-          ref={containerRef}
-          style={{
-            transform: `scale(${zoom}) rotate(${rotate}deg)`,
-            transformOrigin: "top center",
-            transition: "transform 0.1s ease",
-            // When zoomed or rotated, expand to allow scrolling to edges
-            width: zoom > 1 ? `${100 / zoom}%` : "100%",
-            marginBottom: zoom > 1 ? `${(zoom - 1) * 100}%` : 0,
-          }}
-        />
+        {/* Centering wrapper so transformOrigin:"top center" scales symmetrically */}
+        <div style={{ display:"flex", justifyContent:"center" }}>
+          <div style={{ width:"100%", paddingBottom: zoom > 1 ? `${(zoom - 1) * 50}%` : 0 }}>
+            <div
+              ref={containerRef}
+              style={{
+                transform: `scale(${zoom}) rotate(${rotate}deg)`,
+                transformOrigin: "top center",
+                transition: "transform 0.1s ease",
+                width: "100%",
+              }}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
