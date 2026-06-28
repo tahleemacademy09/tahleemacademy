@@ -567,7 +567,8 @@ export default function HifdhRevisionTracker() {
   };
 
   const activateAssignment = async (assignId: string, _studentId: string) => {
-    // Toggle this assignment active — others stay as-is (multiple can be active)
+    // Set this assignment active. Multiple assignments can be active simultaneously —
+    // each will show as a separate card on the student dashboard.
     await (supabase as any)
       .from("hifdh_daily_assignments")
       .update({ active: true, updated_at: new Date().toISOString() })
@@ -852,6 +853,17 @@ export default function HifdhRevisionTracker() {
                                     Today → page {tp}
                                   </div>
                                 )}
+                                {/* Show parsed custom note, not raw JSON */}
+                                {(() => {
+                                  try {
+                                    const n = JSON.parse(a.notes || "{}");
+                                    return n.custom ? (
+                                      <div style={{marginTop:3,fontSize:10,color:"#6b7280",fontStyle:"italic"}}>
+                                        {"💬"} {n.custom}
+                                      </div>
+                                    ) : null;
+                                  } catch { return null; }
+                                })()}
                               </div>
                               <div style={{display:"flex",gap:4,flexShrink:0,flexDirection:"column",alignItems:"flex-end"}}>
                                 {/* Toggle active/inactive without affecting other assignments */}
