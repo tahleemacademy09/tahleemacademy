@@ -123,6 +123,13 @@ function toEmbedUrl(url: string): {
   return { embedUrl: url, embedKind: "iframe" };
 }
 
+/* ── Module-level URL cache ─────────────────────────────────────────────
+   Signed URLs are resolved once and cached across renders/remounts.
+   Tapping any file after prewarm fires opens it with zero loading delay.
+──────────────────────────────────────────────────────────────────────── */
+const LCFP_URL_CACHE    = new Map<string, string>();            // rawUrl → resolvedUrl
+const LCFP_URL_INFLIGHT = new Map<string, Promise<string>>();
+
 /* ════════════════════════════════════════════════════════════
    SINGLE FILE VIEWER — one instance per open material
    zIndex stacking is controlled by the parent (higher = on top)
@@ -453,26 +460,38 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     return () => window.removeEventListener("popstate", handler);
   }, [anyExpanded]);
 
-  /* ── Resolve URL ── */
+  /* ── Resolve URL (with module-level cache so repeat calls are instant) ── */
   const resolveViewerUrl = useCallback(async (rawUrl: string): Promise<string> => {
     if (!rawUrl) return rawUrl;
-    const isSupabaseStorage = rawUrl.includes(".supabase.co/storage");
-    if (!isSupabaseStorage) return rawUrl;
-    const match = rawUrl.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
-    if (!match) return rawUrl;
-    const [, bucketName, storagePath] = match;
-    const { data: pub } = supabase.storage.from(bucketName).getPublicUrl(storagePath);
-    if (pub?.publicUrl) {
+    // Cache hit — return immediately, zero network
+    const cached = LCFP_URL_CACHE.get(rawUrl);
+    if (cached) return cached;
+    // De-dupe in-flight requests for the same URL
+    if (LCFP_URL_INFLIGHT.has(rawUrl)) return LCFP_URL_INFLIGHT.get(rawUrl)!;
+
+    const p = (async () => {
+      const isSupabaseStorage = rawUrl.includes(".supabase.co/storage");
+      if (!isSupabaseStorage) { LCFP_URL_CACHE.set(rawUrl, rawUrl); return rawUrl; }
+      const match = rawUrl.match(/\/storage\/v1\/object\/(?:public\/)?([^/?]+)\/(.+?)(\?.*)?$/);
+      if (!match) { LCFP_URL_CACHE.set(rawUrl, rawUrl); return rawUrl; }
+      const [, bucketName, storagePath] = match;
+      const { data: pub } = supabase.storage.from(bucketName).getPublicUrl(storagePath);
+      if (pub?.publicUrl) {
+        try {
+          const r = await fetch(pub.publicUrl, { method: "HEAD", signal: AbortSignal.timeout(4000) });
+          if (r.ok || r.status === 304) { LCFP_URL_CACHE.set(rawUrl, pub.publicUrl); return pub.publicUrl; }
+        } catch { /* fall through */ }
+      }
       try {
-        const r = await fetch(pub.publicUrl, { method: "HEAD", signal: AbortSignal.timeout(4000) });
-        if (r.ok || r.status === 304) return pub.publicUrl;
+        const { data: signed } = await supabase.storage.from(bucketName).createSignedUrl(storagePath, 604800);
+        if (signed?.signedUrl) { LCFP_URL_CACHE.set(rawUrl, signed.signedUrl); return signed.signedUrl; }
       } catch { /* fall through */ }
-    }
-    try {
-      const { data: signed } = await supabase.storage.from(bucketName).createSignedUrl(storagePath, 604800);
-      if (signed?.signedUrl) return signed.signedUrl;
-    } catch { /* fall through */ }
-    return rawUrl;
+      LCFP_URL_CACHE.set(rawUrl, rawUrl);
+      return rawUrl;
+    })().finally(() => LCFP_URL_INFLIGHT.delete(rawUrl));
+
+    LCFP_URL_INFLIGHT.set(rawUrl, p);
+    return p;
   }, []);
 
   const dragCnt = useRef(0);
@@ -492,13 +511,44 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
 
   useEffect(() => { fetchFiles(); }, [fetchFiles]);
 
+  // Pre-resolve + prewarm all files when the list loads.
+  // PDFs are the heaviest — start them immediately (no delay).
+  // Other types are staggered so they don't compete with PDF rendering.
   useEffect(() => {
     if (!files.length) return;
-    const pdfs = files.filter(f => (f.file_url || "").toLowerCase().split("?")[0].endsWith(".pdf"));
-    const timers = pdfs.map((f, i) => setTimeout(async () => {
-      const resolved = await resolveViewerUrl(f.file_url);
-      prewarmPDF(resolved);
-    }, i * 600));
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    let nonPdfIndex = 0;
+
+    files.forEach(f => {
+      if (f.file_type === "link" || /^https?:\/\//i.test(f.file_name)) return;
+
+      const isPDF = (f.file_type || "").includes("pdf") ||
+        (f.file_url || "").toLowerCase().split("?")[0].endsWith(".pdf");
+
+      if (isPDF) {
+        // PDFs: resolve URL then immediately kick off bitmap rendering — no delay
+        resolveViewerUrl(f.file_url).then(resolved => prewarmPDF(resolved));
+      } else {
+        // Non-PDFs: stagger after 800ms so they don't compete with PDF rendering
+        const delay = nonPdfIndex * 400 + 800;
+        nonPdfIndex++;
+        timers.push(setTimeout(async () => {
+          const resolved = await resolveViewerUrl(f.file_url);
+          const isImage = (f.file_type || "").includes("image") ||
+            /\.(jpg|jpeg|png|gif|webp|svg|avif)$/i.test(f.file_url.split("?")[0]);
+          if (isImage) { const img = new Image(); img.src = resolved; }
+          const isMedia = (f.file_type || "").match(/^(audio|video)/) ||
+            /\.(mp4|webm|mov|mp3|wav|m4a|aac|ogg)$/i.test(f.file_url.split("?")[0]);
+          if (isMedia && !document.querySelector(`link[data-lcfp="${f.id}"]`)) {
+            const link = document.createElement("link");
+            link.rel = "prefetch"; link.href = resolved;
+            link.setAttribute("data-lcfp", f.id);
+            document.head.appendChild(link);
+          }
+        }, delay));
+      }
+    });
+
     return () => timers.forEach(clearTimeout);
   }, [files, resolveViewerUrl]);
 
@@ -519,16 +569,24 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     const alreadyOpen = viewers.some(v => v.id === f.id);
     if (alreadyOpen) return;
 
-    // New viewer
+    // Check if URL already resolved in cache — open instantly with no spinner
+    const cachedUrl = LCFP_URL_CACHE.get(f.file_url) ?? (f.file_type === "link" || /^https?:\/\//i.test(f.file_name) ? f.file_url : null);
+
     zCounter.current++;
     const z = zCounter.current;
     const newEntry: ViewerEntry = {
-      id: f.id, file: f, resolvedUrl: null, resolving: true, minimized: false, zOrder: z,
+      id: f.id, file: f,
+      resolvedUrl: cachedUrl,
+      resolving: !cachedUrl,   // only show spinner if not yet resolved
+      minimized: false, zOrder: z,
     };
     setViewers(prev => [...prev, newEntry]);
 
-    const resolved = await resolveViewerUrl(f.file_url);
-    setViewers(prev => prev.map(v => v.id === f.id ? { ...v, resolvedUrl: resolved, resolving: false } : v));
+    if (!cachedUrl) {
+      // Not yet in cache — resolve now (background prewarm may still be running)
+      const resolved = await resolveViewerUrl(f.file_url);
+      setViewers(prev => prev.map(v => v.id === f.id ? { ...v, resolvedUrl: resolved, resolving: false } : v));
+    }
   }, [viewers, resolveViewerUrl]);
 
   const closeViewer = useCallback((id: string) => {
