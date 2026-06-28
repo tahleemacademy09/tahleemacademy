@@ -197,6 +197,15 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
   const resetView = useCallback(() => { applyZoom(1); setRotate(0); }, [applyZoom]);
   const rotateCW  = useCallback(() => setRotate(r => (r + 90) % 360), []);
 
+  // ── Page-swipe mode ──────────────────────────────────────────────────────
+  const [pageMode, setPageMode] = useState(false); // false = scroll, true = single-page swipe
+  const pageModeRef    = useRef(false);  // mirror of pageMode for use inside event handlers
+  const currentPageRef = useRef(1);      // mirror of currentPage — avoids stale closure in swipe handler
+  const goToPageRef    = useRef<(n: number) => void>(() => {}); // stable ref to goToPage
+  const swipeStartX = useRef(0);
+  const swipeStartY = useRef(0);
+  const isPinching  = useRef(false); // true while 2 fingers are down
+
   // Ctrl/Cmd + scroll = zoom (desktop)
   useEffect(() => {
     const el = scrollRef.current;
@@ -210,42 +219,83 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     return () => el.removeEventListener("wheel", onWheel);
   }, [applyZoom]);
 
-  // Pinch-to-zoom + double-tap (mobile)
+  // Unified touch handler: pinch-zoom + double-tap + page-swipe
+  // Key insight: we track isPinching so single-finger scroll is NEVER
+  // blocked — only 2-finger moves are intercepted for zoom.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const dist = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
-        touch1.current = e.touches[0];
-        touch2.current = e.touches[1];
+        // Two fingers down → start pinch, record state
+        isPinching.current = true;
+        touch1.current = { ...e.touches[0] } as any;
+        touch2.current = { ...e.touches[1] } as any;
         pinchStartDist.current = dist(e.touches[0], e.touches[1]);
         pinchStartZoom.current = zoomRef.current;
-      } else if (e.touches.length === 1) {
+        // Prevent scroll from firing during pinch
+        e.preventDefault();
+      } else if (e.touches.length === 1 && !isPinching.current) {
+        // Single finger — record for double-tap and swipe
+        swipeStartX.current = e.touches[0].clientX;
+        swipeStartY.current = e.touches[0].clientY;
         const now = Date.now();
         if (now - lastTap.current < 300) {
+          // Double-tap: toggle 2× zoom
           e.preventDefault();
           applyZoom(zoomRef.current > 1.1 ? 1 : 2);
         }
         lastTap.current = now;
       }
     };
+
     const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 2 || !touch1.current) return;
-      e.preventDefault();
-      keepNavAlive();
-      applyZoom(pinchStartZoom.current * (dist(e.touches[0], e.touches[1]) / pinchStartDist.current));
+      if (e.touches.length === 2 && isPinching.current) {
+        // Pinch in progress — block scroll, update zoom only
+        e.preventDefault();
+        keepNavAlive();
+        const newDist = dist(e.touches[0], e.touches[1]);
+        applyZoom(pinchStartZoom.current * (newDist / pinchStartDist.current));
+      }
+      // Single-finger moves: let the browser handle scroll naturally (no preventDefault)
     };
-    const onTouchEnd = () => { touch1.current = null; touch2.current = null; releaseNavAlive(); };
-    el.addEventListener("touchstart",  onTouchStart, { passive: false });
-    el.addEventListener("touchmove",   onTouchMove,  { passive: false });
-    el.addEventListener("touchend",    onTouchEnd,   { passive: true });
+
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) {
+        // Last finger lifted after pinch
+        if (isPinching.current) {
+          isPinching.current = false;
+          touch1.current = null;
+          touch2.current = null;
+          releaseNavAlive();
+          return; // don't treat this as a swipe
+        }
+      }
+
+      // Page-swipe mode: detect horizontal swipe to go prev/next
+      if (pageModeRef.current && e.changedTouches.length === 1 && !isPinching.current) {
+        const dx = e.changedTouches[0].clientX - swipeStartX.current;
+        const dy = e.changedTouches[0].clientY - swipeStartY.current;
+        // Only register as swipe if horizontal movement dominates and > 40px
+        if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          if (dx < 0) goToPageRef.current(currentPageRef.current + 1); // swipe left → next
+          else        goToPageRef.current(currentPageRef.current - 1); // swipe right → prev
+        }
+      }
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove",  onTouchMove,  { passive: false });
+    el.addEventListener("touchend",   onTouchEnd,   { passive: true });
     return () => {
-      el.removeEventListener("touchstart",  onTouchStart);
-      el.removeEventListener("touchmove",   onTouchMove);
-      el.removeEventListener("touchend",    onTouchEnd);
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove",  onTouchMove);
+      el.removeEventListener("touchend",   onTouchEnd);
     };
-  }, [applyZoom]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [applyZoom]); // pageModeRef/currentPageRef/goToPageRef are refs — stable, no re-registration needed
 
   // ── Page navigator (always-visible "N / total" + jump-to-page) ───────────
   const [currentPage, setCurrentPage] = useState(1);
@@ -289,6 +339,11 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
     setCurrentPage(clamped);
     setPageInput(String(clamped));
   }, []);
+
+  // Keep refs in sync so event handlers never have stale values
+  useEffect(() => { goToPageRef.current = goToPage; }, [goToPage]);
+  useEffect(() => { currentPageRef.current = currentPage; }, [currentPage]);
+  useEffect(() => { pageModeRef.current = pageMode; }, [pageMode]);
 
   // Keep the input showing the live page while the user isn't actively typing in it
   useEffect(() => {
@@ -532,15 +587,35 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
             background:"rgba(255,255,255,.06)", color:"#d1d5db", fontSize:14,
             display:"flex", alignItems:"center", justifyContent:"center", textDecoration:"none",
           }}>⬇</a>
+
+          <div style={{ width:1, height:20, background:"rgba(255,255,255,.12)", margin:"0 2px" }}/>
+
+          {/* Page-swipe mode toggle */}
+          <button
+            title={pageMode ? "Switch to scroll mode" : "Switch to page-swipe mode"}
+            onClick={() => setPageMode(p => !p)}
+            style={{
+              width:28, height:28, borderRadius:8, border:`1px solid ${pageMode ? "rgba(16,185,129,.5)" : "rgba(255,255,255,.15)"}`,
+              background: pageMode ? "rgba(16,185,129,.18)" : "rgba(255,255,255,.06)",
+              color: pageMode ? "#10b981" : "#d1d5db",
+              fontSize:13, cursor:"pointer",
+              display:"flex", alignItems:"center", justifyContent:"center",
+            }}
+          >⇄</button>
         </div>
       )}
 
       <div
         ref={scrollRef}
         style={{
-          flex:1, overflowY:"auto", overflowX: zoom > 1 ? "auto" : "hidden",
-          padding:"8px", display: phase === "error" ? "none" : "block",
-          touchAction: "pan-x pan-y",
+          flex:1,
+          overflowY: pageMode ? "hidden" : "auto",
+          overflowX: zoom > 1 ? "auto" : "hidden",
+          padding:"8px",
+          display: phase === "error" ? "none" : "block",
+          // Let browser decide scroll direction naturally.
+          // We only intercept 2-finger moves in JS for pinch-zoom.
+          touchAction: "manipulation",
         }}
       >
         {/* Centering wrapper so transformOrigin:"top center" scales symmetrically */}
