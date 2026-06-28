@@ -177,8 +177,9 @@ const StudentDashboard = () => {
   const [impersonatedProfile, setImpersonatedProfile] = useState<any>(null);
   const [todayClasses, setTodayClasses] = useState<any[]>([]);
   const [nowTick, setNowTick] = useState(new Date());
-  const [hifdhAssignment, setHifdhAssignment] = useState<any>(null);
-  const [hifdhTodayLog, setHifdhTodayLog]     = useState<any>(null);
+  const [hifdhAssignments, setHifdhAssignments] = useState<any[]>([]);   // ALL active assignments
+  const [hifdhAssignment,  setHifdhAssignment]  = useState<any>(null);   // kept for compat (first active)
+  const [hifdhTodayLog, setHifdhTodayLog]       = useState<any>(null);
   const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string>>(new Set());
 
   // Tick every 30s so countdowns stay fresh
@@ -319,7 +320,7 @@ const StudentDashboard = () => {
           supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
           supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar, level, levels)"),
           supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar, levels, level, visibility)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
-          (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", uid).eq("active", true).maybeSingle(),
+          (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", uid).eq("active", true).order("created_at", {ascending: true}),
           (supabase as any).from("hifdh_daily_logs").select("*").eq("student_id", uid).eq("log_date", new Date().toISOString().split("T")[0]).maybeSingle(),
           (supabase as any).from("private_student_subjects").select("subject_id").eq("student_id", uid),
           supabase.from("profiles").select("level, student_type, assigned_teacher_id").eq("user_id", uid).maybeSingle(),
@@ -384,7 +385,21 @@ const StudentDashboard = () => {
       });
 
       setTodayClasses(filteredSlots);
-      setHifdhAssignment((hifdhAssignRes as any)?.data ?? null);
+      const hifdhArr = (hifdhAssignRes as any)?.data ?? [];
+      // Parse notes JSON and extract custom field for display
+      const hifdhParsed = hifdhArr.map((a: any) => {
+        let extra: any = {};
+        try { extra = JSON.parse(a.notes || "{}"); } catch {}
+        return {
+          ...a,
+          program_start: extra.programStart ?? a.program_start,
+          program_days:  extra.programDays  ?? a.program_days,
+          days_off:      extra.daysOff      ?? a.days_off ?? [],
+          notes_display: extra.custom || "",   // only show the human-written note, not raw JSON
+        };
+      });
+      setHifdhAssignments(hifdhParsed);
+      setHifdhAssignment(hifdhParsed[0] ?? null);   // backward compat
       setHifdhTodayLog((hifdhLogRes as any)?.data ?? null);
         setLoading(false);
       } catch (err) {
@@ -551,7 +566,7 @@ const StudentDashboard = () => {
                     <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.9 }}>{lc.ar}</span>
                   </span>
                 ) : null;
-              })()}
+              })}
             </div>
 
             {/* Hijri date — its own centered line */}
@@ -708,21 +723,20 @@ const StudentDashboard = () => {
           );
         })()}
 
-        {/* ── Hifdh Daily Assignment Card ── */}
-        {hifdhAssignment && (() => {
+        {/* ── Hifdh Daily Assignment Cards — one per active assignment ── */}
+        {hifdhAssignments.length > 0 && hifdhAssignments.map((hifdhAssignment, assignIdx) => {
+          // Each assignment has its own log keyed by assignment_id
+          // For now the log is shared (daily log tracks the student's session for today).
+          // When multiple assignments exist, the log is attributed to the first completed one.
           const log          = hifdhTodayLog;
-          const completed    = log?.completed ?? false;
+          const completed    = assignIdx === 0 ? (log?.completed ?? false) : false; // only first gets credit for now
           const pagesTarget  = hifdhAssignment.daily_pages ?? 1;
-          // Only count pages_revised toward progress when the session is fully complete.
-          // The interim save (after recitation, before quiz) writes pages_revised with
-          // completed=false — using it would show 100% on an incomplete session.
           const pagesRevised = completed ? (log?.pages_revised ?? 0) : 0;
           const progress     = Math.min(1, pagesRevised / Math.max(1, pagesTarget));
           const progressPct  = Math.round(progress * 100);
-          // Quiz pending: recitation passed but quiz not yet done
           const PASS = 55;
           const recScore = log?.session_data?.recitation_score ?? 0;
-          const quizPending = !completed && recScore >= PASS;
+          const quizPending = assignIdx === 0 && !completed && recScore >= PASS;
 
           const mode: string        = hifdhAssignment.mode ?? "juz";
           const items: number[]     = hifdhAssignment.selected_items ?? [];
@@ -734,7 +748,7 @@ const StudentDashboard = () => {
           const accentC  = completed ? "#276749"  : DARK_GREEN;
 
           return (
-            <div style={{ ...card, background: cardBg, border: `1.5px solid ${cardBdr}` }}>
+            <div key={hifdhAssignment.id} style={{ ...card, background: cardBg, border: `1.5px solid ${cardBdr}` }}>
               {/* Header */}
               <div style={{ padding: "14px 16px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
@@ -744,6 +758,11 @@ const StudentDashboard = () => {
                   <div>
                     <p style={{ fontSize: 14, fontWeight: 900, color: TEXT_DARK, margin: 0, fontFamily: "'Playfair Display', serif" }}>
                       {t("Today's Hifdh Revision", "مراجعة الحفظ اليومية")}
+                      {hifdhAssignments.length > 1 && (
+                        <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: GOLD, background: GOLD+"18", borderRadius: 8, padding: "1px 6px" }}>
+                          {assignIdx + 1}/{hifdhAssignments.length}
+                        </span>
+                      )}
                     </p>
                     <p style={{ fontSize: 10, color: TEXT_LIGHT, margin: "1px 0 0" }}>
                       {t("Daily assignment from your teacher", "الواجب اليومي من معلمك")}
@@ -799,9 +818,9 @@ const StudentDashboard = () => {
                     transition: "width 0.8s ease",
                   }} />
                 </div>
-                {hifdhAssignment.notes && (
+                {hifdhAssignment.notes_display && (
                   <p style={{ fontSize: 11, color: TEXT_MED, margin: "8px 0 0", fontStyle: "italic" }}>
-                    💬 {hifdhAssignment.notes}
+                    💬 {hifdhAssignment.notes_display}
                   </p>
                 )}
               </div>
@@ -809,7 +828,7 @@ const StudentDashboard = () => {
               {/* CTA button */}
               <div style={{ padding: "12px 16px 16px" }}>
                 <button
-                  onClick={() => navigate("/student/hifdh-daily")}
+                  onClick={() => navigate(`/student/hifdh-daily?assignmentId=${hifdhAssignment.id}`)}
                   style={{
                     width: "100%", padding: "11px 0", borderRadius: 12, border: "none",
                     background: completed
