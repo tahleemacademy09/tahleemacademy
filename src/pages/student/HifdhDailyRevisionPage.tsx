@@ -3962,6 +3962,7 @@ export default function HifdhDailyRevisionPage() {
   const [userId,       setUserId]       = useState<string|null>(null);
   const [studentName,  setStudentName]  = useState("Student");
   const [assignment,   setAssignment]   = useState<Assignment|null>(null);
+  const [allAssignments, setAllAssignments] = useState<Assignment[]>([]);
   const [logs,         setLogs]         = useState<DailyLog[]>([]);
   const [todayLog,     setTodayLog]     = useState<DailyLog|null>(null);
   const [tab,          setTab]          = useState<MainTab>("today");
@@ -3979,29 +3980,33 @@ export default function HifdhDailyRevisionPage() {
       const uid=data.user.id;
       setUserId(uid);
 
-      const [{data:pf},{data:asgn},{data:lgs}] = await Promise.all([
+      const [{data:pf},{data:asgns},{data:lgs}] = await Promise.all([
         supabase.from("profiles").select("full_name").eq("user_id" as any,uid).maybeSingle(),
         (supabase as any).from("hifdh_daily_assignments")
-          .select("*").eq("student_id",uid).eq("active",true).maybeSingle(),
+          .select("*").eq("student_id",uid).eq("active",true).order("created_at",{ascending:false}),
         (supabase as any).from("hifdh_daily_logs")
           .select("*").eq("student_id",uid)
           .order("log_date",{ascending:false}).limit(60),
       ]);
 
       if((pf as any)?.full_name) setStudentName((pf as any).full_name);
-      if(asgn) {
-        // The RPC stores programStart/programDays/daysOff inside the notes JSON field.
-        // Enrich the assignment so getTodayPages() can compute the correct page.
+
+      const enrichAssignment = (a: any): Assignment => {
         let extra: any = {};
-        try { extra = JSON.parse((asgn as any).notes || "{}"); } catch {}
-        const enriched: Assignment = {
-          ...(asgn as Assignment),
-          program_start: extra.programStart ?? (asgn as any).program_start ?? (asgn as any).starts_on,
-          program_days:  extra.programDays  ?? (asgn as any).program_days,
-          days_off:      extra.daysOff      ?? (asgn as any).days_off ?? [],
+        try { extra = JSON.parse(a.notes || "{}"); } catch {}
+        return {
+          ...a,
+          program_start: extra.programStart ?? a.program_start ?? a.starts_on,
+          program_days:  extra.programDays  ?? a.program_days,
+          days_off:      extra.daysOff      ?? a.days_off ?? [],
         };
-        setAssignment(enriched);
-      }
+      };
+
+      const enriched = ((asgns as any[]) ?? []).map(enrichAssignment);
+      setAllAssignments(enriched);
+      // Default to the first (most recently created) active assignment
+      if (enriched.length > 0) setAssignment(enriched[0]);
+
       const allLogs=(lgs??[]) as DailyLog[];
       setLogs(allLogs);
       const todLog=allLogs.find(l=>l.log_date===today)??null;
@@ -4225,6 +4230,42 @@ export default function HifdhDailyRevisionPage() {
           {/* ════ TAB: TODAY ════ */}
           {tab==="today"&&(
             <>
+              {/* Assignment switcher — only shown when student has multiple active assignments */}
+              {allAssignments.length > 1 && (
+                <div style={{background:W,borderRadius:16,border:`1px solid ${BRD}`,padding:"12px 14px",
+                  animation:"slideUp .3s ease"}}>
+                  <p style={{margin:"0 0 8px",fontSize:10,fontWeight:800,color:G3,
+                    textTransform:"uppercase",letterSpacing:.6}}>📚 Your Assignments</p>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {allAssignments.map((a,i) => {
+                      const isSel = assignment?.id === a.id;
+                      return (
+                        <button key={a.id} onClick={()=>setAssignment(a)}
+                          style={{width:"100%",padding:"10px 12px",borderRadius:10,
+                            border:`1.5px solid ${isSel ? G3 : BRD}`,
+                            background:isSel ? `${G3}12` : WARM,
+                            cursor:"pointer",textAlign:"left" as const,
+                            display:"flex",alignItems:"center",gap:10,fontFamily:"inherit"}}>
+                          <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,
+                            background:isSel ? G3 : "#D1D5DB"}}/>
+                          <div style={{flex:1}}>
+                            <span style={{fontWeight:700,fontSize:12,color:isSel?G1:"#374151"}}>
+                              {a.mode==="juz"?"Juz":a.mode==="hizb"?"Hizb":"Surah"}{" "}
+                              {(a.selected_items||[]).slice(0,3).join(", ")}
+                              {(a.selected_items||[]).length>3?"…":""}
+                            </span>
+                            <span style={{marginLeft:8,fontSize:11,color:"#9aab94"}}>
+                              {a.daily_pages} pg/day
+                            </span>
+                          </div>
+                          {isSel && <CheckCircle size={14} color={G3}/>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Today's hero card */}
               <div style={{borderRadius:20,overflow:"hidden",
                 background:todayDone
