@@ -539,12 +539,7 @@ export default function HifdhRevisionTracker() {
           .eq("id", editingAssignId);
         if (upErr) { setSaveError(`Update failed: ${upErr.message}`); setSavingAssign(false); return; }
       } else {
-        // INSERT a new assignment row; deactivate others first so only one is active
-        await (supabase as any)
-          .from("hifdh_daily_assignments")
-          .update({ active: false })
-          .eq("student_id", studentId);
-
+        // INSERT a new assignment row — multiple assignments can be active simultaneously
         const payload: any = {
           student_id:     studentId,
           assigned_by:    userId,
@@ -571,12 +566,8 @@ export default function HifdhRevisionTracker() {
     setSavingAssign(false);
   };
 
-  const activateAssignment = async (assignId: string, studentId: string) => {
-    // Deactivate all others, activate this one
-    await (supabase as any)
-      .from("hifdh_daily_assignments")
-      .update({ active: false })
-      .eq("student_id", studentId);
+  const activateAssignment = async (assignId: string, _studentId: string) => {
+    // Toggle this assignment active — others stay as-is (multiple can be active)
     await (supabase as any)
       .from("hifdh_daily_assignments")
       .update({ active: true, updated_at: new Date().toISOString() })
@@ -863,7 +854,18 @@ export default function HifdhRevisionTracker() {
                                 )}
                               </div>
                               <div style={{display:"flex",gap:4,flexShrink:0,flexDirection:"column",alignItems:"flex-end"}}>
-                                {!isActive && (
+                                {/* Toggle active/inactive without affecting other assignments */}
+                                {isActive ? (
+                                  <button onClick={async()=>{
+                                    await (supabase as any).from("hifdh_daily_assignments")
+                                      .update({active:false,updated_at:new Date().toISOString()}).eq("id",a.id);
+                                    await load();
+                                  }}
+                                    style={{padding:"3px 8px",borderRadius:6,border:"1px solid #fca5a5",
+                                      background:"#fff5f5",cursor:"pointer",fontSize:10,fontWeight:700,color:"#dc2626"}}>
+                                    Pause
+                                  </button>
+                                ) : (
                                   <button onClick={()=>activateAssignment(a.id, s.user_id)}
                                     style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${G}`,
                                       background:W,cursor:"pointer",fontSize:10,fontWeight:700,color:G}}>
@@ -889,13 +891,11 @@ export default function HifdhRevisionTracker() {
                                     color:"#374151",display:"flex",alignItems:"center",gap:3}}>
                                   <Edit2 size={9}/> Edit
                                 </button>
-                                {!isActive && (
-                                  <button onClick={()=>deleteAssignment(a.id)}
-                                    style={{padding:"3px 8px",borderRadius:6,border:"1px solid #fca5a5",
-                                      background:"#fff5f5",cursor:"pointer",fontSize:10,fontWeight:700,color:"#dc2626"}}>
-                                    ✕
-                                  </button>
-                                )}
+                                <button onClick={()=>deleteAssignment(a.id)}
+                                  style={{padding:"3px 8px",borderRadius:6,border:"1px solid #fca5a5",
+                                    background:"#fff5f5",cursor:"pointer",fontSize:10,fontWeight:700,color:"#dc2626"}}>
+                                  ✕
+                                </button>
                               </div>
                             </div>
                           );
