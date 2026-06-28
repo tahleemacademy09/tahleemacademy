@@ -380,26 +380,50 @@ export default function TeacherSettings() {
     setVerifying(true);
     setVerified(false);
     try {
-      // Use Paystack's public resolve endpoint (needs CORS proxy or backend edge function)
-      // We call our Supabase edge function to keep the secret key server-side
       const { data, error } = await (supabase as any).functions.invoke("verify-bank-account", {
         body: { account_number: bankForm.account_number, bank_code: bankForm.bank_code },
       });
-      if (error || !data?.account_name) {
-        // Fallback: mark as unverified but allow saving with a warning
+
+      // Supabase FunctionsHttpError carries the response body in error.context
+      if (error) {
+        let errMsg = "Verification failed — please try again.";
+        try {
+          // Try to extract the actual Paystack error message from the response body
+          const ctx = error?.context;
+          if (ctx) {
+            const text = typeof ctx === "string" ? ctx : await ctx.text?.();
+            const parsed = typeof text === "string" ? JSON.parse(text) : text;
+            if (parsed?.error) errMsg = parsed.error;
+          }
+        } catch { /* ignore parse errors */ }
         toast({
           title: "⚠️ Could not auto-verify",
-          description: "Please double-check your account details. Admin will manually verify before payments.",
+          description: errMsg,
           variant: "destructive",
         });
         setVerified(false);
-      } else {
-        setBankForm(f => ({ ...f, account_name: data.account_name }));
-        setVerified(true);
-        toast({ title: `✅ Account verified: ${data.account_name}` });
+        return;
       }
-    } catch {
-      toast({ title: "Verification failed — check your details and try again", variant: "destructive" });
+
+      if (!data?.account_name) {
+        toast({
+          title: "⚠️ Could not auto-verify",
+          description: data?.error || "Account not found — check your account number and bank selection.",
+          variant: "destructive",
+        });
+        setVerified(false);
+        return;
+      }
+
+      setBankForm(f => ({ ...f, account_name: data.account_name }));
+      setVerified(true);
+      toast({ title: `✅ Verified: ${data.account_name}` });
+    } catch (e: any) {
+      toast({
+        title: "⚠️ Verification error",
+        description: e?.message || "Network error — check your connection and try again.",
+        variant: "destructive",
+      });
     } finally {
       setVerifying(false);
     }
