@@ -25,7 +25,9 @@ const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 interface Student {
   user_id: string; full_name: string; student_id: string; level: string | null;
   payment_status?: string | null; is_payment_exempt?: boolean;
-  assignment?: Assignment; todayLog?: DailyLog;
+  assignment?: Assignment;       // active assignment (for backward compat / today's status)
+  assignments?: Assignment[];    // ALL assignments (active + inactive)
+  todayLog?: DailyLog;
 }
 interface Assignment {
   id: string; mode: "juz"|"hizb"|"surah"; selected_items: number[];
@@ -385,21 +387,31 @@ export default function HifdhRevisionTracker() {
       const ids = profiles.map((p:any) => p.user_id);
 
       const [{ data: assignments }, { data: logs }] = await Promise.all([
-        (supabase as any).from("hifdh_daily_assignments").select("*").eq("active",true).in("student_id",ids),
+        (supabase as any).from("hifdh_daily_assignments").select("*").in("student_id",ids).order("created_at",{ascending:false}),
         (supabase as any).from("hifdh_daily_logs").select("*").eq("log_date",todayStr()).in("student_id",ids),
       ]);
 
-      const aMap: Record<string,Assignment> = {};
+      // Build: student_id → all assignments (active first)
+      const allAsgns: Record<string, Assignment[]> = {};
       (assignments||[]).forEach((a:any) => {
         let extra: any = {};
         try { extra = JSON.parse(a.notes||"{}"); } catch {}
-        aMap[a.student_id] = {
+        const enriched: Assignment = {
           ...a,
           program_start: extra.programStart ?? a.program_start,
           program_days:  extra.programDays  ?? a.program_days,
           days_off:      extra.daysOff      ?? a.days_off ?? [],
         };
+        if (!allAsgns[a.student_id]) allAsgns[a.student_id] = [];
+        allAsgns[a.student_id].push(enriched);
       });
+      // Active assignment = first active one found
+      const aMap: Record<string,Assignment> = {};
+      Object.entries(allAsgns).forEach(([sid, arr]) => {
+        const active = arr.find(a => a.active);
+        if (active) aMap[sid] = active;
+      });
+
       const lMap: Record<string,DailyLog> = {};
       (logs||[]).forEach((l:any) => {
         lMap[l.student_id] = {
@@ -412,8 +424,9 @@ export default function HifdhRevisionTracker() {
 
       setStudents(profiles.map((p:any) => ({
         ...p,
-        assignment: aMap[p.user_id],
-        todayLog:   lMap[p.user_id],
+        assignment:  aMap[p.user_id],
+        assignments: allAsgns[p.user_id] ?? [],
+        todayLog:    lMap[p.user_id],
       })));
     } catch(e) { console.error(e); }
     setLoading(false);
@@ -497,6 +510,9 @@ export default function HifdhRevisionTracker() {
     setGrading(null);
   };
 
+  // editingAssignId: if set, we're editing that assignment's fields; if null, we're creating new
+  const [editingAssignId, setEditingAssignId] = useState<string|null>(null);
+
   const saveAssignment = async (studentId: string) => {
     if (!userId){ return; }
     setSavingAssign(true); setSaveError(null);
@@ -507,18 +523,28 @@ export default function HifdhRevisionTracker() {
         daysOff:      assignForm.days_off ?? [],
         custom:       assignForm.notes || "",
       });
-      // Try RPC first (with assigned_by param)
-      const {error: rpcErr} = await (supabase as any).rpc("save_hifdh_assignment",{
-        p_student_id:     studentId,
-        p_mode:           assignForm.mode,
-        p_selected_items: assignForm.selected_items,
-        p_daily_pages:    assignForm.daily_pages,
-        p_reciter_id:     assignForm.reciter_id||"Alafasy_128kbps",
-        p_notes:          notesJson,
-        p_assigned_by:    userId,
-      });
-      if (rpcErr) {
-        // Fallback: direct upsert so assigned_by is always set
+
+      if (editingAssignId) {
+        // UPDATE existing assignment fields
+        const { error: upErr } = await (supabase as any)
+          .from("hifdh_daily_assignments")
+          .update({
+            mode:           assignForm.mode,
+            selected_items: assignForm.selected_items,
+            daily_pages:    assignForm.daily_pages,
+            reciter_id:     assignForm.reciter_id||"Alafasy_128kbps",
+            notes:          notesJson,
+            updated_at:     new Date().toISOString(),
+          })
+          .eq("id", editingAssignId);
+        if (upErr) { setSaveError(`Update failed: ${upErr.message}`); setSavingAssign(false); return; }
+      } else {
+        // INSERT a new assignment row; deactivate others first so only one is active
+        await (supabase as any)
+          .from("hifdh_daily_assignments")
+          .update({ active: false })
+          .eq("student_id", studentId);
+
         const payload: any = {
           student_id:     studentId,
           assigned_by:    userId,
@@ -529,16 +555,42 @@ export default function HifdhRevisionTracker() {
           notes:          notesJson,
           active:         true,
           created_at:     new Date().toISOString(),
+          updated_at:     new Date().toISOString(),
+          starts_on:      assignForm.program_start || todayStr(),
         };
-        const { error: upErr } = await (supabase as any)
+        const { error: insErr } = await (supabase as any)
           .from("hifdh_daily_assignments")
-          .upsert(payload, { onConflict: "student_id" });
-        if (upErr) { setSaveError(`Save failed: ${upErr.message}`); setSavingAssign(false); return; }
+          .insert(payload);
+        if (insErr) { setSaveError(`Save failed: ${insErr.message}`); setSavingAssign(false); return; }
       }
+
       setShowAssign(null);
+      setEditingAssignId(null);
       await load();
     } catch(e:any){ setSaveError(`Unexpected error: ${e?.message??String(e)}`); }
     setSavingAssign(false);
+  };
+
+  const activateAssignment = async (assignId: string, studentId: string) => {
+    // Deactivate all others, activate this one
+    await (supabase as any)
+      .from("hifdh_daily_assignments")
+      .update({ active: false })
+      .eq("student_id", studentId);
+    await (supabase as any)
+      .from("hifdh_daily_assignments")
+      .update({ active: true, updated_at: new Date().toISOString() })
+      .eq("id", assignId);
+    await load();
+  };
+
+  const deleteAssignment = async (assignId: string) => {
+    if (!confirm("Delete this assignment? This cannot be undone.")) return;
+    await (supabase as any)
+      .from("hifdh_daily_assignments")
+      .delete()
+      .eq("id", assignId);
+    await load();
   };
 
   const loadPayHistory = async (uid: string) => {
@@ -745,59 +797,118 @@ export default function HifdhRevisionTracker() {
                 <div style={{borderTop:`1px solid ${BRD}`,padding:"12px 14px",
                   background:WARM,display:"flex",flexDirection:"column",gap:12}}>
 
-                  {/* Assignment info */}
-                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8}}>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:10,fontWeight:800,color:GOLD,letterSpacing:1,
-                        textTransform:"uppercase" as const,marginBottom:4}}>Assignment</div>
-                      {assign?(
-                        <div style={{fontSize:12,color:"#374151"}}>
-                          <strong>{assign.mode==="juz"?"Juz":assign.mode==="hizb"?"Hizb":"Surah"}</strong>{" "}
-                          {assign.selected_items.join(", ")} · {assign.daily_pages} page{assign.daily_pages!==1?"s":""}/day
-                          {assign.program_start&&(
-                            <div style={{fontSize:10,color:"#9aab94",marginTop:2,display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
-                              <Calendar size={9}/> Started {assign.program_start}
-                              {assign.program_days?` · ${assign.program_days}-day program`:""}
-                              {assign.days_off?.length?` · Off: ${assign.days_off.map(d=>DAY_NAMES[d]).join(",")}`:""}
-                            </div>
-                          )}
-                          {todayPage&&(
-                            <div style={{marginTop:5,display:"inline-block",padding:"4px 10px",
-                              borderRadius:8,background:`${GOLD}18`,color:GOLD,fontWeight:800,fontSize:11}}>
-                              Today's page: {todayPage}
-                            </div>
-                          )}
-                        </div>
-                      ):(
-                        <div style={{fontSize:12,color:"#9aab94"}}>Not assigned yet</div>
-                      )}
+                  {/* ── All Assignments ── */}
+                  <div>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                      <div style={{fontSize:10,fontWeight:800,color:GOLD,letterSpacing:1,textTransform:"uppercase" as const}}>
+                        Assignments ({(s.assignments||[]).length})
+                      </div>
+                      <button onClick={()=>{
+                        setShowAssign(showAssign===s.user_id?null:s.user_id);
+                        setEditingAssignId(null);
+                        setAssignForm({
+                          mode:"juz", selected_items:[1], daily_pages:1,
+                          reciter_id:"Alafasy_128kbps",
+                          program_start:todayStr(), program_days:30, days_off:[0], notes:"",
+                        });
+                      }}
+                        style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${BRD}`,
+                          background:W,cursor:"pointer",fontSize:11,fontWeight:700,
+                          color:G,display:"flex",alignItems:"center",gap:4}}>
+                        <Plus size={11}/> Add New
+                      </button>
                     </div>
-                    <button onClick={()=>{
-                      setShowAssign(showAssign===s.user_id?null:s.user_id);
-                      setAssignForm({
-                        mode:assign?.mode??"juz",
-                        selected_items:assign?.selected_items??[1],
-                        daily_pages:assign?.daily_pages??1,
-                        reciter_id:assign?.reciter_id??"Alafasy_128kbps",
-                        program_start:assign?.program_start??todayStr(),
-                        program_days:assign?.program_days??30,
-                        days_off:assign?.days_off??[0],
-                        notes:"",
-                      });
-                    }}
-                      style={{padding:"5px 10px",borderRadius:8,border:`1px solid ${BRD}`,
-                        background:W,cursor:"pointer",fontSize:11,fontWeight:700,
-                        color:G,display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-                      {assign?<Edit2 size={11}/>:<Plus size={11}/>}
-                      {assign?"Edit":"Assign"}
-                    </button>
+
+                    {/* List of existing assignments */}
+                    {(s.assignments||[]).length === 0 ? (
+                      <div style={{fontSize:12,color:"#9aab94",padding:"8px 0"}}>Not assigned yet</div>
+                    ) : (
+                      <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                        {(s.assignments||[]).map((a, ai) => {
+                          const isActive = !!a.active;
+                          const tp = isActive ? currentPage(a) : null;
+                          return (
+                            <div key={a.id} style={{
+                              background:isActive ? `${G}0d` : "#F9FAFB",
+                              border:`1.5px solid ${isActive ? G+"44" : BRD}`,
+                              borderRadius:10, padding:"8px 10px",
+                              display:"flex", alignItems:"flex-start", gap:8,
+                            }}>
+                              <div style={{flex:1, minWidth:0}}>
+                                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                                  {isActive && (
+                                    <span style={{fontSize:9,fontWeight:800,padding:"2px 6px",borderRadius:6,
+                                      background:G,color:"#fff"}}>ACTIVE</span>
+                                  )}
+                                  <span style={{fontSize:12,fontWeight:700,color:isActive?G:"#6b7280"}}>
+                                    {a.mode==="juz"?"Juz":a.mode==="hizb"?"Hizb":"Surah"}{" "}
+                                    {(a.selected_items||[]).join(", ")}
+                                  </span>
+                                  <span style={{fontSize:11,color:"#9aab94"}}>
+                                    {a.daily_pages} pg/day
+                                  </span>
+                                </div>
+                                {a.program_start && (
+                                  <div style={{fontSize:10,color:"#9aab94",marginTop:2,display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+                                    <Calendar size={9}/> {a.program_start}
+                                    {a.program_days ? ` · ${a.program_days}d` : ""}
+                                    {a.days_off?.length ? ` · Off: ${a.days_off.map((d:number)=>DAY_NAMES[d]).join(",")}` : ""}
+                                  </div>
+                                )}
+                                {tp && (
+                                  <div style={{marginTop:4,display:"inline-block",padding:"2px 8px",
+                                    borderRadius:6,background:`${GOLD}18`,color:GOLD,fontWeight:800,fontSize:10}}>
+                                    Today → page {tp}
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{display:"flex",gap:4,flexShrink:0,flexDirection:"column",alignItems:"flex-end"}}>
+                                {!isActive && (
+                                  <button onClick={()=>activateAssignment(a.id, s.user_id)}
+                                    style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${G}`,
+                                      background:W,cursor:"pointer",fontSize:10,fontWeight:700,color:G}}>
+                                    Activate
+                                  </button>
+                                )}
+                                <button onClick={()=>{
+                                  setShowAssign(s.user_id);
+                                  setEditingAssignId(a.id);
+                                  setAssignForm({
+                                    mode:a.mode,
+                                    selected_items:a.selected_items,
+                                    daily_pages:a.daily_pages,
+                                    reciter_id:a.reciter_id||"Alafasy_128kbps",
+                                    program_start:a.program_start||todayStr(),
+                                    program_days:a.program_days||30,
+                                    days_off:a.days_off||[0],
+                                    notes:"",
+                                  });
+                                }}
+                                  style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${BRD}`,
+                                    background:W,cursor:"pointer",fontSize:10,fontWeight:700,
+                                    color:"#374151",display:"flex",alignItems:"center",gap:3}}>
+                                  <Edit2 size={9}/> Edit
+                                </button>
+                                {!isActive && (
+                                  <button onClick={()=>deleteAssignment(a.id)}
+                                    style={{padding:"3px 8px",borderRadius:6,border:"1px solid #fca5a5",
+                                      background:"#fff5f5",cursor:"pointer",fontSize:10,fontWeight:700,color:"#dc2626"}}>
+                                    ✕
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
 
-                  {/* Individual assign form */}
+                  {/* Assignment form (new or edit) */}
                   {showAssign===s.user_id&&(
                     <div style={{background:W,border:`1px solid ${BRD}`,borderRadius:12,padding:12}}>
                       <div style={{fontSize:11,fontWeight:800,color:G,marginBottom:10}}>
-                        {assign?"Update Assignment":"New Assignment"}
+                        {editingAssignId ? "✏️ Edit Assignment" : "➕ New Assignment"}
                       </div>
 
                       <Label>Mode</Label>
@@ -886,9 +997,9 @@ export default function HifdhRevisionTracker() {
                           style={{flex:1,padding:"9px",borderRadius:8,border:"none",
                             background:`linear-gradient(135deg,${G},${GM})`,
                             color:"#fff",fontWeight:800,fontSize:12,cursor:"pointer"}}>
-                          {savingAssign?"Saving…":"Save Assignment"}
+                          {savingAssign?"Saving…":editingAssignId?"Update Assignment":"Add Assignment"}
                         </button>
-                        <button onClick={()=>{setShowAssign(null);setSaveError(null);}}
+                        <button onClick={()=>{setShowAssign(null);setSaveError(null);setEditingAssignId(null);}}
                           style={{padding:"9px 14px",borderRadius:8,border:`1px solid ${BRD}`,
                             background:W,cursor:"pointer",fontSize:12}}>
                           Cancel
