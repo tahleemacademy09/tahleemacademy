@@ -1548,42 +1548,34 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           return null;
         };
 
-        // Run transcription AND storage upload in parallel.
-        // setScore must only fire AFTER both resolve — otherwise the interim-save
-        // useEffect fires while audioStorageUrlRef is still null (the race condition).
-        Promise.all([transcribeAudio(blob, pageAyahsRef.current), uploadAudioToStorage()]).then(([tx, storageUrl]) => {
-          audioStorageUrlRef.current = storageUrl;
-          // ── DO NOT call setSavedAudioUrl(storageUrl) here ────────────────────────────────────────
-          // savedAudioUrl is already set to the local blob URL (line above Promise.all).
-          // Replacing it with the remote URL caused silent playback failure:
-          //   • getPublicUrl returns a URL even for private buckets → 403 when fetched
-          //   • FullAudioPlayer fires an error event → player stuck on "⚠ Tap ▶ to retry"
-          // The local blob URL is valid for the lifetime of this page session and always
-          // plays immediately. The signed storage URL is only needed for admin/DB saving.
-
-          // If no transcription API is configured, show a soft-fail:
-          // score 0 but with a clear message rather than silent 0%.
+        // Transcribe immediately for fast evaluation, upload audio in background.
+        transcribeAudio(blob, pageAyahsRef.current).then(tx => {
+          const capturedSecs = recSecsRef.current;
+          const ayahs = pageAyahsRef.current;
           if (tx === "__NO_API__") {
             setLastTranscript("");
             lastResultRef.current = { tx: "", ayahCorrectness: [] };
-            setScore(0);
-            setErrorWords([]);
-            setAyahCorrectness([]);
-            setNoApiWarning(true); // show "Transcription unavailable" banner
+            setScore(0); setErrorWords([]); setAyahCorrectness([]);
+            setNoApiWarning(true);
             idbDeleteBlob(`${userId}_${todayISO()}_partial`);
             setCarryOverSecs(0);
             return;
           }
-
           const sc   = scoreText(tx, ayahs, capturedSecs);
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
           setLastTranscript(tx);
           lastResultRef.current = { tx, ayahCorrectness: corr };
           setScore(sc); setErrorWords(errs); setAyahCorrectness(corr);
-          // Partial blob no longer needed — clean up IDB and reset carry-over
           idbDeleteBlob(`${userId}_${todayISO()}_partial`);
           setCarryOverSecs(0);
+        });
+
+        // Upload runs in background — doesn't block the result screen
+        uploadAudioToStorage().then(storageUrl => {
+          audioStorageUrlRef.current = storageUrl ?? null;
+          // savedAudioUrl stays as local blob URL for immediate playback.
+          // storageUrl is only needed for admin DB saving via the interim-save useEffect.
         });
       };
       mr.start(200);
@@ -2186,16 +2178,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     });
 
     // ── Word statuses ────────────────────────────────────────────────────────
-    // During recording: green=revealed(correct), amber=just-revealed, blurred=not-yet
+    // During recording: no coloring (plain text)
     // After evaluation: green=correct, red=missing
-    type WordStatus = "correct" | "partial" | "missing" | "pending" | "none";
-    const wordStatuses: WordStatus[] = tokens.map((tok) => {
-      if (evaluationReady) return "none"; // will be overwritten below
-      if (!isRecording) return "none";
-      if (tok.globalIdx < revealedWordCount) return "correct";
-      if (tok.globalIdx === revealedWordCount) return "partial"; // leading edge
-      return "pending";
-    });
+    type WordStatus = "correct" | "missing" | "none";
+    const wordStatuses: WordStatus[] = tokens.map(() => "none");
     if (evaluationReady) {
       const ref = pageAyahs.map(a => a.text).join(" ");
       compareWords(ref, lastTranscript).forEach((r, i) => {
@@ -2217,20 +2203,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
     const renderWord = (tok: WordToken) => {
       const st = wordStatuses[tok.globalIdx];
-      // Color logic
+      // Color logic — only applied after evaluation, plain during recording
       let color = "#1a0a00";
       let bg = "transparent";
-      let blur = "none";
-      let opacity = 1;
       let border = "none";
 
       if (evaluationReady) {
         if (st === "correct") { color = "#15803d"; bg = "#dcfce733"; border = "2px solid #16a34a"; }
         else if (st === "missing") { color = "#b91c1c"; bg = "#fee2e233"; border = "2px solid #dc2626"; }
-      } else if (isRecording) {
-        if (st === "correct") { color = "#15803d"; bg = "#dcfce744"; }
-        else if (st === "partial") { color = "#d97706"; bg = `${GOLD}33`; }
-        else { blur = "blur(7px)"; opacity = 0.18; }
       }
 
       return (
@@ -2238,19 +2218,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           display: "inline-block",
           color,
           background: bg,
-          filter: blur,
-          opacity,
           borderBottom: border,
           paddingBottom: border !== "none" ? 2 : 0,
           borderRadius: 3,
           margin: "0 1px",
-          transition: "color 0.35s ease, background 0.35s ease, filter 0.4s ease, opacity 0.4s ease",
+          transition: "color 0.35s ease, background 0.35s ease",
         }}>{tok.word}</span>
       );
     };
 
     const renderAyahNum = (tok: WordToken) => {
-      const isRevealed = !isRecording || tok.globalIdx < revealedWordCount;
       return (
         <span key={`n${tok.globalIdx}`} style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -2258,9 +2235,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           border: `1.5px solid ${GOLD}`, background: "#fffdf6",
           fontSize: 10, color: GOLD, fontFamily: "'Amiri',serif",
           margin: "0 4px", verticalAlign: "middle", lineHeight: 1,
-          filter: isRevealed || !isRecording ? "none" : "blur(6px)",
-          opacity: isRevealed || !isRecording ? 1 : 0.2,
-          transition: "filter 0.4s ease, opacity 0.4s ease",
           flexShrink: 0,
         }}>{tok.numberInSurah}</span>
       );
@@ -2343,67 +2317,22 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           </div>
         )}
 
-        {/* ── Live progress bar (speech reveal) ── */}
-        {isRecording && (
-          <div style={{
-            margin: "0 14px",
-            padding: "4px 0",
-            borderBottom: `1px solid ${GOLD}22`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-          }}>
-            <div style={{flex:1,height:4,borderRadius:2,background:`${GOLD}22`,overflow:"hidden"}}>
-              <div style={{
-                height:"100%", borderRadius:2,
-                background:`linear-gradient(to right,#16a34a,${GOLD})`,
-                width:`${totalToks > 0 ? Math.min(100,(revealedWordCount/totalToks)*100) : 0}%`,
-                transition:"width .4s ease",
-              }}/>
-            </div>
-            <span style={{fontSize:9,fontWeight:800,color:GOLD,whiteSpace:"nowrap",fontFamily:"'Cairo',sans-serif"}}>
-              {Math.min(revealedWordCount,totalToks)}/{totalToks}
-            </span>
-          </div>
-        )}
-
-        {/* ── Legend row ── */}
-        {(isRecording || evaluationReady) && (
+        {/* ── Legend row (evaluation only) ── */}
+        {evaluationReady && (
           <div style={{
             padding:"3px 14px",
             background:"#faf6ea",
             borderBottom:`1px solid ${GOLD}22`,
             display:"flex", alignItems:"center", justifyContent:"center", gap:16,
           }}>
-            {isRecording && !evaluationReady && (
-              <>
-                <span style={{fontSize:9,color:"#15803d",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{width:8,height:8,borderRadius:"50%",background:"#16a34a",display:"inline-block"}}/>
-                  Correct
-                </span>
-                <span style={{fontSize:9,color:"#b45309",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{width:8,height:8,borderRadius:"50%",background:GOLD,display:"inline-block"}}/>
-                  Close
-                </span>
-                <span style={{fontSize:9,color:"#9CA3AF",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{width:8,height:8,borderRadius:"50%",background:"#D1D5DB",display:"inline-block"}}/>
-                  Not yet
-                </span>
-              </>
-            )}
-            {evaluationReady && (
-              <>
-                <span style={{fontSize:9,color:"#15803d",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{width:14,height:2.5,background:"#16a34a",borderRadius:1,display:"inline-block"}}/>
-                  Correct
-                </span>
-                <span style={{fontSize:9,color:"#dc2626",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{width:14,height:2.5,background:"#dc2626",borderRadius:1,display:"inline-block"}}/>
-                  Missed
-                </span>
-              </>
-            )}
+            <span style={{fontSize:9,color:"#15803d",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
+              <span style={{width:14,height:2.5,background:"#16a34a",borderRadius:1,display:"inline-block"}}/>
+              Correct
+            </span>
+            <span style={{fontSize:9,color:"#dc2626",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
+              <span style={{width:14,height:2.5,background:"#dc2626",borderRadius:1,display:"inline-block"}}/>
+              Missed
+            </span>
           </div>
         )}
 
