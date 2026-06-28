@@ -221,15 +221,36 @@ const EnrollmentPayment = () => {
   useEffect(() => { if (tab === "history") loadHistory(); }, [tab, loadHistory]);
 
   // ── Payment via Paystack ─────────────────────────────────────
-  const initiatePayment = () => {
+  const initiatePayment = async () => {
     if (!user || !studentProfile) return;
     const amount = selectedPlan === "monthly" ? fees.monthly : fees.term;
     const email  = studentProfile.email || user.email || "";
     const ref    = `TAH-${user.id.slice(0,8)}-${Date.now()}`;
 
+    // Resolve plan_id from payment_plans table so the webhook can link correctly
+    const { data: matchedPlan } = await supabase
+      .from("payment_plans" as any)
+      .select("id, duration_months")
+      .eq("amount", amount)
+      .eq("is_active", true)
+      .maybeSingle();
+    const planId: string | null = matchedPlan?.id || null;
+
+    // Pre-create a pending payment row so the webhook UPDATE can find it
+    await supabase.from("payments" as any).insert({
+      student_id:        user.id,
+      plan_id:           planId,
+      amount,
+      currency:          "NGN",
+      status:            "pending",
+      type:              "subscription",
+      paystack_reference: ref,
+      payment_method:    "paystack",
+    });
+
     if (!PAYSTACK_KEY) {
       // Demo mode — simulate success
-      handlePaymentSuccess(ref, amount);
+      handlePaymentSuccess(ref, amount, planId);
       return;
     }
 
@@ -240,18 +261,20 @@ const EnrollmentPayment = () => {
       amount: amount * 100, // kobo
       currency: "NGN",
       ref,
-      metadata: { user_id: user.id, level, plan_type: selectedPlan },
-      callback: (res: any) => { setPaying(false); handlePaymentSuccess(res.reference, amount); },
+      // Include plan_id in metadata so paystack-sync can match it without a table scan
+      metadata: { user_id: user.id, plan_id: planId, level, plan_type: selectedPlan },
+      callback: (res: any) => { setPaying(false); handlePaymentSuccess(res.reference, amount, planId); },
       onClose: () => { setPaying(false); toast({ title: "Payment cancelled" }); },
     });
     handler?.openIframe?.();
   };
 
-  const handlePaymentSuccess = async (ref: string, amount: number) => {
+  const handlePaymentSuccess = async (ref: string, amount: number, planId: string | null) => {
     if (!user || !enrollment) return;
     setPaying(true);
     const now      = new Date().toISOString();
-    const nextDue  = addMonths(selectedPlan === "monthly" ? 1 : 3);
+    const durationMonths = selectedPlan === "monthly" ? 1 : 3;
+    const nextDue  = addMonths(durationMonths);
     const receipt  = `RCT-${Math.random().toString(36).slice(2,10).toUpperCase()}`;
 
     // Update enrollment → active
@@ -264,17 +287,61 @@ const EnrollmentPayment = () => {
       level,
     }).eq("id", enrollment.id);
 
-    // Record payment
+    // Update the pre-created pending payment row → success
+    // (webhook will also do this, but this ensures immediate admin visibility)
+    await supabase.from("payments" as any)
+      .update({
+        status:         "success",
+        payment_method: "paystack",
+        paid_at:        now,
+      })
+      .eq("paystack_reference", ref);
+
+    // Also update profile payment_status and subscription_end_date immediately
+    const subEnd = new Date();
+    subEnd.setMonth(subEnd.getMonth() + durationMonths);
+    await supabase.from("profiles").update({
+      payment_status:        "paid",
+      subscription_end_date: subEnd.toISOString().split("T")[0],
+    } as any).eq("user_id", user.id);
+
+    // Upsert student_subscriptions
+    const { data: existingSub } = await supabase
+      .from("student_subscriptions" as any)
+      .select("id, end_date, status")
+      .eq("student_id", user.id)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (existingSub) {
+      const extendBase = existingSub.end_date && new Date(existingSub.end_date) > new Date()
+        ? new Date(existingSub.end_date) : new Date();
+      const extendEnd = new Date(extendBase);
+      extendEnd.setMonth(extendEnd.getMonth() + durationMonths);
+      await supabase.from("student_subscriptions" as any)
+        .update({ end_date: extendEnd.toISOString().split("T")[0], status: "active" })
+        .eq("id", existingSub.id);
+    } else {
+      await supabase.from("student_subscriptions" as any).insert({
+        student_id: user.id,
+        plan_id:    planId,
+        status:     "active",
+        start_date: now.split("T")[0],
+        end_date:   subEnd.toISOString().split("T")[0],
+      });
+    }
+
+    // Record legacy payment_history row (student's own history view)
     await supabase.from("payment_history" as any).insert({
-      user_id: user.id,
+      user_id:       user.id,
       enrollment_id: enrollment.id,
       amount,
-      paid_at: now,
+      paid_at:       now,
       level,
-      plan_type: selectedPlan,
-      receipt_id: receipt,
-      status: "success",
-      payment_ref: ref,
+      plan_type:     selectedPlan,
+      receipt_id:    receipt,
+      status:        "success",
+      payment_ref:   ref,
     });
 
     toast({ title: "✅ Payment Successful!", description: `Receipt: ${receipt}` });
