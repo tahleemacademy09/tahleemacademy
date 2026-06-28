@@ -20,6 +20,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
+import { useHifdhSettings } from "@/hooks/useHifdhSettings";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import {
@@ -47,6 +48,7 @@ const TABS = [
   { id: "profile",       emoji: "👤", label: "Profile"       },
   { id: "academy",       emoji: "🏫", label: "Academy"       },
   { id: "notifications", emoji: "🔔", label: "Notifications" },
+  { id: "hifdh",         emoji: "📖", label: "Hifdh"         },
   { id: "security",      emoji: "🔒", label: "Security"      },
 ];
 
@@ -118,6 +120,7 @@ export default function AdminSettings() {
   const navigate                   = useNavigate();
   const avatarRef                  = useRef<HTMLInputElement>(null);
   const { settings, loading: acLoading, updateMultiple } = useAcademySettings();
+  const { settings: hifdhSettings, loading: hifdhLoading, save: saveHifdh } = useHifdhSettings();
 
   const [tab,             setTab]             = useState("profile");
   const [saving,          setSaving]          = useState(false);
@@ -127,6 +130,8 @@ export default function AdminSettings() {
   const [changingPw,      setChangingPw]      = useState(false);
   const [pw,              setPw]              = useState({ new: "", confirm: "" });
   const [acSaving,        setAcSaving]        = useState(false);
+  const [hifdhSaving,     setHifdhSaving]     = useState(false);
+  const [hifdhDraft,      setHifdhDraft]      = useState({ violation_limit: 5 });
 
   /* ── Profile ─────────────────────────────────────────────────── */
   const [form, setForm] = useState({
@@ -212,6 +217,13 @@ export default function AdminSettings() {
     }
   }, [acLoading, settings]);
 
+  /* ── Sync hifdh settings once loaded ────────────────────────── */
+  useEffect(() => {
+    if (!hifdhLoading) {
+      setHifdhDraft({ violation_limit: hifdhSettings.violation_limit });
+    }
+  }, [hifdhLoading, hifdhSettings]);
+
   /* ── Save profile ────────────────────────────────────────────── */
   const saveProfile = async () => {
     if (!user) return;
@@ -294,6 +306,14 @@ export default function AdminSettings() {
     setSaving(false);
     if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
     else       toast({ title: "✅ Notification preferences saved!" });
+  };
+
+  const saveHifdhSettings = async () => {
+    if (!user) return;
+    setHifdhSaving(true);
+    await saveHifdh({ violation_limit: hifdhDraft.violation_limit }, user.id);
+    setHifdhSaving(false);
+    toast({ title: "✅ Hifdh settings saved!" });
   };
 
   /* ── Change password ─────────────────────────────────────────── */
@@ -568,6 +588,49 @@ export default function AdminSettings() {
           </Sec>
 
           <SaveBtn fn={saveNotifs} saving={saving} />
+        </>}
+
+        {/* ════════ HIFDH TAB ════════ */}
+        {tab === "hifdh" && <>
+          <Sec title="Proctoring Settings">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0", borderBottom: "1px solid #F3F4F6" }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>
+                  📷 Face Violation Limit
+                </p>
+                <p style={{ fontSize: 11, color: "#9CA3AF", margin: "3px 0 0", lineHeight: 1.5 }}>
+                  How many camera violations a student is allowed before the test is auto-submitted with a score of 0.
+                  The warning overlay appears after each violation.
+                </p>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 16 }}>
+                <button
+                  onClick={() => setHifdhDraft(d => ({ ...d, violation_limit: Math.max(1, d.violation_limit - 1) }))}
+                  style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >−</button>
+                <span style={{ minWidth: 32, textAlign: "center", fontWeight: 800, fontSize: 20, color: G, fontFamily: "'Cairo', sans-serif" }}>
+                  {hifdhDraft.violation_limit}
+                </span>
+                <button
+                  onClick={() => setHifdhDraft(d => ({ ...d, violation_limit: Math.min(20, d.violation_limit + 1) }))}
+                  style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >+</button>
+              </div>
+            </div>
+            <div style={{ padding: "12px 0 4px", display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+              {[2, 3, 5, 7, 10].map(n => (
+                <button key={n} onClick={() => setHifdhDraft(d => ({ ...d, violation_limit: n }))}
+                  style={{ padding: "5px 14px", borderRadius: 20, border: `1.5px solid ${hifdhDraft.violation_limit === n ? G : "#E5E7EB"}`, background: hifdhDraft.violation_limit === n ? G : "#fff", color: hifdhDraft.violation_limit === n ? "#fff" : "#374151", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo', sans-serif" }}>
+                  {n}
+                </button>
+              ))}
+            </div>
+            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "10px 0 0", fontStyle: "italic" }}>
+              Tip: 5 is recommended for most classes. Set higher (7–10) for younger students who may move around more.
+            </p>
+          </Sec>
+
+          <SaveBtn fn={saveHifdhSettings} saving={hifdhSaving} />
         </>}
 
         {/* ════════ SECURITY TAB ════════ */}
