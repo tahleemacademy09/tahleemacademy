@@ -1096,7 +1096,7 @@ function ProctoringIntro({onReady,countA,countB}:{onReady:()=>void;countA:number
       </div>
       <div style={{width:"100%",maxWidth:340,background:"rgba(255,255,255,.06)",borderRadius:16,padding:"16px",border:"1px solid rgba(255,255,255,.1)"}}>
         <p style={{margin:"0 0 12px",fontSize:10,fontWeight:800,color:`${GOLD}cc`,textTransform:"uppercase",letterSpacing:.8}}>Before You Begin</p>
-        {["🎯 Quiet, focused environment","📵 Do Not Disturb mode on","🚫 Do NOT switch tabs — it will be flagged","📖 Do NOT look at the Qur'an","🤍 Answer honestly — this tests your hifdh"].map((t,i)=>(
+        {["📸 Camera will monitor you throughout the test","🎯 Quiet, focused environment","📵 Do Not Disturb mode on","🚫 Do NOT switch tabs — it will be flagged","📖 Do NOT look at the Qur'an — camera detects this","🤍 Answer honestly — this tests your hifdh"].map((t,i)=>(
           <div key={i} style={{display:"flex",gap:8,padding:"7px 0",borderBottom:i<4?"1px solid rgba(255,255,255,.06)":"none",alignItems:"flex-start"}}>
             <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,.7)",lineHeight:1.5}}>{t}</p>
           </div>
@@ -1241,6 +1241,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [finalScore,   setFinalScore]  = useState(0);
   const [tabSwitchCount,setTabSwitchCount] = useState(0);
   const [focusWarning, setFocusWarning] = useState(false);
+  // Face proctoring
+  const [faceViolations,  setFaceViolations]  = useState(0);
+  const [faceWarning,     setFaceWarning]     = useState<string|null>(null);
+  const [cameraReady,     setCameraReady]     = useState(false);
+  const cameraStreamRef   = useRef<MediaStream|null>(null);
+  const cameraVideoRef    = useRef<HTMLVideoElement|null>(null);
+  const cameraCanvasRef   = useRef<HTMLCanvasElement|null>(null);
+  const faceCheckRef      = useRef<any>(null);
+  const faceDetectorRef   = useRef<any>(null);
+  const faceViolationsRef = useRef(0);
   const [savedAudioUrl,setSavedAudioUrl] = useState<string|null>(
     recitationAlreadyDone ? (todayLog?.session_data?.audio_url ?? null) : null
   );
@@ -1307,6 +1317,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
       wakeLockRef.current?.release().catch(() => {});
+      // Stop camera if active
+      stopCamera();
     };
   }, []);
 
@@ -1456,6 +1468,173 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     document.addEventListener("visibilitychange",handler);
     return()=>document.removeEventListener("visibilitychange",handler);
   },[phase]);
+
+  /* ── Proctoring: camera face detection during test ─────────────── */
+  useEffect(()=>{
+    if(phase!=="testing"){ stopCamera(); return; }
+    startCamera();
+    return ()=>{ stopCamera(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[phase]);
+
+  const [autoSubmitFail, setAutoSubmitFail] = useState(false);
+
+  // When auto-submit flag fires, submit with 0
+  useEffect(()=>{
+    if(!autoSubmitFail) return;
+    stopCamera();
+    submitSession(0, 0, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[autoSubmitFail]);
+
+  const stopCamera = ()=>{
+    clearInterval(faceCheckRef.current);
+    faceCheckRef.current=null;
+    if(cameraStreamRef.current){
+      cameraStreamRef.current.getTracks().forEach(t=>t.stop());
+      cameraStreamRef.current=null;
+    }
+    if(cameraVideoRef.current){ cameraVideoRef.current.remove(); cameraVideoRef.current=null; }
+    if(cameraCanvasRef.current){ cameraCanvasRef.current.remove(); cameraCanvasRef.current=null; }
+    setCameraReady(false);
+  };
+
+  const triggerFaceViolation = (reason: string)=>{
+    faceViolationsRef.current += 1;
+    setFaceViolations(faceViolationsRef.current);
+    setFaceWarning(reason);
+    setTimeout(()=>setFaceWarning(null), 5000);
+    // 3 violations → auto-fail
+    if(faceViolationsRef.current >= 3){
+      clearInterval(faceCheckRef.current);
+      setFaceWarning("⛔ Too many violations — test auto-submitted");
+      setTimeout(()=>setAutoSubmitFail(true), 2000);
+    }
+  };
+
+  const startCamera = async ()=>{
+    try{
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video:{ facingMode:"user", width:{ideal:320}, height:{ideal:240} },
+        audio:false,
+      });
+      cameraStreamRef.current = stream;
+
+      // Create hidden video + canvas elements
+      if(!cameraVideoRef.current){
+        const v = document.createElement("video");
+        v.setAttribute("playsinline","");
+        v.muted=true;
+        v.style.cssText="position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;top:0;left:0;";
+        document.body.appendChild(v);
+        cameraVideoRef.current=v;
+      }
+      if(!cameraCanvasRef.current){
+        const c = document.createElement("canvas");
+        c.width=320; c.height=240;
+        c.style.display="none";
+        document.body.appendChild(c);
+        cameraCanvasRef.current=c;
+      }
+
+      const video = cameraVideoRef.current;
+      video.srcObject = stream;
+      await video.play();
+      setCameraReady(true);
+
+      // Try native FaceDetector API (Chrome 91+, Android Chrome)
+      const FaceDetectorAPI = (window as any).FaceDetector;
+      if(FaceDetectorAPI){
+        try{
+          faceDetectorRef.current = new FaceDetectorAPI({ maxDetectedFaces:1, fastMode:true });
+        } catch { faceDetectorRef.current = null; }
+      }
+
+      // Poll every 2.5 seconds
+      faceCheckRef.current = setInterval(async ()=>{
+        try{ await checkFace(); } catch{ /* silent */ }
+      }, 2500);
+
+    } catch(e){
+      // Camera denied — flag but don't block (some devices lack front camera)
+      console.warn("[Proctor] Camera unavailable:", e);
+      setCameraReady(false);
+    }
+  };
+
+  const checkFace = async ()=>{
+    const video = cameraVideoRef.current;
+    const canvas = cameraCanvasRef.current;
+    if(!video || !canvas || video.readyState < 2) return;
+
+    const ctx = canvas.getContext("2d");
+    if(!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // ── Method 1: Native FaceDetector API ────────────────────────
+    if(faceDetectorRef.current){
+      try{
+        const faces = await faceDetectorRef.current.detect(canvas);
+        if(faces.length===0){
+          triggerFaceViolation("👁️ No face detected — keep your eyes on the screen!");
+          return;
+        }
+        // Check head orientation using landmark positions
+        const face = faces[0];
+        const lms = face.landmarks;
+        if(lms && lms.length >= 2){
+          const box = face.boundingBox;
+          // Eyes landmark — if eyes Y position is near top of bounding box = looking straight
+          // If eyes disappear or face box is very small = looking down
+          const eyeLms = lms.filter((l:any)=>l.type==="eye");
+          if(eyeLms.length < 2){
+            triggerFaceViolation("👁️ Eyes not visible — please look at the screen!");
+            return;
+          }
+          // Head-down heuristic: face box height/width ratio
+          // When looking down, face appears wider than tall (ratio < 0.75)
+          const ratio = box.height / box.width;
+          if(ratio < 0.6){
+            triggerFaceViolation("📵 Please look at the screen — not at the Qur'an!");
+            return;
+          }
+        }
+        return; // face found and OK
+      } catch{ /* fall through to pixel method */ }
+    }
+
+    // ── Method 2: Pixel-brightness skin-tone presence check ──────
+    // Lightweight fallback: sample the centre region for skin-tone pixels.
+    // A blank or floor scene has very different pixel distribution than a face.
+    const imageData = ctx.getImageData(60, 40, 200, 160);
+    const data = imageData.data;
+    let skinPixels = 0;
+    const total = data.length / 4;
+    for(let i=0;i<data.length;i+=4){
+      const r=data[i], g=data[i+1], b=data[i+2];
+      // Simple skin tone range (works across most complexions in reasonable lighting)
+      if(r>60 && r<250 && g>30 && g<200 && b>20 && b<180 &&
+         r>g && r>b && (r-Math.min(g,b))>10){
+        skinPixels++;
+      }
+    }
+    const skinRatio = skinPixels / total;
+    // Also check brightness delta between top-half and bottom-half of frame
+    // When looking down, top of frame (where face was) goes dark
+    let topBright=0, botBright=0;
+    const imgAll = ctx.getImageData(0,0,320,240).data;
+    for(let i=0;i<imgAll.length/2;i+=4) topBright+=(imgAll[i]+imgAll[i+1]+imgAll[i+2])/3;
+    for(let i=imgAll.length/2;i<imgAll.length;i+=4) botBright+=(imgAll[i]+imgAll[i+1]+imgAll[i+2])/3;
+    const topAvg = topBright/(imgAll.length/8);
+    const botAvg = botBright/(imgAll.length/8);
+
+    if(skinRatio < 0.04){
+      triggerFaceViolation("👁️ No face visible — please face the camera!");
+    } else if(botAvg > topAvg + 30 && skinRatio < 0.10){
+      // Bottom of frame is brighter (light from Quran pages below), top is dark
+      triggerFaceViolation("📵 Please look up at the screen — not at the Qur'an!");
+    }
+  };
 
   /* ── Fetch juz ayahs for Section B (lazy, up to 3 prior pages) ── */
   const fetchJuzAyahs = useCallback(async () => {
@@ -2060,7 +2239,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           errors:pageResults.flatMap(r=>r.errorWords.map(w=>({word:w,page:r.pageNum}))).slice(0,20),
           proctoring: {
             tab_switches: tabSwitchCount,
-            flagged: tabSwitchCount > 0,
+            face_violations: faceViolations,
+            flagged: tabSwitchCount > 0 || faceViolations > 0,
             test_started_at: new Date().toISOString(),
           },
           question_log: questions.map((q,i)=>({
@@ -2438,6 +2618,31 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         </div>
       )}
 
+      {/* ── Face proctoring warning ── */}
+      {faceWarning&&(
+        <div style={{position:"fixed",inset:0,zIndex:9998,background:"rgba(0,0,0,.82)",
+          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+          padding:28,gap:20}}>
+          <div style={{width:72,height:72,borderRadius:"50%",background:`${FAIL}22`,
+            border:`3px solid ${FAIL}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <span style={{fontSize:32}}>⚠️</span>
+          </div>
+          <p style={{margin:0,fontWeight:900,fontSize:18,color:W,textAlign:"center",lineHeight:1.4}}>
+            {faceWarning}
+          </p>
+          <div style={{padding:"10px 18px",borderRadius:12,background:`${FAIL}22`,border:`1px solid ${FAIL}55`}}>
+            <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,.7)",textAlign:"center"}}>
+              Violation {faceViolations} of 3 — 3 violations will auto-submit the test
+            </p>
+          </div>
+          <button onClick={()=>setFaceWarning(null)}
+            style={{padding:"12px 32px",borderRadius:12,border:"none",cursor:"pointer",
+              background:FAIL,color:W,fontWeight:900,fontSize:14,fontFamily:"inherit"}}>
+            I Understand — Resume Test
+          </button>
+        </div>
+      )}
+
       {/* ── Return Banner: student navigated away and came back ── */}
       {returnBanner&&(
         <div style={{position:"fixed",inset:0,zIndex:9998,background:"rgba(0,0,0,.72)",
@@ -2624,69 +2829,78 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             </div>
           </div>
 
-          <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
-            padding:"10px 14px 90px"}}>
-
-            {retryMsg&&retryCount>0&&(
-              <div style={{marginBottom:10,padding:"10px 12px",borderRadius:12,background:`${GOLD}12`,
-                border:`1.5px solid ${GOLD}44`,animation:"slideUp .3s ease"}}>
-                <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
-                  <Heart size={16} color={GOLD} style={{flexShrink:0,marginTop:1}}/>
-                  <p style={{margin:0,fontSize:12,fontWeight:600,color:"#92400E",lineHeight:1.6}}>{retryMsg}</p>
+          {/* ── While recording: hide text, show mic UI only ── */}
+          {isRecording ? (
+            <>
+              <div style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
+                justifyContent:"center",gap:28,background:G0}}>
+                {/* Pulsing mic */}
+                <div style={{position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <div style={{position:"absolute",width:130,height:130,borderRadius:"50%",
+                    background:`${GOLD}14`,animation:"wavePulse 1.6s ease-in-out infinite"}}/>
+                  <div style={{position:"absolute",width:100,height:100,borderRadius:"50%",
+                    background:`${GOLD}22`,animation:"wavePulse 1.6s ease-in-out infinite",animationDelay:".3s"}}/>
+                  <div style={{width:76,height:76,borderRadius:"50%",
+                    background:`linear-gradient(135deg,${G2},${G3})`,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    boxShadow:`0 0 0 5px ${GOLD}44,0 8px 32px rgba(0,0,0,.35)`}}>
+                    <Mic size={34} color={W}/>
+                  </div>
                 </div>
-              </div>
-            )}
-
-            {/* Recording indicator bar — shown at top while recording, page stays visible */}
-            {isRecording && (
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-                marginBottom:12,padding:"10px 14px",borderRadius:14,
-                background:`${PASS}10`,border:`1.5px solid ${PASS}40`}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <Wave/>
-                  <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>Listening…</p>
-                </div>
-                <span style={{padding:"4px 14px",borderRadius:20,
-                  background:`${PASS}18`,border:`1px solid ${PASS}50`,
-                  fontSize:13,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
-                  🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
+                {/* Timer */}
+                <span style={{fontSize:42,fontWeight:900,color:GOLD,fontVariantNumeric:"tabular-nums",
+                  fontFamily:"'Cairo',sans-serif",letterSpacing:3}}>
+                  {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
                 </span>
+                <p style={{margin:0,fontWeight:700,fontSize:13,color:`${GOLD}99`,textAlign:"center",
+                  fontFamily:"'Cairo',sans-serif"}}>
+                  Reciting page {todayPages[pageIdx]}…
+                </p>
               </div>
-            )}
-            {/* Quran page — always visible so student can read while reciting */}
-            {!isRecording && !retryCount && (
-              <div style={{marginBottom:10,padding:"8px 12px",borderRadius:10,
-                background:"#FFFBEB",border:"1px solid #FDE68A",
-                display:"flex",alignItems:"center",gap:8}}>
-                <Target size={13} color={AMBER}/>
-                <span style={{fontSize:11,fontWeight:700,color:AMBER}}>
-                  Recite the full page clearly — need ≥{PASS_THRESHOLD}% to proceed
-                </span>
-              </div>
-            )}
-            <QuranPage/>
-          </div>
-
-          {/* Sticky bottom */}
-          <div style={{padding:"12px 16px",background:W,borderTop:`1px solid ${BRD}`,flexShrink:0}}>
-            {!isRecording
-              ?(
-                <button onClick={startRecording}
-                  style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
-                    background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,
-                    display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
-                  <Mic size={17}/> Start Reciting
-                </button>
-              ):(
+              <div style={{padding:"12px 16px",background:W,borderTop:`1px solid ${BRD}`,flexShrink:0}}>
                 <button onClick={handleStop}
                   style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
                     background:FAIL,color:W,fontWeight:900,fontSize:14,
                     display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
                   <MicOff size={17}/> Finished — Evaluate My Recitation
                 </button>
-              )
-            }
-          </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",
+                padding:"10px 14px 90px"}}>
+                {retryMsg&&retryCount>0&&(
+                  <div style={{marginBottom:10,padding:"10px 12px",borderRadius:12,background:`${GOLD}12`,
+                    border:`1.5px solid ${GOLD}44`,animation:"slideUp .3s ease"}}>
+                    <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+                      <Heart size={16} color={GOLD} style={{flexShrink:0,marginTop:1}}/>
+                      <p style={{margin:0,fontSize:12,fontWeight:600,color:"#92400E",lineHeight:1.6}}>{retryMsg}</p>
+                    </div>
+                  </div>
+                )}
+                {!retryCount&&(
+                  <div style={{marginBottom:10,padding:"8px 12px",borderRadius:10,
+                    background:"#FFFBEB",border:"1px solid #FDE68A",
+                    display:"flex",alignItems:"center",gap:8}}>
+                    <Target size={13} color={AMBER}/>
+                    <span style={{fontSize:11,fontWeight:700,color:AMBER}}>
+                      Recite the full page clearly — need ≥{PASS_THRESHOLD}% to proceed
+                    </span>
+                  </div>
+                )}
+                <QuranPage/>
+              </div>
+              <div style={{padding:"12px 16px",background:W,borderTop:`1px solid ${BRD}`,flexShrink:0}}>
+                <button onClick={startRecording}
+                  style={{width:"100%",padding:"15px",borderRadius:14,border:"none",cursor:"pointer",
+                    background:`linear-gradient(135deg,${G2},${G3})`,color:W,fontWeight:900,fontSize:14,
+                    display:"flex",alignItems:"center",justifyContent:"center",gap:8,fontFamily:"inherit"}}>
+                  <Mic size={17}/> Start Reciting
+                </button>
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -2960,6 +3174,18 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 border:`1px solid ${questions[qIdx]?.section==="A"?GOLD:"#7c3aed"}44`}}>
                 §{questions[qIdx]?.section}
               </div>
+              {/* Camera proctoring indicator */}
+              <div style={{display:"flex",alignItems:"center",gap:4,padding:"3px 8px",
+                borderRadius:8,background:`${cameraReady?"#16a34a":"#dc2626"}22`,
+                border:`1px solid ${cameraReady?"#16a34a":"#dc2626"}44`}}>
+                <div style={{width:6,height:6,borderRadius:"50%",
+                  background:cameraReady?"#16a34a":"#dc2626",
+                  boxShadow:cameraReady?"0 0 4px #16a34a":undefined,
+                  animation:cameraReady?"wavePulse 2s ease-in-out infinite":undefined}}/>
+                <span style={{fontSize:9,fontWeight:800,color:cameraReady?"#16a34a":"#dc2626"}}>
+                  {cameraReady?"CAM":"NO CAM"}
+                </span>
+              </div>
             </div>
 
             <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"16px 16px 28px",
@@ -3199,10 +3425,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             </div>
 
             {/* Proctoring report */}
-            {tabSwitchCount>0&&(
-              <div style={{padding:"10px 12px",borderRadius:12,background:"#FEF2F2",border:"1.5px solid #FECACA",display:"flex",gap:8,alignItems:"center"}}>
-                <AlertCircle size={14} color={FAIL}/>
-                <p style={{margin:0,fontSize:12,color:FAIL,fontWeight:600}}>{tabSwitchCount} tab switch{tabSwitchCount!==1?"es":""} detected — flagged for teacher review</p>
+            {(tabSwitchCount>0||faceViolations>0)&&(
+              <div style={{padding:"10px 12px",borderRadius:12,background:"#FEF2F2",border:"1.5px solid #FECACA",display:"flex",flexDirection:"column",gap:4}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <AlertCircle size={14} color={FAIL}/>
+                  <p style={{margin:0,fontSize:12,color:FAIL,fontWeight:800}}>Proctoring Violations — Flagged for Review</p>
+                </div>
+                {tabSwitchCount>0&&<p style={{margin:"0 0 0 22px",fontSize:11,color:FAIL,fontWeight:600}}>• {tabSwitchCount} tab switch{tabSwitchCount!==1?"es":""} detected</p>}
+                {faceViolations>0&&<p style={{margin:"0 0 0 22px",fontSize:11,color:FAIL,fontWeight:600}}>• {faceViolations} camera violation{faceViolations!==1?"s":""} (face / gaze detection)</p>}
               </div>
             )}
 
