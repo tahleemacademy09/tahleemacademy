@@ -1,60 +1,69 @@
 // supabase/functions/verify-bank-account/index.ts
-// Verifies a Nigerian bank account via Paystack's resolve endpoint.
-// Keeps PAYSTACK_SECRET_KEY server-side.
-
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+// Verifies a Nigerian bank account via Paystack's /bank/resolve endpoint.
+// Uses Deno.serve (required by current Supabase Edge Runtime).
 
 const CORS = {
   "Access-Control-Allow-Origin":  "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-serve(async (req) => {
+const json = (data: unknown, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
+
+Deno.serve(async (req) => {
+  // Handle CORS preflight
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
+
   try {
-    const { account_number, bank_code } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { account_number, bank_code } = body as Record<string, string>;
 
     if (!account_number || !bank_code) {
-      return new Response(
-        JSON.stringify({ error: "account_number and bank_code are required" }),
-        { status: 400, headers: { ...CORS, "Content-Type": "application/json" } },
-      );
+      return json({ error: "account_number and bank_code are required" }, 400);
     }
 
-    const PAYSTACK_KEY = Deno.env.get("PAYSTACK_SECRET_KEY");
-    if (!PAYSTACK_KEY) {
-      return new Response(
-        JSON.stringify({ error: "PAYSTACK_SECRET_KEY not configured" }),
-        { status: 500, headers: { ...CORS, "Content-Type": "application/json" } },
-      );
+    const PAYSTACK_SECRET = Deno.env.get("PAYSTACK_SECRET_KEY");
+    if (!PAYSTACK_SECRET) {
+      console.error("[verify-bank-account] PAYSTACK_SECRET_KEY env var is not set");
+      return json({ error: "Payment service not configured — contact admin" }, 503);
     }
 
     const url = `https://api.paystack.co/bank/resolve?account_number=${encodeURIComponent(account_number)}&bank_code=${encodeURIComponent(bank_code)}`;
-    const res  = await fetch(url, {
-      headers: { Authorization: `Bearer ${PAYSTACK_KEY}` },
-    });
-    const data = await res.json();
 
-    if (!res.ok || !data.status) {
-      return new Response(
-        JSON.stringify({ error: data.message || "Verification failed" }),
-        { status: 400, headers: { ...CORS, "Content-Type": "application/json" } },
-      );
+    console.log(`[verify-bank-account] Resolving account=${account_number} bank=${bank_code}`);
+
+    const psRes = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${PAYSTACK_SECRET}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const psData = await psRes.json();
+
+    console.log(`[verify-bank-account] Paystack response status=${psRes.status}`, JSON.stringify(psData));
+
+    if (!psRes.ok || !psData.status) {
+      // Pass Paystack's actual error message back so teachers know what's wrong
+      const msg = psData?.message || "Account verification failed";
+      return json({ error: msg }, 400);
     }
 
-    // Return just what the client needs
-    return new Response(
-      JSON.stringify({
-        account_name:   data.data.account_name,
-        account_number: data.data.account_number,
-      }),
-      { headers: { ...CORS, "Content-Type": "application/json" } },
-    );
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: (err as Error).message }),
-      { status: 500, headers: { ...CORS, "Content-Type": "application/json" } },
-    );
+    return json({
+      account_name:   psData.data.account_name,
+      account_number: psData.data.account_number,
+      bank_code,
+    });
+
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    console.error("[verify-bank-account] Unexpected error:", msg);
+    return json({ error: msg }, 500);
   }
 });
