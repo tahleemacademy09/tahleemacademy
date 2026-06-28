@@ -11,7 +11,7 @@
 //                           by the time the user actually taps to open it
 // • Scroll position saved per materialId and restored on reopen
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 
 const PDFJS_VERSION = "3.11.174";
 const PDFJS_SRC    = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}/pdf.min.js`;
@@ -171,6 +171,80 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
   const [errMsg,setErrMsg]= useState("");
   const cancelRef = useRef(false);
   const lastDrawn = useRef(0);
+
+  // ── Zoom / rotate / download state ───────────────────────────────────────
+  const [zoom,   setZoom]   = useState(1);
+  const [rotate, setRotate] = useState(0); // degrees: 0 90 180 270
+  const zoomRef  = useRef(1);
+
+  // Pinch-to-zoom touch tracking
+  const touch1         = useRef<Touch | null>(null);
+  const touch2         = useRef<Touch | null>(null);
+  const pinchStartDist = useRef(0);
+  const pinchStartZoom = useRef(1);
+  const lastTap        = useRef(0);
+
+  const clampZoom = (z: number) => Math.min(5, Math.max(0.5, z));
+
+  const applyZoom = useCallback((z: number) => {
+    const clamped = clampZoom(z);
+    zoomRef.current = clamped;
+    setZoom(clamped);
+  }, []);
+
+  const zoomIn    = useCallback(() => applyZoom(zoomRef.current + 0.25), [applyZoom]);
+  const zoomOut   = useCallback(() => applyZoom(zoomRef.current - 0.25), [applyZoom]);
+  const resetView = useCallback(() => { applyZoom(1); setRotate(0); }, [applyZoom]);
+  const rotateCW  = useCallback(() => setRotate(r => (r + 90) % 360), []);
+
+  // Ctrl/Cmd + scroll = zoom (desktop)
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      applyZoom(zoomRef.current - e.deltaY * 0.002);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [applyZoom]);
+
+  // Pinch-to-zoom + double-tap (mobile)
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const dist = (a: Touch, b: Touch) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        touch1.current = e.touches[0];
+        touch2.current = e.touches[1];
+        pinchStartDist.current = dist(e.touches[0], e.touches[1]);
+        pinchStartZoom.current = zoomRef.current;
+      } else if (e.touches.length === 1) {
+        const now = Date.now();
+        if (now - lastTap.current < 300) {
+          e.preventDefault();
+          applyZoom(zoomRef.current > 1.1 ? 1 : 2);
+        }
+        lastTap.current = now;
+      }
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !touch1.current) return;
+      e.preventDefault();
+      applyZoom(pinchStartZoom.current * (dist(e.touches[0], e.touches[1]) / pinchStartDist.current));
+    };
+    const onTouchEnd = () => { touch1.current = null; touch2.current = null; };
+    el.addEventListener("touchstart",  onTouchStart, { passive: false });
+    el.addEventListener("touchmove",   onTouchMove,  { passive: false });
+    el.addEventListener("touchend",    onTouchEnd,   { passive: true });
+    return () => {
+      el.removeEventListener("touchstart",  onTouchStart);
+      el.removeEventListener("touchmove",   onTouchMove);
+      el.removeEventListener("touchend",    onTouchEnd);
+    };
+  }, [applyZoom]);
 
   // ── Page navigator (always-visible "N / total" + jump-to-page) ───────────
   const [currentPage, setCurrentPage] = useState(1);
@@ -415,9 +489,75 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
         </div>
       )}
 
-      <div ref={scrollRef} style={{ flex:1, overflowY:"auto", padding:"8px", display: phase === "error" ? "none" : "block" }}>
-        <div ref={containerRef}/>
+      {/* ── Zoom / Rotate toolbar ─────────────────────────────────────────── */}
+      {(phase === "rendering" || phase === "done") && (
+        <div style={{
+          position:"absolute", bottom:14, left:"50%", transform:"translateX(-50%)", zIndex:8,
+          display:"flex", alignItems:"center", gap:4,
+          background:"rgba(15,17,23,.88)", border:"1px solid rgba(255,255,255,.12)",
+          borderRadius:30, padding:"5px 8px", boxShadow:"0 4px 16px rgba(0,0,0,.5)",
+          backdropFilter:"blur(8px)",
+        }}>
+          {/* Zoom out */}
+          <button title="Zoom out" onClick={zoomOut} disabled={zoom <= 0.5} style={btnStyle(zoom <= 0.5)}>－</button>
+          {/* Zoom % — tap to reset to 100% */}
+          <button title="Reset zoom" onClick={resetView} style={{
+            minWidth:46, height:28, borderRadius:8, border:"1px solid rgba(255,255,255,.15)",
+            background:"rgba(255,255,255,.06)", color:"#d1d5db", fontSize:11, fontWeight:700,
+            cursor:"pointer", padding:"0 4px",
+          }}>{Math.round(zoom * 100)}%</button>
+          {/* Zoom in */}
+          <button title="Zoom in" onClick={zoomIn} disabled={zoom >= 5} style={btnStyle(zoom >= 5)}>＋</button>
+
+          <div style={{ width:1, height:20, background:"rgba(255,255,255,.12)", margin:"0 2px" }}/>
+
+          {/* Rotate */}
+          <button title="Rotate 90°" onClick={rotateCW} style={btnStyle(false)}>⟳</button>
+
+          <div style={{ width:1, height:20, background:"rgba(255,255,255,.12)", margin:"0 2px" }}/>
+
+          {/* Download */}
+          <a href={url} download title="Download PDF" style={{
+            width:28, height:28, borderRadius:8, border:"1px solid rgba(255,255,255,.15)",
+            background:"rgba(255,255,255,.06)", color:"#d1d5db", fontSize:14,
+            display:"flex", alignItems:"center", justifyContent:"center", textDecoration:"none",
+          }}>⬇</a>
+        </div>
+      )}
+
+      <div
+        ref={scrollRef}
+        style={{
+          flex:1, overflowY:"auto", overflowX: zoom > 1 ? "auto" : "hidden",
+          padding:"8px", display: phase === "error" ? "none" : "block",
+          // Let the browser handle two-finger scroll normally when not pinching
+          touchAction: "pan-x pan-y",
+        }}
+      >
+        <div
+          ref={containerRef}
+          style={{
+            transform: `scale(${zoom}) rotate(${rotate}deg)`,
+            transformOrigin: "top center",
+            transition: "transform 0.1s ease",
+            // When zoomed or rotated, expand to allow scrolling to edges
+            width: zoom > 1 ? `${100 / zoom}%` : "100%",
+            marginBottom: zoom > 1 ? `${(zoom - 1) * 100}%` : 0,
+          }}
+        />
       </div>
     </div>
   );
+}
+
+/* Small icon button shared by toolbar */
+function btnStyle(disabled: boolean): React.CSSProperties {
+  return {
+    width:28, height:28, borderRadius:8, border:"1px solid rgba(255,255,255,.15)",
+    background: disabled ? "rgba(255,255,255,.03)" : "rgba(255,255,255,.06)",
+    color: disabled ? "rgba(255,255,255,.25)" : "#d1d5db",
+    fontSize:16, cursor: disabled ? "default" : "pointer",
+    display:"flex", alignItems:"center", justifyContent:"center",
+    pointerEvents: disabled ? "none" : "auto",
+  } as React.CSSProperties;
 }
