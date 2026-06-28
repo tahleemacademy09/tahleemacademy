@@ -81,21 +81,42 @@ export default function TeacherPayments() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Get teacher user_ids — prefer user_roles, fall back to teacher_profiles
-      const { data: roleRows } = await (supabase as any)
-        .from("user_roles")
+      // 1. Get teacher user_ids from profiles (role = teacher)
+      //    We read from profiles directly — more reliable than user_roles table
+      //    which may not exist in all environments.
+      const { data: teacherProfiles } = await (supabase as any)
+        .from("profiles")
         .select("user_id")
         .eq("role", "teacher");
 
-      let teacherIds: string[] = (roleRows || []).map((r: any) => r.user_id);
+      let teacherIds: string[] = (teacherProfiles || []).map((r: any) => r.user_id);
 
-      // 2. Fetch bank accounts (full data) — also use their user_ids as a safety net
-      //    in case a teacher has a bank entry but no role/profile row yet
-      const { data: banks } = await (supabase as any)
-        .from("teacher_bank_accounts")
-        .select("*");
+      // Fallback: try user_roles table too (union, ignore if table missing)
+      try {
+        const { data: roleRows } = await (supabase as any)
+          .from("user_roles")
+          .select("user_id")
+          .eq("role", "teacher");
+        if (roleRows) {
+          const roleIds = (roleRows as any[]).map((r: any) => r.user_id);
+          teacherIds = Array.from(new Set([...teacherIds, ...roleIds]));
+        }
+      } catch {
+        // user_roles table doesn't exist — that's fine, we got teachers from profiles
+      }
 
-      const bankOwnerIds: string[] = (banks || []).map((r: any) => r.user_id);
+      // 2. Fetch bank accounts — gracefully handle missing table
+      let banks: any[] = [];
+      try {
+        const { data: bankRows, error: bankErr } = await (supabase as any)
+          .from("teacher_bank_accounts")
+          .select("*");
+        if (!bankErr) banks = bankRows || [];
+      } catch {
+        // teacher_bank_accounts table missing — show teachers with "No Bank Details"
+      }
+
+      const bankOwnerIds: string[] = banks.map((r: any) => r.user_id);
       const allTeacherIds = Array.from(new Set([...teacherIds, ...bankOwnerIds]));
 
       // 3. Get their profiles
@@ -109,31 +130,39 @@ export default function TeacherPayments() {
         tList = data || [];
       }
 
-      // 4. All payments
-      const { data: pays } = await (supabase as any)
-        .from("teacher_payments")
-        .select("*")
-        .order("payment_date", { ascending: false });
+      // 4. All payments — gracefully handle missing table
+      let pays: any[] = [];
+      try {
+        const { data: payRows, error: payErr } = await (supabase as any)
+          .from("teacher_payments")
+          .select("*")
+          .order("payment_date", { ascending: false });
+        if (!payErr) pays = payRows || [];
+      } catch {
+        // teacher_payments table missing — will show empty history
+      }
 
       const bankMap: Record<string, any> = {};
-      (banks || []).forEach((b: any) => { bankMap[b.user_id] = b; });
+      banks.forEach((b: any) => { bankMap[b.user_id] = b; });
 
       setTeachers(tList);
       setBankAccounts(bankMap);
-      setPayments(pays || []);
+      setPayments(pays);
 
-      const pRows = pays || [];
       setStats({
-        totalPaid:        pRows.filter((r: any) => r.status === "paid").reduce((s: number, r: any) => s + (r.amount || 0), 0),
-        pendingAmt:       pRows.filter((r: any) => r.status === "pending").reduce((s: number, r: any) => s + (r.amount || 0), 0),
+        totalPaid:        pays.filter((r: any) => r.status === "paid").reduce((s: number, r: any) => s + (r.amount || 0), 0),
+        pendingAmt:       pays.filter((r: any) => r.status === "pending").reduce((s: number, r: any) => s + (r.amount || 0), 0),
         teachersWithBank: Object.keys(bankMap).length,
         totalTeachers:    tList.length,
       });
+    } catch (err: any) {
+      console.error("[TeacherPayments] loadAll error:", err);
+      toast({ title: "Failed to load teacher data", description: err?.message, variant: "destructive" });
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
