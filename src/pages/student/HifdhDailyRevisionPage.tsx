@@ -17,6 +17,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useHifdhSettings } from "@/hooks/useHifdhSettings";
 import {
   ArrowLeft, Mic, MicOff, BookOpen, CalendarDays, Clock, Trophy,
   Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
@@ -1504,8 +1505,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     setFaceViolations(faceViolationsRef.current);
     setFaceWarning(reason);
     setTimeout(()=>setFaceWarning(null), 5000);
-    // 3 violations → auto-fail
-    if(faceViolationsRef.current >= 3){
+    // violation_limit violations → auto-fail
+    if(faceViolationsRef.current >= hifdhSettings.violation_limit){
       clearInterval(faceCheckRef.current);
       setFaceWarning("⛔ Too many violations — test auto-submitted");
       setTimeout(()=>setAutoSubmitFail(true), 2000);
@@ -2632,7 +2633,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           </p>
           <div style={{padding:"10px 18px",borderRadius:12,background:`${FAIL}22`,border:`1px solid ${FAIL}55`}}>
             <p style={{margin:0,fontSize:12,color:"rgba(255,255,255,.7)",textAlign:"center"}}>
-              Violation {faceViolations} of 3 — 3 violations will auto-submit the test
+              Violation {faceViolations} of {hifdhSettings.violation_limit} — {hifdhSettings.violation_limit} violations will auto-submit the test
             </p>
           </div>
           <button onClick={()=>setFaceWarning(null)}
@@ -3956,6 +3957,7 @@ function DayDetailModal({day,totalPagesInProg,pagesReadSoFar,onClose}:{
 ═══════════════════════════════════════════════════════════════════*/
 export default function HifdhDailyRevisionPage() {
   const navigate = useNavigate();
+  const { settings: hifdhSettings } = useHifdhSettings();
   const [loading,      setLoading]      = useState(true);
   const [userId,       setUserId]       = useState<string|null>(null);
   const [studentName,  setStudentName]  = useState("Student");
