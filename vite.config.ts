@@ -86,21 +86,44 @@ export default defineConfig(({ mode }) => ({
         // Works together with constBindings:false for belt-and-suspenders
         // coverage of both intra-chunk and cross-chunk TDZ scenarios.
         hoistTransitiveImports: false,
-        manualChunks: {
-          // LiveKit WebRTC — heavy, only needed inside classroom sessions
-          "vendor-livekit": [
-            "livekit-client",
-            "@livekit/components-react",
-            "@livekit/components-styles",
-          ],
-          // Framer Motion — animation library, not needed at first paint
-          "vendor-motion": ["framer-motion"],
-          // Recharts — charting, only used in dashboards
-          "vendor-charts": ["recharts"],
-          // PDF / spreadsheet utilities — only used in specific admin pages
-          "vendor-docs": ["jspdf", "xlsx"],
-          // Supabase client — shared but large, isolate for long-term caching
-          "vendor-supabase": ["@supabase/supabase-js"],
+        manualChunks(id) {
+          // ── Vendor libraries — always isolated ──────────────────────────
+          if (id.includes("node_modules/livekit-client") ||
+              id.includes("node_modules/@livekit")) {
+            return "vendor-livekit";
+          }
+          if (id.includes("node_modules/framer-motion")) {
+            return "vendor-motion";
+          }
+          // Recharts + ALL its d3 sub-dependencies in one chunk.
+          // Using the function form ensures nothing else leaks in.
+          if (id.includes("node_modules/recharts") ||
+              id.includes("node_modules/d3-") ||
+              id.includes("node_modules/victory-vendor") ||
+              id.includes("node_modules/d3")) {
+            return "vendor-charts";
+          }
+          if (id.includes("node_modules/jspdf") ||
+              id.includes("node_modules/xlsx")) {
+            return "vendor-docs";
+          }
+          if (id.includes("node_modules/@supabase")) {
+            return "vendor-supabase";
+          }
+
+          // ── Pages that import recharts — force into their own chunks ────
+          // This prevents Rollup from co-bundling them with StudentDashboard,
+          // which was causing "se.map is not a function" when recharts code
+          // inside Transcripts/ExamResults ran before their data was ready.
+          if (id.includes("src/pages/student/Transcripts")) {
+            return "page-transcripts";
+          }
+          if (id.includes("src/pages/student/ExamResults")) {
+            return "page-exam-results";
+          }
+          if (id.includes("src/pages/admin/TranscriptManagement")) {
+            return "page-transcript-mgmt";
+          }
         },
       },
     },
