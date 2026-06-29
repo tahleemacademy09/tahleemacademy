@@ -5,15 +5,6 @@ import { componentTagger } from "lovable-tagger";
 import type { Plugin } from "vite";
 
 // ── iOS chunk-load recovery ───────────────────────────────────────────────────
-// When iOS Safari has a stale index.html cached (from a previous deploy),
-// dynamic import() calls for the new hashed chunk filenames fail silently
-// and produce a blank screen. This plugin injects a tiny error handler into
-// the built index.html that detects "Failed to fetch dynamically imported module"
-// / "Load failed" errors and forces a hard reload — clearing the stale cache
-// and fetching the real current index.html (which is now no-store in Vercel).
-//
-// FIXED: original code would also fire when the page was hidden (PWA minimize).
-// Guard added: only reload if document.visibilityState === "visible".
 function chunkLoadRecoveryPlugin(): Plugin {
   return {
     name: "chunk-load-recovery",
@@ -21,8 +12,6 @@ function chunkLoadRecoveryPlugin(): Plugin {
       const script = `
 <script>
   function _chunkReload() {
-    // Never reload while the PWA is backgrounded — that causes a
-    // jarring full-refresh when the user returns from minimize.
     if (document.visibilityState !== 'visible') return;
     if (!sessionStorage.getItem('_chunkReload')) {
       sessionStorage.setItem('_chunkReload', '1');
@@ -65,69 +54,58 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        // ── TDZ FIX (PRIMARY) ─────────────────────────────────────────────
-        // The app has 60+ files each declaring `const G`, `const GOLD`,
-        // `const GM` etc. at module level. When Rollup scope-hoists these
-        // into a single chunk it renames duplicates (e.g. to `le`, `ne`,
-        // `re`) but the initialization ORDER can put a usage before the
-        // declaration → "Cannot access 'le' before initialization".
-        //
-        // `generatedCode.constBindings: false` tells Rollup to emit `var`
-        // instead of `const`/`let` for module-level bindings in the output.
-        // `var` is hoisted to function scope, so there is NO TDZ — the
-        // variable exists (as undefined) from the start of the chunk's
-        // execution, and is assigned when the initializer runs.
-        // This is the canonical Rollup fix for this exact class of error.
+        // ── TDZ FIX ───────────────────────────────────────────────────────
+        // Emit var instead of const/let for module-level bindings so there
+        // is no Temporal Dead Zone when Rollup reorders declarations.
         generatedCode: {
           constBindings: false,
         },
-        // ── TDZ FIX (SECONDARY) ──────────────────────────────────────────
-        // Prevents Rollup from reordering transitive imports across chunks.
-        // Works together with constBindings:false for belt-and-suspenders
-        // coverage of both intra-chunk and cross-chunk TDZ scenarios.
         hoistTransitiveImports: false,
+
         manualChunks(id) {
-          // ── React core — MUST be its own chunk so it is fully initialized
-          // before any other vendor chunk (e.g. recharts) calls React.forwardRef
-          // at module-init time. Without this, vendor-charts can load before
-          // React exists → "Cannot read properties of undefined (reading 'forwardRef')".
-          if (id.includes("node_modules/react/") ||
-              id.includes("node_modules/react-dom/") ||
-              id.includes("node_modules/react-is/") ||
-              id.includes("node_modules/scheduler/")) {
-            return "vendor-react";
+          // ── vendor-charts: React + recharts + d3 in ONE chunk ────────────
+          //
+          // recharts calls React.forwardRef / React.createContext at MODULE
+          // LEVEL (outside any function). If React is in a separate chunk,
+          // the browser may load vendor-charts before vendor-react finishes
+          // executing → React is undefined → crash.
+          //
+          // Co-locating React and recharts in the SAME chunk guarantees
+          // React is fully initialised before recharts module code runs —
+          // they execute in declaration order within a single JS file,
+          // not across asynchronous chunk boundaries.
+          if (
+            id.includes("node_modules/react/") ||
+            id.includes("node_modules/react-dom/") ||
+            id.includes("node_modules/react-is/") ||
+            id.includes("node_modules/scheduler/") ||
+            id.includes("node_modules/recharts") ||
+            id.includes("node_modules/d3-") ||
+            id.includes("node_modules/victory-vendor") ||
+            id.includes("node_modules/d3")
+          ) {
+            return "vendor-charts";
           }
 
-          // ── Vendor libraries — always isolated ──────────────────────────
-          if (id.includes("node_modules/livekit-client") ||
-              id.includes("node_modules/@livekit")) {
+          // ── Other vendor libraries ────────────────────────────────────────
+          if (
+            id.includes("node_modules/livekit-client") ||
+            id.includes("node_modules/@livekit")
+          ) {
             return "vendor-livekit";
           }
           if (id.includes("node_modules/framer-motion")) {
             return "vendor-motion";
           }
-          // Recharts + ALL its d3 sub-dependencies in one chunk.
-          // Using the function form ensures nothing else leaks in.
-          if (id.includes("node_modules/recharts") ||
-              id.includes("node_modules/d3-") ||
-              id.includes("node_modules/victory-vendor") ||
-              id.includes("node_modules/d3")) {
-            return "vendor-charts";
-          }
-          if (id.includes("node_modules/jspdf") ||
-              id.includes("node_modules/xlsx")) {
+          if (
+            id.includes("node_modules/jspdf") ||
+            id.includes("node_modules/xlsx")
+          ) {
             return "vendor-docs";
           }
           if (id.includes("node_modules/@supabase")) {
             return "vendor-supabase";
           }
-
-          // NOTE: page-level manual chunks for Transcripts/ExamResults/TranscriptManagement
-          // were intentionally removed. Splitting them caused React.createContext to fire
-          // before vendor-react was initialized → white screen crash.
-          // The original reason for splitting (se.map bug) was fixed directly in
-          // StudentDashboard.tsx (removed erroneous () after .map()), so these splits
-          // are no longer needed.
         },
       },
     },
