@@ -122,19 +122,12 @@ export default defineConfig(({ mode }) => ({
             return "vendor-supabase";
           }
 
-          // ── Pages that import recharts — force into their own chunks ────
-          // This prevents Rollup from co-bundling them with StudentDashboard,
-          // which was causing "se.map is not a function" when recharts code
-          // inside Transcripts/ExamResults ran before their data was ready.
-          if (id.includes("src/pages/student/Transcripts")) {
-            return "page-transcripts";
-          }
-          if (id.includes("src/pages/student/ExamResults")) {
-            return "page-exam-results";
-          }
-          if (id.includes("src/pages/admin/TranscriptManagement")) {
-            return "page-transcript-mgmt";
-          }
+          // NOTE: page-level manual chunks for Transcripts/ExamResults/TranscriptManagement
+          // were intentionally removed. Splitting them caused React.createContext to fire
+          // before vendor-react was initialized → white screen crash.
+          // The original reason for splitting (se.map bug) was fixed directly in
+          // StudentDashboard.tsx (removed erroneous () after .map()), so these splits
+          // are no longer needed.
         },
       },
     },
