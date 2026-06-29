@@ -571,7 +571,7 @@ ${term3.length>0 ? buildTermSection(term3,"الفترة الثالثة","Third T
                   <span className="font-bold text-sm" style={{ color:G }}>{t("Score Trend","مسار الدرجات")}</span>
                 </div>
                 <ResponsiveContainer width="100%" height={180}>
-                  <LineChart data={trendData}>
+                  <LineChart data={trendData || []}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f0f4f8" />
                     <XAxis dataKey="name" tick={{ fontSize:10 }} axisLine={false} tickLine={false} />
                     <YAxis domain={[0,100]} tick={{ fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`${v}%`} />
@@ -590,7 +590,7 @@ ${term3.length>0 ? buildTermSection(term3,"الفترة الثالثة","Third T
                 <span className="font-bold text-sm" style={{ color:G }}>{t("Term Comparison","مقارنة الفترات")}</span>
               </div>
               <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={termBarData} barSize={44}>
+                <BarChart data={termBarData || []} barSize={44}>
                   <XAxis dataKey="name" tick={{ fontSize:12 }} axisLine={false} tickLine={false} />
                   <YAxis domain={[0,100]} tick={{ fontSize:10 }} axisLine={false} tickLine={false} tickFormatter={v=>`${v}%`} />
                   <Tooltip formatter={(v:any) => [`${v}%`,"Average"]}
