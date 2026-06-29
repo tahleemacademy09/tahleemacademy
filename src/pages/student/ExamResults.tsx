@@ -464,7 +464,7 @@ const ExamResults = () => {
                       <Target style={{ width: 16, height: 16, color: GOLD }} /> {t("Performance by Difficulty", "الأداء حسب الصعوبة")}
                     </div>
                     <ResponsiveContainer width="100%" height={160}>
-                      <BarChart data={diffData} barSize={36}>
+                      <BarChart data={diffData || []} barSize={36}>
                         <XAxis dataKey="name" tick={{ fontSize: 12, fontFamily: "'Cairo',sans-serif" }} axisLine={false} tickLine={false} />
                         <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={v => `${v}%`} />
                         <Tooltip formatter={(v: any) => `${v}%`} contentStyle={{ borderRadius: 10, fontSize: 12, fontFamily: "'Cairo',sans-serif" }} />
@@ -490,7 +490,7 @@ const ExamResults = () => {
                       <TrendingUp style={{ width: 16, height: 16, color: GOLD }} /> {t("Skills Breakdown", "تحليل المهارات")}
                     </div>
                     <ResponsiveContainer width="100%" height={200}>
-                      <RadarChart data={radarData}>
+                      <RadarChart data={radarData || []}>
                         <PolarGrid stroke="#e5e7eb" />
                         <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fontFamily: "'Cairo',sans-serif" }} />
                         <Radar dataKey="score" stroke={G} fill={G} fillOpacity={0.2} strokeWidth={2} />
