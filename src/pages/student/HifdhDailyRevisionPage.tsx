@@ -3800,7 +3800,9 @@ export default function HifdhDailyRevisionPage() {
   const [loading,      setLoading]      = useState(true);
   const [userId,       setUserId]       = useState<string|null>(null);
   const [studentName,  setStudentName]  = useState("Student");
-  const [assignment,   setAssignment]   = useState<Assignment|null>(null);
+  // Multi-assignment support: all active assignments
+  const [assignments,  setAssignments]  = useState<Assignment[]>([]);
+  const [activeAssignIdx, setActiveAssignIdx] = useState(0);
   const [logs,         setLogs]         = useState<DailyLog[]>([]);
   const [todayLog,     setTodayLog]     = useState<DailyLog|null>(null);
   const [tab,          setTab]          = useState<MainTab>("today");
@@ -3811,6 +3813,9 @@ export default function HifdhDailyRevisionPage() {
   const [overrideNotif, setOverrideNotif] = useState<{score:number;feedback:string;teacher:string}|null>(null);
   const today = todayISO();
 
+  // Derived: current active assignment (the one student is viewing/doing session for)
+  const assignment = assignments[activeAssignIdx] ?? null;
+
   /* ── Load data ── */
   useEffect(()=>{
     supabase.auth.getUser().then(async({data})=>{
@@ -3818,29 +3823,29 @@ export default function HifdhDailyRevisionPage() {
       const uid=data.user.id;
       setUserId(uid);
 
-      const [{data:pf},{data:asgn},{data:lgs}] = await Promise.all([
+      const [{data:pf},{data:asgnAll},{data:lgs}] = await Promise.all([
         supabase.from("profiles").select("full_name").eq("user_id" as any,uid).maybeSingle(),
         (supabase as any).from("hifdh_daily_assignments")
-          .select("*").eq("student_id",uid).eq("active",true).maybeSingle(),
+          .select("*").eq("student_id",uid).eq("active",true).order("created_at",{ascending:true}),
         (supabase as any).from("hifdh_daily_logs")
           .select("*").eq("student_id",uid)
           .order("log_date",{ascending:false}).limit(60),
       ]);
 
       if((pf as any)?.full_name) setStudentName((pf as any).full_name);
-      if(asgn) {
-        // The RPC stores programStart/programDays/daysOff inside the notes JSON field.
-        // Enrich the assignment so getTodayPages() can compute the correct page.
+      // Enrich all active assignments
+      const enrichedAll: Assignment[] = ((asgnAll as any[]) ?? []).map((asgn: any) => {
         let extra: any = {};
-        try { extra = JSON.parse((asgn as any).notes || "{}"); } catch {}
-        const enriched: Assignment = {
-          ...(asgn as Assignment),
-          program_start: extra.programStart ?? (asgn as any).program_start ?? (asgn as any).starts_on,
-          program_days:  extra.programDays  ?? (asgn as any).program_days,
-          days_off:      extra.daysOff      ?? (asgn as any).days_off ?? [],
-        };
-        setAssignment(enriched);
-      }
+        try { extra = JSON.parse(asgn.notes || "{}"); } catch {}
+        return {
+          ...asgn,
+          program_start: extra.programStart ?? asgn.program_start ?? asgn.starts_on,
+          program_days:  extra.programDays  ?? asgn.program_days,
+          days_off:      extra.daysOff      ?? asgn.days_off ?? [],
+        } as Assignment;
+      });
+      setAssignments(enrichedAll);
+      setActiveAssignIdx(0);
       const allLogs=(lgs??[]) as DailyLog[];
       setLogs(allLogs);
       const todLog=allLogs.find(l=>l.log_date===today)??null;
@@ -3934,7 +3939,7 @@ export default function HifdhDailyRevisionPage() {
   );
 
   /* ── No assignment ── */
-  if(!assignment) return(
+  if(assignments.length === 0) return(
     <div style={{minHeight:"100dvh",background:WARM,fontFamily:"'Cairo',sans-serif",
       display:"flex",flexDirection:"column"}}>
       <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
@@ -4064,6 +4069,31 @@ export default function HifdhDailyRevisionPage() {
           {/* ════ TAB: TODAY ════ */}
           {tab==="today"&&(
             <>
+          {/* ── Multi-assignment switcher (shown only when >1 active assignment) ── */}
+          {assignments.length > 1 && (
+            <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4,scrollbarWidth:"none" as any}}>
+              {assignments.map((a, i) => {
+                const modeLabel = a.mode==="juz"?"Juz":a.mode==="hizb"?"Hizb":"Surah";
+                const items = (a.selected_items||[]).slice(0,3).join(", ")+(a.selected_items?.length>3?"…":"");
+                const isActive = i === activeAssignIdx;
+                return (
+                  <button key={a.id} onClick={()=>{ setActiveAssignIdx(i); setShowSession(false); }}
+                    style={{flexShrink:0,padding:"8px 14px",borderRadius:12,border:`2px solid ${isActive?GOLD:BRD}`,
+                      background:isActive?`linear-gradient(135deg,${G1},${G2})`:W,
+                      color:isActive?W:G2,fontWeight:800,fontSize:11,cursor:"pointer",
+                      fontFamily:"inherit",transition:"all .15s",
+                      boxShadow:isActive?`0 2px 12px ${G1}44`:"none"}}>
+                    <span style={{color:isActive?GOLD_L:"#9CA3AF",fontSize:9,display:"block",fontWeight:700,
+                      textTransform:"uppercase",letterSpacing:.4,marginBottom:2}}>
+                      Programme {i+1}
+                    </span>
+                    {modeLabel} {items}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
               {/* Today's hero card */}
               <div style={{borderRadius:20,overflow:"hidden",
                 background:todayDone
