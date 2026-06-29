@@ -170,20 +170,26 @@ const LiveClassManagement = () => {
   useEffect(()=>{ fetchData(); },[fetchData]);
   useEffect(()=>{ const iv=setInterval(fetchData,15000); return ()=>clearInterval(iv); },[fetchData]);
 
-  useEffect(()=>{
-    const liveSess = sessions.filter(s=>s.status==="live");
-    if (!liveSess.length) return;
-    (async()=>{
-      const map: Record<string,any[]> = {};
-      await Promise.all(liveSess.map(async s=>{
-        const {data} = await supabase.from("class_participants")
-          .select("*,profiles:student_id(full_name,level)")
-          .eq("session_id",s.id).is("left_at",null);
-        map[s.id]=data||[];
-      }));
-      setParticipants(map);
-    })();
-  },[sessions]);
+  const fetchParticipants = useCallback(async (liveSessions: any[]) => {
+    if (!liveSessions.length) { setParticipants({}); return; }
+    const map: Record<string,any[]> = {};
+    await Promise.all(liveSessions.map(async s => {
+      const { data } = await supabase.from("class_participants")
+        .select("*,profiles:student_id(full_name,level)")
+        .eq("session_id", s.id).is("left_at", null);
+      map[s.id] = data || [];
+    }));
+    setParticipants(map);
+  }, []);
+
+  useEffect(() => {
+    const liveSess = sessions.filter(s => ["live","active"].includes(s.status));
+    fetchParticipants(liveSess);
+    // Independent 10-second poll so participant count stays live
+    // even when the sessions array reference hasn't changed.
+    const iv = setInterval(() => fetchParticipants(liveSess), 10_000);
+    return () => clearInterval(iv);
+  }, [sessions, fetchParticipants]);
 
   useEffect(()=>{
     (async()=>{
@@ -194,7 +200,7 @@ const LiveClassManagement = () => {
   },[]);
 
   const todayIdx  = now.getDay();
-  const liveNow   = sessions.filter(s=>s.status==="live");
+  const liveNow   = sessions.filter(s=>["live","active"].includes(s.status));
   const scheduled = sessions.filter(s=>s.status==="scheduled");
   const todaySlots= timetable.filter(t=>t.day_of_week===todayIdx)
                               .sort((a,b)=>a.start_time.localeCompare(b.start_time));
@@ -781,7 +787,7 @@ const LiveClassManagement = () => {
                 const cur=now.getHours()*60+now.getMinutes();
                 const isNow=cur>=sh*60+sm&&cur<eh*60+em;
                 const isPast=cur>=eh*60+em;
-                const relatedSess=sessions.find(s=>s.subject_id===slot.subject_id&&s.status==="live");
+                const relatedSess=sessions.find(s=>s.subject_id===slot.subject_id&&["live","active"].includes(s.status));
                 return (
                   <div key={slot.id} className="lc-slot"
                     style={{background:isNow?"rgba(239,68,68,.04)":isPast?"#fafafa":"#fff",borderLeftColor:isNow?"#ef4444":isPast?"#e5e7eb":G,boxShadow:isNow?"0 2px 16px rgba(239,68,68,.1)":"0 1px 6px rgba(0,0,0,.05)"}}
