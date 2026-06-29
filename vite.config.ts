@@ -87,6 +87,17 @@ export default defineConfig(({ mode }) => ({
         // coverage of both intra-chunk and cross-chunk TDZ scenarios.
         hoistTransitiveImports: false,
         manualChunks(id) {
+          // ── React core — MUST be its own chunk so it is fully initialized
+          // before any other vendor chunk (e.g. recharts) calls React.forwardRef
+          // at module-init time. Without this, vendor-charts can load before
+          // React exists → "Cannot read properties of undefined (reading 'forwardRef')".
+          if (id.includes("node_modules/react/") ||
+              id.includes("node_modules/react-dom/") ||
+              id.includes("node_modules/react-is/") ||
+              id.includes("node_modules/scheduler/")) {
+            return "vendor-react";
+          }
+
           // ── Vendor libraries — always isolated ──────────────────────────
           if (id.includes("node_modules/livekit-client") ||
               id.includes("node_modules/@livekit")) {
