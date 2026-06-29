@@ -120,10 +120,10 @@ function PayPill({ status, exempt }: { status?: string|null; exempt?: boolean })
 
 // ── Bulk Assign Bottom Sheet ──────────────────────────────────────────────────
 function BulkAssignModal({
-  levels, students, onClose, onDone,
+  levels, students, onClose, onDone, adminUserId,
 }: {
   levels: string[]; students: Student[];
-  onClose: () => void; onDone: () => void;
+  onClose: () => void; onDone: () => void; adminUserId: string | null;
 }) {
   const [form, setForm] = useState<BulkForm>({
     target:"all", levelSlug: levels[0]||"",
@@ -162,15 +162,24 @@ function BulkAssignModal({
     for (const s of targets) {
       setProgress(`Assigning ${s.full_name}… (${done+failed+1}/${targets.length})`);
       try {
-        const { error: rpcErr } = await (supabase as any).rpc("save_hifdh_assignment", {
-          p_student_id:     s.user_id,
-          p_mode:           form.mode,
-          p_selected_items: form.selectedItems,
-          p_daily_pages:    form.dailyPages,
-          p_reciter_id:     form.reciterId,
-          p_notes:          notesJson,
-        });
-        if (rpcErr) throw rpcErr;
+        // Direct INSERT — allows multiple active assignments per student simultaneously.
+        // Do NOT use save_hifdh_assignment RPC as it upserts (deactivates existing ones).
+        const { error: insErr } = await (supabase as any)
+          .from("hifdh_daily_assignments")
+          .insert({
+            student_id:     s.user_id,
+            assigned_by:    adminUserId,
+            mode:           form.mode,
+            selected_items: form.selectedItems,
+            daily_pages:    form.dailyPages,
+            reciter_id:     form.reciterId,
+            notes:          notesJson,
+            active:         true,
+            starts_on:      form.programStart,
+            created_at:     new Date().toISOString(),
+            updated_at:     new Date().toISOString(),
+          });
+        if (insErr) throw insErr;
         done++;
       } catch { failed++; }
     }
@@ -625,6 +634,7 @@ export default function HifdhRevisionTracker() {
         <BulkAssignModal
           levels={allLevels} students={students}
           onClose={()=>setShowBulk(false)} onDone={load}
+          adminUserId={userId}
         />
       )}
 
