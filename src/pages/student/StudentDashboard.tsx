@@ -861,7 +861,7 @@ const StudentDashboard = () => {
               </div>
             </div>
           );
-        })()}
+        })}
 
         {/* ── Academic Snapshot ── */}
         <div style={card}>
