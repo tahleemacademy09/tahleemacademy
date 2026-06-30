@@ -5245,7 +5245,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       prefetch.current=null; // always clear after reading so Try Again fetches a new token
       if(!tk||!url){const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});if(e)throw e;if(data?.error)throw new Error(data.error);tk=data.token;url=data.url;}
       setToken(tk!);setWsUrl(url!);
-      const{data:sessions}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active","scheduled"]).order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
+      // FIX: pick the session that is ACTUALLY live/active first, only falling back to a
+      // merely-scheduled row if none is live. Sorting by scheduled_at alone was wrong: a
+      // future pre-scheduled occurrence of a recurring class always has a later scheduled_at
+      // than today's already-live session, so it was being picked instead — causing students'
+      // attendance_logs/class_participants rows to be written against the wrong session_id.
+      // The LiveKit call itself still worked (room name is keyed off subject_id, not session
+      // id), but the admin dashboard's participant count — looked up by the real live
+      // session's id — found nothing, showing 0 while people were actually in the class.
+      const{data:liveRows}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active"]).order("actual_start_time",{ascending:false,nullsFirst:false}).limit(1);
+      let sessions=liveRows;
+      if(!sessions?.length){
+        const{data:scheduledRows}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","scheduled").order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
+        sessions=scheduledRows;
+      }
       if(sessions?.length){
         const freshSessionId=sessions[0].id;
         // FIX BUG 1: Apply class settings using the freshly-retrieved session ID, not the
