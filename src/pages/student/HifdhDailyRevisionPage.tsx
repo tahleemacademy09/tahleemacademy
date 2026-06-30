@@ -17,6 +17,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
 import {
   ArrowLeft, Mic, MicOff, BookOpen, CalendarDays, Clock, Trophy,
   Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
@@ -418,8 +419,13 @@ function wordsMatch(rw: string, gw: string): boolean {
 // grid can display full tashkeel while still using normalised text for matching.
 interface WordResult { word: string; status: "correct" | "missing"; }
 function compareWords(refText: string, gotText: string): WordResult[] {
-  // Split on whitespace — keep originals for display, normalize for matching
-  const origRef = refText.split(/\s+/).filter(Boolean);
+  // Split on whitespace — keep originals for display, normalize for matching.
+  // FILTER OUT waqf-only tokens (e.g. a lone "صلے", "ۚ", "ۖ" that ended up as
+  // its own whitespace-separated token in the source text). These are pause/stop
+  // marks, not actual recited words — a reciter cannot "say" them, so they must
+  // never be scored as missing/incorrect. We detect them by checking that
+  // stripping waqf characters from the token leaves nothing behind.
+  const origRef = refText.split(/\s+/).filter(Boolean).filter(w => stripWaqf(w).length > 0);
   const normRef = origRef.map(w => normalizeArabic(w));
   const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
 
@@ -994,7 +1000,7 @@ function FullAudioPlayer({ url, label = "Your Recitation" }: { url: string; labe
   };
 
   const cycleSpeed = () => {
-    const speeds = [0.75, 1, 1.25, 1.5];
+    const speeds = [0.5, 0.75, 1, 1.25, 1.5, 2];
     const next = speeds[(speeds.indexOf(speed) + 1) % speeds.length];
     setSpeed(next);
     if (sourceRef.current) sourceRef.current.playbackRate.value = next;
@@ -1184,6 +1190,13 @@ interface SessionProps {
 }
 
 function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: SessionProps) {
+  // Admin-configured Hifdh settings (pass mark + "Hifdh Proctoring" on/off).
+  // Falls back to the module defaults (55%) until loaded.
+  const { settings: hifdhSettings } = useHifdhSettings();
+  const PASS_THRESHOLD      = hifdhSettings.pass_mark ?? DEFAULT_HIFDH_SETTINGS.pass_mark;
+  const TEST_PASS_THRESHOLD = PASS_THRESHOLD;
+  const hifdhProctoringEnabled = hifdhSettings.proctoring_enabled;
+
   // If recitation is done today but quiz not yet completed, start directly at quiz
   // Only resume to quiz if recitation is done AND score passed the threshold.
   // A 2% score means they failed recitation — they should redo it, not skip to quiz.
@@ -1432,6 +1445,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 errorWords,
               },
             ],
+            // Flag for admin/teacher dashboards only — never shown to the student.
+            // Lets staff see at a glance that this page's score is unreliable
+            // because no transcription engine returned text (e.g. API outage).
+            ...(noApiWarning ? { transcription_failed: true } : {}),
             // Preserve teacher override so it isn't wiped by re-attempts
             ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
           },
@@ -1456,6 +1473,41 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     document.addEventListener("visibilitychange",handler);
     return()=>document.removeEventListener("visibilitychange",handler);
   },[phase]);
+
+  /* ── Hifdh Proctoring (admin-controlled, default OFF) ───────────────────
+     When enabled in Admin Settings → Hifdh → Hifdh Proctoring, this extends
+     focus-mode protection across the ENTIRE session — recitation ("reading"/
+     recording) AND the questions/test ("testing") phase — not just the quiz:
+       • Detects tab/app switching (flags it, same counter used by teachers)
+       • Blocks copy, cut, paste and right-click so students can't look up
+         answers or paste in text
+     This is intentionally separate from the camera-based useProctoring hook
+     (used elsewhere for exams) — Hifdh sessions are voice-based and don't
+     need a webcam, just focus protection. */
+  useEffect(() => {
+    if (!hifdhProctoringEnabled) return;
+    if (phase !== "reading" && phase !== "testing") return;
+    const onHidden = () => {
+      if (document.hidden) {
+        setTabSwitchCount(c => c + 1);
+        setFocusWarning(true);
+        setTimeout(() => setFocusWarning(false), 4000);
+      }
+    };
+    const block = (e: Event) => e.preventDefault();
+    document.addEventListener("visibilitychange", onHidden);
+    document.addEventListener("copy", block);
+    document.addEventListener("cut", block);
+    document.addEventListener("paste", block);
+    document.addEventListener("contextmenu", block);
+    return () => {
+      document.removeEventListener("visibilitychange", onHidden);
+      document.removeEventListener("copy", block);
+      document.removeEventListener("cut", block);
+      document.removeEventListener("paste", block);
+      document.removeEventListener("contextmenu", block);
+    };
+  }, [hifdhProctoringEnabled, phase]);
 
   /* ── Fetch juz ayahs for Section B (lazy, up to 3 prior pages) ── */
   const fetchJuzAyahs = useCallback(async () => {
@@ -1487,8 +1539,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: false,   // off: avoids pumping during quiet tajweed pauses
-          sampleRate: 44100,
+          autoGainControl: true,    // boosts quiet recitation to an audible level
+          sampleRate: 48000,
           channelCount: 1,
         }
       });
@@ -1497,8 +1549,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       }) || "";
       const mr = new MediaRecorder(stream, mime ? {
         mimeType: mime,
-        audioBitsPerSecond: 128000,   // 128 kbps — clear enough for Quranic evaluation
-      } : { audioBitsPerSecond: 128000 });
+        audioBitsPerSecond: 192000,   // 192 kbps — clearer audio for Quranic evaluation & playback
+      } : { audioBitsPerSecond: 192000 });
       const blobKey = `${userId}_${todayISO()}_partial`;
       mr.ondataavailable = (e) => {
         if (e.data?.size > 0) {
@@ -2496,6 +2548,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       <style>{`
         @keyframes spin  { to{transform:rotate(360deg)} }
         @keyframes wavePulse { 0%,100%{transform:scaleY(.4)} 50%{transform:scaleY(1)} }
+        @keyframes micPulse { 0%{transform:scale(.85);opacity:.9} 100%{transform:scale(1.6);opacity:0} }
         @keyframes slideUp { from{transform:translateY(12px);opacity:0} to{transform:translateY(0);opacity:1} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&family=Amiri:wght@400;700&family=Cairo:wght@400;600;700;800;900&display=swap');
@@ -2708,23 +2761,38 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               </div>
             )}
 
-            {/* Recording indicator bar — shown at top while recording, page stays visible */}
+            {/* Recording indicator — shown ALONE while recording. The Quran page
+                is intentionally hidden during recitation: the student should be
+                reciting from memory, not reading along with a blurred page, and
+                the previous blurred-word layout was confusing/distracting. */}
             {isRecording && (
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-                marginBottom:12,padding:"10px 14px",borderRadius:14,
-                background:`${PASS}10`,border:`1.5px solid ${PASS}40`}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <Wave/>
-                  <p style={{margin:0,fontWeight:800,fontSize:13,color:G1}}>Listening…</p>
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+                gap:22,padding:"48px 20px",minHeight:"50vh"}}>
+                <div style={{position:"relative",width:128,height:128,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  <div style={{position:"absolute",inset:0,borderRadius:"50%",
+                    background:`${PASS}22`,animation:"micPulse 1.6s ease-out infinite"}}/>
+                  <div style={{position:"absolute",inset:14,borderRadius:"50%",
+                    background:`${PASS}33`,animation:"micPulse 1.6s ease-out infinite .3s"}}/>
+                  <div style={{width:84,height:84,borderRadius:"50%",
+                    background:`linear-gradient(135deg,${G2},${G3})`,
+                    display:"flex",alignItems:"center",justifyContent:"center",
+                    boxShadow:`0 6px 24px ${G1}66`}}>
+                    <Mic size={36} color={GOLD}/>
+                  </div>
                 </div>
-                <span style={{padding:"4px 14px",borderRadius:20,
+                <Wave/>
+                <p style={{margin:0,fontWeight:800,fontSize:15,color:G1}}>Listening…</p>
+                <span style={{padding:"5px 16px",borderRadius:20,
                   background:`${PASS}18`,border:`1px solid ${PASS}50`,
-                  fontSize:13,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
+                  fontSize:14,fontWeight:900,color:PASS,fontVariantNumeric:"tabular-nums"}}>
                   🔴 {Math.floor(recSecs/60).toString().padStart(2,"0")}:{(recSecs%60).toString().padStart(2,"0")}
                 </span>
+                <p style={{margin:0,fontSize:11,color:"#9CA3AF",textAlign:"center",maxWidth:260,lineHeight:1.6}}>
+                  Recite Page {todayPages[pageIdx]} from memory. Tap below when finished to get your score.
+                </p>
               </div>
             )}
-            {/* Quran page — always visible so student can read while reciting */}
+            {/* Quran page — visible only BEFORE recording starts, for preview */}
             {!isRecording && !retryCount && (
               <div style={{marginBottom:10,padding:"8px 12px",borderRadius:10,
                 background:"#FFFBEB",border:"1px solid #FDE68A",
@@ -2735,7 +2803,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </span>
               </div>
             )}
-            <QuranPage/>
+            {!isRecording && <QuranPage/>}
           </div>
 
           {/* Sticky bottom */}
@@ -2893,7 +2961,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </div>
               )}
 
-              {/* 5 ── No transcription API warning */}
+              {/* 5 ── Transcription unavailable — student-friendly message only.
+                     Technical detail (which API/key) is for admins/teachers, not
+                     students — it's saved as transcription_failed in session_data
+                     and surfaced on the admin/teacher review pages instead. */}
               {noApiWarning && (
                 <div style={{padding:"12px 14px",borderRadius:12,
                   background:"#FFF7ED",border:"1.5px solid #FED7AA",
@@ -2901,12 +2972,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   <span style={{fontSize:18,flexShrink:0}}>⚠️</span>
                   <div>
                     <p style={{margin:"0 0 4px",fontSize:12,fontWeight:800,color:AMBER}}>
-                      Transcription Unavailable
+                      Couldn't Score This Recitation
                     </p>
                     <p style={{margin:0,fontSize:11,color:"#78350F",lineHeight:1.6}}>
-                      No speech-to-text API key is configured (VITE_GROQ_API_KEY or DEEPGRAM_API_KEY).
-                      Your audio was recorded and saved, but scoring required transcription.
-                      Please contact your admin to add an API key — then re-record to get a proper score.
+                      Your audio was recorded and saved safely, but we weren't able to score it right now.
+                      Please try recording again in a moment.
                     </p>
                   </div>
                 </div>
