@@ -8,11 +8,19 @@ import { supabase } from "@/integrations/supabase/client";
 export interface HifdhSettings {
   // Proctoring
   violation_limit: number;  // how many face violations before auto-submit (default 5)
-  // Future: add more hifdh-specific settings here
+  // Pass mark (%) required for a Hifdh recitation / test to be marked as passed.
+  pass_mark: number;
+  // "Hifdh Proctoring" — when enabled, applies focused-mode protections
+  // (tab-switch detection, copy/paste/right-click blocking, screen-stay-on)
+  // across the daily revision recitation AND the Hifdh questions/test phase,
+  // not just the proctored quiz section. Admin-controlled on/off switch.
+  proctoring_enabled: boolean;
 }
 
 export const DEFAULT_HIFDH_SETTINGS: HifdhSettings = {
   violation_limit: 5,
+  pass_mark: 55,
+  proctoring_enabled: false,
 };
 
 export const useHifdhSettings = () => {
@@ -37,6 +45,12 @@ export const useHifdhSettings = () => {
         violation_limit: map.violation_limit !== undefined
           ? Number(map.violation_limit)
           : prev.violation_limit,
+        pass_mark: map.pass_mark !== undefined
+          ? Number(map.pass_mark)
+          : prev.pass_mark,
+        proctoring_enabled: map.proctoring_enabled !== undefined
+          ? map.proctoring_enabled === "true"
+          : prev.proctoring_enabled,
       }));
     }
     setLoading(false);
