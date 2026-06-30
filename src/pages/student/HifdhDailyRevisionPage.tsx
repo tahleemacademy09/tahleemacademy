@@ -2100,31 +2100,28 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     stopListenAudio();
     setListenError(false);
     if (!(surahNum && surahNum > 0 && numberInSurah && numberInSurah > 0)) {
-      // Should never happen for a properly-built listen_choose question, but
-      // guard against it rather than silently falling back to TTS.
-      console.error("[HifdhDaily] listen_choose question missing surah/ayah number — cannot play reciter audio.");
+      console.error("[HifdhDaily] listen_choose question missing surah/ayah number.");
       setListenError(true);
       return;
     }
-    const audio = new Audio();
-    audio.preload = "auto";
-    audio.src = quranAyahAudioUrl(surahNum, numberInSurah, "Alafasy_128kbps");
+    // new Audio(url) starts loading immediately — no explicit load() needed.
+    // Calling load() then play() on mobile triggers onerror before data is buffered.
+    const url = quranAyahAudioUrl(surahNum, numberInSurah, "Alafasy_128kbps");
+    const audio = new Audio(url);
     listenAudioRef.current = audio;
     setIsSpeaking(true);
     audio.onended = () => { setIsSpeaking(false); setListenDone(true); listenAudioRef.current = null; };
-    let retried = false;
-    audio.onerror = () => {
-      if (!retried) {
-        // One retry — first load can fail on flaky mobile connections
-        retried = true;
-        audio.load();
-        audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); setListenError(true); });
-        return;
-      }
-      listenAudioRef.current = null; setIsSpeaking(false); setListenError(true);
+    audio.onerror = () => { listenAudioRef.current = null; setIsSpeaking(false); setListenError(true); };
+    // Wait for canplay before calling play() — avoids the "play() called before
+    // buffer ready" abort that shows up on Android/Samsung as an immediate onerror.
+    let played = false;
+    const tryPlay = () => {
+      if (played) return; played = true;
+      audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); setListenError(true); });
     };
-    audio.load();
-    audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); setListenError(true); });
+    audio.addEventListener("canplay", tryPlay, { once: true });
+    // Fallback: if canplay doesn't fire within 3s (very slow connection), try anyway
+    setTimeout(tryPlay, 3000);
   };
 
   const acceptPage = () => {
