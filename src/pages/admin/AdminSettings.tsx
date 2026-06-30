@@ -22,7 +22,7 @@ import { storageSupabase } from "@/integrations/supabase/storageClient";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { useHifdhSettings } from "@/hooks/useHifdhSettings";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Camera, Save, Lock, LogOut, Eye, EyeOff, Loader2,
   ExternalLink, School, Bell, ShieldCheck, ChevronRight,
@@ -122,7 +122,8 @@ export default function AdminSettings() {
   const { settings, loading: acLoading, updateMultiple } = useAcademySettings();
   const { settings: hifdhSettings, loading: hifdhLoading, save: saveHifdh } = useHifdhSettings();
 
-  const [tab,             setTab]             = useState("profile");
+  const [searchParams]             = useSearchParams();
+  const [tab,             setTab]             = useState(() => searchParams.get("tab") || "profile");
   const [saving,          setSaving]          = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [showPw,          setShowPw]          = useState(false);
@@ -131,7 +132,7 @@ export default function AdminSettings() {
   const [pw,              setPw]              = useState({ new: "", confirm: "" });
   const [acSaving,        setAcSaving]        = useState(false);
   const [hifdhSaving,     setHifdhSaving]     = useState(false);
-  const [hifdhDraft,      setHifdhDraft]      = useState({ violation_limit: 5 });
+  const [hifdhDraft,      setHifdhDraft]      = useState({ violation_limit: 5, pass_mark: 55, proctoring_enabled: false });
 
   /* ── Profile ─────────────────────────────────────────────────── */
   const [form, setForm] = useState({
@@ -220,7 +221,11 @@ export default function AdminSettings() {
   /* ── Sync hifdh settings once loaded ────────────────────────── */
   useEffect(() => {
     if (!hifdhLoading) {
-      setHifdhDraft({ violation_limit: hifdhSettings.violation_limit });
+      setHifdhDraft({
+        violation_limit: hifdhSettings.violation_limit,
+        pass_mark: hifdhSettings.pass_mark,
+        proctoring_enabled: hifdhSettings.proctoring_enabled,
+      });
     }
   }, [hifdhLoading, hifdhSettings]);
 
@@ -311,7 +316,11 @@ export default function AdminSettings() {
   const saveHifdhSettings = async () => {
     if (!user) return;
     setHifdhSaving(true);
-    await saveHifdh({ violation_limit: hifdhDraft.violation_limit }, user.id);
+    await saveHifdh({
+      violation_limit: hifdhDraft.violation_limit,
+      pass_mark: hifdhDraft.pass_mark,
+      proctoring_enabled: hifdhDraft.proctoring_enabled,
+    }, user.id);
     setHifdhSaving(false);
     toast({ title: "✅ Hifdh settings saved!" });
   };
@@ -592,7 +601,58 @@ export default function AdminSettings() {
 
         {/* ════════ HIFDH TAB ════════ */}
         {tab === "hifdh" && <>
-          <Sec title="Proctoring Settings">
+          <Sec title="Hifdh Daily — General Settings">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0", borderBottom: "1px solid #F3F4F6" }}>
+              <div style={{ flex: 1 }}>
+                <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>
+                  🎯 Pass Mark
+                </p>
+                <p style={{ fontSize: 11, color: "#9CA3AF", margin: "3px 0 0", lineHeight: 1.5 }}>
+                  Minimum recitation/score percentage a student must reach to pass a Hifdh page or test.
+                </p>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: 16 }}>
+                <button
+                  onClick={() => setHifdhDraft(d => ({ ...d, pass_mark: Math.max(10, d.pass_mark - 5) }))}
+                  style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >−</button>
+                <span style={{ minWidth: 44, textAlign: "center", fontWeight: 800, fontSize: 20, color: G, fontFamily: "'Cairo', sans-serif" }}>
+                  {hifdhDraft.pass_mark}%
+                </span>
+                <button
+                  onClick={() => setHifdhDraft(d => ({ ...d, pass_mark: Math.min(100, d.pass_mark + 5) }))}
+                  style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 16, fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", justifyContent: "center" }}
+                >+</button>
+              </div>
+            </div>
+            <div style={{ padding: "12px 0 4px", display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+              {[50, 55, 60, 70, 80, 90].map(n => (
+                <button key={n} onClick={() => setHifdhDraft(d => ({ ...d, pass_mark: n }))}
+                  style={{ padding: "5px 14px", borderRadius: 20, border: `1.5px solid ${hifdhDraft.pass_mark === n ? G : "#E5E7EB"}`, background: hifdhDraft.pass_mark === n ? G : "#fff", color: hifdhDraft.pass_mark === n ? "#fff" : "#374151", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo', sans-serif" }}>
+                  {n}%
+                </button>
+              ))}
+            </div>
+          </Sec>
+
+          <Sec title="Hifdh Proctoring">
+            <Tog
+              label="🛡️ Enable Hifdh Proctoring"
+              sub="Applies focused-mode protections during daily recitation AND the Hifdh questions/test: blocks copy/paste & right-click, detects tab-switching/app-switching, keeps the screen awake, and flags violations for teacher review — so students focus only on their recitation, not the rest of the device."
+              checked={hifdhDraft.proctoring_enabled}
+              onChange={(v) => setHifdhDraft(d => ({ ...d, proctoring_enabled: v }))}
+            />
+            {hifdhDraft.proctoring_enabled && (
+              <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "#F0FDF4", border: "1px solid #BBF7D0" }}>
+                <p style={{ margin: 0, fontSize: 11, color: "#166534", lineHeight: 1.6 }}>
+                  ✅ Active across: Daily Revision recitation · Hifdh questions (Section A &amp; B) · Recitation/Musabaqah tests.
+                  Violations are recorded in the session log and visible to teachers/admins on review.
+                </p>
+              </div>
+            )}
+          </Sec>
+
+          <Sec title="Face Violation Proctoring (Test Camera)">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 0", borderBottom: "1px solid #F3F4F6" }}>
               <div style={{ flex: 1 }}>
                 <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>

@@ -185,6 +185,18 @@ function SessionDetail({log,ov,saving,onOvChange,onSave,onClose}:{
         ))}
       </div>
 
+      {/* Admin-only technical flag: transcription engine failed for this session.
+          Students never see this — it's only meaningful to staff diagnosing scores. */}
+      {(sd as any)?.transcription_failed && (
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",borderRadius:10,
+          background:"#FEF2F2",border:"1.5px solid #FECACA"}}>
+          <span style={{fontSize:14}}>⚠️</span>
+          <span style={{fontSize:11,fontWeight:700,color:FAIL}}>
+            Transcription engine failed for this session — score may be unreliable (0%). Admin review recommended.
+          </span>
+        </div>
+      )}
+
       {/* Audio player */}
       {sd?.audio_url
         ?<SessionAudioPlayer url={sd.audio_url} logDate={log.log_date}/>

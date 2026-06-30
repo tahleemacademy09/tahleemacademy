@@ -4,10 +4,13 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
+import { useNavigate } from "react-router-dom";
+import { useHifdhSettings } from "@/hooks/useHifdhSettings";
+import { Switch } from "@/components/ui/switch";
 import {
   Shield, AlertTriangle, Search, Eye, Trash2, Monitor, Download,
   User, Activity, ShieldAlert, ShieldCheck, Camera, RefreshCw,
-  ChevronRight, X,
+  ChevronRight, X, BookOpen,
 } from "lucide-react";
 
 /* ── Brand tokens ─────────────────── */
@@ -51,6 +54,45 @@ const Thumb = ({ media, onClick }: { media: any; onClick: () => void }) => {
       <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(0,0,0,0)", transition:"background .2s" }}>
         <Eye style={{width:16,height:16,color:"#fff",opacity:0}}/>
       </div>
+    </div>
+  );
+};
+
+/* ── Hifdh Proctoring section — lives inside General Proctoring ──────
+   Quick on/off switch for "full proctoring" across Hifdh Daily Revision
+   recitation + questions/test, with a shortcut to the detailed Hifdh
+   settings (pass mark, violation limit) in Admin Settings → Hifdh tab. */
+const HifdhProctoringSection = ({ t }: { t: (en: string, ar: string) => string }) => {
+  const { settings, loading, save } = useHifdhSettings();
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+
+  const toggle = async (v: boolean) => {
+    setBusy(true);
+    await save({ proctoring_enabled: v });
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ background:"#fff", borderRadius:16, padding:"14px 16px", marginBottom:16, border:`1px solid ${BORDER}` }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+          <BookOpen style={{ width:16, height:16, color:G }}/>
+          <p style={{ margin:0, fontWeight:800, fontSize:13, color:G }}>{t("Hifdh Proctoring","مراقبة الحفظ")}</p>
+        </div>
+        <Switch checked={settings.proctoring_enabled} disabled={loading||busy} onCheckedChange={toggle}/>
+      </div>
+      <p style={{ margin:"0 0 10px", fontSize:11, color:TL, lineHeight:1.6 }}>
+        {t(
+          "When enabled, students get focused-mode protection (no copy/paste, tab-switch detection, screen stays on) during daily Hifdh recitation and the Hifdh questions/test — not just exams.",
+          "عند التفعيل، يحصل الطلاب على حماية الوضع المركّز أثناء تلاوة الحفظ اليومي واختبار/أسئلة الحفظ."
+        )}
+      </p>
+      <button onClick={()=>navigate("/admin/settings?tab=hifdh")}
+        style={{ display:"flex", alignItems:"center", gap:4, background:"none", border:"none",
+          color:G, fontSize:12, fontWeight:700, cursor:"pointer", padding:0 }}>
+        {t("Pass mark & violation limit settings","إعدادات علامة النجاح وحد المخالفات")} <ChevronRight style={{width:13,height:13}}/>
+      </button>
     </div>
   );
 };
@@ -452,6 +494,9 @@ const ProctoringDashboard = () => {
             </div>
           </div>
         </div>
+
+        {/* Hifdh Proctoring — quick toggle + link to full Hifdh settings */}
+        <HifdhProctoringSection t={t} />
 
         {/* Filters */}
         <div style={{ background:"#fff", borderRadius:16, padding:"14px 16px", marginBottom:16, border:`1px solid ${BORDER}` }}>
