@@ -711,13 +711,13 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
   const errorAyahs = allAyahs.filter(a =>
     errorWords.some(ew => normalizeArabic(a.text).includes(normalizeArabic(stripWaqf(ew)).slice(0,3)))
   );
-  for (const a of errorAyahs.slice(0, 4)) {
+  for (const a of shuffle(errorAyahs).slice(0, 4)) {
     const q = makeMcqBlank(a, true, allAyahs, "A");
     if (q) qs.push(q);
   }
 
   // 2. Error continuation — what comes after error verses
-  errorAyahs.forEach(a => {
+  shuffle(errorAyahs).forEach(a => {
     const idx = allAyahs.indexOf(a);
     if (idx < 0 || idx >= allAyahs.length-1) return;
     if (qs.filter(q=>q.section==="A"&&q.type==="mcq_continuation").length >= 2) return;
@@ -726,16 +726,18 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
   });
 
   // 3. Record-continue from error areas
-  errorAyahs.slice(0,2).forEach(a => {
+  shuffle(errorAyahs).slice(0,2).forEach(a => {
     const idx = allAyahs.indexOf(a);
     if (idx < 0 || idx >= allAyahs.length-2) return;
     const q = makeRecordContinue(idx, allAyahs, "A", true);
     if (q) qs.push(q);
   });
 
-  // 4. MCQ next — across today's pages (spread evenly)
+  // 4. MCQ next — across today's pages (spread evenly, random starting offset
+  //    each attempt so repeats don't always test the exact same verses)
   const stepA = Math.max(1, Math.floor(allAyahs.length / 3));
-  for (let i = 0; i < allAyahs.length-1 && qs.filter(q=>q.section==="A"&&q.type==="mcq_next").length < 3; i += stepA) {
+  const startA = allAyahs.length > 1 ? Math.floor(Math.random() * Math.min(stepA, allAyahs.length - 1)) : 0;
+  for (let i = startA; i < allAyahs.length-1 && qs.filter(q=>q.section==="A"&&q.type==="mcq_next").length < 3; i += stepA) {
     const q = makeMcqNext(i, allAyahs, "A");
     if (q) qs.push(q);
   }
@@ -751,19 +753,22 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
   // ── SECTION B: JUZ REVIEW ──────────────────────────────────────
   if (juzAyahs.length >= 3) {
     const stepB = Math.max(1, Math.floor(juzAyahs.length / 3));
+    const startB = juzAyahs.length > 1 ? Math.floor(Math.random() * Math.min(stepB, juzAyahs.length - 1)) : 0;
     // MCQ next
-    for (let i = 0; i < juzAyahs.length-1 && qs.filter(q=>q.section==="B"&&q.type==="mcq_next").length < 3; i += stepB) {
+    for (let i = startB; i < juzAyahs.length-1 && qs.filter(q=>q.section==="B"&&q.type==="mcq_next").length < 3; i += stepB) {
       const q = makeMcqNext(i, juzAyahs, "B");
       if (q) qs.push(q);
     }
     // MCQ blanks
     const stepB2 = Math.max(1, Math.floor(juzAyahs.length / 3));
-    for (let i = 0; i < juzAyahs.length && qs.filter(q=>q.section==="B"&&q.type==="mcq_blank").length < 2; i += stepB2) {
+    const startB2 = juzAyahs.length > 1 ? Math.floor(Math.random() * Math.min(stepB2, juzAyahs.length)) : 0;
+    for (let i = startB2; i < juzAyahs.length && qs.filter(q=>q.section==="B"&&q.type==="mcq_blank").length < 2; i += stepB2) {
       const q = makeMcqBlank(juzAyahs[i], false, juzAyahs, "B");
       if (q) qs.push(q);
     }
-    // Record continue from juz
-    const recIdx = Math.floor(juzAyahs.length / 2);
+    // Record continue from juz — random position each attempt instead of
+    // always the exact midpoint
+    const recIdx = juzAyahs.length > 1 ? Math.floor(Math.random() * (juzAyahs.length - 1)) : 0;
     const qRec = makeRecordContinue(recIdx, juzAyahs, "B");
     if (qRec) qs.push(qRec);
     // Listen+choose from juz
@@ -1337,6 +1342,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // TTS / listen state
   const [isSpeaking,   setIsSpeaking]   = useState(false);
   const [listenDone,   setListenDone]   = useState(false);
+  const [listenError,  setListenError]  = useState(false);
   // Ref to the currently-playing CDN audio so we can stop it when question changes
   const listenAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isRecording,  setIsRecording] = useState(false);
@@ -1517,7 +1523,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             // Flag for admin/teacher dashboards only — never shown to the student.
             // Lets staff see at a glance that this page's score is unreliable
             // because no transcription engine returned text (e.g. API outage).
-            ...(noApiWarning ? { transcription_failed: true } : {}),
+            ...(noApiWarning ? { transcription_failed: true, transcription_failed_reason: lastTranscribeErrorRef.current || "unknown" } : {}),
             // Preserve teacher override so it isn't wiped by re-attempts
             ...(existingTeacherOverride ? { teacher_override: existingTeacherOverride } : {}),
           },
@@ -1696,6 +1702,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             setErrorWords([]);
             setAyahCorrectness([]);
             setNoApiWarning(true); // show "Transcription unavailable" banner
+            console.warn("[HifdhDaily] Transcription failed — reason:", lastTranscribeErrorRef.current);
             idbDeleteBlob(`${userId}_${todayISO()}_partial`);
             setCarryOverSecs(0);
             return;
@@ -1860,7 +1867,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // Uses verbose_json so we can check no_speech_prob and reject silence/noise.
   // Style prompt sets diacritised Quranic script WITHOUT including the verse
   // being recited (Whisper would hallucinate the reference text as the transcript).
+  const lastTranscribeErrorRef = useRef<string>("");
+
   const transcribeAudio = async (blob: Blob, ayahs?: Ayah[]): Promise<string> => {
+    lastTranscribeErrorRef.current = "";
     const ext = blob.type.includes("mp4") ? "mp4"
       : blob.type.includes("ogg") ? "ogg"
       : "webm";
@@ -1883,8 +1893,21 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       return "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
     })();
 
-    // 1. Groq Whisper large-v3 — verbose_json for segment-level no_speech_prob
-    if (GROQ_KEY) {
+    if (!GROQ_KEY) {
+      console.warn("[HifdhDaily] VITE_GROQ_API_KEY is not set in this build — relying on Deepgram fallback only.");
+      lastTranscribeErrorRef.current = "groq_key_missing";
+    }
+
+    // ── Run Groq (with hard timeout) and Deepgram concurrently ────────────────
+    // Previously these ran sequentially: a slow/stalled Groq request (e.g. a CORS
+    // preflight that hangs instead of failing fast) blocked Deepgram from even
+    // starting, which is the main cause of long "Analysing your recitation…" waits.
+    // Now both fire at once and we take whichever returns usable text first.
+
+    const runGroq = async (): Promise<string | null> => {
+      if (!GROQ_KEY) return null;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000); // 8s hard cap
       try {
         const fd = new FormData();
         fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
@@ -1895,39 +1918,73 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         fd.append("prompt", stylePrompt);
         const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
           method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
+          signal: controller.signal,
         });
         if (r.ok) {
           const json = await r.json();
-          // Check ALL segments — reject if the majority are likely silence/noise
           const segs: any[] = json.segments ?? [];
           const avgNoSpeech = segs.length > 0
             ? segs.reduce((s: number, g: any) => s + (g.no_speech_prob ?? 0), 0) / segs.length
             : (json.segments?.[0]?.no_speech_prob ?? 0);
           const txt = (json.text ?? "").trim();
-          // Only reject if most segments are silence (< 0.4 threshold is stricter)
           if (avgNoSpeech < 0.4 && txt.length > 5) return txt;
-          if (avgNoSpeech >= 0.4) return "";
+          if (avgNoSpeech >= 0.4) { lastTranscribeErrorRef.current = "groq_silence_detected"; return ""; }
+          lastTranscribeErrorRef.current = "groq_empty_response";
+          return null;
         }
-      } catch { /* fall through to edge function */ }
-    }
+        const body = await r.text().catch(() => "");
+        lastTranscribeErrorRef.current = `groq_http_${r.status}`;
+        console.error(`[HifdhDaily] Groq transcription failed: HTTP ${r.status}`, body.slice(0, 300));
+        return null;
+      } catch (e: any) {
+        lastTranscribeErrorRef.current = e?.name === "AbortError" ? "groq_timeout_8s" : "groq_network_or_cors_error";
+        console.error("[HifdhDaily] Groq fetch failed:", e);
+        return null;
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
 
-    // 2. Supabase edge function fallback (Deepgram)
-    try {
-      const b64 = await new Promise<string>(resolve => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve((reader.result as string).split(",")[1] || "");
-        reader.readAsDataURL(blob);
-      });
-      const { data } = await supabase.functions.invoke("transcribe-hifdh", {
-        body: { audio: b64, mimeType: blob.type || "audio/webm" },
-      });
-      const tx = data?.text ?? data?.transcript ?? "";
-      if (tx) return tx;
-    } catch { /* fall through */ }
+    const runDeepgram = async (): Promise<string | null> => {
+      try {
+        const b64 = await new Promise<string>(resolve => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve((reader.result as string).split(",")[1] || "");
+          reader.readAsDataURL(blob);
+        });
+        const { data, error } = await supabase.functions.invoke("transcribe-hifdh", {
+          body: { audio: b64, mimeType: blob.type || "audio/webm" },
+        });
+        if (error) {
+          lastTranscribeErrorRef.current = `${lastTranscribeErrorRef.current || "groq_failed"}+deepgram_invoke_error`;
+          console.error("[HifdhDaily] transcribe-hifdh edge function invoke error:", error);
+          return null;
+        }
+        if (data?.error) {
+          lastTranscribeErrorRef.current = `${lastTranscribeErrorRef.current || "groq_failed"}+deepgram_${data.error}`;
+          console.error("[HifdhDaily] transcribe-hifdh returned error:", data.error);
+          return null;
+        }
+        const tx = data?.text ?? data?.transcript ?? "";
+        return tx || null;
+      } catch (e) {
+        lastTranscribeErrorRef.current = `${lastTranscribeErrorRef.current || "groq_failed"}+deepgram_threw`;
+        console.error("[HifdhDaily] transcribe-hifdh fetch threw:", e);
+        return null;
+      }
+    };
+
+    const [groqResult, dgResult] = await Promise.all([runGroq(), runDeepgram()]);
+    // Prefer Groq (generally higher accuracy for Quranic Arabic) when it returned
+    // anything — including an explicit "" silence verdict, which we trust over
+    // Deepgram. Otherwise fall back to whatever Deepgram returned.
+    if (groqResult !== null) return groqResult;
+    if (dgResult) return dgResult;
 
     // 3. No transcription API available — return a sentinel so the UI
     //    can show a helpful message instead of 0% with no explanation.
-    console.warn("[HifdhDaily] No transcription API available. Set VITE_GROQ_API_KEY or DEEPGRAM_API_KEY.");
+    console.warn("[HifdhDaily] No transcription API available. Reason:", lastTranscribeErrorRef.current || "unknown",
+      "— set VITE_GROQ_API_KEY (client build env) and/or DEEPGRAM_API_KEY (Supabase secret).");
     return "__NO_API__";
   };
 
@@ -1954,6 +2011,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     stopListenAudio();
     setQRecording(false); setQRecSecs(0); setQRecChunks([]); setQRecResult(null); setQRecDone(false);
     setListenDone(false);
+    setListenError(false);
     clearInterval(qRecTimerRef.current);
     if (qMediaRecRef.current && qMediaRecRef.current.state !== "inactive") {
       try { qMediaRecRef.current.stop(); } catch {}
@@ -2025,75 +2083,48 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   };
 
   // ── playListenAudio ────────────────────────────────────────────────────────
-  // 1. If we have a global ayah number → fetch Mishary Alafasy mp3 from CDN
-  //    (reliable, professional Quranic recitation, works on all browsers).
-  // 2. On CDN failure or no ayah number → fall back to Web Speech TTS with
-  //    the voices-not-loaded race condition fixed for Android Chrome.
+  // Listen questions must ALWAYS play the actual Mishary Alafasy Qur'an
+  // recitation from the CDN — never a generic Web Speech TTS voice, which
+  // mispronounces Arabic and has none of the correct tajweed. If the CDN
+  // genuinely fails, we surface a retry state rather than substituting TTS.
   // ──────────────────────────────────────────────────────────────────────────
   const stopListenAudio = () => {
     if (listenAudioRef.current) {
       listenAudioRef.current.pause(); listenAudioRef.current.src = "";
       listenAudioRef.current = null;
     }
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     setIsSpeaking(false);
   };
 
-  const speakTextTTS = (text: string) => {
-    if (!("speechSynthesis" in window)) { setListenDone(true); return; }
-    window.speechSynthesis.cancel();
-    const utt = new SpeechSynthesisUtterance(text);
-    utt.lang = "ar-SA"; utt.rate = 0.8;
-    const doSpeak = () => {
-      const voices = window.speechSynthesis.getVoices();
-      const arVoice = voices.find(v => v.lang.startsWith("ar"));
-      if (arVoice) utt.voice = arVoice;
-      utt.onstart = () => setIsSpeaking(true);
-      utt.onend   = () => { setIsSpeaking(false); setListenDone(true); };
-      utt.onerror = () => { setIsSpeaking(false); setListenDone(true); };
-      window.speechSynthesis.speak(utt);
-    };
-    // getVoices() returns [] synchronously on first call on Android Chrome
-    if (window.speechSynthesis.getVoices().length > 0) {
-      doSpeak();
-    } else {
-      window.speechSynthesis.onvoiceschanged = () => {
-        window.speechSynthesis.onvoiceschanged = null; doSpeak();
-      };
-      setTimeout(() => {
-        if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) doSpeak();
-      }, 800);
-    }
-  };
-
-  // Keep the old name as an alias so nothing else breaks
-  const speakText = (text: string) => speakTextTTS(text);
-
   const playListenAudio = (text: string, surahNum?: number, numberInSurah?: number) => {
     stopListenAudio();
-    if (surahNum && surahNum > 0 && numberInSurah && numberInSurah > 0) {
-      const audio = new Audio();
-      audio.preload = "auto";
-      audio.src = quranAyahAudioUrl(surahNum, numberInSurah);
-      listenAudioRef.current = audio;
-      setIsSpeaking(true);
-      audio.onended = () => { setIsSpeaking(false); setListenDone(true); listenAudioRef.current = null; };
-      let retried = false;
-      audio.onerror = () => {
-        if (!retried) {
-          // One retry — first load can fail on flaky mobile connections
-          retried = true;
-          audio.load();
-          audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); speakTextTTS(text); });
-          return;
-        }
-        listenAudioRef.current = null; setIsSpeaking(false); speakTextTTS(text);
-      };
-      audio.load();
-      audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); speakTextTTS(text); });
-    } else {
-      speakTextTTS(text);
+    setListenError(false);
+    if (!(surahNum && surahNum > 0 && numberInSurah && numberInSurah > 0)) {
+      // Should never happen for a properly-built listen_choose question, but
+      // guard against it rather than silently falling back to TTS.
+      console.error("[HifdhDaily] listen_choose question missing surah/ayah number — cannot play reciter audio.");
+      setListenError(true);
+      return;
     }
+    const audio = new Audio();
+    audio.preload = "auto";
+    audio.src = quranAyahAudioUrl(surahNum, numberInSurah, "Alafasy_128kbps");
+    listenAudioRef.current = audio;
+    setIsSpeaking(true);
+    audio.onended = () => { setIsSpeaking(false); setListenDone(true); listenAudioRef.current = null; };
+    let retried = false;
+    audio.onerror = () => {
+      if (!retried) {
+        // One retry — first load can fail on flaky mobile connections
+        retried = true;
+        audio.load();
+        audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); setListenError(true); });
+        return;
+      }
+      listenAudioRef.current = null; setIsSpeaking(false); setListenError(true);
+    };
+    audio.load();
+    audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); setListenError(true); });
   };
 
   const acceptPage = () => {
@@ -3307,10 +3338,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                               :<Play size={16} color={W} style={{marginLeft:2}}/>}
                           </button>
                           <div>
-                            <p style={{margin:0,fontSize:12,fontWeight:700,color:PURPLE}}>
-                              {isSpeaking?"Playing…":listenDone?"✓ Heard — now choose what comes next":"Tap to hear — then choose the continuation"}
+                            <p style={{margin:0,fontSize:12,fontWeight:700,color:listenError?FAIL:PURPLE}}>
+                              {isSpeaking?"Playing…":listenError?"⚠ Couldn't load audio — tap to retry":listenDone?"✓ Heard — now choose what comes next":"Tap to hear — then choose the continuation"}
                             </p>
-                            {listenDone&&<p style={{margin:"2px 0 0",fontSize:10,color:"#9CA3AF"}}>You can replay it</p>}
+                            {listenDone&&!listenError&&<p style={{margin:"2px 0 0",fontSize:10,color:"#9CA3AF"}}>You can replay it</p>}
                           </div>
                         </div>
                       ):(
