@@ -2072,12 +2072,24 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const playListenAudio = (text: string, surahNum?: number, numberInSurah?: number) => {
     stopListenAudio();
     if (surahNum && surahNum > 0 && numberInSurah && numberInSurah > 0) {
-      const audio = new Audio(quranAyahAudioUrl(surahNum, numberInSurah));
+      const audio = new Audio();
       audio.preload = "auto";
+      audio.src = quranAyahAudioUrl(surahNum, numberInSurah);
       listenAudioRef.current = audio;
       setIsSpeaking(true);
       audio.onended = () => { setIsSpeaking(false); setListenDone(true); listenAudioRef.current = null; };
-      audio.onerror = () => { listenAudioRef.current = null; setIsSpeaking(false); speakTextTTS(text); };
+      let retried = false;
+      audio.onerror = () => {
+        if (!retried) {
+          // One retry — first load can fail on flaky mobile connections
+          retried = true;
+          audio.load();
+          audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); speakTextTTS(text); });
+          return;
+        }
+        listenAudioRef.current = null; setIsSpeaking(false); speakTextTTS(text);
+      };
+      audio.load();
       audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); speakTextTTS(text); });
     } else {
       speakTextTTS(text);
@@ -2602,10 +2614,13 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             overflowWrap: "normal",
           }}>
             {bodyTokens.map(tok => (
-              <span key={tok.globalIdx} style={{display: "inline-block"}}>
-                {renderWord(tok)}
-                {tok.isLast && renderAyahNum(tok)}
-              </span>
+              <React.Fragment key={tok.globalIdx}>
+                <span style={{display: "inline-block"}}>
+                  {renderWord(tok)}
+                  {tok.isLast && renderAyahNum(tok)}
+                </span>
+                {" "}
+              </React.Fragment>
             ))}
           </div>
         </div>
@@ -3034,16 +3049,20 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 </div>
               )}
 
-              {/* 4 ── Your Recitation transcript (exact مراجعة) */}
+              {/* 4 ── Your Recitation transcript (exact مراجعة) —
+                   rendered from the matched MUSHAF words (origRef, full tashkeel),
+                   not the raw STT output, so the script matches the Qur'an exactly.
+                   Missing words are simply omitted here (they're already shown
+                   in red above); only what you actually said is shown, in Quran script. */}
               {lastTranscript&&(
                 <div style={{borderRadius:14,padding:"14px",
                   background:"#ffffff",border:`1px solid ${GOLD}22`}}>
                   <p style={{margin:"0 0 8px",fontSize:12,fontWeight:800,color:GOLD}}>
-                    Your Recitation (transcribed)
+                    Your Recitation (matched words)
                   </p>
                   <p style={{margin:0,fontSize:14,lineHeight:2.1,direction:"rtl",
-                    fontFamily:"'Amiri',serif",color:"#1a1a1a",wordBreak:"break-word"}}>
-                    {lastTranscript}
+                    fontFamily:"'Amiri Quran','Amiri',serif",color:"#1a1a1a",wordBreak:"break-word"}}>
+                    {wordRes.filter(w=>w.status==="correct").map(w=>w.word).join(" ")}
                   </p>
                 </div>
               )}
@@ -3467,7 +3486,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
               <p style={{margin:"0 0 10px",fontSize:9,fontWeight:800,color:"#9CA3AF",
                 textTransform:"uppercase",letterSpacing:.5}}>Question Breakdown</p>
               {questions.map((q,i)=>{
-                const ua=answers[i]; const ok=ua===q.correct;
+                const ua=answers[i];
+                const isRecQBreak=q.type==="record_continue"||q.type==="record_complete";
+                const ok=isRecQBreak ? ua===0 : ua===q.correct;
                 return(
                   <div key={q.id} style={{display:"flex",gap:10,padding:"8px 0",
                     borderBottom:i<questions.length-1?"1px solid #F3F4F6":"none"}}>
