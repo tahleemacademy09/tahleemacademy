@@ -147,11 +147,12 @@ interface Question {
   options: string[]; correct: number; correctText: string;
   // For LISTEN questions: a fragment of an ayah to play (TTS via Web Speech or stored text)
   listenText?: string;
-  // Global ayah number (1-6236) — kept for reference only, no longer used for audio URLs.
-  listenAyahNum?: number;
+  // Global ayah number (1-6236) — used as fallback CDN key when surah+verse CDN fails.
+  listenGlobalNum?: number;
   // Surah number + in-surah verse number — used together to build the correct
   // per-surah CDN audio URL (fixes the bug where listen questions played Al-Fatihah
   // audio regardless of which page/surah the question was actually about).
+  listenAyahNum?: number;
   listenSurahNum?: number;
   // For RECORD questions: what the student should recite
   recordPrompt?: string;
@@ -697,8 +698,9 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
     if (distract.length < 2) return null;
     const opts = shuffle([nextFull, ...distract.map(a => fullVerse(a))]);
     return { id:id++, type:"listen_choose", section:sec, snippet:false,
-      listenText: curFull,           // full verse text fed to TTS
-      listenAyahNum: ayah.numberInSurah, // in-surah verse number — used with listenSurahNum for CDN audio
+      listenText: curFull,
+      listenGlobalNum: ayah.number,            // global 1-6236 — fallback CDN key
+      listenAyahNum: ayah.numberInSurah,        // in-surah verse number
       listenSurahNum: ayah.surah.number,
       prompt: curFull,
       promptLabel: `${sec==="A"?"§A Today":"§B Review"} · 👂 Listen to the verse — what comes next?`,
@@ -1342,7 +1344,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // TTS / listen state
   const [isSpeaking,   setIsSpeaking]   = useState(false);
   const [listenDone,   setListenDone]   = useState(false);
-  const [listenError,  setListenError]  = useState(false);
+  const [listenError,    setListenError]    = useState(false);
+  const [listenErrorUrl, setListenErrorUrl] = useState("");
   // Ref to the currently-playing CDN audio so we can stop it when question changes
   const listenAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isRecording,  setIsRecording] = useState(false);
@@ -2012,6 +2015,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     setQRecording(false); setQRecSecs(0); setQRecChunks([]); setQRecResult(null); setQRecDone(false);
     setListenDone(false);
     setListenError(false);
+    setListenErrorUrl("");
     clearInterval(qRecTimerRef.current);
     if (qMediaRecRef.current && qMediaRecRef.current.state !== "inactive") {
       try { qMediaRecRef.current.stop(); } catch {}
@@ -2096,32 +2100,53 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     setIsSpeaking(false);
   };
 
-  const playListenAudio = (text: string, surahNum?: number, numberInSurah?: number) => {
+  const playListenAudio = (text: string, surahNum?: number, numberInSurah?: number, globalNum?: number) => {
     stopListenAudio();
     setListenError(false);
+    setListenErrorUrl("");
     if (!(surahNum && surahNum > 0 && numberInSurah && numberInSurah > 0)) {
-      console.error("[HifdhDaily] listen_choose question missing surah/ayah number.");
+      console.error("[HifdhDaily] listen_choose missing surah/ayah —",
+        "surahNum:", surahNum, "numberInSurah:", numberInSurah, "globalNum:", globalNum);
       setListenError(true);
+      setListenErrorUrl("missing verse data (surahNum=" + (surahNum??0) + " ayah=" + (numberInSurah??0) + ")");
       return;
     }
-    // new Audio(url) starts loading immediately — no explicit load() needed.
-    // Calling load() then play() on mobile triggers onerror before data is buffered.
-    const url = quranAyahAudioUrl(surahNum, numberInSurah, "Alafasy_128kbps");
-    const audio = new Audio(url);
-    listenAudioRef.current = audio;
-    setIsSpeaking(true);
-    audio.onended = () => { setIsSpeaking(false); setListenDone(true); listenAudioRef.current = null; };
-    audio.onerror = () => { listenAudioRef.current = null; setIsSpeaking(false); setListenError(true); };
-    // Wait for canplay before calling play() — avoids the "play() called before
-    // buffer ready" abort that shows up on Android/Samsung as an immediate onerror.
-    let played = false;
-    const tryPlay = () => {
-      if (played) return; played = true;
-      audio.play().catch(() => { listenAudioRef.current = null; setIsSpeaking(false); setListenError(true); });
+    // play() must be called synchronously inside the click-handler user-gesture.
+    const primaryUrl = quranAyahAudioUrl(surahNum, numberInSurah, "Alafasy_128kbps");
+    const fallbackUrl = globalNum && globalNum > 0
+      ? `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${globalNum}.mp3`
+      : null;
+    console.log("[HifdhDaily] playListenAudio primary:", primaryUrl, "fallback:", fallbackUrl);
+
+    const doPlay = (url: string, isFallback: boolean) => {
+      const audio = new Audio(url);
+      listenAudioRef.current = audio;
+      setIsSpeaking(true);
+      audio.onended = () => { setIsSpeaking(false); setListenDone(true); listenAudioRef.current = null; };
+      audio.onerror = () => {
+        console.error("[HifdhDaily] CDN failed:", url, "code:", audio.error?.code);
+        listenAudioRef.current = null;
+        if (!isFallback && fallbackUrl) {
+          doPlay(fallbackUrl, true);
+        } else {
+          setIsSpeaking(false);
+          setListenError(true);
+          setListenErrorUrl(primaryUrl);
+        }
+      };
+      audio.play().catch((e) => {
+        console.error("[HifdhDaily] play() rejected:", e?.name, url);
+        listenAudioRef.current = null;
+        if (!isFallback && fallbackUrl) {
+          doPlay(fallbackUrl, true);
+        } else {
+          setIsSpeaking(false);
+          setListenError(true);
+          setListenErrorUrl(primaryUrl);
+        }
+      });
     };
-    audio.addEventListener("canplay", tryPlay, { once: true });
-    // Fallback: if canplay doesn't fire within 3s (very slow connection), try anyway
-    setTimeout(tryPlay, 3000);
+    doPlay(primaryUrl, false);
   };
 
   const acceptPage = () => {
@@ -3322,7 +3347,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                       {/* Prompt snippet — middle of verse, not full */}
                       {isListenQ?(
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <button onClick={()=>playListenAudio(q.listenText||q.prompt, q.listenSurahNum, q.listenAyahNum)}
+                          <button onClick={()=>playListenAudio(q.listenText||q.prompt, q.listenSurahNum, q.listenAyahNum, q.listenGlobalNum)}
                             disabled={isSpeaking}
                             style={{flexShrink:0,width:48,height:48,borderRadius:"50%",border:"none",cursor:"pointer",
                               background:isSpeaking?`${PURPLE}22`:`linear-gradient(135deg,${PURPLE},#6d28d9)`,
@@ -3336,7 +3361,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                           </button>
                           <div>
                             <p style={{margin:0,fontSize:12,fontWeight:700,color:listenError?FAIL:PURPLE}}>
-                              {isSpeaking?"Playing…":listenError?"⚠ Couldn't load audio — tap to retry":listenDone?"✓ Heard — now choose what comes next":"Tap to hear — then choose the continuation"}
+                              {isSpeaking?"Playing…":listenError
+                                ?`⚠ Audio failed — tap to retry${listenErrorUrl?" ("+listenErrorUrl+")":""}`
+                                :listenDone?"✓ Heard — now choose what comes next":"Tap to hear — then choose the continuation"}
                             </p>
                             {listenDone&&!listenError&&<p style={{margin:"2px 0 0",fontSize:10,color:"#9CA3AF"}}>You can replay it</p>}
                           </div>
