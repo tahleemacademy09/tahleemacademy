@@ -2360,17 +2360,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       });
     }
 
-    // ── Group tokens into mushaf lines ───────────────────────────────────────
-    const lineMap = new Map<number, WordToken[]>();
-    tokens.forEach(tok => {
-      if (!lineMap.has(tok.line)) lineMap.set(tok.line, []);
-      lineMap.get(tok.line)!.push(tok);
-    });
-    const sortedLines = Array.from(lineMap.entries()).sort(([a], [b]) => a - b);
-
     // Bismillah lives on its own line — keep separate
     const bismTokens = tokens.filter(t => t.isBismWord);
     const hasBism = bismTokens.length > 0;
+    // All non-Bismillah tokens, in reading order — rendered as one flowing
+    // justified paragraph (see "Mushaf body" below) instead of per-line blocks.
+    const bodyTokens = tokens.filter(t => !t.isBismWord);
 
     const renderWord = (tok: WordToken) => {
       const st = wordStatuses[tok.globalIdx];
@@ -2591,41 +2586,28 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             </div>
           )}
 
-          {/* ── Mushaf body: one div per mushaf line, fully justified ── */}
-          {sortedLines
-            .filter(([, toks]) => !toks.every(t => t.isBismWord))
-            .map(([lineNum, lineToks]) => {
-              const bodyToks = lineToks.filter(t => !t.isBismWord);
-              if (!bodyToks.length) return null;
-              // Detect if this line has end-of-ayah markers — use center for short lines
-              const hasAyahEnd = bodyToks.some(t => t.isLast);
-              return (
-                <div key={lineNum} style={{
-                  direction: "rtl",
-                  display: "flex",
-                  flexWrap: "nowrap",
-                  // Full justify = space-between so each line fills the column width
-                  // exactly like a physical Mushaf. Short lines (with ayah end) → center.
-                  justifyContent: hasAyahEnd && bodyToks.length <= 4 ? "center" : "space-between",
-                  alignItems: "center",
-                  lineHeight: 3.2,
-                  fontSize: 23,
-                  marginBottom: 0,
-                  minHeight: "3.2em",
-                  letterSpacing: 0.5,
-                }}>
-                  {bodyToks.map(tok => (
-                    <span key={tok.globalIdx} style={{
-                      display:"inline-flex", alignItems:"center",
-                      flexShrink: hasAyahEnd && bodyToks.length <= 4 ? 0 : 1,
-                    }}>
-                      {renderWord(tok)}
-                      {tok.isLast && renderAyahNum(tok)}
-                    </span>
-                  ))}
-                </div>
-              );
-            })}
+          {/* ── Mushaf body: one flowing, justified paragraph (wraps naturally —
+               same layout as the entrance exam recitation screen) ──────────────
+               Previously this rendered one fixed-width flex row per mushaf line
+               with `flexWrap:"nowrap"`, which forced lines wider than the
+               viewport to overflow horizontally and get cut off on narrow
+               phone screens. A single justified block avoids that entirely. */}
+          <div style={{
+            direction: "rtl",
+            textAlign: "justify",
+            lineHeight: 3.2,
+            fontSize: 23,
+            letterSpacing: 0.5,
+            wordBreak: "normal",
+            overflowWrap: "normal",
+          }}>
+            {bodyTokens.map(tok => (
+              <span key={tok.globalIdx} style={{display: "inline-block"}}>
+                {renderWord(tok)}
+                {tok.isLast && renderAyahNum(tok)}
+              </span>
+            ))}
+          </div>
         </div>
 
         {/* ── Inner gold rule (bottom) ── */}
