@@ -242,14 +242,10 @@ export const useProctoring = (
           const frameW = video.videoWidth || W;
           const frameH = video.videoHeight || H;
 
-          // Face too far to the side = looking away. Skipped for close-up
-          // faces (e.g. leaning toward the mic for clearer audio) — a face
-          // filling most of the frame naturally shifts off the strict center
-          // window without actually looking away.
-          const isCloseUpA = (fw * fh) / (frameW * frameH) > 0.35;
+          // Face too far to the side = looking away
           const xRatio = faceCenterX / frameW;
           const yRatio = faceCenterY / frameH;
-          if (!isCloseUpA && (xRatio < 0.25 || xRatio > 0.75 || yRatio < 0.15 || yRatio > 0.85)) {
+          if (xRatio < 0.25 || xRatio > 0.75 || yRatio < 0.15 || yRatio > 0.85) {
             logViolation("looking_away", 1, `Face position off-center: ${xRatio.toFixed(2)}, ${yRatio.toFixed(2)}`);
           }
 
@@ -277,49 +273,43 @@ export const useProctoring = (
       } catch (_) { fdInstance.current = null; }
     }
 
-    // Method B: Skin-tone canvas fallback (used on browsers without the
-    // experimental FaceDetector API, e.g. Samsung Internet / most non-Chrome
-    // mobile browsers — this is the path actually used by nearly all students).
+    // Method B: Skin-tone canvas fallback
     if (!fdInstance.current) {
-      // Full-frame skin centroid — used for both presence AND looking-away/
-      // looking-down detection, and for a "close-up" bypass below.
-      let skinPixels = 0, skinSumX = 0, skinSumY = 0;
-      // r<250 previously excluded overexposed/bright skin pixels — this caused
-      // false "no face" when a student leans close to the camera for clearer
-      // audio (front camera exposure blows out close skin tones near-white).
-      // Raised to 253 so only truly blown-out (near-pure-white) pixels are excluded.
-      const isSkin = (r: number, g: number, b: number) =>
-        r > 60 && g > 30 && b > 15 && r > g && r > b &&
-        Math.abs(r - g) < 120 && (r - b) > 12 && r < 253;
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
+      let skinPixels = 0;
+      // Focus on center 60% of frame where face should be
+      const startX = Math.round(W * 0.2), endX = Math.round(W * 0.8);
+      const startY = Math.round(H * 0.1), endY = Math.round(H * 0.9);
+      const totalCenter = (endX - startX) * (endY - startY);
+      for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
           const i = (y * W + x) * 4;
-          if (isSkin(data[i], data[i+1], data[i+2])) {
-            skinPixels++; skinSumX += x; skinSumY += y;
-          }
+          const r = data[i], g = data[i+1], b = data[i+2];
+          if (r > 60 && g > 30 && b > 15 && r > g && r > b &&
+              Math.abs(r - g) < 120 && (r - b) > 12 && r < 250) skinPixels++;
         }
       }
-      const totalPx = W * H;
-      const skinRatio = skinPixels / totalPx;
-      // A close-up face (leaning in toward the mic) fills a large portion of
-      // the frame — treat that as confidently present without requiring the
-      // centroid to fall inside the narrower "centered" window below.
-      const isCloseUp = skinRatio > 0.18;
-      facePresent = skinRatio > 0.03 || isCloseUp; // 3% skin (or close-up) = face present
+      facePresent = (skinPixels / totalCenter) > 0.03; // 3% skin = face present (more sensitive)
       faceCount = facePresent ? 1 : 0;
 
-      if (facePresent && skinPixels > 0) {
-        const cx = skinSumX / skinPixels / W; // 0..1 across width
-        const cy = skinSumY / skinPixels / H; // 0..1 across height
-        if (!isCloseUp) {
-          // Looking away / looking down — only checked when NOT a close-up
-          // frame, since a close-up face naturally shifts the centroid toward
-          // whichever edge it's nearest without actually "looking away".
-          if (cx < 0.22 || cx > 0.78) {
-            logViolation("looking_away", 1, `Face off-center x:${cx.toFixed(2)}`);
-          } else if (cy > 0.82) {
-            logViolation("eyes_not_visible", 1, `Face shifted down y:${cy.toFixed(2)} — may be looking down`);
+      // Simple looking-away: check if skin is concentrated off-center
+      if (!facePresent) {
+        let skinLeft = 0, skinRight = 0;
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W / 2; x++) {
+            const i = (y * W + x) * 4;
+            const r = data[i], g = data[i+1], b = data[i+2];
+            if (r > 60 && g > 30 && b > 15 && r > g && r > b) skinLeft++;
           }
+          for (let x = W / 2; x < W; x++) {
+            const i = (y * W + x) * 4;
+            const r = data[i], g = data[i+1], b = data[i+2];
+            if (r > 60 && g > 30 && b > 15 && r > g && r > b) skinRight++;
+          }
+        }
+        if ((skinLeft > 600 || skinRight > 600) && Math.abs(skinLeft - skinRight) > 300) {
+          facePresent = true; // face is there but off-center
+          faceCount = 1;
+          logViolation("looking_away", 1, `Face off-center L:${skinLeft} R:${skinRight}`);
         }
       }
     }
@@ -330,14 +320,14 @@ export const useProctoring = (
       if (!faceAbsStart.current) faceAbsStart.current = Date.now();
       const absTime = Date.now() - faceAbsStart.current;
 
-      if (absTime >= 2500 && absTime < 6000) {
-        // 2.5s absent → immediate warning
+      if (absTime >= 1500 && absTime < 4000) {
+        // 1.5s absent → immediate warning
         logViolation("face_not_detected", 1, `Face absent ${Math.round(absTime/1000)}s`);
-      } else if (absTime >= 6000) {
-        // 6s absent → strike + snapshot
+      } else if (absTime >= 4000) {
+        // 4s absent → strike + snapshot
         logViolation("face_not_detected", 2, `Face absent ${Math.round(absTime/1000)}s — possible cheating`);
         captureSnapshot("face_absent_extended");
-        faceAbsStart.current = Date.now(); // reset so it fires again every 6s
+        faceAbsStart.current = Date.now(); // reset so it fires again every 4s
       }
     } else {
       faceAbsStart.current = null; // reset timer
