@@ -23,8 +23,19 @@ import {
   Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
   Flame, Target, TrendingUp, Play, RefreshCcw, Heart, Loader2,
   BookMarked, BarChart2, Lock, ShieldCheck, Bell, Eye,
-  SkipBack, SkipForward,
+  SkipBack, SkipForward, Timer as TimerIcon, Camera,
 } from "lucide-react";
+// Per-surah CDN audio (everyayah.com) — keyed by (surahNum, verseNumInSurah), NOT the
+// global 1-6236 ayah id. Using this avoids the "wrong page audio" bug where the old
+// islamic.network URL was built from an in-surah verse number misread as a global id,
+// which made low verse numbers (1-7) always resolve to Surah Al-Fatihah audio.
+import { audioUrl as quranAyahAudioUrl, SURAHS } from "@/components/hifdh/surahData";
+// Face-capture proctoring — same engine used by HifdhTest.tsx / ExamTaking.tsx.
+import { useProctoring } from "@/hooks/useProctoring";
+import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
+
+const SURAH_NAME_BY_NUM: Record<number, { name: string; arabicName: string }> =
+  Object.fromEntries(SURAHS.map(s => [s.num, { name: s.name, arabicName: s.arabicName }]));
 
 /* ── Design tokens ──────────────────────────────────────────────── */
 const G0   = "#061409";
@@ -136,8 +147,12 @@ interface Question {
   options: string[]; correct: number; correctText: string;
   // For LISTEN questions: a fragment of an ayah to play (TTS via Web Speech or stored text)
   listenText?: string;
-  // Global ayah number (1-6236) used to fetch professional Quran audio from CDN
+  // Global ayah number (1-6236) — kept for reference only, no longer used for audio URLs.
   listenAyahNum?: number;
+  // Surah number + in-surah verse number — used together to build the correct
+  // per-surah CDN audio URL (fixes the bug where listen questions played Al-Fatihah
+  // audio regardless of which page/surah the question was actually about).
+  listenSurahNum?: number;
   // For RECORD questions: what the student should recite
   recordPrompt?: string;
   // Snippet of just a few words, not full verse
@@ -281,14 +296,19 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
       const j = await r.json();
       const verses: any[] = j?.verses ?? [];
       if (verses.length > 0) {
-        return verses.map((v: any) => ({
-          number: v.verse_number ?? 0,
+        return verses.map((v: any) => {
+          const meta = SURAH_NAME_BY_NUM[v.chapter_id ?? 0];
+          return {
+          // NOTE: `number` here is the global 1-6236 ayah id when available from the API,
+          // but we no longer rely on it for audio playback (see quranAyahAudioUrl below) —
+          // audio is keyed off surah.number + numberInSurah instead, which is always correct.
+          number: v.id ?? v.verse_number ?? 0,
           numberInSurah: v.verse_number ?? 0,
           text: v.text_uthmani ?? v.words?.map((w: any) => w.text_uthmani ?? w.text).join(" ") ?? "",
           surah: {
             number: v.chapter_id ?? 0,
-            name: "",
-            englishName: v.chapter_id ? "" : "",
+            name: meta?.arabicName ?? "",
+            englishName: meta?.name ?? "",
           },
           words: (v.words ?? [])
             .filter((w: any) => w.char_type_name !== "end")
@@ -296,7 +316,8 @@ async function fetchPageAyahs(page: number): Promise<Ayah[]> {
               text: w.text_uthmani ?? w.text ?? "",
               line_number: w.line_number ?? 0,
             })),
-        }));
+          };
+        });
       }
     }
   } catch { /* fall through */ }
@@ -639,6 +660,10 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
 
   // ── RECORD CONTINUE ────────────────────────────────────────────────────────
   // Show complete verse[i] as prompt, student recites verse[i+1] from memory.
+  // IMPORTANT: the expected answer must match exactly what the prompt asks for
+  // ("recite the next verse" — singular). Previously this also required the
+  // verse AFTER that to be recited, so a student who correctly recited only the
+  // next verse (as instructed) was scored ~50% even with a perfect transcript.
   const makeRecordContinue = (i: number, pool: Ayah[], sec: "A"|"B", isErr=false): Question | null => {
     if (i >= pool.length - 1) return null;
     const cur  = pool[i];
@@ -646,8 +671,8 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
     const curFull  = fullVerse(cur);
     if (used.has(key("rec", curFull))) return null;
     used.add(key("rec", curFull));
-    // Student must recite the next verse (and optionally the one after)
-    const expected = [fullVerse(next), pool[i+2] ? fullVerse(pool[i+2]) : ""].filter(Boolean).join(" ");
+    // Student must recite exactly the next verse — matches the recordPrompt text below.
+    const expected = fullVerse(next);
     return { id:id++, type:"record_continue", section:sec, isErrorFocused:isErr, snippet:false,
       prompt: curFull,
       promptLabel: `${sec==="A"?"§A Today":"§B Review"} · ${cur.surah.englishName} ${cur.numberInSurah} — Recite what comes after`,
@@ -673,7 +698,8 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
     const opts = shuffle([nextFull, ...distract.map(a => fullVerse(a))]);
     return { id:id++, type:"listen_choose", section:sec, snippet:false,
       listenText: curFull,           // full verse text fed to TTS
-      listenAyahNum: ayah.number,    // CDN audio number
+      listenAyahNum: ayah.numberInSurah, // in-surah verse number — used with listenSurahNum for CDN audio
+      listenSurahNum: ayah.surah.number,
       prompt: curFull,
       promptLabel: `${sec==="A"?"§A Today":"§B Review"} · 👂 Listen to the verse — what comes next?`,
       options: opts, correct: opts.indexOf(nextFull), correctText: nextFull,
@@ -754,6 +780,24 @@ function buildQuestions(results: PageResult[], juzAyahs: Ayah[] = []): Question[
   return [...sA, ...sB];
 }
 
+
+/* ── Per-question timer — time limit scales with question complexity ──────
+   MCQ "what comes next"/"fill blank" questions just need recognition, so they
+   get less time. Listen questions need time to hear the audio first. Record
+   questions need the most time since the student must recall and recite from
+   memory (and longer still for error-focused / continuation questions, which
+   tend to be harder). */
+function questionTimeLimit(q: Question): number {
+  switch (q.type) {
+    case "mcq_blank":        return 20;                     // single-word recognition
+    case "mcq_next":         return 25;                     // recognise the next full verse
+    case "mcq_continuation": return 30;                     // harder — error-focused area
+    case "listen_choose":    return 40;                     // includes time to listen first
+    case "record_continue":  return q.isErrorFocused ? 60 : 45; // recall + recite from memory
+    case "record_complete":  return 75;                     // multi-verse recall + recite
+    default:                 return 30;
+  }
+}
 
 /* ── Encouragement messages ─────────────────────────────────────── */
 const RETRY_MSGS = [
@@ -1197,6 +1241,24 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const TEST_PASS_THRESHOLD = PASS_THRESHOLD;
   const hifdhProctoringEnabled = hifdhSettings.proctoring_enabled;
 
+  // ── Face-capture (webcam) proctoring for the testing phase ──────────────
+  // Reuses the same engine that powers HifdhTest.tsx / ExamTaking.tsx. Gated by
+  // the admin "Hifdh Proctoring" toggle so it only requests the camera when the
+  // school has actually enabled proctored testing.
+  const proctoringConfig = React.useMemo(() => ({
+    attemptId: `${assignment.id}-${todayISO()}`,
+    userId,
+    proctoring_enabled: true,
+    webcam_required: true,
+    screenshot_interval_seconds: 30,
+    max_warnings: 5,
+    auto_submit_on_violation: false,
+    tab_switch_limit: 3,
+    sessionType: "hifdh" as const,
+    contextLabel: `Hifdh Daily Revision — ${todayISO()}`,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [assignment.id, userId]);
+
   // If recitation is done today but quiz not yet completed, start directly at quiz
   // Only resume to quiz if recitation is done AND score passed the threshold.
   // A 2% score means they failed recitation — they should redo it, not skip to quiz.
@@ -1208,6 +1270,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   );
 
   const [phase,        setPhase]       = useState<Phase>(recitationAlreadyDone ? "proctor_intro" : "intro");
+  const procState = useProctoring(
+    proctoringConfig,
+    phase === "testing" && !!hifdhProctoringEnabled && !!userId,
+  );
   const [pageIdx,      setPageIdx]     = useState(0);
   const [pageAyahs,    setPageAyahs]   = useState<Ayah[]>([]);
   const [fetchingPage, setFetchingPage] = useState(false);
@@ -1265,6 +1331,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const [qRecDone,     setQRecDone]     = useState(false);
   const qRecTimerRef  = useRef<any>(null);
   const qMediaRecRef  = useRef<MediaRecorder|null>(null);
+  // Per-question complexity-based countdown timer (testing phase)
+  const [qTimeLeft,    setQTimeLeft]    = useState(0);
+  const qCountdownRef  = useRef<any>(null);
   // TTS / listen state
   const [isSpeaking,   setIsSpeaking]   = useState(false);
   const [listenDone,   setListenDone]   = useState(false);
@@ -1509,9 +1578,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     };
   }, [hifdhProctoringEnabled, phase]);
 
-  /* ── Fetch juz ayahs for Section B (lazy, up to 3 prior pages) ── */
+  /* ── Fetch juz ayahs for Section B (lazy, from assignment start up to today) ──
+     Bounded below by `base` (the admin-assigned starting point — e.g. Juz 1 page 1)
+     and above by `todayFirst` (never reaches into pages not yet revised).
+     Capped to the most recent MAX_LOOKBACK pages for performance on long programmes,
+     while still allowing review of any page within that window, not just the last 3. */
   const fetchJuzAyahs = useCallback(async () => {
     if (juzAyahs.length > 0) return juzAyahs;
+    const MAX_LOOKBACK = 20;
     const base = (() => {
       const a = assignment;
       const first = a.selected_items?.[0];
@@ -1521,7 +1595,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     })();
     const todayFirst = todayPages[0] ?? 1;
     const pagesToFetch: number[] = [];
-    for (let p = Math.max(base, todayFirst - 3); p < todayFirst; p++) {
+    for (let p = Math.max(base, todayFirst - MAX_LOOKBACK); p < todayFirst; p++) {
       if (p >= 1 && p <= 604) pagesToFetch.push(p);
     }
     if (!pagesToFetch.length) return [];
@@ -1995,12 +2069,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // Keep the old name as an alias so nothing else breaks
   const speakText = (text: string) => speakTextTTS(text);
 
-  const playListenAudio = (text: string, ayahNum?: number) => {
+  const playListenAudio = (text: string, surahNum?: number, numberInSurah?: number) => {
     stopListenAudio();
-    if (ayahNum && ayahNum > 0) {
-      const audio = new Audio(
-        `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${ayahNum}.mp3`
-      );
+    if (surahNum && surahNum > 0 && numberInSurah && numberInSurah > 0) {
+      const audio = new Audio(quranAyahAudioUrl(surahNum, numberInSurah));
       audio.preload = "auto";
       listenAudioRef.current = audio;
       setIsSpeaking(true);
@@ -2046,6 +2118,39 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     }
     if(qIdx<questions.length-1) setQIdx(i=>i+1); else gradeTest();
   };
+
+  // ── Per-question countdown timer ─────────────────────────────────────────
+  // Resets whenever the active question changes; time budget scales with the
+  // question's complexity (see questionTimeLimit). On expiry the question is
+  // auto-submitted: in-progress recordings are stopped (their transcript is
+  // still scored), unanswered MCQs are left blank (scored as incorrect), and
+  // the test advances to the next question automatically.
+  const nextQRef = useRef(nextQ);
+  useEffect(() => { nextQRef.current = nextQ; });
+
+  useEffect(() => {
+    clearInterval(qCountdownRef.current);
+    if (phase !== "testing" || testScore !== null || !questions[qIdx]) { setQTimeLeft(0); return; }
+    const limit = questionTimeLimit(questions[qIdx]);
+    setQTimeLeft(limit);
+    qCountdownRef.current = setInterval(() => {
+      setQTimeLeft(t => {
+        if (t <= 1) {
+          clearInterval(qCountdownRef.current);
+          // Time's up — stop any in-progress recording, then auto-advance.
+          if (qMediaRecRef.current && qMediaRecRef.current.state !== "inactive") {
+            try { qMediaRecRef.current.stop(); } catch {}
+          }
+          setTimeout(() => nextQRef.current(), 50);
+          return 0;
+        }
+        return t - 1;
+      });
+    }, 1000);
+    return () => clearInterval(qCountdownRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qIdx, phase, questions.length]);
+
   const gradeTest=()=>{
     const sA = questions.filter(q=>q.section==="A");
     const sB = questions.filter(q=>q.section==="B");
@@ -3081,6 +3186,23 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       {phase==="testing"&&testScore===null&&(
         questions.length>0?(
           <>
+            {hifdhProctoringEnabled&&(
+              <ProctoringOverlay
+                cameraReady={procState.cameraReady}
+                faceDetected={procState.faceDetected}
+                integrityScore={procState.integrityScore}
+                suspicionLevel={procState.suspicionLevel}
+                strikes={procState.strikes}
+                maxStrikes={procState.maxStrikes}
+                violations={procState.violations}
+                lastWarningType={procState.lastWarningType}
+                audioMonitoring={procState.audioMonitoring}
+                recentViolations={procState.recentViolations}
+                getStream={procState.getStream}
+                attemptId={proctoringConfig.attemptId}
+                onPointDeduction={()=>{}}
+              />
+            )}
             <div style={{background:`linear-gradient(160deg,${G1},${G2})`,padding:"14px 16px",
               display:"flex",alignItems:"center",gap:12,flexShrink:0}}>
               <div style={{width:36,height:36,borderRadius:10,background:`${GOLD}22`,
@@ -3101,6 +3223,17 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 border:`1px solid ${questions[qIdx]?.section==="A"?GOLD:"#7c3aed"}44`}}>
                 §{questions[qIdx]?.section}
               </div>
+              {qTimeLeft>0&&(
+                <div style={{display:"flex",alignItems:"center",gap:4,padding:"3px 9px",borderRadius:8,
+                  background:qTimeLeft<=10?"#dc262633":`${GOLD}1a`,
+                  border:`1px solid ${qTimeLeft<=10?"#dc262666":`${GOLD}44`}`}}>
+                  <TimerIcon size={11} color={qTimeLeft<=10?"#dc2626":GOLD}/>
+                  <span style={{fontSize:11,fontWeight:900,fontVariantNumeric:"tabular-nums",
+                    color:qTimeLeft<=10?"#dc2626":GOLD}}>
+                    0:{qTimeLeft.toString().padStart(2,"0")}
+                  </span>
+                </div>
+              )}
             </div>
 
             <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch",padding:"16px 16px 28px",
@@ -3160,7 +3293,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                       {/* Prompt snippet — middle of verse, not full */}
                       {isListenQ?(
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <button onClick={()=>playListenAudio(q.listenText||q.prompt, q.listenAyahNum)}
+                          <button onClick={()=>playListenAudio(q.listenText||q.prompt, q.listenSurahNum, q.listenAyahNum)}
                             disabled={isSpeaking}
                             style={{flexShrink:0,width:48,height:48,borderRadius:"50%",border:"none",cursor:"pointer",
                               background:isSpeaking?`${PURPLE}22`:`linear-gradient(135deg,${PURPLE},#6d28d9)`,
