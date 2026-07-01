@@ -265,6 +265,52 @@ export default function RegistrationDiagnostics() {
     }
   };
 
+  // ── Resend verification email (admin-triggered) ──────────────────────────
+  // Students in "Accounts Without Pipeline Record" have no way to trigger a
+  // resend themselves — that button only lives on the local "verify" screen
+  // right after signup, which disappears once they leave the page. This lets
+  // an admin resend it for them directly. Uses the same auth.resend() call
+  // the signup page uses; it only needs the email, not that user's session.
+  const [resendingEmail, setResendingEmail] = useState<string | null>(null);
+  const [resendCooldowns, setResendCooldowns] = useState<Record<string, number>>({});
+
+  const resendVerification = async (email: string) => {
+    if (resendCooldowns[email] > 0) return;
+    setResendingEmail(email);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email,
+        options: { emailRedirectTo: `${window.location.origin}/auth/register-continue` },
+      });
+
+      if (error) {
+        // FIX: auth.resend() returns { error } instead of throwing — a
+        // previous version of the student-facing resend button ignored this
+        // and always showed a fake success message even when Supabase's
+        // rate limit silently blocked the send. Surface the real reason here.
+        toast({ title: `Could not resend to ${email}`, description: error.message, variant: "destructive" });
+        const match = error.message?.match(/(\d+)\s*second/i);
+        setResendCooldowns(prev => ({ ...prev, [email]: match ? parseInt(match[1], 10) : 60 }));
+      } else {
+        toast({ title: "Verification email resent", description: email });
+        setResendCooldowns(prev => ({ ...prev, [email]: 60 }));
+      }
+
+      const interval = setInterval(() => {
+        setResendCooldowns(prev => {
+          const cur = prev[email] ?? 0;
+          if (cur <= 1) { clearInterval(interval); const { [email]: _, ...rest } = prev; return rest; }
+          return { ...prev, [email]: cur - 1 };
+        });
+      }, 1000);
+    } catch (err: any) {
+      toast({ title: `Could not resend to ${email}`, description: err?.message, variant: "destructive" });
+    } finally {
+      setResendingEmail(null);
+    }
+  };
+
   // ── Filter ─────────────────────────────────────────────────────────────
   const filteredStuck = stuckUsers.filter(u => {
     if (!searchQ) return true;
@@ -667,13 +713,26 @@ export default function RegistrationDiagnostics() {
               ⚠️ These accounts exist in <code>profiles</code> but have no <code>tasjeel_progress</code> row. This means the user created an account but never clicked the verification link — or verification failed.
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(260px,1fr))", gap: 8 }}>
-              {unverified.map((u, i) => (
-                <div key={i} style={{ padding: "10px 12px", borderRadius: 10, background: "#fafafa", border: `1px solid ${BORDER}` }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: G, marginBottom: 2 }}>{u.full_name || "Unknown"}</div>
-                  <div style={{ fontSize: 11, color: "#7a9e88", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis" }}>{u.email}</div>
-                  <div style={{ fontSize: 10, color: "#9ca3af" }}>Registered {fmtAge(u.created_at)}</div>
-                </div>
-              ))}
+              {unverified.map((u, i) => {
+                const cooldown = resendCooldowns[u.email] || 0;
+                const isSending = resendingEmail === u.email;
+                return (
+                  <div key={i} style={{ padding: "10px 12px", borderRadius: 10, background: "#fafafa", border: `1px solid ${BORDER}` }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: G, marginBottom: 2 }}>{u.full_name || "Unknown"}</div>
+                    <div style={{ fontSize: 11, color: "#7a9e88", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis" }}>{u.email}</div>
+                    <div style={{ fontSize: 10, color: "#9ca3af", marginBottom: 8 }}>Registered {fmtAge(u.created_at)}</div>
+                    <button
+                      className="diag-action"
+                      disabled={isSending || cooldown > 0}
+                      onClick={() => resendVerification(u.email)}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, width: "100%", padding: "6px 10px", borderRadius: 8, border: "1.5px solid #6366f1", background: "#eef2ff", color: "#4338ca", fontSize: 11, fontWeight: 700, cursor: (isSending || cooldown > 0) ? "not-allowed" : "pointer", opacity: (isSending || cooldown > 0) ? .6 : 1 }}
+                    >
+                      <Mail size={11} />
+                      {isSending ? "Sending…" : cooldown > 0 ? `Wait ${cooldown}s` : "Resend verification email"}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </>
         )}
