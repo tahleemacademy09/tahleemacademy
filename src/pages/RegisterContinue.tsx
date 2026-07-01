@@ -29,7 +29,7 @@ import {
   BookOpen, CheckCircle2, CreditCard, Shield, Star,
   ArrowRight, Loader2, AlertCircle,
 } from "lucide-react";
-import { initializeTasjeel } from "@/hooks/useTasjeel";
+import { initializeTasjeel, healStuckPaymentStep } from "@/hooks/useTasjeel";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -100,23 +100,37 @@ const RegisterContinue = () => {
 
     (async () => {
       try {
-        // ── Get session with timeout ────────────────────────────────────────
-        const sessionTimeout = new Promise<{ data: { session: null } }>((resolve) =>
-          setTimeout(() => resolve({ data: { session: null } }), 8000)
-        );
-        const { data: { session } } = await Promise.race([
-          supabase.auth.getSession(),
-          sessionTimeout,
-        ]);
+        // ── Resolve the authenticated user ──────────────────────────────────
+        // FIX: previously this always ran its own fresh supabase.auth.getSession()
+        // race against an 8s timeout, even when AuthContext (via useAuth() above)
+        // had ALREADY finished loading and resolved a valid `user`. On a slow
+        // connection that fresh call could time out or blip even though the
+        // person is genuinely signed in and verified — showing a false
+        // "Email verification failed or link expired" error to someone who had
+        // already verified their email. We now trust AuthContext's resolved
+        // user first, and only fall back to a direct session check if it has
+        // none (e.g. a real expired/invalid link with no active session at all).
+        let sessionUser = user;
 
-        if (!session) {
-          setErrMsg("Email verification failed or link expired. Please try signing in again.");
-          setPhase("error");
-          return;
+        if (!sessionUser) {
+          const sessionTimeout = new Promise<{ data: { session: null } }>((resolve) =>
+            setTimeout(() => resolve({ data: { session: null } }), 8000)
+          );
+          const { data: { session } } = await Promise.race([
+            supabase.auth.getSession(),
+            sessionTimeout,
+          ]);
+
+          if (!session) {
+            setErrMsg("Email verification failed or link expired. Please try signing in again.");
+            setPhase("error");
+            return;
+          }
+          sessionUser = session.user as any;
         }
 
-        const userId = session.user.id;
-        const emailAlreadyConfirmed = !!session.user.email_confirmed_at;
+        const userId = sessionUser.id;
+        const emailAlreadyConfirmed = !!sessionUser.email_confirmed_at;
 
         // ── Check for existing tasjeel row (with timeout) ──────────────────
         // If this user already has a row they're either mid-pipeline or done.
@@ -134,7 +148,12 @@ const RegisterContinue = () => {
         ]);
 
         if (existingTp) {
-          const existingStep = (existingTp as any).current_step;
+          const rawStep = (existingTp as any).current_step;
+          // Self-heal: if this student is sitting on "enrollment"/"payment"
+          // but has actually already paid (or the fee is now disabled), skip
+          // them past it instead of re-showing the payment screen. See
+          // healStuckPaymentStep() for why this can happen.
+          const existingStep = await healStuckPaymentStep(userId, rawStep);
           const existingRoute = resolveRoute(existingStep, config);
           if (existingRoute) {
             navigate(existingRoute, { replace: true });
@@ -243,10 +262,17 @@ const RegisterContinue = () => {
   }, [authLoading, cfgLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const advanceTasjeel = async (userId: string, nextStep: string) => {
-    await supabase
+    const { error } = await supabase
       .from("tasjeel_progress" as any)
       .update({ current_step: nextStep, updated_at: new Date().toISOString() } as any)
       .eq("user_id", userId);
+    if (error) {
+      // Don't fail silently — this is the exact write whose failure caused
+      // the "pay again after already paying" bug. It's non-fatal here
+      // (healStuckPaymentStep will self-correct on the next visit), but it
+      // must be visible for debugging.
+      console.error("[RegisterContinue] advanceTasjeel failed to persist step:", error.message, { userId, nextStep });
+    }
   };
 
   // ── Payment handler ───────────────────────────────────────────────────────
