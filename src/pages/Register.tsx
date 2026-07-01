@@ -189,18 +189,48 @@ const Register = () => {
   };
 
   // ── Resend verification email ──────────────────────────────────────────────
+  // FIX: supabase.auth.resend() returns { data, error } — it does NOT throw
+  // on failure. The old code never checked `error`, so it showed "Email
+  // resent ✅" every time even when Supabase silently rejected the request
+  // (almost always its built-in rate limit — by default only one auth email
+  // is allowed roughly every 60s). Students kept clicking resend, kept
+  // seeing a fake success toast, and only ever got the very first email.
+  const [resendCooldown, setResendCooldown] = useState(0);
+
   const handleResend = async () => {
+    if (resendCooldown > 0) return;
     setResending(true);
     try {
       const { supabase } = await import("@/integrations/supabase/client");
-      await supabase.auth.resend({
+      const { error } = await supabase.auth.resend({
         type: "signup",
         email,
         options: { emailRedirectTo: `${window.location.origin}/auth/register-continue` },
       });
-      toast({ title: "Email resent", description: "Check your inbox again." });
-    } catch {
-      toast({ title: "Could not resend email", variant: "destructive" });
+
+      if (error) {
+        // Surface the real reason — usually a rate limit like "For security
+        // purposes, you can only request this after N seconds".
+        toast({ title: "Could not resend email", description: error.message, variant: "destructive" });
+        // Try to read a wait time out of the message so the cooldown UI
+        // matches what Supabase is actually enforcing; fall back to 60s.
+        const match = error.message?.match(/(\d+)\s*second/i);
+        setResendCooldown(match ? parseInt(match[1], 10) : 60);
+      } else {
+        toast({ title: "Email resent", description: "Check your inbox again." });
+        // Cooldown so repeated taps don't immediately hit the rate limit
+        // and produce the same silent-failure symptom again.
+        setResendCooldown(60);
+      }
+
+      const interval = setInterval(() => {
+        setResendCooldown(prev => {
+          if (prev <= 1) { clearInterval(interval); return 0; }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch (err: any) {
+      toast({ title: "Could not resend email", description: err?.message, variant: "destructive" });
     } finally {
       setResending(false);
     }
@@ -321,12 +351,14 @@ const Register = () => {
           {/* Resend */}
           <button
             onClick={handleResend}
-            disabled={resending}
-            style={{ width: "100%", padding: "13px", borderRadius: 14, border: `2px solid ${G}`, background: "transparent", color: G, fontSize: 14, fontWeight: 700, cursor: resending ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 14, opacity: resending ? .6 : 1 }}
+            disabled={resending || resendCooldown > 0}
+            style={{ width: "100%", padding: "13px", borderRadius: 14, border: `2px solid ${G}`, background: "transparent", color: G, fontSize: 14, fontWeight: 700, cursor: (resending || resendCooldown > 0) ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 14, opacity: (resending || resendCooldown > 0) ? .6 : 1 }}
           >
             {resending
               ? <><Loader2 style={{ width: 16, height: 16, animation: "spin .8s linear infinite" }} /> Resending…</>
-              : <><RefreshCw size={16} /> Resend Verification Email</>
+              : resendCooldown > 0
+                ? <>Resend available in {resendCooldown}s</>
+                : <><RefreshCw size={16} /> Resend Verification Email</>
             }
           </button>
 
