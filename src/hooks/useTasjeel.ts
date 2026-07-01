@@ -43,6 +43,74 @@ export const STEP_ORDER = [
 
 export type TasjeelStep = typeof STEP_ORDER[number];
 
+// ── healStuckPaymentStep ───────────────────────────────────────────────────
+// FIX: students who had already confirmed their email and paid were being
+// sent back to "pay again" / re-shown the payment screen. Root cause: after
+// payment, RegisterContinue.tsx runs an UPDATE on tasjeel_progress to move
+// current_step past "payment" — if that write fails for any reason (missing
+// RLS policy, dropped connection, etc.) it fails silently and current_step
+// stays on "enrollment"/"payment" forever, even though the payment actually
+// succeeded. Every subsequent login re-reads that stale value and routes the
+// student straight back to the payment screen.
+//
+// Rather than trust a single write to always have succeeded, whenever we
+// resolve a student's step and find them sitting on "enrollment" or
+// "payment", we cross-check the actual source of truth
+// (enrollments.registration_paid) and the current registration settings. If
+// they've genuinely already paid (or the fee is disabled entirely), we
+// re-derive the correct next step and skip them past it — self-healing the
+// stuck row (best effort) so this only has to happen once per user.
+export async function healStuckPaymentStep(userId: string, step: string): Promise<string> {
+  if (step !== "enrollment" && step !== "payment") return step;
+
+  try {
+    const [{ data: settingsRows }, { data: enrollment }] = await Promise.all([
+      supabase.from("academy_settings" as any).select("key, value"),
+      supabase.from("enrollments" as any).select("registration_paid").eq("user_id", userId).maybeSingle(),
+    ]);
+
+    const cfg: Record<string, string> = {};
+    (settingsRows || []).forEach((r: any) => { if (r.value !== null) cfg[r.key] = r.value; });
+
+    const feeEnabled  = cfg.entrance_fee_enabled !== "false";
+    const alreadyPaid = !!(enrollment as any)?.registration_paid;
+
+    // Nothing to heal — fee is required and genuinely not yet paid.
+    if (feeEnabled && !alreadyPaid) return step;
+
+    const onboardingRequired = cfg.onboarding_required !== "false";
+    const examRequired       = cfg.entrance_exam_required !== "false";
+    const recitationRequired = cfg.recitation_test_required !== "false";
+
+    const nextStep = onboardingRequired
+      ? "onboarding"
+      : examRequired
+        ? "exam"
+        : recitationRequired
+          ? "recitation"
+          : "level_assignment";
+
+    // Best-effort write-back so future logins don't need to heal again.
+    // If this UPDATE fails too (e.g. the RLS policy really is missing), we
+    // still return the healed step below so the student isn't blocked now.
+    try {
+      await supabase
+        .from("tasjeel_progress")
+        .update({ current_step: nextStep, updated_at: new Date().toISOString() })
+        .eq("user_id", userId);
+    } catch {
+      /* non-fatal — see comment above */
+    }
+
+    return nextStep;
+  } catch {
+    // Couldn't verify payment/settings (e.g. offline) — leave step as-is
+    // rather than guessing; showing the payment screen is still correct
+    // in that case.
+    return step;
+  }
+}
+
 // ── resolveTasjeelStep ────────────────────────────────────────────────────
 // SINGLE SOURCE OF TRUTH for "what step is this authenticated user actually
 // at, and where do they belong." Used by both useTasjeel() (the continuous
@@ -75,7 +143,7 @@ export async function resolveTasjeelStep(
   const { data } = await Promise.race([queryPromise, timeoutPromise]);
   const existingStep = (data as any)?.current_step as string | undefined;
 
-  if (existingStep) return existingStep;
+  if (existingStep) return healStuckPaymentStep(userId, existingStep);
 
   // No row at all.
   if (emailConfirmedAt) {
