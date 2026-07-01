@@ -25,7 +25,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { TASJEEL_ROUTES } from "@/hooks/useTasjeel";
+import { TASJEEL_ROUTES, healStuckPaymentStep } from "@/hooks/useTasjeel";
 import { BookOpen } from "lucide-react";
 
 const G    = "#064E3B";
@@ -111,7 +111,11 @@ const AuthCallback = () => {
       // sign-ups. The polling loop above already gives initializeTasjeel a
       // few seconds to create the real row; "completed" is only the fallback
       // once that window has passed.
-      const step  = (tasjeel as any)?.current_step ?? "completed";
+      const rawStep = (tasjeel as any)?.current_step ?? "completed";
+      // Self-heal: if this student is stuck on "enrollment"/"payment" despite
+      // already having paid (or the fee being disabled), skip them forward
+      // instead of bouncing them back to the payment screen.
+      const step  = await healStuckPaymentStep(userId, rawStep);
       const route = TASJEEL_ROUTES[step] ?? "/student";
 
       navigate(route, { replace: true });
