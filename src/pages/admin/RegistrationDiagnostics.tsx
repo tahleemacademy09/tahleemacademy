@@ -445,12 +445,7 @@ export default function RegistrationDiagnostics() {
             <div style={{ fontWeight: 700 }}>{searchQ ? "No results for that search" : "No students stuck in the pipeline 🎉"}</div>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            {/* Header */}
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 80px 80px 100px", gap: 8, padding: "6px 12px", fontSize: 10, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: .5 }}>
-              <span>Student</span><span>Current Step</span><span>Reg Paid</span><span>Waiting</span><span></span>
-            </div>
-
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {filteredStuck.map((u) => {
               const meta        = stepMeta(u.current_step);
               const regPaid     = u.enrollment?.registration_paid;
@@ -462,48 +457,48 @@ export default function RegistrationDiagnostics() {
               const isAlert     = stuckDays >= 3;
 
               return (
-                <div key={u.user_id} style={{ borderRadius: 12, border: `1px solid ${isAlert ? "#fecaca" : BORDER}`, background: isAlert ? "#fff5f5" : "#fff", marginBottom: 6, overflow: "hidden", transition: "box-shadow .15s" }}>
-                  {/* Row */}
+                <div key={u.user_id} style={{ borderRadius: 12, border: `1px solid ${isAlert ? "#fecaca" : BORDER}`, background: isAlert ? "#fff5f5" : "#fff", overflow: "hidden", transition: "box-shadow .15s" }}>
+                  {/* Row — mobile-first: name/email always gets its own full-width line,
+                      badges wrap onto a second line. FIX: the old layout used a rigid
+                      CSS grid with 260px+ of fixed-pixel columns (badges), which on a
+                      ~360-400px phone screen left almost no room for the 2fr name/email
+                      column — squeezing student names down to an invisible sliver. */}
                   <div
                     className="diag-row"
-                    style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 80px 80px 100px", gap: 8, padding: "12px 14px", alignItems: "center", cursor: "pointer" }}
+                    style={{ padding: "12px 14px", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8 }}
                     onClick={() => setExpanded(isExpanded ? null : u.user_id)}
                   >
-                    {/* Name/email */}
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: G, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {u.profile?.full_name || "Unknown"}
-                        {isAlert && <span style={{ marginLeft: 6, fontSize: 10, background: "#fecaca", color: "#991b1b", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>STUCK</span>}
+                    {/* Name/email + expand toggle */}
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: G, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {u.profile?.full_name || "Unknown"}
+                          {isAlert && <span style={{ marginLeft: 6, fontSize: 10, background: "#fecaca", color: "#991b1b", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>STUCK</span>}
+                        </div>
+                        <div style={{ fontSize: 12, color: "#7a9e88", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.profile?.email || u.user_id}</div>
                       </div>
-                      <div style={{ fontSize: 11, color: "#7a9e88", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.profile?.email || u.user_id}</div>
+                      <div style={{ flexShrink: 0, marginTop: 2 }}>
+                        {isExpanded ? <ChevronUp size={16} color="#9ca3af" /> : <ChevronDown size={16} color="#9ca3af" />}
+                      </div>
                     </div>
 
-                    {/* Step badge */}
-                    <div>
+                    {/* Badges — wrap freely instead of being forced into fixed-width columns */}
+                    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: meta.color, background: meta.bg, borderRadius: 20, padding: "3px 10px" }}>
                         <span style={{ width: 6, height: 6, borderRadius: "50%", background: meta.color, flexShrink: 0 }} />
                         {meta.label}
                       </span>
-                    </div>
 
-                    {/* Reg paid */}
-                    <div>
                       {regPaid
                         ? <span style={{ fontSize: 11, fontWeight: 700, color: "#22c55e" }}>✓ Paid</span>
                         : hasPay
                           ? <span style={{ fontSize: 11, fontWeight: 700, color: "#f59e0b" }}>⚠ Partial</span>
-                          : <span style={{ fontSize: 11, fontWeight: 700, color: "#ef4444" }}>✗ No</span>
+                          : <span style={{ fontSize: 11, fontWeight: 700, color: "#ef4444" }}>✗ Not paid</span>
                       }
-                    </div>
 
-                    {/* Age */}
-                    <div style={{ fontSize: 11, color: isAlert ? "#ef4444" : "#7a9e88", fontWeight: isAlert ? 700 : 400 }}>
-                      {fmtAge(u.updated_at || u.created_at)}
-                    </div>
-
-                    {/* Expand */}
-                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                      {isExpanded ? <ChevronUp size={16} color="#9ca3af" /> : <ChevronDown size={16} color="#9ca3af" />}
+                      <span style={{ fontSize: 11, color: isAlert ? "#ef4444" : "#7a9e88", fontWeight: isAlert ? 700 : 400 }}>
+                        {fmtAge(u.updated_at || u.created_at)}
+                      </span>
                     </div>
                   </div>
 
