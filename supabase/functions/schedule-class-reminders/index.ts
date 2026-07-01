@@ -3,9 +3,9 @@
   ══════════════════════════════════════════════════════════════════════
   Called every minute by pg_cron.
 
-  Thresholds (reduced from [0,5,15] → [0,10]):
+  Thresholds [0, 15]:
     0  min → CLASS IS STARTING NOW  (ring push — loud, persistent)
-    10 min → "Class in 10 min" reminder
+    15 min → "Class in 15 min" reminder
 
   Changes v2:
     • Thresholds reduced to [0, 10] — stops duplicate notification flood
@@ -24,7 +24,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const THRESHOLDS    = [0, 10] as const;
+const THRESHOLDS    = [0, 15] as const;
 type Threshold      = typeof THRESHOLDS[number];
 
 const APP_BASE_URL     = "https://tahleemacademy.vercel.app";
@@ -195,8 +195,8 @@ async function maybeNotify(
     // All notifications start with Assalamu Alaikum (tasleem)
 
     const title = isRing
-      ? `📞 حفظ القرآن — Starting Now!`
-      : `📚 ${opts.classTitle} — Class in 10 min`;
+      ? `📞 ${opts.classTitle} — Starting Now!`
+      : `📚 ${opts.classTitle} — Class in 15 min`;
 
     const message = isRing
       ? `Assalamu Alaikum wa Rahmatullah 🌙\n${opts.teacherName} is ready and waiting for you. Tap to join the class now — may Allah bless your learning.`
@@ -204,7 +204,7 @@ async function maybeNotify(
 
     const title_ar = isRing
       ? `📞 ${opts.classTitle} — تبدأ الآن!`
-      : `📚 ${opts.classTitle} — الدرس بعد ١٠ دقائق`;
+      : `📚 ${opts.classTitle} — الدرس بعد ١٥ دقيقة`;
 
     const message_ar = isRing
       ? `السلام عليكم ورحمة الله 🌙\n${opts.teacherName} في انتظاركم — اضغط للانضمام الآن. بارك الله في علمكم.`
@@ -297,14 +297,14 @@ Deno.serve(async (req) => {
 
   try {
     const now       = new Date();
-    const in13min   = new Date(now.getTime() + 13 * 60_000); // covers 0 and 10 min thresholds
+    const in18min   = new Date(now.getTime() + 18 * 60_000); // covers 0 and 15 min thresholds (with 3-min window)
     const minus1min = new Date(now.getTime() - 60_000);
 
     const { data: classes, error: classErr } = await sb
       .from("public_classes")
       .select("id, title, title_ar, scheduled_at, host_id, join_url, status, subject_id")
       .gte("scheduled_at", minus1min.toISOString())
-      .lte("scheduled_at", in13min.toISOString())
+      .lte("scheduled_at", in18min.toISOString())
       .not("status", "eq", "ended")
       .not("status", "eq", "cancelled");
 

@@ -1,202 +1,58 @@
+# Tahleem — Notifications, Live Class Background Audio & Hifdh Crash
 
+## 1. Fix Hifdh dashboard crash (BLOCKER — do first)
+The error `ReferenceError: Cannot access 'le' before initialization` is a minified Temporal Dead Zone bug — a `const`/`let` is referenced before it's defined, almost always caused by a circular import between Hifdh components. I will:
+- Trace the import graph starting from `HifdhPage → HifdhRevision → HifdhDashboard → surahData/hifdhTokens/audioManager`.
+- Break the cycle (usually by moving shared constants into `hifdhTokens.ts` or a new `hifdhShared.ts`) and convert offending top-level `const` usages that depend on cycle-loaded modules.
+- Verify by loading `/student/hifdh` in a headless browser and confirming no console error.
 
-# Tahleem Academy — Full Website & Exam Portal
+## 2. Live class notifications — single fire + deep link
+Current pain: multiple duplicate pushes per class; tapping the push doesn't go straight to the live class.
 
-## Overview
-A complete Arabic learning academy platform with a marketing website, student/admin dashboards, and a fully-featured exam portal. Built with React, Tailwind CSS, and Supabase (backend, auth, storage, edge functions).
+Rework:
+- **Server-side scheduling** (`schedule-class-reminders` + `send-class-reminder` edge functions) becomes the single source of truth. Add an idempotency table `class_notification_log(class_id, kind, sent_at)` with a UNIQUE constraint on `(class_id, kind)` so any retry is a no-op.
+  - `kind = "reminder_15m"` fires exactly once, ~15 min before start.
+  - `kind = "starting_now"` fires exactly once at start time.
+- Remove/disable duplicate client-side triggers in `useTimetableNotifications` and `useClassRing` that also push; they'll only handle the in-app ring/UI, not the OS push.
+- Push payload gains `url: "/student/subject/{subjectId}?join=1"` and `data.action = "join-live-class"`.
+- `sw.js notificationclick` uses `clients.openWindow(url)` / focuses existing client and posts `{type:"NAV", url}`.
+- `useNotificationNavigator` reads `?join=1` and calls `joinClass(subject, {autoJoin:true})` so the classroom opens directly.
 
----
+## 3. Wire all admin/teacher actions to notifications
+One shared helper `notify(recipients, {title, body, url, kind})` used by:
+- New announcement (admin & teacher) → students in target level/subject.
+- New material upload → enrolled students in that subject.
+- New recording available → enrolled students.
+- Daily Hifdh revision reminder (already exists in `hifdh-reminder`) — verify cron is enabled, dedupe per user per day.
+- New assignment / grade published → student.
 
-## 1. Marketing Website
+All go through the same `dispatch-notification` edge function so web-push + in-app inbox + deep link stay consistent.
 
-### Homepage
-- Hero section with Arabic calligraphy imagery and academy tagline
-- Featured courses carousel
-- Testimonials section
-- Call-to-action for registration
+## 4. Cross-role flow bug sweep
+Quick audit only (not a rewrite):
+- Admin creates class → does it appear for assigned teacher + enrolled students? Timezone bug check.
+- Teacher uploads material/recording → student sees it + gets one push.
+- Student joins class → teacher sees participant; leave/rejoin doesn't dupe attendance rows.
+Report findings; fix small bugs inline, flag anything larger.
 
-### Courses Page
-- List of courses (Arabic language, Tajweed, Quran memorization, etc.)
-- Filter by level: beginner, intermediate, advanced
-- Course detail pages with syllabus and instructor info
+## 5. Background audio in PWA (WhatsApp-like)
+Root cause: on Android PWA the WebRTC mic track is muted when the tab is hidden / screen off unless the page owns a MediaSession + a silent looping audio element to keep the audio pipeline "playing".
 
-### About Us Page
-- Academy story, mission, and vision
-- Instructor profiles with credentials
+Fix plan (`useBackgroundAudio` + `GlobalClassroomOverlay`):
+- Ensure `navigator.mediaSession.setActionHandler("play"/"pause"/"hangup")` is set when a call starts, with a real `metadata` (subject title + academy logo).
+- Attach a hidden `<audio loop playsinline>` with a 1-sec silent ogg/mp3 that `play()`s on join — keeps the audio focus alive so Android doesn't suspend the LiveKit publisher.
+- On the LiveKit room, disable "stop track on hidden" and re-enable the mic track in `visibilitychange` if it was auto-muted.
+- Keep the existing `useForegroundService` path for the wrapped Android app; add a Wake Lock (`navigator.wakeLock.request("screen")` optional, and audio-focus via MediaSession is the key for PWA).
+- Verify in the SW that `LIVE_CLASS_KEEPALIVE` doesn't tear down the audio context.
 
-### Contact Page
-- Contact form with validation
-- Email, phone, social media links
-- Embedded map (optional)
+## Order of work
+1. Ship crash fix + verify (small, isolated).
+2. Background-audio PWA fix (highest user-visible impact).
+3. Notification dedupe + deep link + admin/teacher hooks (bigger, one PR).
+4. Flow audit report.
 
----
-
-## 2. Authentication & User Roles
-
-- Secure sign-up and sign-in (email/password) via Supabase Auth
-- Three roles stored in a dedicated `user_roles` table: **Admin**, **Teacher**, **Student**
-- Role-based route protection — students, teachers, and admins each see different dashboards
-- Profile management (name, avatar, contact info)
-
----
-
-## 3. Student Dashboard
-
-- Overview: enrolled courses, upcoming exams, recent scores
-- Course progress tracking
-- Exam schedule calendar
-- Notifications panel (exam reminders, results published)
-- Exam history with scores and detailed feedback
-
----
-
-## 4. Admin / Teacher Dashboard
-
-- Overview: total students, active exams, recent activity stats
-- Student management: view, search, assign to classes/groups
-- Course management: create, edit, delete courses
-- Exam management hub (see below)
-- Reports & analytics with charts (using Recharts)
-- Notification management: send announcements to students
-
----
-
-## 5. Exam Portal — Student Side
-
-### Exam Registration & Listing
-- Browse available exams with date, duration, and subject
-- Register for upcoming exams
-
-### Exam Interface
-- Distraction-free, full-screen exam view
-- Configurable display: one question at a time or all at once
-- Countdown timer with warnings at milestones
-- Auto-save answers periodically
-- Save draft and final submit buttons
-- Flag questions for review
-- Progress bar showing answered/unanswered/flagged questions
-- Navigation panel to jump between questions
-
-### Supported Question Types
-- Multiple Choice (single and multiple correct answers)
-- True/False
-- Short Answer / Essay
-- Fill-in-the-blank
-- Matching questions
-- Audio/Video playback questions (for listening and pronunciation exams)
-
-### Exam Tools
-- Audio playback controls for listening questions
-- Clear indication of answered vs. unanswered questions
-- Exam guidelines/rules displayed before starting
-
-### Results & History
-- Immediate or delayed result display (configurable by admin)
-- Detailed per-question feedback when enabled
-- Full exam history with scores and progress over time
-
-### Proctoring Features
-- Question randomization and answer shuffling
-- Tab-switch detection with warnings
-- Prevent multiple simultaneous logins during exam
-- Exam activity logging
-
----
-
-## 6. Exam Portal — Admin / Teacher Side
-
-### Exam Creation & Management
-- Create, edit, duplicate, and delete exams
-- Rich question editor with full Arabic diacritics support
-- Bulk import questions via CSV/Excel upload
-- Question bank with tagging by topic, difficulty, and type
-- Set exam parameters: time limit, passing score, max attempts, auto-grade toggle
-
-### Scheduling
-- Set exam date/time windows
-- Auto-open and auto-close exams on schedule
-
-### Student Assignment
-- Assign exams to specific classes, groups, or individual students
-
-### Grading & Feedback
-- Auto-grading for objective questions (MCQ, True/False, matching)
-- Manual grading interface for short answer and essay questions
-- Add per-question and overall feedback/comments per student
-
-### Reports & Analytics
-- Performance reports by student, class, or exam
-- Question-level analysis (difficulty index, average score, discrimination)
-- Export reports to PDF and Excel
-
-### Proctoring Monitoring
-- View exam activity logs per student
-- Flag suspicious behavior (excessive tab switches)
-
----
-
-## 7. Multi-Language Support
-- Full interface available in Arabic (RTL) and English (LTR)
-- Language toggle accessible from any page
-- Arabic-first design with proper RTL layout
-
----
-
-## 8. Notifications System
-- In-app notification center
-- Email notifications via Supabase Edge Functions for:
-  - Exam schedule reminders
-  - Results published
-  - Admin announcements
-
----
-
-## 9. Mobile-Responsive Design
-- Fully responsive across all pages including the exam interface
-- Touch-friendly controls for exam-taking on mobile
-- Mobile-optimized navigation with hamburger menu
-
----
-
-## 10. Security & Data Integrity
-- Role-based access control with server-side validation (Supabase RLS)
-- Encrypted data storage for student info and exam content
-- Input validation on all forms (Zod schemas)
-- Rate limiting on auth endpoints
-- Exam anti-cheat measures (randomization, tab detection, activity logging)
-
----
-
-## Database Structure (Supabase)
-- **profiles** — user profile data linked to auth.users
-- **user_roles** — separate role table (admin, teacher, student)
-- **courses** — course catalog
-- **enrollments** — student-course relationships
-- **exams** — exam definitions and settings
-- **exam_questions** — question bank with type, content, options, tags
-- **exam_assignments** — which students/groups are assigned to which exams
-- **exam_attempts** — student exam sessions with timing and status
-- **exam_answers** — individual question responses per attempt
-- **exam_results** — computed scores and feedback
-- **notifications** — in-app notification records
-- **activity_logs** — proctoring and audit trail
-
----
-
-## Pages Summary
-| Page | Access |
-|------|--------|
-| Home, Courses, About, Contact | Public |
-| Login / Register | Public |
-| Student Dashboard | Student |
-| Student Exam List & Registration | Student |
-| Exam Taking Interface | Student |
-| Exam Results & History | Student |
-| Admin Dashboard | Admin/Teacher |
-| Exam Creator/Editor | Admin/Teacher |
-| Question Bank | Admin/Teacher |
-| Student Management | Admin/Teacher |
-| Grading Interface | Admin/Teacher |
-| Reports & Analytics | Admin/Teacher |
-| Settings & Notifications | All authenticated |
-
+## Questions before I start
+1. For "one push 15 min before + one at start" — do you also want a **1-hour-before** reminder or just those two?
+2. Should teachers also receive the "class starting" push, or only students?
+3. For material/announcement notifications, do you want them **immediate** on upload, or **batched** (e.g. one summary per hour) to avoid noise?
+4. The PWA background-audio fix needs a tiny silent audio file (~2 KB). OK to add `public/silence.mp3`?
