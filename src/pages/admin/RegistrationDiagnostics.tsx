@@ -124,10 +124,14 @@ export default function RegistrationDiagnostics() {
 
       if (stuckRaw && stuckRaw.length > 0) {
         const userIds = (stuckRaw as any[]).map((r: any) => r.user_id);
+        // FIX: profiles.id is its own auto-generated PK, unrelated to the
+        // user's auth id — the actual link is profiles.user_id. Filtering/
+        // mapping on "id" here meant this join almost never matched, so
+        // every stuck student fell back to "Unknown" / their raw user_id.
         const { data: profiles } = await supabase
           .from("profiles")
-          .select("id, full_name, email, created_at")
-          .in("id", userIds);
+          .select("id, user_id, full_name, email, created_at")
+          .in("user_id", userIds);
 
         const { data: enrollments } = await supabase
           .from("enrollments" as any)
@@ -143,7 +147,7 @@ export default function RegistrationDiagnostics() {
         const profMap: Record<string, any>   = {};
         const enrollMap: Record<string, any> = {};
         const payMap: Record<string, any[]>  = {};
-        (profiles || []).forEach((p: any) => { profMap[p.id] = p; });
+        (profiles || []).forEach((p: any) => { profMap[p.user_id] = p; });
         (enrollments || []).forEach((e: any) => { enrollMap[e.user_id] = e; });
         (payments || []).forEach((p: any) => {
           if (!payMap[p.user_id]) payMap[p.user_id] = [];
@@ -171,10 +175,10 @@ export default function RegistrationDiagnostics() {
         const payUserIds = [...new Set((pays as any[]).map((p: any) => p.user_id))];
         const { data: payProfs } = await supabase
           .from("profiles")
-          .select("id, full_name, email")
-          .in("id", payUserIds);
+          .select("id, user_id, full_name, email")
+          .in("user_id", payUserIds);
         const ppMap: Record<string, any> = {};
-        (payProfs || []).forEach((p: any) => { ppMap[p.id] = p; });
+        (payProfs || []).forEach((p: any) => { ppMap[p.user_id] = p; });
         setRecentPays((pays as any[]).map((p: any) => ({ ...p, profile: ppMap[p.user_id] || null })));
         setFailedPays((pays as any[]).filter((p: any) => p.status !== "success").map((p: any) => ({ ...p, profile: ppMap[p.user_id] || null })));
       } else {
@@ -186,19 +190,19 @@ export default function RegistrationDiagnostics() {
       const oneHourAgo = new Date(Date.now() - 3600000).toISOString();
       const { data: allProfiles } = await supabase
         .from("profiles")
-        .select("id, full_name, email, created_at")
+        .select("id, user_id, full_name, email, created_at")
         .lt("created_at", oneHourAgo)
         .order("created_at", { ascending: false })
         .limit(50);
 
       if (allProfiles && allProfiles.length > 0) {
-        const allProfIds = (allProfiles as any[]).map((p: any) => p.id);
+        const allProfUserIds = (allProfiles as any[]).map((p: any) => p.user_id);
         const { data: tpCheck } = await supabase
           .from("tasjeel_progress" as any)
           .select("user_id")
-          .in("user_id", allProfIds);
+          .in("user_id", allProfUserIds);
         const tpSet = new Set((tpCheck || []).map((r: any) => r.user_id));
-        setUnverified((allProfiles as any[]).filter((p: any) => !tpSet.has(p.id)).slice(0, 20));
+        setUnverified((allProfiles as any[]).filter((p: any) => !tpSet.has(p.user_id)).slice(0, 20));
       } else {
         setUnverified([]);
       }
