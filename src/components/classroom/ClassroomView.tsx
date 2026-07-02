@@ -57,116 +57,19 @@ const RED   = "#ef4444";
 const BAR_H = 76;
 
 /* ══════════════════════════════════════════════════════════════════════
-   BACKGROUND AUDIO KEEP-ALIVE
-   Keeps LiveKit audio alive when the student/teacher backgrounds the tab,
-   locks the screen, or switches apps on mobile.
+   BACKGROUND AUDIO KEEP-ALIVE — now handled entirely by
+   src/hooks/useBackgroundAudio.ts (started/stopped from GlobalClassroomOverlay
+   based on `hasConnected`). That hook uses a single real <audio> element at
+   volume=0.001 instead of an AudioContext oscillator.
 
-   Layer 1 — <audio> element (near-silent looping WAV)
-     Browsers treat a playing <audio> as "active media" → JS thread stays
-     alive through screen lock, just like a music app.
-
-   Layer 2 — AudioContext oscillator at 1 Hz, gain = 0
-     A second keep-alive signal independent of the <audio> element.
-
-   Layer 3 — setInterval heartbeat every 20 s
-     Forces event-loop ticks even when Chrome throttles background timers.
-
-   Layer 4 — visibilitychange / pageshow resume
-     Re-starts both layers the moment the user returns to the tab.
+   REMOVED (this used to live here): a second, duplicate keep-alive with its
+   own <audio> element AND an AudioContext oscillator at gain=0. Running two
+   silent <audio> elements at once is wasteful and can cause audio-focus
+   contention on Android, and the oscillator is actively counterproductive —
+   Chrome (Android 9+) detects a silent AudioContext and throttles the JS
+   thread after ~30s of screen lock, which is the opposite of what we want.
+   Keeping only one implementation (useBackgroundAudio.ts) avoids both problems.
    ══════════════════════════════════════════════════════════════════════ */
-
-const _CV_SILENCE_WAV =
-  "data:audio/wav;base64," +
-  "UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=";
-
-function useSilentAudioKeepAlive(active: boolean) {
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
-  const acRef      = useRef<AudioContext | null>(null);
-  const oscRef     = useRef<OscillatorNode | null>(null);
-  const gainRef    = useRef<GainNode | null>(null);
-  const hbRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (!active) {
-      if (hbRef.current)      { clearInterval(hbRef.current); hbRef.current = null; }
-      if (audioElRef.current) { audioElRef.current.pause(); audioElRef.current.src = ""; audioElRef.current = null; }
-      try { oscRef.current?.stop(); } catch {}
-      oscRef.current = null; gainRef.current = null;
-      acRef.current?.close().catch(() => {}); acRef.current = null;
-      return;
-    }
-
-    // Layer 1 — <audio>
-    const startAudioEl = () => {
-      if (audioElRef.current) return;
-      try {
-        const el = new Audio(_CV_SILENCE_WAV);
-        el.loop = true; el.volume = 0.001;
-        el.play().catch(() => {});
-        audioElRef.current = el;
-      } catch {}
-    };
-
-    // iOS primer — first touch/click unlocks AudioContext
-    const prime = () => {
-      startAudioEl();
-      const ctx = acRef.current;
-      if (ctx?.state === "suspended") ctx.resume().catch(() => {});
-    };
-    ["touchstart","pointerdown","click","keydown"].forEach(ev =>
-      document.addEventListener(ev, prime, { once: true, passive: true, capture: true })
-    );
-
-    // Layer 2 — AudioContext
-    const startAC = () => {
-      if (acRef.current && acRef.current.state !== "closed") return;
-      try {
-        const AC   = window.AudioContext || (window as any).webkitAudioContext;
-        const ctx  = new AC();
-        const osc  = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.frequency.value = 1; gain.gain.value = 0;
-        osc.connect(gain); gain.connect(ctx.destination); osc.start();
-        acRef.current = ctx; oscRef.current = osc; gainRef.current = gain;
-      } catch {}
-    };
-
-    startAudioEl(); startAC();
-
-    // Layer 3 — heartbeat
-    hbRef.current = setInterval(() => {
-      const ctx = acRef.current;
-      if (ctx?.state === "suspended") ctx.resume().catch(() => {});
-      const el = audioElRef.current;
-      if (el?.paused) el.play().catch(() => {});
-    }, 15_000);
-
-    // Layer 4 — resume on return
-    const resume = () => {
-      const el = audioElRef.current;
-      if (!el)       startAudioEl();
-      else if (el.paused) el.play().catch(() => {});
-      const ctx = acRef.current;
-      if (!ctx || ctx.state === "closed") startAC();
-      else if (ctx.state === "suspended") ctx.resume().catch(() => {});
-    };
-
-    document.addEventListener("visibilitychange", resume);
-    document.addEventListener("pageshow",         resume);
-    window.addEventListener("focus",              resume);
-
-    return () => {
-      document.removeEventListener("visibilitychange", resume);
-      document.removeEventListener("pageshow",         resume);
-      window.removeEventListener("focus",              resume);
-      if (hbRef.current) { clearInterval(hbRef.current); hbRef.current = null; }
-      audioElRef.current?.pause();
-      if (audioElRef.current) { audioElRef.current.src = ""; audioElRef.current = null; }
-      try { oscRef.current?.stop(); } catch {}
-      acRef.current?.close().catch(() => {});
-    };
-  }, [active]);
-}
 
 
 const CSS = `
@@ -425,13 +328,19 @@ const CSS = `
    On Android, minimizing kills the WebSocket → LiveKit fires Disconnected
    (not Reconnecting), so we must handle all three.
    visibilitychange also catches the tab coming back from background.       */
-/* ── 5-MINUTE MINIMIZE GRACE PERIOD ─────────────────────────────────────
-   When the user minimizes / backgrounds the tab, we wait 5 minutes before
-   triggering a disconnect. If they come back within 5 minutes the timer is
-   cancelled and the session continues seamlessly — matching Google Meet's
-   behaviour. Only if the WebSocket itself also drops (Disconnected event)
-   AND the grace period has elapsed do we call onDisconnected.             */
-const MINIMIZE_GRACE_MS = 10 * 60 * 1000; // 10 minutes
+/* ── DEBOUNCE, NOT A DEAD ZONE ───────────────────────────────────────────
+   CHANGED: this used to wait a fixed 10 minutes after backgrounding before
+   doing ANYTHING, even if the WebSocket had already dropped in the first
+   few seconds — meaning zero reconnect attempts were made for up to 10
+   minutes while the user sat there thinking they were still connected.
+
+   Now: a short debounce (WS_DROP_DEBOUNCE_MS) just filters out momentary
+   flicker (e.g. a single missed ping), then reconnection starts right away
+   via the existing autoReconnect backoff loop — whether the tab is visible
+   or not. Background reconnection is allowed to be far more patient before
+   giving up (see BACKGROUND_MAX_ATTEMPTS in autoReconnect below) instead of
+   relying on a silent multi-minute wait to do that job.                    */
+const WS_DROP_DEBOUNCE_MS = 3_000; // 3s — enough to ignore a single flicker, not enough to sit dead
 
 /* ══════════════════════════════════════════════════════════════════════
    FEATURE 1: RECONNECTING OVERLAY
@@ -675,60 +584,50 @@ const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
   onDisconnected: () => void;
 }) => {
   const room = useRoomContext();
-  const graceTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hiddenAt     = useRef<number | null>(null);
-  const wsDropped    = useRef(false); // did LiveKit also fire Disconnected?
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const clearGrace = () => {
-      if (graceTimer.current) { clearTimeout(graceTimer.current); graceTimer.current = null; }
-      hiddenAt.current = null;
-      wsDropped.current = false;
+    const clearDebounce = () => {
+      if (debounceTimer.current) { clearTimeout(debounceTimer.current); debounceTimer.current = null; }
     };
 
+    // A drop is confirmed after WS_DROP_DEBOUNCE_MS with no recovery — filters
+    // out a single missed ping/flicker without sitting idle for minutes.
+    // Fires the same whether the tab is visible or hidden: reconnection
+    // should start as soon as we know it's needed, not only once someone is
+    // looking at the screen. autoReconnect's own backoff (and its separate,
+    // more patient budget while backgrounded) takes it from here.
     const handleDisconnect = () => {
-      wsDropped.current = true;
-      // If still within grace window — wait; grace timer will call onDisconnected
-      if (graceTimer.current) return;
-      // No grace window active (tab is visible) → reconnect immediately
-      onDisconnected();
+      clearDebounce();
+      debounceTimer.current = setTimeout(() => {
+        debounceTimer.current = null;
+        onDisconnected();
+      }, WS_DROP_DEBOUNCE_MS);
     };
 
     room.on(RoomEvent.Reconnecting, onReconnecting);
     room.on(RoomEvent.Reconnected,  onReconnected);
     room.on(RoomEvent.Disconnected, handleDisconnect);
 
-    const onVis = async () => {
-      if (document.visibilityState === "hidden") {
-        // Tab going to background — start grace timer
-        hiddenAt.current = Date.now();
-        graceTimer.current = setTimeout(() => {
-          graceTimer.current = null;
-          // 5 minutes elapsed in background — disconnect if WS also dropped
-          if (wsDropped.current || room.state === ConnectionState.Disconnected) {
-            onDisconnected();
-          }
-          // If somehow still connected after 5 min — leave as-is; LiveKit
-          // will reconnect on its own when the tab returns.
-        }, MINIMIZE_GRACE_MS);
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      // Tab coming back to foreground.
+      if (room.state === ConnectionState.Disconnected) {
+        clearDebounce();
+        onDisconnected(); // reconnect immediately, don't wait for the debounce
         return;
       }
-
-      // Tab coming back to foreground
-      clearGrace();
-      if (room.state === ConnectionState.Disconnected) { onDisconnected(); return; }
-      try {
-        if (room.state === ConnectionState.Connected) {
-          // NOTE: mic restoration is handled by MicKeepAliveFromContext which reads
-          // live mic state from context and never cycles an intentionally-muted mic.
-          onReconnected();
-        }
-      } catch {}
+      if (room.state === ConnectionState.Connected) {
+        clearDebounce(); // we recovered before the debounce fired — cancel it
+        // NOTE: mic restoration is handled by MicKeepAliveFromContext which reads
+        // live mic state from context and never cycles an intentionally-muted mic.
+        onReconnected();
+      }
     };
 
     document.addEventListener("visibilitychange", onVis);
     return () => {
-      clearGrace();
+      clearDebounce();
       room.off(RoomEvent.Reconnecting, onReconnecting);
       room.off(RoomEvent.Reconnected,  onReconnected);
       room.off(RoomEvent.Disconnected, handleDisconnect);
@@ -1261,45 +1160,95 @@ const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
   const micWasEnabledRef = useRef(micWasEnabled);
   micWasEnabledRef.current = micWasEnabled;
 
+  // Guard against overlapping republish attempts (heartbeat + track event
+  // both firing close together).
+  const repairingRef = useRef(false);
+
   useEffect(() => {
-    const restoreMic = async () => {
-      if (document.visibilityState !== "visible") return;
-      const lp = room?.localParticipant;
-      if (!lp) return;
-      // If mic was on before backgrounding, re-enable it
-      if (micWasEnabledRef.current && !lp.isMicrophoneEnabled) {
-        try { await lp.setMicrophoneEnabled(true); } catch {}
-      }
-      // Resume any suspended mic tracks directly
-      const micPub = lp.getTrackPublication(Track.Source.Microphone);
-      const track = micPub?.track?.mediaStreamTrack;
-      if (track && track.readyState === "ended" && micWasEnabledRef.current) {
-        // Track was killed by OS — republish
-        try {
-          await lp.setMicrophoneEnabled(false);
-          await new Promise(r => setTimeout(r, 150));
-          await lp.setMicrophoneEnabled(true);
-        } catch {}
-      }
-    };
+    const lp = () => room?.localParticipant;
 
-    // Ping: keeps mic permission alive on Android while backgrounded
-    const pingMic = async () => {
-      if (document.visibilityState === "visible") return;
+    // The actual repair routine — republishes the mic track if it's the
+    // wrong state. Runs from BOTH the heartbeat and the visibility/track
+    // event listeners, and does NOT gate on document.visibilityState —
+    // that was the bug: a mic that dies while backgrounded needs fixing
+    // while still backgrounded, not only when the user returns.
+    const repairMic = async () => {
+      if (!micWasEnabledRef.current) return; // user had mic off — nothing to keep alive
+      if (repairingRef.current) return;
+      const p = lp();
+      if (!p) return;
+
+      const micPub = p.getTrackPublication(Track.Source.Microphone);
+      const track  = micPub?.track?.mediaStreamTrack;
+      const dead   = !p.isMicrophoneEnabled
+        || !track
+        || track.readyState === "ended"
+        || track.muted === true;
+
+      if (!dead) return;
+
+      repairingRef.current = true;
       try {
-        const s = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-        s.getTracks().forEach(t => t.stop()); // immediately release — just a keep-alive ping
-      } catch {}
+        // Full cycle (off → on) forces LiveKit to grab a fresh getUserMedia
+        // track rather than trying to resume a dead one, which is what
+        // actually recovers audio after Android suspends/kills the capture.
+        await p.setMicrophoneEnabled(false);
+        await new Promise(r => setTimeout(r, 150));
+        await p.setMicrophoneEnabled(true);
+      } catch {
+        // getUserMedia can legitimately fail while the tab is fully
+        // suspended (screen truly locked, no JS running at all) — the
+        // heartbeat below will retry on the next tick or on resume.
+      } finally {
+        repairingRef.current = false;
+      }
     };
 
-    const pingInterval = setInterval(pingMic, 25_000);
-    document.addEventListener("visibilitychange", restoreMic);
-    window.addEventListener("focus", restoreMic);
+    // Heartbeat — runs continuously regardless of visibility, so a mic that
+    // dies mid-background gets caught within ~8s instead of only on return.
+    // Browsers do throttle background timers, but this is still far better
+    // than "do nothing until visible" — it fires whenever the JS thread does
+    // get a tick (which the audio-element/WakeLock keep-alive is there to
+    // maximize the odds of).
+    const heartbeat = setInterval(repairMic, 8_000);
+
+    // Immediate repair attempts on any signal that we might be waking up.
+    const onWake = () => { repairMic(); };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    window.addEventListener("pageshow", onWake);
+    document.addEventListener("resume", onWake as EventListener); // Capacitor, harmless no-op on web
+
+    // Track-level events fire the instant the browser/OS kills the mic
+    // capture, which is faster than waiting for the next heartbeat tick.
+    let unbindTrackEvents: (() => void) | null = null;
+    const bindTrackEvents = () => {
+      const p = lp();
+      const track = p?.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+      if (!track) return;
+      const onEnded = () => repairMic();
+      const onMute  = () => repairMic();
+      track.addEventListener("ended", onEnded);
+      track.addEventListener("mute",  onMute);
+      unbindTrackEvents = () => {
+        track.removeEventListener("ended", onEnded);
+        track.removeEventListener("mute",  onMute);
+      };
+    };
+    bindTrackEvents();
+    // Re-bind whenever the published track changes (e.g. after a repair cycle
+    // swaps in a new MediaStreamTrack).
+    const onLocalTrackPublished = () => { unbindTrackEvents?.(); bindTrackEvents(); };
+    room?.on(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
 
     return () => {
-      clearInterval(pingInterval);
-      document.removeEventListener("visibilitychange", restoreMic);
-      window.removeEventListener("focus", restoreMic);
+      clearInterval(heartbeat);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+      window.removeEventListener("pageshow", onWake);
+      document.removeEventListener("resume", onWake as EventListener);
+      unbindTrackEvents?.();
+      room?.off(RoomEvent.LocalTrackPublished, onLocalTrackPublished);
     };
   }, [room]);
 
@@ -3078,7 +3027,13 @@ const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,
 
   const reloadMats=()=>{
     supabase.from("subject_materials" as any).select("*").eq("subject_id",subjectId).order("created_at",{ascending:false})
-      .then(({data})=>{setMats(data||[]);setBusy(false);});
+      .then(({data})=>{
+        setMats(data||[]);setBusy(false);
+        // Prewarm any PDFs not already cached — covers materials added/edited
+        // after the initial eager prewarm effect (in the parent) already ran.
+        const pdfs=(data||[]).filter((m:any)=>m.file_url&&(m.material_type==="PDF"||m.material_type==="document"||(m.file_url||"").toLowerCase().split("?")[0].endsWith(".pdf")));
+        pdfs.forEach((m:any,i:number)=>setTimeout(()=>prewarmPDF(m.file_url),i*400));
+      });
   };
 
   useEffect(()=>{reloadMats();},[subjectId]);
@@ -5027,11 +4982,39 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const isReconnectingRef=useRef(false);           // guard against concurrent autoReconnect calls
   const intentionalLeaveRef=useRef(false);         // true on manual leave → skip auto-reconnect
   const participantCountRef=useRef(0);              // tracks peak live participant count for ClassEndScreen
+
+  // ── Eager materials prewarm ───────────────────────────────────────────
+  // CHANGED: previously, materials only started loading/rendering the moment
+  // the user opened the Materials panel AND then tapped a specific document —
+  // a fully cold pdf.js load happening right when they wanted to see it.
+  // Now we fetch the material list and start caching/rendering PDFs in the
+  // background from the moment the classroom mounts (lobby included — that's
+  // free head-start time while the user is choosing mic/camera), staggered
+  // so it doesn't compete with the actual class connection. By the time the
+  // user opens Materials and taps a document, PDFViewer's own cache (see
+  // PDFViewer.tsx) usually already has it — instant, and works offline.
+  useEffect(()=>{
+    if(!subject?.id)return;
+    let cancelled=false;
+    const timers:ReturnType<typeof setTimeout>[]=[];
+    supabase.from("subject_materials" as any).select("file_url,material_type").eq("subject_id",subject.id)
+      .then(({data}:{data:any[]|null})=>{
+        if(cancelled||!data)return;
+        const pdfs=data.filter(m=>m.file_url&&(m.material_type==="PDF"||m.material_type==="document"||(m.file_url||"").toLowerCase().split("?")[0].endsWith(".pdf")));
+        pdfs.forEach((m,i)=>{
+          timers.push(setTimeout(()=>{ if(!cancelled) prewarmPDF(m.file_url); },i*600));
+        });
+      })
+      .catch(()=>{}); // best-effort — Materials panel will still load normally if this fails
+    return ()=>{ cancelled=true; timers.forEach(clearTimeout); };
+  },[subject?.id]);
+
   /* ── lobby media choices ── */
   const[lobbyMic,setLobbyMic]=useState(false); // OFF by default — user must explicitly enable
   const[lobbyCam,setLobbyCam]=useState(false); // OFF by default — user must explicitly enable
-  /* ── Background keep-alive: silent audio (student & teacher) ── */
-  useSilentAudioKeepAlive(phase === "live");
+  // Background keep-alive (silent <audio>, WakeLock, MediaSession) is started/stopped
+  // from GlobalClassroomOverlay via useBackgroundAudio.ts based on `hasConnected` —
+  // no per-component keep-alive needed here anymore.
   // Feature 7: Screen wake lock — keep screen on during class so Android doesn't kill audio
   // (Separate from GlobalClassroomOverlay's wake lock — that one only activates after minimize)
   useScreenWakeLock(phase === "live");
@@ -5294,8 +5277,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     if(intentionalLeaveRef.current)return;
     // Guard 2: already mid-reconnect — don't stack concurrent calls
     if(isReconnectingRef.current)return;
-    // Guard 3: exhausted retries — give up and drop back to lobby
-    if(autoReconnectCountRef.current>=8){
+
+    // Guard 3: exhausted retries — give up and drop back to lobby.
+    // CHANGED: the retry budget now depends on whether the tab is visible.
+    // Foreground: fail fast (8 attempts, ~90s total) so a watching user gets
+    // an honest "connection lost" message instead of an endless spinner.
+    // Background: be far more patient (40 attempts, longer backoff cap) —
+    // a minimized/locked-screen user can't see a spinner or an error either
+    // way, so silently giving up after ~90s just means the call is dead by
+    // the time they come back for no good reason. Give the network more
+    // chances to recover first.
+    const backgrounded   = document.visibilityState !== "visible";
+    const maxAttempts     = backgrounded ? 40 : 8;
+    const backoffCapMs    = backgrounded ? 30_000 : 15_000;
+    if(autoReconnectCountRef.current>=maxAttempts){
       setReconnecting(false);
       setError("Connection lost after several attempts. Please try again.");
       setPhase("lobby");
@@ -5304,8 +5299,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     }
     isReconnectingRef.current=true;
     setReconnecting(true);
-    // Exponential backoff: 1s, 2s, 4s, 8s, 15s cap
-    const backoffMs=Math.min(1000*Math.pow(2,autoReconnectCountRef.current),15000);
+    // Exponential backoff, capped higher while backgrounded so we don't
+    // hammer the token endpoint for minutes on end.
+    const backoffMs=Math.min(1000*Math.pow(2,autoReconnectCountRef.current),backoffCapMs);
     await new Promise(r=>setTimeout(r,backoffMs));
     try{
       const{data}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}});
@@ -5318,17 +5314,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         // Do NOT setReconnecting(false) here — overlay stays up until the new room
         // fires Connected, which triggers onReconnected → setReconnecting(false).
       }else{
-        // Token fetch returned no usable data
-        setError("Reconnection failed. Please try again.");
-        setPhase("lobby");
+        // Token fetch returned no usable data — retry rather than giving up
+        // on the very first failure (this used to bail immediately, which
+        // meant a single network blip — common while backgrounded — killed
+        // the whole retry budget instead of using it).
+        autoReconnectCountRef.current+=1;
         isReconnectingRef.current=false;
-        setReconnecting(false);
+        autoReconnect();
       }
     }catch{
-      setError("Reconnection failed. Please try again.");
-      setPhase("lobby");
+      // Network/edge-function error — same reasoning: retry through the
+      // normal backoff loop instead of surrendering on attempt 1.
+      autoReconnectCountRef.current+=1;
       isReconnectingRef.current=false;
-      setReconnecting(false);
+      autoReconnect();
     }
     // No finally{setReconnecting(false)} — success path is cleared by onReconnected
   // eslint-disable-next-line react-hooks/exhaustive-deps
