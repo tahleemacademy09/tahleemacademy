@@ -413,6 +413,14 @@ export default function ProfileSettings() {
       } else if (result === "denied") {
         setPushBlocked(true);
         toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+      } else {
+        // "error" or any other unexpected outcome — surface it so the user
+        // isn't left staring at a silently-off toggle.
+        toast({
+          title: "Couldn't enable push notifications",
+          description: "Something went wrong setting up push on this device. Please refresh and try again, or check that your browser allows notifications for this site.",
+          variant: "destructive",
+        });
       }
     } else {
       // Unsubscribe from push
