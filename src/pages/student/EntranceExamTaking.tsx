@@ -503,7 +503,7 @@ const EntranceExamTaking = () => {
         const { data: att } = await supabase
           .from("exam_attempts").select("*, exams(*)")
           .eq("id", attemptId).single();
-        if (!att || att.user_id !== user.id) { navigate("/onboarding"); return; }
+        if (!att || att.user_id !== user.id) { navigate("/student/entrance-exam", { replace: true }); return; }
         if (att.status !== "in_progress") {
           // Exam already done — send user to wherever their pipeline step says
           const dest = (currentStep && TASJEEL_ROUTES[currentStep]) ? TASJEEL_ROUTES[currentStep] : "/student/recitation-test";
