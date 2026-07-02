@@ -1,59 +1,52 @@
 // src/hooks/useForegroundService.ts
-// Native Android Foreground Service bridge for Tahleem Academy live classes.
-// Keeps the WebView process alive when the home button is pressed on Android.
-// On iOS / web this is a no-op (iOS uses BGProcessingTask differently).
+// Android Foreground Service bridge for Tahleem Academy live classes.
+// Keeps the WebView process alive when the app is backgrounded on Android.
+// No-op on iOS and web.
 
 import { Capacitor } from "@capacitor/core";
 
-// We call the plugin via the Capacitor plugin bridge directly to avoid
-// a missing-module error on web/iOS where the plugin isn't loaded.
-const getPlugin = () => {
-  try {
-    // capacitor-plugin-foreground-service registers as "ForegroundService"
-    return (window as any)?.Capacitor?.Plugins?.ForegroundService ?? null;
-  } catch {
-    return null;
-  }
-};
-
 export interface ForegroundServiceConfig {
-  title:   string;   // Notification title e.g. "Live Class in progress"
-  body:    string;   // Notification body  e.g. "Al-Hadith · Tahleem Academy"
-  id?:     number;   // Notification ID    (default 1001)
-  icon?:   string;   // Drawable name      (default "ic_stat_icon")
-  color?:  string;   // Hex color          (default "#064E3B")
+  title: string;
+  body:  string;
+  id?:   number;
+  icon?: string;
+  color?: string;
 }
 
 let _running = false;
 
-/**
- * Start the Android foreground service.
- * Shows a persistent notification and prevents the OS from killing the process.
- * Safe to call multiple times — idempotent.
- */
-export async function startForegroundService(cfg: ForegroundServiceConfig): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return;
-  const plugin = getPlugin();
-  if (!plugin) {
-    console.warn("[ForegroundService] Plugin not available — install capacitor-plugin-foreground-service");
-    return;
+// Dynamically import so web/iOS bundles never try to resolve the Android module.
+async function getPlugin(): Promise<any | null> {
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") return null;
+  try {
+    const mod: any = await import(
+      /* @vite-ignore */ "@capawesome-team/capacitor-android-foreground-service"
+    );
+    return mod.ForegroundService ?? null;
+  } catch {
+    return null;
   }
+}
+
+export async function startForegroundService(cfg: ForegroundServiceConfig): Promise<void> {
+  const plugin = await getPlugin();
+  if (!plugin) return;
   if (_running) {
-    // Update notification text without restarting
-    await plugin.updateNotification?.({
-      title:           cfg.title,
-      body:            cfg.body,
-      notificationId:  cfg.id ?? 1001,
+    await plugin.updateForegroundService?.({
+      title:     cfg.title,
+      body:      cfg.body,
+      id:        cfg.id ?? 1001,
+      smallIcon: cfg.icon ?? "ic_stat_icon",
     }).catch(() => {});
     return;
   }
   try {
     await plugin.startForegroundService({
-      title:              cfg.title,
-      body:               cfg.body,
-      notificationId:     cfg.id   ?? 1001,
-      notificationIcon:   cfg.icon ?? "ic_stat_icon",
-      notificationColor:  cfg.color ?? "#064E3B",
+      title:     cfg.title,
+      body:      cfg.body,
+      id:        cfg.id   ?? 1001,
+      smallIcon: cfg.icon ?? "ic_stat_icon",
+      buttons:   [],
     });
     _running = true;
   } catch (e) {
@@ -61,12 +54,8 @@ export async function startForegroundService(cfg: ForegroundServiceConfig): Prom
   }
 }
 
-/**
- * Stop the Android foreground service and dismiss the notification.
- */
 export async function stopForegroundService(): Promise<void> {
-  if (!Capacitor.isNativePlatform()) return;
-  const plugin = getPlugin();
+  const plugin = await getPlugin();
   if (!plugin || !_running) return;
   try {
     await plugin.stopForegroundService();
