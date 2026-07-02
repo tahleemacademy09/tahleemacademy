@@ -92,7 +92,7 @@ const Onboarding = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  const { currentStep, loading: stepLoading } = useTasjeel();
+  const { currentStep, loading: stepLoading, advanceStep } = useTasjeel();
   const restoredRef = useRef(false);
 
   // ── Step guard: redirect if user is not on the onboarding step ────────────
@@ -191,12 +191,10 @@ const Onboarding = () => {
 
       clear(user.id);
 
-      // Advance tasjeel to exam step — always, no step is ever skipped.
-      // EntranceExamResume handles finding/creating the attempt and shows
-      // its own error UI if the exam is not yet configured by admin.
-      await supabase.from("tasjeel_progress" as any)
-        .update({ current_step: "exam", updated_at: new Date().toISOString() } as any)
-        .eq("user_id", user.id);
+      // Advance tasjeel via the hook so local state stays in sync — this
+      // prevents a transient loop where EntranceExamResume's step-guard
+      // still sees "onboarding" and bounces the user back.
+      await advanceStep("exam");
 
       toast({ title: "✅ Onboarding complete!", description: "Preparing your entrance exam…" });
       navigate("/student/entrance-exam", { replace: true });

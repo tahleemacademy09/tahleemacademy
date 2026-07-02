@@ -75,7 +75,7 @@ const EntranceExamResume = () => {
         // ── Step 2: Resume an existing in-progress attempt ──────────────────
         const { data: existingRows, error: e1 } = await supabase
           .from("exam_attempts")
-          .select("id")
+          .select("id, started_at, exams(time_limit_minutes)")
           .eq("exam_id", EXAM_ID)
           .eq("user_id", user.id)
           .eq("status", "in_progress")
@@ -84,13 +84,23 @@ const EntranceExamResume = () => {
 
         if (e1) throw new Error(`Could not check existing attempt: ${e1.message}`);
 
-        const existing = existingRows?.[0];
+        const existing: any = existingRows?.[0];
         if (existing) {
+          // Auto-close an in-progress attempt whose timer already expired so
+          // the student isn't dropped back into a dead, timed-out exam UI.
+          const limitMin  = existing?.exams?.time_limit_minutes ?? 0;
+          const startedAt = existing?.started_at ? new Date(existing.started_at).getTime() : 0;
+          const expiredAt = startedAt && limitMin ? startedAt + limitMin * 60_000 : 0;
+          if (expiredAt && Date.now() > expiredAt) {
+            try { await supabase.rpc("grade_exam_attempt" as any, { _attempt_id: existing.id } as any); } catch {}
+            // fall through to Step 3 (submitted-attempt handling)
+          } else {
           clearTimeout(timeoutId);
           setMessage("Resuming your exam…");
           didNavigate.current = true;
           navigate(`/student/entrance-exam/${existing.id}`, { replace: true });
           return;
+          }
         }
 
         // ── Step 3: Check if already submitted — fix stuck tasjeel step ─────
