@@ -425,7 +425,7 @@ const RegisterContinue = () => {
           </div>
           <div>
             <div style={{ fontSize: 17, fontWeight: 900, color: G }}>Tahleem <span style={{ color: GOLD }}>Academy</span></div>
-            <div style={{ fontSize: 10, color: "#7a9e88" }}>أكاديمية تعليم</div>
+            <div style={{ fontSize: 10, color: "#7a9e88" }}>أكاديمية التعليم</div>
           </div>
         </div>
 
