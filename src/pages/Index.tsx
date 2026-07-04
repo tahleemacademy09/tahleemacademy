@@ -379,6 +379,15 @@ const Index = () => {
         .ta-tab { flex:1; min-width:90px; padding:11px 14px; font-size:12px; }
         .ta-btn-primary, .ta-btn-secondary { padding:14px 28px; font-size:14px; }
         .ta-stat-num { font-size:40px; }
+
+        /* FIX: .ta-hero vertically centers its content inside a full 100vh
+           section. On mobile that leaves a large empty gap above the badge
+           on first paint (roughly a third of the screen), pushing the
+           enrol buttons below the fold. Top-align instead and pull the
+           padding way down so the content starts filling that dead space
+           near the top of the viewport instead of floating in the middle. */
+        .ta-hero { justify-content:flex-start; }
+        .ta-hero-content { padding-top:56px; padding-bottom:48px; }
       }
     `;
     document.head.appendChild(style);
