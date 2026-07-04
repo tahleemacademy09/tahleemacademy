@@ -127,6 +127,28 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // ── Idempotency guard ──────────────────────────────────────────────────
+    // FIX: the DB trigger fires on INSERT or any UPDATE OF status on
+    // live_sessions. If status flips to 'live' more than once for the same
+    // session (retry, teacher stop/restart, trigger re-fire), this function
+    // would re-ring every enrolled student each time with no way to stop it.
+    // Guard by checking for a ring notification already tagged with this
+    // exact session_id before doing any work.
+    const ringTag = `ring:${session_id}`;
+    const { data: existingRing } = await sb
+      .from("notifications")
+      .select("id")
+      .eq("type", "class_ring")
+      .ilike("link", `%${ringTag}%`)
+      .limit(1);
+
+    if ((existingRing?.length ?? 0) > 0) {
+      console.log(`[ring-live-class] session ${session_id} already rung — skipping`);
+      return new Response(JSON.stringify({ ok: true, rung: 0, skipped: "already_rung" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // ── Get subject and teacher info ─────────────────────────────────────
     const { data: subject } = await sb
       .from("subjects")
@@ -252,12 +274,15 @@ Deno.serve(async (req) => {
       }
 
       // ── In-app notification ────────────────────────────────────────────
+      // Ring tag appended as a hash fragment so it doesn't interfere with the
+      // real navigation query params but still lets the dedup guard above
+      // match on it via ilike.
       await sb.from("notifications").insert({
         user_id: studentId,
         title:   `📞 ${subjectTitle} is LIVE now!`,
         message: `${teacherName} has started the class. Join immediately.`,
         type:    "class_ring",
-        link:    `/student/live-classes?subject=${subject_id}&autoJoin=true`,
+        link:    `/student/live-classes?subject=${subject_id}&autoJoin=true#${ringTag}`,
         is_read: false,
       }).catch(() => {});
     }
