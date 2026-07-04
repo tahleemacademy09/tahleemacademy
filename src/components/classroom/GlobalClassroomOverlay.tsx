@@ -146,6 +146,13 @@ export default function GlobalClassroomOverlay() {
     };
   }, [hasConnected, handleReturn, handleLeave]);
 
+  // Android foreground-service notification tap → restore the classroom.
+  useEffect(() => {
+    const onReturn = () => handleReturn();
+    window.addEventListener("tahleem:live-class-return", onReturn);
+    return () => window.removeEventListener("tahleem:live-class-return", onReturn);
+  }, [handleReturn]);
+
   // ── Native Android Foreground Service ───────────────────────────────────
   // This is the ONLY reliable way to keep a WebView process alive on Samsung
   // (and other Android OEMs) when the home button is pressed.

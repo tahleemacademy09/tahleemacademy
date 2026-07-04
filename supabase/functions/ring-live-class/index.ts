@@ -215,17 +215,25 @@ Deno.serve(async (req) => {
       .select("user_id, endpoint, p256dh, auth")
       .in("user_id", allStudentIds);
 
-    const pushSubMap = new Map((pushSubs || []).map((s: any) => [s.user_id, s]));
+    const pushSubMap = new Map<string, any[]>();
+    for (const sub of (pushSubs || []) as any[]) {
+      const list = pushSubMap.get(sub.user_id) ?? [];
+      list.push(sub);
+      pushSubMap.set(sub.user_id, list);
+    }
     const profileMap = new Map((profiles || []).map((p: any) => [p.user_id, p]));
 
     let rung = 0;
 
     for (const studentId of allStudentIds) {
-      const pushSub = pushSubMap.get(studentId);
+      const userPushSubs = pushSubMap.get(studentId) ?? [];
       const profile = profileMap.get(studentId);
 
       // ── Web Push ───────────────────────────────────────────────────────
-      if (pushSub) {
+      const webPushSubs = userPushSubs.filter((sub: any) =>
+        sub?.endpoint && !sub.endpoint.startsWith("native:") && sub.p256dh && sub.auth
+      );
+      for (const pushSub of webPushSubs) {
         const result = await sendRingPush(pushSub, ringPayload);
         if (result.gone) {
           // Subscription expired — clean up
@@ -240,7 +248,7 @@ Deno.serve(async (req) => {
       const chatId = profile?.telegram_chat_id;
       if (chatId) {
         await sendTelegramRing(String(chatId), subjectTitle, teacherName, joinUrl);
-        if (!pushSub) rung++;  // count telegram-only users
+        if (webPushSubs.length === 0) rung++;  // count telegram-only users
       }
 
       // ── In-app notification ────────────────────────────────────────────

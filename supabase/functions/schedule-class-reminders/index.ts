@@ -248,6 +248,7 @@ async function maybeNotify(
         };
 
     for (const sub of (pushSubs ?? []) as any[]) {
+      if (!sub?.endpoint || sub.endpoint.startsWith("native:") || !sub.p256dh || !sub.auth) continue;
       try {
         const result = await sendWebPush(sub, pushPayload, isRing ? 600 : 900);
         if (result.gone) {
