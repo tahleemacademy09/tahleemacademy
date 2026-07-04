@@ -54,7 +54,7 @@ const Shell = ({ children, language, setLanguage, config, currencySymbol }: Shel
             <BookOpen style={{ width: 34, height: 34, color: GOLD }} />
           </div>
           <h1 style={{ fontSize: 32, fontWeight: 900, color: "#fff", margin: "0 0 8px" }}>Tahleem<span style={{ color: GOLD }}> Academy</span></h1>
-          <p style={{ fontSize: 15, color: "rgba(255,255,255,.55)", margin: "0 0 36px", lineHeight: 1.6 }}>أكاديمية تعليم الإسلامية<br />Your journey to Islamic knowledge</p>
+          <p style={{ fontSize: 15, color: "rgba(255,255,255,.55)", margin: "0 0 36px", lineHeight: 1.6 }}>أكاديمية التعليم الإسلامية<br />Your journey to Islamic knowledge</p>
           <div style={{ background: "rgba(255,255,255,.06)", borderRadius: 16, padding: "16px 20px", border: "1px solid rgba(255,255,255,.08)", textAlign: "left" }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: GOLD, marginBottom: 12, textTransform: "uppercase", letterSpacing: .5 }}>Registration Journey</div>
             {[
@@ -87,7 +87,7 @@ const Shell = ({ children, language, setLanguage, config, currencySymbol }: Shel
           </div>
           <div>
             <div style={{ fontSize: 16, fontWeight: 900, color: G }}>Tahleem <span style={{ color: GOLD }}>Academy</span></div>
-            <div style={{ fontSize: 10, color: "#7a9e88" }}>أكاديمية تعليم</div>
+            <div style={{ fontSize: 10, color: "#7a9e88" }}>أكاديمية التعليم</div>
           </div>
         </div>
         <div style={{ width: "100%", maxWidth: 480, background: "#fff", borderRadius: 24, border: "1px solid rgba(15,45,31,.1)", boxShadow: "0 8px 40px rgba(15,45,31,.1)", padding: "36px 28px", animation: "fadeUp .5s ease" }}>
@@ -259,7 +259,7 @@ const Register = () => {
             <BookOpen style={{ width: 30, height: 30, color: GOLD }} />
           </div>
           <h1 style={{ fontSize: 22, fontWeight: 900, color: G, margin: "0 0 6px" }}>Tahleem <span style={{ color: GOLD }}>Academy</span></h1>
-          <p style={{ fontSize: 12, color: "#7a9e88", margin: "0 0 28px" }}>أكاديمية تعليم</p>
+          <p style={{ fontSize: 12, color: "#7a9e88", margin: "0 0 28px" }}>أكاديمية التعليم</p>
           <div style={{ background: "#FEF2F2", borderRadius: 16, padding: "20px", border: "2px solid #FECACA", marginBottom: 24 }}>
             <AlertCircle size={32} color="#DC2626" style={{ margin: "0 auto 12px", display: "block" }} />
             <p style={{ fontWeight: 800, fontSize: 16, color: "#991B1B", margin: "0 0 8px" }}>{dailyCapReached ? "Daily Limit Reached" : "Registration Closed"}</p>
