@@ -59,6 +59,7 @@ const MORE_EMOJIS = [
    ───────────────────────────────────────────────────────────────────────── */
 const SettingsModal = ({ onClose, room }: { onClose: () => void; room: any }) => {
   const { t } = useLanguage();
+  const { audioBoost, setAudioBoost } = useLiveClass();
   const [tab, setTab] = useState<"audio" | "video" | "tips">("audio");
 
   // Devices
@@ -232,6 +233,30 @@ const SettingsModal = ({ onClose, room }: { onClose: () => void; room: any }) =>
               <SectionLabel>{t("Noise Cancellation", "إلغاء الضوضاء")}</SectionLabel>
               <Toggle value={noiseCancel} onChange={() => setNoiseCancel(v => !v)}
                 label={noiseCancel ? t("Enabled — background noise suppressed", "مفعّل — الضوضاء مكتومة") : t("Disabled", "معطّل")} />
+
+              <SectionLabel>{t("Voice Volume Boost", "تكبير الصوت")}</SectionLabel>
+              <div style={{ display: "flex", gap: 8 }}>
+                {([
+                  { v: 1,   label: t("Normal",      "عادي") },
+                  { v: 1.5, label: t("Loud",         "عالٍ") },
+                  { v: 2,   label: t("Extra Loud",   "عالٍ جداً") },
+                  { v: 3,   label: t("Max",          "أقصى") },
+                ] as const).map(opt => (
+                  <button key={opt.v} onClick={() => setAudioBoost(opt.v)} style={{
+                    flex: 1, padding: "12px 4px", borderRadius: 10, border: "1px solid", cursor: "pointer",
+                    fontSize: 12, fontWeight: 600,
+                    borderColor: audioBoost === opt.v ? "#22c55e" : "rgba(255,255,255,.12)",
+                    background:  audioBoost === opt.v ? "rgba(34,197,94,.14)" : "rgba(255,255,255,.04)",
+                    color: audioBoost === opt.v ? "#22c55e" : "rgba(255,255,255,.55)",
+                  }}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize: 11, color: "rgba(255,255,255,.3)", marginTop: 8, lineHeight: 1.6 }}>
+                {t("Boosts how loud other people sound to you — doesn't change your own mic. Takes effect immediately.",
+                   "يكبّر صوت الآخرين بالنسبة لك فقط — لا يغيّر ميكروفونك. يعمل فوراً.")}
+              </p>
             </>
           )}
 
