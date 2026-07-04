@@ -327,7 +327,7 @@ const Login = () => {
                 <span style={{ color:GOLD }}>Academy</span>
               </h1>
               <div style={{ fontFamily:"'Amiri',serif", fontSize:16, color:"rgba(232,192,112,.7)", marginBottom:32, direction:"rtl" }}>
-                أكاديمية تعليم
+                أكاديمية التعليم
               </div>
 
               {/* Divider */}
