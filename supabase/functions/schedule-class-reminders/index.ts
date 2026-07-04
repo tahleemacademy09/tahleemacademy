@@ -167,6 +167,61 @@ async function sendTelegram(chatId: string, title: string, message: string, url:
   if (!res.ok) throw new Error(`telegram ${res.status}: ${await res.text()}`);
 }
 
+// ── Resolve who a class is actually for ───────────────────────────────────────
+// FIX: previously every reminder/ring blasted ALL students in the school for
+// EVERY class, regardless of subject/level/enrollment. Mirrors the scoping
+// logic already used in ring-live-class: enrolled-via-course, private
+// 1:1 students, and level-matched students. A class with no subject_id is
+// treated as a genuinely open/public class and still goes to everyone.
+async function resolveStudentAudience(
+  sb: ReturnType<typeof createClient>,
+  subjectId: string | null | undefined
+): Promise<string[]> {
+  if (!subjectId) {
+    const { data: allStudents } = await sb
+      .from("profiles")
+      .select("user_id")
+      .eq("role", "student");
+    return (allStudents ?? []).map((p: any) => p.user_id);
+  }
+
+  const { data: subject } = await sb
+    .from("subjects")
+    .select("levels, level")
+    .eq("id", subjectId)
+    .maybeSingle();
+
+  // Path 1: enrolled via a course tied to this subject
+  const { data: courses } = await sb
+    .from("courses").select("id").eq("subject_id", subjectId);
+  const courseIds = (courses || []).map((c: any) => c.id);
+
+  let enrolledIds: string[] = [];
+  if (courseIds.length > 0) {
+    const { data: enrollments } = await sb
+      .from("enrollments").select("user_id").in("course_id", courseIds);
+    enrolledIds = (enrollments || []).map((e: any) => e.user_id);
+  }
+
+  // Path 2: private 1:1 students assigned to this subject
+  const { data: privateStudents } = await sb
+    .from("private_student_subjects" as any)
+    .select("student_id").eq("subject_id", subjectId);
+  const privateIds = (privateStudents || []).map((p: any) => p.student_id);
+
+  // Path 3: level-based students
+  const subjectLevels: string[] =
+    (subject as any)?.levels || ((subject as any)?.level ? [(subject as any).level] : []);
+  let levelIds: string[] = [];
+  if (subjectLevels.length > 0) {
+    const { data: lvlStudents } = await sb
+      .from("profiles").select("user_id").in("level", subjectLevels).eq("role", "student");
+    levelIds = (lvlStudents || []).map((p: any) => p.user_id);
+  }
+
+  return [...new Set([...enrolledIds, ...privateIds, ...levelIds])];
+}
+
 // ── Notify one user for one class ─────────────────────────────────────────────
 
 async function maybeNotify(
@@ -351,15 +406,15 @@ Deno.serve(async (req) => {
           stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
         }
 
-        // Notify all active students
-        const { data: students } = await sb
-          .from("profiles")
-          .select("user_id")
-          .eq("role", "student");
+        // Notify only the students this class is actually for (enrolled /
+        // private / level-matched — or everyone if it's a true public class
+        // with no subject_id attached).
+        const studentIds = await resolveStudentAudience(sb, cls.subject_id);
 
-        for (const s of (students ?? []) as any[]) {
+        for (const studentId of studentIds) {
+          if (studentId === cls.host_id) continue; // don't double-notify the host as a student
           const r = await maybeNotify(sb, {
-            userId: s.user_id, classId: cls.id, classTitle,
+            userId: studentId, classId: cls.id, classTitle,
             scheduledAt: cls.scheduled_at, minsLeft, threshold,
             joinUrl: `${APP_BASE_URL}${studentJoinPath}`, joinPath: studentJoinPath,
             teacherName, label: "Class",
