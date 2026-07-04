@@ -29,7 +29,7 @@ const DEFAULTS: RegistrationConfig = {
   onboarding_required: true,
   max_daily_registrations: 0,
   registration_message: "Welcome to Tahleem Academy! Complete your registration to begin your Islamic learning journey.",
-  registration_message_ar: "مرحباً بك في أكاديمية تعليم! أكمل تسجيلك لبدء رحلتك التعليمية الإسلامية.",
+  registration_message_ar: "مرحباً بك في أكاديمية التعليم! أكمل تسجيلك لبدء رحلتك التعليمية الإسلامية.",
   closed_message: "Registration is currently closed. Please check back later or contact us.",
   closed_message_ar: "التسجيل مغلق حالياً. يرجى المراجعة لاحقاً أو التواصل معنا.",
 };
