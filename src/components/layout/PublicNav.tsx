@@ -217,7 +217,7 @@ const PublicNav = () => {
             </div>
             <div>
               <div style={{ fontSize:16, fontWeight:900, color:G, lineHeight:1 }}>Tahleem <span style={{ color:GOLD }}>Academy</span></div>
-              <div style={{ fontSize:10, color:"#7a9e88", direction:"rtl" }}>أكاديمية تعليم</div>
+              <div style={{ fontSize:10, color:"#7a9e88", direction:"rtl" }}>أكاديمية التعليم</div>
             </div>
           </Link>
 
