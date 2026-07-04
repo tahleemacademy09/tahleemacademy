@@ -4,6 +4,13 @@
 // No-op on iOS and web.
 
 import { Capacitor } from "@capacitor/core";
+import {
+  ForegroundService,
+  Importance,
+  ServiceType,
+} from "@capawesome-team/capacitor-android-foreground-service";
+import { LocalNotifications } from "@capacitor/local-notifications";
+import { logger } from "@/lib/logger";
 
 export interface ForegroundServiceConfig {
   title: string;
@@ -14,54 +21,89 @@ export interface ForegroundServiceConfig {
 }
 
 let _running = false;
+let _prepared = false;
+let _tapListener: { remove: () => Promise<void> } | null = null;
+const CHANNEL_ID = "tahleem_live_class";
 
-// Dynamically import so web/iOS bundles never try to resolve the Android module.
-async function getPlugin(): Promise<any | null> {
-  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") return null;
+async function prepareForegroundService(): Promise<boolean> {
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android") return false;
+  if (_prepared) return true;
+
   try {
-    const mod: any = await import(
-      /* @vite-ignore */ "@capawesome-team/capacitor-android-foreground-service"
-    );
-    return mod.ForegroundService ?? null;
-  } catch {
-    return null;
+    const perm = await ForegroundService.requestPermissions().catch(() => null);
+    if (perm && perm.display !== "granted") {
+      logger.warn("[ForegroundService] notification permission denied");
+      return false;
+    }
+
+    await ForegroundService.createNotificationChannel({
+      id: CHANNEL_ID,
+      name: "Live classes",
+      description: "Keeps an active Tahleem live class running in the background.",
+      importance: Importance.Low,
+    }).catch(() => {});
+
+    // LocalNotifications is only a fallback UI; the foreground service above is
+    // the actual Android mechanism that keeps the WebView process alive.
+    await LocalNotifications.createChannel({
+      id: CHANNEL_ID,
+      name: "Live classes",
+      description: "Active live class indicator",
+      importance: 2,
+      visibility: 1,
+      vibration: false,
+    }).catch(() => {});
+
+    if (!_tapListener) {
+      _tapListener = await ForegroundService.addListener("notificationTapped", () => {
+        ForegroundService.moveToForeground().catch(() => {});
+        window.dispatchEvent(new CustomEvent("tahleem:live-class-return"));
+      }).catch(() => null);
+    }
+
+    _prepared = true;
+    return true;
+  } catch (e) {
+    logger.warn("[ForegroundService] prepare failed:", e);
+    return false;
   }
 }
 
 export async function startForegroundService(cfg: ForegroundServiceConfig): Promise<void> {
-  const plugin = await getPlugin();
-  if (!plugin) return;
+  const ready = await prepareForegroundService();
+  if (!ready) return;
+
+  const options = {
+    title:     cfg.title,
+    body:      cfg.body,
+    id:        cfg.id ?? 1001,
+    smallIcon: cfg.icon ?? "ic_stat_icon",
+    notificationChannelId: CHANNEL_ID,
+    serviceType: ServiceType.Microphone,
+    silent: true,
+    buttons: [],
+  };
+
   if (_running) {
-    await plugin.updateForegroundService?.({
-      title:     cfg.title,
-      body:      cfg.body,
-      id:        cfg.id ?? 1001,
-      smallIcon: cfg.icon ?? "ic_stat_icon",
-    }).catch(() => {});
+    await ForegroundService.updateForegroundService(options).catch(() => {});
     return;
   }
   try {
-    await plugin.startForegroundService({
-      title:     cfg.title,
-      body:      cfg.body,
-      id:        cfg.id   ?? 1001,
-      smallIcon: cfg.icon ?? "ic_stat_icon",
-      buttons:   [],
-    });
+    await ForegroundService.startForegroundService(options);
     _running = true;
   } catch (e) {
-    console.error("[ForegroundService] start failed:", e);
+    logger.error("[ForegroundService] start failed:", e);
   }
 }
 
 export async function stopForegroundService(): Promise<void> {
-  const plugin = await getPlugin();
-  if (!plugin || !_running) return;
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "android" || !_running) return;
   try {
-    await plugin.stopForegroundService();
+    await ForegroundService.stopForegroundService();
+    await LocalNotifications.cancel({ notifications: [{ id: 1001 }] }).catch(() => {});
     _running = false;
   } catch (e) {
-    console.error("[ForegroundService] stop failed:", e);
+    logger.error("[ForegroundService] stop failed:", e);
   }
 }
 

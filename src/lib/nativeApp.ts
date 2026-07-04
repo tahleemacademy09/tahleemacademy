@@ -28,11 +28,37 @@ import { supabase } from "@/integrations/supabase/client";
 import { logger } from "@/lib/logger";
 
 export const isNative = () => Capacitor.isNativePlatform();
+const CLASS_CHANNEL_ID = "tahleem_class";
+
+async function setupNotificationChannels() {
+  if (!isNative() || Capacitor.getPlatform() !== "android") return;
+  await Promise.allSettled([
+    PushNotifications.createChannel({
+      id: CLASS_CHANNEL_ID,
+      name: "Class notifications",
+      description: "Live class rings and academy reminders",
+      importance: 4,
+      visibility: 1,
+      vibration: true,
+      sound: "adhan.wav",
+    }),
+    LocalNotifications.createChannel({
+      id: CLASS_CHANNEL_ID,
+      name: "Class notifications",
+      description: "Live class rings and academy reminders",
+      importance: 4,
+      visibility: 1,
+      vibration: true,
+      sound: "adhan.wav",
+    }),
+  ]);
+}
 
 // ── Push registration & token storage ────────────────────────────────────────
 
 async function registerPushToken() {
   try {
+    await setupNotificationChannels();
     const perm = await PushNotifications.requestPermissions();
     if (perm.receive !== "granted") {
       logger.warn("[Native] Push permission denied");
@@ -47,20 +73,25 @@ async function registerPushToken() {
       const platform = Capacitor.getPlatform(); // 'ios' | 'android'
       const endpoint = `native:${platform}:${token.value}`;
 
-      // Upsert by endpoint — prevents duplicate rows for same token.
-      // Also upsert by user_id+platform so stale tokens from the same device
-      // get replaced rather than accumulating.
-      const { error } = await supabase.from("push_subscriptions").upsert(
-        {
-          user_id:  user.id,
-          endpoint,
-          p256dh:   null,
-          auth:     null,
-          keys:     { platform, token: token.value, native: true },
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "endpoint" }
-      );
+      const row = {
+        user_id:  user.id,
+        endpoint,
+        p256dh:   null,
+        auth:     null,
+        keys:     { platform, token: token.value, native: true },
+        updated_at: new Date().toISOString(),
+      };
+
+      // Keep one current native token per user/platform. Some existing projects
+      // have old duplicate web-push rows, so do not rely on a global endpoint
+      // unique constraint for native tokens.
+      await supabase
+        .from("push_subscriptions")
+        .delete()
+        .eq("user_id", user.id)
+        .like("endpoint", `native:${platform}:%`);
+
+      const { error } = await supabase.from("push_subscriptions").insert(row as any);
       if (error) logger.warn("[Native] Token upsert error:", error.message);
       else logger.log("[Native] Push token registered/refreshed:", platform);
     });
@@ -89,6 +120,7 @@ async function registerPushToken() {
             sound: "adhan.wav",
             smallIcon: "ic_stat_icon",
             iconColor: "#D4AF37",
+            channelId: CLASS_CHANNEL_ID,
           }],
         });
       } catch (e) {
@@ -113,6 +145,7 @@ async function registerPushToken() {
 
 async function setupLocalNotifications() {
   try {
+    await setupNotificationChannels();
     const perm = await LocalNotifications.requestPermissions();
     if (perm.display !== "granted") {
       logger.warn("[Native] Local notification permission denied");
@@ -150,6 +183,7 @@ export async function initNativeApp() {
   } catch {}
 
   setupDeepLinks();
+  await setupNotificationChannels();
   await setupLocalNotifications();
 
   // Register push once user is authenticated, and again on every auth change

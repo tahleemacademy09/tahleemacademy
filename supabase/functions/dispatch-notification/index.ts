@@ -271,18 +271,53 @@ Deno.serve(async (req) => {
     const fullUrl = absUrl(link);
     const results: Record<string, string> = {};
 
-    // ── Class notifications: skip ALL push + Telegram here ────────────────────
+    // ── Class notifications: web push + Telegram are sent by class schedulers ──
     // schedule-class-reminders already sends web push + Telegram directly
     // before inserting the bell row. If we also send here (fired by the DB
     // trigger on every notifications INSERT) the user gets duplicate phone
     // notifications and duplicate Telegram messages for every class.
-    // Solution: for class_reminder and class_ring, only the bell (DB row) is
-    // needed from this function — push and Telegram are already done.
+    // Native Capacitor tokens are different: schedulers do not send those, so
+    // this function must fan out class rows to native FCM only.
     const CLASS_TYPES = ["class_reminder", "class_ring"];
-    if (CLASS_TYPES.includes(type ?? "")) {
-      results.push     = "skipped_class_type (push sent by scheduler)";
+    const classType = CLASS_TYPES.includes(type ?? "");
+    if (classType) {
+      const SERVICE_ACCOUNT_JSON = Deno.env.get("FIREBASE_SERVICE_ACCOUNT");
+      const FCM_PROJECT_ID       = (() => {
+        try { return JSON.parse(SERVICE_ACCOUNT_JSON ?? "{}").project_id ?? ""; }
+        catch { return ""; }
+      })();
+
+      const { data: nativeSubs, error: nativeErr } = await supabase
+        .from("push_subscriptions")
+        .select("endpoint")
+        .eq("user_id", user_id)
+        .like("endpoint", "native:%");
+
+      if (nativeErr) {
+        results.fcm = `db_error: ${nativeErr.message}`;
+      } else if (!nativeSubs?.length) {
+        results.fcm = "no_native_subscription";
+      } else if (!SERVICE_ACCOUNT_JSON || !FCM_PROJECT_ID) {
+        results.fcm = "not_configured";
+      } else {
+        let sent = 0, failed = 0, expired = 0;
+        const expiredEndpoints: string[] = [];
+        await Promise.all(nativeSubs.map(async (sub: any) => {
+          const parts = String(sub.endpoint).split(":");
+          const token = parts.slice(2).join(":");
+          const result = await sendFCM(token, { title, message, url: fullUrl, type: type ?? "class_reminder" }, SERVICE_ACCOUNT_JSON, FCM_PROJECT_ID);
+          if (result === "ok") sent++;
+          else if (result === "expired") { expired++; expiredEndpoints.push(sub.endpoint); }
+          else failed++;
+        }));
+        if (expiredEndpoints.length > 0) {
+          await supabase.from("push_subscriptions").delete().eq("user_id", user_id).in("endpoint", expiredEndpoints);
+        }
+        results.fcm = `sent ${sent}${expired ? ` (${expired} expired)` : ""}${failed ? ` (${failed} failed)` : ""}`;
+      }
+      results.web_push = "skipped_class_type (web push sent by scheduler)";
       results.telegram = "skipped_class_type (telegram sent by scheduler)";
-      console.log("[dispatch-notification] class type — skipping push+telegram, bell already inserted");
+      console.log("[dispatch-notification] class type — native FCM only", results);
       return new Response(JSON.stringify({ ok: true, results }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
