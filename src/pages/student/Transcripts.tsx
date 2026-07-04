@@ -368,7 +368,7 @@ table.summary .lbl{font-weight:700;background:#f8fafb;width:20%}
 </style></head><body>
 <div class="watermark">TAHLEEM ACADEMY</div>
 <div class="page-header">
-  <div class="ar">أكاديمية تعليم</div>
+  <div class="ar">أكاديمية التعليم</div>
   <div class="en">TAHLEEM ACADEMY</div>
 </div>
 <div class="title-box">
