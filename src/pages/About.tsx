@@ -55,7 +55,7 @@ const About = () => {
       <section className="bg-accent geometric-pattern">
         <div className="container mx-auto px-4 py-20 text-center">
           <motion.h1 className="mb-4 text-4xl font-bold" initial="hidden" animate="visible" variants={fadeUp} custom={0}>
-            {t("About Tahleem Academy", "عن أكاديمية تعليم")}
+            {t("About Tahleem Academy", "عن أكاديمية التعليم")}
           </motion.h1>
           <motion.p className="mx-auto max-w-2xl text-muted-foreground" initial="hidden" animate="visible" variants={fadeUp} custom={1}>
             {t(
