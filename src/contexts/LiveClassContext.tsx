@@ -116,6 +116,19 @@ function restore(): LiveClassState | null {
   return null;
 }
 
+/* ── Audio boost preference — persists across classes (small standalone key,
+   not tied to the inCall restore logic since it's a lasting preference,
+   not per-call state) ── */
+const AUDIO_BOOST_KEY = "tahleem_audio_boost";
+function restoreAudioBoost(): number {
+  try {
+    const raw = localStorage.getItem(AUDIO_BOOST_KEY);
+    const n = raw ? parseFloat(raw) : NaN;
+    if (!isNaN(n) && n >= 1 && n <= 3) return n;
+  } catch {}
+  return 1; // 1× = no extra boost on top of the VolumeBooster base gain
+}
+
 /* ── Types ── */
 interface LiveClassState {
   activeSubject: any | null;
@@ -138,6 +151,11 @@ interface LiveClassContextType extends LiveClassState {
   // FIX: "restore" sets mic ON only — safe to call on background return.
   // toggleMicFnRef flips state and must never be used for restoration.
   restoreMicFnRef: React.MutableRefObject<() => void>;
+  /** Extra multiplier (1×–3×) on top of VolumeBooster's base gain — lets a
+      student/teacher crank remote voices up further when they're too quiet,
+      without needing everyone else to also be loud enough on their own mic. */
+  audioBoost:      number;
+  setAudioBoost:   (v: number) => void;
 }
 const LiveClassContext = createContext<LiveClassContextType | null>(null);
 
@@ -149,7 +167,13 @@ const DEFAULT_STATE: LiveClassState = {
 /* ── Provider ── */
 export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<LiveClassState>(() => restore() ?? DEFAULT_STATE);
+  const [audioBoost, setAudioBoostState] = useState<number>(() => restoreAudioBoost());
   const guardPushed = useRef(false);
+
+  const setAudioBoost = useCallback((v: number) => {
+    setAudioBoostState(v);
+    try { localStorage.setItem(AUDIO_BOOST_KEY, String(v)); } catch {}
+  }, []);
 
   const toggleMicFnRef  = useRef<() => void>(() => {});
   const toggleCamFnRef  = useRef<() => void>(() => {});
@@ -239,6 +263,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
       ...state, joinClass, leaveClass, setMinimized,
       setMicEnabled, setCamEnabled, setHasConnected,
       toggleMicFnRef, toggleCamFnRef, restoreMicFnRef,
+      audioBoost, setAudioBoost,
     }}>
       {children}
     </LiveClassContext.Provider>
