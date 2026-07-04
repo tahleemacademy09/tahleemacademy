@@ -1,6 +1,6 @@
 // supabase/functions/ai-notification-center/index.ts
 // v4 — complete rewrite
-//   • AI switched from Lovable gateway → Anthropic API (claude-sonnet-4-6)
+//   • AI switched from Lovable gateway → Anthropic API (claude-sonnet-5)
 //   • All AI-generated/rephrased notifications are Islamically toned
 //     (Salam opening, In sha Allah, duas, Islamic emoji)
 //   • sanitiseUrl() strips Lovable preview domains from every push payload
@@ -57,7 +57,14 @@ async function callAI(system: string, user: string): Promise<any> {
       "Content-Type":      "application/json",
     },
     body: JSON.stringify({
-      model:      "claude-sonnet-4-6",
+      // BUG FIX: "claude-sonnet-4-6" is not a real Anthropic model string —
+      // it doesn't match any released model, so every call here was getting
+      // rejected by the API with a non-2xx response, which is exactly the
+      // "AI compose failed — Edge Function returned a non-2xx status code"
+      // error shown in the admin panel. This affected EVERY action in this
+      // file (compose, rephrase, auto, moderate) since they all funnel
+      // through callAI(). Using the current Sonnet model string instead.
+      model:      "claude-sonnet-5",
       max_tokens: 1000,
       system,
       messages: [{ role: "user", content: user }],
