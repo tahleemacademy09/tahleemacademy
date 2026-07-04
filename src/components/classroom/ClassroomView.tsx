@@ -4022,7 +4022,7 @@ const useNetworkQuality=()=>{
     readCurrent();
     const initTimer=setTimeout(readCurrent,2000);
 
-    const applyAdaptiveVideo=async(q:string)=>{
+    const applyAdaptiveVideo=async(q:string,prevQ:string)=>{
       if(!lp)return;
       try{
         const camPub=lp.getTrackPublication(Track.Source.Camera);
@@ -4034,9 +4034,18 @@ const useNetworkQuality=()=>{
           // Audio-only mode: camera off saves ~270kbps — best way to stay alive on 2G/edge
           if(camPub?.track) await lp.setCameraEnabled(false);
         }else if(q==="good"||q==="excellent"){
-          if(lastQualityRef.current==="lost"){
+          // BUG FIX: this used to read lastQualityRef.current here, but the
+          // caller had already overwritten that ref to the NEW label (q)
+          // before calling this function — so these branches compared q
+          // against itself and never matched "lost"/"poor". Net effect:
+          // video never actually restored to full resolution/framerate
+          // after recovering from a network dip; it silently stayed
+          // degraded for the rest of the class. Now takes the previous
+          // quality explicitly as a parameter, captured before the ref
+          // was updated, so recovery actually fires.
+          if(prevQ==="lost"){
             await lp.setCameraEnabled(true,{resolution:{width:640,height:480,frameRate:24}} as any);
-          }else if(lastQualityRef.current==="poor"){
+          }else if(prevQ==="poor"){
             await lp.setCameraEnabled(false);
             await lp.setCameraEnabled(true,{resolution:{width:640,height:480,frameRate:24}} as any);
           }
@@ -4085,8 +4094,9 @@ const useNetworkQuality=()=>{
       if((label==="good"||label==="excellent")&&(lastQualityRef.current==="poor"||lastQualityRef.current==="lost")){
         toast({title:"✅ Network Recovered",description:"Connection quality is good again."});
       }
+      const prevLabel=lastQualityRef.current; // capture BEFORE overwriting — see BUG FIX note in applyAdaptiveVideo
       lastQualityRef.current=label;
-      applyAdaptiveVideo(label);
+      applyAdaptiveVideo(label,prevLabel);
       applyAdaptiveBitrate(label);
     };
 
@@ -5587,6 +5597,33 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             adaptiveStream:{pixelDensity:"screen"},
             dynacast:true,
             disconnectOnPageLeave:false,
+            // BUG FIX — "reconnects too much on low network":
+            // No reconnectPolicy was set, so LiveKit fell back to its default
+            // (~10 attempts, short backoff cap). That internal reconnect is
+            // CHEAP — it resumes the existing peer connection / ICE without
+            // touching local tracks or remote subscriptions. Once it's
+            // exhausted, LiveKit fires Disconnected, and our own autoReconnect
+            // below takes over with a FULL rebuild: new token, brand new Room,
+            // re-subscribe every participant from scratch. That's expensive
+            // and visible to the user — and on a flaky/low-bandwidth
+            // connection the default budget ran out constantly, so this heavy
+            // path was firing far more often than it should.
+            // Giving LiveKit's own lightweight reconnect much more patience
+            // means most low-network hiccups now resolve quietly without ever
+            // reaching the app-level rebuild.
+            reconnectPolicy:{
+              nextRetryDelayInMs:(context:{retryCount:number;elapsedMs:number})=>{
+                // Stop after ~2 minutes of trying internally — beyond that,
+                // handing off to autoReconnect (which fetches a fresh token,
+                // useful if the room/session itself changed server-side) is
+                // more likely to help than continuing to retry the same one.
+                if(context.elapsedMs>120_000)return -1; // negative = give up, let Disconnected fire
+                // Gentle backoff: .5s, .75s, 1.1s, 1.7s ... capped at 8s —
+                // frequent-but-cheap retries suit a low-network connection
+                // better than a few expensive, widely-spaced ones.
+                return Math.min(500*Math.pow(1.5,context.retryCount),8_000);
+              },
+            },
             // Feature 6: Force TCP TURN relay so the call survives restrictive
             // school/office WiFi that blocks UDP. LiveKit will still prefer UDP/STUN
             // when available — this just ensures a fallback is always ready.
