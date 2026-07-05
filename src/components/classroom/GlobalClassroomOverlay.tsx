@@ -34,6 +34,7 @@
 
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { startBackgroundAudio, stopBackgroundAudio } from "@/hooks/useBackgroundAudio";
+import { enterPiPKeepAlive, exitPiPKeepAlive, setPiPSource } from "@/hooks/useBackgroundPiP";
 import { App as CapApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import ClassroomView from "@/components/classroom/ClassroomView";
@@ -57,9 +58,9 @@ export default function GlobalClassroomOverlay() {
   const {
     activeSubject, inCall, minimized, autoJoin,
     leaveClass, setMinimized,
-    micEnabled,
+    micEnabled, camEnabled,
     hasConnected,
-    restoreMicFnRef,
+    restoreMicFnRef, getLocalCameraTrackRef,
   } = useLiveClass();
 
   const title = activeSubject?.title ?? "Live Class";
@@ -89,11 +90,20 @@ export default function GlobalClassroomOverlay() {
   const handleReturn = useCallback(() => {
     userMinimizedRef.current = false;
     setMinimized(false);
+    exitPiPKeepAlive();
     // Restore mic after a short delay so LiveKit room is foregrounded first
     if (micEnabledRef.current) {
       setTimeout(() => { restoreMicFnRef.current?.(); }, 400);
     }
   }, [setMinimized, restoreMicFnRef]);
+
+  // Keep the PiP window's content in sync if the user toggles their camera
+  // on/off while already minimized — no need to re-request PiP, the same
+  // floating window just switches what it's displaying.
+  useEffect(() => {
+    if (!minimized) return;
+    setPiPSource(camEnabled ? getLocalCameraTrackRef.current?.() ?? null : null);
+  }, [camEnabled, minimized, getLocalCameraTrackRef]);
 
   const handleLeave = useCallback(() => leaveClass(), [leaveClass]);
 
@@ -116,6 +126,7 @@ export default function GlobalClassroomOverlay() {
   useEffect(() => {
     if (!hasConnected) {
       stopBackgroundAudio();
+      exitPiPKeepAlive();
       return;
     }
     startBackgroundAudio(title);
@@ -189,7 +200,14 @@ export default function GlobalClassroomOverlay() {
     let stateHandle: any  = null;
 
     CapApp.addListener("backButton", () => {
-      if (!minimized) setMinimized(true);
+      if (!minimized) {
+        setMinimized(true);
+        // Attempt PiP here too for consistency. Note: this event arrives via
+        // Capacitor's native bridge, not a trusted browser input event, so
+        // it's less likely than the PWA popstate path to count as a genuine
+        // user gesture — but costs nothing to try.
+        enterPiPKeepAlive(camEnabled ? getLocalCameraTrackRef.current?.() ?? null : null);
+      }
     }).then(h => { backHandle = h; });
 
     // appStateChange fires when app goes to background/foreground on Android.
@@ -213,13 +231,19 @@ export default function GlobalClassroomOverlay() {
       backHandle?.remove();
       stateHandle?.remove();
     };
-  }, [hasConnected, minimized, setMinimized, restoreMicFnRef]);
+  }, [hasConnected, minimized, setMinimized, restoreMicFnRef, camEnabled, getLocalCameraTrackRef]);
 
-  /* ── Minimize button ── */
+  /* ── Minimize button ──
+     This is the ONLY place safe to call requestPictureInPicture() — it must
+     run synchronously inside a real tap/click handler. Calling it from
+     visibilitychange or appStateChange (below) is rejected by the browser,
+     so PiP only has a chance to engage when the user taps this button
+     directly, not when they press the phone's physical home button. */
   const handleMinimize = useCallback(() => {
     userMinimizedRef.current = true;
     setMinimized(true);
-  }, [setMinimized]);
+    enterPiPKeepAlive(camEnabled ? getLocalCameraTrackRef.current?.() ?? null : null);
+  }, [setMinimized, camEnabled, getLocalCameraTrackRef]);
 
   /* ── Phone home/recent button: visibilitychange → hidden → setMinimized.
      When the user returns (visible), auto-restore if they didn't explicitly minimize.
