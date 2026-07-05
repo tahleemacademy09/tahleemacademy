@@ -9,13 +9,14 @@
   normally. We just slide the classroom on/off screen with translateX.
 
   Minimize / background behaviour (simplified):
-    • Minimize button                → translateX(-200%)   + "Return to Class" banner shown
+    • Minimize button                → translateX(-200%) + real browser
+      Picture-in-Picture (native OS-level floating window, see startNativePiP
+      in ClassroomView.tsx's BottomBar) + small draggable circular bubble
     • Phone home / recents button   → visibilitychange hidden → translateX(-200%)
     • Back button                   → popstate (handled by LiveClassContext) → translateX(-200%)
-    • Tapping "Return to Class"     → translateX(0) + banner hidden
-    • Returning to tab              → auto-restore (banner never needed)
-
-  NO canvas PiP. NO browser PiP. NO video element hacks.
+    • Tapping the bubble            → translateX(0) + bubble hidden
+    • Dragging the bubble           → repositions it, does not return to class
+    • Returning to tab              → auto-restore (bubble never needed)
 
   KEEP-ALIVE STRATEGY (all inside useBackgroundAudio):
   ──────────────────────────────────────────────────────
@@ -37,9 +38,10 @@ import { startBackgroundAudio, stopBackgroundAudio } from "@/hooks/useBackground
 import { App as CapApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import ClassroomView from "@/components/classroom/ClassroomView";
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { startForegroundService, stopForegroundService } from "@/hooks/useForegroundService";
 import { useLocation } from "react-router-dom";
+import { Mic, MicOff, Video, VideoOff } from "lucide-react";
 
 // Routes where the overlay is allowed to persist.
 // Navigating to anything else (home, login, register) auto-calls leaveClass().
@@ -57,7 +59,7 @@ export default function GlobalClassroomOverlay() {
   const {
     activeSubject, inCall, minimized, autoJoin,
     leaveClass, setMinimized,
-    micEnabled,
+    micEnabled, camEnabled,
     hasConnected,
     restoreMicFnRef,
   } = useLiveClass();
@@ -75,6 +77,52 @@ export default function GlobalClassroomOverlay() {
 
   // Track whether the user explicitly minimized (button/back) vs tab-switched
   const userMinimizedRef = useRef(false);
+
+  // ── Draggable bubble position (Messenger chat-head style) ────────────────
+  // Defaults to bottom-right, clear of nav bars. Clamped to viewport on drag
+  // so it can never be dragged fully off-screen and lost.
+  const BUBBLE_SIZE = 60;
+  const [bubblePos, setBubblePos] = useState(() => ({
+    x: typeof window !== "undefined" ? window.innerWidth - BUBBLE_SIZE - 16 : 300,
+    y: typeof window !== "undefined" ? window.innerHeight - BUBBLE_SIZE - 140 : 400,
+  }));
+  const dragRef = useRef({ dragging: false, moved: false, startX: 0, startY: 0, origX: 0, origY: 0 });
+
+  const clampBubble = useCallback((x: number, y: number) => {
+    const maxX = window.innerWidth - BUBBLE_SIZE - 6;
+    const maxY = window.innerHeight - BUBBLE_SIZE - 6;
+    return { x: Math.min(Math.max(6, x), Math.max(6, maxX)), y: Math.min(Math.max(6, y), Math.max(6, maxY)) };
+  }, []);
+
+  const onBubblePointerDown = useCallback((e: React.PointerEvent) => {
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    dragRef.current = { dragging: true, moved: false, startX: e.clientX, startY: e.clientY, origX: bubblePos.x, origY: bubblePos.y };
+  }, [bubblePos]);
+
+  const onBubblePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragRef.current.dragging) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    // Small movement threshold — anything under ~6px is still treated as a
+    // tap (finger jitter), not a drag, so tapping to return still works.
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) dragRef.current.moved = true;
+    if (dragRef.current.moved) {
+      setBubblePos(clampBubble(dragRef.current.origX + dx, dragRef.current.origY + dy));
+    }
+  }, [clampBubble]);
+
+  const onBubblePointerUp = useCallback((e: React.PointerEvent) => {
+    const wasMoved = dragRef.current.moved;
+    dragRef.current.dragging = false;
+    dragRef.current.moved = false;
+    // Safe to reference handleReturn here even though it's declared further
+    // down: this callback only ever RUNS on a later pointerup event (long
+    // after the whole component has finished rendering), and handleReturn's
+    // own identity is stable (its deps — setMinimized, restoreMicFnRef —
+    // never change), so there's no stale-closure risk from the empty deps.
+    if (!wasMoved) handleReturn(); // a genuine tap (no drag) — return to class
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // FIX: snapshot mic state the moment the tab goes to background so we
   // restore exactly that state — not whatever micEnabled happens to be when
@@ -291,81 +339,61 @@ export default function GlobalClassroomOverlay() {
         />
       </div>
 
-      {/* ── "Return to Class" floating banner — shown when minimized ── */}
+      {/* ── Floating bubble — shown when minimized. Small circular Messenger-
+         chat-head style, draggable anywhere on screen. Tap (no drag) returns
+         to class; dragging just repositions it. Shows live mic/video status
+         so you can tell at a glance whether you're still unmuted. ── */}
       {minimized && (
         <div
-          onClick={handleReturn}
+          onPointerDown={onBubblePointerDown}
+          onPointerMove={onBubblePointerMove}
+          onPointerUp={onBubblePointerUp}
           style={{
-            position:       "fixed",
-            bottom:         "env(safe-area-inset-bottom, 16px)",
-            left:           "50%",
-            transform:      "translateX(-50%)",
-            zIndex:         9000,
-            display:        "flex",
-            alignItems:     "center",
-            gap:            "10px",
-            background:     "linear-gradient(135deg, #0c1f12 0%, #14290f 100%)",
-            border:         "1.5px solid #c9a84c",
-            borderRadius:   "999px",
-            padding:        "10px 20px 10px 14px",
-            cursor:         "pointer",
-            boxShadow:      "0 4px 24px rgba(0,0,0,0.45), 0 0 0 1px rgba(201,168,76,0.15)",
-            userSelect:     "none",
+            position:   "fixed",
+            left:       bubblePos.x,
+            top:        bubblePos.y,
+            width:      BUBBLE_SIZE,
+            height:     BUBBLE_SIZE,
+            zIndex:     9000,
+            borderRadius: "50%",
+            background: "linear-gradient(135deg, #0c1f12 0%, #14290f 100%)",
+            border:     "2px solid #c9a84c",
+            boxShadow:  "0 4px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(201,168,76,0.15)",
+            display:    "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor:     "grab",
+            touchAction: "none",
+            userSelect: "none",
             WebkitUserSelect: "none",
-            whiteSpace:     "nowrap",
           }}
         >
-          {/* Pulsing live dot */}
-          <span style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 10, height: 10 }}>
+          {/* Pulsing live dot — top-right corner */}
+          <span style={{ position: "absolute", top: -3, right: -3, width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <span style={{
-              position:     "absolute",
-              width:        "100%",
-              height:       "100%",
-              borderRadius: "50%",
-              background:   "#ef4444",
-              opacity:      0.6,
-              animation:    "tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite",
+              position: "absolute", width: "100%", height: "100%", borderRadius: "50%",
+              background: "#ef4444", opacity: 0.6, animation: "tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite",
             }} />
-            <span style={{
-              position:     "relative",
-              width:        8,
-              height:       8,
-              borderRadius: "50%",
-              background:   "#ef4444",
-              display:      "block",
-            }} />
+            <span style={{ position: "relative", width: 9, height: 9, borderRadius: "50%", background: "#ef4444", border: "1.5px solid #0c1f12" }} />
           </span>
 
-          {/* Subject name */}
+          {/* Mic status — the main glyph */}
+          {micEnabled
+            ? <Mic style={{ width: 22, height: 22, color: "#34d399" }} />
+            : <MicOff style={{ width: 22, height: 22, color: "#ef4444" }} />
+          }
+
+          {/* Video status — small badge, bottom-right */}
           <span style={{
-            color:      "#f5f0e8",
-            fontSize:   "13px",
-            fontWeight: 600,
-            maxWidth:   "160px",
-            overflow:   "hidden",
-            textOverflow: "ellipsis",
+            position: "absolute", bottom: -2, right: -2, width: 20, height: 20, borderRadius: "50%",
+            background: "#0c1f12", border: "1.5px solid #c9a84c",
+            display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            {title}
+            {camEnabled
+              ? <Video style={{ width: 11, height: 11, color: "#34d399" }} />
+              : <VideoOff style={{ width: 11, height: 11, color: "rgba(255,255,255,.4)" }} />
+            }
           </span>
-
-          {/* Divider */}
-          <span style={{ width: 1, height: 14, background: "rgba(201,168,76,0.35)" }} />
-
-          {/* CTA */}
-          <span style={{
-            color:       "#c9a84c",
-            fontSize:    "12px",
-            fontWeight:  700,
-            letterSpacing: "0.02em",
-            textTransform: "uppercase",
-          }}>
-            Return to Class
-          </span>
-
-          {/* Chevron */}
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c9a84c" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
         </div>
       )}
 
