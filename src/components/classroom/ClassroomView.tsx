@@ -5003,7 +5003,7 @@ const BottomBarBridge=(props:any)=>{const room=useRoomContext();const isMobile=u
    This replaces the fragile ClassControls-based ref registration.      */
 const RoomToContextBridge = () => {
   const room = useRoomContext();
-  const { setMicEnabled, setCamEnabled, setHasConnected, toggleMicFnRef, toggleCamFnRef, restoreMicFnRef } = useLiveClass();
+  const { setMicEnabled, setCamEnabled, setHasConnected, toggleMicFnRef, toggleCamFnRef, restoreMicFnRef, getLocalCameraTrackRef } = useLiveClass();
 
   // Re-register on every render so closures are always fresh
   useEffect(() => {
@@ -5020,6 +5020,17 @@ const RoomToContextBridge = () => {
         await room.localParticipant.setCameraEnabled(next);
         setCamEnabled(next);
       } catch {}
+    };
+    // Background Picture-in-Picture keep-alive reads the live camera track
+    // through this getter — it's called on demand, not stored, so it always
+    // reflects whatever LiveKit is currently publishing.
+    getLocalCameraTrackRef.current = () => {
+      try {
+        const pub = room.localParticipant.getTrackPublication?.(Track.Source.Camera);
+        const mst = pub?.videoTrack?.mediaStreamTrack;
+        if (mst && mst.readyState === "live" && !pub?.isMuted) return mst;
+        return null;
+      } catch { return null; }
     };
     // FIX: dedicated "ensure mic ON" fn used by GlobalClassroomOverlay when
     // returning from background — never accidentally toggles mic OFF.
