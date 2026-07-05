@@ -812,8 +812,13 @@ const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) => {
 //      mobile before first gesture), the <audio> fallback plays unmuted and is
 //      migrated to the Web Audio pipeline once the AC resumes.
 // ═══════════════════════════════════════════════════════════════════════════════
+// Base amplification factor for VolumeBooster before the user's adjustable
+// audioBoost multiplier (Settings → Audio → Volume Boost) is applied.
+const BASE_GAIN = 2.2;
+
 const VolumeBooster = () => {
   const room = useRoomContext();
+  const { audioBoost } = useLiveClass(); // 1×–3× user-adjustable multiplier, see Settings → Audio
   const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio], { onlySubscribed: true });
 
   const acRef        = useRef<AudioContext | null>(null);
@@ -856,10 +861,13 @@ const VolumeBooster = () => {
       const ac = new (window.AudioContext || (window as any).webkitAudioContext)();
       acRef.current = ac;
 
-      // Amplify: 2.2× — loud and clear without clipping distortion.
+      // Base amplify: 2.2× — loud and clear without clipping distortion.
       // 3.5× was too hot; voices near 0 dBFS would clip audibly.
+      // The user-adjustable audioBoost (1×–3×, see Settings → Audio → Volume
+      // Boost) multiplies on top of this for classes where remote mics are
+      // just naturally quiet — the compressor below still catches any peaks.
       const gain = ac.createGain();
-      gain.gain.value = 2.2;
+      gain.gain.value = BASE_GAIN * audioBoost;
       gainRef.current = gain;
 
       // Compressor: transparent voice levelling — avoids the "pumping" / "wah-wah"
@@ -904,6 +912,14 @@ const VolumeBooster = () => {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Live-update gain when the user changes the boost slider mid-call ────────
+  // Deliberately separate from the pipeline-creation effect above (which only
+  // runs once) so adjusting Settings → Audio → Volume Boost takes effect
+  // immediately without tearing down/rebuilding the whole Web Audio graph.
+  useEffect(() => {
+    if (gainRef.current) gainRef.current.gain.value = BASE_GAIN * audioBoost;
+  }, [audioBoost]);
 
   // ── 2. Connect / disconnect tracks as participants join or leave ─────────────
   useEffect(() => {
@@ -3536,11 +3552,20 @@ const MaterialViewer=({material,isTeacher,onClose}:any)=>{
    • Empty-chunk abort on fast stop → mr.requestData() flushes pending chunk before stop()
    • Lost subject_id                → always falls back to subjectId prop so DB row is queryable
    ══════════════════════════════════════════════════════════════════════════════════════════ */
-const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:any)=>{
+const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef,isRecordingRef}:any)=>{
   const room=useRoomContext();const{t}=useLanguage();
   const[recording,setRecording]=useState(false);
   const[paused,setPaused]=useState(false);
   const[displayTime,setDisplayTime]=useState(0);
+
+  // Keep the parent's isRecordingRef genuinely in sync — see BUG FIX note on
+  // the beforeunload handler in the main component: this is the actual
+  // source of truth for "is a recording active right now", replacing the
+  // old (always-true) function-truthiness check.
+  useEffect(()=>{
+    if(isRecordingRef)isRecordingRef.current=recording;
+    return()=>{ if(isRecordingRef)isRecordingRef.current=false; };
+  },[recording,isRecordingRef]);
 
   // Refs that are always current — safe to read inside callbacks / pagehide
   const timerRef    = useRef<any>(null);
@@ -3631,8 +3656,26 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
       const recExt=mime.includes("mp4")?"mp4":mime.includes("ogg")?"ogg":"webm";
       const blob=new Blob(chunks,{type:mime});
       if(blob.size<1000){
-        // Under 1 KB — almost certainly empty, don't bother saving
-        console.warn("[RecController] blob too small to save:",blob.size,"bytes");
+        // BUG FIX — "recording just clears off and won't even save":
+        // This used to `return` here with NOTHING persisted anywhere — no
+        // storage upload, no DB row, nothing. If this fired while the app
+        // was backgrounded (which is exactly when the emergency-save path
+        // below calls saveChunks), the toast was never seen either, since
+        // the user wasn't looking at the screen. Net result from the
+        // user's perspective: the recording just vanished with zero trace
+        // and zero explanation. Now we always insert a DB row (with
+        // file_url: null) so there's at least a record that a recording
+        // was attempted and why it wasn't saved — nothing disappears
+        // silently anymore, even a near-empty clip.
+        console.warn("[RecController] blob too small to upload:",blob.size,"bytes — logging anyway, not uploading");
+        await supabase.from("session_recordings").insert({
+          subject_id:       bid||null,
+          session_id:       sid||null,
+          file_url:         null,
+          teacher_name:     email||"Teacher",
+          duration_seconds: elapsed,
+          file_size:        blob.size,
+        } as any).catch(()=>{});
         toast({title:"Recording too short",description:"No audio was captured. Make sure your mic is on.",variant:"destructive"});
         return;
       }
@@ -3721,11 +3764,37 @@ const RecController=({sessionId,subjectId,userEmail,onSavingChange,stopRecRef}:a
 
   // ── Emergency save on visibility hidden (Android back/home button) ──────────
   // This fires BEFORE pagehide in most Android Chrome builds.
+  //
+  // BUG FIX — "pause a recording, minimize for a while, it clears off and
+  // won't even save": this handler used to fire on EVERY hide, including
+  // while the recorder was merely PAUSED — forcing a full stop+finalize
+  // (mr.stop(), mrRef.current=null, chunksRef cleared) the instant the app
+  // was minimized. That's wrong on two counts:
+  //   1. Pausing means "I intend to resume later" — auto-ending the
+  //      recording the moment you minimize breaks that entirely; there was
+  //      no recorder left to resume when you came back.
+  //   2. If very little audio had been captured before the pause (e.g. the
+  //      first ~2s chunk hadn't fired yet), the resulting blob landed under
+  //      the 1KB threshold and got silently dropped — and since the app was
+  //      backgrounded at that exact moment, the "Recording too short" toast
+  //      was never even seen. From the user's side: paused → minimized →
+  //      came back → recording just gone, no explanation.
+  // Now: only force-finalize while ACTIVELY recording (genuinely at risk if
+  // the OS kills a backgrounded tab mid-capture). A paused recording simply
+  // stays paused — nothing new is being captured, so nothing is at risk —
+  // and resuming after minimizing now actually works.
+  const pausedRef=useRef(false);
+  useEffect(()=>{ pausedRef.current=paused; },[paused]);
+
   useEffect(()=>{
     const onHide=async()=>{
       if(document.visibilityState!=="hidden")return;
       const mr=mrRef.current;
       if(!mr||mr.state==="inactive")return;
+      if(pausedRef.current){
+        console.log("[RecController] visibilitychange hidden while PAUSED — leaving recorder intact for resume, not finalizing");
+        return;
+      }
       console.log("[RecController] visibilitychange hidden → emergency save");
       // Flush current chunk immediately
       try{if(mr.state==="recording")mr.requestData();}catch{}
@@ -4074,7 +4143,17 @@ const useNetworkQuality=()=>{
       }catch{}
     };
 
-    const onQualityChanged=(_participant:any,q:ConnectionQuality)=>{
+    // BUG FIX — "network bar doesn't function at all":
+    // RoomEvent.ConnectionQualityChanged fires as (quality, participant) —
+    // quality FIRST, participant SECOND. This handler had the parameters
+    // swapped: (_participant, q). That meant `_participant` was actually
+    // receiving the ConnectionQuality enum value, so `_participant?.identity`
+    // was always undefined — never equal to `lp?.identity` — so the guard
+    // below returned early on every single event, forever. setQuality()
+    // never ran again after the initial mount read, toasts never fired, and
+    // adaptive video/bitrate never adjusted. The badge only ever showed
+    // whatever readCurrent() saw once at mount.
+    const onQualityChanged=(q:ConnectionQuality,_participant:any)=>{
       if(_participant?.identity!==lp?.identity)return;
       const label=q===ConnectionQuality.Excellent?"excellent"
                  :q===ConnectionQuality.Good?"good"
@@ -4137,7 +4216,9 @@ const ParticipantSignalIcon=({participant}:{participant:any})=>{
   const[quality,setQuality]=useState<string>("unknown");
   useEffect(()=>{
     if(!room)return;
-    const handler=(_p:any,q:ConnectionQuality)=>{
+    // BUG FIX — same swapped-parameter issue as useNetworkQuality above:
+    // event fires (quality, participant), not (participant, quality).
+    const handler=(q:ConnectionQuality,_p:any)=>{
       if(_p?.identity!==participant?.identity)return;
       const label=q===ConnectionQuality.Excellent?"excellent"
                  :q===ConnectionQuality.Good?"good"
@@ -5033,6 +5114,12 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
   const[savingRec,setSavingRec]=useState(false);const[isSessionLive,setIsSessionLive]=useState(false);const[duration,setDuration]=useState(0);
   const recStopRef=useRef<()=>Promise<void>>(async()=>{});
+  // BUG FIX — see onBeforeUnload below: recStopRef.current is ALWAYS a
+  // function (a no-op placeholder until RecController mounts, then the real
+  // stopRec) — so checking "is it a function" is always true and can never
+  // distinguish "recording active" from "never recorded at all". This ref
+  // is the real source of truth, kept in sync by RecController itself.
+  const isRecordingRef=useRef(false);
   // Auto-save on pagehide (tab close / refresh / navigate away).
   // pagehide fires synchronously; stopRec is async but the browser allows
   // async work initiated from pagehide as long as we don't await across
@@ -5040,11 +5127,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   useEffect(()=>{
     const onPageHide=()=>{ recStopRef.current?.(); };
     const onBeforeUnload=(e:BeforeUnloadEvent)=>{
-      // If recording is active, warn the user before leaving
-      const mr=(recStopRef as any).current;
-      if(mr&&typeof mr==="function"){
-        // We can't reliably detect if recording is active here, so show warning always
-        // The RecController itself handles the actual save
+      // BUG FIX — "recording in progress" warning was showing on EVERY
+      // leave/refresh/close, for every teacher AND every student, even when
+      // no recording had ever been started. The old check tested whether
+      // recStopRef.current was a function — which it always is (either the
+      // no-op placeholder or the real stopRec) — so this fired unconditionally.
+      // Now gated on the actual recording state.
+      if(isRecordingRef.current){
         e.preventDefault();
         e.returnValue="A recording is in progress. Are you sure you want to leave?";
       }
@@ -5189,18 +5278,32 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
      subscribe immediately when the fresh sessionId is known — before this effect runs. */
   useEffect(()=>{
     if(!sessionId||isPrivileged||phase!=="live")return;
-    // If connect() already set up a channel for this sessionId, reuse it — don't double-subscribe
-    if(sessionEndChannelRef.current)return;
-    const ch=supabase.channel(`session-end-${sessionId}`)
-      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${sessionId}`},
-        (payload:any)=>{
-          if(payload.new?.status==="ended"&&!intentionalLeaveRef.current){
-            // Teacher ended the class
-            setPhase("ended");
-          }
-        })
-      .subscribe();
-    sessionEndChannelRef.current=ch;
+    // BUG FIX — real Supabase Realtime channel leak: this channel is usually
+    // created by connect() itself (to close a race-condition window — see
+    // BUG FIX 8 comment there), which runs synchronously before this effect
+    // even gets a chance to fire. That meant this effect's own subscribe
+    // branch was always skipped (`if(sessionEndChannelRef.current)return`),
+    // so its cleanup — which only existed inside that same skipped branch —
+    // never got registered either. Net effect: the channel connect() opened
+    // was NEVER removed by anything, not when the class ended, not even on
+    // component unmount. Every class join permanently leaked one open
+    // realtime subscription for the lifetime of the tab.
+    // Fix: register the cleanup unconditionally, based on whatever is
+    // currently in the ref — regardless of which code path put it there —
+    // so it's reliably torn down exactly once whenever sessionId/phase
+    // changes away from this state, or on unmount.
+    if(!sessionEndChannelRef.current){
+      const ch=supabase.channel(`session-end-${sessionId}`)
+        .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${sessionId}`},
+          (payload:any)=>{
+            if(payload.new?.status==="ended"&&!intentionalLeaveRef.current){
+              // Teacher ended the class
+              setPhase("ended");
+            }
+          })
+        .subscribe();
+      sessionEndChannelRef.current=ch;
+    }
     return()=>{
       if(sessionEndChannelRef.current){supabase.removeChannel(sessionEndChannelRef.current);sessionEndChannelRef.current=null;}
     };
@@ -5714,7 +5817,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               {/* Layout switcher — desktop only */}
               {!isMobile&&<LayoutSwitcher layout={layout} onChange={setLayout}/>}
               {/* RecController — admin only, icon-only on mobile */}
-              {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef}/>}
+              {isPrivileged&&<RecController sessionId={sessionId} subjectId={subject.id} userEmail={user?.email||""} onSavingChange={setSavingRec} stopRecRef={recStopRef} isRecordingRef={isRecordingRef}/>}
             </div>
           </div>
           {/* Content — material panels render here so footer always stays visible */}
