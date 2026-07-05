@@ -43,12 +43,21 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
     // on unexpected unmount (e.g. nav away, error) — prevents camera LED staying on.
     let localStream: MediaStream | null = null;
 
+    // BUG FIX: this rAF loop had no cancellation — every time the lobby
+    // unmounted (Start Class, Join Class, or Back), the tick() loop kept
+    // scheduling itself forever, calling setMicLevel on a stale/unmounted
+    // component indefinitely. Over multiple lobby visits in one session,
+    // these accumulate as orphaned loops silently burning CPU/battery.
+    let rafId: number | null = null;
+    let cancelled = false;
+
     const init = async () => {
       try {
         const s = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
           audio: { echoCancellation: true, noiseSuppression: true },
         });
+        if (cancelled) { s.getTracks().forEach(t => t.stop()); return; }
         localStream = s;
         setStream(s);
         s.getVideoTracks().forEach(t => { t.enabled = false; });
@@ -67,9 +76,10 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
           ctx.createMediaStreamSource(s).connect(analyser);
           const data = new Uint8Array(analyser.frequencyBinCount);
           const tick = () => {
+            if (cancelled) return; // stop scheduling once unmounted
             analyser.getByteFrequencyData(data);
             setMicLevel(data.reduce((a, b) => a + b, 0) / data.length / 128);
-            requestAnimationFrame(tick);
+            rafId = requestAnimationFrame(tick);
           };
           tick();
         } catch {}
@@ -85,6 +95,8 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
     // FIX BUG 3: Cleanup — stop all tracks if user navigates away without clicking Start/Join.
     // Without this, the camera LED stays on and the mic is held open indefinitely.
     return () => {
+      cancelled = true;
+      if (rafId !== null) cancelAnimationFrame(rafId);
       localStream?.getTracks().forEach(t => t.stop());
     };
   }, []);
