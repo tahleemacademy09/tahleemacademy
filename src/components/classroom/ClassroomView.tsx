@@ -1049,7 +1049,16 @@ const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClos
         const msg = JSON.parse(new TextDecoder().decode(payload));
         if(msg.type==="wb_open")          onWbOpen();
         if(msg.type==="wb_close")         onWbClose();
-        if(msg.type==="wb_strokes")       strokesBuffer.current=msg.strokes;
+        // BUG FIX: Whiteboard broadcasts every live update as "wb_elements"
+        // (see broadcast() calls throughout the Whiteboard component) — the
+        // "wb_strokes" type it also listens for is explicitly legacy/"compat"
+        // and is never actually sent by the current whiteboard. This buffer
+        // only ever caught the dead legacy type, so it was permanently
+        // stale — it's the fallback seed used when a student's own Supabase
+        // fetch fails right as their whiteboard first opens, and that
+        // fallback silently never worked.
+        if(msg.type==="wb_elements")      strokesBuffer.current=msg.elements;
+        if(msg.type==="wb_strokes")       strokesBuffer.current=msg.strokes; // legacy compat
         if(msg.type==="wb_clear")         strokesBuffer.current=[];
         if(msg.type==="mat_open")         onMatOpen?.(msg.material);
         if(msg.type==="mat_close")        onMatClose?.();
@@ -4186,7 +4195,9 @@ const useNetworkQuality=()=>{
   return quality;
 };
 
-/* Badge shown in the top bar — icon only, compact */
+/* Badge shown in the top bar — icon only, compact.
+   NOTE: NO LONGER RENDERED — network indicator moved to per-participant
+   name pills per request. Kept here (unused) in case it's wanted back. */
 const NetworkQualityBadge=()=>{
   const quality=useNetworkQuality();
   // Only show badge when network is degraded OR still checking
@@ -4210,10 +4221,32 @@ const NetworkQualityBadge=()=>{
   );
 };
 
-/* Tiny per-participant signal icon — shown next to mic in name pill only when poor/lost */
+/* BUG-PREVENTION NOTE: useNetworkQuality() doesn't just feed the visual
+   badge above — it's also what actually RUNS the adaptive video/bitrate
+   degradation logic (see onQualityChanged inside it). It was previously
+   only ever invoked from inside NetworkQualityBadge, so removing that
+   badge's render call would have silently killed adaptive video entirely.
+   This headless component keeps the hook (and therefore adaptive video)
+   running regardless of whether anything visual is shown for it. */
+const NetworkAdaptiveEngine=()=>{ useNetworkQuality(); return null; };
+
+/* Per-participant signal icon — shown next to every name pill, always visible,
+   color-coded green (good/excellent) / yellow (poor) / red (lost) so you can
+   see at a glance whose connection is struggling, not just your own. */
 const ParticipantSignalIcon=({participant}:{participant:any})=>{
   const room=useRoomContext();
-  const[quality,setQuality]=useState<string>("unknown");
+  // Read the participant's CURRENT quality immediately at mount instead of
+  // starting blank/"unknown" and waiting for the next ConnectionQualityChanged
+  // event to fire (which could be a while) — LiveKit already exposes this as
+  // a live property on the participant object.
+  const[quality,setQuality]=useState<string>(()=>{
+    const q=participant?.connectionQuality;
+    if(q===ConnectionQuality.Excellent)return"excellent";
+    if(q===ConnectionQuality.Good)return"good";
+    if(q===ConnectionQuality.Poor)return"poor";
+    if(q===ConnectionQuality.Lost)return"lost";
+    return"unknown";
+  });
   useEffect(()=>{
     if(!room)return;
     // BUG FIX — same swapped-parameter issue as useNetworkQuality above:
@@ -4229,7 +4262,12 @@ const ParticipantSignalIcon=({participant}:{participant:any})=>{
     room.on(RoomEvent.ConnectionQualityChanged,handler);
     return()=>room.off(RoomEvent.ConnectionQualityChanged,handler);
   },[room,participant]);
-  if(quality==="excellent"||quality==="good"||quality==="unknown")return null;
+  // BUG FIX: this used to `return null` for anything except poor/lost — so
+  // the icon was invisible almost all the time (exactly when a connection
+  // was FINE), which made it look broken/"not showing green" as reported.
+  // SignalBars already color-codes green/yellow/red/gray correctly; the
+  // fix is simply to always render it instead of hiding the good case.
+  if(quality==="unknown")return null; // still nothing meaningful to show yet
   return <SignalBars quality={quality}/>;
 };
 
@@ -4772,6 +4810,14 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
     {/* More menu — clean */}
     {moreOpen&&portal&&createPortal(
       <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right,minWidth:240}}>
+        {/* Minimize — keeps the class alive as a floating overlay so audio
+            survives Android backgrounding/tab-killing, instead of relying on
+            the OS back/home button (which some devices fully suspend). */}
+        {onMinimize&&(
+          <button className="gm-more-item" onClick={()=>{onMinimize();setMoreOpen(false);}}>
+            <Minimize2 style={{width:16,height:16,opacity:.7}}/> Minimize
+          </button>
+        )}
         {isMobile&&<>
           {isPrivileged
             ?<button className="gm-more-item" onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} style={{color:whiteboardOpen?"#34d399":"#e8eaed"}}>
@@ -5810,8 +5856,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 <Circle style={{width:5,height:5,fill:"#ea4335",color:"#ea4335",animation:"rec-pulse 1.4s ease-in-out infinite",flexShrink:0}}/>
                 <span style={{fontSize:11,fontWeight:500,fontVariantNumeric:"tabular-nums",fontFamily:"'Google Sans',sans-serif",color:"rgba(255,255,255,.8)"}}>{fmtT(duration)}</span>
               </div>
-              {/* Network — only shown when degraded (poor/lost/checking), hidden when good */}
-              <NetworkQualityBadge/>
+              {/* Network indicator moved to per-participant name pills (ParticipantSignalIcon)
+                  so you can see everyone's connection at a glance instead of just your own
+                  in the header — removed from here per request. Adaptive video/bitrate
+                  engine is kept alive headlessly since it doesn't just feed this badge. */}
+              <NetworkAdaptiveEngine/>
               {/* Participant count */}
               <ParticipantCountBadge/>
               {/* Layout switcher — desktop only */}
