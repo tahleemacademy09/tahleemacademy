@@ -36,6 +36,7 @@ import {
   type ReactNode,
 } from "react";
 import { lockReload, unlockReload } from "@/lib/reloadGuard";
+import { enterPiPKeepAlive } from "@/hooks/useBackgroundPiP";
 
 const STORAGE_KEY   = "tahleem_live_class";
 import { wasBackPressClaimed } from "@/lib/backPressClaim";
@@ -151,6 +152,11 @@ interface LiveClassContextType extends LiveClassState {
   // FIX: "restore" sets mic ON only — safe to call on background return.
   // toggleMicFnRef flips state and must never be used for restoration.
   restoreMicFnRef: React.MutableRefObject<() => void>;
+  /** Populated by ClassroomView. Returns the live local camera MediaStreamTrack
+      (or null if camera is off / not yet published). Used by the background
+      Picture-in-Picture keep-alive so it can show the real camera feed when
+      video is on, and fall back to a static logo frame when it's audio-only. */
+  getLocalCameraTrackRef: React.MutableRefObject<() => MediaStreamTrack | null>;
   /** Extra multiplier (1×–3×) on top of VolumeBooster's base gain — lets a
       student/teacher crank remote voices up further when they're too quiet,
       without needing everyone else to also be loud enough on their own mic. */
@@ -178,6 +184,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const toggleMicFnRef  = useRef<() => void>(() => {});
   const toggleCamFnRef  = useRef<() => void>(() => {});
   const restoreMicFnRef = useRef<() => void>(() => {});
+  const getLocalCameraTrackRef = useRef<() => MediaStreamTrack | null>(() => null);
 
   useLiveClassKeepAlive(state.inCall);
   useLiveClassReloadGuard(state.inCall);
@@ -220,10 +227,17 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
       if (wasBackPressClaimed()) return; // a panel already handled this press
       // Minimize the classroom
       setState(prev => prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev);
+      // Attempt PiP keep-alive — this is a real browser back-navigation event
+      // triggered directly by the phone's back gesture/button, so (unlike
+      // Capacitor's native backButton bridge event) it has a real chance of
+      // counting as a genuine user gesture. Untested on-device; safe to try.
+      enterPiPKeepAlive(
+        state.camEnabled ? getLocalCameraTrackRef.current?.() ?? null : null
+      );
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [state.inCall]);
+  }, [state.inCall, state.camEnabled]);
 
   const joinClass = useCallback((subject: any, opts?: { autoJoin?: boolean }) => {
     clearPersist();
@@ -262,7 +276,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     <LiveClassContext.Provider value={{
       ...state, joinClass, leaveClass, setMinimized,
       setMicEnabled, setCamEnabled, setHasConnected,
-      toggleMicFnRef, toggleCamFnRef, restoreMicFnRef,
+      toggleMicFnRef, toggleCamFnRef, restoreMicFnRef, getLocalCameraTrackRef,
       audioBoost, setAudioBoost,
     }}>
       {children}
