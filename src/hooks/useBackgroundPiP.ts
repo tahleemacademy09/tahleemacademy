@@ -48,10 +48,17 @@ function ensureElements() {
     videoEl.setAttribute("aria-hidden", "true");
     // NOT display:none — PiP requires the element to be an actual rendering
     // video, not a hidden one. Tucked off-screen instead, near-invisible.
+    // Deliberately a modest, non-trivial size rather than near-zero (2px).
+    // Chrome tends to base the initial floating PiP window size on this
+    // element's rendered box, so a tiny box can cause Android to fall back
+    // to an oversized default. Still positioned off-screen so it's never
+    // actually visible in the page itself.
+    videoEl.width = 120;
+    videoEl.height = 120;
     Object.assign(videoEl.style, {
       position: "fixed",
-      width: "2px",
-      height: "2px",
+      width: "120px",
+      height: "120px",
       opacity: "0.01",
       pointerEvents: "none",
       left: "-9999px",
@@ -61,8 +68,8 @@ function ensureElements() {
   }
   if (!canvasEl) {
     canvasEl = document.createElement("canvas");
-    canvasEl.width = 320;
-    canvasEl.height = 320;
+    canvasEl.width = 160;
+    canvasEl.height = 160;
   }
   if (!logoImg) {
     logoImg = new Image();
@@ -77,7 +84,7 @@ function drawLogoFrame() {
   ctx.fillStyle = LOGO_BG;
   ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
   if (logoImg && logoImg.complete && logoImg.naturalWidth > 0) {
-    const size = 200;
+    const size = 100;
     const x = (canvasEl.width - size) / 2;
     const y = (canvasEl.height - size) / 2;
     ctx.drawImage(logoImg, x, y, size, size);
