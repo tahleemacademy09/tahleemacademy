@@ -4624,75 +4624,6 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
   const[videoPickerPos,setVideoPickerPos]=useState({bottom:0,left:0});
   const[morePos,setMorePos]=useState({bottom:0,right:0});
 
-  // ── Native Picture-in-Picture (the ACTUAL Chrome/Android OS-level floating
-  // window — the same mechanism Google Meet uses, distinct from the in-app
-  // translateX-hide minimize). requestPictureInPicture() needs a real <video>
-  // element with a live video track; for an audio-only moment (camera off)
-  // we synthesize one from a canvas so PiP always works regardless of camera
-  // state, showing a small live mic-status card instead of a blank/failed PiP.
-  const pipCanvasRef=useRef<HTMLCanvasElement|null>(null);
-  const pipVideoRef=useRef<HTMLVideoElement|null>(null);
-  const pipDrawTimerRef=useRef<any>(null);
-
-  const drawPipFrame=useCallback(()=>{
-    const cv=pipCanvasRef.current; if(!cv)return;
-    const ctx=cv.getContext("2d"); if(!ctx)return;
-    const grad=ctx.createLinearGradient(0,0,cv.width,cv.height);
-    grad.addColorStop(0,"#0a1f14"); grad.addColorStop(1,"#0f2a1a");
-    ctx.fillStyle=grad; ctx.fillRect(0,0,cv.width,cv.height);
-    // live dot + label
-    ctx.fillStyle="#ea4335"; ctx.beginPath(); ctx.arc(30,32,8,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle="#fff"; ctx.font="bold 20px system-ui,sans-serif"; ctx.textAlign="left";
-    ctx.fillText("LIVE",48,40);
-    // mic status — the big glyph in the middle
-    ctx.font="56px system-ui,sans-serif"; ctx.textAlign="center";
-    ctx.fillText(micOn?"🎤":"🔇",cv.width/2,cv.height/2+22);
-    // brand footer
-    ctx.font="bold 16px system-ui,sans-serif"; ctx.fillStyle="#c9a84c";
-    ctx.fillText("Tahleem Academy",cv.width/2,cv.height-26);
-    ctx.textAlign="left";
-  },[micOn]);
-
-  const startNativePiP=useCallback(async()=>{
-    try{
-      if(!("pictureInPictureEnabled"in document)||!(document as any).pictureInPictureEnabled){
-        toast({title:"Picture-in-Picture not supported",description:"Your browser doesn't support floating video on this device."});
-        return;
-      }
-      if(!pipCanvasRef.current){
-        const cv=document.createElement("canvas"); cv.width=320; cv.height=240;
-        pipCanvasRef.current=cv;
-      }
-      drawPipFrame();
-      if(pipDrawTimerRef.current)clearInterval(pipDrawTimerRef.current);
-      pipDrawTimerRef.current=setInterval(drawPipFrame,700); // keep mic icon live-updating while floating
-      const stream=(pipCanvasRef.current as any).captureStream(5);
-      if(!pipVideoRef.current){
-        const v=document.createElement("video");
-        v.muted=true; v.playsInline=true;
-        // Kept off-screen but genuinely in the DOM/rendering — PiP requires
-        // an actual playing video element, it can't be display:none.
-        v.style.position="fixed"; v.style.opacity="0.01"; v.style.pointerEvents="none";
-        v.style.width="1px"; v.style.height="1px"; v.style.bottom="0"; v.style.right="0";
-        document.body.appendChild(v);
-        pipVideoRef.current=v;
-      }
-      pipVideoRef.current.srcObject=stream;
-      await pipVideoRef.current.play();
-      await (pipVideoRef.current as any).requestPictureInPicture();
-    }catch(e:any){
-      toast({title:"Couldn't start floating video",description:e?.message||"Try again",variant:"destructive"});
-    }
-  },[drawPipFrame]);
-
-  // Clean up the synthetic PiP pipeline on unmount — stop the canvas capture
-  // stream and remove the hidden video element from the DOM.
-  useEffect(()=>()=>{
-    if(pipDrawTimerRef.current)clearInterval(pipDrawTimerRef.current);
-    try{(pipVideoRef.current?.srcObject as MediaStream|null)?.getTracks().forEach(t=>t.stop());}catch{}
-    try{pipVideoRef.current?.remove();}catch{}
-  },[]);
-
   useEffect(()=>{
     if(!room)return;
     const sync=()=>{setMicOn(!!room.localParticipant?.isMicrophoneEnabled);setCamOn(!!room.localParticipant?.isCameraEnabled);};
@@ -4883,7 +4814,7 @@ const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeave
             survives Android backgrounding/tab-killing, instead of relying on
             the OS back/home button (which some devices fully suspend). */}
         {onMinimize&&(
-          <button className="gm-more-item" onClick={()=>{startNativePiP();onMinimize();setMoreOpen(false);}}>
+          <button className="gm-more-item" onClick={()=>{onMinimize();setMoreOpen(false);}}>
             <Minimize2 style={{width:16,height:16,opacity:.7}}/> Minimize
           </button>
         )}
