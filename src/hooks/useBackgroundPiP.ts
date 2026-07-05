@@ -46,6 +46,15 @@ function ensureElements() {
     videoEl.playsInline = true;
     videoEl.setAttribute("playsinline", "true");
     videoEl.setAttribute("aria-hidden", "true");
+    // Tapping the PiP window brings the browser/app to the foreground, but
+    // does NOT know anything about the classroom's own minimized state —
+    // it just fires this native event. Reuse the same restore signal the
+    // foreground-service notification tap already uses, so tapping the PiP
+    // window reliably brings the user back into the live class instead of
+    // just whatever page happens to be underneath.
+    videoEl.addEventListener("leavepictureinpicture", () => {
+      window.dispatchEvent(new CustomEvent("tahleem:live-class-return"));
+    });
     // NOT display:none — PiP requires the element to be an actual rendering
     // video, not a hidden one. Tucked off-screen instead, near-invisible.
     // Deliberately a modest, non-trivial size rather than near-zero (2px).
@@ -142,6 +151,12 @@ export async function enterPiPKeepAlive(cameraTrack: MediaStreamTrack | null): P
 
   ensureElements();
   setPiPSource(cameraTrack);
+
+  // Already showing — some Android WebView versions treat a repeat
+  // requestPictureInPicture() call on an already-active element as a
+  // toggle-off rather than a no-op, which was closing the window on a
+  // second back-press. Just refresh the content and stop here.
+  if (document.pictureInPictureElement === videoEl) return true;
 
   try {
     await videoEl!.play().catch(() => {});
