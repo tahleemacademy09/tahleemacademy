@@ -414,7 +414,6 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
   }, [timerOn, timeLeft]);
 
   const doFinishRef = useRef<() => void>(() => {});
-  useEffect(() => { doFinishRef.current = doFinish; }, [doFinish]);
 
   useEffect(() => {
     if (timerOn && timeLeft === 0 && stage === "active") doFinishRef.current();
@@ -592,6 +591,11 @@ export default function HifdhTest({ reciter = DEFAULT_RECITER, onSessionSaved }:
     });
     setStage("results");
   }, [surahNum, timeLeft, testSessionId, onSessionSaved]);
+
+  // Keep the ref in sync now that doFinish is declared above — this used
+  // to sit before the doFinish declaration and threw "Cannot access
+  // 'doFinish' before initialization" in production builds.
+  useEffect(() => { doFinishRef.current = doFinish; }, [doFinish]);
 
   const confirmAnswer = () => {
     if (selected === null) return;
