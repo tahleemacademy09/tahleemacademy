@@ -670,15 +670,15 @@ export default function HifdhDashboard({
 
             {/* Revision */}
             <button onClick={() => onNavigate("recitation")}
-              className="w-full flex items-center gap-3 p-3 rounded-xl text-left active:scale-[0.98] transition-all"
+              className="w-full flex items-center gap-2 p-3 rounded-xl text-left active:scale-[0.98] transition-all"
               style={{ background: "#f0faf3", border: "1px solid #b6e5c5" }}>
-              <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
                 style={{ background: "#276749", color: "#fff" }}>
-                <BookOpen size={15} />
+                <BookOpen size={14} />
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-black" style={{ color: INK }}>Revision</p>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-1.5 mt-1">
                   <div className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: "#d1f0da" }}>
                     <div className="h-full rounded-full" style={{ width: `${revStats.avgScore}%`, background: "#276749" }} />
                   </div>
@@ -688,7 +688,7 @@ export default function HifdhDashboard({
                   {revStats.sessions} session{revStats.sessions !== 1 ? "s" : ""} · {revStats.pagesRevised} pages revised
                 </p>
               </div>
-              <ChevronRight size={13} color={MUTED} />
+              <ChevronRight size={12} color={MUTED} className="shrink-0" />
             </button>
 
             {/* Memorization */}
