@@ -8,7 +8,7 @@
 //   3. Cache name bumped to tahleem-v10 — forces old v9 cache (with stale chunks)
 //      to be deleted on activate.
 
-const CACHE_NAME = "tahleem-v10";
+const CACHE_NAME = "tahleem-v11";
 const ICON       = "/icons/icon-192x192.png";
 const BADGE      = "/icons/icon-96x96.png";
 
@@ -224,7 +224,14 @@ self.addEventListener("fetch", e => {
         if (cached) return cached;
         return fetch(e.request).then(response => {
           if (response.ok) {
-            caches.open(CACHE_NAME).then(c => c.put(e.request, response.clone()));
+            // Clone SYNCHRONOUSLY, right here, before returning the
+            // response to the page. If clone() is deferred inside the
+            // nested caches.open().then(...) below, it runs after the
+            // response has already been handed back and its body may
+            // already be locked/consumed — that's what was throwing
+            // "Response body is already used".
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME).then(c => c.put(e.request, responseToCache));
           }
           return response;
         });
