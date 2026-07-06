@@ -81,12 +81,65 @@ export default function HifdhDashboard({
   const [memStats,  setMemStats]  = useState({ sessions: 0, versesMemorized: 0, avgScore: 0 });
   const [testStats, setTestStats] = useState({ sessions: 0, avgScore: 0, lastScore: 0 });
 
+  // ── Today's Revision — mirrors exactly what the Revision tab itself
+  // resumes into, so clicking this card lands on the same page(s).
+  const [todaysRevision, setTodaysRevision] = useState<{
+    source: "assigned" | "personal";
+    modeLabel: string;
+    pageLabel: string;
+  } | null>(null);
+  const [todaysRevisionChecked, setTodaysRevisionChecked] = useState(false);
+
   const overdueCount = progress.filter(p => daysSince(p.last_reviewed) >= 10).length;
   const urgentCount  = progress.filter(p => { const d = daysSince(p.last_reviewed); return d >= 5 && d < 10; }).length;
   const currentJuz   = juzPartial.length > 0 ? juzPartial[0] : null;
   const currentSurah = currentJuz
     ? progress.find(p => Math.ceil(p.surah_num / 4.27) === currentJuz)
     : null;
+
+  const MODE_LABEL: Record<string, string> = { juz: "Juz", hizb: "Hizb", surah: "Surah" };
+
+  useEffect(() => {
+    if (!userId) return;
+    setTodaysRevisionChecked(false);
+
+    (supabase as any)
+      .from("hifdh_daily_assignments")
+      .select("mode,selected_items,daily_pages")
+      .eq("student_id", userId)
+      .eq("active", true)
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .then(({ data }: any) => {
+        const assignment = data?.[0] ?? null;
+        const source: "assigned" | "personal" = assignment ? "assigned" : "personal";
+        const modeForLabel = assignment?.mode;
+        const selectedForLabel: number[] = (assignment?.selected_items ?? []).map(Number);
+
+        // The Revision tab keeps the authoritative day-to-day plan (with
+        // currentIdx) in localStorage — read the same key it uses so this
+        // card always shows exactly what "Continue" will resume into.
+        let pageLabel = "Tap to start today's revision";
+        let modeLabel = modeForLabel ? `${MODE_LABEL[modeForLabel] ?? modeForLabel} ${selectedForLabel.join(", ")}` : "";
+        try {
+          const saved = localStorage.getItem(`revision_plan_${userId}`);
+          if (saved) {
+            const p = JSON.parse(saved);
+            const todays: number[] = (p.allPages ?? []).slice(p.currentIdx, p.currentIdx + (p.dailyPages || 1));
+            if (todays.length === 1) pageLabel = `Page ${todays[0]}`;
+            else if (todays.length > 1) pageLabel = `Pages ${todays[0]}–${todays[todays.length - 1]}`;
+            if (!modeLabel) modeLabel = `${MODE_LABEL[p.mode] ?? p.mode} ${(p.selected ?? []).join(", ")}`;
+          }
+        } catch { /* ignore */ }
+
+        if (!assignment && modeLabel === "") {
+          setTodaysRevision(null); // no assignment and no personal plan yet
+        } else {
+          setTodaysRevision({ source, modeLabel, pageLabel });
+        }
+        setTodaysRevisionChecked(true);
+      });
+  }, [userId, refreshKey]);
 
   useEffect(() => {
     if (!userId) return;
@@ -596,65 +649,52 @@ export default function HifdhDashboard({
           </SectionCard>
         )}
 
-        {/* ── Urgent Revisions ── */}
-        {progress.length > 0 && (
+        {/* ── Today's Revision (assigned by teacher, or personal plan) ── */}
+        {todaysRevisionChecked && (
           <SectionCard
             icon={<RotateCcw size={16} />}
-            title="Urgent Revisions"
-            titleAr="المراجعات العاجلة"
-            iconBg="#b91c1c"
-            headerRight={
-              <button
-                onClick={() => onNavigate("test")}
-                className="flex items-center gap-0.5 text-xs font-bold"
-                style={{ color: GOLD }}>
-                View All <ChevronRight size={13} />
-              </button>
-            }>
-            <div className="px-4 pb-4 space-y-2">
-              {progress
-                .filter(p => daysSince(p.last_reviewed) < 10)
-                .slice(0, 3)
-                .map((item, i) => {
-                  const days = daysSince(item.last_reviewed);
-                  const isUrgent = days >= 5;
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => onNavigate("test")}
-                      className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
-                      style={{
-                        background: isUrgent ? "#fdf3e0" : "#eaf7ee",
-                        border: `1px solid ${isUrgent ? "#f3c66b" : "#bbe4c8"}`,
-                      }}>
-                      <div
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ background: isUrgent ? "#d97706" : "#16a34a" }}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-black truncate" style={{ color: INK }}>
-                          {item.surah_name}
-                        </p>
-                        <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>
-                          {days === 0 ? "Today" : `${days}d ago`} · Best:{" "}
-                          <span style={{ color: GOLD }}>{item.best_accuracy}%</span>
-                        </p>
-                      </div>
+            title="Today's Revision"
+            titleAr="مراجعة اليوم"
+            iconBg="#276749">
+            <div className="px-4 pb-4">
+              {todaysRevision ? (
+                <button
+                  onClick={() => onNavigate("recitation")}
+                  className="w-full flex items-center gap-3 p-3 rounded-xl text-left transition-all active:scale-[0.98]"
+                  style={{ background: "#f0faf3", border: "1px solid #b6e5c5" }}>
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                    style={{ background: "#276749", color: "#fff" }}>
+                    <BookOpen size={15} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs font-black truncate" style={{ color: INK }}>
+                        {todaysRevision.modeLabel || "Your Revision"}
+                      </p>
                       <span
-                        className="text-[10px] font-black px-2 py-0.5 rounded-lg shrink-0"
+                        className="text-[9px] font-black px-1.5 py-0.5 rounded shrink-0"
                         style={{
-                          background: isUrgent ? "#f59e0b22" : "#16a34a22",
-                          color:      isUrgent ? "#b45309"   : "#15803d",
+                          background: todaysRevision.source === "assigned" ? "#c9a84c22" : "#8a9b8522",
+                          color:      todaysRevision.source === "assigned" ? "#9a7b1f"   : "#5c6b58",
                         }}>
-                        {isUrgent ? "⚡ Soon" : "✓ On Track"}
+                        {todaysRevision.source === "assigned" ? "ASSIGNED" : "PERSONAL"}
                       </span>
-                    </button>
-                  );
-                })}
-              {progress.filter(p => daysSince(p.last_reviewed) < 10).length === 0 && (
-                <div className="py-6 text-center">
-                  <p className="text-xs font-bold" style={{ color: MUTED }}>No urgent revisions — great job! 🎉</p>
-                </div>
+                    </div>
+                    <p className="text-[11px] mt-0.5" style={{ color: MUTED }}>
+                      {todaysRevision.pageLabel}
+                    </p>
+                  </div>
+                  <ChevronRight size={13} color={MUTED} />
+                </button>
+              ) : (
+                <button
+                  onClick={() => onNavigate("recitation")}
+                  className="w-full py-4 text-center rounded-xl transition-all active:scale-[0.98]"
+                  style={{ background: "#f5f2ec", border: "1px dashed #d8cdb8" }}>
+                  <p className="text-xs font-bold" style={{ color: MUTED }}>
+                    No revision plan yet — tap to set one up
+                  </p>
+                </button>
               )}
             </div>
           </SectionCard>
