@@ -1877,8 +1877,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     }
   }, []);
 
-  const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY || "";
-
   // ── Exact same transcription pipeline as مراجعة (QuranRevisionHub) ──────────
   // Uses verbose_json so we can check no_speech_prob and reject silence/noise.
   // Style prompt sets diacritised Quranic script WITHOUT including the verse
@@ -1909,52 +1907,59 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       return "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
     })();
 
-    if (!GROQ_KEY) {
-      console.warn("[HifdhDaily] VITE_GROQ_API_KEY is not set in this build — relying on Deepgram fallback only.");
-      lastTranscribeErrorRef.current = "groq_key_missing";
-    }
-
     // ── Run Groq (with hard timeout) and Deepgram concurrently ────────────────
     // Previously these ran sequentially: a slow/stalled Groq request (e.g. a CORS
     // preflight that hangs instead of failing fast) blocked Deepgram from even
     // starting, which is the main cause of long "Analysing your recitation…" waits.
     // Now both fire at once and we take whichever returns usable text first.
 
+    // ── Groq, via the secure server-side edge function ────────────────────────
+    // IMPORTANT: this used to call api.groq.com directly from the browser with
+    // VITE_GROQ_API_KEY. That key is no longer shipped in the client build
+    // (moved server-side for security, same as QuranRevisionHub's مراجعة flow),
+    // so the direct call always failed with "groq_key_missing" / 401 — which is
+    // why every single recitation on this page was landing on "Couldn't Score
+    // This Recitation" regardless of audio quality. Routing through
+    // `groq-transcribe` (Supabase edge function, server-side GROQ_API_KEY)
+    // fixes that and matches the working pattern used elsewhere in the app.
     const runGroq = async (): Promise<string | null> => {
-      if (!GROQ_KEY) return null;
+      const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL;
+      const SUPABASE_KEY =
+        (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+        (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
+      if (!SUPABASE_URL || !SUPABASE_KEY) {
+        lastTranscribeErrorRef.current = "groq_supabase_env_missing";
+        return null;
+      }
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 8000); // 8s hard cap
       try {
         const fd = new FormData();
         fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
-        fd.append("model", "whisper-large-v3");
-        fd.append("language", "ar");
-        fd.append("response_format", "verbose_json");
-        fd.append("temperature", "0");
         fd.append("prompt", stylePrompt);
-        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-          method: "POST", headers: { Authorization: `Bearer ${GROQ_KEY}` }, body: fd,
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/groq-transcribe`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${SUPABASE_KEY}`,
+            apikey: SUPABASE_KEY,
+          },
+          body: fd,
           signal: controller.signal,
         });
+        const json = await r.json().catch(() => ({}));
         if (r.ok) {
-          const json = await r.json();
-          const segs: any[] = json.segments ?? [];
-          const avgNoSpeech = segs.length > 0
-            ? segs.reduce((s: number, g: any) => s + (g.no_speech_prob ?? 0), 0) / segs.length
-            : (json.segments?.[0]?.no_speech_prob ?? 0);
           const txt = (json.text ?? "").trim();
-          if (avgNoSpeech < 0.4 && txt.length > 5) return txt;
-          if (avgNoSpeech >= 0.4) { lastTranscribeErrorRef.current = "groq_silence_detected"; return ""; }
+          if (txt.length > 5) return txt;
+          if (txt.length > 0) { lastTranscribeErrorRef.current = "groq_silence_detected"; return ""; }
           lastTranscribeErrorRef.current = "groq_empty_response";
           return null;
         }
-        const body = await r.text().catch(() => "");
         lastTranscribeErrorRef.current = `groq_http_${r.status}`;
-        console.error(`[HifdhDaily] Groq transcription failed: HTTP ${r.status}`, body.slice(0, 300));
+        console.error(`[HifdhDaily] groq-transcribe failed: HTTP ${r.status}`, json?.error ?? "");
         return null;
       } catch (e: any) {
         lastTranscribeErrorRef.current = e?.name === "AbortError" ? "groq_timeout_8s" : "groq_network_or_cors_error";
-        console.error("[HifdhDaily] Groq fetch failed:", e);
+        console.error("[HifdhDaily] groq-transcribe fetch failed:", e);
         return null;
       } finally {
         clearTimeout(timeout);
