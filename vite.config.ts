@@ -54,31 +54,29 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        // ── TDZ FIX ───────────────────────────────────────────────────────
-        // Emit var instead of const/let for module-level bindings so there
-        // is no Temporal Dead Zone when Rollup reorders declarations.
-        generatedCode: {
-          constBindings: false,
-        },
-        hoistTransitiveImports: false,
-
         manualChunks(id) {
-          // ── vendor-charts: React + recharts + d3 in ONE chunk ────────────
+          // ── vendor-react: React + ReactDOM + Scheduler ONLY ──────────────
           //
-          // recharts calls React.forwardRef / React.createContext at MODULE
-          // LEVEL (outside any function). If React is in a separate chunk,
-          // the browser may load vendor-charts before vendor-react finishes
-          // executing → React is undefined → crash.
-          //
-          // Co-locating React and recharts in the SAME chunk guarantees
-          // React is fully initialised before recharts module code runs —
-          // they execute in declaration order within a single JS file,
-          // not across asynchronous chunk boundaries.
+          // Keep this chunk minimal. Every other chunk (recharts, d3, app
+          // code) statically imports from "react"/"react-dom", so Rollup's
+          // own chunk-loading graph already guarantees this chunk finishes
+          // executing before any chunk that depends on it runs. We do NOT
+          // need to co-locate consumers with React to get correct ordering
+          // — ESM import semantics already do that for free, and forcing
+          // unrelated libraries into the same chunk as React (e.g. all of
+          // d3's interdependent sub-packages) can itself create circular
+          // -eval-order TDZ bugs, which is exactly what was happening here.
           if (
             id.includes("node_modules/react/") ||
             id.includes("node_modules/react-dom/") ||
             id.includes("node_modules/react-is/") ||
-            id.includes("node_modules/scheduler/") ||
+            id.includes("node_modules/scheduler/")
+          ) {
+            return "vendor-react";
+          }
+
+          // ── vendor-charts: recharts + d3 + victory-vendor ────────────────
+          if (
             id.includes("node_modules/recharts") ||
             id.includes("node_modules/d3-") ||
             id.includes("node_modules/victory-vendor") ||
