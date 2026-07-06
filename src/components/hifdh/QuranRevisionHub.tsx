@@ -550,22 +550,21 @@ export default function QuranRevisionHub({ userId }: Props) {
             localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(planToUse));
           }
 
-          // Populate plan but stay on setup screen — user clicks Resume/Start to begin
-          setPlan(planToUse);
-          didStartRef.current = true;
-          setAssignmentLoaded(true);
+          // Resume straight into the active plan instead of showing setup —
+          // startSession() was defined above but never called, which is why
+          // this always dropped back to the setup screen.
+          setDailyPages(planToUse.dailyPages);
+          startSession(planToUse);
         } else {
           // No assignment — fall back to localStorage or show setup
           const saved = localStorage.getItem(`revision_plan_${userId}`);
           if (!saved) { setAssignmentLoaded(true); return; }
           try {
             const p: RevisionPlan = JSON.parse(saved);
-            setPlan(p);
             setSelectMode(p.mode);
             setSelected(p.selected);
             setDailyPages(p.dailyPages);
-            didStartRef.current = true;
-            setAssignmentLoaded(true);
+            startSession(p);
           } catch {
             setAssignmentLoaded(true);
           }
