@@ -15,9 +15,9 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar, CheckCircle,
+  Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar,
   GraduationCap, MessageCircle, ArrowRight, Video, Star, ChevronLeft,
-  ChevronRight, AlertTriangle, Mic, Lock, BookMarked, Flame, ClipboardCheck
+  ChevronRight, AlertTriangle, Mic, Lock, ClipboardCheck
 } from "lucide-react";
 
 const toHijri = (date: Date) => {
@@ -177,9 +177,6 @@ const StudentDashboard = () => {
   const [impersonatedProfile, setImpersonatedProfile] = useState<any>(null);
   const [todayClasses, setTodayClasses] = useState<any[]>([]);
   const [nowTick, setNowTick] = useState(new Date());
-  const [hifdhAssignments, setHifdhAssignments] = useState<any[]>([]);   // ALL active assignments
-  const [hifdhAssignment,  setHifdhAssignment]  = useState<any>(null);   // kept for compat (first active)
-  const [hifdhTodayLog, setHifdhTodayLog]       = useState<any>(null);
   const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string>>(new Set());
 
   // Tick every 30s so countdowns stay fresh
@@ -308,7 +305,7 @@ const StudentDashboard = () => {
 
         const [enrollRes, gradedAttemptsRes, pendingAttemptsRes, notifsRes, assignmentsRes,
           recentRes, allAttemptsRes, subjectsRes, calendarExamsRes, subAssignmentsRes, ttRes,
-          hifdhAssignRes, hifdhLogRes, privateSubjectsRes, studentProfileRes] = await withTimeout(Promise.all([
+          privateSubjectsRes, studentProfileRes] = await withTimeout(Promise.all([
           supabase.from("enrollments").select("id").eq("user_id", uid),
           supabase.from("exam_attempts").select("percentage").eq("user_id", uid).eq("status", "graded"),
           supabase.from("exam_attempts").select("id").eq("user_id", uid).eq("status", "submitted"),
@@ -320,8 +317,6 @@ const StudentDashboard = () => {
           supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
           supabase.from("subject_assignments").select("id, title, deadline, subject_id, subjects(title, title_ar, level, levels)"),
           supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar, levels, level, visibility)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
-          (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", uid).eq("active", true).order("created_at", {ascending: true}),
-          (supabase as any).from("hifdh_daily_logs").select("*").eq("student_id", uid).eq("log_date", new Date().toISOString().split("T")[0]).maybeSingle(),
           (supabase as any).from("private_student_subjects").select("subject_id").eq("student_id", uid),
           supabase.from("profiles").select("level, student_type, assigned_teacher_id").eq("user_id", uid).maybeSingle(),
         ]));
@@ -385,22 +380,6 @@ const StudentDashboard = () => {
       });
 
       setTodayClasses(filteredSlots);
-      const hifdhArr = (hifdhAssignRes as any)?.data ?? [];
-      // Parse notes JSON and extract custom field for display
-      const hifdhParsed = hifdhArr.map((a: any) => {
-        let extra: any = {};
-        try { extra = JSON.parse(a.notes || "{}"); } catch {}
-        return {
-          ...a,
-          program_start: extra.programStart ?? a.program_start,
-          program_days:  extra.programDays  ?? a.program_days,
-          days_off:      extra.daysOff      ?? a.days_off ?? [],
-          notes_display: extra.custom || "",   // only show the human-written note, not raw JSON
-        };
-      });
-      setHifdhAssignments(hifdhParsed);
-      setHifdhAssignment(hifdhParsed[0] ?? null);   // backward compat
-      setHifdhTodayLog((hifdhLogRes as any)?.data ?? null);
         setLoading(false);
       } catch (err) {
         console.error("Dashboard data fetch error:", err);
@@ -722,146 +701,6 @@ const StudentDashboard = () => {
           </div>
           );
         })()}
-
-        {/* ── Hifdh Daily Assignment Cards — one per active assignment ── */}
-        {hifdhAssignments.length > 0 && hifdhAssignments.map((hifdhAssignment, assignIdx) => {
-          // Each assignment has its own log keyed by assignment_id
-          // For now the log is shared (daily log tracks the student's session for today).
-          // When multiple assignments exist, the log is attributed to the first completed one.
-          const log          = hifdhTodayLog;
-          const completed    = assignIdx === 0 ? (log?.completed ?? false) : false; // only first gets credit for now
-          const pagesTarget  = hifdhAssignment.daily_pages ?? 1;
-          const pagesRevised = completed ? (log?.pages_revised ?? 0) : 0;
-          const progress     = Math.min(1, pagesRevised / Math.max(1, pagesTarget));
-          const progressPct  = Math.round(progress * 100);
-          const PASS = 55;
-          const recScore = log?.session_data?.recitation_score ?? 0;
-          const quizPending = assignIdx === 0 && !completed && recScore >= PASS;
-
-          const mode: string        = hifdhAssignment.mode ?? "juz";
-          const items: number[]     = hifdhAssignment.selected_items ?? [];
-          const modeLabel           = mode === "juz" ? (language === "ar" ? "جزء" : "Juz") : mode === "hizb" ? (language === "ar" ? "حزب" : "Hizb") : (language === "ar" ? "سورة" : "Surah");
-          const itemsDisplay        = items.slice(0, 4).join(", ") + (items.length > 4 ? "…" : "");
-
-          const cardBg   = completed ? "#f0fff4" : "#fffdf5";
-          const cardBdr  = completed ? "#9ae6b4" : `${GOLD}66`;
-          const accentC  = completed ? "#276749"  : DARK_GREEN;
-
-          return (
-            <div key={hifdhAssignment.id} style={{ ...card, background: cardBg, border: `1.5px solid ${cardBdr}` }}>
-              {/* Header */}
-              <div style={{ padding: "14px 16px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 11, background: completed ? "#dcfce7" : `${GOLD}22`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <BookMarked style={{ width: 18, height: 18, color: completed ? "#276749" : GOLD }} />
-                  </div>
-                  <div>
-                    <p style={{ fontSize: 14, fontWeight: 900, color: TEXT_DARK, margin: 0, fontFamily: "'Playfair Display', serif" }}>
-                      {t("Today's Hifdh Revision", "مراجعة الحفظ اليومية")}
-                      {hifdhAssignments.length > 1 && (
-                        <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: GOLD, background: GOLD+"18", borderRadius: 8, padding: "1px 6px" }}>
-                          {assignIdx + 1}/{hifdhAssignments.length}
-                        </span>
-                      )}
-                    </p>
-                    <p style={{ fontSize: 10, color: TEXT_LIGHT, margin: "1px 0 0" }}>
-                      {t("Daily assignment from your teacher", "الواجب اليومي من معلمك")}
-                    </p>
-                  </div>
-                </div>
-                {completed ? (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: "#276749", background: "#dcfce7", border: "1px solid #9ae6b4", borderRadius: 20, padding: "4px 10px" }}>
-                    <CheckCircle style={{ width: 12, height: 12 }} />
-                    {t("Done!", "مكتمل!")}
-                  </span>
-                ) : quizPending ? (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: "#7c3aed", background: "#f5f3ff", border: "1px solid #c4b5fd", borderRadius: 20, padding: "4px 10px" }}>
-                    <ClipboardList style={{ width: 12, height: 12 }} />
-                    {t("Quiz Pending", "الاختبار باقٍ")}
-                  </span>
-                ) : (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 800, color: GOLD, background: `${GOLD}18`, border: `1px solid ${GOLD}44`, borderRadius: 20, padding: "4px 10px" }}>
-                    <Flame style={{ width: 12, height: 12 }} />
-                    {t("Pending", "بانتظارك")}
-                  </span>
-                )}
-              </div>
-
-              {/* Assignment details */}
-              <div style={{ padding: "12px 16px 0", display: "flex", gap: 10, flexWrap: "wrap" as const }}>
-                {[
-                  { label: t("Type", "النوع"),        value: modeLabel },
-                  { label: t("Sections", "الأجزاء"),  value: itemsDisplay || "—" },
-                  { label: t("Pages/day", "صفحات/يوم"), value: `${pagesTarget}` },
-                ].map((item, i) => (
-                  <div key={i} style={{ flex: 1, minWidth: 70, background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: "8px 10px", textAlign: "center" }}>
-                    <p style={{ fontSize: 10, color: TEXT_LIGHT, margin: "0 0 2px", fontWeight: 600 }}>{item.label}</p>
-                    <p style={{ fontSize: 13, fontWeight: 800, color: TEXT_DARK, margin: 0 }} dir="auto">{item.value}</p>
-                  </div>
-                ))}
-              </div>
-
-              {/* Progress bar */}
-              <div style={{ padding: "12px 16px 0" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: TEXT_MED }}>{t("Today's progress", "تقدم اليوم")}</span>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: accentC }}>{pagesRevised} / {pagesTarget} {t("pages", "صفحات")} · {progressPct}%</span>
-                </div>
-                <div style={{ height: 8, borderRadius: 8, background: `${GOLD}22`, overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%",
-                    width: `${progressPct}%`,
-                    borderRadius: 8,
-                    background: completed
-                      ? "linear-gradient(90deg,#34d399,#22c55e)"
-                      : `linear-gradient(90deg,${GOLD},${DARK_GREEN})`,
-                    transition: "width 0.8s ease",
-                  }} />
-                </div>
-                {hifdhAssignment.notes_display && (
-                  <p style={{ fontSize: 11, color: TEXT_MED, margin: "8px 0 0", fontStyle: "italic" }}>
-                    💬 {hifdhAssignment.notes_display}
-                  </p>
-                )}
-              </div>
-
-              {/* CTA button */}
-              <div style={{ padding: "12px 16px 16px" }}>
-                <button
-                  onClick={() => navigate(`/student/hifdh-daily?assignmentId=${hifdhAssignment.id}`)}
-                  style={{
-                    width: "100%", padding: "11px 0", borderRadius: 12, border: "none",
-                    background: completed
-                      ? "linear-gradient(135deg,#276749,#34d399)"
-                      : `linear-gradient(135deg,${DARK_GREEN},${MID_GREEN})`,
-                    color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer",
-                    position: "relative", overflow: "hidden",
-                    boxShadow: `0 4px 14px ${completed ? "#22c55e44" : DARK_GREEN + "44"}`,
-                  }}
-                >
-                  {!completed && (
-                    <span style={{
-                      position: "absolute", inset: 0, zIndex: 0,
-                      background: "linear-gradient(110deg, transparent 35%, rgba(255,255,255,0.22) 50%, transparent 65%)",
-                      backgroundSize: "200% 100%",
-                      animation: "shimmer 2.8s infinite",
-                      pointerEvents: "none",
-                    }} />
-                  )}
-                  <span style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                    <BookMarked style={{ width: 15, height: 15 }} />
-                    {completed
-                      ? t("View Today's Session", "عرض جلسة اليوم")
-                      : quizPending
-                      ? t("Resume — Take the Quiz", "استكمل — أجِب الاختبار")
-                      : t("Start Revision Now", "ابدأ المراجعة الآن")}
-                    <ArrowRight style={{ width: 13, height: 13 }} />
-                  </span>
-                </button>
-              </div>
-            </div>
-          );
-        })}
 
         {/* ── Academic Snapshot ── */}
         <div style={card}>
