@@ -1,5 +1,6 @@
 // src/components/hifdh/HifdhDashboard.tsx
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
   BookOpen, TrendingUp, Flame, ChevronRight,
@@ -10,7 +11,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { H_GOLD as GOLD, H_GOLD_L3 as GOLD_LIGHT, H_INK2 as INK } from "./hifdhTokens";
+import { H_GOLD as GOLD, H_GOLD_L3 as GOLD_LIGHT, H_INK2 as INK, H_G, H_GM } from "./hifdhTokens";
 
 interface Props {
   userId: string | null;
@@ -62,6 +63,7 @@ const WEEK_DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export default function HifdhDashboard({
   userId, studentName, onNavigate, refreshKey = 0,
 }: Props) {
+  const navigate = useNavigate();
   const [progress,    setProgress]    = useState<ProgressEntry[]>([]);
   const [sessions,    setSessions]    = useState<SessionEntry[]>([]);
   const [juzDone,     setJuzDone]     = useState<number[]>([]);
@@ -89,6 +91,12 @@ export default function HifdhDashboard({
     pageLabel: string;
   } | null>(null);
   const [todaysRevisionChecked, setTodaysRevisionChecked] = useState(false);
+
+  // ── Full teacher-assigned Hifdh cards (moved here from the Student
+  // Dashboard) — shows Type / Sections / Pages-per-day, live progress,
+  // and a CTA into the actual daily-revision flow at /student/hifdh-daily.
+  const [hifdhAssignments, setHifdhAssignments] = useState<any[]>([]);
+  const [hifdhTodayLog,    setHifdhTodayLog]    = useState<any>(null);
 
   const overdueCount = progress.filter(p => daysSince(p.last_reviewed) >= 10).length;
   const urgentCount  = progress.filter(p => { const d = daysSince(p.last_reviewed); return d >= 5 && d < 10; }).length;
@@ -139,6 +147,31 @@ export default function HifdhDashboard({
         }
         setTodaysRevisionChecked(true);
       });
+  }, [userId, refreshKey]);
+
+  // ── Fetch full teacher-assigned Hifdh cards + today's log ──
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      const todayStr = new Date().toISOString().split("T")[0];
+      const [assignRes, logRes] = await Promise.all([
+        (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", userId).eq("active", true).order("created_at", { ascending: true }),
+        (supabase as any).from("hifdh_daily_logs").select("*").eq("student_id", userId).eq("log_date", todayStr).maybeSingle(),
+      ]);
+      const parsed = (assignRes?.data ?? []).map((a: any) => {
+        let extra: any = {};
+        try { extra = JSON.parse(a.notes || "{}"); } catch { /* ignore */ }
+        return {
+          ...a,
+          program_start: extra.programStart ?? a.program_start,
+          program_days:  extra.programDays  ?? a.program_days,
+          days_off:      extra.daysOff      ?? a.days_off ?? [],
+          notes_display: extra.custom || "",
+        };
+      });
+      setHifdhAssignments(parsed);
+      setHifdhTodayLog(logRes?.data ?? null);
+    })();
   }, [userId, refreshKey]);
 
   useEffect(() => {
@@ -649,8 +682,124 @@ export default function HifdhDashboard({
           </SectionCard>
         )}
 
-        {/* ── Today's Revision (assigned by teacher, or personal plan) ── */}
-        {todaysRevisionChecked && (
+        {/* ── Today's Hifdh Revision — teacher-assigned daily cards, one per
+             active assignment. This replaces the old simple "Today's
+             Revision" summary and mirrors the card that used to live on the
+             Student Dashboard, now shown here in the Overview instead. ── */}
+        {hifdhAssignments.length > 0 ? (
+          hifdhAssignments.map((assignment, assignIdx) => {
+            const log          = hifdhTodayLog;
+            const completed    = assignIdx === 0 ? (log?.completed ?? false) : false;
+            const pagesTarget  = assignment.daily_pages ?? 1;
+            const pagesRevised = completed ? (log?.pages_revised ?? 0) : 0;
+            const progress     = Math.min(1, pagesRevised / Math.max(1, pagesTarget));
+            const progressPct  = Math.round(progress * 100);
+            const PASS = 55;
+            const recScore    = log?.session_data?.recitation_score ?? 0;
+            const quizPending = assignIdx === 0 && !completed && recScore >= PASS;
+
+            const mode: string    = assignment.mode ?? "juz";
+            const items: number[] = assignment.selected_items ?? [];
+            const modeLabel       = MODE_LABEL[mode] ?? mode;
+            const itemsDisplay    = items.slice(0, 4).join(", ") + (items.length > 4 ? "…" : "");
+
+            const cardBg  = completed ? "#f0fff4" : "#fffdf5";
+            const cardBdr = completed ? "#9ae6b4" : `${GOLD}66`;
+            const accentC = completed ? "#276749" : H_G;
+
+            return (
+              <div key={assignment.id} className="rounded-2xl overflow-hidden"
+                style={{ background: cardBg, border: `1.5px solid ${cardBdr}`, boxShadow: "0 2px 10px rgba(26,61,36,.06)" }}>
+                {/* Header */}
+                <div className="flex items-center justify-between px-4 pt-3.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                      style={{ background: completed ? "#dcfce7" : `${GOLD}22` }}>
+                      <BookMarked size={18} color={completed ? "#276749" : GOLD} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-black flex items-center gap-1.5" style={{ color: INK }}>
+                        Today's Hifdh Revision
+                        {hifdhAssignments.length > 1 && (
+                          <span className="text-[9px] font-black px-1.5 py-0.5 rounded shrink-0"
+                            style={{ background: `${GOLD}18`, color: GOLD }}>
+                            {assignIdx + 1}/{hifdhAssignments.length}
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[10px] mt-0.5" style={{ color: MUTED }}>Daily assignment from your teacher</p>
+                    </div>
+                  </div>
+                  {completed ? (
+                    <span className="flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full shrink-0"
+                      style={{ color: "#276749", background: "#dcfce7", border: "1px solid #9ae6b4" }}>
+                      <CheckCircle2 size={11} /> Done!
+                    </span>
+                  ) : quizPending ? (
+                    <span className="flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full shrink-0"
+                      style={{ color: "#7c3aed", background: "#f5f3ff", border: "1px solid #c4b5fd" }}>
+                      <ClipboardCheck size={11} /> Quiz Pending
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[10px] font-black px-2 py-1 rounded-full shrink-0"
+                      style={{ color: GOLD, background: `${GOLD}18`, border: `1px solid ${GOLD}44` }}>
+                      <Flame size={11} /> Pending
+                    </span>
+                  )}
+                </div>
+
+                {/* Assignment details */}
+                <div className="flex gap-2 px-4 pt-3 flex-wrap">
+                  {[
+                    { label: "Type", value: modeLabel },
+                    { label: "Sections", value: itemsDisplay || "—" },
+                    { label: "Pages/day", value: `${pagesTarget}` },
+                  ].map((item, i) => (
+                    <div key={i} className="flex-1 rounded-lg text-center px-2.5 py-2"
+                      style={{ minWidth: 70, background: "#fff", border: "1px solid #e8ddd0" }}>
+                      <p className="text-[9px] font-semibold mb-0.5" style={{ color: MUTED }}>{item.label}</p>
+                      <p className="text-xs font-black" style={{ color: INK }} dir="auto">{item.value}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Progress bar */}
+                <div className="px-4 pt-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] font-bold" style={{ color: MUTED }}>Today's progress</span>
+                    <span className="text-[11px] font-black" style={{ color: accentC }}>
+                      {pagesRevised} / {pagesTarget} pages · {progressPct}%
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full overflow-hidden" style={{ background: `${GOLD}22` }}>
+                    <div className="h-full rounded-full transition-all" style={{
+                      width: `${progressPct}%`,
+                      background: completed ? "linear-gradient(90deg,#34d399,#22c55e)" : `linear-gradient(90deg,${GOLD},${H_G})`,
+                    }} />
+                  </div>
+                  {assignment.notes_display && (
+                    <p className="text-[11px] italic mt-2" style={{ color: MUTED }}>💬 {assignment.notes_display}</p>
+                  )}
+                </div>
+
+                {/* CTA */}
+                <div className="px-4 pt-3 pb-4">
+                  <button
+                    onClick={() => navigate(`/student/hifdh-daily?assignmentId=${assignment.id}`)}
+                    className="w-full py-2.5 rounded-xl font-black text-xs text-white flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
+                    style={{
+                      background: completed ? "linear-gradient(135deg,#276749,#34d399)" : `linear-gradient(135deg,${H_G},${H_GM})`,
+                      boxShadow: `0 4px 14px ${completed ? "#22c55e44" : H_G + "44"}`,
+                    }}>
+                    <BookMarked size={14} />
+                    {completed ? "View Today's Session" : quizPending ? "Resume — Take the Quiz" : "Start Revision Now"}
+                    <ArrowRight size={13} />
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        ) : todaysRevisionChecked && (
           <SectionCard
             icon={<RotateCcw size={16} />}
             title="Today's Revision"
