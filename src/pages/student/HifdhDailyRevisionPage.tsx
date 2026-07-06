@@ -34,8 +34,21 @@ import { audioUrl as quranAyahAudioUrl, SURAHS } from "@/components/hifdh/surahD
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 
+// ── Lazy surah lookup ─────────────────────────────────────────────────────
+// Building this map at module init time (`const X = Object.fromEntries(SURAHS.map(...))`)
+// caused a production TDZ crash ("Cannot access 'le' before initialization") because
+// Rollup scope-hoists this chunk together with surahData and the init order of the
+// cross-module `SURAHS` binding is not guaranteed. A Proxy defers the lookup until
+// after all module bindings have initialized, eliminating the TDZ entirely.
 const SURAH_NAME_BY_NUM: Record<number, { name: string; arabicName: string }> =
-  Object.fromEntries(SURAHS.map(s => [s.num, { name: s.name, arabicName: s.arabicName }]));
+  new Proxy({} as Record<number, { name: string; arabicName: string }>, {
+    get(_t, key) {
+      const num = Number(key);
+      if (!Number.isFinite(num)) return undefined;
+      const s = SURAHS.find(x => x.num === num);
+      return s ? { name: s.name, arabicName: s.arabicName } : undefined;
+    },
+  });
 
 /* ── Design tokens ──────────────────────────────────────────────── */
 const G0   = "#061409";
