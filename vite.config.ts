@@ -75,15 +75,22 @@ export default defineConfig(({ mode }) => ({
             return "vendor-react";
           }
 
-          // ── vendor-charts: recharts + d3 + victory-vendor ────────────────
-          if (
-            id.includes("node_modules/recharts") ||
-            id.includes("node_modules/d3-") ||
-            id.includes("node_modules/victory-vendor") ||
-            id.includes("node_modules/d3")
-          ) {
-            return "vendor-charts";
-          }
+          // ── recharts / d3 / victory-vendor: NO forced merge ──────────────
+          //
+          // d3 is ~30 interdependent sub-packages with real circular
+          // imports among themselves (e.g. d3-scale <-> d3-time chains).
+          // Forcing them all into one synthetic "vendor-charts" chunk
+          // makes Rollup linearize that cycle into a single file, and
+          // there is no valid order — some module ends up reading another
+          // module's top-level binding before it has run. That's the
+          // "Cannot access 'X' before initialization" crash.
+          //
+          // Leaving these OUT of manualChunks lets Rollup fall back to
+          // its default automatic chunking, which handles circular ESM
+          // dependencies correctly (it keeps genuinely-cyclic modules
+          // together only when safe, and does not force unrelated
+          // packages like victory-vendor into the same file).
+          // Deliberately no branch here for recharts/d3/victory-vendor.
 
           // ── Other vendor libraries ────────────────────────────────────────
           if (
