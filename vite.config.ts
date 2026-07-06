@@ -52,6 +52,11 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
+    // ── TEMP DEBUG: unminified build to reveal the real variable name ────
+    // behind the minified 'le' in the Hifdh crash. REVERT to true (or
+    // remove this line) once the real bug is found and fixed — this
+    // makes the production bundle much larger and slower.
+    minify: false,
     rollupOptions: {
       output: {
         manualChunks(id) {
