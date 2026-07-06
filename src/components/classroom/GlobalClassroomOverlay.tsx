@@ -13,7 +13,10 @@
     • Phone home / recents button   → visibilitychange hidden → translateX(-200%)
     • Back button                   → popstate (handled by LiveClassContext) → translateX(-200%)
     • Tapping "Return to Class"     → translateX(0) + banner hidden
-    • Returning to tab              → auto-restore (banner never needed)
+    • Returning to tab              → STAYS minimized; banner is shown so
+                                       the user has to explicitly tap it to
+                                       bring the video back up (no surprise
+                                       pop-open just from switching apps)
 
   NO canvas PiP. NO browser PiP. NO video element hacks.
 
@@ -218,8 +221,9 @@ export default function GlobalClassroomOverlay() {
         // the foreground service (started above). Do NOT stop audio here.
         if (!userMinimizedRef.current) setMinimized(true);
       } else {
-        // App came back to foreground
-        if (!userMinimizedRef.current) setMinimized(false);
+        // App came back to foreground — stay minimized. The user must tap
+        // the "Return to Class" banner to bring the video back up; we no
+        // longer auto-restore it just because the app regained focus.
         // Restore mic — Android releases mic track when app backgrounds
         if (micEnabledRef.current) {
           setTimeout(() => { restoreMicFnRef.current?.(); }, 600);
@@ -266,7 +270,8 @@ export default function GlobalClassroomOverlay() {
         if (!userMinimizedRef.current) setMinimized(true);
         // micEnabledRef is already up-to-date via its own effect above
       } else if (document.visibilityState === "visible") {
-        if (!userMinimizedRef.current) setMinimized(false);
+        // Tab/app regained visibility — stay minimized. Only an explicit tap
+        // on "Return to Class" (handleReturn) should bring the video back up.
         // Restore mic only if it was on before backgrounding
         if (micEnabledRef.current) {
           setTimeout(() => {
