@@ -91,7 +91,7 @@ export default function HifdhPage() {
         </div>
 
         <div className="h-full overflow-hidden" style={{ display: tab === "revision" ? "flex" : "none", flexDirection: "column" }}>
-          <HifdhRevision userId={userId} autoStart={false} onSessionSaved={triggerRefresh} />
+          <HifdhRevision userId={userId} autoStart={true} onSessionSaved={triggerRefresh} />
         </div>
 
         <div className="h-full overflow-y-auto" style={{ display: tab === "test" ? "block" : "none" }}>
