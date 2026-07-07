@@ -194,7 +194,7 @@ const LiveClassManagement = () => {
   useEffect(()=>{
     (async()=>{
       const {data} = await supabase.from("manual_attendance")
-        .select("subject_id,status,student_id,profiles:student_id(level)").limit(3000);
+        .select("subject_id,session_id,status,student_id,profiles:student_id(level)").limit(3000);
       setGeneralAtt(data||[]);
     })();
   },[]);
@@ -662,21 +662,37 @@ const LiveClassManagement = () => {
           {subjectTab==="attendance" && (
             <div>
               <p className="lc-section">Attendance per Session</p>
+              {/* FIX: this list used to show every session with a bar hardcoded to
+                  width:"70%" — completely fake, the same for every session regardless
+                  of who actually attended. It's now computed from real manual_attendance
+                  rows saved for that specific session (present+late ÷ total marked).
+                  A session that was never opened/marked yet has no rows to compute from —
+                  we show "Not recorded yet" for those instead of inventing a number. */}
               {subSess.filter(s=>s.status!=="scheduled").length===0 ? (
                 <div className="lc-card" style={{padding:36,textAlign:"center",color:"#9ca3af"}}><p style={{fontSize:13}}>No completed sessions yet</p></div>
               ) : (
-                subSess.filter(s=>s.status!=="scheduled").map(sess=>(
-                  <div key={sess.id} className="lc-card" style={{marginBottom:10,padding:"14px 16px",cursor:"pointer"}} onClick={()=>openAttendance(sess)}>
-                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
-                      <div>
-                        <p style={{fontSize:13,fontWeight:700,marginBottom:2}}>{sess.topic||"Session"}</p>
-                        <p style={{fontSize:11,color:"#9ca3af"}}>{fmtDate(sess.scheduled_at)}</p>
+                subSess.filter(s=>s.status!=="scheduled").map(sess=>{
+                  const rows = generalAtt.filter((r:any)=>r.session_id===sess.id);
+                  const total = rows.length;
+                  const present = rows.filter((r:any)=>["present","late"].includes(r.status)).length;
+                  const rate = total>0 ? Math.round(present/total*100) : null;
+                  const barColor = rate===null ? "#d1d5db" : rate>=75 ? "#16a34a" : rate>=60 ? GOLD : "#ef4444";
+                  return (
+                    <div key={sess.id} className="lc-card" style={{marginBottom:10,padding:"14px 16px",cursor:"pointer"}} onClick={()=>openAttendance(sess)}>
+                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+                        <div>
+                          <p style={{fontSize:13,fontWeight:700,marginBottom:2}}>{sess.topic||"Session"}</p>
+                          <p style={{fontSize:11,color:"#9ca3af"}}>{fmtDate(sess.scheduled_at)}</p>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontSize:12,fontWeight:800,color:barColor}}>{rate===null?"Not recorded yet":`${rate}%`}</span>
+                          <ChevronRight style={{width:16,height:16,color:"#9ca3af"}}/>
+                        </div>
                       </div>
-                      <ChevronRight style={{width:16,height:16,color:"#9ca3af",marginTop:4}}/>
+                      <div className="lc-att-bar"><div className="lc-att-fill" style={{width:`${rate??0}%`,background:barColor}}/></div>
                     </div>
-                    <div className="lc-att-bar"><div className="lc-att-fill" style={{width:"70%",background:"#16a34a"}}/></div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           )}
