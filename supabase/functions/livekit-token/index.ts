@@ -74,18 +74,53 @@ Deno.serve(async (req) => {
       roleLabel     = isPrivileged ? 'teacher' : 'student';
 
       // Handle start_session action
+      //
+      // FIX: this used to ONLY check for a row already marked "live" — if none
+      // existed it always INSERTed a brand-new live_sessions row, even when a
+      // "scheduled" placeholder for this exact class already existed (created
+      // ahead of time via the admin's Schedule form, or by the recurring
+      // timetable). That left two disconnected rows behind: the original
+      // "scheduled" row (which some views later flip to "completed"/"done"
+      // purely because its time passed, without it ever actually being used)
+      // and a brand-new row that the real attendance_logs/manual_attendance
+      // rows for the class actually pointed to. Whoever opened the OLD
+      // scheduled row afterwards to check attendance saw "No students found"
+      // even though people genuinely attended — their data was just sitting
+      // under the other, hidden row.
+      //
+      // Now: reuse the nearest not-yet-started scheduled session for this
+      // subject (if one exists) by flipping IT to live, so the row the admin
+      // already sees in their Sessions list is the same row attendance gets
+      // recorded against. Only create a new row if no scheduled placeholder
+      // exists at all. Also set actual_start_time here (previously only set
+      // by the client-side "instant class" path) so every code path that
+      // creates/starts a session sorts consistently by the same column.
       if (action === 'start_session' && isPrivileged) {
-        const { data: existingSession } = await serviceClient
+        const { data: existingLive } = await serviceClient
           .from('live_sessions').select('id')
           .eq('subject_id', subject_id).eq('status', 'live').maybeSingle();
 
-        if (!existingSession) {
-          await serviceClient.from('live_sessions').insert({
-            subject_id,
-            host_id:    user.id,
-            status:     'live',
-            started_at: new Date().toISOString(),
-          });
+        if (!existingLive) {
+          const nowIso = new Date().toISOString();
+          const { data: existingScheduled } = await serviceClient
+            .from('live_sessions').select('id')
+            .eq('subject_id', subject_id).eq('status', 'scheduled')
+            .order('scheduled_at', { ascending: true })
+            .limit(1).maybeSingle();
+
+          if (existingScheduled) {
+            await serviceClient.from('live_sessions')
+              .update({ status: 'live', started_at: nowIso, actual_start_time: nowIso })
+              .eq('id', existingScheduled.id);
+          } else {
+            await serviceClient.from('live_sessions').insert({
+              subject_id,
+              host_id:           user.id,
+              status:            'live',
+              started_at:        nowIso,
+              actual_start_time: nowIso,
+            });
+          }
         }
       }
 
