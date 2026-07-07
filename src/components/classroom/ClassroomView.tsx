@@ -4335,15 +4335,27 @@ const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participan
       style={{
         width:"100%",height:"100%",
         borderRadius: pip ? 16 : 0,
-        border: isSpeaking ? `3px solid #25D366` : pip ? "3px solid transparent" : "none",
+        // FIX: border is now ALWAYS 3px (transparent when not speaking) instead of
+        // toggling between "none" and "3px solid". Voice-activity detection flips
+        // isSpeaking on/off rapidly during normal conversation (pauses between words),
+        // and since the border eats into the content box, that repeated 0px→3px→0px
+        // swing was shrinking/growing the video's rendered area every time — that's
+        // the "shake" people were seeing. Reserving the 3px permanently and only
+        // animating the *color* means the box size never changes, so the video stays
+        // perfectly still while still giving a clear WhatsApp-style speaking indicator.
+        border: isSpeaking ? "3px solid #25D366" : "3px solid transparent",
         overflow:"hidden",
         transition:"border-color .2s",
         background: "#111",
       }}
     >
-      {/* Live video — no mirroring: local shows true-to-life, same orientation others see */}
+      {/* Live video — local camera is mirrored (selfie-style, scaleX(-1)) so it feels
+          natural to look at, exactly like every other self-view in this codebase
+          (ClassLobby, Mustabaqah, exam verification) and every camera app. Remote
+          participants are NEVER mirrored — what they broadcast is what everyone
+          else (including them) sees, unflipped. */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
-        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none"}}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
       />
 
       {/* Camera-off avatar — WhatsApp dark grey background + large silhouette */}
