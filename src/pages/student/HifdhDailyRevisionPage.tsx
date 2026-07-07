@@ -1457,7 +1457,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         if (saved.savedAudioUrl) setSavedAudioUrl(saved.savedAudioUrl);
         if (saved.recSecs)   setCarryOverSecs(saved.recSecs);   // ← resume timer
         setPhase("reading");
-        setReturnBanner("recitation");
+        // (Welcome Back / resume-recording banner removed — session data is still restored above,
+        // student just sees the normal recite screen and can tap Start Reciting.)
         // Attempt to restore the partial audio blob saved to IndexedDB mid-recording
         const blobKey = `${userId}_${todayISO()}_partial`;
         idbLoadBlob(blobKey).then(blob => {
@@ -1481,7 +1482,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   useEffect(() => {
     const handleReturn = () => {
       if (document.visibilityState !== "visible") return;
-      if (isRecording) { handleStop(); setReturnBanner("recitation"); return; }
+      if (isRecording) { handleStop(); return; } // banner removed — recording just stops silently; student re-taps Start Reciting
       if (phase === "testing") setReturnBanner("test");
     };
     document.addEventListener("visibilitychange", handleReturn);
@@ -2556,47 +2557,12 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         </div>
       )}
 
-      {/* ── Return Banner: student navigated away and came back ── */}
-      {returnBanner&&(
+      {/* ── Return Banner: student navigated away and came back mid-test ── */}
+      {returnBanner==="test"&&(
         <div style={{position:"fixed",inset:0,zIndex:9998,background:"rgba(0,0,0,.72)",
           display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
           <div style={{background:W,borderRadius:24,padding:"28px 24px",maxWidth:340,width:"100%",
             boxShadow:"0 24px 60px rgba(0,0,0,.4)",textAlign:"center"}}>
-            {returnBanner==="recitation"?(
-              <>
-                <div style={{width:64,height:64,borderRadius:"50%",background:`${GOLD}18`,
-                  border:`3px solid ${GOLD}`,display:"flex",alignItems:"center",justifyContent:"center",
-                  margin:"0 auto 16px"}}>
-                  <Mic size={28} color={GOLD}/>
-                </div>
-                <p style={{margin:"0 0 6px",fontWeight:900,fontSize:18,color:G1}}>Welcome Back!</p>
-                <p style={{margin:"0 0 18px",fontSize:13,color:"#6B7280",lineHeight:1.6}}>
-                  Your recitation session is still active.<br/>
-                  You can <strong>continue recording</strong> from where you were, or <strong>start fresh</strong> for this page.
-                </p>
-                <div style={{display:"flex",flexDirection:"column",gap:10}}>
-                  <button onClick={()=>{setReturnBanner(null); startRecording();}}
-                    style={{padding:"14px",borderRadius:12,border:"none",cursor:"pointer",
-                      background:`linear-gradient(135deg,${G2},${G3})`,color:W,
-                      fontWeight:900,fontSize:14,fontFamily:"inherit",
-                      display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                    <Mic size={16}/> Continue Recording
-                  </button>
-                  <button onClick={()=>{
-                    audioChunks.current=[]; audioBlobRef.current=null;
-                    setScore(null); setRetryCount(0); setRecSecs(0); setCarryOverSecs(0);
-                    idbDeleteBlob(`${userId}_${todayISO()}_partial`);
-                    setReturnBanner(null); startRecording();
-                  }} style={{padding:"13px",borderRadius:12,border:`1.5px solid ${GOLD}`,
-                    cursor:"pointer",background:"transparent",color:GOLD,
-                    fontWeight:800,fontSize:14,fontFamily:"inherit",
-                    display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-                    <RefreshCcw size={15}/> Start This Page Again
-                  </button>
-                </div>
-              </>
-            ):(
-              <>
                 <div style={{width:64,height:64,borderRadius:"50%",background:`${FAIL}12`,
                   border:`3px solid ${FAIL}`,display:"flex",alignItems:"center",justifyContent:"center",
                   margin:"0 auto 16px"}}>
@@ -2618,8 +2584,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                   display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
                   <RefreshCcw size={15}/> Restart Test
                 </button>
-              </>
-            )}
           </div>
         </div>
       )}
