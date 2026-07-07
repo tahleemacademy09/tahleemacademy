@@ -5085,6 +5085,15 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
 
   const[sessionId,setSessionId]=useState<string|null>(null);const[sessionInfo,setSessionInfo]=useState<any>(null);
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
+  // FIX: when a student disconnects (logs out, force-closes the app, hard network
+  // drop) and later rejoins, we now reuse their EXISTING attendance_logs row for
+  // this session instead of inserting a second one — previously every rejoin
+  // created a brand-new row, so the same student could show up multiple times in
+  // the admin's "Auto-Logged" list with their time split across separate entries.
+  // attPriorDurationRef holds whatever duration was already banked on that row
+  // from earlier stints in this same session, so the next time they leave we
+  // write back prior + this-stint duration instead of overwriting it.
+  const attPriorDurationRef=useRef(0);
   const[savingRec,setSavingRec]=useState(false);const[isSessionLive,setIsSessionLive]=useState(false);const[duration,setDuration]=useState(0);
   const recStopRef=useRef<()=>Promise<void>>(async()=>{});
   // BUG FIX — see onBeforeUnload below: recStopRef.current is ALWAYS a
@@ -5334,8 +5343,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         // stale sessionId state (which is null when a teacher starts a new class for the first time).
         if(settings){await supabase.from("live_sessions").update({...settings,actual_start_time:new Date().toISOString(),status:"live"}).eq("id",freshSessionId);}
         setSessionId(freshSessionId);setSessionInfo(sessions[0]);
-        const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
-        if(att)setAttendanceId(att.id);
+        // FIX: check for an attendance_logs row this student already has for
+        // this exact session (from an earlier stint that disconnected/logged
+        // out) before inserting a new one. Reusing it means a rejoin shows up
+        // as ONE continuous attendance record instead of a duplicate entry.
+        const{data:existingAtt}=await supabase.from("attendance_logs").select("id,duration_seconds").eq("session_id",freshSessionId).eq("user_id",user.id).maybeSingle();
+        if(existingAtt){
+          attPriorDurationRef.current=existingAtt.duration_seconds||0;
+          setAttendanceId(existingAtt.id);
+          await supabase.from("attendance_logs").update({left_at:null,device_info:navigator.userAgent}).eq("id",existingAtt.id);
+        }else{
+          attPriorDurationRef.current=0;
+          const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
+          if(att)setAttendanceId(att.id);
+        }
         await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});
         // FIX BUG 8: Subscribe to session-end immediately here — before the useEffect cycle —
         // so there is no window where the teacher can end the class and students miss the event.
@@ -5420,7 +5441,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   },[subject.id,isPrivileged]); // stable — refs handle mutable values
 
   useEffect(()=>()=>{
-    if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
+    if(attendanceId){const d=attPriorDurationRef.current+Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
     if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);
   },[attendanceId,joinedAt,sessionId,user]);
 
@@ -5470,7 +5491,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     // Auto-save any active recording before leaving
     await recStopRef.current?.();
     try{playLeaveSound();}catch{}
-    if(attendanceId){const d=Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
+    if(attendanceId){const d=attPriorDurationRef.current+Math.floor((Date.now()-joinedAt)/1000);supabase.from("attendance_logs").update({left_at:new Date().toISOString(),duration_seconds:d}).eq("id",attendanceId);}
     if(sessionId&&user)supabase.from("class_participants").update({left_at:new Date().toISOString(),duration_minutes:Math.floor((Date.now()-joinedAt)/60000)}).eq("session_id",sessionId).eq("student_id",user.id);
     onLeave();
   };
