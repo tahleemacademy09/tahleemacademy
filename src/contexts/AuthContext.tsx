@@ -70,6 +70,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => { mountedRef.current = false; };
   }, []);
 
+  // ── FIX: proactive session refresh on resume ───────────────────────────────
+  // Root cause of the "randomly logged out" reports: supabase-js's autoRefreshToken
+  // relies on an internal setTimeout to renew the JWT a little before it expires.
+  // Live classes routinely run 45-60+ minutes, and while the phone is locked or the
+  // app is backgrounded, mobile browsers/WebViews throttle or fully suspend JS timers
+  // — exactly the same throttling this codebase already works around elsewhere for
+  // audio/WakeLock (see LiveClassContext's wakeAudio). That internal refresh timer
+  // gets suspended too, so by the time the person unlocks their phone and comes back,
+  // the access token has quietly expired. The very next Supabase call then fails with
+  // 401, and depending on where that happens it can cascade into what looks like a
+  // random logout mid-class.
+  //
+  // Fix: on every resume signal (tab focus, pageshow, Capacitor resume), explicitly
+  // call getSession() — supabase-js checks the token's expiry inside that call and
+  // silently refreshes it via the refresh token if needed. This runs the refresh the
+  // moment the app is actually alive and has network again, instead of waiting on a
+  // timer that may never have fired while suspended. No spinner, no profile re-fetch —
+  // onAuthStateChange's existing TOKEN_REFRESHED branch (below) already handles the
+  // resulting session update silently.
+  useEffect(() => {
+    const wakeSession = () => {
+      supabase.auth.getSession().catch((err) => {
+        console.warn("[AuthContext] resume session check failed:", err);
+      });
+    };
+    const onVis = () => { if (document.visibilityState === "visible") wakeSession(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", wakeSession);
+    window.addEventListener("pageshow", wakeSession);
+    document.addEventListener("resume", wakeSession); // Capacitor Android WebView
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", wakeSession);
+      window.removeEventListener("pageshow", wakeSession);
+      document.removeEventListener("resume", wakeSession);
+    };
+  }, []);
+
   // ── Fetch roles + profile with simple retry on network error ──────────────
   const fetchUserData = async (userId: string): Promise<void> => {
     // Skip if a fetch for this user is already in flight
