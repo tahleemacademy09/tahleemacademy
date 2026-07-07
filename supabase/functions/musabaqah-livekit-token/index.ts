@@ -88,8 +88,20 @@ Deno.serve(async (req) => {
       for (const b of bytes) binary += String.fromCharCode(b);
       return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     };
-    const b64urlStr = (str: string) =>
-      btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const b64urlStr = (str: string) => {
+      // FIX: the old code here was `btoa(str)` directly — btoa() throws a
+      // DOMException for any character outside Latin-1. participantName
+      // comes from the user's profile full_name, which on this platform is
+      // very often Arabic. Any participant with an Arabic name would hit
+      // this throw inside JSON.stringify(claims) → b64urlStr(...), get
+      // caught by the outer try/catch, and receive a silent 500 — leaving
+      // them stuck on "Reconnecting…" when trying to join a Musabaqah room.
+      // Same fix already applied in livekit-token and public-class-token.
+      const bytes = enc.encode(str);           // UTF-8 encode first
+      let binary = "";
+      for (const b of bytes) binary += String.fromCharCode(b);
+      return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    };
 
     const header = { alg: "HS256", typ: "JWT" };
     const now = Math.floor(Date.now() / 1000);
