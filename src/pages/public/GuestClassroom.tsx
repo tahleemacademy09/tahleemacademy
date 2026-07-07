@@ -909,7 +909,7 @@ const GuestClassroom = () => {
             ? carrier.getAttribute("data-lk-local-participant")
             : vid.getAttribute("data-lk-local-participant");
           const isLocal = attr === "true" || attr === "";
-          const wantedTransform = isLocal ? "scaleX(-1)" : "none";
+          const wantedTransform = "none"; // no mirroring — local shows true-to-life, same as remote
           const curTransform = vid.style.getPropertyValue("transform");
           const curPriority  = vid.style.getPropertyPriority("transform");
           const curObjFit    = vid.style.getPropertyValue("object-fit");
