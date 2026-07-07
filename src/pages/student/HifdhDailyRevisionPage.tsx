@@ -1382,19 +1382,22 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const recSecsRef   = useRef(0);
   const wakeLockRef  = useRef<any>(null);
 
-  // ── PROGRESSIVE REVEAL ────────────────────────────────────────────────────
-  // Words on the Quran page start blurred and reveal progressively as the
-  // student recites. Two reveal mechanisms work together:
-  //   1. TIME-BASED (recSecs): a word reveals automatically every N seconds
-  //      so the page always advances even if SpeechRecognition is unavailable.
-  //   2. SPEECH-BASED (SpeechRecognition): each interim / final transcript
-  //      result bumps the reveal index by the number of words spoken so far,
-  //      giving instant, voice-driven reveals when the browser supports it.
-  // Both mechanisms write to revealedWordCount; the max of the two always wins.
-  const [revealedWordCount, setRevealedWordCount] = useState(0);
-  const recognitionRef = useRef<any>(null);
-  // Seconds-per-word pacing: reveal one word every ~2 s by default.
-  // Words reveal via speech-match only — no time-based pacing.
+  // ── ROLLING TRANSCRIPTION (Groq) ──────────────────────────────────────────
+  // The Quran page is hidden while recording (see QuranPage render guard below),
+  // so there's no on-screen word reveal to drive anymore — WebSpeech-based live
+  // reveal has been removed entirely. What WebSpeech was never needed for (word
+  // reveal) is separate from what made scoring slow: uploading the WHOLE
+  // recording to Groq only after the student taps stop. To fix that we run a
+  // second, short-lived MediaRecorder alongside the main one that restarts
+  // every ROLL_INTERVAL_MS, sending each self-contained segment to Groq in the
+  // background WHILE the student keeps reciting. By the time they tap
+  // "Finished", only the last few seconds still need transcribing.
+  const ROLL_INTERVAL_MS = 12000;
+  const chunkRecRef = useRef<MediaRecorder | null>(null);
+  const chunkRestartTimerRef = useRef<any>(null);
+  const rollingTranscriptRef = useRef<string>("");
+  const stylePromptRef = useRef<string>("");
+  const chunkFinalWaiterRef = useRef<(() => void) | null>(null);
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
   useEffect(() => {
@@ -1699,7 +1702,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         // Run transcription AND storage upload in parallel.
         // setScore must only fire AFTER both resolve — otherwise the interim-save
         // useEffect fires while audioStorageUrlRef is still null (the race condition).
-        Promise.all([transcribeAudio(blob, pageAyahsRef.current), uploadAudioToStorage()]).then(([tx, storageUrl]) => {
+        Promise.all([finalizeTranscript(blob, pageAyahsRef.current), uploadAudioToStorage()]).then(([tx, storageUrl]) => {
           audioStorageUrlRef.current = storageUrl;
           // ── DO NOT call setSavedAudioUrl(storageUrl) here ────────────────────────────────────────
           // savedAudioUrl is already set to the local blob URL (line above Promise.all).
@@ -1738,275 +1741,150 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       mr.start(200);
       mediaRecRef.current = mr;
       setIsRecording(true);
-      setRevealedWordCount(0);             // start fully blurred — reveal only via speech
       setRecSecs(carryOverSecs);           // resume from previous session's elapsed time
       recSecsRef.current = carryOverSecs;
       timerRef.current = setInterval(() => {
-        // Only increment the elapsed-seconds counter.
-        // Word reveal is SPEECH-ONLY — no time-based auto-reveal.
         setRecSecs(s => s + 1);
       }, 1000);
 
-      // ── SPEECH-BASED reveal — sequential sliding-window match ─────────────
-      // FIX: pageTokens are built LAZILY inside onresult (not at SR start time)
-      // so they always read from the live pageAyahsRef even if ayahs hadn't
-      // loaded yet when startRecording() was called.
-      //
-      // Algorithm:
-      //   - interimResults: true — fast word-by-word feedback on Android Chrome.
-      //   - Each onresult gives the FULL accumulated transcript. We track
-      //     lastSpokenCount to process only NEW words each call.
-      //   - For each new word, we search within a LOOKAHEAD window ahead of
-      //     matchPos. Hit → matchPos jumps past it. Miss → silently discarded.
-      //   - matchPos only ever moves forward (noise never resets it).
-      //   - Auto-restarts on onend (Chrome's 60 s limit).
-      //   - Time-based fallback: if SR is unavailable OR the page loaded very
-      //     late, a gentle auto-reveal (1 word / 3 s) ensures the student never
-      //     sees a completely frozen page.
-      try {
-        const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-        if (SR) {
-          // matchPos and lastSpokenCount persist across onend restarts via closure.
-          let matchPos = 0;
-          let lastSpokenCount = 0;
-          const LOOKAHEAD = 6; // wider window handles fast reciters & skipped words
-
-          // ── Lazy token builder — reads pageAyahsRef at call time ──────────
-          // Called inside onresult so ayahs are guaranteed to be populated by
-          // the time the student has spoken at least one word.
-          const getPageTokens = (): string[] => {
-            const toks: string[] = [];
-            pageAyahsRef.current.forEach(a => {
-              a.text.split(/\s+/).filter(Boolean).forEach(w => toks.push(normalizeArabic(w)));
-            });
-            return toks;
-          };
-          // Cache once populated to avoid rebuilding on every onresult call
-          let cachedTokens: string[] | null = null;
-          const pageTokens = () => {
-            if (!cachedTokens || cachedTokens.length === 0) {
-              const built = getPageTokens();
-              if (built.length > 0) cachedTokens = built;
-              return built;
-            }
-            return cachedTokens;
-          };
-
-          const startRec = () => {
-            // Don't start a new instance if one is already running
-            if (recognitionRef.current) return;
-            const toks = pageTokens();
-            if (toks.length > 0 && matchPos >= toks.length) return; // page done
-
-            const rec = new SR();
-            rec.lang = "ar-SA";
-            rec.continuous = true;
-            rec.interimResults = true;   // essential on Android Chrome
-            rec.maxAlternatives = 3;
-
-            rec.onresult = (event: any) => {
-              const toks = pageTokens();
-              if (!toks.length) return; // ayahs not yet loaded — skip
-
-              // Build full transcript from all results — prefer most-Arabic alternative
-              let fullText = "";
-              for (let i = 0; i < event.results.length; i++) {
-                const result = event.results[i];
-                let bestAlt = result[0]?.transcript ?? "";
-                let bestArabicScore = (bestAlt.match(/[؀-ۿ]/g) || []).length;
-                for (let k = 1; k < result.length; k++) {
-                  const alt = result[k]?.transcript ?? "";
-                  const arabicScore = (alt.match(/[؀-ۿ]/g) || []).length;
-                  if (arabicScore > bestArabicScore) { bestAlt = alt; bestArabicScore = arabicScore; }
-                }
-                fullText += " " + bestAlt;
-              }
-              const allSpoken = normalizeArabic(fullText.trim()).split(/\s+/).filter(Boolean);
-
-              // Only process NEW words since last call
-              const newWords = allSpoken.slice(lastSpokenCount);
-              if (!newWords.length) return;
-              lastSpokenCount = allSpoken.length;
-
-              let changed = false;
-              for (const spokenWord of newWords) {
-                if (matchPos >= toks.length) break;
-                // Sliding lookahead window
-                const windowEnd = Math.min(matchPos + LOOKAHEAD + 1, toks.length);
-                let hitAt = -1;
-                for (let wi = matchPos; wi < windowEnd; wi++) {
-                  if (wordsMatch(toks[wi], spokenWord)) { hitAt = wi; break; }
-                }
-                if (hitAt >= 0) { matchPos = hitAt + 1; changed = true; }
-                // No match → noise, discard silently
-              }
-
-              if (changed) {
-                setRevealedWordCount(prev => Math.max(prev, matchPos));
-              }
-            };
-
-            rec.onerror = (e: any) => {
-              if (e.error === "no-speech") {
-                // no-speech → onend fires → auto-restart handled there
-              } else if (e.error !== "aborted") {
-                console.warn("SpeechRecognition error:", e.error);
-              }
-            };
-
-            rec.onend = () => {
-              // handleStop nulls recognitionRef BEFORE stopping, so if ref is
-              // null here the stop was intentional — do NOT restart.
-              if (recognitionRef.current === rec) {
-                recognitionRef.current = null;
-                setTimeout(startRec, 150);
-              }
-            };
-
-            recognitionRef.current = rec;
-            try { rec.start(); } catch {
-              recognitionRef.current = null;
-            }
-          };
-
-          startRec();
-        }
-      } catch { /* SpeechRecognition unavailable */ }
+      // ── Rolling Groq transcription — kick off the chunk recorder ──────────
+      rollingTranscriptRef.current = "";
+      stylePromptRef.current = buildStylePrompt(pageAyahsRef.current);
+      startChunkRecorder(stream, mime);
+      chunkRestartTimerRef.current = setInterval(() => {
+        // Refresh the vocabulary hint in case ayahs finished loading late.
+        stylePromptRef.current = buildStylePrompt(pageAyahsRef.current);
+        restartChunkRecorder(stream, mime);
+      }, ROLL_INTERVAL_MS);
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
     }
   }, []);
 
-  // ── Exact same transcription pipeline as مراجعة (QuranRevisionHub) ──────────
-  // Uses verbose_json so we can check no_speech_prob and reject silence/noise.
-  // Style prompt sets diacritised Quranic script WITHOUT including the verse
-  // being recited (Whisper would hallucinate the reference text as the transcript).
+  // ── Vocabulary-hint prompt builder (shared by rolling chunks + fallback) ──
+  const buildStylePrompt = (ayahs?: Ayah[]): string => {
+    if (ayahs && ayahs.length > 0) {
+      const hint = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ " +
+        ayahs.slice(0, 2).map(a => a.text).join(" ");
+      return hint.slice(0, 220); // Whisper prompt cap
+    }
+    return "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
+  };
+
+  // ── One self-contained MediaRecorder segment → one Groq call ─────────────
+  // Each restart produces a fully independent, decodable audio file (unlike
+  // slicing an ongoing recorder's chunks, which lack a container header after
+  // the first piece), so every segment can be sent to Groq on its own.
+  const startChunkRecorder = (stream: MediaStream, mime: string) => {
+    const mr2 = new MediaRecorder(stream, mime ? {
+      mimeType: mime, audioBitsPerSecond: 128000,
+    } : { audioBitsPerSecond: 128000 });
+    const localChunks: Blob[] = [];
+    mr2.ondataavailable = (e) => { if (e.data?.size > 0) localChunks.push(e.data); };
+    mr2.onstop = () => {
+      const segBlob = new Blob(localChunks, { type: mime || "audio/webm" });
+      const waiter = chunkFinalWaiterRef.current;
+      chunkFinalWaiterRef.current = null;
+      const finish = () => { if (waiter) waiter(); };
+      if (segBlob.size < 3000) { finish(); return; } // near-silent/empty segment
+      transcribeAudio(segBlob, undefined, stylePromptRef.current).then(txt => {
+        if (txt && txt !== "__NO_API__") {
+          rollingTranscriptRef.current = (rollingTranscriptRef.current + " " + txt).trim();
+        }
+      }).finally(finish);
+    };
+    chunkRecRef.current = mr2;
+    try { mr2.start(); } catch { chunkRecRef.current = null; }
+  };
+
+  const restartChunkRecorder = (stream: MediaStream, mime: string) => {
+    const old = chunkRecRef.current;
+    if (old && old.state !== "inactive") { try { old.stop(); } catch { /* noop */ } }
+    startChunkRecorder(stream, mime);
+  };
+
+  // Stops the chunk recorder and waits for its final segment's Groq call to
+  // resolve (and append to rollingTranscriptRef) before returning.
+  const stopChunkRecorderAndWait = (): Promise<void> => {
+    clearInterval(chunkRestartTimerRef.current);
+    return new Promise((resolve) => {
+      const cr = chunkRecRef.current;
+      if (!cr || cr.state === "inactive") { resolve(); return; }
+      chunkFinalWaiterRef.current = resolve;
+      try { cr.stop(); } catch { chunkFinalWaiterRef.current = null; resolve(); }
+    });
+  };
+
   const lastTranscribeErrorRef = useRef<string>("");
 
-  const transcribeAudio = async (blob: Blob, ayahs?: Ayah[]): Promise<string> => {
+  // Groq-only, single-shot transcription of one audio blob. Used for:
+  //   - each rolling chunk during recording (segment-sized blobs)
+  //   - the short "answer this question" recordings elsewhere on this page
+  //   - the one-off fallback inside finalizeTranscript if no chunk ever succeeded
+  // Deepgram has been removed: Groq alone was already the preferred/winning
+  // result almost every time, and racing two providers on every short chunk
+  // would double the API calls for no real accuracy benefit.
+  // `promptOverride` lets rolling chunks reuse a prompt built once per segment
+  // instead of recomputing it from `ayahs` on every call.
+  const transcribeAudio = async (blob: Blob, ayahs?: Ayah[], promptOverride?: string): Promise<string> => {
     lastTranscribeErrorRef.current = "";
     const ext = blob.type.includes("mp4") ? "mp4"
       : blob.type.includes("ogg") ? "ogg"
       : "webm";
+    const stylePrompt = promptOverride ?? buildStylePrompt(ayahs);
 
-    // ── Whisper prompt design ─────────────────────────────────────────────────
-    // Strategy: provide the first ~2 ayahs of the expected page as context.
-    // This seeds Whisper with the correct Quranic vocabulary for this specific
-    // page WITHOUT giving away the full content — temperature=0 prevents
-    // hallucination of words not actually spoken, while the vocabulary hint
-    // dramatically improves recognition of Quranic root words and diacritics.
-    // A pure style-only prompt (old approach) left Whisper with no vocabulary
-    // context, causing it to produce plausible-sounding but wrong Arabic.
-    const stylePrompt = (() => {
-      if (ayahs && ayahs.length > 0) {
-        // Use bismillah + first 2 ayahs as vocabulary context (max ~200 chars)
-        const hint = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ " +
-          ayahs.slice(0, 2).map(a => a.text).join(" ");
-        return hint.slice(0, 220); // Whisper prompt cap
+    const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL;
+    const SUPABASE_KEY =
+      (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+      (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
+    if (!SUPABASE_URL || !SUPABASE_KEY) {
+      lastTranscribeErrorRef.current = "groq_supabase_env_missing";
+      return "__NO_API__";
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const fd = new FormData();
+      fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
+      fd.append("prompt", stylePrompt);
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/groq-transcribe`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${SUPABASE_KEY}`,
+          apikey: SUPABASE_KEY,
+        },
+        body: fd,
+        signal: controller.signal,
+      });
+      const json = await r.json().catch(() => ({}));
+      if (r.ok) {
+        const txt = (json.text ?? "").trim();
+        return txt; // may legitimately be "" (silence) — caller decides what to do
       }
-      return "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
-    })();
+      lastTranscribeErrorRef.current = `groq_http_${r.status}`;
+      console.error(`[HifdhDaily] groq-transcribe failed: HTTP ${r.status}`, json?.error ?? "");
+      return "__NO_API__";
+    } catch (e: any) {
+      lastTranscribeErrorRef.current = e?.name === "AbortError" ? "groq_timeout" : "groq_network_or_cors_error";
+      console.error("[HifdhDaily] groq-transcribe fetch failed:", e);
+      return "__NO_API__";
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
 
-    // ── Run Groq (with hard timeout) and Deepgram concurrently ────────────────
-    // Previously these ran sequentially: a slow/stalled Groq request (e.g. a CORS
-    // preflight that hangs instead of failing fast) blocked Deepgram from even
-    // starting, which is the main cause of long "Analysing your recitation…" waits.
-    // Now both fire at once and we take whichever returns usable text first.
-
-    // ── Groq, via the secure server-side edge function ────────────────────────
-    // IMPORTANT: this used to call api.groq.com directly from the browser with
-    // VITE_GROQ_API_KEY. That key is no longer shipped in the client build
-    // (moved server-side for security, same as QuranRevisionHub's مراجعة flow),
-    // so the direct call always failed with "groq_key_missing" / 401 — which is
-    // why every single recitation on this page was landing on "Couldn't Score
-    // This Recitation" regardless of audio quality. Routing through
-    // `groq-transcribe` (Supabase edge function, server-side GROQ_API_KEY)
-    // fixes that and matches the working pattern used elsewhere in the app.
-    const runGroq = async (): Promise<string | null> => {
-      const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL;
-      const SUPABASE_KEY =
-        (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-        (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
-      if (!SUPABASE_URL || !SUPABASE_KEY) {
-        lastTranscribeErrorRef.current = "groq_supabase_env_missing";
-        return null;
-      }
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 8000); // 8s hard cap
-      try {
-        const fd = new FormData();
-        fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
-        fd.append("prompt", stylePrompt);
-        const r = await fetch(`${SUPABASE_URL}/functions/v1/groq-transcribe`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${SUPABASE_KEY}`,
-            apikey: SUPABASE_KEY,
-          },
-          body: fd,
-          signal: controller.signal,
-        });
-        const json = await r.json().catch(() => ({}));
-        if (r.ok) {
-          const txt = (json.text ?? "").trim();
-          if (txt.length > 5) return txt;
-          if (txt.length > 0) { lastTranscribeErrorRef.current = "groq_silence_detected"; return ""; }
-          lastTranscribeErrorRef.current = "groq_empty_response";
-          return null;
-        }
-        lastTranscribeErrorRef.current = `groq_http_${r.status}`;
-        console.error(`[HifdhDaily] groq-transcribe failed: HTTP ${r.status}`, json?.error ?? "");
-        return null;
-      } catch (e: any) {
-        lastTranscribeErrorRef.current = e?.name === "AbortError" ? "groq_timeout_8s" : "groq_network_or_cors_error";
-        console.error("[HifdhDaily] groq-transcribe fetch failed:", e);
-        return null;
-      } finally {
-        clearTimeout(timeout);
-      }
-    };
-
-    const runDeepgram = async (): Promise<string | null> => {
-      try {
-        const b64 = await new Promise<string>(resolve => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve((reader.result as string).split(",")[1] || "");
-          reader.readAsDataURL(blob);
-        });
-        const { data, error } = await supabase.functions.invoke("transcribe-hifdh", {
-          body: { audio: b64, mimeType: blob.type || "audio/webm" },
-        });
-        if (error) {
-          lastTranscribeErrorRef.current = `${lastTranscribeErrorRef.current || "groq_failed"}+deepgram_invoke_error`;
-          console.error("[HifdhDaily] transcribe-hifdh edge function invoke error:", error);
-          return null;
-        }
-        if (data?.error) {
-          lastTranscribeErrorRef.current = `${lastTranscribeErrorRef.current || "groq_failed"}+deepgram_${data.error}`;
-          console.error("[HifdhDaily] transcribe-hifdh returned error:", data.error);
-          return null;
-        }
-        const tx = data?.text ?? data?.transcript ?? "";
-        return tx || null;
-      } catch (e) {
-        lastTranscribeErrorRef.current = `${lastTranscribeErrorRef.current || "groq_failed"}+deepgram_threw`;
-        console.error("[HifdhDaily] transcribe-hifdh fetch threw:", e);
-        return null;
-      }
-    };
-
-    const [groqResult, dgResult] = await Promise.all([runGroq(), runDeepgram()]);
-    // Prefer Groq (generally higher accuracy for Quranic Arabic) when it returned
-    // anything — including an explicit "" silence verdict, which we trust over
-    // Deepgram. Otherwise fall back to whatever Deepgram returned.
-    if (groqResult !== null) return groqResult;
-    if (dgResult) return dgResult;
-
-    // 3. No transcription API available — return a sentinel so the UI
-    //    can show a helpful message instead of 0% with no explanation.
-    console.warn("[HifdhDaily] No transcription API available. Reason:", lastTranscribeErrorRef.current || "unknown",
-      "— set VITE_GROQ_API_KEY (client build env) and/or DEEPGRAM_API_KEY (Supabase secret).");
-    return "__NO_API__";
+  // Combines whatever the rolling chunks already transcribed with the final
+  // tail segment, so only ~12s (at most) of audio is left to transcribe at
+  // the moment the student taps "Finished" — not the whole page.
+  const finalizeTranscript = async (fullBlob: Blob, ayahs?: Ayah[]): Promise<string> => {
+    await stopChunkRecorderAndWait();
+    const full = rollingTranscriptRef.current.trim();
+    if (full) return full;
+    // Safety net: no rolling chunk ever succeeded (e.g. flaky network for the
+    // whole session) — fall back to one full-recording Groq call so the
+    // student still gets a result instead of nothing.
+    const fallback = await transcribeAudio(fullBlob, ayahs);
+    return fallback && fallback !== "__NO_API__" && fallback.length > 5 ? fallback : "__NO_API__";
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
@@ -2015,14 +1893,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     setIsRecording(false);
     clearInterval(timerRef.current);
     if (mediaRecRef.current && mediaRecRef.current.state !== "inactive") {
-      mediaRecRef.current.stop(); // triggers mr.onstop → transcribeAudio → setScore
+      mediaRecRef.current.stop(); // triggers mr.onstop → finalizeTranscript → setScore
     }
     mediaRecRef.current = null;
-    // Stop SpeechRecognition — null the ref FIRST so onend doesn't auto-restart
-    const recToStop = recognitionRef.current;
-    recognitionRef.current = null;
-    try { recToStop?.stop(); } catch { /* already stopped */ }
-    setRevealedWordCount(0);
     // mr.onstop handles setPhase("page_result") + setScore(null) + fill
   };
 
@@ -2426,16 +2299,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     });
 
     // ── Word statuses ────────────────────────────────────────────────────────
-    // During recording: green=revealed(correct), amber=just-revealed, blurred=not-yet
-    // After evaluation: green=correct, red=missing
+    // The Quran page only renders when NOT recording (see the render guard
+    // below), so the only statuses that ever matter here are the post-
+    // evaluation ones: green=correct, red=missing.
     type WordStatus = "correct" | "partial" | "missing" | "pending" | "none";
-    const wordStatuses: WordStatus[] = tokens.map((tok) => {
-      if (evaluationReady) return "none"; // will be overwritten below
-      if (!isRecording) return "none";
-      if (tok.globalIdx < revealedWordCount) return "correct";
-      if (tok.globalIdx === revealedWordCount) return "partial"; // leading edge
-      return "pending";
-    });
+    const wordStatuses: WordStatus[] = tokens.map(() => "none");
     if (evaluationReady) {
       const ref = pageAyahs.map(a => a.text).join(" ");
       compareWords(ref, lastTranscript).forEach((r, i) => {
@@ -2462,10 +2330,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       if (evaluationReady) {
         if (st === "correct") { color = "#15803d"; bg = "#dcfce733"; border = "2px solid #16a34a"; }
         else if (st === "missing") { color = "#b91c1c"; bg = "#fee2e233"; border = "2px solid #dc2626"; }
-      } else if (isRecording) {
-        if (st === "correct") { color = "#15803d"; bg = "#dcfce744"; }
-        else if (st === "partial") { color = "#d97706"; bg = `${GOLD}33`; }
-        else { blur = "blur(7px)"; opacity = 0.18; }
       }
 
       return (
@@ -2485,7 +2349,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     };
 
     const renderAyahNum = (tok: WordToken) => {
-      const isRevealed = !isRecording || tok.globalIdx < revealedWordCount;
       return (
         <span key={`n${tok.globalIdx}`} style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -2493,8 +2356,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           border: `1.5px solid ${GOLD}`, background: "#fffdf6",
           fontSize: 10, color: GOLD, fontFamily: "'Amiri',serif",
           margin: "0 4px", verticalAlign: "middle", lineHeight: 1,
-          filter: isRevealed || !isRecording ? "none" : "blur(6px)",
-          opacity: isRevealed || !isRecording ? 1 : 0.2,
+          filter: "none",
+          opacity: 1,
           transition: "filter 0.4s ease, opacity 0.4s ease",
           flexShrink: 0,
         }}>{tok.numberInSurah}</span>
@@ -2511,8 +2374,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         Could not load page — check internet connection.
       </div>
     );
-
-    const totalToks = tokens.filter(t => !t.isBismWord).length;
 
     // ── Authentic Mushaf border pattern ──────────────────────────────────
     // A physical Mushaf has: thick outer gold border → gap → thin inner border
@@ -2578,55 +2439,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           </div>
         )}
 
-        {/* ── Live progress bar (speech reveal) ── */}
-        {isRecording && (
-          <div style={{
-            margin: "0 14px",
-            padding: "4px 0",
-            borderBottom: `1px solid ${GOLD}22`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 8,
-          }}>
-            <div style={{flex:1,height:4,borderRadius:2,background:`${GOLD}22`,overflow:"hidden"}}>
-              <div style={{
-                height:"100%", borderRadius:2,
-                background:`linear-gradient(to right,#16a34a,${GOLD})`,
-                width:`${totalToks > 0 ? Math.min(100,(revealedWordCount/totalToks)*100) : 0}%`,
-                transition:"width .4s ease",
-              }}/>
-            </div>
-            <span style={{fontSize:9,fontWeight:800,color:GOLD,whiteSpace:"nowrap",fontFamily:"'Cairo',sans-serif"}}>
-              {Math.min(revealedWordCount,totalToks)}/{totalToks}
-            </span>
-          </div>
-        )}
-
-        {/* ── Legend row ── */}
-        {(isRecording || evaluationReady) && (
+        {/* ── Legend row (shown only after evaluation — QuranPage doesn't
+              render while recording, so there's no "live" state to show) ── */}
+        {evaluationReady && (
           <div style={{
             padding:"3px 14px",
             background:"#faf6ea",
             borderBottom:`1px solid ${GOLD}22`,
             display:"flex", alignItems:"center", justifyContent:"center", gap:16,
           }}>
-            {isRecording && !evaluationReady && (
-              <>
-                <span style={{fontSize:9,color:"#15803d",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{width:8,height:8,borderRadius:"50%",background:"#16a34a",display:"inline-block"}}/>
-                  Correct
-                </span>
-                <span style={{fontSize:9,color:"#b45309",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{width:8,height:8,borderRadius:"50%",background:GOLD,display:"inline-block"}}/>
-                  Close
-                </span>
-                <span style={{fontSize:9,color:"#9CA3AF",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
-                  <span style={{width:8,height:8,borderRadius:"50%",background:"#D1D5DB",display:"inline-block"}}/>
-                  Not yet
-                </span>
-              </>
-            )}
             {evaluationReady && (
               <>
                 <span style={{fontSize:9,color:"#15803d",fontWeight:800,display:"flex",alignItems:"center",gap:3}}>
