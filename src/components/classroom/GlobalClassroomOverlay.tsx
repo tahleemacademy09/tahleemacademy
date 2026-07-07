@@ -13,10 +13,12 @@
     • Phone home / recents button   → visibilitychange hidden → translateX(-200%)
     • Back button                   → popstate (handled by LiveClassContext) → translateX(-200%)
     • Tapping "Return to Class"     → translateX(0) + banner hidden
-    • Returning to tab              → STAYS minimized; banner is shown so
-                                       the user has to explicitly tap it to
-                                       bring the video back up (no surprise
-                                       pop-open just from switching apps)
+    • Returning to tab / app        → AUTO-RESTORES straight back into the classroom
+                                       (translateX(0)); the banner only flashes briefly
+                                       for tab-switches too fast for the eye to register.
+                                       No extra tap required — this matches how people
+                                       actually use it (lock the phone or switch apps
+                                       briefly, then come straight back to the room).
 
   NO canvas PiP. NO browser PiP. NO video element hacks.
 
@@ -221,13 +223,12 @@ export default function GlobalClassroomOverlay() {
         // the foreground service (started above). Do NOT stop audio here.
         if (!userMinimizedRef.current) setMinimized(true);
       } else {
-        // App came back to foreground — stay minimized. The user must tap
-        // the "Return to Class" banner to bring the video back up; we no
-        // longer auto-restore it just because the app regained focus.
-        // Restore mic — Android releases mic track when app backgrounds
-        if (micEnabledRef.current) {
-          setTimeout(() => { restoreMicFnRef.current?.(); }, 600);
-        }
+        // FIX: app came back to foreground — jump straight back into the
+        // classroom instead of leaving the person staring at the "Return to
+        // Class" banner and making them tap it. That extra tap was the exact
+        // complaint: minimizing (locking the phone, switching apps, etc.) and
+        // coming back should land them directly in the room, not on the bubble.
+        if (minimized) handleReturn();
       }
     }).then(h => { stateHandle = h; });
 
@@ -235,7 +236,7 @@ export default function GlobalClassroomOverlay() {
       backHandle?.remove();
       stateHandle?.remove();
     };
-  }, [hasConnected, minimized, setMinimized, restoreMicFnRef, camEnabled, getLocalCameraTrackRef]);
+  }, [hasConnected, minimized, setMinimized, restoreMicFnRef, camEnabled, getLocalCameraTrackRef, handleReturn]);
 
   /* ── Minimize button ──
      This is the ONLY place safe to call requestPictureInPicture() — it must
@@ -270,21 +271,17 @@ export default function GlobalClassroomOverlay() {
         if (!userMinimizedRef.current) setMinimized(true);
         // micEnabledRef is already up-to-date via its own effect above
       } else if (document.visibilityState === "visible") {
-        // Tab/app regained visibility — stay minimized. Only an explicit tap
-        // on "Return to Class" (handleReturn) should bring the video back up.
-        // Restore mic only if it was on before backgrounding
-        if (micEnabledRef.current) {
-          setTimeout(() => {
-            restoreMicFnRef.current?.();  // sets mic ON, never flips it OFF
-          }, 400);
-        }
+        // FIX: tab/app regained visibility — jump straight back into the
+        // classroom (handleReturn also restores the mic if it was on before
+        // backgrounding). Previously this stayed minimized and made the
+        // person tap the "Return to Class" banner every single time —
+        // that extra tap was the actual complaint.
+        handleReturn();
       }
     };
     document.addEventListener("visibilitychange", onVis);
     return () => document.removeEventListener("visibilitychange", onVis);
-    // Only hasConnected and setMinimized in deps — micEnabled/toggleMicFnRef
-    // changes must NOT re-register this listener or the restore fires twice.
-  }, [hasConnected, setMinimized, restoreMicFnRef]);
+  }, [hasConnected, setMinimized, handleReturn]);
 
   if (!inCall || !activeSubject) return null;
 
