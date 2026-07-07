@@ -435,7 +435,7 @@ const useAudioOnlyMode = () => {
             if (sender) {
               const params = sender.getParameters();
               if (params.encodings?.length) {
-                params.encodings[0].maxBitrate = 16000; // 16kbps — enough for voice
+                params.encodings[0].maxBitrate = 20000; // 20kbps — audio-only mode, still clear for voice
                 await sender.setParameters(params);
               }
             }
@@ -453,7 +453,7 @@ const useAudioOnlyMode = () => {
             if (sender) {
               const params = sender.getParameters();
               if (params.encodings?.length) {
-                params.encodings[0].maxBitrate = 32000; // restore 32kbps
+                params.encodings[0].maxBitrate = 40000; // restore 40kbps
                 await sender.setParameters(params);
               }
             }
@@ -4131,7 +4131,8 @@ const useNetworkQuality=()=>{
       }catch{}
     };
 
-    // Feature 3: Adaptive audio bitrate — reduce Opus to 16kbps on poor/lost
+    // Feature 3: Adaptive audio bitrate — reduce Opus on poor/lost, but keep
+    // enough headroom that voices stay intelligible instead of muffled.
     const applyAdaptiveBitrate=async(q:string)=>{
       if(!lp)return;
       try{
@@ -4142,11 +4143,11 @@ const useNetworkQuality=()=>{
         const params=sender.getParameters();
         if(!params.encodings?.length)return;
         if(q==="poor"){
-          params.encodings[0].maxBitrate=20000; // 20kbps — clear enough for voice
+          params.encodings[0].maxBitrate=24000; // 24kbps — clearer than the old 20kbps floor
         }else if(q==="lost"){
-          params.encodings[0].maxBitrate=12000; // 12kbps — barely usable but stays alive
+          params.encodings[0].maxBitrate=16000; // 16kbps — still usable, clearer than 12kbps
         }else if(q==="good"||q==="excellent"){
-          params.encodings[0].maxBitrate=32000; // restore 32kbps
+          params.encodings[0].maxBitrate=40000; // restore to the new 40kbps default
         }
         await sender.setParameters(params);
       }catch{}
@@ -4239,14 +4240,15 @@ const ParticipantSignalIcon=({participant}:{participant:any})=>{
   // starting blank/"unknown" and waiting for the next ConnectionQualityChanged
   // event to fire (which could be a while) — LiveKit already exposes this as
   // a live property on the participant object.
-  const[quality,setQuality]=useState<string>(()=>{
+  const readQuality=useCallback(()=>{
     const q=participant?.connectionQuality;
     if(q===ConnectionQuality.Excellent)return"excellent";
     if(q===ConnectionQuality.Good)return"good";
     if(q===ConnectionQuality.Poor)return"poor";
     if(q===ConnectionQuality.Lost)return"lost";
     return"unknown";
-  });
+  },[participant]);
+  const[quality,setQuality]=useState<string>(readQuality);
   useEffect(()=>{
     if(!room)return;
     // BUG FIX — same swapped-parameter issue as useNetworkQuality above:
@@ -4260,8 +4262,17 @@ const ParticipantSignalIcon=({participant}:{participant:any})=>{
       setQuality(label);
     };
     room.on(RoomEvent.ConnectionQualityChanged,handler);
-    return()=>room.off(RoomEvent.ConnectionQualityChanged,handler);
-  },[room,participant]);
+    // BUG FIX — "icon shows for some participants and not others, and the
+    // signal it shows isn't accurate":
+    // ConnectionQualityChanged doesn't reliably fire for every participant
+    // (e.g. ones with no published tracks, or ones the SFU only reports on
+    // periodically) — so some tiles were stuck on "unknown" forever and
+    // never got a single event. Poll the live property directly every 2.5s
+    // as a fallback so every participant's badge stays in sync with LiveKit's
+    // actual current value even if we missed (or never got) the event.
+    const iv=setInterval(()=>setQuality(readQuality()),2500);
+    return()=>{room.off(RoomEvent.ConnectionQualityChanged,handler);clearInterval(iv);};
+  },[room,participant,readQuality]);
   // BUG FIX: this used to `return null` for anything except poor/lost — so
   // the icon was invisible almost all the time (exactly when a connection
   // was FINE), which made it look broken/"not showing green" as reported.
@@ -4330,9 +4341,9 @@ const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participan
         background: "#111",
       }}
     >
-      {/* Live video */}
+      {/* Live video — no mirroring: local shows true-to-life, same orientation others see */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
-        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none"}}
       />
 
       {/* Camera-off avatar — WhatsApp dark grey background + large silhouette */}
@@ -4408,11 +4419,11 @@ const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participan
   );
 };
 
-/* ══ VIDEO GRID — WhatsApp voice/video call style ══
-   1 participant  → full screen, centred avatar
-   2 participants → remote fills entire screen, local in draggable PiP corner
-   3–4            → remote(s) fill screen (top half each), local PiP corner
-   5+             → scrollable grid of remote tiles, local always PiP corner
+/* ══ VIDEO GRID — uniform grid, everyone the same size ══
+   No self PiP bubble — the local participant is just another tile.
+   Column count is capped at 3 and grows in rows as people join:
+     1 → 1×1     2 → 2×1     3 → 3×1
+     4 → 2×2     6 → 3×2     9 → 3×3     etc.
    ══════════════════════════════════════════════════════════════════════════ */
 const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?:LayoutMode;isMobile?:boolean;spotlightId?:string|null})=>{
   const{localParticipant}=useLocalParticipant();
@@ -4424,25 +4435,6 @@ const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?:Layout
     ? [...all.filter(p=>p.identity===spotlightId), ...all.filter(p=>p.identity!==spotlightId)]
     : all;
   const n=orderedAll.length;
-
-  // PiP corner drag state
-  const[pipPos,setPipPos]=useState<{bottom:number;right:number}>({bottom:16,right:12});
-  const dragRef=useRef<{startX:number;startY:number;startR:number;startB:number}|null>(null);
-
-  const onPipPointerDown=(e:React.PointerEvent)=>{
-    e.currentTarget.setPointerCapture(e.pointerId);
-    dragRef.current={startX:e.clientX,startY:e.clientY,startR:pipPos.right,startB:pipPos.bottom};
-  };
-  const onPipPointerMove=(e:React.PointerEvent)=>{
-    if(!dragRef.current)return;
-    const dx=e.clientX-dragRef.current.startX;
-    const dy=e.clientY-dragRef.current.startY;
-    setPipPos({
-      right:Math.max(8,Math.min(window.innerWidth-100,dragRef.current.startR-dx)),
-      bottom:Math.max(8,Math.min(window.innerHeight-160,dragRef.current.startB-dy)),
-    });
-  };
-  const onPipPointerUp=()=>{dragRef.current=null;};
 
   // Screen share always takes main slot
   const screensharer=all.find(p=>{
@@ -4464,20 +4456,8 @@ const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?:Layout
     );
   }
 
-  // Solo — just show yourself
-  if(n===1){
-    return(
-      <div style={{width:"100%",height:"100%"}}>
-        <ParticipantTile participant={orderedAll[0]} isLocal size="large"/>
-      </div>
-    );
-  }
-
-  // WhatsApp 2-person: remote fills screen, local is draggable PiP
-  const local=orderedAll.find(p=>p.identity===localParticipant?.identity)||orderedAll[0];
-  const mainRemotes=orderedAll.filter(p=>p.identity!==local?.identity);
-
-  // Spotlight layout: spotlighted participant fills screen, others in strip
+  // Spotlight layout: spotlighted participant fills screen, others in strip.
+  // (Explicit teacher/admin action — separate from the default equal grid.)
   if(spotlightId && layout==="spotlight"){
     const spotParticipant=orderedAll.find(p=>p.identity===spotlightId)||orderedAll[0];
     const stripParticipants=orderedAll.filter(p=>p.identity!==spotParticipant?.identity);
@@ -4497,101 +4477,25 @@ const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?:Layout
     );
   }
 
-  if(mainRemotes.length===1){
-    // ── 1 remote: full screen + PiP ──
+  // Solo — just show yourself, full screen
+  if(n===1){
     return(
-      <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a"}}>
-        {/* Remote — fills entire area */}
-        <div style={{position:"absolute",inset:0}}>
-          <ParticipantTile participant={mainRemotes[0]} isLocal={false} size="large"/>
-        </div>
-        {/* Local — draggable PiP, rounded rect, top-right */}
-        {local&&(
-          <div
-            onPointerDown={onPipPointerDown}
-            onPointerMove={onPipPointerMove}
-            onPointerUp={onPipPointerUp}
-            style={{
-              position:"absolute",
-              bottom:pipPos.bottom,
-              right:pipPos.right,
-              width:isMobile?90:110,
-              height:isMobile?134:160,
-              borderRadius:18,
-              overflow:"hidden",
-              boxShadow:"0 4px 20px rgba(0,0,0,.6)",
-              cursor:"grab",
-              touchAction:"none",
-              zIndex:10,
-            }}
-          >
-            <ParticipantTile participant={local} isLocal pip size="small"/>
-          </div>
-        )}
+      <div style={{width:"100%",height:"100%"}}>
+        <ParticipantTile participant={orderedAll[0]} isLocal size="large"/>
       </div>
     );
   }
 
-  if(mainRemotes.length===2){
-    // ── 2 remotes: stacked vertically (WhatsApp 3-person) + local PiP ──
-    return(
-      <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a"}}>
-        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",gap:2}}>
-          {mainRemotes.map(p=>(<div key={p.identity} style={{flex:1,minHeight:0}}><ParticipantTile participant={p} isLocal={false} size="normal"/></div>))}
-        </div>
-        {local&&(
-          <div
-            onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
-            style={{position:"absolute",bottom:pipPos.bottom,right:pipPos.right,width:isMobile?80:100,height:isMobile?120:148,borderRadius:16,overflow:"hidden",boxShadow:"0 4px 20px rgba(0,0,0,.6)",cursor:"grab",touchAction:"none",zIndex:10}}
-          >
-            <ParticipantTile participant={local} isLocal pip size="small"/>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if(mainRemotes.length===3){
-    // ── 3 remotes: 2 top + 1 bottom (WhatsApp 4-person) + local PiP ──
-    return(
-      <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a"}}>
-        <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",gap:2}}>
-          <div style={{flex:1,display:"flex",gap:2}}>
-            {mainRemotes.slice(0,2).map(p=>(<div key={p.identity} style={{flex:1,minWidth:0}}><ParticipantTile participant={p} isLocal={false} size="normal"/></div>))}
-          </div>
-          <div style={{flex:1}}><ParticipantTile participant={mainRemotes[2]} isLocal={false} size="normal"/></div>
-        </div>
-        {local&&(
-          <div
-            onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
-            style={{position:"absolute",bottom:pipPos.bottom,right:pipPos.right,width:isMobile?80:100,height:isMobile?120:148,borderRadius:16,overflow:"hidden",boxShadow:"0 4px 20px rgba(0,0,0,.6)",cursor:"grab",touchAction:"none",zIndex:10}}
-          >
-            <ParticipantTile participant={local} isLocal pip size="small"/>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // ── 4+ remotes: 2-column grid, local always PiP ──
-  const COLS=2;
+  // Everyone — including local — as equal tiles in a capped-3-column grid.
+  const cols = n===2 ? 2 : Math.min(3,n);
+  const rows = Math.ceil(n/cols);
   return(
-    <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a",overflowY:"auto"}}>
-      <div style={{display:"grid",gridTemplateColumns:`repeat(${COLS},1fr)`,gap:2,padding:2,minHeight:"100%"}}>
-        {mainRemotes.map(p=>(
-          <div key={p.identity} style={{height:isMobile?200:240}}>
-            <ParticipantTile participant={p} isLocal={false} size="normal"/>
-          </div>
-        ))}
-      </div>
-      {local&&(
-        <div
-          onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp}
-          style={{position:"fixed",bottom:pipPos.bottom+80,right:pipPos.right,width:isMobile?80:100,height:isMobile?120:148,borderRadius:16,overflow:"hidden",boxShadow:"0 4px 20px rgba(0,0,0,.6)",cursor:"grab",touchAction:"none",zIndex:10}}
-        >
-          <ParticipantTile participant={local} isLocal pip size="small"/>
+    <div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap:2,padding:2,background:"#0a0a0a"}}>
+      {orderedAll.map(p=>(
+        <div key={p.identity} style={{width:"100%",height:"100%",minWidth:0,minHeight:0,borderRadius:isMobile?8:10,overflow:"hidden"}}>
+          <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="normal"/>
         </div>
-      )}
+      ))}
     </div>
   );
 };
@@ -5797,7 +5701,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               sampleRate:48000,channelCount:1,
             },
             publishDefaults:{
-              audioPreset:{maxBitrate:32000}, // 32kbps default (was 64kbps) — saves 32kbps always
+              audioPreset:{maxBitrate:40000}, // 40kbps default — clearer voice than the previous 32kbps while still bandwidth-conscious
               dtx:true,   // discontinuous transmission — muted mic uses ~0 bandwidth
               red:true,   // redundant audio encoding — recovers from packet loss
               stopMicTrackOnMute:false,
