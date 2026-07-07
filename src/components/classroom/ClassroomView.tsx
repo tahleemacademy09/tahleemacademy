@@ -578,6 +578,16 @@ function useScreenWakeLock(active: boolean) {
   }, [active]);
 }
 
+// Module-scope (not component-scope) so both the network-quality hook and the
+// manual mic/cam toggle handler — which live in two separate components —
+// can read/clear the same flag. Single active call per app instance, so a
+// module-level value (rather than context) is fine here.
+// true only while camera is off because the network hook turned it off for
+// a "lost" connection; cleared the instant the student manually touches the
+// camera toggle, so a later quality-recovery event never overrides a
+// deliberate user action.
+const cameraAutoDisabledByNetwork = { current: false };
+
 const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected }: {
   onReconnecting: () => void;
   onReconnected:  () => void;
@@ -1016,24 +1026,51 @@ const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: b
   const optsRef = useRef({ lobbyMic, lobbyCam });
   optsRef.current = { lobbyMic, lobbyCam }; // keep ref fresh every render
 
+  // BUG FIX — "my camera/mic turns itself back on/off with no interaction":
+  // <LiveKitRoom key={roomKey}> is remounted on every reconnect (network
+  // blip → new token → fresh room), which remounts THIS component too. Its
+  // effect used to unconditionally re-apply the LOBBY choice on every mount
+  // — including reconnects that happen minutes into a class, long after the
+  // student manually toggled mic/camera. Net effect: any silent reconnect
+  // reverted mic/cam to whatever they were in the pre-join lobby, undoing
+  // whatever the student changed since joining.
+  //
+  // Fix: `hasConnected` (in LiveClassContext, which lives ABOVE the
+  // remounted <LiveKitRoom> and therefore survives reconnects) is false
+  // only before the very first successful join. So:
+  //   - first-ever mount (hasConnected === false): apply the lobby choice.
+  //   - any later remount (hasConnected === true, i.e. a reconnect):
+  //     re-apply the user's LAST KNOWN toggle state (camEnabled/micEnabled
+  //     from context, kept fresh by RoomToContextBridge) instead of the
+  //     stale lobby snapshot — a reconnect restores what the student
+  //     actually had a moment ago, not what they had before ever joining.
+  const { hasConnected, micEnabled, camEnabled } = useLiveClass();
+  const lastKnownRef = useRef({ micEnabled, camEnabled });
+  lastKnownRef.current = { micEnabled, camEnabled };
+
   useEffect(() => {
     let cancelled = false;
+    const isReconnect = hasConnected; // true only on remounts after the first join
     const init = async () => {
       // Slightly longer delay so LiveKit finishes its own track setup first
       await new Promise(r => setTimeout(r, 450));
       if (cancelled) return;
       try {
         const lp = room.localParticipant;
-        const { lobbyMic: mic, lobbyCam: cam } = optsRef.current; // read latest via ref
-        // Apply the exact lobby choices — not a blanket disable
+        const { mic, cam } = isReconnect
+          ? { mic: lastKnownRef.current.micEnabled, cam: lastKnownRef.current.camEnabled }
+          : { mic: optsRef.current.lobbyMic,        cam: optsRef.current.lobbyCam };
         if (lp.isMicrophoneEnabled !== mic) await lp.setMicrophoneEnabled(mic);
         if (lp.isCameraEnabled     !== cam) await lp.setCameraEnabled(cam);
       } catch {}
     };
     init();
     return () => { cancelled = true; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // safe: reads optsRef which is always up-to-date
+    // Deliberately runs once per mount (i.e. once per reconnect remount too) —
+    // `hasConnected` at mount time is what decides lobby-vs-last-known, so it
+    // must NOT be a reactive dependency here (that would re-run mid-session).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   return null;
 };
 
@@ -4106,11 +4143,18 @@ const useNetworkQuality=()=>{
         const camPub=lp.getTrackPublication(Track.Source.Camera);
         if(q==="poor"){
           if(!camPub?.track)return;
+          cameraAutoDisabledByNetwork.current=false; // staying on, just at lower res — not an auto-off
           await lp.setCameraEnabled(false);
           await lp.setCameraEnabled(true,{resolution:{width:320,height:240,frameRate:10}} as any);
         }else if(q==="lost"){
-          // Audio-only mode: camera off saves ~270kbps — best way to stay alive on 2G/edge
-          if(camPub?.track) await lp.setCameraEnabled(false);
+          // Audio-only mode: camera off saves ~270kbps — best way to stay alive on 2G/edge.
+          // BUG FIX ("camera turns itself back on"): mark this specific off as
+          // network-driven so the recovery branch below only restores video
+          // when WE turned it off — never when the student manually disabled
+          // their camera. Without this flag, any manual camera-off followed
+          // by ANY later quality recovery event would silently force it back
+          // on with no interaction from the user.
+          if(camPub?.track){ cameraAutoDisabledByNetwork.current=true; await lp.setCameraEnabled(false); }
         }else if(q==="good"||q==="excellent"){
           // BUG FIX: this used to read lastQualityRef.current here, but the
           // caller had already overwritten that ref to the NEW label (q)
@@ -4122,7 +4166,10 @@ const useNetworkQuality=()=>{
           // quality explicitly as a parameter, captured before the ref
           // was updated, so recovery actually fires.
           if(prevQ==="lost"){
-            await lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any);
+            if(cameraAutoDisabledByNetwork.current){
+              cameraAutoDisabledByNetwork.current=false;
+              await lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any);
+            } // else: camera was off because the STUDENT turned it off — leave it off
           }else if(prevQ==="poor"){
             await lp.setCameraEnabled(false);
             await lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any);
@@ -5044,6 +5091,11 @@ const RoomToContextBridge = () => {
     toggleCamFnRef.current = async () => {
       try {
         const next = !room.localParticipant.isCameraEnabled;
+        // Student is deliberately choosing the camera state now — this is
+        // never a network auto-disable, so clear the flag. Otherwise a
+        // later network-quality-recovery event could still force the
+        // camera back on/off based on a stale reason.
+        cameraAutoDisabledByNetwork.current = false;
         await room.localParticipant.setCameraEnabled(next);
         setCamEnabled(next);
       } catch {}
