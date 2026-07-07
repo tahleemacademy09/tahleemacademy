@@ -4122,10 +4122,10 @@ const useNetworkQuality=()=>{
           // quality explicitly as a parameter, captured before the ref
           // was updated, so recovery actually fires.
           if(prevQ==="lost"){
-            await lp.setCameraEnabled(true,{resolution:{width:640,height:480,frameRate:24}} as any);
+            await lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any);
           }else if(prevQ==="poor"){
             await lp.setCameraEnabled(false);
-            await lp.setCameraEnabled(true,{resolution:{width:640,height:480,frameRate:24}} as any);
+            await lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any);
           }
         }
       }catch{}
@@ -4407,7 +4407,15 @@ const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participan
           borderRadius:20,padding:"4px 10px",
           maxWidth:"calc(100% - 20px)",pointerEvents:"none",
         }}>
-          {micEnabled
+          {isSpeaking&&micEnabled ? (
+            // WhatsApp-style "live" indicator — pulsing dot + animated bars, replaces the static mic while the person is actually talking
+            <span style={{display:"inline-flex",alignItems:"center",gap:4,flexShrink:0}}>
+              <span style={{width:7,height:7,borderRadius:"50%",background:"#25D366",animation:"pip-pulse 1s ease-in-out infinite",flexShrink:0}}/>
+              <span className="gm-wave">
+                {[0,1,2].map(i=>(<div key={i} className="gm-wave-bar" style={{background:"#25D366",animationDelay:`${i*.12}s`}}/>))}
+              </span>
+            </span>
+          ) : micEnabled
             ? <Mic style={{width:12,height:12,color:"rgba(255,255,255,.75)",flexShrink:0}}/>
             : <MicOff style={{width:12,height:12,color:"#ef4444",flexShrink:0}}/>
           }
@@ -4421,7 +4429,9 @@ const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participan
       {/* PiP: mic indicator only */}
       {pip&&(
         <div style={{position:"absolute",bottom:6,left:6,background:"rgba(0,0,0,.5)",borderRadius:10,padding:"3px 6px",display:"flex",alignItems:"center",gap:3}}>
-          {micEnabled
+          {isSpeaking&&micEnabled ? (
+            <span style={{width:6,height:6,borderRadius:"50%",background:"#25D366",animation:"pip-pulse 1s ease-in-out infinite"}}/>
+          ) : micEnabled
             ? <Mic style={{width:10,height:10,color:"rgba(255,255,255,.8)"}}/>
             : <MicOff style={{width:10,height:10,color:"#ef4444"}}/>
           }
@@ -4498,16 +4508,117 @@ const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?:Layout
     );
   }
 
-  // Everyone — including local — as equal tiles in a capped-3-column grid.
-  const cols = n===2 ? 2 : Math.min(3,n);
-  const rows = Math.ceil(n/cols);
+  // Two people — one full-screen background, one small PiP bubble on top.
+  // Owner (the local participant) starts as the PiP; tap either tile to swap
+  // who's in front and who's in the bubble.
+  if(n===2){
+    return <DuoPipLayout participants={orderedAll} localIdentity={localParticipant?.identity}/>;
+  }
+
+  // Three or more — capped-3-column grid, paginated once it would exceed 3×6 (18) tiles.
+  return <PagedGrid participants={orderedAll} localIdentity={localParticipant?.identity} isMobile={isMobile}/>;
+};
+
+/* ══ DUO PiP — two-person calls ══
+   One participant fills the screen, the other floats in a small draggable-feeling
+   corner bubble. Tap either tile to swap which one is in front. The "owner" (the
+   local participant) starts in the bubble; the other person is the background. */
+const DuoPipLayout=({participants,localIdentity}:{participants:any[];localIdentity?:string})=>{
+  const owner=participants.find(p=>p.identity===localIdentity)||participants[0];
+  const other=participants.find(p=>p.identity!==owner?.identity)||participants[1];
+  const[ownerIsPip,setOwnerIsPip]=useState(true); // default: owner in the bubble, other person in the background
+  const bg=ownerIsPip?other:owner;
+  const bubble=ownerIsPip?owner:other;
+  const swap=()=>setOwnerIsPip(v=>!v);
+  if(!bg||!bubble)return null;
   return(
-    <div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap:2,padding:2,background:"#0a0a0a"}}>
-      {orderedAll.map(p=>(
-        <div key={p.identity} style={{width:"100%",height:"100%",minWidth:0,minHeight:0,borderRadius:isMobile?8:10,overflow:"hidden"}}>
-          <ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="normal"/>
+    <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a",overflow:"hidden"}}>
+      <div style={{position:"absolute",inset:0,cursor:"pointer"}} onClick={swap}>
+        <ParticipantTile participant={bg} isLocal={bg.identity===localIdentity} size="large"/>
+      </div>
+      <div
+        onClick={(e)=>{e.stopPropagation();swap();}}
+        style={{
+          position:"absolute",top:14,right:14,
+          width:"32%",maxWidth:150,minWidth:96,aspectRatio:"3/4",
+          borderRadius:16,overflow:"hidden",cursor:"pointer",zIndex:5,
+          boxShadow:"0 6px 20px rgba(0,0,0,.55)",
+          border:"2px solid rgba(255,255,255,.18)",
+        }}
+      >
+        <ParticipantTile participant={bubble} isLocal={bubble.identity===localIdentity} size="normal" pip/>
+      </div>
+    </div>
+  );
+};
+
+// 3×6 = 18 tiles is the largest a single page will hold before spilling to the next page.
+const GRID_PAGE_SIZE=18;
+
+/* ══ PAGED GRID — 3+ participants ══
+   3 → 2 up / 1 down (centered)     4 → 2×2
+   5..18 → capped at 3 columns, growing rows (shrinking tiles) up to 3×6
+   >18 → split into pages of 18, swipeable left/right with a page-dot indicator */
+const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[];localIdentity?:string;isMobile:boolean})=>{
+  const n=participants.length;
+  const pageCount=Math.max(1,Math.ceil(n/GRID_PAGE_SIZE));
+  const[page,setPage]=useState(0);
+  useEffect(()=>{ if(page>pageCount-1)setPage(0); },[pageCount,page]);
+
+  const touchStartX=useRef<number|null>(null);
+  const onTouchStart=(e:React.TouchEvent)=>{touchStartX.current=e.touches[0].clientX;};
+  const onTouchEnd=(e:React.TouchEvent)=>{
+    if(touchStartX.current==null)return;
+    const dx=e.changedTouches[0].clientX-touchStartX.current;
+    touchStartX.current=null;
+    if(Math.abs(dx)<50)return; // ignore taps/small jitters
+    if(dx<0&&page<pageCount-1)setPage(p=>p+1); // swiped left → next page
+    if(dx>0&&page>0)setPage(p=>p-1);           // swiped right → previous page
+  };
+
+  const pageParticipants=participants.slice(page*GRID_PAGE_SIZE,(page+1)*GRID_PAGE_SIZE);
+  const pn=pageParticipants.length;
+  const isFirstPage=page===0;
+
+  // Special asymmetric layout only applies to the true 3-person call (first/only page)
+  if(isFirstPage&&n===3){
+    return(
+      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:2,padding:2,background:"#0a0a0a"}}>
+        <div style={{display:"flex",gap:2,flex:1,minHeight:0}}>
+          {pageParticipants.slice(0,2).map(p=>(
+            <div key={p.identity} style={{flex:1,minWidth:0,borderRadius:isMobile?8:10,overflow:"hidden"}}>
+              <ParticipantTile participant={p} isLocal={p.identity===localIdentity} size="normal"/>
+            </div>
+          ))}
         </div>
-      ))}
+        <div style={{display:"flex",flex:1,minHeight:0,justifyContent:"center"}}>
+          <div style={{width:"50%",minWidth:0,borderRadius:isMobile?8:10,overflow:"hidden"}}>
+            <ParticipantTile participant={pageParticipants[2]} isLocal={pageParticipants[2].identity===localIdentity} size="normal"/>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const cols = (isFirstPage&&n===4) ? 2 : Math.min(3,pn);
+  const rows = Math.ceil(pn/cols);
+
+  return(
+    <div style={{width:"100%",height:"100%",position:"relative",overflow:"hidden"}} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap:2,padding:2,background:"#0a0a0a"}}>
+        {pageParticipants.map(p=>(
+          <div key={p.identity} style={{width:"100%",height:"100%",minWidth:0,minHeight:0,borderRadius:isMobile?8:10,overflow:"hidden"}}>
+            <ParticipantTile participant={p} isLocal={p.identity===localIdentity} size="normal"/>
+          </div>
+        ))}
+      </div>
+      {pageCount>1&&(
+        <div style={{position:"absolute",bottom:6,left:"50%",transform:"translateX(-50%)",display:"flex",gap:6,zIndex:5,padding:"4px 8px",background:"rgba(0,0,0,.4)",borderRadius:12}}>
+          {Array.from({length:pageCount}).map((_,i)=>(
+            <div key={i} onClick={()=>setPage(i)} style={{width:i===page?18:6,height:6,borderRadius:3,background:i===page?"#fff":"rgba(255,255,255,.4)",cursor:"pointer",transition:"width .2s"}}/>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -5738,10 +5849,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               dtx:true,   // discontinuous transmission — muted mic uses ~0 bandwidth
               red:true,   // redundant audio encoding — recovers from packet loss
               stopMicTrackOnMute:false,
-              videoEncoding:{maxBitrate:500_000,maxFramerate:20}, // cap at 500kbps (was 700k)
+              videoEncoding:{maxBitrate:900_000,maxFramerate:24}, // bumped from 500kbps/20fps — noticeably sharper on decent connections; adaptive-quality logic below still steps this down automatically on poor/lost connections
               backupCodec:true,
             },
-            videoCaptureDefaults:{resolution:{width:640,height:480,frameRate:20},facingMode:"user"},
+            videoCaptureDefaults:{resolution:{width:960,height:540,frameRate:24},facingMode:"user"}, // bumped from 640×480/20fps for a visibly crisper default picture
           }} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           {/* VolumeBooster replaces bare RoomAudioRenderer — Web Audio pipeline: GainNode(2.2×) + DynamicsCompressor(4:1) ensures every remote voice is loud and clear without clipping, crackle, or self-playback */}
           <VolumeBooster/>
