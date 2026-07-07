@@ -4515,7 +4515,7 @@ const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?:Layout
     return <DuoPipLayout participants={orderedAll} localIdentity={localParticipant?.identity}/>;
   }
 
-  // Three or more — capped-3-column grid, paginated once it would exceed 3×6 (18) tiles.
+  // Three or more — capped-3-column grid, paginated once it would exceed 3×3 (9) tiles.
   return <PagedGrid participants={orderedAll} localIdentity={localParticipant?.identity} isMobile={isMobile}/>;
 };
 
@@ -4552,13 +4552,13 @@ const DuoPipLayout=({participants,localIdentity}:{participants:any[];localIdenti
   );
 };
 
-// 3×6 = 18 tiles is the largest a single page will hold before spilling to the next page.
-const GRID_PAGE_SIZE=18;
+// 3×3 = 9 tiles is the largest a single page will hold before spilling to the next page.
+const GRID_PAGE_SIZE=9;
 
 /* ══ PAGED GRID — 3+ participants ══
    3 → 2 up / 1 down (centered)     4 → 2×2
-   5..18 → capped at 3 columns, growing rows (shrinking tiles) up to 3×6
-   >18 → split into pages of 18, swipeable left/right with a page-dot indicator */
+   5..9 → capped at 3 columns, growing rows (shrinking tiles) up to 3×3
+   >9 → split into pages of 9, swipeable left/right with a page-dot indicator */
 const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[];localIdentity?:string;isMobile:boolean})=>{
   const n=participants.length;
   const pageCount=Math.max(1,Math.ceil(n/GRID_PAGE_SIZE));
