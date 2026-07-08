@@ -33,6 +33,7 @@ import { audioUrl as quranAyahAudioUrl, SURAHS } from "@/components/hifdh/surahD
 // Face-capture proctoring — same engine used by HifdhTest.tsx / ExamTaking.tsx.
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
+import { RollingTranscriber } from "@/lib/rollingTranscription";
 
 // ── Lazy surah lookup ─────────────────────────────────────────────────────
 // Building this map at module init time (`const X = Object.fromEntries(SURAHS.map(...))`)
@@ -1388,16 +1389,16 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // reveal has been removed entirely. What WebSpeech was never needed for (word
   // reveal) is separate from what made scoring slow: uploading the WHOLE
   // recording to Groq only after the student taps stop. To fix that we run a
-  // second, short-lived MediaRecorder alongside the main one that restarts
-  // every ROLL_INTERVAL_MS, sending each self-contained segment to Groq in the
-  // background WHILE the student keeps reciting. By the time they tap
-  // "Finished", only the last few seconds still need transcribing.
-  const ROLL_INTERVAL_MS = 12000;
-  const chunkRecRef = useRef<MediaRecorder | null>(null);
-  const chunkRestartTimerRef = useRef<any>(null);
-  const rollingTranscriptRef = useRef<string>("");
+  // background rolling transcriber that chunks audio into OVERLAPPING ~18s
+  // windows (via the shared RollingTranscriber — see rollingTranscription.ts
+  // for why overlap matters: the old fixed 12s HARD-cut chunker, with no
+  // overlap and a brand-new MediaRecorder at every boundary, reliably clipped
+  // or dropped whatever word straddled each cut — a cut every 12 seconds
+  // through a multi-minute recitation added up to "skips a lot of words".
+  // By the time the student taps "Finished", only the last ~18-20s (one
+  // chunk) still needs transcribing.
+  const rollerRef = useRef<RollingTranscriber | null>(null);
   const stylePromptRef = useRef<string>("");
-  const chunkFinalWaiterRef = useRef<(() => void) | null>(null);
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
   useEffect(() => {
@@ -1748,15 +1749,20 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         setRecSecs(s => s + 1);
       }, 1000);
 
-      // ── Rolling Groq transcription — kick off the chunk recorder ──────────
-      rollingTranscriptRef.current = "";
+      // ── Rolling Groq transcription — kick off the overlapping-chunk transcriber ──
       stylePromptRef.current = buildStylePrompt(pageAyahsRef.current);
-      startChunkRecorder(stream, mime);
-      chunkRestartTimerRef.current = setInterval(() => {
-        // Refresh the vocabulary hint in case ayahs finished loading late.
-        stylePromptRef.current = buildStylePrompt(pageAyahsRef.current);
-        restartChunkRecorder(stream, mime);
-      }, ROLL_INTERVAL_MS);
+      const roller = new RollingTranscriber(stream, mime, {
+        intervalMs: 18000, // long enough for real word/verse context per chunk
+        overlapMs: 3000,   // shared window at each boundary — no word gets clipped
+        buildPrompt: () => {
+          // Refresh the vocabulary hint each chunk in case ayahs finished loading late.
+          stylePromptRef.current = buildStylePrompt(pageAyahsRef.current);
+          return stylePromptRef.current;
+        },
+        transcribeChunk: (chunkBlob, prompt) => transcribeAudio(chunkBlob, undefined, prompt),
+      });
+      roller.start();
+      rollerRef.current = roller;
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
     }
@@ -1772,54 +1778,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     return "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
   };
 
-  // ── One self-contained MediaRecorder segment → one Groq call ─────────────
-  // Each restart produces a fully independent, decodable audio file (unlike
-  // slicing an ongoing recorder's chunks, which lack a container header after
-  // the first piece), so every segment can be sent to Groq on its own.
-  const startChunkRecorder = (stream: MediaStream, mime: string) => {
-    const mr2 = new MediaRecorder(stream, mime ? {
-      mimeType: mime, audioBitsPerSecond: 128000,
-    } : { audioBitsPerSecond: 128000 });
-    const localChunks: Blob[] = [];
-    mr2.ondataavailable = (e) => { if (e.data?.size > 0) localChunks.push(e.data); };
-    mr2.onstop = () => {
-      const segBlob = new Blob(localChunks, { type: mime || "audio/webm" });
-      const waiter = chunkFinalWaiterRef.current;
-      chunkFinalWaiterRef.current = null;
-      const finish = () => { if (waiter) waiter(); };
-      if (segBlob.size < 3000) { finish(); return; } // near-silent/empty segment
-      transcribeAudio(segBlob, undefined, stylePromptRef.current).then(txt => {
-        if (txt && txt !== "__NO_API__") {
-          rollingTranscriptRef.current = (rollingTranscriptRef.current + " " + txt).trim();
-        }
-      }).finally(finish);
-    };
-    chunkRecRef.current = mr2;
-    try { mr2.start(); } catch { chunkRecRef.current = null; }
-  };
-
-  const restartChunkRecorder = (stream: MediaStream, mime: string) => {
-    const old = chunkRecRef.current;
-    if (old && old.state !== "inactive") { try { old.stop(); } catch { /* noop */ } }
-    startChunkRecorder(stream, mime);
-  };
-
-  // Stops the chunk recorder and waits for its final segment's Groq call to
-  // resolve (and append to rollingTranscriptRef) before returning.
-  const stopChunkRecorderAndWait = (): Promise<void> => {
-    clearInterval(chunkRestartTimerRef.current);
-    return new Promise((resolve) => {
-      const cr = chunkRecRef.current;
-      if (!cr || cr.state === "inactive") { resolve(); return; }
-      chunkFinalWaiterRef.current = resolve;
-      try { cr.stop(); } catch { chunkFinalWaiterRef.current = null; resolve(); }
-    });
-  };
-
   const lastTranscribeErrorRef = useRef<string>("");
 
   // Groq-only, single-shot transcription of one audio blob. Used for:
-  //   - each rolling chunk during recording (segment-sized blobs)
+  //   - each rolling chunk during recording (segment-sized blobs, via RollingTranscriber)
   //   - the short "answer this question" recordings elsewhere on this page
   //   - the one-off fallback inside finalizeTranscript if no chunk ever succeeded
   // Deepgram has been removed: Groq alone was already the preferred/winning
@@ -1875,11 +1837,11 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   };
 
   // Combines whatever the rolling chunks already transcribed with the final
-  // tail segment, so only ~12s (at most) of audio is left to transcribe at
+  // tail segment, so only ~18-20s (at most) of audio is left to transcribe at
   // the moment the student taps "Finished" — not the whole page.
   const finalizeTranscript = async (fullBlob: Blob, ayahs?: Ayah[]): Promise<string> => {
-    await stopChunkRecorderAndWait();
-    const full = rollingTranscriptRef.current.trim();
+    const roller = rollerRef.current;
+    const full = roller ? (await roller.finalize()).trim() : "";
     if (full) return full;
     // Safety net: no rolling chunk ever succeeded (e.g. flaky network for the
     // whole session) — fall back to one full-recording Groq call so the
