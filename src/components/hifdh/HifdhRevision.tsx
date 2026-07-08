@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
+import { RollingTranscriber } from "@/lib/rollingTranscription";
 import { cn } from "@/lib/utils";
 import {
   Mic, MicOff, ChevronRight, ChevronLeft,
@@ -401,6 +402,13 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
   const liveMediaRef = useRef<any>(null);
   const liveAccumRef = useRef("");
   const liveChunkRef = useRef<Blob | null>(null);
+  // Background overlapping-chunk transcriber for the page recording — see
+  // rollingTranscription.ts. Replaces the old approach of resending the
+  // ENTIRE growing recording to Groq on every 500ms tick (expensive, and
+  // competed with the final full-page call for upload bandwidth) and the old
+  // "one giant Whisper call only after Stop" final evaluation (which is what
+  // caused the 6-10 minute wait and the dropped-middle-of-the-page bug).
+  const pageRollerRef = useRef<RollingTranscriber | null>(null);
   // keep liveVerseResults/liveCurrentVerseIdx for backward compat with other code
   const [liveVerseResults, setLiveVerseResults] = useState<any[]>([]);
   const [liveCurrentVerseIdx, setLiveCurrentVerseIdx] = useState(0);
@@ -717,11 +725,24 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
         });
         if (r.ok) {
           const json = await r.json();
-          // verbose_json gives us no_speech_prob to detect silence/noise
-          const noSpeech = json.segments?.[0]?.no_speech_prob ?? 0;
-          const txt = (json.text ?? "").trim();
-          if (noSpeech < 0.6 && txt.length > 0) return txt;
-          if (noSpeech >= 0.6) return ""; // treat as silence / no speech detected
+          // verbose_json gives us per-segment no_speech_prob. BUG FIX: this used
+          // to only check segments[0], so on any multi-segment response only the
+          // FIRST segment's silence confidence was ever consulted — any speech
+          // Whisper judged real would be returned in full even if a LATER
+          // segment was pure silence/noise it should have excluded, and
+          // conversely a genuinely-spoken first segment mis-flagged as silence
+          // would discard segments after it that were fine. Now each segment is
+          // judged on its own and only confident-silence segments are dropped.
+          const segments = Array.isArray(json.segments) ? json.segments : null;
+          const txt = segments
+            ? segments
+                .filter((s: any) => (s?.no_speech_prob ?? 0) < 0.6)
+                .map((s: any) => (s?.text ?? "").trim())
+                .filter(Boolean)
+                .join(" ")
+            : (json.text ?? "").trim();
+          if (txt.length > 0) return txt;
+          if (segments && segments.length > 0) return ""; // every segment judged silent
         }
       } catch { /* fall through to edge function */ }
     }
@@ -951,58 +972,59 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
       recChunksRef.current = [];
       mediaRecRef.current = mr;
 
-      const allAudioChunks: Blob[] = [];
-      let inFlight = 0;
+      // Style-setting prompt only — NEVER the verse text, or Whisper "helpfully"
+      // echoes the reference back regardless of what was actually recited.
+      const stylePrompt = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ";
 
-      const sendToGroq = async () => {
-        if (inFlight >= 2 || allAudioChunks.length === 0) return;
-        const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
-        if (!groqKey) return;
-        inFlight++;
-        const ext = (mime ?? "").includes("mp4") ? "mp4"
-          : (mime ?? "").includes("ogg") ? "ogg" : "webm";
-        // Snapshot current audio — safe to send while recording continues
-        const snap = new Blob([...allAudioChunks], { type: mime || "audio/webm" });
-        try {
-          const fd = new FormData();
-          fd.append("file", new File([snap], `q.${ext}`, { type: mime || "audio/webm" }));
-          fd.append("model", "whisper-large-v3-turbo");
-          fd.append("language", "ar");
-          fd.append("response_format", "json");
-          fd.append("temperature", "0");
-          // Style prompt only — NEVER use the verse text or Whisper hallucinates it
-          fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ");
-          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${groqKey}` },
-            body: fd,
-          });
-          if (r.ok) {
-            const { text } = await r.json();
-            const clean = (text || "").trim();
-            if (clean.length > 1) applyTranscript(clean);
-          }
-        } catch {}
-        inFlight--;
-      };
+      // BUG FIX — "6-10 minutes after Stop, and the middle gets dropped":
+      // The old code did two things wrong: (1) it resent the ENTIRE growing
+      // recording to Groq on every 500ms tick for the live word-reveal — by
+      // the end of a multi-minute page that's dozens of increasingly large
+      // overlapping uploads competing for the same mobile connection; and
+      // (2) the actual SCORE always came from a separate one-shot Whisper
+      // call on the whole page, only sent after Stop — a single multi-minute
+      // file forces Whisper's own internal ~30s windowing with no exposed
+      // silence tuning, and whenever it misjudges a span as silence that
+      // whole span silently vanishes from the result, usually the middle.
+      //
+      // Fix: chunk into overlapping ~18s windows in the background WHILE
+      // the student keeps reciting (RollingTranscriber — see
+      // rollingTranscription.ts), driving the live word-reveal off the
+      // continuously-merged transcript instead of separate spam calls. By
+      // the time Stop is pressed, only the last chunk is left to finish —
+      // a few seconds, not minutes — and no single request ever has to
+      // cover more than ~18-20s of audio, so there's no long-form window to
+      // silently drop a middle section from.
+      const roller = new RollingTranscriber(stream, mime || "", {
+        intervalMs: 18000,
+        overlapMs: 3000,
+        buildPrompt: () => stylePrompt,
+        transcribeChunk: (chunkBlob) => transcribeAudio(chunkBlob),
+      });
+      pageRollerRef.current = roller;
+
+      // Poll the merged transcript-so-far to drive the live word-reveal —
+      // cheap (no network call), just reads what the roller already has.
+      const liveRevealTimer = setInterval(() => {
+        const soFar = roller.getTranscriptSoFar();
+        if (soFar) applyTranscript(soFar);
+      }, 1000);
 
       mr.ondataavailable = (e) => {
         if (!e.data?.size) return;
         recChunksRef.current.push(e.data);
-        allAudioChunks.push(e.data);
-        sendToGroq(); // fire immediately on every chunk
       };
 
-      mr.onstop = () => {
+      mr.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
         clearInterval(recTimerRef.current);
+        clearInterval(liveRevealTimer);
         const blob = new Blob(recChunksRef.current, { type: mime || "audio/webm" });
         if (blob.size > 500) runPageEvaluation(blob);
       };
 
-      // 500ms chunks = Groq gets new audio every 500ms, responds in ~600-900ms
-      // Net lag: ~100-400ms behind the speaker — fast enough to feel live
-      mr.start(500);
+      roller.start();
+      mr.start(1000); // just accumulates the full recording for playback/upload — no longer used for transcription
       liveMediaRef.current = { stop: () => mr.stop() };
       recTimerRef.current = setInterval(() => setRecTime(t => t + 1), 1000);
 
@@ -1031,7 +1053,17 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
     try {
       const ayahs    = pageDataRef.current?.ayahs ?? [];
       const refText  = ayahs.map((a: any) => a.text).join(" ");
-      const transcript = await transcribeAudio(blob, refText);
+      // If the rolling transcriber was running (the normal path, via
+      // startLiveRecording), finalize() stops it and resolves once whatever
+      // chunk(s) were still in flight finish merging — normally just the
+      // last ~18-20s chunk, so this takes a few seconds, not minutes.
+      // Falls back to a one-shot call on the full blob only if no chunk
+      // ever produced anything (e.g. no ayahs loaded → startPageRecording's
+      // fallback path never created a roller at all) or Groq is down.
+      const roller = pageRollerRef.current;
+      pageRollerRef.current = null;
+      const rolled = roller ? (await roller.finalize()).trim() : "";
+      const transcript = rolled || await transcribeAudio(blob, refText);
 
       if (!transcript || transcript.trim().length < 3) {
         // Fallback: use the live word-match results we already have
