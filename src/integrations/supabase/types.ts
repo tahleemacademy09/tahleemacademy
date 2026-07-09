@@ -6584,6 +6584,7 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: undefined
       }
+      remind_admins_unreviewed_students: { Args: never; Returns: number }
       review_hifdh_daily_log: {
         Args: { p_avg_score: number; p_log_id: string; p_session_data: Json }
         Returns: Json
