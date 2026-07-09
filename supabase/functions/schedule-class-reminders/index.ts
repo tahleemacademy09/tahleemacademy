@@ -424,6 +424,99 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Recurring weekly classes from subject_timetable ────────────────────────
+    // These are the day-of-week + start_time slots teachers set up in the
+    // timetable editor. We compute today's scheduled datetime in Africa/Lagos
+    // and match against the same 0/15-min thresholds.
+    try {
+      // Africa/Lagos is fixed UTC+1 (no DST) — compute today's dow/time there.
+      const lagosNowMs = Date.now() + 60 * 60_000;
+      const lagosNow   = new Date(lagosNowMs);
+      const lagosDow   = lagosNow.getUTCDay(); // 0=Sun..6=Sat
+
+      const { data: slots } = await sb
+        .from("subject_timetable")
+        .select("id, subject_id, teacher_id, day_of_week, start_time, live_url, is_active")
+        .eq("is_active", true)
+        .eq("day_of_week", lagosDow);
+
+      console.log(`[schedule-class-reminders] found ${(slots ?? []).length} timetable slots for dow=${lagosDow}`);
+
+      for (const slot of (slots ?? []) as any[]) {
+        if (!slot.start_time) continue;
+        // start_time is "HH:MM:SS" in Africa/Lagos local time
+        const [hh, mm] = String(slot.start_time).split(":").map(Number);
+        if (Number.isNaN(hh) || Number.isNaN(mm)) continue;
+
+        // Build today's scheduled UTC instant: Lagos = UTC+1
+        const scheduledUtcMs = Date.UTC(
+          lagosNow.getUTCFullYear(),
+          lagosNow.getUTCMonth(),
+          lagosNow.getUTCDate(),
+          hh - 1, mm, 0
+        );
+        const scheduledIso = new Date(scheduledUtcMs).toISOString();
+        const minsLeft = (scheduledUtcMs - Date.now()) / 60_000;
+
+        for (const threshold of THRESHOLDS) {
+          const window = 3;
+          if (minsLeft < threshold - window || minsLeft > threshold + window) continue;
+
+          // Resolve subject title
+          let classTitle = "Class";
+          if (slot.subject_id) {
+            const { data: sj } = await sb
+              .from("subjects").select("title, title_ar")
+              .eq("id", slot.subject_id).maybeSingle();
+            classTitle = (sj as any)?.title_ar || (sj as any)?.title || classTitle;
+          }
+
+          const joinPath = slot.subject_id
+            ? `/student/live-classes?subject=${slot.subject_id}&autoJoin=true`
+            : "/student/live-classes";
+          const teacherJoinPath = "/teacher/live-classes";
+
+          // Teacher name
+          let teacherName = "Your teacher";
+          if (slot.teacher_id) {
+            const { data: tp } = await sb
+              .from("profiles").select("full_name")
+              .eq("user_id", slot.teacher_id).maybeSingle();
+            teacherName = (tp as any)?.full_name || teacherName;
+          }
+
+          // Notify teacher
+          if (slot.teacher_id) {
+            stats.checked++;
+            const r = await maybeNotify(sb, {
+              userId: slot.teacher_id, classId: slot.id, classTitle,
+              scheduledAt: scheduledIso, minsLeft, threshold,
+              joinUrl: `${APP_BASE_URL}${teacherJoinPath}`,
+              joinPath: teacherJoinPath,
+              teacherName: "You", label: "Your class",
+            });
+            stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
+          }
+
+          // Notify enrolled/level students
+          const studentIds = await resolveStudentAudience(sb, slot.subject_id);
+          for (const studentId of studentIds) {
+            if (studentId === slot.teacher_id) continue;
+            stats.checked++;
+            const r = await maybeNotify(sb, {
+              userId: studentId, classId: slot.id, classTitle,
+              scheduledAt: scheduledIso, minsLeft, threshold,
+              joinUrl: `${APP_BASE_URL}${joinPath}`, joinPath,
+              teacherName, label: "Class",
+            });
+            stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
+          }
+        }
+      }
+    } catch (e: any) {
+      console.error("[schedule-class-reminders] timetable scan failed:", e.message);
+    }
+
     console.log("[schedule-class-reminders] done", stats);
     return new Response(JSON.stringify({ ok: true, stats }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
