@@ -454,6 +454,17 @@ function wordsMatch(rw: string, gw: string): boolean {
 // Stores the ORIGINAL diacritic form of each reference word so the result
 // grid can display full tashkeel while still using normalised text for matching.
 interface WordResult { word: string; status: "correct" | "missing"; }
+// FIX: order-aware global LCS alignment (ported from the fix already applied
+// in HifdhRevision.tsx). The previous version scanned normGot from index 0
+// for EVERY reference word, restarting each time. For words that repeat on a
+// page (e.g. "ذٰلِكَ", "ضُحَاهَا", "أَنتَ" — each appears twice on p.584), if
+// Whisper's transcript was missing the FIRST occurrence but did capture the
+// SECOND (the one actually recited), the greedy scan handed that single
+// available match to the EARLIER reference position — marking it correct —
+// while the LATER position (genuinely recited) lost its match and was wrongly
+// flagged as missing. A true LCS alignment considers the whole sequence at
+// once, so a repeated word can only bind to the occurrence that is actually
+// consistent with its neighbours in both texts.
 function compareWords(refText: string, gotText: string): WordResult[] {
   // Split on whitespace — keep originals for display, normalize for matching.
   // FILTER OUT waqf-only tokens (e.g. a lone "صلے", "ۚ", "ۖ" that ended up as
@@ -465,27 +476,39 @@ function compareWords(refText: string, gotText: string): WordResult[] {
   const normRef = origRef.map(w => normalizeArabic(w));
   const normGot = normalizeArabic(gotText).split(/\s+/).filter(Boolean);
 
-  const results: WordResult[] = [];
-  const usedGot = new Set<number>();
+  if (!normGot.length) return origRef.map(w => ({ word: w, status: "missing" as const }));
 
-  for (let ri = 0; ri < normRef.length; ri++) {
-    const rw = normRef[ri];
-    let found = false;
-    for (let i = 0; i < normGot.length; i++) {
-      if (usedGot.has(i)) continue;
-      const gw = normGot[i];
-      const match = wordsMatch(rw, gw);
-      if (match) {
-        // Store the original (with diacritics) so the UI renders full tashkeel
-        results.push({ word: origRef[ri], status: "correct" });
-        usedGot.add(i);
-        found = true;
-        break;
-      }
+  const R = normRef.length;
+  const G = normGot.length;
+
+  // Build LCS length table (fuzzy equality via wordsMatch)
+  const dp: number[][] = Array.from({ length: R + 1 }, () => new Array(G + 1).fill(0));
+  for (let r = 1; r <= R; r++) {
+    for (let g = 1; g <= G; g++) {
+      dp[r][g] = wordsMatch(normRef[r - 1], normGot[g - 1])
+        ? dp[r - 1][g - 1] + 1
+        : Math.max(dp[r - 1][g], dp[r][g - 1]);
     }
-    if (!found) results.push({ word: origRef[ri], status: "missing" });
   }
-  return results;
+
+  // Backtrack to find which ref positions actually matched
+  const matched = new Set<number>();
+  let r = R, g = G;
+  while (r > 0 && g > 0) {
+    if (wordsMatch(normRef[r - 1], normGot[g - 1])) {
+      matched.add(r - 1);
+      r--; g--;
+    } else if (dp[r - 1][g] >= dp[r][g - 1]) {
+      r--;
+    } else {
+      g--;
+    }
+  }
+
+  return origRef.map((word, i) => ({
+    word,
+    status: matched.has(i) ? ("correct" as const) : ("missing" as const),
+  }));
 }
 
 /**
