@@ -415,6 +415,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="truncate">{item.label}</span>
+                  {hasUnreadFor(item.to) && <UnreadDot />}
                 </Link>
               );
             }
@@ -434,6 +435,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="flex-1 text-left truncate">{item.label}</span>
+                  {item.children.some((c: any) => hasUnreadFor(c.to)) && <UnreadDot />}
                   {isOpen
                     ? <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0"/>
                     : <ChevronRight className="h-3.5 w-3.5 opacity-50 shrink-0"/>}
@@ -451,6 +453,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                           )}>
                           <child.icon className="h-3.5 w-3.5 shrink-0"/>
                           <span className="truncate">{child.label}</span>
+                          {hasUnreadFor(child.to) && <UnreadDot />}
                         </Link>
                       );
                     })}
