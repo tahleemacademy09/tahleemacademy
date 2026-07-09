@@ -314,6 +314,29 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     setUnreadNotifs(0);
   };
 
+  // ── Unread-per-route helper (asterisk badges) ─────────────────
+  // Returns true if any unread notification's `link` starts with the given route
+  // (or matches any of the extra keywords in its type/link — used for cross-cutting
+  // categories like "new-registration" that live at /admin/students).
+  const hasUnreadFor = (route: string, extraTypes: string[] = []): boolean => {
+    if (!notifList?.length) return false;
+    return notifList.some((n: any) => {
+      if (n.is_read) return false;
+      const link = String(n.link || "");
+      if (link.startsWith(route)) return true;
+      if (extraTypes.length && extraTypes.includes(n.type)) return true;
+      return false;
+    });
+  };
+
+  // Small red asterisk/dot rendered inside nav items with unseen items
+  const UnreadDot = () => (
+    <span
+      aria-label="unread"
+      className="ms-auto inline-flex h-2 w-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.25)] animate-pulse"
+    />
+  );
+
   // ── Detect whether a string is predominantly Arabic ──────────
   const isArabicText = (s: string) => /[\u0600-\u06FF]/.test(s ?? "");
 
