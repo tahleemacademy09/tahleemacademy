@@ -12,6 +12,7 @@ import {
   Loader2, Trash2, CheckCircle, XCircle, AlertTriangle, Eye,
   Users, GraduationCap, User, ChevronDown, Check, X,
   Zap, MessageSquare, BookOpen, CreditCard, Trophy, Star,
+  Radio, Wifi, WifiOff, Search,
 } from "lucide-react";
 
 const G  = "#064E3B";
@@ -24,10 +25,11 @@ const inp: React.CSSProperties = {
 };
 
 const TABS = [
-  { id: "compose",    label: "AI Compose",    icon: Sparkles  },
-  { id: "auto",       label: "Auto Events",   icon: Zap       },
-  { id: "moderation", label: "Moderation",    icon: ShieldCheck },
-  { id: "history",    label: "History",       icon: History   },
+  { id: "compose",     label: "AI Compose",    icon: Sparkles    },
+  { id: "auto",        label: "Auto Events",   icon: Zap         },
+  { id: "moderation",  label: "Moderation",    icon: ShieldCheck },
+  { id: "history",     label: "History",       icon: History     },
+  { id: "diagnostics", label: "Reach",         icon: Radio       },
 ] as const;
 type Tab = typeof TABS[number]["id"];
 
@@ -829,6 +831,203 @@ function NotificationHistory() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// PUSH / TELEGRAM REACH DIAGNOSTICS
+// ═══════════════════════════════════════════════════════════════════════════════
+type DiagUser = {
+  user_id: string;
+  name: string;
+  role: string;
+  level: string | null;
+  push_subscribed: boolean;
+  device_count: number;
+  device_types: string[];
+  telegram_linked: boolean;
+  last_updated: string | null;
+};
+type DiagSummary = { total: number; push_subscribed: number; telegram_linked: number; reachable_either: number; unreachable: number };
+
+const DEVICE_LABEL: Record<string, string> = {
+  "web-push":       "🌐 Web",
+  "native-android":  "🤖 Android app",
+  "native-ios":      "📱 iOS app",
+  "legacy-fcm-web":  "🌐 Web (legacy)",
+  "unknown":         "❓ Unknown",
+};
+
+function SummaryCard({ label, icon: Icon, s }: { label: string; icon: any; s: DiagSummary }) {
+  const pct = s.total > 0 ? Math.round((s.reachable_either / s.total) * 100) : 0;
+  const color = pct >= 70 ? "#16A34A" : pct >= 40 ? "#D97706" : "#DC2626";
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E5E7EB", padding: 16, flex: 1, minWidth: 150 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <Icon size={15} color="#6B7280" />
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>{label}</span>
+      </div>
+      <div style={{ fontSize: 26, fontWeight: 900, color, lineHeight: 1 }}>{pct}%</div>
+      <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 4 }}>
+        {s.reachable_either} of {s.total} reachable in background
+      </div>
+      <div style={{ display: "flex", gap: 10, marginTop: 8, fontSize: 10.5, color: "#6B7280" }}>
+        <span>📲 {s.push_subscribed} push</span>
+        <span>✈️ {s.telegram_linked} telegram</span>
+        {s.unreachable > 0 && <span style={{ color: "#DC2626", fontWeight: 700 }}>⚠️ {s.unreachable} unreachable</span>}
+      </div>
+    </div>
+  );
+}
+
+function PushDiagnostics({ session }: { session: any }) {
+  const { toast } = useToast();
+  const [loading,  setLoading]  = useState(true);
+  const [summary,  setSummary]  = useState<Record<string, DiagSummary> | null>(null);
+  const [users,    setUsers]    = useState<DiagUser[]>([]);
+  const [search,   setSearch]   = useState("");
+  const [roleFilter, setRoleFilter] = useState<"all" | "student" | "teacher" | "admin">("all");
+  const [onlyUnreachable, setOnlyUnreachable] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("admin-notification-diagnostics", {
+        body: { action: "stats" },
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (error) throw error;
+      setSummary(data.summary);
+      setUsers(data.users);
+    } catch (e: any) {
+      toast({ title: "Failed to load diagnostics", description: e.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  }, [session, toast]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const sendTest = async (userId: string) => {
+    setTestingId(userId);
+    try {
+      const { error } = await supabase.functions.invoke("admin-notification-diagnostics", {
+        body: { action: "send_test", user_id: userId },
+        headers: { Authorization: `Bearer ${session?.access_token}` },
+      });
+      if (error) throw error;
+      toast({ title: "Test notification sent", description: "Check the device now — including with the app fully closed." });
+    } catch (e: any) {
+      toast({ title: "Failed to send test", description: e.message, variant: "destructive" });
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const filtered = useMemo(() => users.filter(u => {
+    if (roleFilter !== "all" && u.role !== roleFilter) return false;
+    if (onlyUnreachable && (u.push_subscribed || u.telegram_linked)) return false;
+    if (search && !u.name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  }), [users, roleFilter, onlyUnreachable, search]);
+
+  if (loading) {
+    return <div style={{ display: "flex", justifyContent: "center", padding: 60 }}><Spin size={28} /></div>;
+  }
+  if (!summary) return null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Explainer */}
+      <div style={{ background: "#F0F9FF", border: "1px solid #BAE6FD", borderRadius: 12, padding: 12, fontSize: 12, color: "#0369A1", display: "flex", gap: 8, alignItems: "flex-start" }}>
+        <Wifi size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+        <span>Shows who can actually be reached in the background — push subscription and/or Telegram linked — versus who only sees notifications while the app is open.</span>
+      </div>
+
+      {/* Summary cards */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <SummaryCard label="Students" icon={GraduationCap} s={summary.students} />
+        <SummaryCard label="Teachers" icon={User}           s={summary.teachers} />
+        <SummaryCard label="Admins"   icon={ShieldCheck}    s={summary.admins} />
+        <SummaryCard label="Overall"  icon={Users}          s={summary.overall} />
+      </div>
+
+      {/* Send test to self */}
+      <button
+        onClick={() => sendTest(session?.user?.id)}
+        disabled={testingId === session?.user?.id}
+        style={{ alignSelf: "flex-start", padding: "8px 14px", borderRadius: 10, border: "none", background: "#064E3B", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+      >
+        {testingId === session?.user?.id ? <Spin size={13} /> : <Send size={13} />} Send test notification to me
+      </button>
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
+          <Search size={13} color="#9CA3AF" style={{ position: "absolute", left: 10, top: 10 }} />
+          <input placeholder="Search name…" value={search} onChange={e => setSearch(e.target.value)} style={{ ...inp, paddingLeft: 30 }} />
+        </div>
+        {(["all", "student", "teacher", "admin"] as const).map(r => (
+          <button key={r} onClick={() => setRoleFilter(r)} style={{
+            padding: "7px 12px", borderRadius: 8, border: "1px solid #E5E7EB",
+            background: roleFilter === r ? "#064E3B" : "#fff", color: roleFilter === r ? "#fff" : "#374151",
+            fontSize: 11.5, fontWeight: 700, cursor: "pointer", textTransform: "capitalize",
+          }}>{r === "all" ? "All roles" : `${r}s`}</button>
+        ))}
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: "#374151", fontWeight: 600, cursor: "pointer" }}>
+          <input type="checkbox" checked={onlyUnreachable} onChange={e => setOnlyUnreachable(e.target.checked)} />
+          Unreachable only
+        </label>
+        <button onClick={load} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 11.5, color: "#374151", fontWeight: 700 }}>
+          <RefreshCw size={12} /> Refresh
+        </button>
+      </div>
+
+      {/* User table */}
+      <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E5E7EB", overflow: "hidden" }}>
+        {filtered.length === 0 ? (
+          <div style={{ padding: 30, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>No users match this filter.</div>
+        ) : filtered.map((u, i) => (
+          <div key={u.user_id} style={{
+            display: "flex", alignItems: "center", gap: 10, padding: "11px 14px",
+            borderBottom: i < filtered.length - 1 ? "1px solid #F3F4F6" : "none",
+          }}>
+            {u.push_subscribed || u.telegram_linked
+              ? <Wifi size={15} color="#16A34A" style={{ flexShrink: 0 }} />
+              : <WifiOff size={15} color="#DC2626" style={{ flexShrink: 0 }} />}
+
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#111", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {u.name} <span style={{ fontWeight: 500, color: "#9CA3AF", textTransform: "capitalize" }}>· {u.role}{u.level ? ` · ${u.level}` : ""}</span>
+              </div>
+              <div style={{ fontSize: 10.5, color: "#9CA3AF", display: "flex", gap: 8, marginTop: 2, flexWrap: "wrap" }}>
+                {u.device_types.length > 0
+                  ? u.device_types.map(d => <span key={d}>{DEVICE_LABEL[d] ?? d}</span>)
+                  : <span>No push device</span>}
+                {u.telegram_linked && <span>✈️ Telegram linked</span>}
+                {u.last_updated && <span>Updated {new Date(u.last_updated).toLocaleDateString()}</span>}
+              </div>
+            </div>
+
+            <button
+              onClick={() => sendTest(u.user_id)}
+              disabled={testingId === u.user_id || (!u.push_subscribed && !u.telegram_linked)}
+              title={!u.push_subscribed && !u.telegram_linked ? "No channel to test — user hasn't enabled push or linked Telegram" : "Send a test push"}
+              style={{
+                padding: "6px 10px", borderRadius: 8, border: "1px solid #E5E7EB",
+                background: (!u.push_subscribed && !u.telegram_linked) ? "#F9FAFB" : "#fff",
+                color: (!u.push_subscribed && !u.telegram_linked) ? "#D1D5DB" : "#064E3B",
+                fontSize: 11, fontWeight: 700, cursor: (!u.push_subscribed && !u.telegram_linked) ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", gap: 4, flexShrink: 0,
+              }}
+            >
+              {testingId === u.user_id ? <Spin size={11} /> : <Send size={11} />} Test
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ROOT COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function NotificationManagement() {
@@ -880,10 +1079,11 @@ export default function NotificationManagement() {
 
       {/* Content */}
       <div style={{ maxWidth: 760, margin: "0 auto", padding: 16 }}>
-        {tab === "compose"    && <AICompose session={session} targets={TARGETS} />}
-        {tab === "auto"       && <AutoEvents targets={TARGETS} />}
-        {tab === "moderation" && <ModerationQueue />}
-        {tab === "history"    && <NotificationHistory />}
+        {tab === "compose"     && <AICompose session={session} targets={TARGETS} />}
+        {tab === "auto"        && <AutoEvents targets={TARGETS} />}
+        {tab === "moderation"  && <ModerationQueue />}
+        {tab === "history"     && <NotificationHistory />}
+        {tab === "diagnostics" && <PushDiagnostics session={session} />}
       </div>
     </div>
   );
