@@ -33,7 +33,7 @@ import { audioUrl as quranAyahAudioUrl, SURAHS } from "@/components/hifdh/surahD
 // Face-capture proctoring — same engine used by HifdhTest.tsx / ExamTaking.tsx.
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
-import { RollingTranscriber } from "@/lib/rollingTranscription";
+// RollingTranscriber import removed — transcription is now a single whole-recording Groq call on Stop
 
 // ── Lazy surah lookup ─────────────────────────────────────────────────────
 // Building this map at module init time (`const X = Object.fromEntries(SURAHS.map(...))`)
@@ -1420,7 +1420,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // through a multi-minute recitation added up to "skips a lot of words".
   // By the time the student taps "Finished", only the last ~18-20s (one
   // chunk) still needs transcribing.
-  const rollerRef = useRef<RollingTranscriber | null>(null);
   const stylePromptRef = useRef<string>("");
 
   // ── WAKE LOCK: keep screen on for entire session ─────────────────────────
@@ -1761,9 +1760,6 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           // Partial blob no longer needed — clean up IDB and reset carry-over
           idbDeleteBlob(`${userId}_${todayISO()}_partial`);
           setCarryOverSecs(0);
-          // Fire-and-forget: cross-check against one full-file Groq pass in the
-          // background. Never blocks — the student is already looking at `sc`.
-          crossCheckFullTranscript(blob, ayahs, capturedSecs, sc);
         });
       };
       mr.start(200);
@@ -1775,20 +1771,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
         setRecSecs(s => s + 1);
       }, 1000);
 
-      // ── Rolling Groq transcription — kick off the overlapping-chunk transcriber ──
+      // Rolling background transcription removed per request — transcription
+      // now happens once, on the whole recording, when the student taps
+      // Stop/Finished (see finalizeTranscript / mr.onstop above).
       stylePromptRef.current = buildStylePrompt(pageAyahsRef.current);
-      const roller = new RollingTranscriber(stream, mime, {
-        intervalMs: 18000, // long enough for real word/verse context per chunk
-        overlapMs: 3000,   // shared window at each boundary — no word gets clipped
-        buildPrompt: () => {
-          // Refresh the vocabulary hint each chunk in case ayahs finished loading late.
-          stylePromptRef.current = buildStylePrompt(pageAyahsRef.current);
-          return stylePromptRef.current;
-        },
-        transcribeChunk: (chunkBlob, prompt) => transcribeAudio(chunkBlob, undefined, prompt),
-      });
-      roller.start();
-      rollerRef.current = roller;
     } catch {
       alert("Mic access denied. Please allow microphone access and try again.");
     }
@@ -1862,55 +1848,15 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
     }
   };
 
-  // Combines whatever the rolling chunks already transcribed with the final
-  // tail segment, so only ~18-20s (at most) of audio is left to transcribe at
-  // the moment the student taps "Finished" — not the whole page.
+  // Single whole-recording transcription: one Groq call on the entire audio
+  // blob, no chunking. Longer timeout since a multi-minute recitation takes
+  // longer to upload/transcribe as one file than an 18s chunk did.
   const finalizeTranscript = async (fullBlob: Blob, ayahs?: Ayah[]): Promise<string> => {
-    const roller = rollerRef.current;
-    const full = roller ? (await roller.finalize()).trim() : "";
-    if (full) return full;
-    // Safety net: no rolling chunk ever succeeded (e.g. flaky network for the
-    // whole session) — fall back to one full-recording Groq call so the
-    // student still gets a result instead of nothing.
-    const fallback = await transcribeAudio(fullBlob, ayahs);
-    return fallback && fallback !== "__NO_API__" && fallback.length > 5 ? fallback : "__NO_API__";
+    const tx = await transcribeAudio(fullBlob, ayahs, undefined, 120000);
+    return tx && tx !== "__NO_API__" && tx.length > 5 ? tx : "__NO_API__";
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
-
-  // ── BACKGROUND CROSS-CHECK: one full-recording Groq call, run AFTER the
-  // student already sees a result from the fast rolling-chunk pipeline.
-  // Purpose: the 18s chunk boundaries and Whisper's repetition-collapse
-  // behavior each drop different spans; a full-file pass sees the audio
-  // with completely different windowing and sometimes recovers a span the
-  // chunked pass missed (or vice-versa). We NEVER block the initial result
-  // on this — it fires fire-and-forget and only *upgrades* the displayed
-  // score/transcript if it's actually better, never downgrades.
-  // Long timeout (multi-minute recordings can take a while to transcribe
-  // as one file) but this runs in parallel with the student already seeing
-  // and reviewing their result, so it doesn't add to perceived wait time.
-  const crossCheckFullTranscript = (
-    fullBlob: Blob,
-    ayahs: Ayah[],
-    capturedSecs: number,
-    baselineScore: number,
-  ) => {
-    transcribeAudio(fullBlob, ayahs, undefined, 90000).then((fullTx) => {
-      if (!fullTx || fullTx === "__NO_API__") return; // keep the chunked result
-      const fullScore = scoreText(fullTx, ayahs, capturedSecs);
-      // Only switch if the full-file pass is a meaningful improvement —
-      // avoids churning the UI over noise-level differences.
-      if (fullScore <= baselineScore + 2) return;
-      const fullErrs = getErrorWords(fullTx, ayahs);
-      const fullCorr = getAyahCorrectness(fullTx, ayahs, capturedSecs);
-      setLastTranscript(fullTx);
-      lastResultRef.current = { tx: fullTx, ayahCorrectness: fullCorr };
-      setScore(fullScore);
-      setErrorWords(fullErrs);
-      setAyahCorrectness(fullCorr);
-      console.info(`[HifdhDaily] cross-check upgraded score ${baselineScore}% → ${fullScore}%`);
-    }).catch(() => { /* best-effort — chunked result already stands */ });
-  };
 
   const handleStop = () => {
     setIsRecording(false);
