@@ -125,6 +125,38 @@ async function sendTelegramRing(
   }).catch(() => {});
 }
 
+// ── Admin notify — class has started (bell + normal push/Telegram fan-out
+//    via dispatch-notification, since "admin_class_ring" is not in its
+//    CLASS_TYPES exclusion list) ────────────────────────────────────────────
+
+async function notifyAdminsClassStarted(
+  sb: ReturnType<typeof createClient>,
+  opts: { sessionId: string; subjectTitle: string; teacherName: string; ringTag: string }
+): Promise<void> {
+  const { data: admins } = await sb.from("user_roles").select("user_id").eq("role", "admin");
+  if (!admins?.length) return;
+
+  for (const admin of admins as any[]) {
+    const { data: existing } = await sb
+      .from("notifications")
+      .select("id")
+      .eq("user_id", admin.user_id)
+      .eq("type", "admin_class_ring")
+      .ilike("link", `%${opts.ringTag}%`)
+      .limit(1);
+    if ((existing?.length ?? 0) > 0) continue;
+
+    await sb.from("notifications").insert({
+      user_id: admin.user_id,
+      title:   `📞 ${opts.subjectTitle} is LIVE now`,
+      message: `${opts.teacherName} has started the class "${opts.subjectTitle}".`,
+      type:    "admin_class_ring",
+      link:    `/admin/live-classes#${opts.ringTag}`,
+      is_read: false,
+    }).catch(() => {});
+  }
+}
+
 // ── Ring a single session ─────────────────────────────────────────────────────
 // Extracted so both the cron sweep (many due sessions) and the manual
 // single-session override (admin "Ring now") share identical logic.
@@ -183,6 +215,9 @@ async function ringSession(
   const teacherName = (teacherProfile as any)?.full_name || "Your teacher";
   const joinUrl     = `${APP_BASE_URL}/student/live-classes?subject=${subject_id}&autoJoin=true`;
   const ringId      = `ring-${session_id}`;
+
+  // Admins should know whenever any class goes live, regardless of subject
+  await notifyAdminsClassStarted(sb, { sessionId: session_id, subjectTitle, teacherName, ringTag });
 
   const ringPayload = {
     type:         "ring",
