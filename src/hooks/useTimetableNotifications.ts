@@ -251,14 +251,17 @@ function listenToSWMessages(userId: string): () => void {
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useTimetableNotifications() {
-  const { user, profile, hasRole } = useAuth();
+  const { user, profile } = useAuth();
   const initRef    = useRef(false);
   const unsubRef   = useRef<(() => void) | null>(null);
   const swMsgUnsub = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!user || !profile) return;
-    if (hasRole("admin")) return;
+    // NOTE: admins used to be excluded here entirely, which meant they never
+    // got a service worker registered or a push subscription saved — so they
+    // could never receive class reminders/rings/content-upload push even
+    // though the backend now sends them notifications. Admins need push too.
 
     if (!initRef.current) {
       initRef.current = true;
