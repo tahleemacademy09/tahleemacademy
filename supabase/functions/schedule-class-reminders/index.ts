@@ -69,6 +69,52 @@ function dedupKey(classId: string, threshold: number): string {
   return `class=${classId}:t=${threshold}`;
 }
 
+// ── Admin notify (bell only — dispatch-notification handles push/Telegram
+//    fan-out normally since these types are NOT in dispatch's CLASS_TYPES
+//    exclusion list) ─────────────────────────────────────────────────────────
+
+async function notifyAdminsForClass(
+  sb: ReturnType<typeof createClient>,
+  opts: { classId: string; classTitle: string; teacherName: string; threshold: Threshold; joinPath: string }
+): Promise<void> {
+  const { data: admins } = await sb.from("user_roles").select("user_id").eq("role", "admin");
+  if (!admins?.length) return;
+
+  const isRing = opts.threshold === 0;
+  const key    = dedupKey(opts.classId, opts.threshold);
+  const type   = isRing ? "admin_class_ring" : "admin_class_reminder";
+  const title  = isRing
+    ? `📞 ${opts.classTitle} is starting now`
+    : `📚 ${opts.classTitle} starts in 15 min`;
+  const message = isRing
+    ? `${opts.teacherName}'s class "${opts.classTitle}" is starting now.`
+    : `${opts.teacherName}'s class "${opts.classTitle}" starts in 15 minutes.`;
+
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+
+  for (const admin of admins as any[]) {
+    const { data: existing } = await sb
+      .from("notifications")
+      .select("id")
+      .eq("user_id", admin.user_id)
+      .eq("type", type)
+      .ilike("link", `%${key}%`)
+      .gte("created_at", todayStart.toISOString())
+      .limit(1);
+    if ((existing?.length ?? 0) > 0) continue;
+
+    await sb.from("notifications").insert({
+      user_id: admin.user_id,
+      title,
+      message,
+      type,
+      link: `${opts.joinPath}#${key}`,
+      is_read: false,
+    });
+  }
+}
+
 // ── Dedup ─────────────────────────────────────────────────────────────────────
 
 async function alreadyNotified(
@@ -406,6 +452,12 @@ Deno.serve(async (req) => {
           stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
         }
 
+        // Notify admins (oversight copy — every class, every threshold)
+        await notifyAdminsForClass(sb, {
+          classId: cls.id, classTitle, teacherName, threshold,
+          joinPath: `/teacher/live-classes`,
+        });
+
         // Notify only the students this class is actually for (enrolled /
         // private / level-matched — or everyone if it's a true public class
         // with no subject_id attached).
@@ -497,6 +549,12 @@ Deno.serve(async (req) => {
             });
             stats[r === "sent" ? "sent" : r === "dedup" ? "dedup" : "errors"]++;
           }
+
+          // Notify admins (oversight copy — every timetable class, every threshold)
+          await notifyAdminsForClass(sb, {
+            classId: slot.id, classTitle, teacherName, threshold,
+            joinPath: teacherJoinPath,
+          });
 
           // Notify enrolled/level students
           const studentIds = await resolveStudentAudience(sb, slot.subject_id);
