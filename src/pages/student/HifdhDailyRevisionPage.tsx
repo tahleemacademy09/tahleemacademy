@@ -1761,6 +1761,9 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
           // Partial blob no longer needed — clean up IDB and reset carry-over
           idbDeleteBlob(`${userId}_${todayISO()}_partial`);
           setCarryOverSecs(0);
+          // Fire-and-forget: cross-check against one full-file Groq pass in the
+          // background. Never blocks — the student is already looking at `sc`.
+          crossCheckFullTranscript(blob, ayahs, capturedSecs, sc);
         });
       };
       mr.start(200);
@@ -1812,7 +1815,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   // would double the API calls for no real accuracy benefit.
   // `promptOverride` lets rolling chunks reuse a prompt built once per segment
   // instead of recomputing it from `ayahs` on every call.
-  const transcribeAudio = async (blob: Blob, ayahs?: Ayah[], promptOverride?: string): Promise<string> => {
+  const transcribeAudio = async (blob: Blob, ayahs?: Ayah[], promptOverride?: string, timeoutMs: number = 15000): Promise<string> => {
     lastTranscribeErrorRef.current = "";
     const ext = blob.type.includes("mp4") ? "mp4"
       : blob.type.includes("ogg") ? "ogg"
@@ -1828,7 +1831,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       return "__NO_API__";
     }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const fd = new FormData();
       fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
@@ -1874,6 +1877,40 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   };
 
   const lastResultRef = useRef<{ tx: string; ayahCorrectness: boolean[] } | null>(null);
+
+  // ── BACKGROUND CROSS-CHECK: one full-recording Groq call, run AFTER the
+  // student already sees a result from the fast rolling-chunk pipeline.
+  // Purpose: the 18s chunk boundaries and Whisper's repetition-collapse
+  // behavior each drop different spans; a full-file pass sees the audio
+  // with completely different windowing and sometimes recovers a span the
+  // chunked pass missed (or vice-versa). We NEVER block the initial result
+  // on this — it fires fire-and-forget and only *upgrades* the displayed
+  // score/transcript if it's actually better, never downgrades.
+  // Long timeout (multi-minute recordings can take a while to transcribe
+  // as one file) but this runs in parallel with the student already seeing
+  // and reviewing their result, so it doesn't add to perceived wait time.
+  const crossCheckFullTranscript = (
+    fullBlob: Blob,
+    ayahs: Ayah[],
+    capturedSecs: number,
+    baselineScore: number,
+  ) => {
+    transcribeAudio(fullBlob, ayahs, undefined, 90000).then((fullTx) => {
+      if (!fullTx || fullTx === "__NO_API__") return; // keep the chunked result
+      const fullScore = scoreText(fullTx, ayahs, capturedSecs);
+      // Only switch if the full-file pass is a meaningful improvement —
+      // avoids churning the UI over noise-level differences.
+      if (fullScore <= baselineScore + 2) return;
+      const fullErrs = getErrorWords(fullTx, ayahs);
+      const fullCorr = getAyahCorrectness(fullTx, ayahs, capturedSecs);
+      setLastTranscript(fullTx);
+      lastResultRef.current = { tx: fullTx, ayahCorrectness: fullCorr };
+      setScore(fullScore);
+      setErrorWords(fullErrs);
+      setAyahCorrectness(fullCorr);
+      console.info(`[HifdhDaily] cross-check upgraded score ${baselineScore}% → ${fullScore}%`);
+    }).catch(() => { /* best-effort — chunked result already stands */ });
+  };
 
   const handleStop = () => {
     setIsRecording(false);
