@@ -8,18 +8,24 @@
     • session_recordings
 
   For each event it:
-    1. Resolves the subject title (EN + AR)
-    2. Finds every student enrolled in that subject (regular + private)
-    3. Inserts one bell notification per student into `notifications`
+    1. Resolves the subject title (EN + AR) and teacher
+    2. Finds the student audience: enrolled + private-assigned + level-matched
+       (falls back to "every student" only if the subject has no level and
+       no enrollment/private data at all — i.e. a genuinely open subject)
+    3. Notifies the subject's assigned teacher (unless they're the uploader)
+    4. Notifies every admin
+    5. Inserts one bell notification per recipient into `notifications`
        → dispatch-notification trigger fires automatically for push/Telegram
 
   Notification types used (must NOT be class_reminder/class_ring — those
   are excluded from dispatch-notification push. These are distinct types
   so dispatch-notification sends push normally):
-    assignment   → "📝 New Assignment"
-    announcement → "📣 New Announcement"
-    material     → "📂 New Material"
-    recording    → "🎬 Class Recording"
+    assignment   → "📝 New Assignment"          (students)
+    announcement → "📣 New Announcement"        (students)
+    material     → "📂 New Material"            (students)
+    recording    → "🎬 Class Recording"         (students)
+    <type>_teacher → same event, teacher-facing copy
+    <type>_admin    → same event, admin-facing copy
 ══════════════════════════════════════════════════════════════════════
 */
 
@@ -33,8 +39,6 @@ const corsHeaders = {
 
 const APP_BASE_URL = "https://tahleemacademy.vercel.app";
 
-// ── Student deep-link paths per content type ──────────────────────────────────
-// All go to the student learning hub with the subject open on the right tab.
 function buildLink(contentType: string, subjectId: string, contentId: string): string {
   switch (contentType) {
     case "assignment":   return `${APP_BASE_URL}/student/courses?subject=${subjectId}&tab=assignments&highlight=${contentId}`;
@@ -45,7 +49,10 @@ function buildLink(contentType: string, subjectId: string, contentId: string): s
   }
 }
 
-// ── Bilingual notification copy ────────────────────────────────────────────────
+function buildTeacherLink(contentType: string, subjectId: string): string {
+  return `${APP_BASE_URL}/teacher/subjects?subject=${subjectId}&tab=${contentType}s`;
+}
+
 function buildCopy(
   contentType: string,
   subjectTitle: string,
@@ -91,23 +98,18 @@ function buildCopy(
   }
 }
 
-// ── Main ───────────────────────────────────────────────────────────────────────
+const CONTENT_LABEL: Record<string, string> = {
+  assignment:   "assignment",
+  announcement: "announcement",
+  material:     "material",
+  recording:    "recording",
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
     const body = await req.json();
-    /*
-      Expected payload from Postgres trigger:
-      {
-        content_type: "assignment" | "announcement" | "material" | "recording",
-        content_id:   string,   -- NEW.id
-        subject_id:   string,   -- NEW.subject_id
-        title:        string,   -- NEW.title
-        created_by:   string,   -- NEW.created_by  (uploader's user_id — skip their own notif)
-      }
-    */
     const { content_type, content_id, subject_id, title: contentTitle, created_by } = body;
 
     if (!content_type || !content_id || !subject_id || !contentTitle) {
@@ -122,47 +124,50 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // 1. Resolve subject title
     const { data: subject } = await sb
       .from("subjects")
-      .select("title, title_ar")
+      .select("title, title_ar, teacher_id, level, levels")
       .eq("id", subject_id)
       .maybeSingle();
 
     const subjectTitle   = (subject as any)?.title    ?? "Your Subject";
     const subjectTitleAr = (subject as any)?.title_ar ?? subjectTitle;
+    const teacherId      = (subject as any)?.teacher_id ?? null;
+    const subjectLevels: string[] =
+      (subject as any)?.levels?.length ? (subject as any).levels
+      : (subject as any)?.level ? [(subject as any).level]
+      : [];
 
-    // 2. Build notification copy
     const copy = buildCopy(content_type, subjectTitle, subjectTitleAr, contentTitle);
     const link = buildLink(content_type, subject_id, content_id);
 
-    // 3. Collect all students enrolled in this subject
-    //    a) Regular enrollments via `profiles` role=student who have this subject
-    //       in their timetable / subject access.
-    //       We use private_student_subjects (explicit per-student subject grants)
-    //       UNION all students whose level matches the subject's levels array.
-    //
-    //    Strategy that works with existing schema:
-    //      - private_student_subjects: student_id where subject_id matches
-    //      - profiles where role = 'student' and NOT in private_student_subjects
-    //        (i.e. general students who see all subjects in their level)
-    //        — but we don't have a clean level filter here, so we just
-    //          notify ALL students for general subjects. For private subjects,
-    //          only those explicitly assigned.
+    const { data: courses } = await sb
+      .from("courses").select("id").eq("subject_id", subject_id);
+    const courseIds = (courses || []).map((c: any) => c.id);
 
-    // Check if this subject has any private student assignments
+    let enrolledIds: string[] = [];
+    if (courseIds.length > 0) {
+      const { data: enrollments } = await sb
+        .from("enrollments").select("user_id").in("course_id", courseIds);
+      enrolledIds = (enrollments || []).map((e: any) => e.user_id);
+    }
+
     const { data: privateRows } = await sb
       .from("private_student_subjects")
       .select("student_id")
       .eq("subject_id", subject_id);
+    const privateIds = (privateRows || []).map((r: any) => r.student_id);
 
-    let studentIds: string[] = [];
+    let levelIds: string[] = [];
+    if (subjectLevels.length > 0) {
+      const { data: lvlStudents } = await sb
+        .from("profiles").select("user_id").in("level", subjectLevels).eq("role", "student");
+      levelIds = (lvlStudents || []).map((p: any) => p.user_id);
+    }
 
-    if (privateRows && privateRows.length > 0) {
-      // Private subject — only notify explicitly assigned students
-      studentIds = (privateRows as any[]).map((r) => r.student_id);
-    } else {
-      // General subject — notify all active students
+    let studentIds = [...new Set([...enrolledIds, ...privateIds, ...levelIds])];
+
+    if (studentIds.length === 0 && subjectLevels.length === 0) {
       const { data: allStudents } = await sb
         .from("profiles")
         .select("user_id")
@@ -170,31 +175,19 @@ Deno.serve(async (req) => {
       studentIds = (allStudents ?? []).map((s: any) => s.user_id);
     }
 
-    // Remove the uploader themselves (teacher/admin) from the list
     studentIds = studentIds.filter((id) => id !== created_by);
 
-    if (studentIds.length === 0) {
-      console.log(`[notify-content-upload] no students to notify for subject ${subject_id}`);
-      return new Response(JSON.stringify({ ok: true, notified: 0 }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // 4. Insert one bell notification per student
-    //    dispatch-notification trigger fires automatically for each insert
-    //    and sends push + Telegram (since type is NOT class_reminder/class_ring)
     const rows = studentIds.map((userId) => ({
       user_id:    userId,
       title:      copy.title,
       message:    copy.message,
       title_ar:   copy.title_ar,
       message_ar: copy.message_ar,
-      type:       content_type,   // "assignment" | "announcement" | "material" | "recording"
+      type:       content_type,
       link,
       is_read:    false,
     }));
 
-    // Insert in batches of 50 to avoid payload limits
     const BATCH = 50;
     let inserted = 0;
     for (let i = 0; i < rows.length; i += BATCH) {
@@ -206,11 +199,53 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`[notify-content-upload] ✅ notified ${inserted}/${studentIds.length} students for ${content_type} in subject ${subject_id}`);
+    let teacherNotified = false;
+    if (teacherId && teacherId !== created_by) {
+      const label = CONTENT_LABEL[content_type] ?? "content";
+      const { error: teacherErr } = await sb.from("notifications").insert({
+        user_id:    teacherId,
+        title:      `${copy.title} (your subject)`,
+        message:    `Assalamu Alaikum 🌙 A new ${label} "${contentTitle}" was posted for ${subjectTitle}, a subject assigned to you.`,
+        title_ar:   copy.title_ar,
+        message_ar: copy.message_ar,
+        type:       `${content_type}_teacher`,
+        link:       buildTeacherLink(content_type, subject_id),
+        is_read:    false,
+      });
+      if (teacherErr) console.error("[notify-content-upload] teacher insert error:", teacherErr.message);
+      else teacherNotified = true;
+    }
 
-    return new Response(JSON.stringify({ ok: true, notified: inserted }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    const { data: admins } = await sb.from("user_roles").select("user_id").eq("role", "admin");
+    const adminIds = (admins ?? []).map((a: any) => a.user_id).filter((id: string) => id !== created_by);
+
+    let adminsNotified = 0;
+    if (adminIds.length > 0) {
+      const label = CONTENT_LABEL[content_type] ?? "content";
+      const adminRows = adminIds.map((userId: string) => ({
+        user_id:    userId,
+        title:      `${copy.title} (admin copy)`,
+        message:    `A new ${label} "${contentTitle}" was posted for ${subjectTitle}.`,
+        title_ar:   copy.title_ar,
+        message_ar: copy.message_ar,
+        type:       `${content_type}_admin`,
+        link:       buildTeacherLink(content_type, subject_id),
+        is_read:    false,
+      }));
+      const { error: adminErr } = await sb.from("notifications").insert(adminRows);
+      if (adminErr) console.error("[notify-content-upload] admin insert error:", adminErr.message);
+      else adminsNotified = adminRows.length;
+    }
+
+    console.log(
+      `[notify-content-upload] ✅ ${content_type} in subject ${subject_id}: ` +
+      `students ${inserted}/${studentIds.length}, teacher ${teacherNotified ? 1 : 0}, admins ${adminsNotified}`
+    );
+
+    return new Response(
+      JSON.stringify({ ok: true, notified_students: inserted, teacher_notified: teacherNotified, admins_notified: adminsNotified }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
 
   } catch (err: any) {
     console.error("[notify-content-upload] fatal:", err.message);
