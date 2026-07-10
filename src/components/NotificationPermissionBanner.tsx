@@ -64,16 +64,17 @@ function detectState(): PermState {
 }
 
 export default function NotificationPermissionBanner() {
-  const { user, hasRole } = useAuth();
+  const { user } = useAuth();
 
   const [perm,        setPerm]        = useState<PermState>("unknown");
   const [dismissed,   setDismissed]   = useState(false);
   const [subscribing, setSubscribing] = useState(false);
   const [success,     setSuccess]     = useState(false);
 
-  // Show to students AND teachers — both need class reminders.
-  // Admins are excluded (they manage the platform, don't attend classes).
-  const shouldShow = !!user && !hasRole("admin");
+  // Show to students, teachers, AND admins — admins now receive oversight
+  // notifications (class reminders/rings, content uploads) and need push
+  // enabled just like everyone else to get them in the background.
+  const shouldShow = !!user;
 
   useEffect(() => {
     if (!shouldShow) return;
