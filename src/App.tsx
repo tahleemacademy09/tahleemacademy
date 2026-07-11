@@ -69,6 +69,7 @@ const PaymentScreen       = lazy(() => import("./pages/student/PaymentScreen"));
 const RecordingPlayer     = lazy(() => import("./pages/student/RecordingPlayer"));
 const EnrollmentPayment   = lazy(() => import("./pages/student/EnrollmentPayment"));
 const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
+const RecitationSession    = lazy(() => import("./pages/student/RecitationSession"));
 const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
 const StudentAssignments   = lazy(() => import("./pages/student/StudentAssignments"));
 const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
@@ -107,6 +108,7 @@ const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"
 const HifdhRevisionTracker  = lazy(() => import("./pages/admin/HifdhRevisionTracker"));
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
 const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment"));
+const AdminRecitationSession = lazy(() => import("./pages/admin/RecitationSession"));
 const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
 const LevelManagement       = lazy(() => import("./pages/admin/LevelManagement"));
 const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
@@ -245,6 +247,7 @@ const App = () => (
                   <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute><EntranceResults /></ProtectedRoute>} />
                   <Route path="/student/payment"                     element={<ProtectedRoute><PaymentScreen /></ProtectedRoute>} />
                   <Route path="/student/awaiting-level"              element={<ProtectedRoute><TasjeelAwaitingLevel /></ProtectedRoute>} />
+                  <Route path="/student/recitation-session"          element={<ProtectedRoute><RecitationSession /></ProtectedRoute>} />
 
                   {/* ── Teacher routes ── */}
                   <Route element={<ProtectedRoute requiredRole="teacher"><TeacherLayout /></ProtectedRoute>}>
@@ -302,6 +305,7 @@ const App = () => (
                     <Route path="/admin/hifdh-tracker"               element={<HifdhRevisionTracker />} />
                     <Route path="/admin/recitation-test-settings"    element={<RecitationTestAdmin />} />
                     <Route path="/admin/level-assignment"            element={<LevelAssignment />} />
+                    <Route path="/admin/recitation-session"          element={<AdminRecitationSession />} />
                     <Route path="/admin/levels"                      element={<LevelManagement />} />
                     <Route path="/admin/transcripts"                 element={<TranscriptManagement />} />
                     <Route path="/admin/attendance"                  element={<AttendanceManagement />} />
