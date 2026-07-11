@@ -370,7 +370,7 @@ const StudentCard = ({ s, onRefresh }: { s: any; onRefresh: () => void }) => {
               {adminApproved && (
                 <>
                   <button
-                    onClick={() => canJoin && navigate(`/admin/live-classes?room=${roomName}&type=recitation`)}
+                    onClick={() => canJoin && navigate(`/admin/recitation-session?room=${roomName}&studentId=${s.user_id}&type=recitation`)}
                     style={{ width: "100%", padding: "11px", borderRadius: 12, border: "none", background: canJoin ? `linear-gradient(135deg,${G},${GM})` : "#E5E7EB", color: canJoin ? "#fff" : "#9CA3AF", cursor: canJoin ? "pointer" : "not-allowed", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginBottom: 8, transition: "all .2s" }}>
                     <Video size={14} />
                     {canJoin
