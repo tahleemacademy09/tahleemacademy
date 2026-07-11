@@ -974,7 +974,7 @@ const LevelAssignment = () => {
                             {student.rec_approved && (
                               <div>
                                 <button
-                                  onClick={() => live && navigate(`/admin/live-classes?room=${roomName}&type=recitation`)}
+                                  onClick={() => live && navigate(`/admin/recitation-session?room=${roomName}&studentId=${student.user_id}&type=recitation`)}
                                   style={{
                                     width: "100%", padding: "14px 16px", borderRadius: 14, border: "none",
                                     background: live ? `linear-gradient(135deg,${G},${GM})` : "#E5E7EB",
