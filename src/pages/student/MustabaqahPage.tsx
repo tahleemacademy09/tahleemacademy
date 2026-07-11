@@ -433,11 +433,18 @@ const VideoPanel = ({
   </div>
 );
 
-/* ── Video grid — PiP layout: main dominant + self-view corner overlay ── */
+/* ── Video grid — main dominant + a row of small switchable overlay tiles ──
+ *  Every role (judge, active participant, waiting, observer) gets a main
+ *  video plus small tiles for every *other* live feed — every judge (there
+ *  can be more than one) and the active participant. Tapping any small tile
+ *  swaps it into the main view; tapping the main view's own small self-tile
+ *  (if present) swaps back. The choice is per-viewer (pinnedUserId), not
+ *  broadcast — everyone can look at whoever they want independently. */
 const LiveVideoGrid = ({
-  activeUserId, isJudge, isObserver, allowControls, activePStatus,
+  activeUserId, isJudge, isObserver, allowControls, activePStatus, pinnedUserId, onPin,
 }: {
   activeUserId:string|null; isJudge:boolean; isObserver:boolean; allowControls:boolean; activePStatus?:string|null;
+  pinnedUserId:string|null; onPin:(userId:string|null)=>void;
 }) => {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants   = useRemoteParticipants();
@@ -446,54 +453,31 @@ const LiveVideoGrid = ({
   const localMeta  = getMeta(localParticipant);
   const iAmJudge   = localMeta.role === "judge";
   const iAmActive  = !!(activeUserId && localMeta.user_id === activeUserId);
+  const localPub   = localParticipant?.getTrackPublication(Track.Source.Camera);
 
-  const judgeRemote  = remoteParticipants.find(p=>getMeta(p).role==="judge");
-  const activeRemote = remoteParticipants.find(p=>getMeta(p).user_id===activeUserId);
-  const localPub     = localParticipant?.getTrackPublication(Track.Source.Camera);
-  const judgeRemotePub   = judgeRemote?.getTrackPublication(Track.Source.Camera);
-  const activeRemotePub  = activeRemote?.getTrackPublication(Track.Source.Camera);
+  // Every judge currently in the room (there can be more than one)
+  const judgeRemotes  = remoteParticipants.filter(p=>getMeta(p).role==="judge");
+  const activeRemote  = remoteParticipants.find(p=>getMeta(p).user_id===activeUserId);
 
-  // ── Decide main view (dominant) and PiP self-view ──────────────────
-  // Judge:  active participant dominant — self as PiP bottom-right
-  // Active participant: judge dominant — self as PiP bottom-right
-  // Observer / waiting: judge dominant, no PiP
-
-  let mainPub:any, mainParticipant:any, mainName:string, mainLabel:string;
-  let pipShow = false;
-
-  if (iAmJudge) {
-    // Judge sees participant as main
-    mainPub = activeRemotePub;
-    mainParticipant = activeRemote ?? null;
-    mainName  = getMeta(activeRemote).name || (activeUserId ? "Participant" : "—");
-    mainLabel = activeUserId ? `🎙️ ${mainName}` : "⚖️ Waiting for participant…";
-    pipShow   = true; // judge always sees self PiP
-  } else if (iAmActive) {
-    // Active participant sees judge as main
-    mainPub = judgeRemotePub;
-    mainParticipant = judgeRemote ?? null;
-    mainName  = getMeta(judgeRemote).name || "Judge";
-    mainLabel = `⚖️ ${mainName}`;
-    pipShow   = true; // active participant sees self PiP
-  } else {
-    // Observers / waiting participants: see whoever is active (judge or active p)
-    if (judgeRemote || judgeRemotePub) {
-      mainPub = judgeRemotePub;
-      mainParticipant = judgeRemote ?? null;
-      mainName  = getMeta(judgeRemote).name || "Judge";
-      mainLabel = `⚖️ ${mainName}`;
-    } else {
-      mainPub = activeRemotePub;
-      mainParticipant = activeRemote ?? null;
-      mainName  = getMeta(activeRemote).name || "Live";
-      mainLabel = `🎙️ ${mainName}`;
-    }
-    pipShow = false;
+  // Build the full roster of "feeds" available to this viewer: every remote
+  // judge + the active participant, each tagged with a stable user_id.
+  type Feed = { userId:string; participant:any; pub:any; name:string; kind:"judge"|"active" };
+  const feeds: Feed[] = [];
+  judgeRemotes.forEach(jp => {
+    const meta = getMeta(jp);
+    if (!meta.user_id || meta.user_id===activeUserId) return; // avoid dup if a judge is also the active reciter
+    feeds.push({ userId:meta.user_id, participant:jp, pub:jp.getTrackPublication(Track.Source.Camera), name:meta.name||"Judge", kind:"judge" });
+  });
+  if (activeRemote) {
+    const meta = getMeta(activeRemote);
+    feeds.push({ userId:meta.user_id||activeUserId||"active", participant:activeRemote, pub:activeRemote.getTrackPublication(Track.Source.Camera), name:meta.name||"Participant", kind:"active" });
+  }
+  // Include myself as a selectable feed too (so I can swap back to "me" as main)
+  if (iAmJudge || iAmActive) {
+    feeds.push({ userId:localMeta.user_id||"me", participant:localParticipant, pub:localPub, name:localMeta.name||"You", kind: iAmJudge?"judge":"active" });
   }
 
-  const hasMain = !!(mainPub?.videoTrack) || !!mainParticipant || iAmJudge || iAmActive;
-
-  if (!hasMain) return (
+  if (feeds.length === 0) return (
     <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,background:"rgba(0,0,0,.6)"}}>
       <div style={{fontSize:36,opacity:.3}}>﷽</div>
       <div style={{color:"rgba(255,255,255,.25)",fontSize:12,textAlign:"center",maxWidth:220,lineHeight:1.7}}>
@@ -502,54 +486,57 @@ const LiveVideoGrid = ({
     </div>
   );
 
+  // Default main (before any tap): judge → active participant; active participant → first judge;
+  // observer/waiting → first judge if present, else active participant.
+  const defaultMain = iAmJudge
+    ? (feeds.find(f=>f.kind==="active") || feeds[0])
+    : (feeds.find(f=>f.kind==="judge" && f.userId!==localMeta.user_id) || feeds[0]);
+  const main = (pinnedUserId && feeds.find(f=>f.userId===pinnedUserId)) || defaultMain;
+  const overlayFeeds = feeds.filter(f=>f.userId!==main.userId);
+
+  const renderTile = (f:Feed, isMe:boolean) => (
+    f.pub?.videoTrack ? (
+      <VideoTrack trackRef={{participant:f.participant, source:Track.Source.Camera, publication:f.pub}} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+    ) : (
+      <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:4,background:"#111"}}>
+        <div style={{width:32,height:32,borderRadius:"50%",background:`${GOLD}22`,display:"flex",alignItems:"center",justifyContent:"center",color:GOLD,fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif"}}>
+          {(f.name||"?")[0]?.toUpperCase()}
+        </div>
+        <div style={{color:"rgba(255,255,255,.35)",fontSize:8,textAlign:"center",padding:"0 4px"}}>{isMe?"You":f.name}</div>
+      </div>
+    )
+  );
+
   return (
     <div style={{position:"relative",width:"100%",height:"100%",background:"#000",overflow:"hidden"}}>
-
       {/* ── Main dominant video (full area) ── */}
       <div style={{position:"absolute",inset:0}}>
-        <VideoPanel
-          pub={mainPub}
-          participant={mainParticipant}
-          localParticipant={localParticipant}
-          name={mainName}
-          label={mainLabel}
-        />
+        {main.userId===(localMeta.user_id||"me") ? (
+          <div style={{position:"relative",width:"100%",height:"100%"}}>
+            {renderTile(main,true)}
+            <div style={{position:"absolute",bottom:0,left:0,right:0,background:"linear-gradient(to top,rgba(0,0,0,.85),transparent)",padding:"18px 10px 8px"}}>
+              <span style={{color:"#fff",fontSize:12,fontWeight:700}}>You{main.kind==="judge"?" · ⚖️":" · 🎙️"}</span>
+            </div>
+          </div>
+        ) : (
+          <VideoPanel pub={main.pub} participant={main.participant} localParticipant={localParticipant} name={main.name} label={`${main.kind==="judge"?"⚖️":"🎙️"} ${main.name}`}/>
+        )}
       </div>
 
-      {/* ── PiP self-view — bottom-right corner ── */}
-      {pipShow && (
-        <div style={{
-          position:"absolute",
-          bottom:44,   // above the LIVE badge
-          right:8,
-          width:88,
-          height:116,
-          borderRadius:12,
-          overflow:"hidden",
-          border:`2px solid rgba(201,168,76,.55)`,
-          boxShadow:"0 4px 20px rgba(0,0,0,.7)",
-          zIndex:8,
-          background:"#111",
-        }}>
-          {localPub?.videoTrack ? (
-            <div className="musabaqah-local-video" style={{width:"100%",height:"100%"}}>
-              <VideoTrack
-                trackRef={{participant:localParticipant, source:Track.Source.Camera, publication:localPub}}
-                style={{width:"100%",height:"100%",objectFit:"cover"}}
-              />
-            </div>
-          ) : (
-            <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:4}}>
-              <div style={{width:32,height:32,borderRadius:"50%",background:`${GOLD}22`,display:"flex",alignItems:"center",justifyContent:"center",color:GOLD,fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif"}}>
-                {(localMeta.name||"?")[0]?.toUpperCase()}
-              </div>
-              <div style={{color:"rgba(255,255,255,.35)",fontSize:8,textAlign:"center",padding:"0 4px"}}>You</div>
-            </div>
-          )}
-          {/* Small "YOU" label */}
-          <div style={{position:"absolute",bottom:0,left:0,right:0,background:"linear-gradient(to top,rgba(0,0,0,.8),transparent)",padding:"10px 4px 3px",textAlign:"center"}}>
-            <span style={{color:"rgba(255,255,255,.6)",fontSize:8,fontWeight:700,letterSpacing:.5}}>YOU</span>
-          </div>
+      {/* ── Switchable overlay tiles — every other judge + the active participant ── */}
+      {overlayFeeds.length>0 && (
+        <div style={{position:"absolute",top:8,right:8,display:"flex",flexDirection:"column",gap:6,zIndex:8,maxHeight:"calc(100% - 60px)",overflowY:"auto"}}>
+          {overlayFeeds.map(f=>{
+            const isMe = f.userId===(localMeta.user_id||"me");
+            return (
+              <button key={f.userId} onClick={()=>onPin(f.userId)} style={{width:76,height:100,borderRadius:11,overflow:"hidden",position:"relative",border:`2px solid rgba(201,168,76,.55)`,boxShadow:"0 4px 16px rgba(0,0,0,.6)",background:"#111",padding:0,cursor:"pointer"}}>
+                {renderTile(f,isMe)}
+                <div style={{position:"absolute",bottom:0,left:0,right:0,background:"linear-gradient(to top,rgba(0,0,0,.85),transparent)",padding:"10px 3px 3px",textAlign:"center"}}>
+                  <span style={{color:"rgba(255,255,255,.75)",fontSize:8,fontWeight:700}}>{isMe?"YOU":f.kind==="judge"?`⚖️ ${f.name.split(" ")[0]}`:`🎙️ ${f.name.split(" ")[0]}`}</span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -623,6 +610,7 @@ interface Competition {
   current_participant_id?:string|null; room_code:string; created_by:string; created_at:string; use_criteria_scoring:boolean;
   registration_deadline?:string|null; registration_override?:"auto"|"open"|"closed";
   queue_reveal_active?:boolean; queue_box_count?:number;
+  revealed_participant_ids?:string[]; results_reveal_active?:boolean;
 }
 interface Participant {
   id:string; competition_id:string; user_id?:string; participant_name:string; school?:string;
@@ -634,6 +622,13 @@ interface Attempt {
   id:string; competition_id:string; participant_id:string; stage_number:number;
   scope_label:string; scope_label_ar:string; bell_count:number; score_breakdown?:Record<string,number>;
   judge_score?:number; judge_comment?:string; duration_seconds?:number; status:"pending"|"reciting"|"scored"; created_at:string;
+  surah_number?:number|null; ayah_number?:number|null;
+}
+/** One judge's independent score for a given attempt. The attempt's official
+ *  judge_score is the mean of every JudgeScore row tied to it. */
+interface JudgeScore {
+  id:string; attempt_id:string; participant_id:string; judge_user_id:string; judge_name:string;
+  score_breakdown:Record<string,number>; total_score:number; comment?:string; created_at:string;
 }
 
 const SCORING_CRITERIA = [
@@ -712,6 +707,15 @@ export default function MustabaqahPage() {
   const [showScorePanel, setShowScore]     = useState(false);
   const [scoreBreak,     setScoreBreak]    = useState<Record<string,string>>({tajweed:"",memorize:"",fluency:"",voice:""});
   const [judgeComment,   setJudgeComment]  = useState("");
+  // ── Multi-judge scoring: every judge scores independently, official score = mean ──
+  const [judgeScores,    setJudgeScores]   = useState<Record<string, JudgeScore[]>>({}); // attempt_id -> all judges' scores
+  const [presentJudges,  setPresentJudges] = useState<{user_id:string;name:string}[]>([]); // who's actually in the room right now
+  const [myScoreSubmitted, setMyScoreSubmitted] = useState(false); // have I (this judge) scored the current attempt yet
+  // ── Results reveal ceremony ──────────────────────────────────────
+  const [revealBusy,     setRevealBusy]    = useState(false);
+  const [revealSpotlight, setRevealSpotlight] = useState<{participant:Participant;rank:number}|null>(null);
+  // ── Multi-judge video overlay: which remote user_id is currently pinned to the main view (tap-to-swap) ──
+  const [pinnedUserId,   setPinnedUserId]  = useState<string|null>(null);
   const [copyFlash,      setCopyFlash]     = useState(false);
   const [deleteModal,    setDeleteModal]   = useState<Competition|null>(null);
   const [audioReady,     setAudioReady]    = useState(false);
@@ -756,8 +760,10 @@ export default function MustabaqahPage() {
   const competitionRef   = useRef<Competition|null>(null);
   const elapsedRef       = useRef(0);  // for accurate elapsed tracking independent of timer direction
 
+  const participantsRef   = useRef<Participant[]>([]);
   useEffect(()=>{ myParticipantRef.current=myParticipant; },[myParticipant]);
   useEffect(()=>{ competitionRef.current=competition; },[competition]);
+  useEffect(()=>{ participantsRef.current=participants; },[participants]);
 
   // ── Session persistence: save arena session to localStorage ──────
   useEffect(()=>{
@@ -908,7 +914,80 @@ export default function MustabaqahPage() {
     if (data) setAttempts(data as Attempt[]);
   },[]);
 
-  useEffect(()=>{ if (competition) { loadParticipants(); loadAttempts(); } },[competition]);
+  // ── All judges' individual scores for this competition, grouped by attempt ──
+  const loadJudgeScores = useCallback(async () => {
+    const comp=competitionRef.current; if (!comp) return;
+    const {data}=await supabase.from("musabaqah_judge_scores" as any).select("*").eq("competition_id",comp.id);
+    if (!data) return;
+    const grouped: Record<string, JudgeScore[]> = {};
+    (data as JudgeScore[]).forEach(js => { (grouped[js.attempt_id] ||= []).push(js); });
+    setJudgeScores(grouped);
+  },[]);
+
+  /** Mean total across every judge who has scored this attempt so far. */
+  const meanScoreFor = (attemptId:string|undefined) => {
+    const rows = attemptId ? (judgeScores[attemptId]||[]) : [];
+    if (!rows.length) return 0;
+    return Math.round((rows.reduce((s,r)=>s+r.total_score,0)/rows.length) * 10) / 10;
+  };
+  /** Mean of each criterion across judges, for showing a combined breakdown. */
+  const meanBreakdownFor = (attemptId:string|undefined) => {
+    const rows = attemptId ? (judgeScores[attemptId]||[]) : [];
+    if (!rows.length) return {} as Record<string,number>;
+    const out: Record<string,number> = {};
+    SCORING_CRITERIA.forEach(c=>{
+      const vals = rows.map(r=>r.score_breakdown?.[c.key]||0);
+      out[c.key] = Math.round((vals.reduce((s,v)=>s+v,0)/vals.length)*10)/10;
+    });
+    return out;
+  };
+
+  useEffect(()=>{ if (competition) { loadParticipants(); loadAttempts(); loadJudgeScores(); } },[competition]);
+
+  // ── Reconnect / resume: rebuild the in-progress moment from the DB instead
+  //    of resetting — for judge, participant, and observers alike. Fires when
+  //    an active participant exists but we haven't received the live question
+  //    yet (fresh mount, refresh, or reconnect after a drop).
+  useEffect(() => {
+    if (!competition || !activeP) return;
+    if (activeP.status !== "called" && activeP.status !== "reciting") return;
+    if (pickedTile) return; // already have it live — nothing to rebuild
+
+    if (activeP.status === "reciting") {
+      const stageAttempts = attempts.filter(a => a.participant_id === activeP.id && a.stage_number === activeParticipantStage);
+      const latest = stageAttempts[stageAttempts.length - 1];
+      if (!latest) return;
+
+      const tile: Tile = latest.surah_number && latest.ayah_number
+        ? { num: activeParticipantStage, label: latest.scope_label, labelAr: latest.scope_label_ar,
+            surah: latest.surah_number, ayah: latest.ayah_number,
+            surahName: SURAHS.find(s => s.n === latest.surah_number)?.en ?? "",
+            surahAr: SURAHS.find(s => s.n === latest.surah_number)?.ar ?? "" }
+        : { num: activeParticipantStage, label: latest.scope_label, labelAr: latest.scope_label_ar, surah: 0, ayah: 0, surahName: "", surahAr: "" };
+      setPickedTile(tile);
+      setCurAttempt(latest);
+      if (tile.surah > 0) fetchAyah(tile.surah, tile.ayah);
+
+      // Reconstruct the real time remaining from how long ago this attempt began
+      const startedMs = new Date(latest.created_at).getTime();
+      const durationSecs = competition.time_limit_seconds || judgeTimerDuration || 300;
+      const elapsed = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+      elapsedRef.current = elapsed; setElapsedSecs(elapsed);
+      const remaining = Math.max(0, durationSecs - elapsed);
+      if (remaining > 0) { setTimerSecs(remaining); setTimerActive(true); setTimerExpired(false); }
+      else { setTimerSecs(0); setTimerActive(false); }
+
+      if (isJudge) { setScoreBreak({ tajweed: "", memorize: "", fluency: "", voice: "" }); setJudgeComment(""); setShowScore(true); }
+    } else {
+      // Called but hasn't started reciting yet — restore the tile picker
+      const cfg = (competition.scope_config || {}) as any;
+      if (cfg.current_tiles?.length && cfg.current_called_id === activeP.id) {
+        setStageTiles(cfg.current_tiles); setShowTilePicker(true); setPickerParticipantId(activeP.id);
+        if (cfg.current_stage_num) setPickerStage(cfg.current_stage_num);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [competition?.id, activeP?.id, activeP?.status, attempts.length]);
 
   // ── Polling fallback for pending participants ─────────────────────
   // Real-time broadcast can arrive before the channel finishes subscribing.
@@ -976,7 +1055,7 @@ export default function MustabaqahPage() {
       .on("broadcast",{event:"CALLED"},({payload}:any)=>{
         loadParticipants();
         setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current=0;
-        setTimerExpired(false); setShowScore(false);
+        setTimerExpired(false); setShowScore(false); setPinnedUserId(null);
         setPickedTile(null); setStageTiles([]); setAyahText(null); setPickerParticipantId(null);
         setPickerStage(1);
         const mine=myParticipantRef.current;
@@ -1082,6 +1161,22 @@ export default function MustabaqahPage() {
       .on("broadcast",{event:"QUEUE_REVEAL_DONE"},()=>{
         setCompetition(c=>c?{...c, queue_reveal_active:false}:c);
       })
+      .on("broadcast",{event:"JUDGE_SCORE_SUBMITTED"},({payload}:any)=>{
+        // Another judge submitted their score for the live attempt — refresh the
+        // running mean everyone sees, and check if my own submission is still pending.
+        loadJudgeScores();
+        if (payload.judge_user_id===user?.id) setMyScoreSubmitted(true);
+      })
+      .on("broadcast",{event:"REVEAL_RESULT"},({payload}:any)=>{
+        // A judge announced a participant's final rank/score — show it to everyone.
+        setCompetition(c=>c?{...c, revealed_participant_ids:payload.revealed_participant_ids}:c);
+        const p = participantsRef.current.find(pp=>pp.id===payload.participant_id);
+        if (p) { setRevealSpotlight({participant:p, rank:payload.rank}); setTimeout(()=>setRevealSpotlight(null),4500); }
+        playStageWin();
+      })
+      .on("broadcast",{event:"REVEAL_START"},({payload}:any)=>{
+        setCompetition(c=>c?{...c, results_reveal_active:true, revealed_participant_ids:payload.revealed_participant_ids??[]}:c);
+      })
       .on("postgres_changes" as any,{event:"*",schema:"public",table:"musabaqah_participants",filter:`competition_id=eq.${competition.id}`},()=>{ loadParticipants(); })
       .subscribe(async()=>{
         const myName=myParticipantRef.current?.participant_name||profile?.full_name||"Guest";
@@ -1090,7 +1185,12 @@ export default function MustabaqahPage() {
       });
     ch.on("presence",{event:"sync"},()=>{
       const state=ch.presenceState() as Record<string,any[]>;
-      setOnlineUsers(Object.values(state).flat().map((u:any)=>({name:u.name||"Guest",role:u.role||"observer"})));
+      const flat = Object.values(state).flat() as any[];
+      setOnlineUsers(flat.map((u:any)=>({name:u.name||"Guest",role:u.role||"observer"})));
+      // De-dupe judges by user_id (one judge could have multiple tabs/presence entries)
+      const judgeMap = new Map<string,{user_id:string;name:string}>();
+      flat.filter((u:any)=>u.role==="judge"&&u.user_id).forEach((u:any)=>judgeMap.set(u.user_id,{user_id:u.user_id,name:u.name||"Judge"}));
+      setPresentJudges(Array.from(judgeMap.values()));
     });
     channelRef.current=ch;
     return ()=>{ supabase.removeChannel(ch); };
@@ -1230,9 +1330,14 @@ export default function MustabaqahPage() {
       stage_number:activeParticipantStage,
       scope_label:pickedTile.label, scope_label_ar:pickedTile.labelAr,
       bell_count:0, status:"reciting",
+      surah_number:pickedTile.surah||null, ayah_number:pickedTile.ayah||null,
     }).select().single();
     if (att) setCurAttempt(att as Attempt);
     setActiveP(p=>p?{...p,status:"reciting"}:p);
+    // Evaluation panel opens for judges the moment recitation begins — not just
+    // after Stop — so scoring can happen live as they listen.
+    setScoreBreak({ tajweed: "", memorize: "", fluency: "", voice: "" });
+    setJudgeComment(""); setMyScoreSubmitted(false); setShowScore(true);
     // Re-broadcast shortly after so a dropped websocket message doesn't leave
     // the participant stuck on "wait for judge to start" forever.
     setTimeout(()=>{ broadcast("START_RECITING",{participant_id:activeP.id}); broadcast("TIMER_START",{duration}); }, 1000);
@@ -1311,13 +1416,16 @@ export default function MustabaqahPage() {
 
   const [submittingScore, setSubmittingScore] = useState(false);
 
-  const submitScore = async () => {
-    if (!activeP || !competition) return;
+  /** Step 1 of scoring: THIS judge submits their own independent score for the
+   *  live attempt. Every present judge does this separately. Once every judge
+   *  who's actually in the room has submitted, the stage auto-finalizes using
+   *  the mean of all their scores (see finalizeAttemptScore below). */
+  const submitMyJudgeScore = async () => {
+    if (!activeP || !competition || !user) return;
     if (submittingScore) return;
     setSubmittingScore(true);
     try {
       let attempt = currentAttempt;
-      // If no attempt record exists (e.g. after page reload), create one now
       if (!attempt) {
         const { data: att } = await supabase.from("musabaqah_attempts" as any).insert({
           competition_id: competition.id,
@@ -1327,6 +1435,8 @@ export default function MustabaqahPage() {
           scope_label_ar: pickedTile?.labelAr || "",
           bell_count: bellCount,
           status: "reciting",
+          surah_number: pickedTile?.surah || null,
+          ayah_number: pickedTile?.ayah || null,
         } as any).select().single();
         if (att) { attempt = att as Attempt; setCurAttempt(att as Attempt); }
       }
@@ -1340,7 +1450,64 @@ export default function MustabaqahPage() {
       } else { total = Number(scoreBreak.tajweed) || 0; }
       total = Math.max(0, total - bellCount * 2);
 
-      // Save this stage's attempt
+      // Upsert THIS judge's own score row (one row per judge per attempt)
+      const { data: myRow } = await supabase.from("musabaqah_judge_scores" as any)
+        .upsert({
+          attempt_id: attempt.id, competition_id: competition.id, participant_id: activeP.id,
+          judge_user_id: user.id, judge_name: profile?.full_name || "Judge",
+          score_breakdown: breakdown, total_score: total, comment: judgeComment,
+          updated_at: new Date().toISOString(),
+        } as any, { onConflict: "attempt_id,judge_user_id" }).select().single();
+
+      setMyScoreSubmitted(true);
+      broadcast("JUDGE_SCORE_SUBMITTED", { attempt_id: attempt.id, judge_user_id: user.id, judge_name: profile?.full_name || "Judge" });
+      await loadJudgeScores();
+
+      // Merge in my just-submitted row locally (state update above may not have landed yet)
+      const existing = judgeScores[attempt.id] || [];
+      const merged = [...existing.filter(r=>r.judge_user_id!==user.id), (myRow as any) || {
+        id:"local", attempt_id:attempt.id, participant_id:activeP.id, judge_user_id:user.id,
+        judge_name:profile?.full_name||"Judge", score_breakdown:breakdown, total_score:total, comment:judgeComment, created_at:new Date().toISOString(),
+      }];
+
+      const otherJudgesPresent = presentJudges.filter(j=>j.user_id!==user.id);
+      const everyoneScored = otherJudgesPresent.every(j=>merged.some(r=>r.judge_user_id===j.user_id));
+
+      if (everyoneScored) {
+        const meanTotal = Math.round((merged.reduce((s,r)=>s+r.total_score,0)/merged.length)*10)/10;
+        const meanBreak: Record<string,number> = {};
+        SCORING_CRITERIA.forEach(c=>{ const vals=merged.map(r=>r.score_breakdown?.[c.key]||0); meanBreak[c.key]=Math.round((vals.reduce((s,v)=>s+v,0)/vals.length)*10)/10; });
+        await finalizeAttemptScore(attempt, meanTotal, meanBreak, merged.length);
+      } else {
+        toast({ title: `✅ Your score submitted — waiting for ${otherJudgesPresent.length - merged.filter(r=>otherJudgesPresent.some(j=>j.user_id===r.judge_user_id)).length} more judge(s)` });
+      }
+    } catch (err: any) {
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSubmittingScore(false);
+    }
+  };
+
+  /** Any judge can force-finalize with whichever scores have been submitted so
+   *  far, in case another judge disconnected or never joined. */
+  const forceFinalizeScore = async () => {
+    if (!activeP || !currentAttempt) return;
+    const rows = judgeScores[currentAttempt.id] || [];
+    if (!rows.length) { toast({ title: "No judge has scored yet", variant: "destructive" }); return; }
+    const meanTotal = Math.round((rows.reduce((s,r)=>s+r.total_score,0)/rows.length)*10)/10;
+    const meanBreak: Record<string,number> = {};
+    SCORING_CRITERIA.forEach(c=>{ const vals=rows.map(r=>r.score_breakdown?.[c.key]||0); meanBreak[c.key]=Math.round((vals.reduce((s,v)=>s+v,0)/vals.length)*10)/10; });
+    await finalizeAttemptScore(currentAttempt, meanTotal, meanBreak, rows.length);
+  };
+
+  /** Step 2 of scoring: once every present judge (or a manual force) has
+   *  weighed in, write the MEAN as the attempt's official score and advance
+   *  the competition — same flow as before, just fed a mean instead of one
+   *  judge's number. */
+  const finalizeAttemptScore = async (attempt: Attempt, total: number, breakdown: Record<string,number>, judgeCount: number) => {
+    if (!activeP || !competition) return;
+    setSubmittingScore(true);
+    try {
       await supabase.from("musabaqah_attempts" as any).update({
         judge_score: total, score_breakdown: breakdown,
         judge_comment: judgeComment, bell_count: bellCount, status: "scored",
@@ -1385,6 +1552,7 @@ export default function MustabaqahPage() {
         setShowScore(false);
         setScoreBreak({ tajweed: "", memorize: "", fluency: "", voice: "" });
         setJudgeComment("");
+        setMyScoreSubmitted(false);
 
         // Persist new tiles to DB so participant polling fallback works
         const newCfg = {
@@ -1403,8 +1571,8 @@ export default function MustabaqahPage() {
         broadcast("TILES_SHOWN", { tiles: newTiles, stage: nextStage, picker_participant_id: activeP.id });
         setTimeout(() => broadcast("TILES_SHOWN", { tiles: newTiles, stage: nextStage, picker_participant_id: activeP.id }), 800);
 
-        toast({ title: `✅ Stage ${activeParticipantStage} scored: ${total} pts — Now Stage ${nextStage}!` });
-        loadAttempts();
+        toast({ title: `✅ Stage ${activeParticipantStage} scored: ${total} pts (mean of ${judgeCount} judge${judgeCount>1?"s":""}) — Now Stage ${nextStage}!` });
+        loadAttempts(); loadJudgeScores();
       } else {
         // ── All stages complete for this participant ───────────────────────────────
         await supabase.from("musabaqah_participants" as any).update({
@@ -1413,14 +1581,14 @@ export default function MustabaqahPage() {
         } as any).eq("id", activeP.id);
 
         broadcast("SCORE_SUBMITTED", { participant_id: activeP.id, score: newTotal });
-        toast({ title: `🏆 All ${competition.total_stages} stages complete! Total: ${newTotal} pts` });
+        toast({ title: `🏆 All ${competition.total_stages} stages complete! Total: ${newTotal} pts (mean of ${judgeCount} judge${judgeCount>1?"s":""})` });
 
         setActiveP(null); setCurAttempt(null); setShowScore(false);
         setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current = 0;
         setTimerActive(false); setTimerExpired(false);
         setShowTilePicker(false); setPickedTile(null); setAyahText(null);
-        setActiveParticipantStage(1);
-        setJudgeTab("roster"); loadParticipants(); loadAttempts();
+        setActiveParticipantStage(1); setMyScoreSubmitted(false);
+        setJudgeTab("roster"); loadParticipants(); loadAttempts(); loadJudgeScores();
       }
     } catch (err: any) {
       toast({ title: "Save failed", description: err.message, variant: "destructive" });
@@ -1430,7 +1598,7 @@ export default function MustabaqahPage() {
   };
 
   // Each participant already loops through all of their own stages in one
-  // sitting (see submitScore's hasMoreStages branch), so there is no real
+  // sitting (see finalizeAttemptScore's hasMoreStages branch), so there is no real
   // "next stage for everyone" concept — this button is only ever shown once
   // the whole roster is done (allDone), so it just ends the competition.
   // NOTE: this used to also support advancing competition.current_stage and
@@ -1440,7 +1608,9 @@ export default function MustabaqahPage() {
   // their existing total_score (double counting) and corrupt the leaderboard.
   const advanceStage = async () => {
     if (!competition) return;
-    await supabase.from("musabaqah_competitions" as any).update({status:"completed",current_participant_id:null}).eq("id",competition.id);
+    await supabase.from("musabaqah_competitions" as any).update({status:"completed",current_participant_id:null,revealed_participant_ids:[],results_reveal_active:true}).eq("id",competition.id);
+    setCompetition(c=>c?{...c,revealed_participant_ids:[],results_reveal_active:true}:c);
+    broadcast("REVEAL_START",{revealed_participant_ids:[]});
     broadcast("COMPETITION_END"); setView("results");
   };
 
@@ -1448,10 +1618,43 @@ export default function MustabaqahPage() {
     if (!competition) return;
     const ok = window.confirm("End this session for all participants? This cannot be undone.");
     if (!ok) return;
-    await supabase.from("musabaqah_competitions" as any).update({ status: "completed", current_participant_id: null } as any).eq("id", competition.id);
+    await supabase.from("musabaqah_competitions" as any).update({ status: "completed", current_participant_id: null, revealed_participant_ids:[], results_reveal_active:true } as any).eq("id", competition.id);
+    setCompetition(c=>c?{...c,revealed_participant_ids:[],results_reveal_active:true}:c);
+    broadcast("REVEAL_START",{revealed_participant_ids:[]});
     broadcast("COMPETITION_END");
     localStorage.removeItem("musabaqah_session");
     setView("results");
+  };
+
+  // ── Results reveal ceremony (judge only) ───────────────────────────
+  // Scores stay hidden from everyone until the judge reveals them, one rank
+  // at a time — either sequentially starting from last place, or by tapping
+  // any specific rank directly.
+  const rankedParticipants = [...participants].sort((a,b)=>b.total_score-a.total_score);
+  const revealedIds = competition?.revealed_participant_ids || [];
+
+  const revealParticipant = async (participantId:string) => {
+    if (!competition || revealBusy) return;
+    if (revealedIds.includes(participantId)) return;
+    setRevealBusy(true);
+    try {
+      const updated = [...revealedIds, participantId];
+      await supabase.from("musabaqah_competitions" as any).update({ revealed_participant_ids: updated } as any).eq("id", competition.id);
+      setCompetition(c=>c?{...c, revealed_participant_ids: updated}:c);
+      const rank = rankedParticipants.findIndex(p=>p.id===participantId) + 1;
+      broadcast("REVEAL_RESULT", { participant_id: participantId, rank, revealed_participant_ids: updated });
+      const p = participants.find(pp=>pp.id===participantId);
+      if (p) { setRevealSpotlight({participant:p, rank}); setTimeout(()=>setRevealSpotlight(null),4500); }
+      playStageWin();
+    } finally { setRevealBusy(false); }
+  };
+
+  /** Reveal the lowest-ranked not-yet-announced participant — builds the
+   *  ceremony from last place up to the winner. */
+  const revealNextInOrder = () => {
+    for (let i = rankedParticipants.length - 1; i >= 0; i--) {
+      if (!revealedIds.includes(rankedParticipants[i].id)) { revealParticipant(rankedParticipants[i].id); return; }
+    }
   };
 
   const startCompetition = async () => {
@@ -2064,18 +2267,59 @@ export default function MustabaqahPage() {
 
   /* ── RESULTS ── */
   if (view==="results") {
-    const sorted=[...participants].sort((a,b)=>b.total_score-a.total_score);
+    const sorted = rankedParticipants;
     const medals=["🥇","🥈","🥉"]; const pColors=[GOLD,"#aaa","#b87333"];
+    const allRevealed = sorted.length>0 && sorted.every(p=>revealedIds.includes(p.id));
+    const revealedSorted = sorted.filter(p=>revealedIds.includes(p.id));
+
     return (
       <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",overflowY:"auto",paddingBottom:60}}>
         <GlobalStyles/><IslamicBackground/>
+
+        {/* ── Spotlight overlay — pops up when a rank is freshly announced ── */}
+        {revealSpotlight && (
+          <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.82)",backdropFilter:"blur(6px)"}}>
+            <div className="anim-slide-up" style={{textAlign:"center",padding:"32px 40px",background:"rgba(10,20,15,.9)",border:`1.5px solid ${GOLD}55`,borderRadius:24,boxShadow:"0 0 60px rgba(201,168,76,.25)"}}>
+              <div style={{color:"rgba(255,255,255,.4)",fontSize:13,fontWeight:700,letterSpacing:2,marginBottom:6}}>IN POSITION</div>
+              <div style={{fontSize:56,fontWeight:900,color:GOLD,fontFamily:"Cinzel,serif",lineHeight:1}}>#{revealSpotlight.rank}</div>
+              <Avatar name={revealSpotlight.participant.participant_name} size={64} active/>
+              <div style={{color:"#fff",fontWeight:800,fontSize:20,marginTop:10}}>{revealSpotlight.participant.participant_name}</div>
+              <div style={{color:GREEN,fontWeight:900,fontSize:32,fontFamily:"Cinzel,serif",marginTop:6}}>{revealSpotlight.participant.total_score} pts</div>
+            </div>
+          </div>
+        )}
+
         <div style={{position:"relative",zIndex:1,maxWidth:600,margin:"0 auto",padding:"40px 16px 0"}}>
-          <div className="anim-slide-up" style={{textAlign:"center",marginBottom:36}}>
+          <div className="anim-slide-up" style={{textAlign:"center",marginBottom:24}}>
             <div style={{fontSize:64,marginBottom:8,animation:"floatUp 4s ease-in-out infinite"}}>🏆</div>
             <h1 style={{fontFamily:"Cinzel,serif",color:GOLD,fontSize:28,margin:"0 0 4px",fontWeight:700}}>Final Results</h1>
             <p style={{color:"rgba(255,255,255,.4)",margin:0,fontSize:13}}>{competition?.title} · {competition?.total_stages} Stages</p>
+            {!allRevealed && <p style={{color:GOLD,margin:"8px 0 0",fontSize:12,fontWeight:700}}>🎙️ Results being announced — {revealedSorted.length}/{sorted.length} revealed</p>}
           </div>
-          {sorted.length>=1&&(
+
+          {/* ── Judge-only announce controls ── */}
+          {isJudge && !allRevealed && (
+            <div className="glass-card" style={{borderRadius:16,padding:14,marginBottom:24}}>
+              <div style={{color:GOLD,fontWeight:800,fontSize:13,marginBottom:10}}>🎺 Announce Results</div>
+              <button onClick={revealNextInOrder} disabled={revealBusy} style={{width:"100%",background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:G,border:"none",borderRadius:11,padding:"12px",cursor:revealBusy?"not-allowed":"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:14,marginBottom:10,opacity:revealBusy?.6:1}}>
+                Reveal Next (starts from last place)
+              </button>
+              <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginBottom:6}}>Or tap any rank to announce it directly:</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
+                {sorted.map((p,i)=>{
+                  const rank=i+1; const done=revealedIds.includes(p.id);
+                  return (
+                    <button key={p.id} onClick={()=>revealParticipant(p.id)} disabled={done||revealBusy} style={{background:done?`${GREEN}18`:"rgba(255,255,255,.06)",border:`1px solid ${done?GREEN+"55":"rgba(255,255,255,.15)"}`,borderRadius:9,padding:"8px 4px",cursor:done?"default":"pointer",color:done?GREEN:"#fff",fontWeight:800,fontSize:12,opacity:revealBusy&&!done?.5:1}}>
+                      {done?"✓":`#${rank}`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── Podium — only once everyone has been announced ── */}
+          {allRevealed && sorted.length>=1&&(
             <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:32,alignItems:"flex-end"}}>
               {[sorted[1],sorted[0],sorted[2]].filter(Boolean).map((p,i)=>{
                 const rank=i===1?0:i===0?1:2; const hs=[140,180,110];
@@ -2090,23 +2334,30 @@ export default function MustabaqahPage() {
               })}
             </div>
           )}
+
+          {/* ── Full leaderboard — revealed ranks show real scores, the rest stay locked ── */}
           <div className="glass-card" style={{borderRadius:20,overflow:"hidden",marginBottom:24}}>
-            {sorted.map((p,i)=>(
-              <div key={p.id} style={{padding:"12px 20px",borderBottom:"1px solid rgba(255,255,255,.05)",display:"flex",alignItems:"center",gap:12,background:i<3?"rgba(201,168,76,.04)":"transparent"}}>
-                <span style={{width:28,textAlign:"center",color:i<3?GOLD:"rgba(255,255,255,.25)",fontWeight:800}}>{i<3?medals[i]:`#${i+1}`}</span>
-                <Avatar name={p.participant_name} size={34} active={i===0}/>
-                <div style={{flex:1,minWidth:0}}><div style={{color:"#fff",fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{p.school}</div>}</div>
-                <div style={{display:"flex",gap:4}}>
-                  {Array.from({length:competition?.total_stages||5},(_,si)=>(
-                    <div key={si} style={{background:"rgba(255,255,255,.05)",borderRadius:6,padding:"2px 7px",textAlign:"center",fontSize:11}}>
-                      <div style={{color:GOLD,fontWeight:700}}>{(p.stage_scores||{})[si+1]??"-"}</div>
-                      <div style={{color:"rgba(255,255,255,.2)",fontSize:9}}>S{si+1}</div>
+            {sorted.map((p,i)=>{
+              const done = revealedIds.includes(p.id);
+              return (
+                <div key={p.id} className={done?"anim-slide-up":undefined} style={{padding:"12px 20px",borderBottom:"1px solid rgba(255,255,255,.05)",display:"flex",alignItems:"center",gap:12,background:done&&i<3?"rgba(201,168,76,.04)":"transparent",opacity:done?1:.5}}>
+                  <span style={{width:28,textAlign:"center",color:!done?"rgba(255,255,255,.2)":i<3?GOLD:"rgba(255,255,255,.25)",fontWeight:800}}>{!done?"🔒":i<3?medals[i]:`#${i+1}`}</span>
+                  <Avatar name={p.participant_name} size={34} active={done&&i===0}/>
+                  <div style={{flex:1,minWidth:0}}><div style={{color:"#fff",fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{p.school}</div>}</div>
+                  {done&&(
+                    <div style={{display:"flex",gap:4}}>
+                      {Array.from({length:competition?.total_stages||5},(_,si)=>(
+                        <div key={si} style={{background:"rgba(255,255,255,.05)",borderRadius:6,padding:"2px 7px",textAlign:"center",fontSize:11}}>
+                          <div style={{color:GOLD,fontWeight:700}}>{(p.stage_scores||{})[si+1]??"-"}</div>
+                          <div style={{color:"rgba(255,255,255,.2)",fontSize:9}}>S{si+1}</div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                  <div style={{color:done?GOLD:"rgba(255,255,255,.2)",fontWeight:900,fontSize:18,minWidth:40,textAlign:"right"}}>{done?p.total_score:"?"}</div>
                 </div>
-                <div style={{color:GOLD,fontWeight:900,fontSize:18,minWidth:40,textAlign:"right"}}>{p.total_score}</div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div style={{display:"flex",justifyContent:"center"}}>
             <button onClick={()=>setView("list")} style={{background:"rgba(255,255,255,.07)",color:"#fff",border:"1px solid rgba(255,255,255,.15)",borderRadius:12,padding:"12px 32px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontWeight:600,fontSize:14}}><ArrowLeft size={14} style={{marginRight:6,verticalAlign:"middle"}}/> Back to List</button>
@@ -2164,7 +2415,7 @@ export default function MustabaqahPage() {
         <RoomAudioRenderer/>
         <AudioEnabler onEnabled={()=>setAudioReady(true)}/>
         {inner(
-          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={true} activePStatus={activeP?.status??null}/>,
+          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={true} activePStatus={activeP?.status??null} pinnedUserId={pinnedUserId} onPin={setPinnedUserId}/>,
           true  // always show mic/cam controls to all connected users
         )}
       </LiveKitRoom>
@@ -2305,14 +2556,18 @@ export default function MustabaqahPage() {
           </button>
         </div>
       )}
-      {!isJudge && !isObserver && myParticipant?.status==="reciting" && timerActive && (
+      {/* Universal timer — shown to judge, active participant, waiting participants,
+          and observers alike, so everyone sees the same countdown for the current stage. */}
+      {activeP?.status==="reciting" && timerActive && (
         <div style={{flexShrink:0,padding:"7px 12px",background:"rgba(4,12,6,.98)",borderBottom:"1px solid rgba(34,197,94,.12)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-          <div style={{display:"flex",alignItems:"center",gap:5}}>
-            <div style={{width:7,height:7,borderRadius:"50%",background:GREEN,animation:"pulseRing 1s ease-in-out infinite"}}/>
-            <span style={{color:GREEN,fontWeight:800,fontSize:12}}>NOW RECITING</span>
+          <div style={{display:"flex",alignItems:"center",gap:5,minWidth:0}}>
+            <div style={{width:7,height:7,borderRadius:"50%",background:GREEN,animation:"pulseRing 1s ease-in-out infinite",flexShrink:0}}/>
+            <span style={{color:GREEN,fontWeight:800,fontSize:12,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+              {isJudge||isObserver ? `${activeP.participant_name} RECITING` : "NOW RECITING"}
+            </span>
           </div>
-          <div style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:900,fontSize:20,fontFamily:"Cinzel,serif"}}>{fmt(timerSecs)}</div>
-          {bellCount>0&&<div style={{color:RED,fontSize:11,fontWeight:700}}>🔔×{bellCount}</div>}
+          <div style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:900,fontSize:20,fontFamily:"Cinzel,serif",flexShrink:0}}>{fmt(timerSecs)}</div>
+          {bellCount>0&&<div style={{color:RED,fontSize:11,fontWeight:700,flexShrink:0}}>🔔×{bellCount}</div>}
         </div>
       )}
 
@@ -2482,7 +2737,19 @@ export default function MustabaqahPage() {
 
                 {showScorePanel&&(
                   <div style={{background:"rgba(201,168,76,.06)",border:"1px solid rgba(201,168,76,.2)",borderRadius:12,padding:"13px"}}>
-                    <div style={{color:GOLD,fontWeight:800,fontSize:13,marginBottom:10}}>📝 Stage {activeParticipantStage} Score — {activeP?.participant_name}</div>
+                    <div style={{color:GOLD,fontWeight:800,fontSize:13,marginBottom:4,display:"flex",alignItems:"center",gap:6}}>
+                      📝 Stage {activeParticipantStage} Score — {activeP?.participant_name}
+                      {activeP?.status==="reciting"&&<span style={{color:GREEN,fontSize:10,fontWeight:700,background:`${GREEN}22`,borderRadius:5,padding:"2px 6px"}}>● scoring live</span>}
+                    </div>
+                    {/* Multi-judge status: who else in the room has already submitted */}
+                    {presentJudges.length>1&&(
+                      <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:9}}>
+                        {presentJudges.map(j=>{
+                          const scored = (judgeScores[currentAttempt?.id||""]||[]).some(r=>r.judge_user_id===j.user_id);
+                          return <span key={j.user_id} style={{fontSize:10,fontWeight:700,borderRadius:6,padding:"3px 7px",color:scored?GREEN:"rgba(255,255,255,.4)",background:scored?`${GREEN}18`:"rgba(255,255,255,.05)",border:`1px solid ${scored?GREEN+"55":"rgba(255,255,255,.1)"}`}}>{scored?"✓":"…"} {j.name.split(" ")[0]}</span>;
+                        })}
+                      </div>
+                    )}
                     {competition.use_criteria_scoring ? (
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:7,marginBottom:9}}>
                         {SCORING_CRITERIA.map(c=>(
@@ -2501,11 +2768,22 @@ export default function MustabaqahPage() {
                     <input value={judgeComment} onChange={e=>setJudgeComment(e.target.value)} placeholder="Judge's comment (optional)" style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:7,padding:"7px 11px",color:"#fff",fontSize:12,marginBottom:9}}/>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
                       {bellCount>0&&<span style={{color:GOLD,fontSize:11}}>⚠️ −{bellCount*2} penalty</span>}
-                      <span style={{color:GREEN,fontWeight:800,fontSize:14,marginLeft:"auto"}}>Final: {finalScore}/100</span>
+                      <span style={{color:GREEN,fontWeight:800,fontSize:14,marginLeft:"auto"}}>Your score: {finalScore}/100</span>
                     </div>
-                    <button onClick={submitScore} disabled={submittingScore} style={{width:"100%",background:submittingScore?`rgba(34,197,94,.4)`:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:9,padding:"11px",cursor:submittingScore?"not-allowed":"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
-                      {submittingScore?<><span style={{animation:"spin .8s linear infinite",display:"inline-block"}}>⏳</span> Saving…</>:<><CheckCircle size={13}/> Submit Score</>}
-                    </button>
+                    {myScoreSubmitted ? (
+                      <div style={{textAlign:"center",padding:"9px",background:`${GREEN}12`,border:`1px solid ${GREEN}33`,borderRadius:9,color:GREEN,fontWeight:700,fontSize:12}}>
+                        ✓ Your score is in — waiting for {Math.max(0,presentJudges.filter(j=>j.user_id!==user?.id).length-(judgeScores[currentAttempt?.id||""]||[]).filter(r=>r.judge_user_id!==user?.id).length)} other judge(s)
+                      </div>
+                    ):(
+                      <button onClick={submitMyJudgeScore} disabled={submittingScore} style={{width:"100%",background:submittingScore?`rgba(34,197,94,.4)`:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:9,padding:"11px",cursor:submittingScore?"not-allowed":"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+                        {submittingScore?<><span style={{animation:"spin .8s linear infinite",display:"inline-block"}}>⏳</span> Saving…</>:<><CheckCircle size={13}/> Submit My Score</>}
+                      </button>
+                    )}
+                    {myScoreSubmitted && presentJudges.length>1 && (judgeScores[currentAttempt?.id||""]||[]).length < presentJudges.length && (
+                      <button onClick={forceFinalizeScore} style={{width:"100%",marginTop:7,background:"transparent",color:"rgba(255,255,255,.4)",border:"1px solid rgba(255,255,255,.15)",borderRadius:8,padding:"8px",cursor:"pointer",fontSize:11,fontFamily:"Cairo,sans-serif"}}>
+                        Force finalize with scores submitted so far
+                      </button>
+                    )}
                   </div>
                 )}
 
