@@ -243,6 +243,16 @@ const LiveQuiz = () => {
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedSavedId, setCopiedSavedId] = useState<string|null>(null);
 
+  // ── Answer-change support ──
+  // Players can pick a different option as many times as they like while the
+  // timer is still running. We track the DB row id for this question's answer
+  // (so re-picking updates it instead of inserting duplicates) and the
+  // participant's score/streak from BEFORE this question, so recomputing on
+  // every change never double-counts points.
+  const answerRowIdRef  = useRef<string|null>(null);
+  const baseScoreRef    = useRef<number>(0);
+  const baseStreakRef   = useRef<number>(0);
+
   // ── Edit Saved Quiz ──
   const [editingQuizId, setEditingQuizId]   = useState<string|null>(null);
   const [editQs,        setEditQs]          = useState<Omit<Question,"id">[]>([]);
@@ -442,6 +452,14 @@ const LiveQuiz = () => {
           // so it's correct BEFORE the postgres_changes event arrives from the DB.
           if (typeof q.order_index === "number") setCurrentQIndex(q.order_index);
           setSelectedAns(null);
+          // Reset per-question answer tracking so a new question starts fresh
+          // and doesn't inherit the previous question's answer row / points.
+          answerRowIdRef.current = null;
+          setParticipant(p => {
+            baseScoreRef.current  = p?.score  || 0;
+            baseStreakRef.current = p?.streak || 0;
+            return p;
+          });
           setCountdown(3);
           setView("countdown-player");
         }
@@ -795,22 +813,35 @@ Make questions educational, clearly worded, and accurate.`
   };
 
   const submitAnswer = async (answer: string) => {
-    if (!room || !currentQ || !participant || selectedAns) return;
+    // Players may change their pick as many times as they like while the
+    // timer is still running — only block once time's up or before a
+    // question has loaded.
+    if (!room || !currentQ || !participant || timeLeft <= 0) return;
     setSelectedAns(answer);
     const isCorrect  = answer === currentQ.correct_answer;
     const speedBonus = Math.max(0, Math.floor((timeLeft / currentQ.time_limit) * 500));
     const points     = isCorrect ? 500 + speedBonus : 0;
-    await supabase.from("live_quiz_answers" as any).insert({
-      room_id:room.id, question_id:currentQ.id, participant_id:participant.id,
-      answer, is_correct:isCorrect, time_taken:currentQ.time_limit-timeLeft, points_earned:points,
-    } as any);
-    if (isCorrect) {
-      await supabase.from("live_quiz_participants" as any).update({ score:(participant.score||0)+points, streak:(participant.streak||0)+1, last_answer_correct:true } as any).eq("id",participant.id);
-      setParticipant(p => p ? {...p, score:(p.score||0)+points, streak:(p.streak||0)+1} : p);
+
+    if (!answerRowIdRef.current) {
+      // First pick for this question — insert the answer row.
+      const { data } = await supabase.from("live_quiz_answers" as any).insert({
+        room_id:room.id, question_id:currentQ.id, participant_id:participant.id,
+        answer, is_correct:isCorrect, time_taken:currentQ.time_limit-timeLeft, points_earned:points,
+      } as any).select("id").single();
+      if (data) answerRowIdRef.current = (data as any).id;
     } else {
-      await supabase.from("live_quiz_participants" as any).update({ streak:0, last_answer_correct:false } as any).eq("id",participant.id);
-      setParticipant(p => p ? {...p, streak:0} : p);
+      // Changed their mind — update the same row instead of inserting a duplicate.
+      await supabase.from("live_quiz_answers" as any).update({
+        answer, is_correct:isCorrect, time_taken:currentQ.time_limit-timeLeft, points_earned:points,
+      } as any).eq("id", answerRowIdRef.current);
     }
+
+    // Recompute score/streak from the pre-question baseline so switching
+    // answers never double-counts points from an earlier pick.
+    const newScore  = baseScoreRef.current + points;
+    const newStreak = isCorrect ? baseStreakRef.current + 1 : 0;
+    await supabase.from("live_quiz_participants" as any).update({ score:newScore, streak:newStreak, last_answer_correct:isCorrect } as any).eq("id",participant.id);
+    setParticipant(p => p ? {...p, score:newScore, streak:newStreak} : p);
   };
 
   const resetAll = () => {
@@ -2042,8 +2073,8 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
           {currentQ.options.map((opt,i) => {
             const isSel = selectedAns === opt;
             return (
-              <button key={i} onClick={()=>submitAnswer(opt)} disabled={!!selectedAns}
-                style={{padding:"16px 18px",borderRadius:14,border:`2px solid ${isSel?SHAPES[i].border:"rgba(255,255,255,0.12)"}`,background:isSel?SHAPES[i].bg:"rgba(255,255,255,0.04)",color:"#fff",cursor:selectedAns?"default":"pointer",fontWeight:700,fontSize:15,textAlign:"left",display:"flex",alignItems:"center",gap:12,transition:"all .2s",transform:isSel?"scale(1.02)":"scale(1)",boxShadow:isSel?`0 0 20px ${SHAPES[i].border}40`:"none"}}>
+              <button key={i} onClick={()=>submitAnswer(opt)} disabled={timeLeft<=0}
+                style={{padding:"16px 18px",borderRadius:14,border:`2px solid ${isSel?SHAPES[i].border:"rgba(255,255,255,0.12)"}`,background:isSel?SHAPES[i].bg:"rgba(255,255,255,0.04)",color:"#fff",cursor:timeLeft<=0?"default":"pointer",fontWeight:700,fontSize:15,textAlign:"left",display:"flex",alignItems:"center",gap:12,transition:"all .2s",transform:isSel?"scale(1.02)":"scale(1)",boxShadow:isSel?`0 0 20px ${SHAPES[i].border}40`:"none"}}>
                 <span style={{fontSize:20,color:SHAPES[i].border,minWidth:22}}>{SHAPES[i].icon}</span>
                 <span style={{flex:1}}>{opt}</span>
                 {isSel && <span style={{fontSize:20}}>✓</span>}
@@ -2054,7 +2085,7 @@ Go to: tahleemacademy.vercel.app/live-quiz`,
 
         {selectedAns && (
           <div style={{marginTop:18,textAlign:"center",padding:"14px",background:"rgba(255,255,255,0.04)",borderRadius:12,border:"1px solid rgba(255,255,255,0.08)"}}>
-            <p style={{fontSize:13,color:"rgba(255,255,255,0.5)",margin:0}}>⏳ Answer locked — waiting for host…</p>
+            <p style={{fontSize:13,color:"rgba(255,255,255,0.5)",margin:0}}>✓ Answer saved — you can change it until time runs out</p>
           </div>
         )}
         </>)}
