@@ -190,6 +190,70 @@ const genQuestion = (scopeType: string) => {
 const genTiles = (scopeType: string, count=10): Tile[] =>
   Array.from({length:count}, (_,i) => ({ num:i+1, ...genQuestion(scopeType) }));
 
+/** A single ayah reference resolved from the Quran API — surah/ayah number plus
+ *  display names — used to build a Tile pool for Juz / Hizb / custom-range scopes. */
+interface ScopeAyah { surah:number; ayah:number; surahName:string; surahAr:string; }
+
+/** Fetch the full pool of ayahs belonging to a Juz, Hizb, or custom Surah/Ayah
+ *  range from the public alquran.cloud API (the same API this page already uses
+ *  for ayah text). Returns [] on any failure so callers can fall back safely. */
+const fetchScopePool = async (scopeType:string, cfg:{
+  juz_number?:number; hizb_number?:number;
+  range_surah_start?:number; range_ayah_start?:number;
+  range_surah_end?:number; range_ayah_end?:number;
+}): Promise<ScopeAyah[]> => {
+  try {
+    if (scopeType==="juz" && cfg.juz_number) {
+      const r = await fetch(`https://api.alquran.cloud/v1/juz/${cfg.juz_number}/quran-uthmani`);
+      const d = await r.json();
+      if (d?.code!==200) return [];
+      return (d.data?.ayahs||[]).map((a:any)=>({
+        surah:a.surah?.number, ayah:a.numberInSurah,
+        surahName:a.surah?.englishName, surahAr:a.surah?.name,
+      }));
+    }
+    if (scopeType==="hizb" && cfg.hizb_number) {
+      // One Hizb = 4 Hizb-Quarters (240 quarters total across 60 Hizb).
+      const quarters = [1,2,3,4].map(q => 4*(cfg.hizb_number!-1)+q);
+      const results = await Promise.all(
+        quarters.map(q=>fetch(`https://api.alquran.cloud/v1/hizbQuarter/${q}/quran-uthmani`).then(r=>r.json()))
+      );
+      const pool: ScopeAyah[] = [];
+      results.forEach((d:any)=>{
+        if (d?.code===200) (d.data?.ayahs||[]).forEach((a:any)=>pool.push({
+          surah:a.surah?.number, ayah:a.numberInSurah, surahName:a.surah?.englishName, surahAr:a.surah?.name,
+        }));
+      });
+      return pool;
+    }
+    if (scopeType==="custom_range" && cfg.range_surah_start && cfg.range_surah_end) {
+      const r = await fetch("https://api.alquran.cloud/v1/surah");
+      const d = await r.json();
+      if (d?.code!==200) return [];
+      const pool: ScopeAyah[] = [];
+      (d.data||[]).forEach((s:any)=>{
+        if (s.number < cfg.range_surah_start! || s.number > cfg.range_surah_end!) return;
+        const ayahFrom = s.number===cfg.range_surah_start ? (cfg.range_ayah_start||1) : 1;
+        const ayahTo   = s.number===cfg.range_surah_end   ? (cfg.range_ayah_end||s.numberOfAyahs) : s.numberOfAyahs;
+        for (let a=ayahFrom; a<=Math.min(ayahTo,s.numberOfAyahs); a++) {
+          pool.push({ surah:s.number, ayah:a, surahName:s.englishName, surahAr:s.name });
+        }
+      });
+      return pool;
+    }
+  } catch(e) { console.warn("[Musabaqah] scope pool fetch failed", e); }
+  return [];
+};
+
+/** Registration is open unless the judge manually closed it, or a deadline has
+ *  passed and the judge hasn't manually overridden it back open. */
+const isRegistrationOpen = (comp: {registration_deadline?:string|null; registration_override?:string}) => {
+  if (comp.registration_override==="closed") return false;
+  if (comp.registration_override==="open") return true;
+  if (!comp.registration_deadline) return true;
+  return new Date(comp.registration_deadline).getTime() > Date.now();
+};
+
 const fmt = (s:number) => `${Math.floor(s/60)}:${String(Math.max(0,s)%60).padStart(2,"0")}`;
 
 const NumberTilePicker = ({ tiles, pickedNum, onPick, canPick, stage }: { tiles:Tile[]; pickedNum:number|null; onPick:(t:Tile)=>void; canPick:boolean; stage:number }) => (
@@ -211,6 +275,63 @@ const NumberTilePicker = ({ tiles, pickedNum, onPick, canPick, stage }: { tiles:
         );
       })}
     </div>
+  </div>
+);
+
+/** Judge shuffles the waiting list into hidden boxes; each participant taps an
+ *  unclaimed box and it flips to reveal their (server-assigned) queue position.
+ *  Boxes already claimed by someone else show that person's name + position so
+ *  everyone can watch the reveal happen live. */
+const QueueBoxGrid = ({ boxCount, participants, myParticipantId, canPick, onPick }: {
+  boxCount:number; participants:Participant[]; myParticipantId:string|null; canPick:boolean; onPick:(box:number)=>void;
+}) => {
+  const claimedByBox: Record<number, Participant> = {};
+  participants.forEach(p => { if (p.queue_box_id) claimedByBox[p.queue_box_id] = p; });
+  const myBox = participants.find(p=>p.id===myParticipantId)?.queue_box_id ?? null;
+  return (
+    <div style={{animation:"fadeIn .3s ease"}}>
+      <div style={{textAlign:"center",marginBottom:14}}>
+        <div style={{color:GOLD,fontWeight:900,fontSize:13,letterSpacing:2,textTransform:"uppercase"}}>Pick Your Box</div>
+        <div style={{color:"rgba(255,255,255,.35)",fontSize:11,marginTop:2}}>Each box hides a queue position — tap one to reveal yours</div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8}}>
+        {Array.from({length:boxCount},(_,i)=>i+1).map(box=>{
+          const claimant = claimedByBox[box];
+          const isMine = myBox===box;
+          return (
+            <div key={box} className={claimant?"tile-revealed":""} onClick={()=>canPick&&!myBox&&!claimant&&onPick(box)}
+              style={{height:64,borderRadius:14,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
+                background: claimant ? (isMine?`linear-gradient(135deg,${GOLD},${GOLDD})`:"rgba(255,255,255,.06)") : "rgba(201,168,76,.12)",
+                border: isMine?`2px solid ${GOLD}`:claimant?"1.5px solid rgba(255,255,255,.15)":"1.5px solid rgba(201,168,76,.4)",
+                cursor: canPick&&!myBox&&!claimant?"pointer":"default", opacity: claimant&&!isMine?.45:1, transition:"all .2s"}}>
+              {claimant ? (
+                <>
+                  <span style={{fontFamily:"Cinzel,serif",fontWeight:900,fontSize:18,color:isMine?G:"#fff"}}>#{claimant.queue_position}</span>
+                  <span style={{fontSize:7,color:isMine?G:"rgba(255,255,255,.55)",fontWeight:700,maxWidth:"90%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{claimant.participant_name}</span>
+                </>
+              ) : <span style={{fontFamily:"Cinzel,serif",fontWeight:900,fontSize:20,color:GOLD}}>?</span>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+/** Read-only ordered roster so participants (not just the judge) can see who
+ *  else is in the queue and where they stand. */
+const QueueList = ({ list, myId, activeId }: { list:Participant[]; myId:string|null; activeId:string|null }) => (
+  <div style={{marginTop:10,textAlign:"left"}}>
+    {[...list].sort((a,b)=>a.queue_position-b.queue_position).map(p=>(
+      <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:9,marginBottom:4,
+        background: p.id===myId?"rgba(201,168,76,.12)":p.id===activeId?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",
+        border: p.id===myId?`1px solid ${GOLD}55`:"1px solid rgba(255,255,255,.05)"}}>
+        <span style={{color:GOLD,fontWeight:800,fontSize:11,width:22,flexShrink:0}}>#{p.queue_position}</span>
+        <Avatar name={p.participant_name} size={26}/>
+        <span style={{color:"#fff",fontSize:12,fontWeight:p.id===myId?800:600,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}{p.id===myId?" (You)":""}</span>
+        <span style={{fontSize:14}}>{STATUS_ICON[p.status]}</span>
+      </div>
+    ))}
   </div>
 );
 
@@ -484,11 +605,14 @@ interface Competition {
   id:string; title:string; description?:string; scope_type:string; scope_config:any;
   total_stages:number; current_stage:number; time_limit_seconds:number; status:CompStatus;
   current_participant_id?:string|null; room_code:string; created_by:string; created_at:string; use_criteria_scoring:boolean;
+  registration_deadline?:string|null; registration_override?:"auto"|"open"|"closed";
+  queue_reveal_active?:boolean; queue_box_count?:number;
 }
 interface Participant {
   id:string; competition_id:string; user_id?:string; participant_name:string; school?:string;
   queue_position:number; status:PStatus; total_score:number; stage_scores:Record<string,number>;
   bell_counts:Record<string,number>; proctor_flagged:boolean; camera_on:boolean; created_at:string;
+  queue_box_id?:number|null;
 }
 interface Attempt {
   id:string; competition_id:string; participant_id:string; stage_number:number;
@@ -506,6 +630,9 @@ const SCOPE_OPTIONS = [
   {id:"juz30",label:"Juz 30 (Amma)",desc:"Short surahs — juniors"},
   {id:"juz29",label:"Juz 29–30",desc:"Two final juz"},
   {id:"full30",label:"Full 30 Juz",desc:"Entire Quran — advanced"},
+  {id:"juz",label:"Specific Juz",desc:"Pick any single Juz (1–30)"},
+  {id:"hizb",label:"Specific Hizb",desc:"Pick any single Hizb (1–60, half a Juz)"},
+  {id:"custom_range",label:"Custom Surah/Ayah Range",desc:"Pick your own start & end point"},
 ];
 const STATUS_COLOR: Record<PStatus,string> = {pending:"#a78bfa",waiting:GOLD,called:"#f97316",reciting:GREEN,completed:"#60a5fa",absent:"#6b7280",disqualified:RED};
 const STATUS_ICON:  Record<PStatus,string> = {pending:"🕐",waiting:"⏳",called:"⚡",reciting:"🎙️",completed:"✅",absent:"❌",disqualified:"🚫"};
@@ -585,7 +712,9 @@ export default function MustabaqahPage() {
   const [showChat,       setShowChat]      = useState(false);
   const [chatMessages,   setChatMessages]  = useState<{id:string;name:string;text:string;time:string}[]>([]);
   const [chatInput,      setChatInput]     = useState("");
-  const [form, setForm] = useState({title:"",description:"",scope_type:"juz30",total_stages:5,time_limit:300,use_criteria:true,tiles_per_stage:10,use_custom_q:false,custom_questions:""});
+  const [form, setForm] = useState({title:"",description:"",scope_type:"juz30",total_stages:5,time_limit:300,use_criteria:true,tiles_per_stage:10,use_custom_q:false,custom_questions:"",
+    juz_number:1, hizb_number:1, range_surah_start:1, range_ayah_start:1, range_surah_end:1, range_ayah_end:7,
+    registration_deadline:"" as string});
   const [joinForm, setJoinForm] = useState({room_code:"",name:profile?.full_name||"",school:profile?.school||""});
 
   // ── Q-Settings panel (live editing of questions from arena) ──────
@@ -912,6 +1041,14 @@ export default function MustabaqahPage() {
         // Push instructions update to all non-judge viewers
         if (payload.instructions!==undefined) setLiveInstructions(payload.instructions);
       })
+      .on("broadcast",{event:"QUEUE_REVEAL_START"},({payload}:any)=>{
+        setCompetition(c=>c?{...c, queue_box_count:payload.boxCount??0, queue_reveal_active:true}:c);
+        loadParticipants();
+      })
+      .on("broadcast",{event:"QUEUE_BOX_PICKED"},()=>{ loadParticipants(); })
+      .on("broadcast",{event:"QUEUE_REVEAL_DONE"},()=>{
+        setCompetition(c=>c?{...c, queue_reveal_active:false}:c);
+      })
       .on("postgres_changes" as any,{event:"*",schema:"public",table:"musabaqah_participants",filter:`competition_id=eq.${competition.id}`},()=>{ loadParticipants(); })
       .subscribe(async()=>{
         const myName=myParticipantRef.current?.participant_name||profile?.full_name||"Guest";
@@ -984,7 +1121,15 @@ export default function MustabaqahPage() {
       );
     }
 
-    // 3. Fall back to random Quran passages
+    // 3. Fall back to a pre-fetched Juz/Hizb/custom-range pool, else random Quran passages
+    const scopePool = comp.scope_config?.scope_pool as ScopeAyah[] | undefined;
+    if (scopePool && scopePool.length > 0) {
+      const shuffled = [...scopePool].sort(()=>Math.random()-0.5).slice(0, count);
+      return shuffled.map((p,i) => ({
+        num:i+1, label:`${p.surahName} — Ayah ${p.ayah}`, labelAr:`سورة ${p.surahAr} — الآية ${p.ayah}`,
+        surah:p.surah, ayah:p.ayah, surahName:p.surahName, surahAr:p.surahAr,
+      }));
+    }
     return genTiles(comp.scope_type, count);
   };
 
@@ -1223,23 +1368,19 @@ export default function MustabaqahPage() {
     }
   };
 
+  // Each participant already loops through all of their own stages in one
+  // sitting (see submitScore's hasMoreStages branch), so there is no real
+  // "next stage for everyone" concept — this button is only ever shown once
+  // the whole roster is done (allDone), so it just ends the competition.
+  // NOTE: this used to also support advancing competition.current_stage and
+  // resetting every participant back to "waiting" — including ones who had
+  // already finished all their stages. That let a judge accidentally re-call
+  // a completed participant, whose score would then be re-added on top of
+  // their existing total_score (double counting) and corrupt the leaderboard.
   const advanceStage = async () => {
     if (!competition) return;
-    const next=competition.current_stage+1;
-    if (next>competition.total_stages) {
-      await supabase.from("musabaqah_competitions" as any).update({status:"completed",current_participant_id:null}).eq("id",competition.id);
-      broadcast("COMPETITION_END"); setView("results"); return;
-    }
-    // Clear current_tiles and current_called_id so the polling fallback doesn't
-    // serve old tiles to participants in the new stage
-    const cleanConfig = { ...(competition.scope_config||{}), current_tiles: [], current_called_id: null, current_stage_num: next };
-    await supabase.from("musabaqah_participants" as any).update({status:"waiting"}).eq("competition_id",competition.id);
-    await supabase.from("musabaqah_competitions" as any)
-      .update({current_stage:next, current_participant_id:null, scope_config:cleanConfig} as any)
-      .eq("id",competition.id);
-    setCompetition(c=>c?{...c,current_stage:next,current_participant_id:null,scope_config:cleanConfig}:c);
-    broadcast("STAGE_CHANGE",{stage:next});
-    toast({title:`🎯 Stage ${next} begins!`}); loadParticipants();
+    await supabase.from("musabaqah_competitions" as any).update({status:"completed",current_participant_id:null}).eq("id",competition.id);
+    broadcast("COMPETITION_END"); setView("results");
   };
 
   const terminateSession = async () => {
@@ -1262,16 +1403,39 @@ export default function MustabaqahPage() {
   };
 
   const createCompetition = async () => {
-    if (!form.title.trim()) { toast({title:"Enter a title",variant:"destructive"}); return; }
+    if (!form.title.trim()) { toast({title:"Enter a title"}); return; }
     setLoading(true);
     const room_code=genCode();
     const customQList = form.use_custom_q ? form.custom_questions.split("\n").map(s=>s.trim()).filter(Boolean) : [];
+    // Juz / Hizb / custom-range need their ayah pool fetched from the Quran API up front
+    // (once), then cached on the competition so every tile-build after this is instant
+    // and works offline.
+    let scopePool: any[] = [];
+    if (["juz","hizb","custom_range"].includes(form.scope_type) && !form.use_custom_q) {
+      scopePool = await fetchScopePool(form.scope_type, {
+        juz_number: form.juz_number, hizb_number: form.hizb_number,
+        range_surah_start: form.range_surah_start, range_ayah_start: form.range_ayah_start,
+        range_surah_end: form.range_surah_end, range_ayah_end: form.range_ayah_end,
+      });
+      if (scopePool.length===0) {
+        setLoading(false);
+        toast({title:"Couldn't fetch that scope",description:"Check your connection and try again, or pick a different scope.",variant:"destructive"});
+        return;
+      }
+    }
     const {data,error}=await supabase.from("musabaqah_competitions" as any).insert({
       title:form.title.trim(),description:form.description.trim(),scope_type:form.scope_type,
-      scope_config:{ tiles_per_stage: form.tiles_per_stage, custom_questions: customQList },
+      scope_config:{
+        tiles_per_stage: form.tiles_per_stage, custom_questions: customQList, scope_pool: scopePool,
+        juz_number: form.juz_number, hizb_number: form.hizb_number,
+        range_surah_start: form.range_surah_start, range_ayah_start: form.range_ayah_start,
+        range_surah_end: form.range_surah_end, range_ayah_end: form.range_ayah_end,
+      },
       total_stages:form.total_stages,current_stage:1,time_limit_seconds:form.time_limit,
       status:"open",room_code,created_by:user?.id,use_criteria_scoring:form.use_criteria,
-    }).select().single();
+      registration_deadline: form.registration_deadline ? new Date(form.registration_deadline).toISOString() : null,
+      registration_override: "auto",
+    } as any).select().single();
     setLoading(false);
     if (error) { toast({title:"Error",description:error.message,variant:"destructive"}); return; }
     const comp=data as Competition;
@@ -1287,12 +1451,17 @@ export default function MustabaqahPage() {
 
   const joinCompetition = async () => {
     const code=joinForm.room_code.trim().toUpperCase(), name=joinForm.name.trim();
-    if (!code||!name) { toast({title:"Enter code and name",variant:"destructive"}); return; }
+    if (!code||!name) { toast({title:"Enter code and name"}); return; }
     setLoading(true);
     const {data:comp,error:compErr}=await supabase.from("musabaqah_competitions" as any).select("*").eq("room_code",code).maybeSingle();
     if (compErr||!comp) { toast({title:"Not found",description:`No competition: ${code}`,variant:"destructive"}); setLoading(false); return; }
     const {data:existing}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",(comp as Competition).id).eq("user_id",user?.id).maybeSingle();
     if (existing) { setCompetition(comp as Competition); setMyParticipant(existing as Participant); setUserRole("participant"); setLoading(false); setView("arena"); await fetchLkToken(code); return; }
+    if ((comp as Competition).status==="completed") { toast({title:"This competition has ended",variant:"destructive"}); setLoading(false); return; }
+    if (!isRegistrationOpen(comp as Competition)) {
+      toast({title:"Registration closed",description:"This musabaqah is no longer accepting new registrations.",variant:"destructive"});
+      setLoading(false); return;
+    }
     const {count}=await supabase.from("musabaqah_participants" as any).select("id",{count:"exact",head:true}).eq("competition_id",(comp as Competition).id);
     const {data:participant,error:insertErr}=await supabase.from("musabaqah_participants" as any).insert({
       competition_id:(comp as Competition).id,user_id:user?.id||null,participant_name:name,school:joinForm.school||null,
@@ -1301,7 +1470,8 @@ export default function MustabaqahPage() {
     setLoading(false);
     if (insertErr) { toast({title:"Failed",description:insertErr.message,variant:"destructive"}); return; }
     setCompetition(comp as Competition); setMyParticipant(participant as Participant); setUserRole("participant");
-    setView("arena"); await fetchLkToken(code); toast({title:"✅ Joined!"});
+    setView("arena"); await fetchLkToken(code);
+    toast({title:"✅ Registered!",description:`Your room code is ${code} — save it to come back anytime.`});
   };
 
   const openComp = async (comp:Competition) => {
@@ -1350,6 +1520,55 @@ export default function MustabaqahPage() {
     await supabase.from("musabaqah_participants" as any).update({ status: "waiting" }).eq("id", p.id);
     broadcast("PARTICIPANT_APPROVED", { participant_id: p.id });
     loadParticipants();
+  };
+
+  // Manual registration close/reopen — overrides the deadline either way.
+  const toggleRegistration = async () => {
+    if (!competition) return;
+    const nextOverride = isRegistrationOpen(competition) ? "closed" : "open";
+    await supabase.from("musabaqah_competitions" as any).update({ registration_override: nextOverride } as any).eq("id", competition.id);
+    setCompetition(c=>c?{...c, registration_override: nextOverride}:c);
+    toast({title: nextOverride==="closed" ? "🔒 Registration closed" : "🔓 Registration reopened"});
+  };
+
+  // Judge shuffles the current waiting list into hidden boxes for participants to pick.
+  const startQueueReveal = async () => {
+    if (!competition) return;
+    const waitingP = participants.filter(p=>p.status==="waiting");
+    if (waitingP.length < 2) { toast({title:"Need at least 2 waiting participants"}); return; }
+    const n = waitingP.length;
+    const positions = Array.from({length:n},(_,i)=>i+1);
+    for (let i=positions.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [positions[i],positions[j]]=[positions[j],positions[i]]; }
+    await supabase.from("musabaqah_participants" as any).update({ queue_box_id: null }).eq("competition_id",competition.id).in("id", waitingP.map(p=>p.id));
+    await supabase.from("musabaqah_competitions" as any)
+      .update({ queue_shuffle_boxes: positions, queue_box_count: n, queue_reveal_active: true } as any)
+      .eq("id",competition.id);
+    setCompetition(c=>c?{...c, queue_box_count:n, queue_reveal_active:true}:c);
+    broadcast("QUEUE_REVEAL_START",{boxCount:n});
+    loadParticipants();
+    toast({title:`🎲 Queue shuffled — ${n} boxes ready to pick!`});
+  };
+
+  const finishQueueReveal = async () => {
+    if (!competition) return;
+    await supabase.from("musabaqah_competitions" as any).update({ queue_reveal_active:false } as any).eq("id",competition.id);
+    setCompetition(c=>c?{...c, queue_reveal_active:false}:c);
+    broadcast("QUEUE_REVEAL_DONE",{});
+  };
+
+  // Participant taps a hidden box — the actual position mapping never leaves the
+  // server; this RPC atomically claims the box and returns the revealed position.
+  const pickQueueBox = async (box:number) => {
+    if (!competition || !myParticipant) return;
+    const { data: position, error } = await supabase.rpc("claim_queue_box" as any, {
+      p_competition_id: competition.id, p_participant_id: myParticipant.id, p_box_id: box,
+    });
+    if (error || position==null) { toast({title:"That box was just taken",description:"Pick another one.",variant:"destructive"}); loadParticipants(); return; }
+    setMyParticipant(p=>p?{...p,queue_box_id:box,queue_position:position as number}:p);
+    broadcast("QUEUE_BOX_PICKED",{});
+    playTilePick();
+    loadParticipants();
+    toast({title:`📦 Box ${box} revealed — you're position #${position}!`});
   };
 
   const confirmDelete = async () => {
@@ -1588,7 +1807,10 @@ export default function MustabaqahPage() {
                   </span>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{color:"rgba(255,255,255,.35)",fontSize:11}}>Stage {c.current_stage}{'/'}{c.total_stages}</span>
+                  <span style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{c.total_stages} Stages</span>
+                  {c.status==="open"&&!isRegistrationOpen(c)&&(
+                    <><span style={{color:"rgba(255,255,255,.15)"}}>·</span><span style={{color:RED,fontSize:10,fontWeight:700}}>Registration Closed</span></>
+                  )}
                   <span style={{color:"rgba(255,255,255,.15)"}}>·</span>
                   <button onClick={e=>copyCode(c.room_code,e)} style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
                     <span style={{color:GOLD,fontWeight:800,letterSpacing:2,fontSize:12}}>{c.room_code}</span>
@@ -1630,6 +1852,43 @@ export default function MustabaqahPage() {
                 <div><div style={{color:form.scope_type===s.id?GOLD:"#fff",fontWeight:700,fontSize:13}}>{s.label}</div><div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{s.desc}</div></div>
               </div>
             ))}
+            {form.scope_type==="juz"&&(
+              <div style={{marginTop:8}}>
+                <Label>Which Juz?</Label>
+                <select value={form.juz_number} onChange={e=>setForm(f=>({...f,juz_number:Number(e.target.value)}))} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}>
+                  {Array.from({length:30},(_,i)=>i+1).map(n=><option key={n} value={n} style={{background:G}}>Juz {n}</option>)}
+                </select>
+              </div>
+            )}
+            {form.scope_type==="hizb"&&(
+              <div style={{marginTop:8}}>
+                <Label>Which Hizb?</Label>
+                <select value={form.hizb_number} onChange={e=>setForm(f=>({...f,hizb_number:Number(e.target.value)}))} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}>
+                  {Array.from({length:60},(_,i)=>i+1).map(n=><option key={n} value={n} style={{background:G}}>Hizb {n}</option>)}
+                </select>
+              </div>
+            )}
+            {form.scope_type==="custom_range"&&(
+              <div style={{marginTop:8}}>
+                <Label>From — Surah : Ayah</Label>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                  <input type="number" min={1} max={114} value={form.range_surah_start} onChange={e=>setForm(f=>({...f,range_surah_start:Number(e.target.value)}))} placeholder="Surah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+                  <input type="number" min={1} value={form.range_ayah_start} onChange={e=>setForm(f=>({...f,range_ayah_start:Number(e.target.value)}))} placeholder="Ayah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+                </div>
+                <Label>To — Surah : Ayah</Label>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  <input type="number" min={1} max={114} value={form.range_surah_end} onChange={e=>setForm(f=>({...f,range_surah_end:Number(e.target.value)}))} placeholder="Surah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+                  <input type="number" min={1} value={form.range_ayah_end} onChange={e=>setForm(f=>({...f,range_ayah_end:Number(e.target.value)}))} placeholder="Ayah #" style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}/>
+                </div>
+                <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Surah numbers 1–114. Leave ayah as 1 / max if unsure — we'll fetch the exact ayah counts when you create the competition.</div>
+              </div>
+            )}
+          </div>
+          <div style={{marginBottom:16}}>
+            <Label>Registration Deadline (optional)</Label>
+            <input type="datetime-local" value={form.registration_deadline} onChange={e=>setForm(f=>({...f,registration_deadline:e.target.value}))}
+              style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14,colorScheme:"dark"}}/>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Leave blank for no deadline. Registration auto-closes at this time — you can always reopen it manually from the arena.</div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
             <div><Label>Total Stages</Label>
@@ -1900,11 +2159,14 @@ export default function MustabaqahPage() {
             <span style={{fontSize:9,fontWeight:700,padding:"1px 6px",borderRadius:20,background:competition.status==="active"?`${GREEN}22`:`${GOLD}22`,color:competition.status==="active"?GREEN:GOLD,border:`1px solid ${competition.status==="active"?GREEN:GOLD}`,letterSpacing:.5,flexShrink:0}}>
               {competition.status==="active"?"● LIVE":competition.status.toUpperCase()}
             </span>
-            <span style={{color:"rgba(255,255,255,.3)",fontSize:10,flexShrink:0}}>S{competition.current_stage}/{competition.total_stages}</span>
+            {/* Shows the current reciter's own stage progress (pickerStage), not a
+                competition-wide stage — each participant runs through all stages
+                in one sitting, so there's no single "stage" for the whole event. */}
+            <span style={{color:"rgba(255,255,255,.3)",fontSize:10,flexShrink:0}}>S{pickerStage}/{competition.total_stages}</span>
             <div style={{display:"flex",gap:2,flexShrink:0}}>
               {Array.from({length:competition.total_stages},(_,i)=>(
-                <div key={i} style={{width:11,height:11,borderRadius:"50%",background:i+1<competition.current_stage?GOLD:i+1===competition.current_stage?`${GOLD}55`:"rgba(255,255,255,.07)",border:`1px solid ${i+1<=competition.current_stage?GOLD:"rgba(255,255,255,.08)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:6,fontWeight:800,color:i+1<competition.current_stage?G:GOLD}}>
-                  {i+1<competition.current_stage?"✓":""}
+                <div key={i} style={{width:11,height:11,borderRadius:"50%",background:i+1<pickerStage?GOLD:i+1===pickerStage?`${GOLD}55`:"rgba(255,255,255,.07)",border:`1px solid ${i+1<=pickerStage?GOLD:"rgba(255,255,255,.08)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:6,fontWeight:800,color:i+1<pickerStage?G:GOLD}}>
+                  {i+1<pickerStage?"✓":""}
                 </div>
               ))}
             </div>
@@ -2186,8 +2448,8 @@ export default function MustabaqahPage() {
                 )}
 
                 {competition.status==="active"&&allDone&&(
-                  <button onClick={advanceStage} style={{background:competition.current_stage>=competition.total_stages?`linear-gradient(135deg,${GOLD},${GOLDD})`:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
-                    {competition.current_stage>=competition.total_stages?<><Trophy size={15}/> End & Show Results</>:<><ArrowRight size={15}/> Next Stage {competition.current_stage+1}</>}
+                  <button onClick={advanceStage} style={{background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+                    <Trophy size={15}/> End & Show Results
                   </button>
                 )}
 
@@ -2210,10 +2472,31 @@ export default function MustabaqahPage() {
 
             {judgeTab==="roster"&&(
               <div>
+                {/* Registration status + manual close/reopen (deadline handles the rest automatically) */}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.08)",borderRadius:9,padding:"8px 10px",marginBottom:9}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{color:isRegistrationOpen(competition)?GREEN:RED,fontSize:11,fontWeight:800}}>
+                      {isRegistrationOpen(competition)?"🟢 Registration Open":"🔴 Registration Closed"}
+                    </div>
+                    {competition.registration_deadline&&(
+                      <div style={{color:"rgba(255,255,255,.3)",fontSize:9,marginTop:1}}>
+                        Deadline: {new Date(competition.registration_deadline).toLocaleString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={toggleRegistration} style={{flexShrink:0,background:isRegistrationOpen(competition)?"rgba(239,68,68,.12)":"rgba(34,197,94,.12)",color:isRegistrationOpen(competition)?RED:GREEN,border:`1px solid ${isRegistrationOpen(competition)?RED:GREEN}44`,borderRadius:8,padding:"6px 11px",cursor:"pointer",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif"}}>
+                    {isRegistrationOpen(competition)?"Close":"Reopen"}
+                  </button>
+                </div>
                 {/* Next Stage / End button shown here too so judge never has to hunt for it */}
                 {competition.status==="active"&&allDone&&(
-                  <button onClick={advanceStage} style={{width:"100%",marginBottom:10,background:competition.current_stage>=competition.total_stages?`linear-gradient(135deg,${GOLD},${GOLDD})`:"linear-gradient(135deg,#7c3aed,#6d28d9)",color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
-                    {competition.current_stage>=competition.total_stages?<><Trophy size={15}/> End & Show Results</>:<><ArrowRight size={15}/> Next Stage {competition.current_stage+1} →</>}
+                  <button onClick={advanceStage} style={{width:"100%",marginBottom:10,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+                    <Trophy size={15}/> End & Show Results
+                  </button>
+                )}
+                {competition.status!=="active"&&waiting.length>=2&&(
+                  <button onClick={competition.queue_reveal_active?finishQueueReveal:startQueueReveal} style={{width:"100%",marginBottom:10,background:"rgba(167,139,250,.12)",color:"#a78bfa",border:"1px solid rgba(167,139,250,.4)",borderRadius:11,padding:"11px",cursor:"pointer",fontWeight:800,fontFamily:"Cairo,sans-serif",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+                    <Shuffle size={14}/> {competition.queue_reveal_active?"Finish Queue Reveal":"Shuffle Queue Positions"}
                   </button>
                 )}
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:7}}>
@@ -2284,19 +2567,32 @@ export default function MustabaqahPage() {
                 <div style={{fontSize:34,marginBottom:6,animation:"floatUp 4s ease-in-out infinite"}}>🕐</div>
                 <div style={{color:"#a78bfa",fontWeight:900,fontSize:16}}>Awaiting Approval</div>
                 <div style={{color:"rgba(255,255,255,.4)",fontSize:12,marginTop:6,lineHeight:1.7}}>The judge will admit you shortly.<br/><strong style={{color:"#fff"}}>{myParticipant.participant_name}</strong></div>
+                {competition&&(
+                  <div style={{marginTop:10,display:"inline-flex",alignItems:"center",gap:6,background:"rgba(201,168,76,.1)",border:`1px solid ${GOLD}44`,borderRadius:20,padding:"5px 12px"}}>
+                    <span style={{color:"rgba(255,255,255,.4)",fontSize:10}}>Room Code</span>
+                    <span style={{color:GOLD,fontWeight:800,letterSpacing:2,fontSize:12}}>{competition.room_code}</span>
+                  </div>
+                )}
               </div>
             )}
             {myParticipant.status==="waiting"&&(
               <div className="glass-card" style={{borderRadius:14,padding:"18px",textAlign:"center"}}>
-                <div style={{fontSize:28,marginBottom:5,animation:"floatUp 4s ease-in-out infinite"}}>⏳</div>
-                <div style={{color:GOLD,fontWeight:800,fontSize:14}}>Waiting in Queue</div>
-                <div style={{color:"rgba(255,255,255,.35)",fontSize:11,marginTop:3}}>Position #{myParticipant.queue_position} of {participants.filter(p=>p.status!=="pending").length}</div>
-                {activeP&&activeP.id!==myParticipant.id&&(
-                  <div style={{marginTop:9,background:"rgba(34,197,94,.07)",border:"1px solid rgba(34,197,94,.2)",borderRadius:9,padding:"8px 11px"}}>
-                    <div style={{color:GREEN,fontWeight:700,fontSize:11}}>🎙️ Now Reciting</div>
-                    <div style={{color:"#fff",fontWeight:700,fontSize:13}}>{activeP.participant_name}</div>
-                    {pickedTile&&<div style={{color:GOLD,fontSize:11,marginTop:2}}>📖 {pickedTile.label}</div>}
-                  </div>
+                {competition?.queue_reveal_active && !myParticipant.queue_box_id ? (
+                  <QueueBoxGrid boxCount={competition.queue_box_count||0} participants={participants} myParticipantId={myParticipant.id} canPick={true} onPick={pickQueueBox}/>
+                ) : (
+                  <>
+                    <div style={{fontSize:28,marginBottom:5,animation:"floatUp 4s ease-in-out infinite"}}>⏳</div>
+                    <div style={{color:GOLD,fontWeight:800,fontSize:14}}>Waiting in Queue</div>
+                    <div style={{color:"rgba(255,255,255,.35)",fontSize:11,marginTop:3}}>Position #{myParticipant.queue_position} of {participants.filter(p=>p.status!=="pending").length}</div>
+                    {activeP&&activeP.id!==myParticipant.id&&(
+                      <div style={{marginTop:9,background:"rgba(34,197,94,.07)",border:"1px solid rgba(34,197,94,.2)",borderRadius:9,padding:"8px 11px"}}>
+                        <div style={{color:GREEN,fontWeight:700,fontSize:11}}>🎙️ Now Reciting</div>
+                        <div style={{color:"#fff",fontWeight:700,fontSize:13}}>{activeP.participant_name}</div>
+                        {pickedTile&&<div style={{color:GOLD,fontSize:11,marginTop:2}}>📖 {pickedTile.label}</div>}
+                      </div>
+                    )}
+                    <QueueList list={participants.filter(p=>p.status!=="pending")} myId={myParticipant.id} activeId={activeP?.id??null}/>
+                  </>
                 )}
               </div>
             )}
