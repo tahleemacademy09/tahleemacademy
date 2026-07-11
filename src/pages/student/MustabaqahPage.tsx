@@ -49,6 +49,7 @@ const GlobalStyles = () => (
     @keyframes floatUp{0%,100%{transform:translateY(0) scale(1);opacity:.6}50%{transform:translateY(-12px) scale(1.02);opacity:1}}
     @keyframes pulseRing{0%{transform:scale(1);opacity:1}100%{transform:scale(2.2);opacity:0}}
     @keyframes bellSwing{0%,100%{transform:rotate(0)}20%{transform:rotate(-20deg)}40%{transform:rotate(20deg)}60%{transform:rotate(-12deg)}80%{transform:rotate(8deg)}}
+    @keyframes countdownPop{0%{transform:scale(.4);opacity:0}30%{transform:scale(1.15);opacity:1}100%{transform:scale(1);opacity:1}}
     @keyframes fadeSlideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
     @keyframes fadeIn{from{opacity:0}to{opacity:1}}
     @keyframes recitingGlow{0%,100%{box-shadow:0 0 20px rgba(34,197,94,.4)}50%{box-shadow:0 0 40px rgba(34,197,94,.8)}}
@@ -107,6 +108,21 @@ const BellFlash = ({ visible, count }: { visible:boolean; count:number }) => (
       </div>
       <div style={{marginTop:14,fontFamily:"Cairo,sans-serif",fontWeight:900,fontSize:24,color:"#fff",letterSpacing:4}}>خطأ • ERROR</div>
       {count>0 && <div style={{marginTop:6,fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:16,color:GOLD}}>Bell #{count} · −{count*2} pts</div>}
+    </>}
+  </div>
+);
+
+/** Shared 3-2-1 countdown shown to judge, participant, and observers alike —
+ *  purely visual on non-judge clients; the judge's own client is the one that
+ *  calls startReciting() the moment this finishes, which is also exactly when
+ *  the real recitation timer begins. */
+const CountdownOverlay = ({ value }: { value:number|null }) => (
+  <div style={{position:"fixed",inset:0,zIndex:10000,pointerEvents:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",opacity:value!==null?1:0,transition:"opacity .15s",background:value!==null?"rgba(0,0,0,.7)":"transparent"}}>
+    {value!==null && <>
+      <div key={value} style={{width:150,height:150,borderRadius:"50%",background:`radial-gradient(circle,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center",animation:"countdownPop 1s ease"}}>
+        <span style={{fontFamily:"Cinzel,serif",fontWeight:900,fontSize:72,color:G}}>{value}</span>
+      </div>
+      <div style={{marginTop:18,fontFamily:"Cairo,sans-serif",fontWeight:800,fontSize:16,color:"#fff",letterSpacing:2}}>GET READY TO RECITE</div>
     </>}
   </div>
 );
@@ -685,6 +701,8 @@ export default function MustabaqahPage() {
   const [stopFlash,      setStopFlash]     = useState(false);
   // Countdown timer
   const [timerActive,    setTimerActive]   = useState(false);
+  const [countdownValue, setCountdownValue] = useState<number|null>(null); // 3-2-1 pre-recitation countdown (visual only — the real timer starts after it finishes)
+  const countdownRef = useRef<ReturnType<typeof setInterval>|null>(null);
   const [timerSecs,      setTimerSecs]     = useState(0);      // counts DOWN
   const [judgeTimerDuration, setJudgeTimerDuration] = useState(300); // judge-set duration per student
   const [timerExpired,   setTimerExpired]  = useState(false);
@@ -835,6 +853,16 @@ export default function MustabaqahPage() {
   };
 
   useEffect(()=>{ loadCompetitions(); },[]);
+
+  // Self-heal: if this participant has been "called" for a while and hasn't
+  // heard COUNTDOWN_START/START_RECITING (dropped websocket message), re-poll
+  // the DB every few seconds so they don't get stuck staring at "wait for
+  // judge to start" forever while the judge has actually already moved on.
+  useEffect(()=>{
+    if (isJudge || myParticipant?.status!=="called") return;
+    const iv = setInterval(()=>{ loadParticipants(); }, 4000);
+    return ()=>clearInterval(iv);
+  },[isJudge, myParticipant?.status]);
   const loadCompetitions = async () => {
     const {data} = await supabase.from("musabaqah_competitions" as any).select("*").order("created_at",{ascending:false});
     if (data) setCompetitions(data as Competition[]);
@@ -981,6 +1009,11 @@ export default function MustabaqahPage() {
         const tile=payload.tile as Tile; setPickedTile(tile);
         if (tile?.surah>0) fetchAyah(tile.surah,tile.ayah);
         getACtx().state==="running"?playTilePick():getACtx().resume().then(playTilePick);
+      })
+      .on("broadcast",{event:"COUNTDOWN_START"},()=>{
+        // Non-judge clients just run the same visual countdown; the judge's own
+        // client is the one that actually calls startReciting() once it finishes.
+        runLocalCountdown();
       })
       .on("broadcast",{event:"START_RECITING"},({payload}:any)=>{
         loadParticipants();
@@ -1200,6 +1233,34 @@ export default function MustabaqahPage() {
     }).select().single();
     if (att) setCurAttempt(att as Attempt);
     setActiveP(p=>p?{...p,status:"reciting"}:p);
+    // Re-broadcast shortly after so a dropped websocket message doesn't leave
+    // the participant stuck on "wait for judge to start" forever.
+    setTimeout(()=>{ broadcast("START_RECITING",{participant_id:activeP.id}); broadcast("TIMER_START",{duration}); }, 1000);
+  };
+
+  // Judge taps "Start Reciting" → everyone (judge, the participant, observers)
+  // sees a shared 3-2-1 countdown; only once THIS finishes does startReciting()
+  // actually run and the real recitation timer begin.
+  const beginCountdown = () => {
+    if (!activeP||!competition||!pickedTile||countdownValue!==null) return;
+    broadcast("COUNTDOWN_START",{participant_id:activeP.id});
+    runLocalCountdown(startReciting);
+  };
+  const runLocalCountdown = (onDone?:()=>void) => {
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    let n=3; setCountdownValue(n);
+    try{navigator.vibrate?.(150);}catch{}
+    countdownRef.current = setInterval(()=>{
+      n -= 1;
+      if (n<=0) {
+        clearInterval(countdownRef.current!); countdownRef.current=null;
+        setCountdownValue(null);
+        onDone?.();
+      } else {
+        setCountdownValue(n);
+        try{navigator.vibrate?.(150);}catch{}
+      }
+    },1000);
   };
 
   // ✅ Bell — INSTANT: sound + broadcast first, DB async
@@ -2132,6 +2193,7 @@ export default function MustabaqahPage() {
     <div style={{minHeight:"100vh",maxHeight:"100vh",display:"flex",flexDirection:"column",fontFamily:"Cairo,sans-serif",overflow:"hidden",position:"relative",background:"#050f08"}}>
       <GlobalStyles/><IslamicBackground/>
       <BellFlash visible={bellFlash} count={bellCount}/>
+      <CountdownOverlay value={countdownValue}/>
       <StopFlash visible={stopFlash}/>
 
       {timerExpired && isJudge && activeP && (
@@ -2238,8 +2300,8 @@ export default function MustabaqahPage() {
       )}
       {isJudge && pickedTile && activeP && activeP.status!=="reciting" && activeP.status!=="completed" && (
         <div style={{flexShrink:0,padding:"8px 12px",background:"rgba(4,12,6,.98)",borderBottom:"1px solid rgba(34,197,94,.12)"}}>
-          <button onClick={startReciting} style={{width:"100%",background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.35)",animation:"recitingGlow 2s ease-in-out infinite"}}>
-            <Play size={18}/> ▶ Start Reciting — {activeP?.participant_name}
+          <button onClick={beginCountdown} disabled={countdownValue!==null} style={{width:"100%",background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:11,padding:"13px",cursor:countdownValue!==null?"not-allowed":"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.35)",animation:"recitingGlow 2s ease-in-out infinite",opacity:countdownValue!==null?.6:1}}>
+            <Play size={18}/> {countdownValue!==null?`Starting in ${countdownValue}…`:`▶ Start Reciting — ${activeP?.participant_name}`}
           </button>
         </div>
       )}
@@ -2409,8 +2471,8 @@ export default function MustabaqahPage() {
                       <div style={{padding:"0 9px 9px"}}>
                         <QuestionDisplay tile={pickedTile} ayahText={ayahText} loadingAyah={loadingAyah} isParticipant={false} instructions={liveInstructions||undefined}/>
                         {activeP.status!=="reciting"&&activeP.status!=="completed"&&(
-                          <button onClick={startReciting} style={{width:"100%",marginTop:10,background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:11,padding:"14px",cursor:"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.35)",animation:"recitingGlow 2s ease-in-out infinite"}}>
-                            <Play size={18}/> ▶ Start Reciting — {activeP.participant_name}
+                          <button onClick={beginCountdown} disabled={countdownValue!==null} style={{width:"100%",marginTop:10,background:`linear-gradient(135deg,${GREEN}dd,#16a34a)`,color:"#fff",border:"none",borderRadius:11,padding:"14px",cursor:countdownValue!==null?"not-allowed":"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:8,boxShadow:"0 4px 20px rgba(34,197,94,.35)",animation:"recitingGlow 2s ease-in-out infinite",opacity:countdownValue!==null?.6:1}}>
+                            <Play size={18}/> {countdownValue!==null?`Starting in ${countdownValue}…`:`▶ Start Reciting — ${activeP.participant_name}`}
                           </button>
                         )}
                       </div>
