@@ -469,29 +469,75 @@ const useAudioOnlyMode = () => {
 
 /* ══════════════════════════════════════════════════════════════════════
    FEATURE 5: CONNECTION HEARTBEAT PING
-   Sends a lightweight Supabase realtime ping every 15s.
-   If 2 consecutive pings fail → proactively drops video before
-   LiveKit even detects the quality drop. Prevents the sudden disconnect
-   by degrading gracefully first.
+   Sends a lightweight Supabase ping every 15s. If several consecutive
+   pings fail AND LiveKit's own connection quality agrees things are bad,
+   proactively drops video before LiveKit even detects the quality drop.
+
+   ROOT-CAUSE FIX ("camera turns itself off / unclicks by itself, often
+   right after opening materials"):
+   1. `.single()` throws whenever the query returns 0 OR MORE THAN 1 row.
+      A stale/duplicated `live_sessions` row for this id (a known separate
+      data bug) made this "ping" fail on EVERY call, forever — switched to
+      `.maybeSingle()` which never throws just because of row count, so a
+      duplicate/missing row can no longer masquerade as a dead connection.
+   2. This ping has nothing to do with the actual media connection — it's
+      a plain REST call, so it competes for bandwidth/HTTP connection
+      slots with whatever else is happening (e.g. opening a subject
+      material triggers a materials-list fetch + PDF pre-warm downloads).
+      On a throttled/slow connection those bursts alone were enough to
+      delay this unrelated ping past 2 cycles and trip a false "weak
+      connection" verdict. Now it's ignored while the tab is backgrounded
+      (visibilitychange throttles timers anyway and produces bogus
+      misses), needs 3 misses instead of 2, and — critically — is
+      corroborated against LiveKit's OWN connection-quality reading
+      before it's allowed to touch the camera at all.
+   3. It never set `cameraAutoDisabledByNetwork`, so the *other* recovery
+      logic (useNetworkQuality, below) had no idea this hook had turned
+      the camera off and could never turn it back on — the camera just
+      stayed off for the rest of the class with no way back except the
+      student noticing and re-clicking it themselves. Now it sets the
+      flag AND restores the camera itself once pings succeed again.
    ══════════════════════════════════════════════════════════════════════ */
 const useConnectionHeartbeat = (sessionId: string | null, active: boolean) => {
   const room = useRoomContext();
   const missRef  = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const disabledByUsRef = useRef(false); // true only while THIS hook turned the camera off
 
   useEffect(() => {
     if (!active || !sessionId) return;
     const ping = async () => {
+      // Backgrounded tabs throttle/delay fetches for reasons that have
+      // nothing to do with actual network health — don't let that count.
+      if (document.visibilityState === "hidden") return;
       try {
         const { error } = await supabase
-          .from("live_sessions").select("id").eq("id", sessionId).single();
+          .from("live_sessions").select("id").eq("id", sessionId).maybeSingle();
         if (error) throw error;
         missRef.current = 0; // success — reset miss counter
+        // Recovery: if WE were the ones who turned the camera off, and the
+        // student hasn't since toggled it themselves in the meantime (flag
+        // still true), turn it back on now that the ping is healthy again.
+        if (disabledByUsRef.current && cameraAutoDisabledByNetwork.current && room?.localParticipant) {
+          try {
+            await room.localParticipant.setCameraEnabled(true);
+            cameraAutoDisabledByNetwork.current = false;
+            disabledByUsRef.current = false;
+            toast({ title: "📷 Connection recovered", description: "Camera restored." });
+          } catch {}
+        }
       } catch {
         missRef.current += 1;
-        if (missRef.current >= 2 && room?.localParticipant) {
-          // 2 consecutive failures = network degrading → camera off proactively
-          try { await room.localParticipant.setCameraEnabled(false); } catch {}
+        // Require 3 consecutive misses (not 2) AND corroboration from LiveKit's
+        // own connection-quality signal — a lone flaky REST call is not
+        // sufficient evidence the actual media connection is degraded.
+        const lp: any = room?.localParticipant;
+        const liveKitAgrees = lp?.connectionQuality === ConnectionQuality.Poor
+                            || lp?.connectionQuality === ConnectionQuality.Lost;
+        if (missRef.current >= 3 && liveKitAgrees && lp && lp.isCameraEnabled) {
+          try { await lp.setCameraEnabled(false); } catch {}
+          cameraAutoDisabledByNetwork.current = true;
+          disabledByUsRef.current = true;
           toast({
             title: "⚠️ Weak connection detected",
             description: "Camera turned off to keep audio running.",
