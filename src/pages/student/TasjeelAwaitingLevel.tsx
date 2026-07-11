@@ -87,7 +87,7 @@ const TasjeelAwaitingLevel = () => {
   const joinSession = () => {
     if (!user) return;
     const roomName = `recitation-eval-${user.id}`;
-    navigate(`/student/live-classes?room=${roomName}&type=recitation`);
+    navigate(`/student/recitation-session?room=${roomName}&type=recitation`);
   };
 
   const steps = [
