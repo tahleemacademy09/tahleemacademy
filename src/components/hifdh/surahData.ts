@@ -26,6 +26,12 @@ export const RECITERS: Reciter[] = [
   { id: "Abdurrahmaan_As-Sudais_192kbps",  label: "Sudais",              labelAr: "السديس"          },
   { id: "Abu_Bakr_Ash-Shaatree_128kbps",   label: "Abu Bakr Ash-Shatri", labelAr: "أبو بكر الشاطري" },
   { id: "Saad_Al-Ghamdi_128kbps",          label: "Saad Al-Ghamdi",      labelAr: "سعد الغامدي"    },
+  { id: "Muhammad_Ayyoub_128kbps",         label: "Muhammad Ayyoub",     labelAr: "محمد أيوب"       },
+  { id: "Muhammad_Jibreel_128kbps",        label: "Muhammad Jibreel",    labelAr: "محمد جبريل"      },
+  { id: "Saood_ash-Shuraym_128kbps",       label: "Saud Al-Shuraim",     labelAr: "سعود الشريم"     },
+  { id: "Maher_AlMuaiqly_64kbps",          label: "Maher Al-Muaiqly",    labelAr: "ماهر المعيقلي"   },
+  { id: "Hani_Rifai_192kbps",              label: "Hani Ar-Rifai",       labelAr: "هاني الرفاعي"    },
+  { id: "Hudhaify_128kbps",                label: "Ali Al-Hudhaify",     labelAr: "علي الحذيفي"     },
 ];
 
 export const DEFAULT_RECITER = RECITERS[0].id;
