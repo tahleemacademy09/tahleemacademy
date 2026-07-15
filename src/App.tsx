@@ -62,6 +62,7 @@ const EntranceExamTaking  = lazy(() => import("./pages/student/EntranceExamTakin
 const EntranceExamResume  = lazy(() => import("./pages/student/EntranceExamResume"));
 const EntranceResults     = lazy(() => import("./pages/student/EntranceResults"));
 const RevisionHub         = lazy(() => import("./pages/student/RevisionHub"));
+const QuranPage               = lazy(() => import("./pages/student/QuranPage"));
 const HifdhPage              = lazy(() => import("./pages/student/HifdhPage"));
 const HifdhDailyRevisionPage = lazy(() => import("./pages/student/HifdhDailyRevisionPage"));
 const RevisionRoom           = lazy(() => import("./pages/student/RevisionRoom"));
@@ -107,6 +108,7 @@ const PublicClassManagement = lazy(() => import("./pages/admin/PublicClassManage
 const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"));
 const HifdhRevisionTracker  = lazy(() => import("./pages/admin/HifdhRevisionTracker"));
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
+const QuranRecitationAdmin  = lazy(() => import("./pages/admin/QuranRecitationAdmin"));
 const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment"));
 const AdminRecitationSession = lazy(() => import("./pages/admin/RecitationSession"));
 const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
@@ -217,6 +219,7 @@ const App = () => (
                   {/* TasjeelGuard blocks dashboard access for mid-registration students */}
                   <Route element={<ProtectedRoute><TasjeelGuard><DashboardLayout role="student" /></TasjeelGuard></ProtectedRoute>}>
                     <Route path="/student"                     element={<StudentDashboard />} />
+                    <Route path="/student/quran"                element={<QuranPage />} />
                     <Route path="/student/courses"             element={<LearningHub />} />
                     <Route path="/student/courses/:courseId"   element={<LearningHub />} />
                     <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
@@ -304,6 +307,7 @@ const App = () => (
                     <Route path="/admin/recitation-review"           element={<HifdhAdminReview />} />
                     <Route path="/admin/hifdh-tracker"               element={<HifdhRevisionTracker />} />
                     <Route path="/admin/recitation-test-settings"    element={<RecitationTestAdmin />} />
+                    <Route path="/admin/quran-recitations"           element={<QuranRecitationAdmin />} />
                     <Route path="/admin/level-assignment"            element={<LevelAssignment />} />
                     <Route path="/admin/recitation-session"          element={<AdminRecitationSession />} />
                     <Route path="/admin/levels"                      element={<LevelManagement />} />
