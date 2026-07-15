@@ -151,7 +151,8 @@ const Index = () => {
 
       /* ── HERO ── */
       .ta-hero { position:relative; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
-      .ta-hero-bg { position:absolute; inset:0; background-image:url('/images/hero-bg.jpg'); background-size:cover; background-position:center 30%; filter:brightness(.42) saturate(.85); }
+      .ta-hero-bg { position:absolute; inset:0; background:radial-gradient(ellipse at center,#0f2e1c 0%,#0a1f12 55%,#040e06 100%); }
+      .ta-hero-bg::before { content:''; position:absolute; inset:0; background-image:url('/brand-logo.png'); background-repeat:no-repeat; background-position:center; background-size:min(70vh,640px); opacity:.14; filter:saturate(1.1); }
       .ta-hero-overlay { position:absolute; inset:0; background:linear-gradient(165deg,rgba(4,14,7,.72) 0%,rgba(8,28,16,.4) 45%,rgba(4,12,7,.75) 100%); }
 
       /* Geometric star behind hero text — the signature element */
