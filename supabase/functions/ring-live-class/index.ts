@@ -129,6 +129,31 @@ async function sendTelegramRing(
 //    via dispatch-notification, since "admin_class_ring" is not in its
 //    CLASS_TYPES exclusion list) ────────────────────────────────────────────
 
+// ── Preferences (mute / channel opt-out — quiet hours never apply to a ring:
+//    a class starting now is the one thing that should ring like a phone
+//    call regardless of the hour) ────────────────────────────────────────────
+
+type Prefs = { push_enabled: boolean; telegram_enabled: boolean; muted_types: string[] };
+const DEFAULT_PREFS: Prefs = { push_enabled: true, telegram_enabled: true, muted_types: [] };
+
+async function getPrefs(sb: ReturnType<typeof createClient>, userId: string): Promise<Prefs> {
+  const { data } = await sb
+    .from("notification_preferences")
+    .select("push_enabled, telegram_enabled, muted_types")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return data ? { ...DEFAULT_PREFS, ...data } : DEFAULT_PREFS;
+}
+
+async function logDelivery(
+  sb: ReturnType<typeof createClient>,
+  opts: { user_id: string; channel: "web_push" | "telegram"; status: "sent" | "failed" | "expired" | "skipped"; error?: string }
+): Promise<void> {
+  await sb.from("notification_deliveries").insert({
+    notification_id: null, user_id: opts.user_id, channel: opts.channel, status: opts.status, error: opts.error ?? null,
+  }).then(({ error }) => { if (error) console.warn("[ring-live-class] delivery log failed:", error.message); });
+}
+
 async function notifyAdminsClassStarted(
   sb: ReturnType<typeof createClient>,
   opts: { sessionId: string; subjectTitle: string; teacherName: string; ringTag: string }
@@ -137,23 +162,16 @@ async function notifyAdminsClassStarted(
   if (!admins?.length) return;
 
   for (const admin of admins as any[]) {
-    const { data: existing } = await sb
-      .from("notifications")
-      .select("id")
-      .eq("user_id", admin.user_id)
-      .eq("type", "admin_class_ring")
-      .ilike("link", `%${opts.ringTag}%`)
-      .limit(1);
-    if ((existing?.length ?? 0) > 0) continue;
-
-    await sb.from("notifications").insert({
+    const { error } = await sb.from("notifications").insert({
       user_id: admin.user_id,
       title:   `📞 ${opts.subjectTitle} is LIVE now`,
       message: `${opts.teacherName} has started the class "${opts.subjectTitle}".`,
       type:    "admin_class_ring",
+      dedup_key: `class-ring:${opts.sessionId}:admin:${admin.user_id}`,
       link:    `/admin/live-classes#${opts.ringTag}`,
       is_read: false,
-    }).catch(() => {});
+    });
+    if (error && error.code !== "23505") console.warn("[ring-live-class] admin bell insert failed:", error.message);
   }
 }
 
@@ -174,29 +192,9 @@ async function ringSession(
   session: { id: string; subject_id: string; host_id?: string | null }
 ): Promise<RingStats> {
   const { id: session_id, subject_id, host_id } = session;
-
-  // ── Idempotency guard ────────────────────────────────────────────────────
-  // A session could be picked up by more than one cron tick (jitter window
-  // overlap) or force-rung manually after already ringing — guard by
-  // checking for a ring notification already tagged with this session_id.
   const ringTag = `ring:${session_id}`;
-  const { data: existingRing } = await sb
-    .from("notifications")
-    .select("id")
-    .eq("type", "class_ring")
-    .ilike("link", `%${ringTag}%`)
-    .limit(1);
 
-  if ((existingRing?.length ?? 0) > 0) {
-    console.log(`[ring-live-class] session ${session_id} already rung — skipping`);
-    return {
-      session_id, total_students: 0, rung: 0,
-      web_push: { attempted: 0, sent: 0, failed: 0, expired: 0, sample_errors: [] },
-      skipped: "already_rung",
-    };
-  }
-
-  // ── Get subject and teacher info ─────────────────────────────────────────
+  // ── Get subject and teacher info (needed for the claim insert below) ─────
   const { data: subject } = await sb
     .from("subjects")
     .select("id, title, title_ar, levels, level, teacher_id")
@@ -205,6 +203,45 @@ async function ringSession(
 
   const subjectTitle = (subject as any)?.title_ar || (subject as any)?.title || "Class";
   const teacherId    = (subject as any)?.teacher_id || host_id;
+
+  // ── Idempotency guard ────────────────────────────────────────────────────
+  // A session could be picked up by more than one cron tick (jitter window
+  // overlap) or force-rung manually after already ringing. CHANGE: the old
+  // guard did a SELECT to check "has this already rung?" then, later in this
+  // function, INSERTed — two overlapping cron ticks could both pass the
+  // SELECT before either INSERT landed, causing a full duplicate ring
+  // broadcast to every student. Now it's a single atomic INSERT (to the
+  // teacher, confirming "your class is live" — a genuinely useful
+  // notification that doubles as the dedup lock); the unique index on
+  // dedup_key means only one cron tick can ever win this insert.
+  const { error: claimErr } = await sb.from("notifications").insert({
+    user_id: teacherId,
+    title:   `📞 Your class "${subjectTitle}" is now live`,
+    message: `Students are being notified now.`,
+    type:    "class_ring",
+    dedup_key: `class-ring-lock:${session_id}`,
+    link:    `/teacher/live-classes?subject=${subject_id}`,
+    is_read: false,
+  });
+
+  if (claimErr) {
+    if (claimErr.code === "23505") {
+      console.log(`[ring-live-class] session ${session_id} already rung — skipping`);
+      return {
+        session_id, total_students: 0, rung: 0,
+        web_push: { attempted: 0, sent: 0, failed: 0, expired: 0, sample_errors: [] },
+        skipped: "already_rung",
+      };
+    }
+    console.warn(`[ring-live-class] claim insert failed for ${session_id}:`, claimErr.message);
+    // Not a duplicate — a real DB error. Fail safe by not ringing rather than
+    // risking an un-deduped double ring if the insert partially succeeded.
+    return {
+      session_id, total_students: 0, rung: 0,
+      web_push: { attempted: 0, sent: 0, failed: 0, expired: 0, sample_errors: [claimErr.message] },
+      skipped: "claim_error",
+    };
+  }
 
   const { data: teacherProfile } = await sb
     .from("profiles")
@@ -305,11 +342,17 @@ async function ringSession(
   for (const studentId of allStudentIds) {
     const userPushSubs = pushSubMap.get(studentId) ?? [];
     const profile = profileMap.get(studentId);
+    const prefs = await getPrefs(sb, studentId);
+
+    if (prefs.muted_types.includes("class_ring")) continue; // student opted out of ring notifications entirely
 
     // ── Web Push ─────────────────────────────────────────────────────────
-    const webPushSubs = userPushSubs.filter((sub: any) =>
-      sub?.endpoint && !sub.endpoint.startsWith("native:") && sub.p256dh && sub.auth
-    );
+    const webPushSubs = prefs.push_enabled
+      ? userPushSubs.filter((sub: any) => sub?.endpoint && !sub.endpoint.startsWith("native:") && sub.p256dh && sub.auth)
+      : [];
+    if (!prefs.push_enabled) {
+      await logDelivery(sb, { user_id: studentId, channel: "web_push", status: "skipped", error: "preference" });
+    }
     for (const pushSub of webPushSubs) {
       webPushAttempted++;
       const result = await sendRingPush(pushSub, ringPayload);
@@ -326,23 +369,40 @@ async function ringSession(
         }
       }
     }
+    if (prefs.push_enabled && webPushSubs.length > 0) {
+      await logDelivery(sb, {
+        user_id: studentId, channel: "web_push",
+        status: webPushFailed === 0 ? "sent" : "failed",
+        error: `attempted ${webPushSubs.length}`,
+      });
+    }
 
     // ── Telegram ─────────────────────────────────────────────────────────
     const chatId = profile?.telegram_chat_id;
-    if (chatId) {
+    if (chatId && prefs.telegram_enabled) {
       await sendTelegramRing(String(chatId), subjectTitle, teacherName, joinUrl);
+      await logDelivery(sb, { user_id: studentId, channel: "telegram", status: "sent" });
       if (webPushSubs.length === 0) rung++;
+    } else if (chatId && !prefs.telegram_enabled) {
+      await logDelivery(sb, { user_id: studentId, channel: "telegram", status: "skipped", error: "preference" });
     }
 
     // ── In-app notification ──────────────────────────────────────────────
-    await sb.from("notifications").insert({
+    // dedup_key here is a secondary safety net — the real dedup guard is the
+    // teacher claim insert above, which already stops a second cron tick
+    // from reaching this loop at all.
+    const { error: notifErr } = await sb.from("notifications").insert({
       user_id: studentId,
       title:   `📞 ${subjectTitle} is LIVE now!`,
       message: `${teacherName} has started the class. Join immediately.`,
       type:    "class_ring",
+      dedup_key: `class-ring:${session_id}:${studentId}`,
       link:    `/student/live-classes?subject=${subject_id}&autoJoin=true#${ringTag}`,
       is_read: false,
-    }).catch(() => {});
+    });
+    if (notifErr && notifErr.code !== "23505") {
+      console.warn(`[ring-live-class] student bell insert failed for ${studentId}:`, notifErr.message);
+    }
   }
 
   const stats: RingStats = {
