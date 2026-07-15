@@ -168,6 +168,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
       { to:"/student/exams",       icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") },
       { to:"/student/transcripts", icon:GraduationCap, label:t("As-Sijill","السجل الأكاديمي") },
+      { to:"/student/attendance",  icon:CheckSquare,   label:t("Al-Ḥuḍūr (Attendance)","الحضور والغياب") },
     ]},
     { type:"link", to:"/student/majlis",     icon:MessageCircle, label:t("Al-Majlis","المجلس") },
     // ── Musabaqah (updated route) ──────────────────────────────
