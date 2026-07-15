@@ -65,13 +65,13 @@ const RevisionHub         = lazy(() => import("./pages/student/RevisionHub"));
 const HifdhPage              = lazy(() => import("./pages/student/HifdhPage"));
 const HifdhDailyRevisionPage = lazy(() => import("./pages/student/HifdhDailyRevisionPage"));
 const RevisionRoom           = lazy(() => import("./pages/student/RevisionRoom"));
-const PaymentScreen       = lazy(() => import("./pages/student/PaymentScreen"));
 const RecordingPlayer     = lazy(() => import("./pages/student/RecordingPlayer"));
 const EnrollmentPayment   = lazy(() => import("./pages/student/EnrollmentPayment"));
 const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
 const RecitationSession    = lazy(() => import("./pages/student/RecitationSession"));
 const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
 const StudentAssignments   = lazy(() => import("./pages/student/StudentAssignments"));
+const StudentAttendance    = lazy(() => import("./pages/student/StudentAttendance"));
 const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
 
 // ── Musabaqah ──────────────────────────────────────────────────────────────
@@ -230,6 +230,7 @@ const App = () => (
                     <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
                     <Route path="/student/assignments"         element={<StudentAssignments />} />
+                    <Route path="/student/attendance"          element={<StudentAttendance />} />
                     <Route path="/student/profile"             element={<ProfileSettings />} />
                     <Route path="/student/enrollment-payment"  element={<EnrollmentPayment />} />
                     {/* Hub: choose between Quiz Arena or Recitation Competition */}
@@ -245,7 +246,6 @@ const App = () => (
                   <Route path="/student/entrance-exam/:attemptId"    element={<ProtectedRoute><EntranceExamTaking /></ProtectedRoute>} />
                   <Route path="/student/entrance-exam"              element={<ProtectedRoute><EntranceExamResume /></ProtectedRoute>} />
                   <Route path="/student/entrance-results/:attemptId" element={<ProtectedRoute><EntranceResults /></ProtectedRoute>} />
-                  <Route path="/student/payment"                     element={<ProtectedRoute><PaymentScreen /></ProtectedRoute>} />
                   <Route path="/student/awaiting-level"              element={<ProtectedRoute><TasjeelAwaitingLevel /></ProtectedRoute>} />
                   <Route path="/student/recitation-session"          element={<ProtectedRoute><RecitationSession /></ProtectedRoute>} />
 
