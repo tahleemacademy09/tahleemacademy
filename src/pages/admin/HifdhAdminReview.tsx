@@ -426,7 +426,7 @@ export default function HifdhAdminReview(){
         await (supabase as any).from("notifications").insert({
           user_id:log.student_id,title:"📖 Hifdh Revision Reviewed",
           message:`Your revision on ${fmtDate(log.log_date)} was reviewed. Score: ${newScore}%.${ov.feedback?` \"${ov.feedback}\"`:""}`  ,
-          type:"hifdh_review",read:false,created_at:new Date().toISOString(),
+          type:"hifdh_review",is_read:false,created_at:new Date().toISOString(),
         });
         toast({title:"✅ Review saved & student notified"});
         setExpandedSession(null);
