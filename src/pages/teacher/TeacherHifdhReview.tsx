@@ -190,7 +190,7 @@ export default function TeacherHifdhReview() {
           user_id: log.student_id,
           title: "📖 Hifdh Revision Reviewed",
           message: `Your revision on ${fmtDate(log.log_date)} was reviewed. Score: ${newScore}%. ${ov.feedback?`"${ov.feedback}"`:""}`  ,
-          type: "hifdh_review", read: false, created_at: new Date().toISOString(),
+          type: "hifdh_review", is_read: false, created_at: new Date().toISOString(),
         });
         toast({ title: "✅ Review saved & student notified" });
         setExpanded(null);
