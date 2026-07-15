@@ -5254,6 +5254,24 @@ export const syncManualAttendanceFromSession=async(sessionId:string,subject:any,
   if(rows.length===0)return;
   try{
     await supabase.from("manual_attendance").upsert(rows,{onConflict:"session_id,student_id"});
+    // Nudge the teacher to review/confirm rather than leaving this silent —
+    // deep-links straight into the pre-filled mark screen for this session.
+    const subjectLabel=subject.title||"Class";
+    const summary=`${subjectLabel}: ${joinedIds.size}/${rows.length} students detected present. Tap to confirm.`;
+    const teacherLink=`/teacher/attendance?subjectId=${subjectId}&date=${todayStr}&sessionId=${sessionId}`;
+    await supabase.from("notifications").insert({
+      user_id:teacherId, title:"Attendance ready to review",
+      message:summary, type:"info", link:teacherLink, is_read:false,
+    });
+    // Also let admins know — they review from /admin/attendance, not the teacher's page.
+    const{data:admins}=await supabase.from("user_roles").select("user_id").eq("role","admin");
+    const adminIds=[...new Set((admins||[]).map((a:any)=>a.user_id))].filter(id=>id!==teacherId);
+    if(adminIds.length>0){
+      await supabase.from("notifications").insert(adminIds.map(id=>({
+        user_id:id, title:"Attendance ready to review",
+        message:summary, type:"info", link:"/admin/attendance", is_read:false,
+      })));
+    }
   }catch(e){console.warn("[syncManualAttendanceFromSession] upsert failed:",e);}
 };
 
