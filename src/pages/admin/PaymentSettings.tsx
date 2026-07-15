@@ -2,7 +2,7 @@
    Registration Fee Payment Toggle — Admin can turn on/off payment requirement instantly
    Uses existing academy_settings table (payment_enabled key)
 */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { useToast } from "@/hooks/use-toast";
@@ -22,6 +22,15 @@ export default function PaymentSettings() {
   const [notifyStudents, setNotifyStudents] = useState(true);
   const [showConfirm, setShowConfirm] = useState(false);
   const [pendingAction, setPendingAction] = useState<"enable" | "disable" | null>(null);
+
+  // Sync the grace-days input with the value actually stored in academy_settings
+  // once it loads — previously this stayed hardcoded at "7" even if a different
+  // value had been saved before, making it look unset on every page reload.
+  useEffect(() => {
+    if (!loading && settings.payment_grace_days) {
+      setGraceDays(settings.payment_grace_days);
+    }
+  }, [loading, settings.payment_grace_days]);
 
   const confirmToggle = (action: "enable" | "disable") => {
     setPendingAction(action);
@@ -196,7 +205,7 @@ export default function PaymentSettings() {
           <p style={{ fontWeight: 800, fontSize: 14, color: "#111", marginBottom: 12 }}>Quick Actions</p>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {[
-              { label: "Enable — Ramadan (30 days free)", action: () => { setReason("Ramadan Mubarak! Registration fees waived for Ramadan."); setGraceDays("30"); confirmToggle("disable"); }, color: "#D97706", bg: "#FFF7ED" },
+              { label: "Waive — Ramadan (fees off)", action: () => { setReason("Ramadan Mubarak! Registration fees waived for Ramadan."); confirmToggle("disable"); }, color: "#D97706", bg: "#FFF7ED" },
               { label: "Enable — New term grace (14 days)", action: () => { setGraceDays("14"); confirmToggle("enable"); }, color: "#1D4ED8", bg: "#EFF6FF" },
               { label: "Disable — System maintenance", action: () => { setReason("System maintenance in progress. Fees waived temporarily."); confirmToggle("disable"); }, color: "#7C3AED", bg: "#F5F3FF" },
               { label: "Enable — Full payment required now", action: () => { setGraceDays("0"); confirmToggle("enable"); }, color: "#DC2626", bg: "#FEF2F2" },
