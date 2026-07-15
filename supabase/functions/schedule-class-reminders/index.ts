@@ -90,32 +90,36 @@ async function notifyAdminsForClass(
     ? `${opts.teacherName}'s class "${opts.classTitle}" is starting now.`
     : `${opts.teacherName}'s class "${opts.classTitle}" starts in 15 minutes.`;
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-
   for (const admin of admins as any[]) {
-    const { data: existing } = await sb
-      .from("notifications")
-      .select("id")
-      .eq("user_id", admin.user_id)
-      .eq("type", type)
-      .ilike("link", `%${key}%`)
-      .gte("created_at", todayStart.toISOString())
-      .limit(1);
-    if ((existing?.length ?? 0) > 0) continue;
-
-    await sb.from("notifications").insert({
+    // dedup_key's unique index is the guard now — no pre-check needed, just
+    // let a duplicate insert fail quietly (23505) and move to the next admin.
+    const { error } = await sb.from("notifications").insert({
       user_id: admin.user_id,
       title,
       message,
       type,
+      dedup_key: `${dedupKeyFor(admin.user_id, opts.classId, opts.threshold)}:admin`,
       link: `${opts.joinPath}#${key}`,
       is_read: false,
     });
+    if (error && error.code !== "23505") {
+      console.warn("[schedule-class-reminders] admin bell insert failed:", error.message);
+    }
   }
 }
 
 // ── Dedup ─────────────────────────────────────────────────────────────────────
+// CHANGE: previously deduped via `ilike(link, '%tag%')` — a select-then-insert
+// check that two overlapping cron ticks could both pass before either one
+// inserted (the "duplicate notification flood" mentioned below). Now uses the
+// dedup_key column, which has a unique index — the insert itself is the
+// authoritative guard (see insertNotification's 23505 handling), and this
+// pre-check is just a cheap way to skip unnecessary push/Telegram sends.
+// Includes userId because dedup_key is globally unique across all users.
+
+function dedupKeyFor(userId: string, classId: string, threshold: number): string {
+  return `class-reminder:${classId}:${threshold}:${userId}`;
+}
 
 async function alreadyNotified(
   sb: ReturnType<typeof createClient>,
@@ -123,35 +127,40 @@ async function alreadyNotified(
   classId: string,
   threshold: number
 ): Promise<boolean> {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
   const { data } = await sb
     .from("notifications")
     .select("id")
-    .eq("user_id", userId)
-    .ilike("link", `%${dedupKey(classId, threshold)}%`)
-    .gte("created_at", todayStart.toISOString())
+    .eq("dedup_key", dedupKeyFor(userId, classId, threshold))
     .limit(1);
   return (data?.length ?? 0) > 0;
 }
 
 // ── Bell notification ─────────────────────────────────────────────────────────
+// Returns the new row's id (for delivery logging) or null if this was a
+// duplicate insert (dedup_key unique-violation) or a real failure.
 
 async function insertNotification(
   sb: ReturnType<typeof createClient>,
-  opts: { userId: string; title: string; message: string; title_ar?: string; message_ar?: string; link: string; type: string }
-): Promise<void> {
-  const { error } = await sb.from("notifications").insert({
+  opts: { userId: string; title: string; message: string; title_ar?: string; message_ar?: string; link: string; type: string; dedupKey: string }
+): Promise<{ id: string | null; duplicate: boolean }> {
+  const { data, error } = await sb.from("notifications").insert({
     user_id:    opts.userId,
     title:      opts.title,
     message:    opts.message,
     title_ar:   opts.title_ar   ?? null,
     message_ar: opts.message_ar ?? null,
     type:       opts.type,
+    dedup_key:  opts.dedupKey,
     link:       opts.link,
     is_read:    false,
-  });
-  if (error) console.warn(`[schedule-class-reminders] bell insert failed:`, error.message);
+  }).select("id").single();
+
+  if (error) {
+    if (error.code === "23505") return { id: null, duplicate: true }; // already sent — race caught
+    console.warn(`[schedule-class-reminders] bell insert failed:`, error.message);
+    return { id: null, duplicate: false };
+  }
+  return { id: (data as any)?.id ?? null, duplicate: false };
 }
 
 // ── Web Push ──────────────────────────────────────────────────────────────────
@@ -268,6 +277,58 @@ async function resolveStudentAudience(
   return [...new Set([...enrolledIds, ...privateIds, ...levelIds])];
 }
 
+// ── Preferences ───────────────────────────────────────────────────────────────
+// Absence of a row means "everything on" — backward compatible with existing
+// users. class_ring bypasses quiet hours entirely (see maybeNotify) — a class
+// starting now is the one thing that should still ring like a phone call.
+
+type Prefs = {
+  push_enabled: boolean;
+  telegram_enabled: boolean;
+  quiet_hours_start: string | null;
+  quiet_hours_end: string | null;
+  muted_types: string[];
+};
+const DEFAULT_PREFS: Prefs = {
+  push_enabled: true, telegram_enabled: true,
+  quiet_hours_start: null, quiet_hours_end: null, muted_types: [],
+};
+
+async function getPrefs(sb: ReturnType<typeof createClient>, userId: string): Promise<Prefs> {
+  const { data } = await sb
+    .from("notification_preferences")
+    .select("push_enabled, telegram_enabled, quiet_hours_start, quiet_hours_end, muted_types")
+    .eq("user_id", userId)
+    .maybeSingle();
+  return data ? { ...DEFAULT_PREFS, ...data } : DEFAULT_PREFS;
+}
+
+function inQuietHours(prefs: Prefs): boolean {
+  if (!prefs.quiet_hours_start || !prefs.quiet_hours_end) return false;
+  const now = new Date();
+  const nowMins = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const [sh, sm] = prefs.quiet_hours_start.split(":").map(Number);
+  const [eh, em] = prefs.quiet_hours_end.split(":").map(Number);
+  const startMins = sh * 60 + sm, endMins = eh * 60 + em;
+  if (startMins === endMins) return false;
+  return startMins < endMins ? nowMins >= startMins && nowMins < endMins : nowMins >= startMins || nowMins < endMins;
+}
+
+// ── Delivery log ──────────────────────────────────────────────────────────────
+
+async function logDelivery(
+  sb: ReturnType<typeof createClient>,
+  opts: { notification_id: string | null; user_id: string; channel: "web_push" | "telegram"; status: "sent" | "failed" | "expired" | "skipped"; error?: string }
+): Promise<void> {
+  await sb.from("notification_deliveries").insert({
+    notification_id: opts.notification_id,
+    user_id:         opts.user_id,
+    channel:         opts.channel,
+    status:          opts.status,
+    error:           opts.error ?? null,
+  }).then(({ error }) => { if (error) console.warn("[schedule-class-reminders] delivery log failed:", error.message); });
+}
+
 // ── Notify one user for one class ─────────────────────────────────────────────
 
 async function maybeNotify(
@@ -291,6 +352,13 @@ async function maybeNotify(
     const isRing  = opts.threshold === 0;
     const time12  = to12hr(opts.scheduledAt);
     const key     = dedupKey(opts.classId, opts.threshold);
+    const dkey    = dedupKeyFor(opts.userId, opts.classId, opts.threshold);
+
+    const prefs = await getPrefs(sb, opts.userId);
+    const type  = isRing ? "class_ring" : "class_reminder";
+
+    // Muted type — skip entirely, don't even insert the bell notification.
+    if (prefs.muted_types.includes(type)) return "dedup";
 
     // ── Islamic content ───────────────────────────────────────────────────────
     // All notifications start with Assalamu Alaikum (tasleem)
@@ -311,18 +379,31 @@ async function maybeNotify(
       ? `السلام عليكم ورحمة الله 🌙\n${opts.teacherName} في انتظاركم — اضغط للانضمام الآن. بارك الله في علمكم.`
       : `السلام عليكم ورحمة الله 🌙\nدرسكم "${opts.classTitle}" يبدأ الساعة ${time12}. تهيّأوا وافتحوا المصحف. بارك الله فيكم.`;
 
-    // Bell link: relative path for direct navigation — dedup key appended as hash so it
-    // doesn't interfere with query params but still lets alreadyNotified() match via ilike.
-    // DashboardLayout checks n.link.startsWith("/") to navigate without a full page reload.
+    // Bell link: relative path for direct navigation — the old dedup-tag hash
+    // is no longer needed for dedup (dedup_key column handles that now), kept
+    // only so DashboardLayout's existing link-parsing logic doesn't need to change.
     const link = `${opts.joinPath}#${key}`;
 
-    // 1. Bell
-    await insertNotification(sb, {
+    // 1. Bell — the authoritative dedup guard. If this races with another
+    //    overlapping cron tick, the unique index on dedup_key rejects the
+    //    second insert and we stop here instead of double-sending push/Telegram.
+    const { id: notificationId, duplicate } = await insertNotification(sb, {
       userId: opts.userId, title, message, title_ar, message_ar,
-      link, type: isRing ? "class_ring" : "class_reminder",
+      link, type, dedupKey: dkey,
     });
+    if (duplicate) return "dedup";
+
+    // Quiet hours — class_ring ("starting now") always bypasses this, same as
+    // a phone call would. class_reminder (the 15-min heads-up) respects it.
+    const respectQuietHours = !isRing && inQuietHours(prefs);
 
     // 2. Web Push — clean path in url so SW can deep-link without pollution
+    if (!prefs.push_enabled || respectQuietHours) {
+      await logDelivery(sb, {
+        notification_id: notificationId, user_id: opts.userId, channel: "web_push",
+        status: "skipped", error: !prefs.push_enabled ? "preference" : "quiet_hours",
+      });
+    } else {
     const { data: pushSubs } = await sb
       .from("push_subscriptions")
       .select("endpoint, p256dh, auth")
@@ -348,23 +429,39 @@ async function maybeNotify(
           vibrate: [300, 100, 300, 100, 600],
         };
 
+    let webSent = 0, webFailed = 0, webExpired = 0;
     for (const sub of (pushSubs ?? []) as any[]) {
       if (!sub?.endpoint || sub.endpoint.startsWith("native:") || !sub.p256dh || !sub.auth) continue;
       try {
         const result = await sendWebPush(sub, pushPayload, isRing ? 600 : 900);
         if (result.gone) {
+          webExpired++;
           await sb.from("push_subscriptions").delete()
             .eq("user_id", opts.userId).eq("endpoint", sub.endpoint);
           console.log("[schedule-class-reminders] cleaned expired sub for user:", opts.userId);
         } else {
+          webSent++;
           console.log(`[schedule-class-reminders] ✅ push → user=${opts.userId} threshold=${opts.threshold}`);
         }
       } catch (e: any) {
+        webFailed++;
         console.warn(`[schedule-class-reminders] push failed user=${opts.userId}:`, e.message);
       }
     }
+    await logDelivery(sb, {
+      notification_id: notificationId, user_id: opts.userId, channel: "web_push",
+      status: webSent > 0 ? "sent" : webExpired > 0 && webFailed === 0 ? "expired" : webFailed > 0 ? "failed" : "skipped",
+      error: `sent ${webSent}, expired ${webExpired}, failed ${webFailed}`,
+    });
+    }
 
     // 3. Telegram
+    if (!prefs.telegram_enabled || respectQuietHours) {
+      await logDelivery(sb, {
+        notification_id: notificationId, user_id: opts.userId, channel: "telegram",
+        status: "skipped", error: !prefs.telegram_enabled ? "preference" : "quiet_hours",
+      });
+    } else {
     const { data: prof } = await sb
       .from("profiles").select("telegram_chat_id")
       .eq("user_id", opts.userId).maybeSingle();
@@ -373,9 +470,14 @@ async function maybeNotify(
       try {
         await sendTelegram(String(chatId), title, message, opts.joinUrl);
         console.log(`[schedule-class-reminders] ✅ telegram → user=${opts.userId}`);
+        await logDelivery(sb, { notification_id: notificationId, user_id: opts.userId, channel: "telegram", status: "sent" });
       } catch (e: any) {
         console.warn(`[schedule-class-reminders] telegram failed user=${opts.userId}:`, e.message);
+        await logDelivery(sb, { notification_id: notificationId, user_id: opts.userId, channel: "telegram", status: "failed", error: e.message });
       }
+    } else {
+      await logDelivery(sb, { notification_id: notificationId, user_id: opts.userId, channel: "telegram", status: "skipped", error: "not_linked" });
+    }
     }
 
     return "sent";
