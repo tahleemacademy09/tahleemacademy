@@ -2,3 +2,6 @@ project_id = "wvqeubhupkddtkcdwqcm"
 
 [functions.public-class-token]
 verify_jwt = false
+
+[functions.livekit-egress-webhook]
+verify_jwt = false
