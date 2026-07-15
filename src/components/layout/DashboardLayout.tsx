@@ -16,7 +16,7 @@ import {
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
   BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
-  Activity,
+  Activity, BookText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -158,6 +158,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const studentNav: NavItem[] = [
     { type:"link", to:"/student",              icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
+    { type:"link", to:"/student/quran",        icon:BookText,        label:t("Al-Qur'an","القرآن الكريم") },
     { type:"link", to:"/student/courses",      icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
     { type:"link", to:"/student/timetable",    icon:Calendar,        label:t("Jadwal (Timetable)","الجدول الدراسي") },
     { type:"link", to:"/student/assignments",  icon:ClipboardList,   label:t("Assignments","الواجبات") },
@@ -230,6 +231,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"group", key:"recit", icon:Mic, label:t("Recitation & Ḥifẓ","التلاوة والحفظ"), children:[
       { to:"/admin/recitation-review",        icon:Mic,      label:t("Recitation Review","مراجعة التلاوة") },
       { to:"/admin/recitation-test-settings", icon:Settings, label:t("Recitation Settings","إعدادات التلاوة") },
+      { to:"/admin/quran-recitations",        icon:BookText, label:t("Qur'an Recitations","تسجيلات القرآن") },
     ]},
 
     // 7 ── Finance ──────────────────────────────────────────────
