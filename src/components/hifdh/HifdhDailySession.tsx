@@ -730,7 +730,7 @@ export default function HifdhDailySession({ assignment, userId, onClose }: Props
           title:      `📖 ${studentName} completed Hifdh revision`,
           message:    `${modeLabel} ${itemsStr} — Score: ${overallScore}% (${pagesToRevise.length} page${pagesToRevise.length > 1 ? "s" : ""})`,
           type:       "hifdh_complete",
-          read:       false,
+          is_read:    false,
           created_at: new Date().toISOString(),
         });
       }
