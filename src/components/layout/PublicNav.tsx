@@ -212,13 +212,8 @@ const PublicNav = () => {
 
           {/* Logo */}
           <Link to="/" onClick={close} style={{ textDecoration:"none", display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
-            <div style={{ width:38, height:38, borderRadius:10, background:G, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              <BookOpen style={{ width:19, height:19, color:GOLD }} />
-            </div>
-            <div>
-              <div style={{ fontSize:16, fontWeight:900, color:G, lineHeight:1 }}>Tahleem <span style={{ color:GOLD }}>Academy</span></div>
-              <div style={{ fontSize:10, color:"#7a9e88", direction:"rtl" }}>أكاديمية التعليم</div>
-            </div>
+            <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width:40, height:40, borderRadius:10, objectFit:"contain", flexShrink:0 }} />
+            <div style={{ fontSize:16, fontWeight:900, color:G, lineHeight:1 }}>Tahleem <span style={{ color:GOLD }}>Academy</span></div>
           </Link>
 
           {/* Desktop nav */}
