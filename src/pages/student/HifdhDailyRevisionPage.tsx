@@ -2173,7 +2173,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       const modeLabel=assignment.mode==="juz"?"Juz":assignment.mode==="hizb"?"Hizb":"Surah";
       const items=assignment.selected_items.slice(0,3).join(", ");
       const msg=`${modeLabel} ${items} — Recitation: ${recAvg}% · Test: ${tScore}% · Overall: ${overall}% · ${todayPages.length} page${todayPages.length>1?"s":""} done`;
-      const notifBase={title:`📖 ${name} completed Daily Hifdh Revision`,message:msg,type:"hifdh_complete",read:false,created_at:new Date().toISOString()};
+      const notifBase={title:`📖 ${name} completed Daily Hifdh Revision`,message:msg,type:"hifdh_complete",is_read:false,created_at:new Date().toISOString()};
       const {data:admins}=await supabase.from("profiles").select("user_id").eq("role","admin" as any);
       const recipients=[...(admins||[]).map((a:any)=>a.user_id)];
       if(assignedTeacher && !recipients.includes(assignedTeacher)) recipients.push(assignedTeacher);
