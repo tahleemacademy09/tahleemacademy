@@ -9,7 +9,8 @@
 //     so re-saving won't duplicate rows.
 //  5. Existing attendance is loaded correctly by subject + date, not just session.
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -34,6 +35,7 @@ const TeacherAttendance = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams] = useSearchParams();
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const [subjects,  setSubjects]  = useState<any[]>([]);
@@ -41,13 +43,19 @@ const TeacherAttendance = () => {
   const [sessions,  setSessions]  = useState<any[]>([]);
   const [attendance, setAttendance] = useState<Record<string, StatusKey>>({});
   const [notes,     setNotes]     = useState<Record<string, string>>({});
+  // Auto-detected join time/duration per student for the selected session —
+  // shown next to the present/late/absent toggle so the teacher can see what
+  // the pre-fill was based on, instead of trusting a blank checkbox.
+  const [joinInfo,  setJoinInfo]  = useState<Record<string, { joinedAt: string; durationSec: number }>>({});
 
   // ── Selection ─────────────────────────────────────────────────────────────
   const [selectedSubject, setSelectedSubject] = useState<any>(null);
   const [selectedDate,    setSelectedDate]    = useState<string>(
-    new Date().toISOString().split("T")[0]   // today
+    searchParams.get("date") || new Date().toISOString().split("T")[0]
   );
-  const [selectedSession, setSelectedSession] = useState<string>("none");
+  const [selectedSession, setSelectedSession] = useState<string>(
+    searchParams.get("sessionId") || "none"
+  );
 
   // ── UI ────────────────────────────────────────────────────────────────────
   const [phase,   setPhase]   = useState<"list" | "mark">("list");
@@ -183,6 +191,50 @@ const TeacherAttendance = () => {
       loadAttendance(selectedSubject.id, selectedDate, selectedSession);
     }
   }, [selectedDate, selectedSession, selectedSubject, phase, loadAttendance]);
+
+  // ── 3b. Auto-detected join time/duration for the selected session ─────────
+  // Pulled from attendance_logs (written live by the classroom as students
+  // join/leave) so the teacher can see what the present/absent pre-fill was
+  // based on, not just a bare checkbox.
+  useEffect(() => {
+    if (!selectedSession || selectedSession === "none") { setJoinInfo({}); return; }
+    (async () => {
+      const { data } = await supabase
+        .from("attendance_logs")
+        .select("user_id, joined_at, duration_seconds")
+        .eq("session_id", selectedSession);
+      const map: Record<string, { joinedAt: string; durationSec: number }> = {};
+      (data || []).forEach((r: any) => {
+        map[r.user_id] = { joinedAt: r.joined_at, durationSec: r.duration_seconds || 0 };
+      });
+      setJoinInfo(map);
+    })();
+  }, [selectedSession]);
+
+  // ── Deep link: /teacher/attendance?subjectId=&date=&sessionId= ────────────
+  // Lands the teacher directly in the pre-filled mark screen for a specific
+  // class instead of making them reselect subject/date/session from scratch —
+  // used by the "attendance ready to review" notification after a class ends.
+  const appliedDeepLink = useRef(false);
+  useEffect(() => {
+    if (appliedDeepLink.current) return;
+    if (subjects.length === 0) return;
+    const subjectId = searchParams.get("subjectId");
+    if (!subjectId) { appliedDeepLink.current = true; return; }
+    const match = subjects.find(s => s.id === subjectId);
+    appliedDeepLink.current = true;
+    if (!match) return;
+    (async () => {
+      setSelectedSubject(match);
+      await loadSubjectData(match);
+      setPhase("mark");
+      const date = searchParams.get("date") || selectedDate;
+      const sessionId = searchParams.get("sessionId") || "none";
+      setSelectedDate(date);
+      setSelectedSession(sessionId);
+      await loadAttendance(match.id, date, sessionId);
+    })();
+  }, [subjects, searchParams, loadSubjectData, loadAttendance, selectedDate]);
 
   // ── 4. Save attendance ────────────────────────────────────────────────────
   const saveAttendance = async () => {
@@ -363,7 +415,13 @@ const TeacherAttendance = () => {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: 800, fontSize: 13, color: "#111", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.full_name || "—"}</p>
-                      <p style={{ fontSize: 10, color: "#9CA3AF", margin: "2px 0 0" }}>{s.level || ""}</p>
+                      <p style={{ fontSize: 10, color: "#9CA3AF", margin: "2px 0 0" }}>
+                        {joinInfo[s.user_id]
+                          ? `${t("Joined","انضم")} ${new Date(joinInfo[s.user_id].joinedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${Math.round(joinInfo[s.user_id].durationSec / 60)}${t("m","د")}`
+                          : selectedSession !== "none"
+                            ? t("Did not join the class", "لم ينضم للحصة")
+                            : (s.level || "")}
+                      </p>
                     </div>
                     {/* Status indicator */}
                     <span style={{ fontSize: 10, padding: "3px 10px", borderRadius: 20, background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}`, fontWeight: 800 }}>
