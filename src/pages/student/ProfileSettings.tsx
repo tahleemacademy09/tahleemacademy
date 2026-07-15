@@ -35,10 +35,16 @@ import { enablePushNotifications } from "@/components/NotificationPermissionBann
 const DM_KEY = "tahleem_dark_mode";
 
 function applyDark(enabled: boolean) {
+  // index.css defines dark-mode CSS variables under a `.dark` class selector
+  // (Tailwind/shadcn convention), not `[data-theme="dark"]`. We set both:
+  // the class so any Tailwind/shadcn-based component actually re-themes,
+  // and the data-theme attribute for any custom CSS keyed off it.
   if (enabled) {
+    document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
     document.documentElement.style.colorScheme = "dark";
   } else {
+    document.documentElement.classList.remove("dark");
     document.documentElement.removeAttribute("data-theme");
     document.documentElement.style.colorScheme = "light";
   }
@@ -207,6 +213,7 @@ export default function ProfileSettings() {
   const [notifsLoaded,    setNotifsLoaded]    = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [showDelete,      setShowDelete]      = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [showPw,          setShowPw]          = useState(false);
   const [showPwVis,       setShowPwVis]       = useState(false);
   const [changingPw,      setChangingPw]      = useState(false);
@@ -475,6 +482,21 @@ export default function ProfileSettings() {
     setChangingPw(false);
     if (error) toast({ title: "Error", description: error.message, variant: "destructive" });
     else { toast({ title: "✅ Password updated!" }); setShowPw(false); setPw({ new: "", confirm: "" }); }
+  };
+
+  const deleteAccount = async () => {
+    if (!user) return;
+    setDeletingAccount(true);
+    const { error } = await (supabase as any).rpc("delete_own_account");
+    setDeletingAccount(false);
+    if (error) {
+      toast({ title: "Delete failed", description: error.message, variant: "destructive" });
+      return;
+    }
+    setShowDelete(false);
+    toast({ title: "Account deleted", description: "Sorry to see you go. You've been signed out." });
+    await signOut();
+    navigate("/login");
   };
 
   const uploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -758,6 +780,9 @@ export default function ProfileSettings() {
                 }}
               />
             </div>
+            <p style={{ fontSize: 10.5, color: T.text2, margin: "6px 2px 0", lineHeight: 1.5 }}>
+              Currently applies to this Settings page. We're rolling it out to the rest of the app next.
+            </p>
           </PSec>
 
           <PSec title="Learning" T={T}>
@@ -855,8 +880,12 @@ export default function ProfileSettings() {
             Permanently deletes your account, exam results, and learning history. Cannot be undone.
           </p>
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setShowDelete(false)} style={{ flex: 1, padding: 11, borderRadius: 11, border: `1.5px solid ${T.border}`, background: T.surface, cursor: "pointer", fontWeight: 600, fontSize: 13, color: T.text }}>Cancel</button>
-            <button style={{ flex: 1, padding: 11, borderRadius: 11, border: "none", background: "#DC2626", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Delete</button>
+            <button onClick={() => setShowDelete(false)} disabled={deletingAccount}
+              style={{ flex: 1, padding: 11, borderRadius: 11, border: `1.5px solid ${T.border}`, background: T.surface, cursor: deletingAccount ? "not-allowed" : "pointer", fontWeight: 600, fontSize: 13, color: T.text }}>Cancel</button>
+            <button onClick={deleteAccount} disabled={deletingAccount}
+              style={{ flex: 1, padding: 11, borderRadius: 11, border: "none", background: deletingAccount ? "#9CA3AF" : "#DC2626", color: "#fff", cursor: deletingAccount ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              {deletingAccount ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Deleting…</> : "Delete"}
+            </button>
           </div>
         </DialogContent>
       </Dialog>
