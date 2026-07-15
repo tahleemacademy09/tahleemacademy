@@ -124,6 +124,7 @@ export default function TeacherSettings() {
   const [saving,          setSaving]          = useState(false);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [showDelete,      setShowDelete]      = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [showPw,          setShowPw]          = useState(false);
   const [showPwVis,       setShowPwVis]       = useState(false);
   const [changingPw,      setChangingPw]      = useState(false);
@@ -253,11 +254,13 @@ export default function TeacherSettings() {
           grading_reminder:           d.grading_reminder           ?? n.grading_reminder,
         }));
         setPrefs(pr => ({ ...pr,
-          language:            d.language             ?? pr.language,
-          dark_mode:           d.dark_mode            ?? pr.dark_mode,
-          autoplay_recordings: d.autoplay_recordings  ?? pr.autoplay_recordings,
-          playback_speed:      d.playback_speed       ?? pr.playback_speed,
-          default_view:        d.default_subject_view ?? pr.default_view,
+          language:             d.language              ?? pr.language,
+          dark_mode:            d.dark_mode             ?? pr.dark_mode,
+          autoplay_recordings:  d.autoplay_recordings   ?? pr.autoplay_recordings,
+          playback_speed:       d.playback_speed        ?? pr.playback_speed,
+          default_view:         d.default_subject_view  ?? pr.default_view,
+          compact_timetable:    d.compact_timetable     ?? pr.compact_timetable,
+          show_student_details: d.show_student_details  ?? pr.show_student_details,
         }));
       }
 
@@ -552,7 +555,9 @@ export default function TeacherSettings() {
     const { error } = await (supabase as any).from("student_preferences").upsert({
       user_id: user.id, language: prefs.language, dark_mode: prefs.dark_mode,
       autoplay_recordings: prefs.autoplay_recordings, playback_speed: prefs.playback_speed,
-      default_subject_view: prefs.default_view, updated_at: new Date().toISOString(),
+      default_subject_view: prefs.default_view,
+      compact_timetable: prefs.compact_timetable, show_student_details: prefs.show_student_details,
+      updated_at: new Date().toISOString(),
     } as any, { onConflict: "user_id" });
     setSaving(false);
     if (!error) { if (prefs.language !== language) setLanguage(prefs.language as any); toast({ title: "✅ Preferences saved!" }); }
@@ -593,6 +598,21 @@ export default function TeacherSettings() {
     await supabase.from("profiles").update({ telegram_chat_id: null, telegram_link_code: null } as any).eq("user_id", user.id);
     setTgChatId(null); setTgCode(null); setTgPolling(false);
     toast({ title: "✅ Telegram unlinked" });
+  };
+
+  const deleteAccount = async () => {
+    if (!user) return;
+    setDeletingAccount(true);
+    const { error } = await (supabase as any).rpc("delete_own_account");
+    setDeletingAccount(false);
+    if (error) {
+      toast({ title: "Delete failed", description: error.message, variant: "destructive" });
+      return;
+    }
+    setShowDelete(false);
+    toast({ title: "Account deleted", description: "Sorry to see you go. You've been signed out." });
+    await signOut();
+    navigate("/login");
   };
 
   const toggleMulti = (arr: string[], val: string, set: (a: string[]) => void) =>
@@ -1244,8 +1264,12 @@ export default function TeacherSettings() {
             Permanently removes your teacher account, all classes, student assignments, and grading history. Cannot be undone — contact admin if you just need a break.
           </p>
           <div style={{ display: "flex", gap: 10 }}>
-            <button onClick={() => setShowDelete(false)} style={{ flex: 1, padding: 11, borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13 }}>Cancel</button>
-            <button style={{ flex: 1, padding: 11, borderRadius: 11, border: "none", background: "#DC2626", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>Delete</button>
+            <button onClick={() => setShowDelete(false)} disabled={deletingAccount}
+              style={{ flex: 1, padding: 11, borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", cursor: deletingAccount ? "not-allowed" : "pointer", fontWeight: 600, fontSize: 13 }}>Cancel</button>
+            <button onClick={deleteAccount} disabled={deletingAccount}
+              style={{ flex: 1, padding: 11, borderRadius: 11, border: "none", background: deletingAccount ? "#9CA3AF" : "#DC2626", color: "#fff", cursor: deletingAccount ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              {deletingAccount ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Deleting…</> : "Delete"}
+            </button>
           </div>
         </DialogContent>
       </Dialog>
