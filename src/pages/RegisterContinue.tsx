@@ -100,6 +100,26 @@ const RegisterContinue = () => {
 
     (async () => {
       try {
+        // ── PKCE FIX (mirrors AuthCallback.tsx) ──────────────────────────────
+        // Supabase v2 signUp() defaults to the PKCE flow, so the verification
+        // link lands here as ?code=... — NOT the #access_token hash this
+        // page's old comments assumed. Nothing was ever calling
+        // exchangeCodeForSession(), so no session was ever established here:
+        // `user` stayed null and the getSession() fallback below also came
+        // back empty, so every new user hit "Email verification failed or
+        // link expired" right after verifying. This must run before we look
+        // at `user` / call getSession().
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get("code");
+        if (code) {
+          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+          if (exchangeError) {
+            setErrMsg(exchangeError.message || "Email verification failed or link expired. Please try signing in again.");
+            setPhase("error");
+            return;
+          }
+        }
+
         // ── Resolve the authenticated user ──────────────────────────────────
         // FIX: previously this always ran its own fresh supabase.auth.getSession()
         // race against an 8s timeout, even when AuthContext (via useAuth() above)
