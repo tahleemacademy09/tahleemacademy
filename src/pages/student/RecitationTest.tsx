@@ -450,10 +450,14 @@ const RecitationTest = () => {
       setAiTranscript(transcript || null);
 
       // ── Score against reference ───────────────────────────────────────────
-      // Build reference text: prefer settings.surah_reference, fall back to
-      // the page ayahs loaded from the Quran API.
-      const refText = (settings.surah_reference || "")
-        || quranAyahs.map(a => a.text).join(" ");
+      // Build reference text from the actual mushaf page shown to the
+      // student (this is what they were instructed to recite). The old
+      // priority scored against settings.surah_reference first, which
+      // defaults to Al-Fatiha's text — so students reciting their assigned
+      // page were being silently graded against the wrong verses. Only fall
+      // back to settings.surah_reference if the page failed to load.
+      const refText = quranAyahs.map(a => a.text).join(" ")
+        || (settings.surah_reference || "");
 
       let breakdown: ScoreBreakdown;
       if (transcript && refText) {
@@ -664,7 +668,7 @@ const RecitationTest = () => {
                 <div style={{ textAlign:"center", marginBottom:20 }}>
                   <div style={{ fontSize:18, fontWeight:800, color:G, marginBottom:6 }}>Stage 1 — Record Your Recitation</div>
                   <div style={{ fontSize:13, color:"#666", lineHeight:1.6 }}>
-                    {settings.instructions || <>Recite <strong>Surah {settings.surah_name || "Al-Fatihah"}</strong> clearly.</>}
+                    {settings.instructions || <>Recite <strong>the page shown below</strong> clearly.</>}
                   </div>
                 </div>
 
@@ -675,7 +679,7 @@ const RecitationTest = () => {
                       {quranMeta ? `الجزء ${quranMeta.juz}` : "الجزء"}
                     </span>
                     <span style={{ fontSize:11, fontWeight:800, color:"#5C3D11", letterSpacing:.5 }}>
-                      {quranMeta?.surahEn || settings.surah_name || "Al-Fatiha"}
+                      {quranMeta?.surahEn || "Loading…"}
                     </span>
                   </div>
                   <div style={{ padding:"18px 16px", minHeight:180, direction:"rtl" as const }}>
@@ -696,8 +700,8 @@ const RecitationTest = () => {
                         ))}
                       </div>
                     ) : (
-                      <div style={{ fontSize:22, fontFamily:"'Amiri Quran','Amiri',serif", lineHeight:2.6, color:"#1A1A1A", textAlign:"justify" as const }}>
-                        {settings.surah_arabic || "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ الرَّحْمَٰنِ الرَّحِيمِ مَالِكِ يَوْمِ الدِّينِ"}
+                      <div style={{ textAlign:"center", padding:"20px 0", fontSize:13, color:"#9C7722" }}>
+                        Couldn't load page {assignedPage}. Please refresh and try again.
                       </div>
                     )}
                   </div>
@@ -715,7 +719,7 @@ const RecitationTest = () => {
                     "Find a quiet room with no background noise",
                     "Hold phone 15–20cm from your mouth",
                     "Recite clearly and at your normal pace",
-                    "Complete the full surah without stopping",
+                    "Complete the full page without stopping",
                   ]).map((tip,i) => (
                     <div key={i} style={{ fontSize:12, color:"#166534", marginBottom:i<3?4:0, display:"flex", alignItems:"flex-start", gap:6 }}>
                       <CheckCircle2 size={12} color="#16A34A" style={{ marginTop:1, flexShrink:0 }} />{tip}
