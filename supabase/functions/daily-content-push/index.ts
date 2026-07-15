@@ -3,18 +3,25 @@
   ════════════════════════════════════════════════════════════════════════
   Called once daily by pg_cron (recommended: 6:00 AM WAT = 5:00 AM UTC).
 
-  Sends phone push notifications + Telegram messages for:
+  Inserts 4 notification rows per student for:
     • Daily Quranic verse
     • Daily Hadith reminder
     • Daily Seerah highlight
     • Hifdh (memorisation) daily reminder
-    • General Islamic reminder / motivational message
 
-  Each type is sent as a separate notification so students get them
-  as individual cards in their phone notification bar.
+  CHANGE: this used to ALSO send its own web push (via pushAllPayloads) and
+  its own single-message Telegram digest, on top of inserting into
+  notifications — which already has an AFTER INSERT trigger that calls
+  dispatch-notification per row. Since "daily_content" was never in
+  dispatch-notification's CLASS_TYPES exclusion list, every student was
+  getting each of these 4 items pushed twice (once from here, once from the
+  trigger) and a 5th, differently-formatted Telegram message on top of the
+  4 the trigger sends. This function's job now is only to decide *what*
+  today's content is and insert it — dispatch-notification (the single
+  shared sender) does the rest, respecting notification_preferences.
 
-  FIX (Bug 3): Changed .maybeSingle() to fetch ALL push subscriptions
-  per user so every device the user has subscribed from gets the push.
+  Each insert carries a dedup_key so re-running this function on the same
+  day (e.g. a retried cron tick) can't double-insert.
 
   pg_cron setup (run in Supabase SQL editor):
     select cron.schedule(
@@ -38,8 +45,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const APP_BASE_URL     = "https://tahleemacademy.vercel.app";
-const TELEGRAM_GATEWAY = "https://connector-gateway.lovable.dev/telegram/sendMessage";
+const APP_BASE_URL = "https://tahleemacademy.vercel.app";
 
 // ── Daily content pool ────────────────────────────────────────────────────────
 // These rotate by day-of-year so each day gets different content.
@@ -90,163 +96,34 @@ function dayOfYear(): number {
   return Math.floor((now.getTime() - start.getTime()) / 86_400_000);
 }
 
-// ── Web Push ──────────────────────────────────────────────────────────────────
-
-async function sendWebPush(
-  sub: { endpoint: string; p256dh: string; auth: string },
-  payload: object
-): Promise<void> {
-  const pvt  = Deno.env.get("VAPID_PRIVATE_KEY");
-  const pub  = Deno.env.get("VAPID_PUBLIC_KEY");
-  const subj = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@tahleemacademy.com";
-  if (!pvt || !pub) return;
-  const wp: any = await import("https://esm.sh/web-push@3.6.7");
-  wp.setVapidDetails(subj, pub, pvt);
-  await wp.sendNotification(
-    { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-    JSON.stringify(payload),
-    { TTL: 60 * 60 * 12 }  // 12hr TTL — deliver within the day
-  );
-}
-
-// ── Telegram ──────────────────────────────────────────────────────────────────
-
-async function sendTelegram(chatId: string, text: string): Promise<void> {
-  const LOVABLE_API_KEY  = Deno.env.get("LOVABLE_API_KEY");
-  const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
-  if (!LOVABLE_API_KEY || !TELEGRAM_API_KEY) return;
-
-  await fetch(TELEGRAM_GATEWAY, {
-    method: "POST",
-    headers: {
-      "Authorization":        `Bearer ${LOVABLE_API_KEY}`,
-      "X-Connection-Api-Key": TELEGRAM_API_KEY,
-      "Content-Type":         "application/json",
-    },
-    body: JSON.stringify({
-      chat_id:                  chatId,
-      text,
-      parse_mode:               "HTML",
-      disable_web_page_preview: true,
-    }),
-  });
-}
-
-// ── Send all push payloads to a single subscription object ───────────────────
-
-async function pushAllPayloads(
-  sub: { endpoint: string; p256dh: string; auth: string },
-  payloads: object[]
-): Promise<void> {
-  for (const payload of payloads) {
-    await sendWebPush(sub, payload).catch((e: any) => {
-      // 410 Gone = subscription expired/unsubscribed — caller handles cleanup
-      if (e?.statusCode === 410) throw e;
-      // Other errors (network, etc.) — log and continue to next payload
-      console.warn("[daily-content-push] sendWebPush error:", e?.message ?? e);
-    });
-    // Small stagger so notifications arrive as separate cards on the phone
-    await new Promise(r => setTimeout(r, 800));
-  }
-}
+// ── Web Push / Telegram sending removed ───────────────────────────────────────
+// dispatch-notification (triggered automatically on every notifications
+// INSERT) now owns all outbound sending for this function's notifications.
 
 // ── Send all daily content to one user ───────────────────────────────────────
 
 async function sendDailyContentToUser(
   sb: ReturnType<typeof createClient>,
   userId: string,
-  telegramChatId: string | null,
-  doy: number
+  doy: number,
+  dateStr: string
 ): Promise<void> {
   const verse  = QURAN_VERSES[doy % QURAN_VERSES.length];
   const hadith = HADITHS[doy % HADITHS.length];
   const seerah = SEERAH_HIGHLIGHTS[doy % SEERAH_HIGHLIGHTS.length];
   const hifdh  = HIFDH_REMINDERS[doy % HIFDH_REMINDERS.length];
 
-  // ── FIX (Bug 3): Fetch ALL subscriptions for this user, not just one.
-  //    Previously .maybeSingle() silently dropped every device except the first.
-  const { data: pushSubs, error: subsError } = await sb
-    .from("push_subscriptions")
-    .select("id, endpoint, p256dh, auth")
-    .eq("user_id", userId);
-
-  if (subsError) {
-    console.warn(`[daily-content-push] could not fetch push subs for ${userId}:`, subsError.message);
-  }
-
-  const activeSubs = (pushSubs ?? []) as Array<{ id: string; endpoint: string; p256dh: string; auth: string }>;
-
-  // Build all push payloads up front
-  const payloads = [
-    {
-      type:    "daily_content",
-      title:   "📖 Daily Quranic Verse",
-      message: `${verse.en} — ${verse.ref}`,
-      body:    `${verse.ar}\n"${verse.en}"\n${verse.ref}`,
-      url:     `${APP_BASE_URL}/student/dashboard`,
-      tag:     "daily-verse",
-      icon:    "/icons/icon-192x192.png",
-      badge:   "/icons/icon-96x96.png",
-    },
-    {
-      type:    "daily_content",
-      title:   "🌙 Daily Hadith",
-      message: `"${hadith.en}" — ${hadith.source}`,
-      url:     `${APP_BASE_URL}/student/dashboard`,
-      tag:     "daily-hadith",
-      icon:    "/icons/icon-192x192.png",
-      badge:   "/icons/icon-96x96.png",
-    },
-    {
-      type:    "daily_content",
-      title:   "📗 Hifdh Reminder",
-      message: hifdh.replace(/^📖\s*/, ""),
-      url:     `${APP_BASE_URL}/student/hifdh`,
-      tag:     "daily-hifdh",
-      icon:    "/icons/icon-192x192.png",
-      badge:   "/icons/icon-96x96.png",
-      actions: [{ action: "open_hifdh", title: "Open Hifdh" }],
-    },
-    {
-      type:    "daily_content",
-      title:   `🕌 Seerah: ${seerah.title}`,
-      message: seerah.body.slice(0, 120) + "…",
-      url:     `${APP_BASE_URL}/student/dashboard`,
-      tag:     "daily-seerah",
-      icon:    "/icons/icon-192x192.png",
-      badge:   "/icons/icon-96x96.png",
-    },
-  ];
-
-  // ── Web Push — send to every subscribed device ───────────────────────────
-  const expiredSubIds: string[] = [];
-
-  for (const sub of activeSubs) {
-    try {
-      await pushAllPayloads(sub, payloads);
-    } catch (e: any) {
-      if (e?.statusCode === 410) {
-        // Subscription expired — mark for cleanup
-        expiredSubIds.push(sub.id);
-      } else {
-        console.warn(`[daily-content-push] push failed for sub ${sub.id}:`, e?.message ?? e);
-      }
-    }
-  }
-
-  // Clean up expired subscriptions
-  if (expiredSubIds.length > 0) {
-    await sb.from("push_subscriptions").delete().in("id", expiredSubIds).catch(() => {});
-    console.log(`[daily-content-push] cleaned up ${expiredSubIds.length} expired sub(s) for ${userId}`);
-  }
-
-  // ── In-app notifications (notifications table) ────────────────────────────
-  await sb.from("notifications").insert([
+  // Each row gets its own dedup_key so a retried/duplicate cron tick on the
+  // same day can't insert this student's content twice — the unique index
+  // on dedup_key makes the DB itself the source of truth for idempotency.
+  const { error } = await sb.from("notifications").insert([
     {
       user_id: userId,
       title:   "📖 Daily Quranic Verse",
       message: `${verse.en} — ${verse.ref}`,
       type:    "daily_content",
+      dedup_key: `daily-content:${userId}:verse:${dateStr}`,
+      link:    "/student/dashboard",
       is_read: false,
     },
     {
@@ -254,6 +131,8 @@ async function sendDailyContentToUser(
       title:   "🌙 Daily Hadith",
       message: `"${hadith.en}" — ${hadith.source}`,
       type:    "daily_content",
+      dedup_key: `daily-content:${userId}:hadith:${dateStr}`,
+      link:    "/student/dashboard",
       is_read: false,
     },
     {
@@ -261,6 +140,7 @@ async function sendDailyContentToUser(
       title:   "📗 Daily Hifdh Reminder",
       message: hifdh.replace(/^📖\s*/, ""),
       type:    "daily_content",
+      dedup_key: `daily-content:${userId}:hifdh:${dateStr}`,
       link:    "/student/hifdh",
       is_read: false,
     },
@@ -269,29 +149,15 @@ async function sendDailyContentToUser(
       title:   `🕌 Seerah: ${seerah.title}`,
       message: seerah.body.slice(0, 200),
       type:    "daily_content",
+      dedup_key: `daily-content:${userId}:seerah:${dateStr}`,
+      link:    "/student/dashboard",
       is_read: false,
     },
-  ]).catch(() => {});
+  ]);
 
-  // ── Telegram — single rich morning message ────────────────────────────────
-  if (telegramChatId) {
-    const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-    const tgText =
-      `🕌 <b>Tahleem Academy — Good Morning!</b>\n` +
-      `<i>${today}</i>\n\n` +
-      `📖 <b>Quran ${verse.ref}</b>\n` +
-      `${verse.ar}\n` +
-      `<i>"${verse.en}"</i>\n\n` +
-      `🌙 <b>Hadith</b>\n` +
-      `<i>"${hadith.en}"</i>\n` +
-      `— ${hadith.source}\n\n` +
-      `🕌 <b>Seerah: ${seerah.title}</b>\n` +
-      `${seerah.body.slice(0, 200)}…\n\n` +
-      `📗 <b>Hifdh</b>\n${hifdh}\n\n` +
-      `🔗 <a href="${APP_BASE_URL}/student/dashboard">Open Academy</a>`;
-
-    await sendTelegram(String(telegramChatId), tgText).catch(() => {});
-  }
+  // Unique violation (23505) means this student's content for today was
+  // already inserted — not a real error, just idempotency doing its job.
+  if (error && error.code !== "23505") throw error;
 }
 
 // ── Main handler ──────────────────────────────────────────────────────────────
@@ -305,20 +171,21 @@ Deno.serve(async (req) => {
   );
 
   const doy = dayOfYear();
+  const dateStr = new Date().toISOString().split("T")[0];
   let sent = 0, errors = 0;
 
   try {
-    // Get all active students with push subscriptions or telegram
+    // Get all active students
     const { data: students, error } = await sb
       .from("profiles")
-      .select("user_id, telegram_chat_id, role, student_type")
+      .select("user_id, role")
       .eq("role", "student");
 
     if (error) throw error;
 
     for (const student of (students ?? []) as any[]) {
       try {
-        await sendDailyContentToUser(sb, student.user_id, student.telegram_chat_id, doy);
+        await sendDailyContentToUser(sb, student.user_id, doy, dateStr);
         sent++;
       } catch (e: any) {
         console.error(`[daily-content-push] failed for ${student.user_id}:`, e.message);
