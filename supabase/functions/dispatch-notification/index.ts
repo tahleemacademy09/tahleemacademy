@@ -220,6 +220,68 @@ function absUrl(link: string | null | undefined): string {
   return `${base}${link.startsWith("/") ? "" : "/"}${link}`;
 }
 
+// ── Delivery log ──────────────────────────────────────────────────────────────
+// One row per channel per notification, so the admin "Reach" tab can show
+// real success/failure instead of reading function logs by hand.
+
+async function logDelivery(
+  supabase: ReturnType<typeof createClient>,
+  opts: { notification_id?: string; user_id: string; channel: "web_push" | "fcm" | "telegram"; status: "sent" | "failed" | "expired" | "skipped"; error?: string }
+): Promise<void> {
+  await supabase.from("notification_deliveries").insert({
+    notification_id: opts.notification_id ?? null,
+    user_id:         opts.user_id,
+    channel:         opts.channel,
+    status:          opts.status,
+    error:           opts.error ?? null,
+  }).then(({ error }) => {
+    if (error) console.warn("[dispatch-notification] delivery log failed:", error.message);
+  });
+}
+
+// ── Preferences ───────────────────────────────────────────────────────────────
+// Absence of a row means "everything on" — fully backward compatible with
+// users who existed before notification_preferences was introduced.
+
+type Prefs = {
+  push_enabled: boolean;
+  telegram_enabled: boolean;
+  quiet_hours_start: string | null;
+  quiet_hours_end: string | null;
+  muted_types: string[];
+};
+
+const DEFAULT_PREFS: Prefs = {
+  push_enabled: true, telegram_enabled: true,
+  quiet_hours_start: null, quiet_hours_end: null, muted_types: [],
+};
+
+async function getPrefs(supabase: ReturnType<typeof createClient>, user_id: string): Promise<Prefs> {
+  const { data } = await supabase
+    .from("notification_preferences")
+    .select("push_enabled, telegram_enabled, quiet_hours_start, quiet_hours_end, muted_types")
+    .eq("user_id", user_id)
+    .maybeSingle();
+  return data ? { ...DEFAULT_PREFS, ...data } : DEFAULT_PREFS;
+}
+
+// Quiet hours are a courtesy for non-urgent notification types only —
+// "class starting now" (class_ring) always bypasses quiet hours, same as
+// how a phone call would.
+function inQuietHours(prefs: Prefs): boolean {
+  if (!prefs.quiet_hours_start || !prefs.quiet_hours_end) return false;
+  const now = new Date();
+  const nowMins = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const [sh, sm] = prefs.quiet_hours_start.split(":").map(Number);
+  const [eh, em] = prefs.quiet_hours_end.split(":").map(Number);
+  const startMins = sh * 60 + sm;
+  const endMins   = eh * 60 + em;
+  if (startMins === endMins) return false;
+  return startMins < endMins
+    ? nowMins >= startMins && nowMins < endMins
+    : nowMins >= startMins || nowMins < endMins; // wraps past midnight
+}
+
 // ── Main handler ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
@@ -267,6 +329,25 @@ Deno.serve(async (req) => {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    const notification_id: string | undefined = body.notification_id;
+    const prefs = await getPrefs(supabase, user_id);
+
+    // Muted type — respect it across every channel, but still record that we
+    // deliberately skipped it (distinct from a silent failure).
+    if (type && prefs.muted_types.includes(type)) {
+      await Promise.all([
+        logDelivery(supabase, { notification_id, user_id, channel: "web_push", status: "skipped", error: "muted_type" }),
+        logDelivery(supabase, { notification_id, user_id, channel: "telegram", status: "skipped", error: "muted_type" }),
+      ]);
+      return new Response(JSON.stringify({ ok: true, results: { push: "skipped_muted_type", telegram: "skipped_muted_type" } }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Quiet hours — courtesy pause for push/Telegram on non-urgent types.
+    // class_ring ("class starting now") always bypasses this, same as a phone call.
+    const respectQuietHours = type !== "class_ring" && inQuietHours(prefs);
 
     const fullUrl = absUrl(link);
     const results: Record<string, string> = {};
@@ -317,6 +398,11 @@ Deno.serve(async (req) => {
       }
       results.web_push = "skipped_class_type (web push sent by scheduler)";
       results.telegram = "skipped_class_type (telegram sent by scheduler)";
+      await logDelivery(supabase, {
+        notification_id, user_id, channel: "fcm",
+        status: results.fcm?.startsWith("sent") ? "sent" : results.fcm === "no_native_subscription" ? "skipped" : "failed",
+        error: results.fcm,
+      });
       console.log("[dispatch-notification] class type — native FCM only", results);
       return new Response(JSON.stringify({ ok: true, results }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -331,6 +417,11 @@ Deno.serve(async (req) => {
     })();
 
     // ── Fan out to ALL subscriptions for this user ────────────────────────────
+    if (!prefs.push_enabled || respectQuietHours) {
+      results.web_push = !prefs.push_enabled ? "skipped_preference" : "skipped_quiet_hours";
+      results.fcm      = results.web_push;
+      await logDelivery(supabase, { notification_id, user_id, channel: "web_push", status: "skipped", error: results.web_push });
+    } else {
     const { data: subs, error: subsErr } = await supabase
       .from("push_subscriptions")
       .select("endpoint, p256dh, auth, keys")
@@ -457,7 +548,21 @@ Deno.serve(async (req) => {
 
       results.web_push = `sent ${webSent}${webExpired ? ` (${webExpired} expired)` : ""}${webFailed ? ` (${webFailed} failed)` : ""}`;
       results.fcm      = `sent ${fcmSent}${fcmExpired ? ` (${fcmExpired} expired)` : ""}${fcmFailed ? ` (${fcmFailed} failed)` : ""}`;
+
+      await Promise.all([
+        logDelivery(supabase, {
+          notification_id, user_id, channel: "web_push",
+          status: webSent > 0 ? "sent" : webExpired > 0 && webFailed === 0 ? "expired" : webFailed > 0 ? "failed" : "skipped",
+          error: results.web_push,
+        }),
+        logDelivery(supabase, {
+          notification_id, user_id, channel: "fcm",
+          status: fcmSent > 0 ? "sent" : fcmExpired > 0 && fcmFailed === 0 ? "expired" : fcmFailed > 0 ? "failed" : "skipped",
+          error: results.fcm,
+        }),
+      ]);
     }
+    } // close push_enabled / quiet-hours gate
 
     // ── Telegram ──────────────────────────────────────────────────────────────
     // (class_reminder / class_ring already exited above — safe to send here)
@@ -468,16 +573,23 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     const chatId = (prof as any)?.telegram_chat_id;
-    if (chatId) {
+    if (!chatId) {
+      results.telegram = "not_linked";
+    } else if (!prefs.telegram_enabled || respectQuietHours) {
+      results.telegram = !prefs.telegram_enabled ? "skipped_preference" : "skipped_quiet_hours";
+    } else {
       try {
         await sendTelegram(String(chatId), title, message, fullUrl, title_ar, message_ar);
         results.telegram = "sent";
       } catch (e: any) {
         results.telegram = `failed: ${e.message}`;
       }
-    } else {
-      results.telegram = "not_linked";
     }
+    await logDelivery(supabase, {
+      notification_id, user_id, channel: "telegram",
+      status: results.telegram === "sent" ? "sent" : results.telegram?.startsWith("failed") ? "failed" : "skipped",
+      error: results.telegram,
+    });
 
     console.log("[dispatch-notification] done for user:", user_id, results);
     return new Response(JSON.stringify({ ok: true, results }), {
