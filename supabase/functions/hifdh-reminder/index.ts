@@ -13,9 +13,21 @@
   2. Check whether they already completed today's session (hifdh_daily_logs)
   3. Skip anyone who already submitted a completed=true log for today
   4. Deduplicate — skip anyone already sent a reminder of this "slot" today
-  5. Insert a notification row  → visible in the app bell immediately
-  6. Send Web Push              → reaches device even when browser is closed
-  7. Send Telegram              → via the existing Lovable gateway (if linked)
+  5. Insert ONE notification row per student. That's it.
+
+  CHANGE: this used to also call its own sendWebPush()/sendTelegram() right
+  after the insert — but the notifications table already has an AFTER INSERT
+  trigger (trg_dispatch_notification_on_insert) that calls dispatch-notification
+  for every new row, which does its own web push + Telegram + FCM fan-out.
+  Calling both meant every Hifdh reminder was being sent twice per channel.
+  This function's only job now is to decide *who* gets reminded and *why*,
+  and insert the row — dispatch-notification (the single shared sender) does
+  the rest, including checking notification_preferences and logging delivery
+  results to notification_deliveries.
+
+  Dedup also moved from `type = 'hifdh_reminder_<slot>'` (which was never a
+  valid value in the notifications.type CHECK constraint, so past reminder
+  rows likely failed to insert at all) to the dedicated `dedup_key` column.
 
   The motivational messages rotate across 9 Hadith / Quran-based quotes so
   students receive fresh encouragement each time rather than the same text.
@@ -23,11 +35,6 @@
   Required Supabase secrets (same as existing functions):
     SUPABASE_URL              — auto-provided
     SUPABASE_SERVICE_ROLE_KEY — auto-provided
-    VAPID_PRIVATE_KEY
-    VAPID_PUBLIC_KEY
-    VAPID_SUBJECT             — mailto:admin@tahleemacademy.com
-    LOVABLE_API_KEY           — optional, enables Telegram
-    TELEGRAM_API_KEY          — optional, enables Telegram
 */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -101,45 +108,9 @@ const SLOT_TITLES: Record<ReminderSlot, string> = {
   evening:   "🌙 Don't miss today's Hifdh revision!",
 };
 
-// ── Web Push ──────────────────────────────────────────────────────────────────
-
-async function sendWebPush(
-  sub: { endpoint: string; p256dh: string; auth: string },
-  payload: { title: string; body: string; url: string; tag: string }
-): Promise<void> {
-  const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY");
-  const VAPID_PUBLIC_KEY  = Deno.env.get("VAPID_PUBLIC_KEY");
-  const VAPID_SUBJECT     = Deno.env.get("VAPID_SUBJECT") ?? "mailto:admin@tahleemacademy.com";
-  if (!VAPID_PRIVATE_KEY || !VAPID_PUBLIC_KEY) return;
-
-  const webpush: any = await import("https://esm.sh/web-push@3.6.7");
-  webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-  await webpush.sendNotification(
-    { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-    JSON.stringify({ title: payload.title, message: payload.body, url: payload.url, tag: payload.tag }),
-    { TTL: 60 * 90 } // hold for 90 min if device offline
-  );
-}
-
-// ── Telegram ──────────────────────────────────────────────────────────────────
-
-async function sendTelegram(chatId: string, title: string, body: string): Promise<void> {
-  const LOVABLE_API_KEY  = Deno.env.get("LOVABLE_API_KEY");
-  const TELEGRAM_API_KEY = Deno.env.get("TELEGRAM_API_KEY");
-  if (!LOVABLE_API_KEY || !TELEGRAM_API_KEY) return;
-
-  const text = `🕌 <b>Tahleem Academy</b>\n<b>${title}</b>\n\n${body}\n\n🔗 <a href="https://tahleemacademy.vercel.app/student/hifdh-daily">Open Hifdh Revision</a>`;
-
-  await fetch("https://connector-gateway.lovable.dev/telegram/sendMessage", {
-    method: "POST",
-    headers: {
-      "Authorization":        `Bearer ${LOVABLE_API_KEY}`,
-      "X-Connection-Api-Key": TELEGRAM_API_KEY,
-      "Content-Type":         "application/json",
-    },
-    body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: false }),
-  });
-}
+// ── Web Push and Telegram sending removed ────────────────────────────────────
+// dispatch-notification (triggered automatically on every notifications
+// INSERT) now owns all outbound sending for this function's notifications.
 
 // ── days_off helper (mirrors client-side logic) ───────────────────────────────
 
@@ -220,11 +191,13 @@ Deno.serve(async (req) => {
     const completedToday = new Set((completedLogs ?? []).map((l: any) => l.student_id));
 
     // ── 3. Who already got a reminder this slot today? (dedup) ───────────────
-    const dedupType = `hifdh_reminder_${activeSlot}`;
+    // CHANGE: previously deduped on `type = 'hifdh_reminder_<slot>'`, but that
+    // value was never in the notifications.type CHECK constraint, so this
+    // query likely never matched anything real. Now uses the dedup_key column.
     const { data: alreadySent } = await supabase
       .from("notifications")
       .select("user_id")
-      .eq("type", dedupType)
+      .like("dedup_key", `hifdh-reminder:%:${activeSlot}:${dateStr}`)
       .gte("created_at", `${dateStr}T00:00:00+01:00`);
 
     const alreadyReminded = new Set((alreadySent ?? []).map((n: any) => n.user_id));
@@ -256,56 +229,33 @@ Deno.serve(async (req) => {
       const title    = SLOT_TITLES[activeSlot];
       const body     = pickMotivation(activeSlot, studentId);
       const link     = "/student/hifdh-daily";
-      const fullUrl  = `https://tahleemacademy.vercel.app${link}`;
 
       try {
-        // ── a. Insert notification row (shows in bell icon) ─────────────────
-        await supabase.from("notifications").insert({
+        // Insert once — the AFTER INSERT trigger on notifications calls
+        // dispatch-notification automatically, which sends web push + FCM +
+        // Telegram and checks the student's notification_preferences
+        // (mute/quiet-hours) before doing so. This function's job ends here.
+        const { error: insertErr } = await supabase.from("notifications").insert({
           user_id:    studentId,
           title,
           message:    body,
-          type:       dedupType,
+          type:       "hifdh_reminder",
+          dedup_key:  `hifdh-reminder:${studentId}:${activeSlot}:${dateStr}`,
           link,
-          read:       false,
+          is_read:    false,
           created_at: new Date().toISOString(),
         });
 
-        // ── b. Web Push ─────────────────────────────────────────────────────
-        const { data: sub } = await supabase
-          .from("push_subscriptions")
-          .select("endpoint, p256dh, auth")
-          .eq("user_id", studentId)
-          .maybeSingle();
-
-        if (sub) {
-          try {
-            await sendWebPush(sub as any, {
-              title, body, url: fullUrl,
-              tag: `hifdh-reminder-${activeSlot}-${dateStr}`,
-            });
-          } catch (pushErr: any) {
-            console.warn(`[hifdh-reminder] push failed for ${studentId}:`, pushErr.message);
-            // Remove expired/invalid subscriptions so they stop failing
-            if (pushErr.statusCode === 410 || pushErr.statusCode === 404) {
-              await supabase.from("push_subscriptions").delete().eq("user_id", studentId);
-            }
+        if (insertErr) {
+          // Unique violation on dedup_key = another concurrent run already
+          // reminded this student for this slot today — not a real error.
+          if (insertErr.code === "23505") {
+            stats.dedup++;
+          } else {
+            console.error(`[hifdh-reminder] insert failed for ${studentId}:`, insertErr.message);
+            stats.errors++;
           }
-        }
-
-        // ── c. Telegram ─────────────────────────────────────────────────────
-        const { data: prof } = await supabase
-          .from("profiles")
-          .select("telegram_chat_id")
-          .eq("user_id", studentId)
-          .maybeSingle();
-
-        const chatId = (prof as any)?.telegram_chat_id;
-        if (chatId) {
-          try {
-            await sendTelegram(String(chatId), title, body);
-          } catch (tgErr: any) {
-            console.warn(`[hifdh-reminder] telegram failed for ${studentId}:`, tgErr.message);
-          }
+          continue;
         }
 
         stats.sent++;
