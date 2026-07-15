@@ -151,8 +151,8 @@ const Index = () => {
 
       /* ── HERO ── */
       .ta-hero { position:relative; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
-      .ta-hero-bg { position:absolute; inset:0; background-image:url('https://images.unsplash.com/photo-1609599006353-e629aaabfeae?w=1600&q=90'); background-size:cover; background-position:center 20%; }
-      .ta-hero-overlay { position:absolute; inset:0; background:linear-gradient(165deg,rgba(4,14,7,.97) 0%,rgba(8,28,16,.91) 45%,rgba(4,12,7,.97) 100%); }
+      .ta-hero-bg { position:absolute; inset:0; background-image:url('/images/hero-bg.jpg'); background-size:cover; background-position:center 30%; filter:brightness(.42) saturate(.85); }
+      .ta-hero-overlay { position:absolute; inset:0; background:linear-gradient(165deg,rgba(4,14,7,.72) 0%,rgba(8,28,16,.4) 45%,rgba(4,12,7,.75) 100%); }
 
       /* Geometric star behind hero text — the signature element */
       .ta-hero-star { position:absolute; top:50%; left:50%; transform:translate(-50%,-52%); width:min(700px,110vw); height:min(700px,110vw); pointer-events:none; animation:starPulse 6s ease-in-out infinite; }
@@ -173,10 +173,10 @@ const Index = () => {
       .ta-divider-line { flex:1; max-width:120px; height:1px; background:linear-gradient(90deg,transparent,rgba(240,192,96,.5),transparent); }
       .ta-divider-gem { color:#f0c060; font-size:10px; }
 
-      .ta-hero-title { font-family:'Playfair Display',serif; font-size:clamp(40px,7vw,76px); font-weight:800; color:#fff; line-height:1.05; margin-bottom:8px; animation:fadeUp .7s .3s ease both; letter-spacing:-1px; }
+      .ta-hero-title { font-family:'Playfair Display',serif; font-size:clamp(40px,7vw,76px); font-weight:800; color:#fff; line-height:1.05; margin-bottom:8px; animation:fadeUp .7s .3s ease both; letter-spacing:-1px; text-shadow:0 4px 24px rgba(0,0,0,.55); }
       .ta-hero-title em { font-style:italic; color:#f0c060; display:block; }
 
-      .ta-hero-sub { color:rgba(255,255,255,.65); font-size:clamp(15px,2.2vw,18px); line-height:1.9; max-width:560px; margin:20px auto 40px; font-weight:400; animation:fadeUp .7s .4s ease both; }
+      .ta-hero-sub { color:rgba(255,255,255,.75); font-size:clamp(15px,2.2vw,18px); line-height:1.9; max-width:560px; margin:20px auto 40px; font-weight:400; animation:fadeUp .7s .4s ease both; text-shadow:0 2px 12px rgba(0,0,0,.5); }
 
       .ta-hero-btns { display:flex; gap:14px; flex-wrap:wrap; justify-content:center; animation:fadeUp .7s .5s ease both; }
 
@@ -276,10 +276,10 @@ const Index = () => {
       .ta-pillars-qen { font-family:'Playfair Display',serif; font-style:italic; font-size:15px; color:rgba(255,255,255,.7); line-height:1.7; }
       .ta-pillars-qref { font-size:10px; color:rgba(255,255,255,.3); letter-spacing:2px; text-transform:uppercase; margin-top:12px; }
 
-      .ta-grid-6 { display:grid; grid-template-columns:repeat(3,1fr); gap:2px; background:#e8e0d4; border-radius:2px; overflow:hidden; }
-      .ta-pillar { background:#fdf8f0; padding:38px 32px; transition:.35s cubic-bezier(.25,.46,.45,.94); position:relative; overflow:hidden; }
+      .ta-grid-6 { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; }
+      .ta-pillar { background:#fff; border:1px solid rgba(201,151,58,.14); border-radius:16px; box-shadow:0 4px 24px rgba(8,24,16,.06); padding:38px 32px; transition:.35s cubic-bezier(.25,.46,.45,.94); position:relative; overflow:hidden; }
       .ta-pillar::after { content:''; position:absolute; bottom:0; left:0; right:0; height:3px; background:linear-gradient(90deg,#c9973a,#f0c060); transform:scaleX(0); transform-origin:left; transition:.4s ease; }
-      .ta-pillar:hover { background:#fff; box-shadow:0 -8px 40px rgba(201,151,58,.08) inset; }
+      .ta-pillar:hover { box-shadow:0 12px 36px rgba(8,24,16,.12); border-color:rgba(201,151,58,.35); transform:translateY(-4px); }
       .ta-pillar:hover::after { transform:scaleX(1); }
       .ta-pillar-num  { font-family:'Playfair Display',serif; font-size:52px; font-weight:700; color:rgba(201,151,58,.1); line-height:1; margin-bottom:16px; }
       .ta-pillar-icon { font-size:28px; margin-bottom:14px; display:block; }
