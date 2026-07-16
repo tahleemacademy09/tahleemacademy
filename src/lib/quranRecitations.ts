@@ -69,7 +69,7 @@ export async function saveRecitation(params: {
   timings: AyahTiming[];
   isPublished: boolean;
   userId: string;
-}): Promise<void> {
+}): Promise<CustomRecitation> {
   let audioPath = params.existingAudioPath;
 
   if (params.file) {
@@ -95,12 +95,19 @@ export async function saveRecitation(params: {
     updated_at: new Date().toISOString(),
   };
 
+  // .select().single() returns the persisted row in the same round-trip as
+  // the write itself, so the caller can update its list optimistically
+  // instead of firing a second full list query and waiting on that too —
+  // that second query was the main thing making "Save" feel slow even
+  // though the actual write is fast for metadata-only edits.
   if (params.id) {
-    const { error } = await db.from("quran_recitations").update(row).eq("id", params.id);
+    const { data, error } = await db.from("quran_recitations").update(row).eq("id", params.id).select().single();
     if (error) throw error;
+    return data as CustomRecitation;
   } else {
-    const { error } = await db.from("quran_recitations").insert(row);
+    const { data, error } = await db.from("quran_recitations").insert(row).select().single();
     if (error) throw error;
+    return data as CustomRecitation;
   }
 }
 
