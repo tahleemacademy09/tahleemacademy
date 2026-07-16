@@ -198,9 +198,23 @@ const ProctoringOverlay = ({
     }
   }, [faceDetected]);
 
+  // ── FIX: don't fire a false "Camera Disconnected" alarm on mount ──────────
+  // cameraReady starts false while useProctoring is still requesting the
+  // webcam stream (this normally takes 1-3s). This effect used to fire
+  // showBanner("webcam_disabled") on every single proctored exam start
+  // because it only checked the *current* falsy value with no regard for
+  // whether the camera had ever actually connected — every student saw a
+  // "Camera Disconnected!" alert flash the instant the exam UI mounted,
+  // even though nothing was wrong. We now only treat it as a real
+  // disconnection if the camera had successfully connected before.
+  const wasCameraReadyRef = useRef(false);
   useEffect(() => {
-    if (cameraReady) setBanners(p => p.filter(b => b.type !== "webcam_disabled"));
-    else showBanner("webcam_disabled");
+    if (cameraReady) {
+      wasCameraReadyRef.current = true;
+      setBanners(p => p.filter(b => b.type !== "webcam_disabled"));
+    } else if (wasCameraReadyRef.current) {
+      showBanner("webcam_disabled");
+    }
   }, [cameraReady]);
 
   // Auto-submit countdown
