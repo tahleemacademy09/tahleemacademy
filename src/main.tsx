@@ -13,6 +13,11 @@ import App from "./App.tsx";
 import "./index.css";
 import { initNativeApp } from "./lib/nativeApp";
 import { isReloadSafe, onReloadSafe } from "./lib/reloadGuard";
+import { bootstrapTheme } from "./lib/theme";
+
+// Apply the saved dark-mode preference immediately, on every page —
+// not just after a user has visited Settings in the current session.
+bootstrapTheme();
 
 initNativeApp();
 
