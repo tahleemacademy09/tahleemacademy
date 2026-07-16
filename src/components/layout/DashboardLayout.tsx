@@ -16,7 +16,7 @@ import {
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
   BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
-  Activity, BookText,
+  Activity, BookText, LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -174,6 +174,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"link", to:"/student/majlis",     icon:MessageCircle, label:t("Al-Majlis","المجلس") },
     // ── Musabaqah (updated route) ──────────────────────────────
     { type:"link", to:"/student/musabaqah",  icon:Trophy,        label:t("Al-Musābaqah 🏆","المسابقة 🏆") },
+    { type:"link", to:"/student/support",    icon:LifeBuoy,      label:t("Help & Support","المساعدة والدعم") },
     { type:"link", to:"/student/profile",    icon:UserCircle,    label:t("Al-I'dādāt","الإعدادات") },
   ];
 
@@ -245,6 +246,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"group", key:"comms", icon:MessageCircle, label:t("Communication","التواصل"), children:[
       { to:"/admin/majlis-moderation", icon:MessageCircle, label:t("Al-Majlis","المجلس") },
       { to:"/admin/notifications",     icon:Bell,          label:t("Notifications","الإشعارات") },
+      { to:"/admin/support-tickets",   icon:LifeBuoy,      label:t("Support Tickets","تذاكر الدعم") },
     ]},
 
     // 9 ── Al-Musābaqah (updated route) ─────────────────────────
