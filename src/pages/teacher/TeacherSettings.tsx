@@ -18,6 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
+import { applyDark, isDarkModeEnabled, DM_KEY } from "@/lib/theme";
 import {
   Camera, Save, Lock, LogOut, Eye, EyeOff,
   Loader2, AlertTriangle, Trash2, Bell, BookOpen,
@@ -188,7 +189,7 @@ export default function TeacherSettings() {
 
   const [prefs, setPrefs] = useState({
     language: "en",
-    dark_mode: false,
+    dark_mode: isDarkModeEnabled(),
     autoplay_recordings: true,
     playback_speed: "1x",
     default_view: "grid",
@@ -262,6 +263,10 @@ export default function TeacherSettings() {
           compact_timetable:    d.compact_timetable     ?? pr.compact_timetable,
           show_student_details: d.show_student_details  ?? pr.show_student_details,
         }));
+        if (d.dark_mode !== undefined && d.dark_mode !== isDarkModeEnabled()) {
+          localStorage.setItem(DM_KEY, String(d.dark_mode));
+          applyDark(d.dark_mode);
+        }
       }
 
       const { data: tg } = await supabase.from("profiles")
@@ -898,7 +903,11 @@ export default function TeacherSettings() {
                 <option value="ar">العربية</option>
               </select>
             </Fld>
-            <Tog label="Dark Mode" sub="Coming soon" checked={prefs.dark_mode} onChange={v => setPrefs(p => ({ ...p, dark_mode: v }))} />
+            <Tog label="Dark Mode" sub="Applies across the whole app" checked={prefs.dark_mode} onChange={v => {
+              setPrefs(p => ({ ...p, dark_mode: v }));
+              localStorage.setItem(DM_KEY, String(v));
+              applyDark(v);
+            }} />
           </Sec>
           <Sec title="Recordings & Playback">
             <Tog label="Autoplay Recordings" sub="Play the next recording automatically"
