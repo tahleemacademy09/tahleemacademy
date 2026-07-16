@@ -9,6 +9,7 @@ import { supabase }     from "@/integrations/supabase/client";
 import { useAuth }      from "@/contexts/AuthContext";
 import { useTasjeel }   from "@/hooks/useTasjeel";
 import { Video, CheckCircle2, Clock, Loader2 } from "lucide-react";
+import TasjeelFAQBot from "@/components/student/TasjeelFAQBot";
 
 const G    = "#064E3B";
 const GM   = "#075E54";
@@ -238,6 +239,8 @@ const TasjeelAwaitingLevel = () => {
           Sign out and come back later
         </button>
       </div>
+
+      <TasjeelFAQBot />
     </>
   );
 };
