@@ -8,13 +8,14 @@
 // needed).
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { Search, Upload, Play, Pause, Trash2, CheckCircle2, Circle, Loader2, Wand2, Save } from "lucide-react";
+import { Search, Upload, Play, Pause, Trash2, CheckCircle2, Circle, Loader2, Wand2, Save, Mic, Square, AlertTriangle, Sparkles } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { SURAHS } from "@/components/hifdh/surahData";
 import {
   CustomRecitation, AyahTiming, listRecitationsForSurah, getRecitationAudioUrl,
   saveRecitation, deleteRecitation, analyzeAudioFile, analyzeAudioUrl,
   detectVerseBoundariesFromEnvelope, boundariesToTimings, AudioEnvelope,
+  detectVerseBoundariesFromTranscription,
 } from "@/lib/quranRecitations";
 
 const GREEN = "#0f2d1f";
@@ -48,10 +49,27 @@ export default function QuranRecitationAdmin() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playingSegment, setPlayingSegment] = useState<number | null>(null);
 
+  // ── In-app recording (mic, instead of upload-only) ──────────────────
+  const [audioSource, setAudioSource] = useState<"upload" | "record">("upload");
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordStreamRef = useRef<MediaStream | null>(null);
+  const recordTimerRef = useRef<number | null>(null);
+
+  // ── Transcription-assisted sync ──────────────────────────────────────
+  const [syncingTranscription, setSyncingTranscription] = useState(false);
+  const [lowConfidenceAyahs, setLowConfidenceAyahs] = useState<number[]>([]);
+
   useEffect(() => {
     const a = new Audio();
     audioRef.current = a;
-    return () => { a.pause(); };
+    return () => {
+      a.pause();
+      if (recordTimerRef.current) window.clearInterval(recordTimerRef.current);
+      recordStreamRef.current?.getTracks().forEach(tr => tr.stop());
+    };
   }, []);
 
   const refreshExisting = useCallback(() => {
@@ -61,11 +79,53 @@ export default function QuranRecitationAdmin() {
 
   useEffect(() => { refreshExisting(); resetForm(); }, [surahNumber]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  function stopRecording(discard = false) {
+    if (recordTimerRef.current) { window.clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+    const mr = mediaRecorderRef.current;
+    if (mr && mr.state !== "inactive") {
+      if (discard) mr.onstop = null; // suppress the finalize handler below
+      mr.stop();
+    }
+    recordStreamRef.current?.getTracks().forEach(tr => tr.stop());
+    recordStreamRef.current = null;
+    mediaRecorderRef.current = null;
+    setRecording(false);
+    setRecordSeconds(0);
+    if (discard) recordedChunksRef.current = [];
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordStreamRef.current = stream;
+      recordedChunksRef.current = [];
+      const mr = new MediaRecorder(stream);
+      mediaRecorderRef.current = mr;
+      mr.ondataavailable = e => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: mr.mimeType || "audio/webm" });
+        const ext = (mr.mimeType || "audio/webm").includes("mp4") ? "mp4" : "webm";
+        const recordedFile = new File([blob], `recording-${Date.now()}.${ext}`, { type: blob.type });
+        onFileChosen(recordedFile);
+        recordStreamRef.current?.getTracks().forEach(tr => tr.stop());
+        recordStreamRef.current = null;
+      };
+      mr.start();
+      setRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = window.setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    } catch {
+      alert("Could not access the microphone. Please allow microphone access and try again.");
+    }
+  }
+
   function resetForm() {
     setEditingId(null);
     setReciterName(""); setReciterNameAr(""); setIsPublished(true);
     setFile(null); setExistingAudioPath(undefined); setPreviewUrl(undefined);
     setEnvelope(null); setBoundaries([]);
+    setAudioSource("upload"); setLowConfidenceAyahs([]);
+    stopRecording(true);
   }
 
   const startNew = () => { resetForm(); setEditingId("new"); };
@@ -102,6 +162,40 @@ export default function QuranRecitationAdmin() {
 
   const redetect = () => {
     if (envelope) setBoundaries(detectVerseBoundariesFromEnvelope(envelope, surah.verses));
+  };
+
+  // Uses the actual recited words (via transcription) instead of loudness
+  // alone to place each cut — see quranRecitations.ts for how it aligns the
+  // transcript to the known ayah text and picks the midpoint between one
+  // ayah's last word and the next one's first word, so a cut never bleeds
+  // into the following verse.
+  const syncWithTranscription = async () => {
+    let audioFile = file;
+    if (!audioFile && previewUrl) {
+      try {
+        const res = await fetch(previewUrl);
+        const blob = await res.blob();
+        audioFile = new File([blob], "existing-audio", { type: blob.type || "audio/mpeg" });
+      } catch {
+        alert("Could not load the existing audio file for transcription.");
+        return;
+      }
+    }
+    if (!audioFile) { alert("Choose or record audio first."); return; }
+    setSyncingTranscription(true);
+    setLowConfidenceAyahs([]);
+    try {
+      const result = await detectVerseBoundariesFromTranscription(audioFile, surahNumber, surah.verses);
+      setBoundaries(result.boundaries);
+      setLowConfidenceAyahs(result.lowConfidenceAyahs);
+      if (result.lowConfidenceAyahs.length) {
+        alert(`Synced. Please double-check the cuts around ayah(s) ${result.lowConfidenceAyahs.join(", ")} — the transcript match was weaker there.`);
+      }
+    } catch (e: any) {
+      alert("Transcription sync failed: " + (e?.message ?? "unknown error"));
+    } finally {
+      setSyncingTranscription(false);
+    }
   };
 
   const timings: AyahTiming[] = useMemo(
@@ -275,12 +369,46 @@ export default function QuranRecitationAdmin() {
           </div>
 
           <div style={{ marginBottom: 12 }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", border: `1.5px dashed ${GOLD}`, borderRadius: 10, cursor: "pointer", fontSize: 13 }}>
-              <Upload size={15} />
-              {file ? file.name : existingAudioPath ? "Replace audio file…" : "Choose full-surah audio file…"}
-              <input type="file" accept="audio/*" style={{ display: "none" }} onChange={e => e.target.files?.[0] && onFileChosen(e.target.files[0])} />
-            </label>
-            <span style={{ fontSize: 11, color: "#999", marginLeft: 8 }}>The admin reads the whole surah in one recording — we split it automatically.</span>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <button onClick={() => { if (!recording) setAudioSource("upload"); }} style={{
+                ...smallBtnStyle(), background: audioSource === "upload" ? GREEN : "#fff",
+                color: audioSource === "upload" ? "#fff" : "#333", borderColor: audioSource === "upload" ? GREEN : BORDER,
+              }}>
+                <Upload size={12} /> Upload file
+              </button>
+              <button onClick={() => setAudioSource("record")} style={{
+                ...smallBtnStyle(), background: audioSource === "record" ? GREEN : "#fff",
+                color: audioSource === "record" ? "#fff" : "#333", borderColor: audioSource === "record" ? GREEN : BORDER,
+              }}>
+                <Mic size={12} /> Record now
+              </button>
+            </div>
+
+            {audioSource === "upload" ? (
+              <>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "10px 14px", border: `1.5px dashed ${GOLD}`, borderRadius: 10, cursor: "pointer", fontSize: 13 }}>
+                  <Upload size={15} />
+                  {file ? file.name : existingAudioPath ? "Replace audio file…" : "Choose full-surah audio file…"}
+                  <input type="file" accept="audio/*" style={{ display: "none" }} onChange={e => e.target.files?.[0] && onFileChosen(e.target.files[0])} />
+                </label>
+                <span style={{ fontSize: 11, color: "#999", marginLeft: 8 }}>The admin reads the whole surah in one recording — we split it automatically.</span>
+              </>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", border: `1.5px dashed ${recording ? "#c0392b" : GOLD}`, borderRadius: 10 }}>
+                {!recording ? (
+                  <button onClick={startRecording} style={{ ...smallBtnStyle(), background: GREEN, color: "#fff", borderColor: GREEN }}>
+                    <Mic size={13} /> Start recording
+                  </button>
+                ) : (
+                  <button onClick={() => stopRecording(false)} style={{ ...smallBtnStyle(true) }}>
+                    <Square size={12} /> Stop ({fmt(recordSeconds)})
+                  </button>
+                )}
+                <span style={{ fontSize: 12, color: recording ? "#c0392b" : "#999" }}>
+                  {recording ? "Recording… read the whole surah, then tap Stop." : file ? `Recorded: ${file.name}` : "Records straight from this device's microphone — no upload needed."}
+                </span>
+              </div>
+            )}
           </div>
 
           {analyzing && (
@@ -291,10 +419,21 @@ export default function QuranRecitationAdmin() {
 
           {envelope && !analyzing && (
             <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 6 }}>
                 <span style={{ fontSize: 12, color: "#666" }}>Drag the gold lines to adjust where each verse ends ({boundaries.length + 1} of {surah.verses} segments)</span>
-                <button onClick={redetect} style={smallBtnStyle()}><Wand2 size={12} /> Re-detect</button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={redetect} style={smallBtnStyle()}><Wand2 size={12} /> Re-detect (silence)</button>
+                  <button onClick={syncWithTranscription} disabled={syncingTranscription} style={{ ...smallBtnStyle(), background: GREEN, color: "#fff", borderColor: GREEN }}>
+                    {syncingTranscription ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                    {syncingTranscription ? "Transcribing…" : "Sync with transcription"}
+                  </button>
+                </div>
               </div>
+              {lowConfidenceAyahs.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#a66a1f", background: "#fff8ec", border: "1px solid #f0d9a8", borderRadius: 8, padding: "6px 10px", marginBottom: 8 }}>
+                  <AlertTriangle size={13} /> Weaker match around ayah(s) {lowConfidenceAyahs.join(", ")} — double-check those cuts below.
+                </div>
+              )}
               <canvas
                 ref={canvasRef} width={800} height={90}
                 style={{ width: "100%", height: 90, borderRadius: 8, border: `1px solid ${BORDER}`, touchAction: "none", cursor: dragIdx !== null ? "grabbing" : "pointer" }}
