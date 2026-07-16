@@ -11,6 +11,7 @@
 // immediately without waiting on codegen.
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
+import { getSurahText } from "@/lib/quranTextApi";
 const db: any = supabase;
 
 export const RECITATION_BUCKET = "quran-recitations";
@@ -212,4 +213,169 @@ export function boundariesToTimings(boundaries: number[], totalDuration: number)
     timings.push({ ayah: i + 1, start: points[i], end: points[i + 1] });
   }
   return timings;
+}
+
+// ── Transcription-assisted verse boundaries ─────────────────────────────
+// Silence detection alone (above) only knows about *pauses* — it has no
+// idea what's actually being recited, so a mid-verse breath or two verses
+// read back-to-back without a gap can throw it off. This pass instead
+// transcribes the recording with word-level timestamps and walks the
+// transcript against the *known* text of the surah being recorded, ayah by
+// ayah, so each cut is placed using what was actually said rather than a
+// guess from loudness. Boundaries are placed at the midpoint between the
+// last word of one ayah and the first word of the next, specifically so a
+// cut never bleeds into the following ayah's audio.
+export interface WordTimestamp { word: string; start: number; end: number; }
+
+interface TranscriptionResult {
+  boundaries: number[];
+  /** True if the transcript-to-text match was weak for one or more verses
+   *  (e.g. the reciter skipped/repeated words, or Whisper mis-heard a
+   *  stretch) — the admin should double-check the waveform in that region. */
+  lowConfidenceAyahs: number[];
+}
+
+const CHUNK_SECONDS = 240; // ~4 min per Whisper call — comfortably under Groq's 25MB limit
+
+function floatTo16BitPCM(view: DataView, offset: number, input: Float32Array) {
+  for (let i = 0; i < input.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+}
+
+// Encodes a slice of a decoded AudioBuffer as a mono 16-bit PCM WAV blob —
+// small, universally accepted by Whisper, and lets us chunk a long
+// recording by time without re-uploading/re-encoding the original file.
+function sliceToWav(buffer: AudioBuffer, startSec: number, endSec: number): Blob {
+  const sampleRate = buffer.sampleRate;
+  const startSample = Math.max(0, Math.floor(startSec * sampleRate));
+  const endSample = Math.min(buffer.length, Math.floor(endSec * sampleRate));
+  const frameCount = Math.max(0, endSample - startSample);
+
+  // Downmix to mono
+  const mono = new Float32Array(frameCount);
+  const channels = buffer.numberOfChannels;
+  for (let c = 0; c < channels; c++) {
+    const data = buffer.getChannelData(c);
+    for (let i = 0; i < frameCount; i++) mono[i] += data[startSample + i] / channels;
+  }
+
+  const bytesPerSample = 2;
+  const blockAlign = bytesPerSample;
+  const dataSize = frameCount * bytesPerSample;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buf);
+  const writeStr = (o: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i)); };
+
+  writeStr(0, "RIFF"); view.setUint32(4, 36 + dataSize, true); writeStr(8, "WAVE");
+  writeStr(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true); view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true); writeStr(36, "data"); view.setUint32(40, dataSize, true);
+  floatTo16BitPCM(view, 44, mono);
+
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+async function transcribeChunk(blob: Blob, prompt: string): Promise<WordTimestamp[]> {
+  const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL;
+  const SUPABASE_KEY =
+    (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+    (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
+  if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error("Supabase env vars missing — cannot reach the transcription function.");
+
+  const fd = new FormData();
+  fd.append("file", blob, "chunk.wav");
+  fd.append("timestamps", "word");
+  fd.append("prompt", prompt);
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/groq-transcribe`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${SUPABASE_KEY}`, apikey: SUPABASE_KEY },
+    body: fd,
+  });
+  const json = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(json?.error || `groq-transcribe HTTP ${r.status}`);
+  return Array.isArray(json?.words) ? json.words : [];
+}
+
+// Transcribes the whole recording (in time-chunks) with word timestamps.
+export async function transcribeRecordingWords(file: File, promptHint = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"): Promise<WordTimestamp[]> {
+  const buffer = await decodeArrayBuffer(await file.arrayBuffer());
+  const chunks = Math.max(1, Math.ceil(buffer.duration / CHUNK_SECONDS));
+  const allWords: WordTimestamp[] = [];
+  for (let i = 0; i < chunks; i++) {
+    const start = i * CHUNK_SECONDS;
+    const end = Math.min(buffer.duration, start + CHUNK_SECONDS);
+    const wav = sliceToWav(buffer, start, end);
+    const words = await transcribeChunk(wav, promptHint);
+    for (const w of words) allWords.push({ word: w.word, start: w.start + start, end: w.end + start });
+  }
+  return allWords;
+}
+
+// Strips diacritics/tatweel and normalizes letter variants so ASR output
+// (which is rarely fully-diacritized) can be compared against the Uthmani
+// Qur'an text on a token-by-token basis.
+function normalizeArabicWord(s: string): string {
+  return s
+    .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
+    .replace(/\u0640/g, "")
+    .replace(/[إأآٱا]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/[ىي]/g, "ي")
+    .replace(/[^\u0600-\u06FF]/g, "")
+    .trim();
+}
+
+// Aligns transcribed words against the surah's real ayah text, ayah by
+// ayah, and returns the timestamp cut points between them. Uses a small
+// sliding window (±2 words around the expected count) per ayah so minor
+// ASR slips don't derail the whole alignment — if a window doesn't match
+// well, we fall back to the expected word count for that ayah and flag it
+// as low-confidence for the admin to review.
+export async function detectVerseBoundariesFromTranscription(
+  file: File, surahNumber: number, verseCount: number
+): Promise<TranscriptionResult> {
+  const [words, ayahTexts] = await Promise.all([
+    transcribeRecordingWords(file),
+    getSurahText(surahNumber, false),
+  ]);
+  const ayahWordLists = ayahTexts.map(a => a.text.split(/\s+/).map(normalizeArabicWord).filter(Boolean));
+  const transcribedNorm = words.map(w => normalizeArabicWord(w.word)).map(w => w);
+
+  const boundaries: number[] = [];
+  const lowConfidenceAyahs: number[] = [];
+  let wi = 0; // pointer into `words`
+
+  for (let ayahIdx = 0; ayahIdx < ayahWordLists.length; ayahIdx++) {
+    const expected = ayahWordLists[ayahIdx];
+    const target = expected.length || 1;
+
+    let bestScore = -1, bestLen = target;
+    for (let len = Math.max(1, target - 2); len <= target + 2; len++) {
+      if (wi + len > transcribedNorm.length) continue;
+      let score = 0;
+      for (let k = 0; k < Math.min(len, target); k++) {
+        if (transcribedNorm[wi + k] && expected[k] && transcribedNorm[wi + k] === expected[k]) score++;
+      }
+      if (score > bestScore) { bestScore = score; bestLen = len; }
+    }
+    if (bestScore < 0) { bestLen = Math.min(target, Math.max(0, transcribedNorm.length - wi)); bestScore = 0; }
+    if (target > 0 && bestScore / target < 0.4) lowConfidenceAyahs.push(ayahIdx + 1);
+
+    const consumedEndIdx = wi + bestLen - 1;
+    const lastWordEnd = words[consumedEndIdx]?.end ?? words[words.length - 1]?.end ?? 0;
+    wi += bestLen;
+
+    if (ayahIdx < ayahWordLists.length - 1) {
+      const nextWordStart = words[wi]?.start;
+      const cut = nextWordStart != null && nextWordStart > lastWordEnd
+        ? (lastWordEnd + nextWordStart) / 2
+        : Math.max(0, lastWordEnd - 0.03); // no gap detected — bias slightly early rather than into the next ayah
+      boundaries.push(Math.round(cut * 100) / 100);
+    }
+  }
+
+  return { boundaries, lowConfidenceAyahs };
 }
