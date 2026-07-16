@@ -38,6 +38,7 @@ import {
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
 import ClassParticipants from "./ClassParticipants";
+import { AssignmentFormModal } from "./SubjectAssignments";
 import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
@@ -3117,9 +3118,9 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[cTitle,setCTitle]=useState("");
   const[cBody,setCBody]=useState("");
   const[cFile,setCFile]=useState<File|null>(null);
-  const[cAsAssignment,setCAsAssignment]=useState(false);
-  const[cDeadline,setCDeadline]=useState("");
   const[cPosting,setCPosting]=useState(false);
+  // ── Create Assignment — separate space from materials sharing ──────────
+  const[showAssignmentModal,setShowAssignmentModal]=useState(false);
   const[cError,setCError]=useState("");
   const fileInputRef=useRef<HTMLInputElement>(null);
   const editFileRef=useRef<HTMLInputElement>(null);
@@ -3199,7 +3200,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   };
 
   const resetComposer=()=>{
-    setCTitle("");setCBody("");setCFile(null);setCAsAssignment(false);setCDeadline("");setCError("");
+    setCTitle("");setCBody("");setCFile(null);setCError("");
     if(fileInputRef.current)fileInputRef.current.value="";
   };
 
@@ -3228,19 +3229,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         uploaded_by:user.id,session_id:sessionId||null,
       });
       if(matErr)throw matErr;
-
-      if(cAsAssignment){
-        const{error:asgErr}=await supabase.from("subject_assignments" as any).insert({
-          subject_id:subjectId,title:finalTitle||"Class assignment",
-          description:composerMode==="text"?cBody.trim():(cBody.trim()||`See attached: ${finalTitle}`),
-          deadline:cDeadline?new Date(cDeadline).toISOString():null,
-          file_url:fileUrl,created_by:user.id,
-        });
-        if(asgErr)throw asgErr;
-        toast({title:"✅ Shared with class and added to Assignments"});
-      }else{
-        toast({title:"✅ Shared with the class"});
-      }
+      toast({title:"✅ Shared with the class"});
       resetComposer();setComposerOpen(false);reloadMats();
     }catch(e:any){
       setCError(e?.message||"Failed to share. Please try again.");
@@ -3455,7 +3444,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
               <div style={{fontSize:18,flexShrink:0}}>📤</div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,fontWeight:700,color:"#f2dfa8",fontFamily:"'Google Sans',sans-serif"}}>Share with class</div>
-                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note, upload a file, or assign homework</div>
+                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note or upload a file for students to view</div>
               </div>
               <ChevronDown style={{width:14,height:14,color:"rgba(255,255,255,.4)",transform:composerOpen?"rotate(180deg)":"none",transition:"transform .15s",flexShrink:0}}/>
             </button>
@@ -3472,7 +3461,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                     }}>{m==="text"?"✏️ Write a note":"📎 Upload a file"}</button>
                   ))}
                 </div>
-                <input value={cTitle} onChange={e=>setCTitle(e.target.value)} placeholder="Title (e.g. Today's homework)" style={{
+                <input value={cTitle} onChange={e=>setCTitle(e.target.value)} placeholder="Title (e.g. Today's notes)" style={{
                   width:"100%",boxSizing:"border-box" as const,padding:"9px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
                   background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit",
                 }}/>
@@ -3489,16 +3478,6 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                     {cFile&&<div style={{fontSize:10,color:"#34d399",marginTop:4}}>Ready: {cFile.name} ({(cFile.size/1024/1024).toFixed(1)}MB)</div>}
                   </div>
                 )}
-                <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"rgba(255,255,255,.7)",marginBottom:cAsAssignment?8:10,cursor:"pointer"}}>
-                  <input type="checkbox" checked={cAsAssignment} onChange={e=>setCAsAssignment(e.target.checked)}/>
-                  Also save to Assignments for students
-                </label>
-                {cAsAssignment&&(
-                  <input type="date" value={cDeadline} onChange={e=>setCDeadline(e.target.value)} style={{
-                    width:"100%",boxSizing:"border-box" as const,padding:"8px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
-                    background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:10,fontFamily:"inherit",
-                  }}/>
-                )}
                 {cError&&<div style={{fontSize:11,color:"#ef4444",marginBottom:8}}>{cError}</div>}
                 <button onClick={handleSharePost} disabled={cPosting} style={{
                   width:"100%",padding:"10px",borderRadius:8,border:"none",cursor:cPosting?"default":"pointer",
@@ -3507,6 +3486,21 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                 }}>{cPosting?"Sharing…":"Share with class"}</button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Create Assignment — a separate space from materials sharing.
+            Opens the same assignment form used on the Subject's Assignments
+            tab, so anything created here immediately shows up there too. */}
+        {isPrivileged&&(
+          <div style={{margin:"8px 10px 0",borderRadius:10,border:"1px solid rgba(52,211,153,.3)",background:"rgba(52,211,153,.06)",overflow:"hidden",flexShrink:0}}>
+            <button onClick={()=>setShowAssignmentModal(true)} style={{width:"100%",padding:"12px 14px",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left" as const}}>
+              <div style={{fontSize:18,flexShrink:0}}>📝</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:13,fontWeight:700,color:"#a7f3d0",fontFamily:"'Google Sans',sans-serif"}}>Create Assignment</div>
+                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Give students homework with a deadline, right now or for later</div>
+              </div>
+            </button>
           </div>
         )}
 
@@ -3630,6 +3624,16 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         </div>
       </div>
     </div>
+    {showAssignmentModal&&user&&createPortal(
+      <AssignmentFormModal
+        subjectId={subjectId}
+        assignment={null}
+        userId={user.id}
+        onClose={()=>setShowAssignmentModal(false)}
+        onSaved={()=>{setShowAssignmentModal(false);toast({title:"✅ Assignment created"});}}
+      />,
+      document.body
+    )}
     </>
   );
 };
