@@ -1,60 +1,46 @@
-/*  src/components/NotificationPermissionBanner.tsx
-    ═══════════════════════════════════════════════════════════════════════
-    Visible, dismissable banner that prompts students AND teachers to enable
-    push notifications.
+/*
+  src/components/NotificationPermissionBanner.tsx — Tahleem Academy
+  ═══════════════════════════════════════════════════════════════════════
+  Visible, dismissable banner that prompts students, teachers, and admins
+  to enable push notifications.
 
-    FIXES IN THIS VERSION:
-    ──────────────────────
-    FIX 1 — iOS Safari: Safari on iPhone/iPad requires the PWA to be
-      "Add to Home Screen" installed before Web Push works. We detect this
-      case and show a specific install-first message instead of the
-      normal Enable button.
+  Rebuilt: the push-subscription logic that used to be duplicated here
+  (separately from useTimetableNotifications.ts, with slightly different
+  bugs) now lives in one place — src/lib/push-notifications.ts. This file
+  is UI only.
 
-    FIX 2 — Permission prompt outside user gesture: We call
-      Notification.requestPermission() only from a button onClick, which
-      is a browser-trusted user gesture. Silent auto-calls are removed.
+  Handles:
+  • iOS Safari — Web Push only works once the PWA is installed to Home
+    Screen; shows install instructions instead of an Enable button.
+  • Permission requested only from a button onClick (user gesture).
+  • Silent re-subscribe if permission is already granted but the DB row
+    is missing (new browser / cleared cache).
 
-    FIX 3 — Multi-device: upsert uses (user_id, endpoint) unique key.
-      Falls back gracefully if the DB constraint is old (user_id only).
-
-    FIX 4 — Teachers: banner shows to both students and teachers.
-      Only admins are excluded.
-
-    FIX 5 — Re-subscription on login: if permission is already granted
-      but the DB row is missing (cleared cache, new browser), we silently
-      re-save the subscription in the background.
-
-    Usage — mount once in student layout AND teacher layout:
-      <NotificationPermissionBanner />
-    ═══════════════════════════════════════════════════════════════════════
+  Usage — mount once in each layout (student/teacher/admin):
+    <NotificationPermissionBanner />
+  ═══════════════════════════════════════════════════════════════════════
 */
 import { useState, useEffect } from "react";
 import { Bell, BellOff, X, Smartphone } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { enablePushNotifications, ensureSubscribed } from "@/lib/push-notifications";
 
 const SESSION_KEY = "tahleem_notif_banner_dismissed";
-const NB_G    = "#064E3B";
-const NB_GM   = "#075E54";
+const NB_G = "#064E3B";
+const NB_GM = "#075E54";
 
 type PermState = "unknown" | "default" | "granted" | "denied" | "unsupported" | "ios-needs-install";
 
 function detectState(): PermState {
   if (typeof window === "undefined") return "unknown";
 
-  // iOS Safari detection
   const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   const isSafari = /Safari/.test(navigator.userAgent) && !/Chrome/.test(navigator.userAgent);
 
   if (isIOS && isSafari) {
-    // Check if running as installed PWA (standalone)
     const isInstalled = (window.navigator as any).standalone === true;
-    if (!isInstalled) {
-      // On iOS Safari, Web Push ONLY works in installed PWA
-      return "ios-needs-install";
-    }
-    // Installed PWA on iOS 16.4+ — check Notification API
+    if (!isInstalled) return "ios-needs-install";
     if (typeof Notification === "undefined") return "unsupported";
     return Notification.permission as PermState;
   }
@@ -66,14 +52,11 @@ function detectState(): PermState {
 export default function NotificationPermissionBanner() {
   const { user } = useAuth();
 
-  const [perm,        setPerm]        = useState<PermState>("unknown");
-  const [dismissed,   setDismissed]   = useState(false);
+  const [perm, setPerm] = useState<PermState>("unknown");
+  const [dismissed, setDismissed] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
-  const [success,     setSuccess]     = useState(false);
+  const [success, setSuccess] = useState(false);
 
-  // Show to students, teachers, AND admins — admins now receive oversight
-  // notifications (class reminders/rings, content uploads) and need push
-  // enabled just like everyone else to get them in the background.
   const shouldShow = !!user;
 
   useEffect(() => {
@@ -82,7 +65,7 @@ export default function NotificationPermissionBanner() {
     setPerm(state);
     setDismissed(!!sessionStorage.getItem(SESSION_KEY));
 
-    // FIX 5: Silently re-subscribe if permission already granted but DB row missing
+    // Permission already granted but DB row might be missing — re-sync quietly.
     if (state === "granted" && user) {
       ensureSubscribed(user.id).catch(() => {});
     }
@@ -116,7 +99,7 @@ export default function NotificationPermissionBanner() {
     setDismissed(true);
   };
 
-  // ── iOS: needs PWA install first ────────────────────────────────────────────
+  // ── iOS: needs PWA install first ────────────────────────────────────────
   if (perm === "ios-needs-install") {
     return (
       <div style={{
@@ -150,7 +133,7 @@ export default function NotificationPermissionBanner() {
     );
   }
 
-  // ── Blocked / denied ────────────────────────────────────────────────────────
+  // ── Blocked / denied ──────────────────────────────────────────────────────
   if (perm === "denied") {
     return (
       <div style={{
@@ -166,7 +149,7 @@ export default function NotificationPermissionBanner() {
             Notifications are blocked
           </div>
           <div style={{ fontSize: 12, color: "#C2410C", lineHeight: 1.5 }}>
-            You'll miss class reminders. To fix: tap the 🔒 lock icon in your browser address bar → Notifications → Allow, then refresh.
+            You'll miss updates. To fix: tap the 🔒 lock icon in your browser address bar → Notifications → Allow, then refresh.
           </div>
         </div>
         <button onClick={handleDismiss} style={{ background: "none", border: "none", cursor: "pointer", color: "#9A3412", padding: 2 }}>
@@ -176,7 +159,7 @@ export default function NotificationPermissionBanner() {
     );
   }
 
-  // ── Default: not yet asked ──────────────────────────────────────────────────
+  // ── Default: not yet asked ──────────────────────────────────────────────
   return (
     <div style={{
       background: `linear-gradient(135deg, ${NB_G}08, ${NB_GM}12)`,
@@ -197,10 +180,10 @@ export default function NotificationPermissionBanner() {
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: NB_G, marginBottom: 2 }}>
-          Get class reminders on your phone
+          Stay updated on your phone
         </div>
         <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5 }}>
-          We'll notify you 15 min before each class, even when this page is closed — just like WhatsApp.
+          We'll notify you the moment something important happens — even when this page is closed.
         </div>
       </div>
 
@@ -232,125 +215,4 @@ export default function NotificationPermissionBanner() {
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function urlBase64ToUint8Array(base64: string): ArrayBuffer {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = atob(b64);
-  return new Uint8Array([...raw].map(c => c.charCodeAt(0))).buffer;
-}
-
-async function getVapidKey(): Promise<string | null> {
-  // Prefer build-time env var (fastest, no network call)
-  const fromEnv = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-  if (fromEnv?.length) return fromEnv.trim();
-
-  // Fall back to edge function
-  try {
-    const { data, error } = await supabase.functions.invoke("vapid-public-key");
-    if (error) throw error;
-    const key = (data as any)?.publicKey || (data as any)?.public_key;
-    if (typeof key === "string" && key.length > 10) return key.trim();
-  } catch (e: any) {
-    console.warn("[NotificationBanner] VAPID key fetch failed:", e.message);
-  }
-  return null;
-}
-
-/** Called from the Enable button click — browser shows native permission prompt */
-export async function enablePushNotifications(userId: string): Promise<"granted" | "denied" | "error"> {
-  try {
-    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return "error";
-
-    // Must be called from user gesture (button click) — browser enforces this
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") return "denied";
-
-    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-    await navigator.serviceWorker.ready;
-
-    const vapidKey = await getVapidKey();
-    if (!vapidKey) {
-      console.warn("[NotificationBanner] VAPID key not available — check VITE_VAPID_PUBLIC_KEY env var");
-      return "error";
-    }
-
-    // Get or create push subscription
-    let sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidKey),
-      });
-    }
-
-    const p256dh = sub.getKey("p256dh");
-    const auth   = sub.getKey("auth");
-    if (!p256dh || !auth) return "error";
-
-    await saveToDB(userId, sub.endpoint, p256dh, auth);
-    console.log("[NotificationBanner] ✅ push subscription saved for user:", userId);
-    return "granted";
-  } catch (e: any) {
-    console.warn("[NotificationBanner] subscription error:", e.message);
-    return "error";
-  }
-}
-
-async function saveToDB(
-  userId: string,
-  endpoint: string,
-  p256dh: ArrayBuffer,
-  auth: ArrayBuffer
-): Promise<void> {
-  const row = {
-    user_id:    userId,
-    endpoint,
-    p256dh:     btoa(String.fromCharCode(...new Uint8Array(p256dh))),
-    auth:       btoa(String.fromCharCode(...new Uint8Array(auth))),
-    updated_at: new Date().toISOString(),
-  };
-
-  // Multi-device upsert (requires unique(user_id, endpoint) constraint)
-  const { error } = await supabase
-    .from("push_subscriptions")
-    .upsert(row, { onConflict: "user_id,endpoint" });
-
-  if (error) {
-    // Old schema — fall back to single-device upsert
-    console.warn("[NotificationBanner] multi-device upsert failed, falling back:", error.message);
-    await supabase
-      .from("push_subscriptions")
-      .upsert(row, { onConflict: "user_id" });
-  }
-}
-
-/** Silent background re-subscription for users who already granted permission */
-async function ensureSubscribed(userId: string): Promise<void> {
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
-  try {
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    if (!sub) return; // No browser subscription — user must click Enable
-
-    // Check if this endpoint exists in DB
-    const { data } = await supabase
-      .from("push_subscriptions")
-      .select("id")
-      .eq("user_id", userId)
-      .eq("endpoint", sub.endpoint)
-      .maybeSingle();
-
-    if (!data) {
-      // Browser has subscription but DB doesn't — re-save silently
-      const p256dh = sub.getKey("p256dh");
-      const auth   = sub.getKey("auth");
-      if (!p256dh || !auth) return;
-      await saveToDB(userId, sub.endpoint, p256dh, auth);
-      console.log("[NotificationBanner] silently re-saved subscription for user:", userId);
-    }
-  } catch { /* silent */ }
 }
