@@ -4,7 +4,7 @@
 // Swipe left = next page, swipe right = previous page (matching the natural
 // right-to-left page-turn direction of an Arabic book).
 import type { CSSProperties, TouchEvent as ReactTouchEvent } from "react";
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   BookOpen, Search, X, Play, Pause, Repeat, Repeat1, Star, ChevronDown,
@@ -30,6 +30,18 @@ const AR_NUMERALS = ["٠","١","٢","٣","٤","٥","٦","٧","٨","٩"];
 const toArabicNum = (n: number) => String(n).split("").map(d => AR_NUMERALS[Number(d)] ?? d).join("");
 const TOTAL_PAGES = 604;
 
+// ── Mushaf line auto-fit ─────────────────────────────────────────────────
+// A physical mushaf page justifies every printed line to the exact same
+// width — some lines are naturally short (end of a surah, wide letters),
+// others long, so the print never wraps a line onto a second visual row.
+// At a single fixed font-size, the browser can't reproduce that: any line
+// whose words are wider than the column at that size just wraps, which is
+// the "scattered" look. To match print, each line gets its own font-size,
+// measured against the actual column width and shrunk only as much as it
+// needs to fit on one row — most lines stay at BASE_LINE_FONT_SIZE.
+const BASE_LINE_FONT_SIZE = 24;
+const MIN_LINE_FONT_SIZE = 13;
+
 const LAST_PAGE_KEY = "quran_last_page";
 const RECITER_KEY = "quran_reciter";
 const TRANSLATION_KEY = "quran_show_translation";
@@ -46,6 +58,9 @@ export default function QuranPage() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [verses, setVerses] = useState<QuranVerse[]>([]);
   const [pageLines, setPageLines] = useState<QuranPageLine[] | null>(null);
+  const [lineFontSizes, setLineFontSizes] = useState<Record<number, number>>({});
+  const linesContainerRef = useRef<HTMLDivElement | null>(null);
+  const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [recitationsBySurah, setRecitationsBySurah] = useState<Record<number, CustomRecitation[]>>({});
   const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
@@ -161,6 +176,45 @@ export default function QuranPage() {
     }, 1500);
     return () => clearTimeout(timeout);
   }, [userId, primarySurahNumber, selected, loading]);
+
+  // ── Fit each mushaf line to one row ─────────────────────────────────────
+  // Measures the natural width of every printed line's text (Arabic word
+  // text + ayah-end markers) with an offscreen canvas at BASE_LINE_FONT_SIZE,
+  // then — only for lines that would overflow the column — shrinks that
+  // line's own font-size just enough to fit, instead of letting the browser
+  // wrap it onto a second visual row. Re-runs whenever the page's lines
+  // change or the reader column is resized (e.g. rotate, sidebar toggle).
+  useLayoutEffect(() => {
+    if (!pageLines || !pageLines.length) { setLineFontSizes({}); return; }
+    const containerEl = linesContainerRef.current;
+    if (!containerEl) return;
+
+    const measure = () => {
+      const width = containerEl.clientWidth;
+      if (!width) return;
+      const canvas = measureCanvasRef.current ?? (measureCanvasRef.current = document.createElement("canvas"));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      const next: Record<number, number> = {};
+      for (const line of pageLines) {
+        const text = line.words
+          .map(w => w.text + (w.isAyahEnd ? ` ﴿${toArabicNum(w.ayah)}﴾` : ""))
+          .join(" ");
+        ctx.font = `${BASE_LINE_FONT_SIZE}px ${Q_ARABIC_FONT}`;
+        const naturalWidth = ctx.measureText(text).width;
+        next[line.lineNumber] = naturalWidth > width && naturalWidth > 0
+          ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * width) / naturalWidth))
+          : BASE_LINE_FONT_SIZE;
+      }
+      setLineFontSizes(next);
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(containerEl);
+    return () => ro.disconnect();
+  }, [pageLines]);
 
   const isBookmarked = useCallback((surah: number, ayah: number) =>
     bookmarks.some(b => b.surah_number === surah && b.ayah_number === ayah), [bookmarks]);
@@ -418,7 +472,7 @@ export default function QuranPage() {
                   }}
                 >
                   {text}
-                  {isAyahEnd && <span style={{ fontSize: 16, color: Q_GOLD_DARK, margin: "0 3px" }}>﴿{toArabicNum(ayah)}﴾</span>}
+                  {isAyahEnd && <span style={{ fontSize: "0.67em", color: Q_GOLD_DARK, margin: "0 3px" }}>﴿{toArabicNum(ayah)}﴾</span>}
                   {" "}
                 </span>
               );
@@ -453,15 +507,21 @@ export default function QuranPage() {
                 let lastSurahRendered: number | null = null;
                 const seenAyah = new Set<string>();
                 return (
-                  <div dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontSize: 24, color: Q_INK }}>
+                  <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, color: Q_INK }}>
                     {pageLines.map(line => {
                       const firstWord = line.words[0];
                       const showDivider = firstWord && firstWord.surah !== lastSurahRendered;
                       if (firstWord) lastSurahRendered = firstWord.surah;
+                      const lineFontSize = lineFontSizes[line.lineNumber] ?? BASE_LINE_FONT_SIZE;
                       return (
                         <div key={line.lineNumber}>
                           {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === pageLines[0].lineNumber)}
-                          <div style={{ direction: "rtl", textAlign: "justify", textAlignLast: "justify" as any, lineHeight: 2.1 }}>
+                          <div
+                            style={{
+                              direction: "rtl", textAlign: "justify", textAlignLast: "justify" as any,
+                              lineHeight: 2.1, fontSize: lineFontSize, whiteSpace: "nowrap", overflow: "hidden",
+                            }}
+                          >
                             {line.words.map((w, i) => {
                               const key = `${w.surah}-${w.ayah}-${line.lineNumber}-${i}`;
                               const ayahKey = `${w.surah}-${w.ayah}`;
