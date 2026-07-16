@@ -73,6 +73,7 @@ const RecitationSession    = lazy(() => import("./pages/student/RecitationSessio
 const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
 const StudentAssignments   = lazy(() => import("./pages/student/StudentAssignments"));
 const StudentAttendance    = lazy(() => import("./pages/student/StudentAttendance"));
+const StudentSupport       = lazy(() => import("./pages/student/StudentSupport"));
 const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
 
 // ── Musabaqah ──────────────────────────────────────────────────────────────
@@ -100,6 +101,7 @@ const LiveClassManagement   = lazy(() => import("./pages/admin/LiveClassManageme
 const MajlisModeration      = lazy(() => import("./pages/admin/MajlisModeration"));const NotificationManagement = lazy(() => import("./pages/admin/NotificationManagement"));
 const TranscriptManagement  = lazy(() => import("./pages/admin/TranscriptManagement"));
 const AttendanceManagement  = lazy(() => import("./pages/admin/AttendanceManagement"));
+const SupportTickets        = lazy(() => import("./pages/admin/SupportTickets"));
 const PaymentManagement     = lazy(() => import("./pages/admin/PaymentManagement"));
 const TeacherPayments       = lazy(() => import("./pages/admin/TeacherPayments"));
 const AcademicCalendar      = lazy(() => import("./pages/admin/AcademicCalendar"));
@@ -234,6 +236,7 @@ const App = () => (
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
                     <Route path="/student/assignments"         element={<StudentAssignments />} />
                     <Route path="/student/attendance"          element={<StudentAttendance />} />
+                    <Route path="/student/support"             element={<StudentSupport />} />
                     <Route path="/student/profile"             element={<ProfileSettings />} />
                     <Route path="/student/enrollment-payment"  element={<EnrollmentPayment />} />
                     {/* Hub: choose between Quiz Arena or Recitation Competition */}
@@ -313,6 +316,7 @@ const App = () => (
                     <Route path="/admin/levels"                      element={<LevelManagement />} />
                     <Route path="/admin/transcripts"                 element={<TranscriptManagement />} />
                     <Route path="/admin/attendance"                  element={<AttendanceManagement />} />
+                    <Route path="/admin/support-tickets"             element={<SupportTickets />} />
                     <Route path="/admin/payments"                    element={<PaymentManagement />} />
                     <Route path="/admin/teacher-payments"            element={<TeacherPayments />} />
                     <Route path="/admin/calendar"                    element={<AcademicCalendar />} />
