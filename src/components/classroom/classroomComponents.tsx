@@ -43,6 +43,7 @@ import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
 import PDFViewer, { prewarmPDF } from "./PDFViewer";
 import LiveClassFilePanel from "./LiveClassFilePanel";
+import SubjectAssignments from "./SubjectAssignments";
 import { useIsMobile }   from "@/hooks/use-mobile";
 import { useState, useEffect, useRef, useCallback } from "react";
 
@@ -3117,9 +3118,9 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[cTitle,setCTitle]=useState("");
   const[cBody,setCBody]=useState("");
   const[cFile,setCFile]=useState<File|null>(null);
-  const[cAsAssignment,setCAsAssignment]=useState(false);
-  const[cDeadline,setCDeadline]=useState("");
   const[cPosting,setCPosting]=useState(false);
+  // ── Assignments section (teacher/admin manage, students view/submit) ────
+  const[assignmentsOpen,setAssignmentsOpen]=useState(false);
   const[cError,setCError]=useState("");
   const fileInputRef=useRef<HTMLInputElement>(null);
   const editFileRef=useRef<HTMLInputElement>(null);
@@ -3199,7 +3200,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   };
 
   const resetComposer=()=>{
-    setCTitle("");setCBody("");setCFile(null);setCAsAssignment(false);setCDeadline("");setCError("");
+    setCTitle("");setCBody("");setCFile(null);setCError("");
     if(fileInputRef.current)fileInputRef.current.value="";
   };
 
@@ -3229,18 +3230,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
       });
       if(matErr)throw matErr;
 
-      if(cAsAssignment){
-        const{error:asgErr}=await supabase.from("subject_assignments" as any).insert({
-          subject_id:subjectId,title:finalTitle||"Class assignment",
-          description:composerMode==="text"?cBody.trim():(cBody.trim()||`See attached: ${finalTitle}`),
-          deadline:cDeadline?new Date(cDeadline).toISOString():null,
-          file_url:fileUrl,created_by:user.id,
-        });
-        if(asgErr)throw asgErr;
-        toast({title:"✅ Shared with class and added to Assignments"});
-      }else{
-        toast({title:"✅ Shared with the class"});
-      }
+      toast({title:"✅ Shared with the class"});
       resetComposer();setComposerOpen(false);reloadMats();
     }catch(e:any){
       setCError(e?.message||"Failed to share. Please try again.");
@@ -3455,7 +3445,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
               <div style={{fontSize:18,flexShrink:0}}>📤</div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,fontWeight:700,color:"#f2dfa8",fontFamily:"'Google Sans',sans-serif"}}>Share with class</div>
-                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note, upload a file, or assign homework</div>
+                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note or upload a file as a material</div>
               </div>
               <ChevronDown style={{width:14,height:14,color:"rgba(255,255,255,.4)",transform:composerOpen?"rotate(180deg)":"none",transition:"transform .15s",flexShrink:0}}/>
             </button>
@@ -3489,16 +3479,6 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                     {cFile&&<div style={{fontSize:10,color:"#34d399",marginTop:4}}>Ready: {cFile.name} ({(cFile.size/1024/1024).toFixed(1)}MB)</div>}
                   </div>
                 )}
-                <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"rgba(255,255,255,.7)",marginBottom:cAsAssignment?8:10,cursor:"pointer"}}>
-                  <input type="checkbox" checked={cAsAssignment} onChange={e=>setCAsAssignment(e.target.checked)}/>
-                  Also save to Assignments for students
-                </label>
-                {cAsAssignment&&(
-                  <input type="date" value={cDeadline} onChange={e=>setCDeadline(e.target.value)} style={{
-                    width:"100%",boxSizing:"border-box" as const,padding:"8px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
-                    background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:10,fontFamily:"inherit",
-                  }}/>
-                )}
                 {cError&&<div style={{fontSize:11,color:"#ef4444",marginBottom:8}}>{cError}</div>}
                 <button onClick={handleSharePost} disabled={cPosting} style={{
                   width:"100%",padding:"10px",borderRadius:8,border:"none",cursor:cPosting?"default":"pointer",
@@ -3509,6 +3489,25 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
             )}
           </div>
         )}
+
+        {/* Assignments — teacher/admin can create/grade, students view/submit,
+            all without leaving the live class. Homework no longer lives inside
+            the material composer above; this is the single place for it. */}
+        <button onClick={()=>setAssignmentsOpen(true)} style={{
+          margin:"10px 10px 0",padding:"12px 14px",borderRadius:10,
+          border:"1px solid rgba(59,130,246,.35)",
+          background:"rgba(59,130,246,.08)",
+          cursor:"pointer",textAlign:"left" as const,display:"flex",alignItems:"center",gap:10,flexShrink:0,
+        }}>
+          <ClipboardList style={{width:18,height:18,color:"#93c5fd",flexShrink:0}}/>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#dbeafe",fontFamily:"'Google Sans',sans-serif"}}>Assignments</div>
+            <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>
+              {isPrivileged?"Create, review and grade homework":"View and submit your homework"}
+            </div>
+          </div>
+          <ChevronRight style={{width:13,height:13,color:"#93c5fd",flexShrink:0}}/>
+        </button>
 
         {/* List */}
         <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
@@ -3630,6 +3629,25 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         </div>
       </div>
     </div>
+    {/* Assignments overlay — full screen so its own modals (create/grade/submit)
+        have room, regardless of how narrow the materials drawer is. Reuses the
+        exact same Assignments component used on the subject's profile page, so
+        an assignment created here — or a student's submission made here —
+        shows up there instantly too, and vice versa. */}
+    {assignmentsOpen && (
+      <div style={{position:"fixed",inset:0,zIndex:80,background:"#f5f2ea",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"12px 14px",borderBottom:"1px solid rgba(15,45,31,.1)",flexShrink:0,background:"#fff"}}>
+          <ClipboardList style={{width:16,height:16,color:"#0f2d1f",flexShrink:0}}/>
+          <span style={{flex:1,fontSize:15,fontWeight:800,color:"#0f2d1f"}}>Assignments</span>
+          <button onClick={()=>setAssignmentsOpen(false)} style={{background:"#f4f4f4",border:"none",color:"#555",borderRadius:8,width:32,height:32,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <X style={{width:15,height:15}}/>
+          </button>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:16}}>
+          <SubjectAssignments subjectId={subjectId}/>
+        </div>
+      </div>
+    )}
     </>
   );
 };
