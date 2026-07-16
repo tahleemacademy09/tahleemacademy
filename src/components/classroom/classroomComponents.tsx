@@ -38,7 +38,6 @@ import {
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
 import ClassParticipants from "./ClassParticipants";
-import { AssignmentFormModal } from "./SubjectAssignments";
 import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
@@ -3118,9 +3117,9 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[cTitle,setCTitle]=useState("");
   const[cBody,setCBody]=useState("");
   const[cFile,setCFile]=useState<File|null>(null);
+  const[cAsAssignment,setCAsAssignment]=useState(false);
+  const[cDeadline,setCDeadline]=useState("");
   const[cPosting,setCPosting]=useState(false);
-  // ── Create Assignment — separate space from materials sharing ──────────
-  const[showAssignmentModal,setShowAssignmentModal]=useState(false);
   const[cError,setCError]=useState("");
   const fileInputRef=useRef<HTMLInputElement>(null);
   const editFileRef=useRef<HTMLInputElement>(null);
@@ -3200,7 +3199,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   };
 
   const resetComposer=()=>{
-    setCTitle("");setCBody("");setCFile(null);setCError("");
+    setCTitle("");setCBody("");setCFile(null);setCAsAssignment(false);setCDeadline("");setCError("");
     if(fileInputRef.current)fileInputRef.current.value="";
   };
 
@@ -3229,7 +3228,19 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         uploaded_by:user.id,session_id:sessionId||null,
       });
       if(matErr)throw matErr;
-      toast({title:"✅ Shared with the class"});
+
+      if(cAsAssignment){
+        const{error:asgErr}=await supabase.from("subject_assignments" as any).insert({
+          subject_id:subjectId,title:finalTitle||"Class assignment",
+          description:composerMode==="text"?cBody.trim():(cBody.trim()||`See attached: ${finalTitle}`),
+          deadline:cDeadline?new Date(cDeadline).toISOString():null,
+          file_url:fileUrl,created_by:user.id,
+        });
+        if(asgErr)throw asgErr;
+        toast({title:"✅ Shared with class and added to Assignments"});
+      }else{
+        toast({title:"✅ Shared with the class"});
+      }
       resetComposer();setComposerOpen(false);reloadMats();
     }catch(e:any){
       setCError(e?.message||"Failed to share. Please try again.");
@@ -3444,7 +3455,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
               <div style={{fontSize:18,flexShrink:0}}>📤</div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:13,fontWeight:700,color:"#f2dfa8",fontFamily:"'Google Sans',sans-serif"}}>Share with class</div>
-                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note or upload a file for students to view</div>
+                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note, upload a file, or assign homework</div>
               </div>
               <ChevronDown style={{width:14,height:14,color:"rgba(255,255,255,.4)",transform:composerOpen?"rotate(180deg)":"none",transition:"transform .15s",flexShrink:0}}/>
             </button>
@@ -3461,7 +3472,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                     }}>{m==="text"?"✏️ Write a note":"📎 Upload a file"}</button>
                   ))}
                 </div>
-                <input value={cTitle} onChange={e=>setCTitle(e.target.value)} placeholder="Title (e.g. Today's notes)" style={{
+                <input value={cTitle} onChange={e=>setCTitle(e.target.value)} placeholder="Title (e.g. Today's homework)" style={{
                   width:"100%",boxSizing:"border-box" as const,padding:"9px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
                   background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:8,fontFamily:"inherit",
                 }}/>
@@ -3478,6 +3489,16 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                     {cFile&&<div style={{fontSize:10,color:"#34d399",marginTop:4}}>Ready: {cFile.name} ({(cFile.size/1024/1024).toFixed(1)}MB)</div>}
                   </div>
                 )}
+                <label style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"rgba(255,255,255,.7)",marginBottom:cAsAssignment?8:10,cursor:"pointer"}}>
+                  <input type="checkbox" checked={cAsAssignment} onChange={e=>setCAsAssignment(e.target.checked)}/>
+                  Also save to Assignments for students
+                </label>
+                {cAsAssignment&&(
+                  <input type="date" value={cDeadline} onChange={e=>setCDeadline(e.target.value)} style={{
+                    width:"100%",boxSizing:"border-box" as const,padding:"8px 11px",borderRadius:8,border:"1px solid rgba(255,255,255,.12)",
+                    background:"rgba(255,255,255,.05)",color:"#fff",fontSize:12,marginBottom:10,fontFamily:"inherit",
+                  }}/>
+                )}
                 {cError&&<div style={{fontSize:11,color:"#ef4444",marginBottom:8}}>{cError}</div>}
                 <button onClick={handleSharePost} disabled={cPosting} style={{
                   width:"100%",padding:"10px",borderRadius:8,border:"none",cursor:cPosting?"default":"pointer",
@@ -3486,21 +3507,6 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                 }}>{cPosting?"Sharing…":"Share with class"}</button>
               </div>
             )}
-          </div>
-        )}
-
-        {/* Create Assignment — a separate space from materials sharing.
-            Opens the same assignment form used on the Subject's Assignments
-            tab, so anything created here immediately shows up there too. */}
-        {isPrivileged&&(
-          <div style={{margin:"8px 10px 0",borderRadius:10,border:"1px solid rgba(52,211,153,.3)",background:"rgba(52,211,153,.06)",overflow:"hidden",flexShrink:0}}>
-            <button onClick={()=>setShowAssignmentModal(true)} style={{width:"100%",padding:"12px 14px",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left" as const}}>
-              <div style={{fontSize:18,flexShrink:0}}>📝</div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:700,color:"#a7f3d0",fontFamily:"'Google Sans',sans-serif"}}>Create Assignment</div>
-                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Give students homework with a deadline, right now or for later</div>
-              </div>
-            </button>
           </div>
         )}
 
@@ -3624,16 +3630,6 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         </div>
       </div>
     </div>
-    {showAssignmentModal&&user&&createPortal(
-      <AssignmentFormModal
-        subjectId={subjectId}
-        assignment={null}
-        userId={user.id}
-        onClose={()=>setShowAssignmentModal(false)}
-        onSaved={()=>{setShowAssignmentModal(false);toast({title:"✅ Assignment created"});}}
-      />,
-      document.body
-    )}
     </>
   );
 };
@@ -4202,11 +4198,21 @@ export const ParticipantSignalIcon=({participant}:{participant:any})=>{
     // ConnectionQualityChanged doesn't reliably fire for every participant
     // (e.g. ones with no published tracks, or ones the SFU only reports on
     // periodically) — so some tiles were stuck on "unknown" forever and
-    // never got a single event. Poll the live property directly every 2.5s
-    // as a fallback so every participant's badge stays in sync with LiveKit's
+    // never got a single event. Poll the live property directly as a
+    // fallback so every participant's badge stays in sync with LiveKit's
     // actual current value even if we missed (or never got) the event.
+    //
+    // BUG FIX ("network icon takes a while to show up"): right after a
+    // tile mounts, connectionQuality is genuinely still "unknown" at the
+    // LiveKit SDK level for a moment — the SFU hasn't measured/reported it
+    // yet, so there's nothing to poll for early on. Polling fast for the
+    // first few seconds (instead of only every 2.5s from the start) means
+    // we pick up the real value the moment LiveKit has one, rather than
+    // waiting for the next 2.5s tick.
+    const fastIv=setInterval(()=>setQuality(readQuality()),300);
+    const toStable=setTimeout(()=>clearInterval(fastIv),4000);
     const iv=setInterval(()=>setQuality(readQuality()),2500);
-    return()=>{room.off(RoomEvent.ConnectionQualityChanged,handler);clearInterval(iv);};
+    return()=>{room.off(RoomEvent.ConnectionQualityChanged,handler);clearInterval(iv);clearInterval(fastIv);clearTimeout(toStable);};
   },[room,participant,readQuality]);
   // BUG FIX: this used to `return null` for anything except poor/lost — so
   // the icon was invisible almost all the time (exactly when a connection
@@ -4259,7 +4265,16 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
     };
   },[participant,attachVideo,room,isLocal]);
 
-  const name=participant.name||participant.identity||"User";
+  // BUG FIX ("takes a while before it shows my name"): participant.name only
+  // arrives once the LiveKit connection handshake finishes and the server
+  // relays participant metadata back — a real network round-trip, not
+  // instant. But for the LOCAL participant we already know who they are
+  // (they're logged in) before we ever connect to LiveKit at all, so use
+  // that as the fallback instead of the generic "User" — it's available on
+  // the very first render, not a few seconds later.
+  const {user,profile}=useAuth();
+  const localKnownName=user?.user_metadata?.full_name||(profile as any)?.full_name;
+  const name=participant.name||(isLocal?localKnownName:undefined)||participant.identity||"User";
 
   // WhatsApp-style avatar sizes
   const avatarW = pip ? "55%" : size==="small" ? "60%" : "52%";
