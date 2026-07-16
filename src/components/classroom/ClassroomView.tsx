@@ -838,8 +838,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               sampleRate:48000,channelCount:1,
             },
             publishDefaults:{
-              audioPreset:{maxBitrate:40000}, // 40kbps default — clearer voice than the previous 32kbps while still bandwidth-conscious
-              dtx:true,   // discontinuous transmission — muted mic uses ~0 bandwidth
+              // BUG FIX — "students can't hear well" / dropped word-beginnings:
+              // DTX (discontinuous transmission) skips sending audio packets
+              // during silence to save bandwidth — but on resuming after a
+              // pause, most Opus/WebRTC implementations take a moment to
+              // switch back from comfort-noise to real encoding, clipping the
+              // first syllable. That's a minor annoyance in casual chat; in a
+              // Qur'an class where teachers deliberately pause between words
+              // for tajweed correction, it can eat exactly the sound a
+              // student needs to hear. Bandwidth savings aren't worth it here.
+              audioPreset:{maxBitrate:64000}, // bumped from 40kbps — mono voice at 64kbps has real headroom for the pronunciation detail (madd, ghunnah, makharij) that matters in recitation, still light on data
+              dtx:false,  // was true — see note above
               red:true,   // redundant audio encoding — recovers from packet loss
               stopMicTrackOnMute:false,
               videoEncoding:{maxBitrate:900_000,maxFramerate:24}, // bumped from 500kbps/20fps — noticeably sharper on decent connections; adaptive-quality logic below still steps this down automatically on poor/lost connections
