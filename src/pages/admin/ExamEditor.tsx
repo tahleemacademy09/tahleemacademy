@@ -144,39 +144,52 @@ const BulkTemplateDownload = ({ className }: { className?: string }) => {
   const downloadTemplate = () => {
     const headers = [
       "QuestionType","Question","Answer1","Answer2","Answer3","Answer4","Answer5","Answer6","Answer7","Answer8",
-      "correctanswer","Noofanswers","Explanation","Marks","DirectionID","DifficultyLevel","Istestmaker","Tags","Answeroption","Negativemarks(%)"
+      "correctanswer","Noofanswers","Explanation","Marks","DirectionID","DifficultyLevel","Istestmaker","Tags","Answeroption","Negativemarks(%)",
+      "ResponseMode","QuestionArabic"
     ];
 
     const samples = [
       [
         "Multiple Choice (Radiobutton)","What is the first pillar of Islam?",
         "Shahada","Salat","Zakat","Sawm","","","","",
-        "1","4","The Shahada is the declaration of faith","1","","2","1","","1","0"
+        "1","4","The Shahada is the declaration of faith","1","","2","1","","1","0","",""
       ],
       [
         "Multiple Choice (Radiobutton)","ما هو أول ركن من أركان الإسلام؟",
         "الشهادة","الصلاة","الزكاة","الصيام","","","","",
-        "1","4","الشهادة هي نطق كلمة التوحيد","1","","2","1","","1","0"
+        "1","4","الشهادة هي نطق كلمة التوحيد","1","","2","1","","1","0","",""
       ],
       [
         "True/False","The Quran was revealed over 23 years.",
         "TRUE","FALSE","","","","","","",
-        "1","2","The Quran was revealed gradually over 23 years","1","","1","1","","1","0"
+        "1","2","The Quran was revealed gradually over 23 years","1","","1","1","","1","0","",""
       ],
       [
         "Fill in the Blank","The Prophet Muhammad (ﷺ) was born in ___.",
         "Mecca","","","","","","","",
-        "1","1","","1","","2","1","","1","0"
+        "1","1","","1","","2","1","","1","0","",""
       ],
       [
         "Essay (Evaluated by Admin)","Explain the importance of Tajweed in Quran recitation.",
         "","","","","","","","",
-        "0","0","","5","","2","1","","1","0"
+        "0","0","","5","","2","1","","1","0","",""
       ],
       [
         "Multiple Correct","Which are among the 99 Names of Allah?",
         "Ar-Rahman","Al-Aziz","Al-Kabeer","Al-Jalil","","","","",
-        "\"1,2,3,4\"","4","All four are among the 99 Names of Allah","2","","2","1","","1","0"
+        "\"1,2,3,4\"","4","All four are among the 99 Names of Allah","2","","2","1","","1","0","",""
+      ],
+      [
+        "Audio Answer","Listen to the recitation and type what you hear.",
+        "","","","","","","","",
+        "0","0","Dictation — attach the listening clip as this question's Media file","2","","2","1","","1","0",
+        "text",""
+      ],
+      [
+        "Recite Aloud","Recite the following clearly into your microphone:",
+        "","","","","","","","",
+        "0","0","Recitation — graded manually by an instructor","2","","2","1","","1","0",
+        "audio","بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"
       ],
     ];
 
@@ -326,8 +339,12 @@ const ExamEditor = () => {
 
   // Also parse Tahleem Academy export format
   const parseTahleemRow = (row: string[]): Partial<QuestionForm> | null => {
-    // Tahleem format: QuestionType,Question,Answer1..Answer8,correctanswer,Noofanswers,Explanation,Marks,...
-    const [qType, question, a1, a2, a3, a4, a5, a6, a7, a8, correctanswer, noofanswers, explanation, marks, , , , , ,] = row.map(c => String(c || "").trim());
+    // Tahleem format: QuestionType,Question,Answer1..Answer8,correctanswer,Noofanswers,Explanation,Marks,...,ResponseMode,QuestionArabic
+    // ResponseMode (optional, 21st column) applies only to Audio-type rows:
+    //   "audio" → student records their own voice (recitation-style)
+    //   "text" or blank → student listens to Media audio and types what they hear (dictation)
+    // QuestionArabic (optional, 22nd column) → Arabic text shown alongside the question (e.g. the word/verse to recite)
+    const [qType, question, a1, a2, a3, a4, a5, a6, a7, a8, correctanswer, noofanswers, explanation, marks, , , , , , , responseMode, questionArabic] = row.map(c => String(c || "").trim());
 
     // Detect Tahleem format by checking if first column matches known types
     const tahleemTypes: Record<string, string> = {
@@ -342,6 +359,7 @@ const ExamEditor = () => {
       "DragandMatch":                  "matching",
       "All Correct":                   "multi_select",
       "Audio Answer":                  "audio",
+      "Recite Aloud":                  "audio", // recitation-style — same underlying type, ResponseMode=audio
       "Ordering/Sequence":             "ordering",
     };
 
@@ -357,15 +375,18 @@ const ExamEditor = () => {
       image_url: "",
     }));
 
+    const inferredResponseMode = qType === "Recite Aloud" ? "audio" : (responseMode === "audio" ? "audio" : "text");
+
     return {
       question_type: mappedType,
       question_text: question || "",
-      question_text_ar: "",
+      question_text_ar: questionArabic || "",
       options: options.length >= 2 ? options : emptyQuestion().options.slice(0, 4),
       correct_answer: options[correctIdx]?.id || "",
       points: parseInt(marks) || 1,
       difficulty: "medium",
       explanation: explanation || "",
+      ...(mappedType === "audio" ? { audio_response_type: inferredResponseMode as "text" | "audio" } : {}),
     };
   };
 
@@ -1053,6 +1074,30 @@ const ExamEditor = () => {
                         </div>
                       )}
                     </div>
+
+                    {/* Audio response mode — Listen & Type (dictation) vs Record Voice (recitation) */}
+                    {q.question_type === "audio" && (
+                      <div className="space-y-2 pt-1">
+                        <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Response Mode", "نوع الإجابة")}</Label>
+                        <div className="flex gap-3">
+                          <button type="button" onClick={() => updateQuestion(idx, { audio_response_type: "text" })}
+                            className={cn("flex-1 py-2 rounded-lg border-2 text-xs sm:text-sm font-bold transition-all",
+                              (q.audio_response_type || "text") === "text" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500 hover:border-slate-300")}>
+                            🎧 {t("Listen & Type", "استمع واكتب")}
+                          </button>
+                          <button type="button" onClick={() => updateQuestion(idx, { audio_response_type: "audio" })}
+                            className={cn("flex-1 py-2 rounded-lg border-2 text-xs sm:text-sm font-bold transition-all",
+                              q.audio_response_type === "audio" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500 hover:border-slate-300")}>
+                            🎙️ {t("Record Voice", "سجّل صوتك")}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                          {(q.audio_response_type || "text") === "text"
+                            ? t("Student listens to the Media audio above and types what they hear.", "يستمع الطالب للصوت أعلاه ويكتب ما سمعه.")
+                            : t("Student reads the Arabic question text on screen and records themself reciting it — no listening audio required (Media upload is optional here).", "يقرأ الطالب النص العربي ويسجل نفسه وهو يتلوه — لا حاجة لصوت استماع.")}
+                        </p>
+                      </div>
+                    )}
 
                     {/* MCQ Options */}
                     {(q.question_type==="mcq" || q.question_type==="image_mcq") && (
