@@ -233,6 +233,19 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
                       <Clock style={{ width: 12, height: 12 }} />{fmtDur(r.duration_seconds)}
                     </span>
                   )}
+                  {r.status && r.status !== "completed" && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 800, borderRadius: 20, padding: "2px 9px",
+                      color: r.status === "failed" ? "#c0392b" : "#b45309",
+                      background: r.status === "failed" ? "#fff5f5" : "#fffbeb",
+                      border: `1px solid ${r.status === "failed" ? "#fca5a5" : "#fde68a"}`,
+                    }}>
+                      {r.status === "recording" ? "⏺ Still recording"
+                        : r.status === "processing" ? "⏳ Processing — check back soon"
+                        : r.status === "failed" ? "⚠️ Failed to save"
+                        : r.status}
+                    </span>
+                  )}
                   {hasSaved && !completed && <span style={{ fontSize: 10, color: GOLD, fontWeight: 700 }}>&crarr; {Math.floor(savedPos / 60)}m saved</span>}
                   {started && !completed && <span style={{ fontSize: 11, fontWeight: 700, color: GOLD }}>{pct}% watched</span>}
                   {completed && <span style={{ fontSize: 11, fontWeight: 700, color: "#22c55e" }}>&check; Completed</span>}
