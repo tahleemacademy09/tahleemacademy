@@ -1,964 +1,1054 @@
-// src/components/classroom/SubjectMaterials.tsx — Tahleem Academy [FIXED]
-// ─────────────────────────────────────────────────────────────────────
-//  ✅ Upload uses main Supabase client (authenticated user session)
-//  ✅ Signed URL + public URL fallback for previews
-//  ✅ Auth session verified before upload attempt
-//  ✅ All file types: PDF, Video, Audio, Image, Doc, Link, Text
-//  ✅ Drag-and-drop + transparent file input tap target
-//  ✅ Progress bar with real XHR progress tracking
-//  ✅ Rich error messages with actionable advice
-//  ✅ Preview overlay for all supported types
-// ─────────────────────────────────────────────────────────────────────
+/*  src/components/classroom/SubjectAssignments.tsx
+    Assignments panel embedded inside a subject's tabs (admin / teacher / student).
 
-import React, { useState, useRef, useCallback, useEffect } from "react";
-import PDFViewer, { prewarmPDF } from "./PDFViewer";
-import { createPortal } from "react-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+    ─────────────────────────────────────────────────────────────────────────
+    Role-aware:
+    • Admin / Teacher → AssignmentManager: create/edit/delete assignments for
+      this subject, see submission stats, open a roster to grade each student.
+    • Student         → StudentAssignmentList: browse + submit assignments,
+      with a hard deadline lock — once the deadline passes, an assignment can
+      no longer be opened or submitted to (server-side trigger backs this up:
+      see enforce_assignment_deadline() in the migrations).
+
+    Previously this file only ever rendered the student view (to everyone,
+    including admin/teacher tabs), and ignored the `subjectId` prop entirely,
+    loading assignments from ALL of the student's subjects instead of just
+    the one being viewed. Both are fixed here.
+    ─────────────────────────────────────────────────────────────────────────
+*/
+
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { getSignedUrl, removeStorageFile } from "@/integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { usePrivateStudent } from "@/hooks/usePrivateStudent";
-import { toast } from "@/hooks/use-toast";
-import { Switch } from "@/components/ui/switch";
+import { uploadStorageFile, getSignedUrl } from "@/integrations/supabase/storageClient";
 import {
-  Upload, FileText, Video, Music, Image as ImageIcon,
-  Link as LinkIcon, File, Download, Trash2, Edit2, X, Check,
-  Plus, Loader2, ExternalLink, FileSpreadsheet, Eye,
-  ChevronDown, ChevronUp, Search, AlertCircle,
-  Play, Pause, Volume2, VolumeX, Headphones, Radio,
+  ClipboardList, Clock, CheckCircle, AlertTriangle, Upload, Mic,
+  FileText, BookOpen, ChevronRight, X, Send, Star,
+  Play, Pause, RotateCcw, Paperclip, MessageSquare, Calendar,
+  Search, ArrowLeft, StopCircle, Download,
+  TrendingUp, Award, Loader2, Plus, Pencil, Trash2, Users, Lock,
+  GraduationCap, Save,
 } from "lucide-react";
 
-// ── Constants ─────────────────────────────────────────────────────────
-const G      = "#064E3B";
-const GM     = "#075E54";
-const GOLD   = "#C9A84C";
-const BUCKET = "subject-files";
+/* ── Design tokens ─────────────────────────────────────── */
+const G      = "#0f2d1f";
+const MG     = "#1a4731";
+const GOLD   = "#c9a84c";
+const GOLDF  = "#e4c36a";
+const CREAM  = "#faf6ee";
+const BORDER = "rgba(15,45,31,0.1)";
+const TXT    = "#0f2d1f";
+const TMID   = "#4a7c59";
+const TLIT   = "#7a9e88";
 
-type MatType = "PDF" | "Video" | "Audio" | "Image" | "Link" | "Text" | "Document";
-type Level   = "beginner" | "intermediate" | "advanced";
-const ALL_LEVELS: Level[] = ["beginner", "intermediate", "advanced"];
-
-const MAT_TYPES: MatType[] = ["PDF", "Video", "Audio", "Image", "Link", "Text", "Document"];
-
-const MAT_CFG: Record<MatType, { icon: React.ElementType; bg: string; text: string; border: string }> = {
-  PDF:      { icon: FileText,        bg: "#FEF2F2", text: "#DC2626", border: "#FECACA" },
-  Video:    { icon: Video,           bg: "#F0FDF4", text: "#16A34A", border: "#BBF7D0" },
-  Audio:    { icon: Music,           bg: "#FDF4FF", text: "#9333EA", border: "#E9D5FF" },
-  Image:    { icon: ImageIcon,       bg: "#EFF6FF", text: "#2563EB", border: "#BFDBFE" },
-  Link:     { icon: LinkIcon,        bg: "#F0FDFA", text: "#0D9488", border: "#99F6E4" },
-  Text:     { icon: FileText,        bg: "#FFFBEB", text: "#B45309", border: "#FDE68A" },
-  Document: { icon: FileSpreadsheet, bg: "#EFF6FF", text: "#1D4ED8", border: "#BFDBFE" },
+/* ── Helpers ───────────────────────────────────────────── */
+const card: React.CSSProperties = {
+  background: "#fff", border: `1px solid ${BORDER}`,
+  borderRadius: 18, boxShadow: "0 2px 12px rgba(0,0,0,.06)", overflow: "hidden",
 };
 
-const LVL_CFG: Record<Level, { label: string; bg: string; text: string; border: string }> = {
-  beginner:     { label: "Beginner",     bg: "#F0FDF4", text: "#166534", border: "#86EFAC" },
-  intermediate: { label: "Intermediate", bg: "#EFF6FF", text: "#1E40AF", border: "#93C5FD" },
-  advanced:     { label: "Advanced",     bg: "#FDF4FF", text: "#6B21A8", border: "#D8B4FE" },
+const fmtDate = (s?: string | null) => {
+  if (!s) return "—";
+  return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
 };
 
-// ── Helpers ───────────────────────────────────────────────────────────
-function fmtSize(b?: number | null): string {
-  if (!b) return "";
-  if (b < 1024)    return `${b} B`;
-  if (b < 1048576) return `${(b / 1024).toFixed(0)} KB`;
-  return `${(b / 1048576).toFixed(1)} MB`;
-}
-
-function autoDetectType(file: File): MatType {
-  const t = file.type.toLowerCase();
-  const e = (file.name.split(".").pop() || "").toLowerCase();
-  if (t.includes("pdf") || e === "pdf")                                                  return "PDF";
-  if (t.includes("video") || ["mp4","webm","mov","m4v","avi","mkv"].includes(e))         return "Video";
-  if (t.includes("audio") || ["mp3","wav","m4a","aac","ogg","flac"].includes(e))         return "Audio";
-  if (t.includes("image") || ["jpg","jpeg","png","gif","webp","svg","heic"].includes(e)) return "Image";
-  if (["doc","docx","xls","xlsx","ppt","pptx","odt","ods","odp","rtf","csv"].includes(e)) return "Document";
-  if (e === "txt") return "Text";
-  return "Document";
-}
-
-function parseLevels(raw?: string | null): Set<Level> {
-  if (!raw || raw === "all") return new Set(ALL_LEVELS);
-  return new Set(
-    raw.split(",").map(s => s.trim()).filter(s => ALL_LEVELS.includes(s as Level)) as Level[]
-  );
-}
-
-function encodeLevels(sel: Set<Level>): string {
-  if (sel.size === 0)        return "beginner";
-  if (sel.size === 3)        return "all";
-  return [...sel].join(",");
-}
-
-const inp: React.CSSProperties = {
-  width: "100%", padding: "9px 12px", borderRadius: 10,
-  border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none",
-  background: "#FAFAFA", boxSizing: "border-box", fontFamily: "inherit",
+const isOverdue = (d?: string | null) => d ? new Date(d) < new Date() : false;
+const daysLeft  = (d?: string | null) => {
+  if (!d) return null;
+  const diff = new Date(d).getTime() - Date.now();
+  const days = Math.ceil(diff / 86_400_000);
+  return days;
 };
 
-// ══ UPLOAD via XHR so we can get real progress ══════════════════════
-async function xhrUpload(
-  uploadUrl: string,
-  file: File,
-  token: string,
-  onProgress: (pct: number) => void
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", uploadUrl, true);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-    xhr.setRequestHeader("x-upsert", "false");
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-    };
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve();
-      else reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`));
-    };
-    xhr.onerror = () => reject(new Error("Network error during upload"));
-    xhr.send(file);
-  });
+type AStatus = "all" | "pending" | "submitted" | "graded" | "overdue";
+
+/* ═══════════════════════════════════════════════════════════════
+   Entry point — branches by role
+   ═══════════════════════════════════════════════════════════════ */
+export default function SubjectAssignments({ subjectId }: { subjectId?: string }) {
+  const { hasRole } = useAuth();
+  const isStaff = hasRole("admin") || hasRole("teacher");
+  return isStaff
+    ? <AssignmentManager subjectId={subjectId} />
+    : <StudentAssignmentList subjectId={subjectId} />;
 }
 
-// ══ PREVIEW OVERLAY ═════════════════════════════════════════════════
-function PreviewOverlay({ url, type, title, onClose, materialId }: {
-  url: string; type: MatType; title: string; onClose: () => void; materialId?: string;
-}) {
-  const isImg = type === "Image"    || /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(url);
-  const isPdf = type === "PDF"      || /\.pdf(\?|$)/i.test(url);
-  const isVid = type === "Video"    || /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
-  const isAud = type === "Audio"    || /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i.test(url);
-  const isDoc = type === "Document" || /\.(doc|docx|xls|xlsx|ppt|pptx|odt|csv|rtf)(\?|$)/i.test(url);
-  const isLnk = type === "Link";
-  const storageKey = materialId ? `tahleem_pos_${materialId}` : null;
+/* ═══════════════════════════════════════════════════════════════
+   STAFF VIEW — create, edit, delete, grade
+   ═══════════════════════════════════════════════════════════════ */
+function AssignmentManager({ subjectId }: { subjectId?: string }) {
+  const { user } = useAuth();
+  const { t, language } = useLanguage();
 
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const gateRef  = useRef(true);
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [stats, setStats]             = useState<Record<string, { submitted: number; graded: number }>>({});
+  const [rosterCount, setRosterCount] = useState(0);
+  const [loading, setLoading]         = useState(true);
+  const [showForm, setShowForm]       = useState(false);
+  const [editing, setEditing]         = useState<any | null>(null);
+  const [grading, setGrading]         = useState<any | null>(null);
+  const [deleting, setDeleting]       = useState<any | null>(null);
+  const [deleteBusy, setDeleteBusy]   = useState(false);
 
-  useEffect(() => { const t = setTimeout(() => { gateRef.current = false; }, 80); return () => clearTimeout(t); }, []);
+  const load = useCallback(async () => {
+    if (!subjectId) { setLoading(false); return; }
+    setLoading(true);
+    try {
+      const { data: asgn } = await supabase
+        .from("subject_assignments")
+        .select("*")
+        .eq("subject_id", subjectId)
+        .order("deadline", { ascending: false });
+      setAssignments(asgn || []);
 
-  // ── Resume helpers ────────────────────────────────────────────────
-  const onVideoLoad = () => {
-    if (!storageKey || !videoRef.current) return;
-    const saved = localStorage.getItem(storageKey);
-    if (saved) videoRef.current.currentTime = parseFloat(saved);
-  };
-  const onVideoTime = () => {
-    if (!storageKey || !videoRef.current) return;
-    localStorage.setItem(storageKey, String(videoRef.current.currentTime));
-  };
-  const onAudioLoad = () => {
-    if (!storageKey || !audioRef.current) return;
-    const saved = localStorage.getItem(storageKey);
-    if (saved) audioRef.current.currentTime = parseFloat(saved);
-  };
-  const onAudioTime = () => {
-    if (!storageKey || !audioRef.current) return;
-    localStorage.setItem(storageKey, String(audioRef.current.currentTime));
+      const { count } = await supabase
+        .from("enrollments").select("*", { count: "exact", head: true }).eq("subject_id", subjectId);
+      setRosterCount(count || 0);
+
+      if (asgn && asgn.length > 0) {
+        const ids = asgn.map((a: any) => a.id);
+        const { data: subs } = await supabase
+          .from("assignment_submissions").select("assignment_id, status").in("assignment_id", ids);
+        const s: Record<string, { submitted: number; graded: number }> = {};
+        (subs || []).forEach((row: any) => {
+          if (!s[row.assignment_id]) s[row.assignment_id] = { submitted: 0, graded: 0 };
+          s[row.assignment_id].submitted += 1;
+          if (row.status === "graded") s[row.assignment_id].graded += 1;
+        });
+        setStats(s);
+      } else {
+        setStats({});
+      }
+    } catch (err) {
+      console.error("Failed to load assignments:", err);
+    }
+    setLoading(false);
+  }, [subjectId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    await supabase.from("subject_assignments").delete().eq("id", deleting.id);
+    setDeleteBusy(false);
+    setDeleting(null);
+    await load();
   };
 
-  return createPortal(
-    <div
-      style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.9)", display: "flex", flexDirection: "column" }}
-      onClick={() => { if (!gateRef.current) onClose(); }}
-    >
-      <div
-        style={{ height: 52, background: "rgba(0,0,0,.8)", display: "flex", alignItems: "center", padding: "0 16px", gap: 12, flexShrink: 0 }}
-        onClick={e => e.stopPropagation()}
-      >
-        <span style={{ color: "#fff", fontWeight: 700, fontSize: 14, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {title}
-        </span>
-        <a href={url} download target="_blank" rel="noreferrer"
-          style={{ padding: "6px 14px", borderRadius: 8, background: "rgba(255,255,255,.15)", color: "#fff", fontSize: 12, textDecoration: "none", fontWeight: 600 }}>
-          Download
-        </a>
-        <button onClick={e => { e.stopPropagation(); onClose(); }}
-          style={{ width: 36, height: 36, borderRadius: "50%", background: "rgba(239,68,68,.25)", border: "1.5px solid rgba(239,68,68,.6)", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <X size={18} />
+  if (!subjectId) {
+    return (
+      <div style={{ ...card, padding: "40px 20px", textAlign: "center" }}>
+        <ClipboardList style={{ width: 40, height: 40, color: TLIT, margin: "0 auto 10px", opacity: .4 }} />
+        <p style={{ fontSize: 14, color: TLIT, margin: 0 }}>{t("Select a subject to manage its assignments.", "اختر مادة لإدارة واجباتها.")}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <style>{`
+        .asm-card { transition: box-shadow .18s, transform .18s; }
+        .asm-card:hover { box-shadow: 0 8px 32px rgba(15,45,31,0.13) !important; transform: translateY(-1px); }
+        .asm-btn { transition: opacity .15s, transform .12s; }
+        .asm-btn:active { transform: scale(0.96); }
+        .asm-icon-btn:hover { background: #f4f4f4 !important; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
+
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ fontSize: 17, fontWeight: 900, color: TXT, margin: 0 }}>{t("Assignments", "الواجبات")}</h2>
+          <p style={{ fontSize: 12, color: TLIT, margin: "2px 0 0", display: "flex", alignItems: "center", gap: 5 }}>
+            <Users style={{ width: 12, height: 12 }} />
+            {t(`${rosterCount} enrolled student${rosterCount === 1 ? "" : "s"}`, `${rosterCount} طالب مسجل`)}
+          </p>
+        </div>
+        <button onClick={() => { setEditing(null); setShowForm(true); }} className="asm-btn"
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, ${G}, ${MG})`, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+          <Plus style={{ width: 15, height: 15 }} />
+          {t("New Assignment", "واجب جديد")}
         </button>
       </div>
 
-      <div
-        style={{ flex: 1, overflow: "hidden", display: "flex", alignItems: isImg || isAud ? "center" : "stretch", justifyContent: isImg || isAud ? "center" : "stretch", padding: isImg || isAud ? "12px 12px 72px" : "0 0 60px" }}
-        onClick={e => e.stopPropagation()}
-      >
-        {isImg && <img src={url} alt={title} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 8 }} />}
-        {isPdf && !isImg && (
-          <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <PDFViewer url={url} bg="rgba(0,0,0,.85)" materialId={materialId} />
-          </div>
-        )}
-        {isVid && !isImg && !isPdf && (
-          <video
-            ref={videoRef}
-            src={url}
-            controls
-            autoPlay
-            playsInline
-            onLoadedMetadata={onVideoLoad}
-            onTimeUpdate={onVideoTime}
-            style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000" }}
-          />
-        )}
-        {isAud && !isImg && !isPdf && !isVid && (
-          <div style={{ background: "#1a1a2e", borderRadius: 20, padding: "40px 32px", textAlign: "center", minWidth: 280 }}>
-            <div style={{ width: 72, height: 72, borderRadius: "50%", background: MAT_CFG.Audio.bg, border: `2px solid ${MAT_CFG.Audio.border}`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
-              <Music size={32} color={MAT_CFG.Audio.text} />
-            </div>
-            <p style={{ color: "#fff", fontWeight: 700, marginBottom: 16, fontSize: 15 }}>{title}</p>
-            <audio
-              ref={audioRef}
-              src={url}
-              controls
-              onLoadedMetadata={onAudioLoad}
-              onTimeUpdate={onAudioTime}
-              style={{ width: "100%", maxWidth: 400 }}
-            />
-          </div>
-        )}
-        {isLnk && !isImg && !isPdf && !isVid && !isAud && (() => {
-          const isYT      = url.includes("youtube.com") || url.includes("youtu.be");
-          const isGDrive  = url.includes("drive.google.com") || url.includes("docs.google.com");
-          const ytEmbed   = (u: string) => {
-            const m = u.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
-            return m ? `https://www.youtube.com/embed/${m[1]}?autoplay=1&rel=0` : u;
-          };
-          const gdEmbed   = (u: string) => u.replace("/view", "/preview");
-          const embedSrc  = isYT ? ytEmbed(url) : isGDrive ? gdEmbed(url) : url;
-          return (
-            <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-              <iframe
-                src={embedSrc}
-                title={title}
-                style={{ flex: 1, width: "100%", border: "none" }}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                sandbox={isYT || isGDrive ? undefined : "allow-scripts allow-same-origin allow-forms allow-popups"}
-              />
-              {!isYT && !isGDrive && (
-                <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
-                  <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
-                    Page blocked from embedding?{" "}
-                    <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>Open in new tab ↗</a>
-                  </p>
+      {/* List */}
+      {loading ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 50 }}>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", border: `3px solid ${G}`, borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
+        </div>
+      ) : assignments.length === 0 ? (
+        <div style={{ ...card, padding: "40px 20px", textAlign: "center" }}>
+          <ClipboardList style={{ width: 44, height: 44, color: TLIT, margin: "0 auto 10px", opacity: .4 }} />
+          <p style={{ fontSize: 15, fontWeight: 700, color: TXT, margin: "0 0 4px" }}>{t("No assignments yet", "لا توجد واجبات بعد")}</p>
+          <p style={{ fontSize: 13, color: TLIT, margin: 0 }}>{t("Create the first one for this subject.", "أنشئ أول واجب لهذه المادة.")}</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {assignments.map(a => {
+            const title = language === "ar" ? (a.title_ar || a.title) : a.title;
+            const s = stats[a.id] || { submitted: 0, graded: 0 };
+            const locked = isOverdue(a.deadline);
+            return (
+              <div key={a.id} className="asm-card" style={card}>
+                <div style={{ padding: "16px 18px", cursor: "pointer" }} onClick={() => setGrading(a)}>
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 13, background: `${G}10`, border: `1px solid ${G}20`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <ClipboardList style={{ width: 20, height: 20, color: G }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                        <span style={{ fontSize: 15, fontWeight: 800, color: TXT }}>{title}</span>
+                        <span style={{ fontSize: 10, fontWeight: 800, color: locked ? "#c0392b" : TMID, background: locked ? "#fff5f5" : "#f0fdf4", border: `1px solid ${locked ? "#fca5a5" : "#86efac"}`, borderRadius: 20, padding: "2px 9px", display: "flex", alignItems: "center", gap: 4 }}>
+                          {locked ? <Lock style={{ width: 10, height: 10 }} /> : <Clock style={{ width: 10, height: 10 }} />}
+                          {locked ? t("Closed", "مغلق") : t("Open", "مفتوح")}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                        {a.deadline && (
+                          <span style={{ fontSize: 11, color: locked ? "#c0392b" : TLIT, display: "flex", alignItems: "center", gap: 4 }}>
+                            <Calendar style={{ width: 11, height: 11 }} />{fmtDate(a.deadline)}
+                          </span>
+                        )}
+                        <span style={{ fontSize: 11, color: TMID, fontWeight: 700 }}>
+                          {t(`${s.submitted}/${rosterCount} submitted`, `${s.submitted}/${rosterCount} تم التسليم`)}
+                        </span>
+                        <span style={{ fontSize: 11, color: "#276749", fontWeight: 700 }}>
+                          {t(`${s.graded} graded`, `${s.graded} مصحح`)}
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                      <button onClick={() => { setEditing(a); setShowForm(true); }} className="asm-icon-btn"
+                        style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${BORDER}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Pencil style={{ width: 14, height: 14, color: TMID }} />
+                      </button>
+                      <button onClick={() => setDeleting(a)} className="asm-icon-btn"
+                        style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${BORDER}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Trash2 style={{ width: 14, height: 14, color: "#c0392b" }} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              )}
-            </div>
-          );
-        })()}
-        {isDoc && !isImg && !isPdf && !isVid && !isAud && !isLnk && (() => {
-          const isGDrive = url.includes("drive.google.com") || url.includes("docs.google.com");
-          const docSrc   = isGDrive
-            ? url.replace("/view", "/preview")
-            : `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`;
-          return (
-            <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column" }}>
-              <iframe src={docSrc} title={title} style={{ flex: 1, width: "100%", border: "none" }} allowFullScreen />
-              <div style={{ padding: "8px 16px", background: "rgba(0,0,0,.65)", textAlign: "center" }}>
-                <p style={{ color: "rgba(255,255,255,.5)", fontSize: 11, margin: 0 }}>
-                  Preview not loading?{" "}
-                  <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: "#93C5FD", textDecoration: "none", fontWeight: 600 }}>Open in new tab ↗</a>
-                  {" · "}
-                  <a href={url} download target="_blank" rel="noopener noreferrer" style={{ color: "#86EFAC", textDecoration: "none", fontWeight: 600 }}>Download ↓</a>
-                </p>
               </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showForm && (
+        <AssignmentFormModal
+          subjectId={subjectId}
+          assignment={editing}
+          userId={user!.id}
+          onClose={() => setShowForm(false)}
+          onSaved={async () => { setShowForm(false); await load(); }}
+        />
+      )}
+
+      {grading && (
+        <GradingModal
+          assignment={grading}
+          subjectId={subjectId}
+          language={language}
+          t={t}
+          onClose={() => setGrading(null)}
+          onGraded={load}
+        />
+      )}
+
+      {deleting && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(0,0,0,.5)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+          onClick={() => !deleteBusy && setDeleting(null)}>
+          <div style={{ background: "#fff", borderRadius: 18, padding: 22, maxWidth: 340, width: "100%" }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontWeight: 800, fontSize: 16, marginBottom: 8, color: TXT }}>{t("Delete assignment?", "حذف الواجب؟")}</h3>
+            <p style={{ fontSize: 13, color: TLIT, marginBottom: 18 }}>
+              {t("This permanently deletes the assignment and every student's submission for it. This can't be undone.", "سيؤدي هذا إلى حذف الواجب وجميع تسليمات الطلاب نهائياً. لا يمكن التراجع عن هذا.")}
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setDeleting(null)} disabled={deleteBusy}
+                style={{ flex: 1, padding: 11, borderRadius: 11, border: `1.5px solid ${BORDER}`, background: "#fff", cursor: "pointer", fontWeight: 600, fontSize: 13, color: TXT }}>
+                {t("Cancel", "إلغاء")}
+              </button>
+              <button onClick={confirmDelete} disabled={deleteBusy}
+                style={{ flex: 1, padding: 11, borderRadius: 11, border: "none", background: deleteBusy ? "#9CA3AF" : "#DC2626", color: "#fff", cursor: deleteBusy ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                {deleteBusy ? <Loader2 style={{ width: 14, height: 14, animation: "spin .8s linear infinite" }} /> : <Trash2 style={{ width: 14, height: 14 }} />}
+                {t("Delete", "حذف")}
+              </button>
             </div>
-          );
-        })()}
-        {!isImg && !isPdf && !isVid && !isAud && !isLnk && !isDoc && (
-          <div style={{ textAlign: "center", color: "#fff" }}>
-            <File size={64} style={{ opacity: .4, marginBottom: 20 }} />
-            <p style={{ fontSize: 16, fontWeight: 700, marginBottom: 16 }}>{title}</p>
-            <a href={url} download target="_blank" rel="noreferrer"
-              style={{ padding: "12px 28px", borderRadius: 12, background: G, color: "#fff", textDecoration: "none", fontWeight: 700 }}>
-              Download File
-            </a>
-          </div>
-        )}
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-// ══ FILE PREVIEW BLOCK (before upload) ══════════════════════════════
-function FilePreviewBlock({ file, type, objectUrl, onClear }: {
-  file: File; type: MatType; objectUrl: string; onClear: () => void;
-}) {
-  const cfg = MAT_CFG[type]; const Icon = cfg.icon;
-  const isImg = type === "Image"; const isPdf = type === "PDF";
-  const isVid = type === "Video"; const isAud = type === "Audio";
-
-  return (
-    <div style={{ position: "relative", borderRadius: 12, overflow: "hidden", border: `1.5px solid ${cfg.border}`, background: cfg.bg }}>
-      <button type="button" onClick={onClear}
-        style={{ position: "absolute", top: 8, right: 8, zIndex: 10, width: 28, height: 28, borderRadius: "50%", background: "rgba(239,68,68,.9)", color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <X size={13} />
-      </button>
-      {isImg  && objectUrl && <img src={objectUrl} alt={file.name} style={{ width: "100%", maxHeight: 200, objectFit: "contain", display: "block" }} />}
-      {isPdf  && objectUrl && <iframe src={objectUrl} title={file.name} style={{ width: "100%", height: 220, border: "none", display: "block" }} />}
-      {isVid  && objectUrl && <video src={objectUrl} controls style={{ width: "100%", maxHeight: 200, display: "block", background: "#000" }} />}
-      {isAud  && objectUrl && (
-        <div style={{ padding: "20px 16px", textAlign: "center" }}>
-          <Music size={32} color={cfg.text} style={{ marginBottom: 10 }} />
-          <audio src={objectUrl} controls style={{ width: "100%" }} />
-        </div>
-      )}
-      {!isImg && !isPdf && !isVid && !isAud && (
-        <div style={{ padding: "20px 16px", display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 10, background: "#fff", border: `1.5px solid ${cfg.border}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Icon size={22} color={cfg.text} />
-          </div>
-          <div>
-            <p style={{ fontWeight: 700, fontSize: 13, color: "#111", margin: 0, wordBreak: "break-all" }}>{file.name}</p>
-            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>{fmtSize(file.size)}</p>
           </div>
         </div>
       )}
-      <div style={{ padding: "6px 12px", background: "rgba(0,0,0,.05)", display: "flex", justifyContent: "space-between" }}>
-        <span style={{ fontSize: 11, color: cfg.text, fontWeight: 700 }}>✓ Ready to upload</span>
-        <span style={{ fontSize: 10, color: "#9CA3AF" }}>{fmtSize(file.size)}</span>
-      </div>
     </div>
   );
 }
 
-// ══ UPLOAD / EDIT MODAL ═════════════════════════════════════════════
-interface ModalProps {
-  ed?: any; subjectId: string; nextSort: number;
-  onClose: () => void; onSaved: () => void;
-}
+/* ── Create / Edit assignment form ────────────────────────────── */
+export function AssignmentFormModal({
+  subjectId, assignment, userId, onClose, onSaved,
+}: { subjectId: string; assignment: any | null; userId: string; onClose: () => void; onSaved: () => void }) {
+  const { t } = useLanguage();
+  const isEdit = !!assignment;
+  const [title, setTitle]           = useState(assignment?.title || "");
+  const [titleAr, setTitleAr]       = useState(assignment?.title_ar || "");
+  const [desc, setDesc]             = useState(assignment?.description || "");
+  const [descAr, setDescAr]         = useState(assignment?.description_ar || "");
+  const [question, setQuestion]     = useState(assignment?.question || "");
+  const [questionAr, setQuestionAr] = useState(assignment?.question_ar || "");
+  const [deadline, setDeadline]     = useState(assignment?.deadline ? toLocalInput(assignment.deadline) : "");
+  const [maxScore, setMaxScore]     = useState(String(assignment?.max_score ?? 100));
+  const [allowText, setAllowText]   = useState(assignment?.allow_text !== false);
+  const [allowFile, setAllowFile]   = useState(assignment?.allow_file !== false);
+  const [allowAudio, setAllowAudio] = useState(assignment?.allow_audio !== false);
+  const [file, setFile]             = useState<File | null>(null);
+  const [saving, setSaving]         = useState(false);
+  const [error, setError]           = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-const MaterialModal = React.memo(({ ed, subjectId, nextSort, onClose, onSaved }: ModalProps) => {
-  const { user } = useAuth();
+  function toLocalInput(iso: string) {
+    const d = new Date(iso);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
 
-  const [f, setF] = useState({
-    title:           ed?.title           || "",
-    title_ar:        ed?.title_ar        || "",
-    description:     ed?.description     || "",
-    material_type:   (ed?.material_type  || "PDF") as MatType,
-    content:         ed?.content         || "",
-    file_url:        ed?.file_url        || "",
-    is_downloadable: ed?.is_downloadable ?? true,
-    sort_order:      ed?.sort_order      ?? nextSort,
-    visibility:      (ed?.visibility     || "all") as "all" | "general" | "private",
-  });
-
-  const [selectedLevels, setSelectedLevels] = useState<Set<Level>>(parseLevels(ed?.level));
-  const [file,       setFile]       = useState<File | null>(null);
-  const [objectUrl,  setObjectUrl]  = useState<string>("");
-  const [phase,      setPhase]      = useState<"idle"|"uploading"|"saving"|"done"|"error">("idle");
-  const [pct,        setPct]        = useState(0);
-  const [err,        setErr]        = useState("");
-  const [isDragOver, setIsDragOver] = useState(false);
-  const fileRef       = useRef<HTMLInputElement>(null);
-  const pickerOpenRef = useRef(false);
-
-  const cfg      = MAT_CFG[f.material_type];
-  const needFile = !["Link", "Text"].includes(f.material_type);
-  const needUrl  = f.material_type === "Link";
-  const needText = f.material_type === "Text";
-  const busy     = phase === "uploading" || phase === "saving";
-
-  useEffect(() => () => { if (objectUrl) URL.revokeObjectURL(objectUrl); }, [objectUrl]);
-
-  // Android back-nav guard
-  useEffect(() => {
-    window.history.pushState({ smModalGuard: true }, "");
-    const handlePopState = (e: PopStateEvent) => {
-      // If this pop came from the live-class back-button guard, ignore it —
-      // LiveClassContext handles it and will re-push its own guard.
-      if (e.state?.["tahleem-live-class"]) return;
-      window.history.pushState({ smModalGuard: true }, "");
-      if (pickerOpenRef.current) pickerOpenRef.current = false;
-      else onClose();
-    };
-    window.addEventListener("popstate", handlePopState);
-    return () => {
-      window.removeEventListener("popstate", handlePopState);
-      if (window.history.state?.smModalGuard) window.history.replaceState(null, "");
-    };
-  }, [onClose]);
-
-  const pickFile = useCallback((picked: File) => {
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
-    const blobUrl = URL.createObjectURL(picked);
-    setObjectUrl(blobUrl);
-    setFile(picked);
-    setF(prev => ({
-      ...prev,
-      material_type: autoDetectType(picked),
-      title: prev.title || picked.name.replace(/\.[^/.]+$/, ""),
-    }));
-    setErr("");
-  }, [objectUrl]);
-
-  const clearFile = useCallback(() => {
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
-    setObjectUrl(""); setFile(null); setPct(0); setPhase("idle");
-    if (fileRef.current) fileRef.current.value = "";
-  }, [objectUrl]);
-
-  const toggleLevel = (lv: Level) => {
-    setSelectedLevels(prev => { const next = new Set(prev); next.has(lv) ? next.delete(lv) : next.add(lv); return next; });
-  };
-
-  const doSave = async () => {
-    setErr("");
-    if (!f.title.trim())                         { setErr("Title is required."); return; }
-    if (needFile && !file && !f.file_url.trim()) { setErr("Please choose a file or paste a URL."); return; }
-    if (needUrl  && !f.file_url.trim())          { setErr("Please enter a URL."); return; }
-    if (needText && !f.content.trim())           { setErr("Content cannot be empty."); return; }
-    if (selectedLevels.size === 0)               { setErr("Select at least one level."); return; }
-
-    // ── Verify user is signed in before touching storage ────────────
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      setErr("You must be signed in to upload files. Please refresh and log in again.");
-      return;
-    }
-
-    setPhase("uploading"); setPct(5);
-
+  const handleSave = async () => {
+    if (!title.trim()) { setError(t("Please give the assignment a title.", "يرجى إعطاء الواجب عنواناً.")); return; }
+    if (!deadline) { setError(t("Please set a deadline.", "يرجى تحديد موعد نهائي.")); return; }
+    if (!allowText && !allowFile && !allowAudio) { setError(t("Allow at least one submission type.", "اسمح بنوع تسليم واحد على الأقل.")); return; }
+    setSaving(true);
+    setError(null);
     try {
-      let fileUrl  = needText ? "" : f.file_url.trim();
-      let fileSize = 0;
-
-      if (needFile && file) {
-        const rawExt   = file.name.split(".").pop()?.toLowerCase() || "bin";
-        const safeExt  = rawExt.replace(/[^a-z0-9]/g, "").slice(0, 10) || "bin";
-        const uploadPath = `materials/${subjectId}/${crypto.randomUUID()}.${safeExt}`;
-
-        setPct(20);
-
-        // ── Use the MAIN supabase client directly for upload ─────────
-        // This uses the authenticated user's JWT session, which means
-        // the storage RLS policy (auth.role() = 'authenticated') is met.
-        const { data: upData, error: upErr } = await supabase.storage
-          .from(BUCKET)
-          .upload(uploadPath, file, {
-            cacheControl: "3600",
-            upsert: false,
-            contentType: file.type || "application/octet-stream",
-          });
-
-        if (upErr) {
-          const msg = upErr.message || "";
-          throw new Error(
-            msg.includes("row-level security") || msg.includes("policy") || (upErr as any).status === 403
-              ? `Storage permission denied.\n\nFix: Go to Supabase Dashboard → Storage → subject-files → Policies and add:\n• INSERT policy for authenticated users\n• SELECT policy for public (or authenticated)\n\nError: ${msg}`
-              : msg.includes("already exists")
-              ? "A file with this name already exists. Try again (a new unique name will be generated)."
-              : msg.includes("Payload too large") || msg.includes("413")
-              ? "File is too large. Contact support to increase the storage limit."
-              : msg.includes("Invalid API key") || (upErr as any).status === 401
-              ? "Invalid API key. Check that VITE_SUPABASE_PUBLISHABLE_KEY is set correctly in your environment variables."
-              : msg.includes("Bucket not found") || (upErr as any).status === 404
-              ? `Bucket 'subject-files' not found in your Supabase project.\n\nFix: Go to Supabase Dashboard → Storage → New bucket → name it 'subject-files' and enable public access.`
-              : `Upload failed: ${msg}`
-          );
-        }
-
-        fileUrl  = upData?.path || uploadPath;
-        fileSize = file.size;
-        setPct(85);
+      let file_url = assignment?.file_url || null;
+      if (file) {
+        const ext  = file.name.split(".").pop();
+        const path = `assignments/${subjectId}/${Date.now()}.${ext}`;
+        const res  = await uploadStorageFile("subject-files" as any, path, file, { upsert: true });
+        if (!res.success) { setError(res.error || "Upload failed"); setSaving(false); return; }
+        file_url = res.path!;
       }
-
-      setPhase("saving"); setPct(92);
 
       const payload: any = {
-        subject_id:      subjectId,
-        title:           f.title.trim(),
-        title_ar:        f.title_ar.trim()     || null,
-        description:     f.description?.trim() || null,
-        material_type:   f.material_type,
-        content:         needText ? f.content.trim() : null,
-        file_url:        fileUrl,
-        file_size:       fileSize || null,
-        level:           encodeLevels(selectedLevels),
-        sort_order:      f.sort_order,
-        is_downloadable: f.is_downloadable,
-        visibility:      f.visibility,
-        ...(!ed?.id && user ? { uploaded_by: user.id } : {}),
+        subject_id: subjectId,
+        title: title.trim(),
+        title_ar: titleAr.trim() || null,
+        description: desc.trim() || null,
+        description_ar: descAr.trim() || null,
+        question: question.trim() || null,
+        question_ar: questionAr.trim() || null,
+        deadline: new Date(deadline).toISOString(),
+        max_score: Number(maxScore) || 100,
+        allow_text: allowText,
+        allow_file: allowFile,
+        allow_audio: allowAudio,
+        file_url,
       };
 
-      // Include updated_at so any DB trigger that references it doesn't fail
-      if (ed?.id) payload.updated_at = new Date().toISOString();
-
-      const { error: dbErr } = ed?.id
-        ? await supabase.from("subject_materials").update(payload).eq("id", ed.id)
-        : await supabase.from("subject_materials").insert(payload);
-
-      if (dbErr) {
-        // If DB insert fails but file was already uploaded, try to clean up
-        if (needFile && file) {
-          try { await supabase.storage.from(BUCKET).remove([payload.file_url]); } catch {}
-        }
-        throw new Error(`Database error: ${dbErr.message}`);
+      if (isEdit) {
+        const { error: upErr } = await supabase.from("subject_assignments").update(payload).eq("id", assignment.id);
+        if (upErr) throw upErr;
+      } else {
+        const { error: inErr } = await supabase.from("subject_assignments").insert({ ...payload, created_by: userId, status: "open" });
+        if (inErr) throw inErr;
       }
-
-      setPct(100); setPhase("done");
-      toast({ title: "✅ Material saved successfully" });
-      setTimeout(() => onSaved(), 600);
-
-    } catch (e: any) {
-      setPhase("error"); setPct(0);
-      setErr(e.message || "Upload failed.");
-      toast({ title: "Upload Error", description: e.message?.split("\n")[0], variant: "destructive" });
+      onSaved();
+    } catch (err: any) {
+      setError(err.message || "Save failed");
     }
+    setSaving(false);
   };
 
   return (
-    <div
-      style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.65)", backdropFilter: "blur(3px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
-      onClick={e => { if (busy) return; if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div
-        style={{ background: "#fff", borderRadius: 20, width: "100%", maxWidth: 580, maxHeight: "94vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,.35)" }}
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid #E5E7EB", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, background: "#fff", zIndex: 1, borderRadius: "20px 20px 0 0" }}>
-          <div>
-            <h2 style={{ fontSize: 16, fontWeight: 800, color: "#111", margin: 0 }}>
-              {ed ? "Edit Material" : "Upload Material"}
-            </h2>
-            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>
-              PDF, Word, Excel, PowerPoint, Video, Audio, Images & more
-            </p>
-          </div>
-          <button type="button" onClick={onClose} disabled={busy}
-            style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(239,68,68,.1)", border: "1.5px solid rgba(239,68,68,.3)", cursor: busy ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <X size={15} color="#DC2626" />
+    <div style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(0,0,0,.5)", backdropFilter: "blur(6px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={onClose}>
+      <div style={{ width: "100%", maxWidth: 600, background: "#fff", borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: "#ddd" }} />
+        </div>
+        <div style={{ padding: "12px 20px 14px", borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <p style={{ fontSize: 18, fontWeight: 900, color: TXT, margin: 0 }}>
+            {isEdit ? t("Edit Assignment", "تعديل الواجب") : t("New Assignment", "واجب جديد")}
+          </p>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: `1px solid ${BORDER}`, background: "#f4f4f4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <X style={{ width: 15, height: 15, color: "#888" }} />
           </button>
         </div>
 
-        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          <Field label={t("Title", "العنوان")}>
+            <input value={title} onChange={e => setTitle(e.target.value)} placeholder={t("e.g. Tajweed Chapter 3 Exercises", "مثال: تمارين التجويد الفصل 3")} style={inputStyle} />
+          </Field>
+          <Field label={t("Title (Arabic, optional)", "العنوان (عربي، اختياري)")}>
+            <input value={titleAr} onChange={e => setTitleAr(e.target.value)} dir="rtl" style={inputStyle} />
+          </Field>
+          <Field label={t("Instructions", "التعليمات")}>
+            <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={4} style={{ ...inputStyle, height: "auto", resize: "vertical" }} />
+          </Field>
+          <Field label={t("Instructions (Arabic, optional)", "التعليمات (عربي، اختياري)")}>
+            <textarea value={descAr} onChange={e => setDescAr(e.target.value)} dir="rtl" rows={3} style={{ ...inputStyle, height: "auto", resize: "vertical" }} />
+          </Field>
 
-          {/* Error banner */}
-          {err && (
-            <div style={{ padding: "12px 14px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", color: "#DC2626", fontSize: 12, whiteSpace: "pre-line", display: "flex", gap: 8 }}>
-              <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span>{err}</span>
-            </div>
-          )}
+          <Field label={t("Question", "السؤال")}>
+            <textarea value={question} onChange={e => setQuestion(e.target.value)} rows={4} placeholder={t("What should the student answer?", "ما الذي يجب على الطالب الإجابة عنه؟")} style={{ ...inputStyle, height: "auto", resize: "vertical" }} />
+          </Field>
+          <Field label={t("Question (Arabic, optional)", "السؤال (عربي، اختياري)")}>
+            <textarea value={questionAr} onChange={e => setQuestionAr(e.target.value)} dir="rtl" rows={3} style={{ ...inputStyle, height: "auto", resize: "vertical" }} />
+          </Field>
 
-          {/* Type selector */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field label={t("Deadline", "الموعد النهائي")}>
+              <input type="datetime-local" value={deadline} onChange={e => setDeadline(e.target.value)} style={inputStyle} />
+            </Field>
+            <Field label={t("Max Score", "أعلى درجة")}>
+              <input type="number" value={maxScore} onChange={e => setMaxScore(e.target.value)} min={1} style={inputStyle} />
+            </Field>
+          </div>
+
           <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8, letterSpacing: .5 }}>MATERIAL TYPE</label>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {MAT_TYPES.map(mt => {
-                const c = MAT_CFG[mt]; const Ic = c.icon; const sel = f.material_type === mt;
-                return (
-                  <button key={mt} type="button" disabled={busy}
-                    onClick={() => { setF(x => ({ ...x, material_type: mt })); clearFile(); }}
-                    style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", borderRadius: 20, fontSize: 11, fontWeight: sel ? 800 : 500, border: `2px solid ${sel ? c.border : "#E5E7EB"}`, background: sel ? c.bg : "#fff", color: sel ? c.text : "#6B7280", cursor: "pointer", transition: "all .15s" }}>
-                    <Ic size={12} /> {mt}
-                  </button>
-                );
-              })}
+            <p style={{ fontSize: 12, fontWeight: 700, color: TLIT, marginBottom: 8 }}>{t("Accepted submission types", "أنواع التسليم المقبولة")}</p>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              {[
+                { label: t("Text", "نص"), val: allowText, set: setAllowText },
+                { label: t("File", "ملف"), val: allowFile, set: setAllowFile },
+                { label: t("Audio", "صوت"), val: allowAudio, set: setAllowAudio },
+              ].map(o => (
+                <label key={o.label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: TXT, cursor: "pointer" }}>
+                  <input type="checkbox" checked={o.val} onChange={e => o.set(e.target.checked)} />
+                  {o.label}
+                </label>
+              ))}
             </div>
           </div>
 
-          {/* File drop zone */}
-          {needFile && (
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8, letterSpacing: .5 }}>FILE</label>
-              {file ? (
-                <FilePreviewBlock file={file} type={f.material_type} objectUrl={objectUrl} onClear={clearFile} />
-              ) : (
-                <div
-                  onDragOver={e => { e.preventDefault(); e.stopPropagation(); setIsDragOver(true); }}
-                  onDragLeave={() => setIsDragOver(false)}
-                  onDrop={e => { e.preventDefault(); e.stopPropagation(); setIsDragOver(false); const fi = e.dataTransfer.files?.[0]; if (fi) pickFile(fi); }}
-                  style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", border: `2px dashed ${isDragOver ? cfg.border : "#D1D5DB"}`, borderRadius: 14, background: isDragOver ? cfg.bg : "#FAFAFA", padding: "32px 20px", textAlign: "center", transition: "all .2s" }}
-                >
-                  <div style={{ pointerEvents: "none" }}>
-                    <div style={{ width: 56, height: 56, borderRadius: 14, background: cfg.bg, border: `1.5px solid ${cfg.border}`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-                      <Upload size={24} color={cfg.text} />
-                    </div>
-                    <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: "0 0 4px" }}>Tap to choose a file, or drop here</p>
-                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: 0 }}>
-                      {f.material_type === "PDF"      ? "PDF files" :
-                       f.material_type === "Video"    ? "MP4, WebM, MOV, AVI" :
-                       f.material_type === "Audio"    ? "MP3, WAV, M4A, AAC" :
-                       f.material_type === "Image"    ? "JPG, PNG, GIF, WebP, SVG, HEIC" :
-                       f.material_type === "Document" ? "Word, Excel, PowerPoint, ODT, CSV, RTF" :
-                       "Any file type"}
-                    </p>
-                  </div>
-                  {/* Transparent full-zone input. accept="star/star" avoids Android document-picker back-nav bug */}
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="*/*"
-                    disabled={busy}
-                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", margin: 0, padding: 0 }}
-                    onClick={() => { pickerOpenRef.current = true; }}
-                    onChange={e => {
-                      pickerOpenRef.current = false;
-                      const fi = e.target.files?.[0];
-                      if (fi) pickFile(fi);
-                      if (fileRef.current) fileRef.current.value = "";
-                    }}
-                  />
-                </div>
-              )}
-
-              {/* URL fallback */}
-              <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ flex: 1, height: 1, background: "#E5E7EB" }} />
-                <span style={{ fontSize: 11, color: "#9CA3AF", whiteSpace: "nowrap" }}>or paste a direct URL</span>
-                <div style={{ flex: 1, height: 1, background: "#E5E7EB" }} />
-              </div>
-              <input
-                value={f.file_url} disabled={busy || !!file}
-                onChange={e => setF(x => ({ ...x, file_url: e.target.value }))}
-                placeholder="https://…"
-                style={{ ...inp, marginTop: 8, opacity: file ? .4 : 1 }}
-              />
-            </div>
-          )}
-
-          {/* Link URL */}
-          {needUrl && (
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 6 }}>URL *</label>
-              <input value={f.file_url} disabled={busy} onChange={e => { setF(x => ({ ...x, file_url: e.target.value })); setErr(""); }} placeholder="https://…" style={inp} />
-            </div>
-          )}
-
-          {/* Text content */}
-          {needText && (
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 6 }}>Content *</label>
-              <textarea value={f.content} disabled={busy} rows={5} onChange={e => { setF(x => ({ ...x, content: e.target.value })); setErr(""); }} placeholder="Type the text content here…" style={{ ...inp, resize: "vertical" }} />
-            </div>
-          )}
-
-          {/* Titles */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 5 }}>TITLE (ENGLISH) *</label>
-              <input value={f.title} disabled={busy} onChange={e => { setF(x => ({ ...x, title: e.target.value })); setErr(""); }} placeholder="e.g. Week 1 Worksheet" style={inp} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 5 }}>TITLE (ARABIC)</label>
-              <input value={f.title_ar} disabled={busy} onChange={e => setF(x => ({ ...x, title_ar: e.target.value }))} placeholder="مثال: ورقة الأسبوع الأول" dir="rtl" style={{ ...inp, fontFamily: "'Amiri', serif" }} />
-            </div>
-          </div>
-
-          {/* Description */}
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 5 }}>DESCRIPTION</label>
-            <textarea value={f.description} disabled={busy} rows={2} onChange={e => setF(x => ({ ...x, description: e.target.value }))} placeholder="Brief description…" style={{ ...inp, resize: "vertical", fontFamily: "inherit" }} />
-          </div>
-
-          {/* Levels */}
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8, letterSpacing: .5 }}>VISIBLE TO LEVELS</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              {ALL_LEVELS.map(lv => {
-                const c = LVL_CFG[lv]; const sel = selectedLevels.has(lv);
-                return (
-                  <button key={lv} type="button" disabled={busy} onClick={() => toggleLevel(lv)}
-                    style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 10, fontSize: 12, border: `2px solid ${sel ? c.border : "#E5E7EB"}`, background: sel ? c.bg : "#fff", cursor: "pointer", textAlign: "left", transition: "all .15s" }}>
-                    <div style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0, border: `2px solid ${sel ? c.border : "#D1D5DB"}`, background: sel ? c.text : "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      {sel && <Check size={10} color="#fff" strokeWidth={3} />}
-                    </div>
-                    <span style={{ fontWeight: sel ? 800 : 500, color: sel ? c.text : "#374151" }}>{c.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {selectedLevels.size === 0 && <p style={{ fontSize: 11, color: "#DC2626", marginTop: 4 }}>Select at least one level</p>}
-          </div>
-
-          {/* Visibility */}
-          <div>
-            <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 8, letterSpacing: .5 }}>WHO CAN SEE THIS MATERIAL?</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              {([
-                { value: "all",     label: "All Students",  desc: "Everyone sees it",        color: "#22c55e", bg: "#f0fff4", border: "#9ae6b4" },
-                { value: "general", label: "Class Students", desc: "Not private students",   color: "#3b82f6", bg: "#eff6ff", border: "#bfdbfe" },
-                { value: "private", label: "Private Only",   desc: "Private students only",  color: "#7C3AED", bg: "#F3E8FF", border: "#D8B4FE" },
-              ] as const).map(opt => {
-                const sel = f.visibility === opt.value;
-                return (
-                  <button key={opt.value} type="button" disabled={busy}
-                    onClick={() => setF(x => ({ ...x, visibility: opt.value }))}
-                    style={{ flex: 1, padding: "10px 6px", borderRadius: 11, cursor: "pointer", border: `2px solid ${sel ? opt.color : "#E5E7EB"}`, background: sel ? opt.bg : "#F9FAFB", textAlign: "center" as const, transition: "all .15s" }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: sel ? opt.color : "#374151" }}>{opt.label}</div>
-                    <div style={{ fontSize: 10, color: sel ? opt.color + "bb" : "#9CA3AF", marginTop: 2 }}>{opt.desc}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Options */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderRadius: 12, background: "#F9FAFB", border: "1px solid #E5E7EB" }}>
-            <div>
-              <p style={{ fontWeight: 700, fontSize: 13, color: "#374151", margin: 0 }}>Allow Download</p>
-              <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>Students can download this file</p>
-            </div>
-            <Switch checked={f.is_downloadable} onCheckedChange={v => setF(x => ({ ...x, is_downloadable: v }))} disabled={busy} />
-          </div>
-
-          {/* Progress */}
-          {phase !== "idle" && (
-            <div style={{
-              padding: "12px 16px", borderRadius: 12, fontSize: 13,
-              background: phase === "done" ? "#F0FDF4" : phase === "error" ? "#FEF2F2" : "#EFF6FF",
-              border: `1px solid ${phase === "done" ? "#BBF7D0" : phase === "error" ? "#FECACA" : "#BFDBFE"}`,
-              color: phase === "done" ? "#16A34A" : phase === "error" ? "#DC2626" : "#1D4ED8",
-              display: "flex", alignItems: "center", gap: 10,
-            }}>
-              {(phase === "uploading" || phase === "saving") && (
-                <>
-                  <Loader2 size={14} style={{ animation: "spin .8s linear infinite", flexShrink: 0 }} />
-                  <span style={{ flexShrink: 0 }}>{phase === "uploading" ? `Uploading… ${pct}%` : "Saving to database…"}</span>
-                  {phase === "uploading" && (
-                    <div style={{ flex: 1, height: 6, borderRadius: 4, background: "#BFDBFE", overflow: "hidden" }}>
-                      <div style={{ width: `${pct}%`, height: "100%", background: "#1D4ED8", borderRadius: 4, transition: "width .4s" }} />
-                    </div>
-                  )}
-                </>
-              )}
-              {phase === "done"  && <>✅ Saved successfully!</>}
-              {phase === "error" && <>❌ Error — see message above</>}
-            </div>
-          )}
-
-          {/* Actions */}
-          <div style={{ display: "flex", gap: 10 }}>
-            <button type="button" onClick={onClose} disabled={busy}
-              style={{ flex: 1, padding: "12px", borderRadius: 12, border: "1.5px solid #E5E7EB", background: "#fff", color: "#374151", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              Cancel
+          <Field label={t("Attachment (optional)", "مرفق (اختياري)")}>
+            <input type="file" ref={fileRef} onChange={e => setFile(e.target.files?.[0] || null)} style={{ display: "none" }} />
+            <button onClick={() => fileRef.current?.click()} type="button"
+              style={{ width: "100%", padding: 11, borderRadius: 12, border: `2px dashed ${BORDER}`, background: "#f8fafb", cursor: "pointer", fontSize: 13, fontWeight: 700, color: TMID, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <Upload style={{ width: 15, height: 15 }} />
+              {file ? file.name : assignment?.file_url ? t("Replace attachment", "استبدال المرفق") : t("Choose file", "اختر ملفاً")}
             </button>
-            <button type="button" onClick={doSave}
-              disabled={busy || phase === "done" || !f.title || selectedLevels.size === 0}
-              style={{
-                flex: 2, padding: "12px", borderRadius: 12, border: "none",
-                background: busy || phase === "done" || !f.title || selectedLevels.size === 0 ? "#E5E7EB" : `linear-gradient(135deg, ${G}, ${GM})`,
-                color: busy || phase === "done" || !f.title || selectedLevels.size === 0 ? "#9CA3AF" : "#fff",
-                fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              }}>
-              {busy
-                ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Saving…</>
-                : <><Upload size={14} /> {ed ? "Update Material" : "Upload Material"}</>}
-            </button>
-          </div>
+          </Field>
+
+          {error && (
+            <div style={{ background: "#fff5f5", border: "1px solid #fca5a5", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+              <AlertTriangle style={{ width: 14, height: 14, color: "#c0392b" }} />
+              <p style={{ fontSize: 13, color: "#c0392b", margin: 0 }}>{error}</p>
+            </div>
+          )}
+
+          <button onClick={handleSave} disabled={saving} className="asm-btn"
+            style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: saving ? "#ccc" : `linear-gradient(135deg, ${G}, ${MG})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: saving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            {saving ? <Loader2 style={{ width: 16, height: 16, animation: "spin .7s linear infinite" }} /> : <Save style={{ width: 15, height: 15 }} />}
+            {saving ? t("Saving…", "جارٍ الحفظ…") : isEdit ? t("Save Changes", "حفظ التغييرات") : t("Create Assignment", "إنشاء الواجب")}
+          </button>
         </div>
       </div>
     </div>
   );
-});
+}
 
-// ══ MATERIAL CARD ════════════════════════════════════════════════════
-function MaterialCard({ m, isPrivileged, onEdit, onDelete }: {
-  m: any; isPrivileged: boolean; onEdit: () => void; onDelete: () => void;
-}) {
-  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [loading,     setLoading]     = useState(false);
-  const [expanded,    setExpanded]    = useState(false);
-  const [previewErr,  setPreviewErr]  = useState("");
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label style={{ fontSize: 12, fontWeight: 700, color: TLIT, display: "block", marginBottom: 6 }}>{label}</label>
+      {children}
+    </div>
+  );
+}
 
-  // Resume badge — read saved position from localStorage
-  const posKey = `tahleem_pos_${m.id}`;
-  const savedSecs = (() => { try { const v = localStorage.getItem(posKey); return v ? parseFloat(v) : null; } catch { return null; } })();
-  const fmtTime = (s: number) => { const m = Math.floor(s / 60); const sec = Math.floor(s % 60); return `${m}:${sec.toString().padStart(2, "0")}`; };
+const inputStyle: React.CSSProperties = {
+  width: "100%", borderRadius: 12, border: `1px solid ${BORDER}`, padding: "11px 14px",
+  fontSize: 14, color: TXT, outline: "none", fontFamily: "'Cairo', sans-serif",
+  background: "#fff", boxSizing: "border-box", height: 44,
+};
 
-  const cfg  = MAT_CFG[(m.material_type as MatType) || "PDF"];
-  const Icon = cfg.icon;
-  const levels = parseLevels(m.level);
-  const isText = m.material_type === "Text";
-  const isLink = m.material_type === "Link";
+/* ── Grading modal — roster of students + their submissions ─────── */
+function GradingModal({
+  assignment: a, subjectId, language, t, onClose, onGraded,
+}: { assignment: any; subjectId: string; language: string; t: (en: string, ar: string) => string; onClose: () => void; onGraded: () => void }) {
+  const [roster, setRoster]   = useState<any[]>([]);
+  const [subs, setSubs]       = useState<Record<string, any>>({});
+  const [loading, setLoading] = useState(true);
+  const [openStudent, setOpenStudent] = useState<string | null>(null);
 
-  const resolveUrl = async (): Promise<string | null> => {
-    if (resolvedUrl) return resolvedUrl;
-    if (isLink) return m.file_url;
-    setLoading(true); setPreviewErr("");
-    try {
-      const url = await getSignedUrl(m.file_url);
-      if (url) { setResolvedUrl(url); return url; }
-      setPreviewErr("Could not load file — check storage policies.");
-      return null;
-    } catch (e: any) {
-      setPreviewErr("Preview failed: " + (e?.message || "Unknown error"));
-      return null;
-    } finally {
-      setLoading(false);
+  const title = language === "ar" ? (a.title_ar || a.title) : a.title;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data: enrolled } = await supabase.from("enrollments").select("user_id").eq("subject_id", subjectId);
+    const userIds = (enrolled || []).map((e: any) => e.user_id);
+    if (userIds.length > 0) {
+      const { data: profiles } = await supabase.from("profiles").select("user_id, full_name, avatar_url").in("user_id", userIds);
+      setRoster(profiles || []);
+    } else {
+      setRoster([]);
     }
-  };
+    const { data: submissions } = await supabase.from("assignment_submissions").select("*").eq("assignment_id", a.id);
+    const map: Record<string, any> = {};
+    (submissions || []).forEach((s: any) => { map[s.user_id] = s; });
+    setSubs(map);
+    setLoading(false);
+  }, [subjectId, a.id]);
 
-  const handlePreview = async () => {
-    if (isText) { setExpanded(e => !e); return; }
-    if (isLink) { setResolvedUrl(m.file_url); setPreviewOpen(true); return; }
-    const url = await resolveUrl();
-    if (url) setPreviewOpen(true);
-  };
-
-  const handleDownload = async () => {
-    const url = await resolveUrl();
-    if (url) window.open(url, "_blank");
-  };
+  useEffect(() => { load(); }, [load]);
 
   return (
-    <>
-      <div style={{ background: "#fff", borderRadius: 16, border: `1px solid ${cfg.border}`, overflow: "hidden", boxShadow: "0 1px 4px rgba(0,0,0,.04)" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 14, padding: "14px 16px" }}>
-
-          {/* Icon */}
-          <div style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0, background: cfg.bg, border: `1.5px solid ${cfg.border}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
-            {m.material_type === "Image" && m.file_url?.startsWith("http")
-              ? <img src={m.file_url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              : <Icon size={20} color={cfg.text} />}
+    <div style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(0,0,0,.5)", backdropFilter: "blur(6px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={onClose}>
+      <div style={{ width: "100%", maxWidth: 640, background: "#fff", borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: "#ddd" }} />
+        </div>
+        <div style={{ padding: "12px 20px 14px", borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <p style={{ fontSize: 11, color: TMID, margin: "0 0 2px", fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+              <GraduationCap style={{ width: 12, height: 12 }} />{t("Grading", "التصحيح")}
+            </p>
+            <p style={{ fontSize: 18, fontWeight: 900, color: TXT, margin: 0 }}>{title}</p>
           </div>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: `1px solid ${BORDER}`, background: "#f4f4f4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <X style={{ width: 15, height: 15, color: "#888" }} />
+          </button>
+        </div>
 
-          {/* Info */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontWeight: 800, fontSize: 14, color: "#111", margin: "0 0 2px", wordBreak: "break-word" }}>{m.title}</p>
-            {m.title_ar && <p style={{ fontSize: 12, color: GOLD, margin: "0 0 4px", direction: "rtl", fontFamily: "'Amiri', serif" }}>{m.title_ar}</p>}
-            {m.description && <p style={{ fontSize: 11, color: "#6B7280", margin: "0 0 6px", fontStyle: "italic" }}>{m.description}</p>}
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-              <span style={{ padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: cfg.bg, color: cfg.text, border: `1px solid ${cfg.border}` }}>
-                {m.material_type || "PDF"}
-              </span>
-              {[...levels].map(lv => (
-                <span key={lv} style={{ padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: LVL_CFG[lv].bg, color: LVL_CFG[lv].text, border: `1px solid ${LVL_CFG[lv].border}` }}>
-                  {LVL_CFG[lv].label}
-                </span>
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          {loading ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
+              <Loader2 style={{ width: 28, height: 28, color: G, animation: "spin .7s linear infinite" }} />
+            </div>
+          ) : roster.length === 0 ? (
+            <p style={{ textAlign: "center", color: TLIT, fontSize: 13, padding: 30 }}>{t("No students enrolled in this subject yet.", "لا يوجد طلاب مسجلون في هذه المادة بعد.")}</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {roster.map(student => (
+                <StudentSubmissionRow
+                  key={student.user_id}
+                  student={student}
+                  assignment={a}
+                  submission={subs[student.user_id]}
+                  open={openStudent === student.user_id}
+                  onToggle={() => setOpenStudent(o => o === student.user_id ? null : student.user_id)}
+                  t={t}
+                  onGraded={async () => { await load(); onGraded(); }}
+                />
               ))}
-              {m.file_size && <span style={{ fontSize: 10, color: "#9CA3AF" }}>{fmtSize(m.file_size)}</span>}
-              {(m.visibility === "private") && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 9, background: "#F3E8FF", color: "#7C3AED", fontWeight: 700, border: "1px solid #D8B4FE" }}>🔒 Private</span>}
-              {(m.visibility === "general") && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 9, background: "#eff6ff", color: "#3b82f6", fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</span>}
-              {savedSecs !== null && (m.material_type === "Video" || m.material_type === "Audio") && (
-                <span style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: "#FFFBEB", color: "#B45309", border: "1px solid #FDE68A" }}>
-                  ▶ Resume {fmtTime(savedSecs)}
-                </span>
-              )}
-              {previewErr && <span style={{ fontSize: 10, color: "#DC2626" }}>⚠ {previewErr}</span>}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StudentSubmissionRow({
+  student, assignment: a, submission: sub, open, onToggle, t, onGraded,
+}: { student: any; assignment: any; submission: any; open: boolean; onToggle: () => void; t: (en: string, ar: string) => string; onGraded: () => void }) {
+  const [grade, setGrade]       = useState(sub?.grade != null ? String(sub.grade) : "");
+  const [feedback, setFeedback] = useState(sub?.feedback || "");
+  const [saving, setSaving]     = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open && sub?.audio_url) getSignedUrl(sub.audio_url, 3600).then(u => setAudioUrl(u));
+  }, [open, sub?.audio_url]);
+
+  const saveGrade = async () => {
+    if (!sub) return;
+    const n = Number(grade);
+    if (grade !== "" && (isNaN(n) || n < 0 || n > (a.max_score ?? 100))) return;
+    setSaving(true);
+    const { data: authData } = await supabase.auth.getUser();
+    await supabase.from("assignment_submissions").update({
+      grade: grade === "" ? null : n,
+      feedback: feedback.trim() || null,
+      status: grade !== "" ? "graded" : sub.status,
+      graded_by: authData.user?.id,
+      graded_at: new Date().toISOString(),
+    }).eq("id", sub.id);
+    setSaving(false);
+    onGraded();
+  };
+
+  const statusInfo = !sub
+    ? { label: t("Not submitted", "لم يُسلَّم"), color: TLIT, bg: "#f4f4f4" }
+    : sub.status === "graded"
+      ? { label: t("Graded", "مُصحَّح"), color: "#276749", bg: "#f0fdf4" }
+      : { label: t("Submitted", "مُرسَل") + (sub.is_late ? ` (${t("late", "متأخر")})` : ""), color: "#1d4ed8", bg: "#eff6ff" };
+
+  return (
+    <div style={{ border: `1px solid ${BORDER}`, borderRadius: 14, overflow: "hidden" }}>
+      <div onClick={sub ? onToggle : undefined} style={{ padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, cursor: sub ? "pointer" : "default", background: "#fff" }}>
+        <div style={{ width: 32, height: 32, borderRadius: "50%", background: `${G}12`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: G }}>{(student.full_name || "?")[0]?.toUpperCase()}</span>
+        </div>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: TXT, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{student.full_name || t("Unnamed student", "طالب بدون اسم")}</span>
+        {sub?.grade != null && (
+          <span style={{ fontSize: 11, fontWeight: 800, color: "#276749" }}>{sub.grade}/{a.max_score ?? 100}</span>
+        )}
+        <span style={{ fontSize: 10, fontWeight: 800, color: statusInfo.color, background: statusInfo.bg, borderRadius: 20, padding: "3px 9px" }}>{statusInfo.label}</span>
+        {sub && <ChevronRight style={{ width: 14, height: 14, color: TLIT, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }} />}
+      </div>
+
+      {open && sub && (
+        <div style={{ padding: "14px", borderTop: `1px solid ${BORDER}`, background: "#f8fafb", display: "flex", flexDirection: "column", gap: 12 }}>
+          {sub.text_response && (
+            <div>
+              <p style={{ fontSize: 10, fontWeight: 700, color: TLIT, margin: "0 0 4px", textTransform: "uppercase" }}>{t("Text answer", "الإجابة النصية")}</p>
+              <p style={{ fontSize: 13, color: TXT, margin: 0, whiteSpace: "pre-wrap", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 12px" }}>{sub.text_response}</p>
+            </div>
+          )}
+          {sub.file_url && (
+            <AttachmentRow url={sub.file_url} label={t("Attached file", "الملف المرفق")} />
+          )}
+          {audioUrl && (
+            <audio controls src={audioUrl} style={{ width: "100%", height: 36 }} />
+          )}
+
+          <div style={{ display: "grid", gridTemplateColumns: "100px 1fr", gap: 10, alignItems: "flex-start" }}>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 700, color: TLIT, display: "block", marginBottom: 4 }}>{t("Score", "الدرجة")}</label>
+              <input type="number" value={grade} onChange={e => setGrade(e.target.value)} min={0} max={a.max_score ?? 100}
+                placeholder={`/${a.max_score ?? 100}`}
+                style={{ width: "100%", height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, padding: "0 10px", fontSize: 13, boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 700, color: TLIT, display: "block", marginBottom: 4 }}>{t("Feedback", "الملاحظات")}</label>
+              <input value={feedback} onChange={e => setFeedback(e.target.value)} placeholder={t("Optional note to the student…", "ملاحظة اختيارية للطالب…")}
+                style={{ width: "100%", height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, padding: "0 10px", fontSize: 13, boxSizing: "border-box" }} />
             </div>
           </div>
 
-          {/* Actions */}
-          <div style={{ display: "flex", gap: 4, flexShrink: 0, flexDirection: "column", alignItems: "flex-end" }}>
-            {!isText && (
-              <button type="button" onClick={e => { e.stopPropagation(); handlePreview(); }} title={previewErr || "Preview"} disabled={loading}
-                style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${previewErr ? "#FECACA" : cfg.border}`, background: previewErr ? "#FEF2F2" : cfg.bg, cursor: loading ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", opacity: loading ? .7 : 1 }}>
-                {loading ? <Loader2 size={14} style={{ animation: "spin .8s linear infinite", color: "#9CA3AF" }} /> : previewErr ? <span style={{ fontSize: 14 }}>⚠</span> : <Eye size={14} color={cfg.text} />}
-              </button>
-            )}
-            {!isLink && !isText && m.is_downloadable !== false && (
-              <button type="button" onClick={handleDownload} title="Download"
-                style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Download size={14} color={G} />
-              </button>
-            )}
-            {isLink && (
-              <button type="button" onClick={() => window.open(m.file_url, "_blank")} title="Open link"
-                style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <ExternalLink size={14} color={G} />
-              </button>
-            )}
-            {isText && (
-              <button type="button" onClick={() => setExpanded(e => !e)}
-                style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {expanded ? <ChevronUp size={14} color={G} /> : <Eye size={14} color={G} />}
-              </button>
-            )}
-            {isPrivileged && (
-              <>
-                <button type="button" onClick={onEdit}
-                  style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Edit2 size={14} color={G} />
-                </button>
-                <button type="button" onClick={onDelete}
-                  style={{ width: 34, height: 34, borderRadius: 10, border: "1px solid #FEE2E2", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Trash2 size={14} color="#DC2626" />
-                </button>
-              </>
-            )}
+          <button onClick={saveGrade} disabled={saving} className="asm-btn"
+            style={{ padding: "10px", borderRadius: 10, border: "none", background: saving ? "#ccc" : G, color: "#fff", fontSize: 13, fontWeight: 800, cursor: saving ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            {saving ? <Loader2 style={{ width: 14, height: 14, animation: "spin .8s linear infinite" }} /> : <Save style={{ width: 13, height: 13 }} />}
+            {t("Save grade", "حفظ الدرجة")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   STUDENT VIEW — browse + submit, locked once overdue
+   ═══════════════════════════════════════════════════════════════ */
+function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
+  const { user } = useAuth();
+  const { t, language } = useLanguage();
+  const navigate = useNavigate();
+
+  const [assignments, setAssignments]   = useState<any[]>([]);
+  const [submissions, setSubmissions]   = useState<Record<string, any>>({});
+  const [loading, setLoading]           = useState(true);
+  const [filter, setFilter]             = useState<AStatus>("all");
+  const [search, setSearch]             = useState("");
+  const [subjectFilter, setSubjectFilter] = useState("all");
+  const [subjects, setSubjects]         = useState<any[]>([]);
+  const [selected, setSelected]         = useState<any | null>(null);
+  const [showSubmit, setShowSubmit]     = useState(false);
+
+  const embedded = !!subjectId;
+
+  /* ── Load data ─────────────────────────────────────────── */
+  const load = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      let list: any[] = [];
+
+      if (subjectId) {
+        // Scoped to a single subject tab — the common case.
+        const { data: asgn } = await supabase
+          .from("subject_assignments")
+          .select("*, subjects(id, title, title_ar, level, levels)")
+          .eq("subject_id", subjectId)
+          .order("deadline", { ascending: true });
+        list = asgn || [];
+      } else {
+        // Legacy standalone use — every assignment across enrolled subjects.
+        const { data: profileData } = await supabase
+          .from("profiles").select("level").eq("user_id", user.id).single();
+        const studentLevel: string | null = (profileData as any)?.level || null;
+
+        const { data: enrollments } = await supabase
+          .from("enrollments").select("subject_id").eq("user_id", user.id);
+        const subjectIds = (enrollments || []).map((e: any) => e.subject_id).filter(Boolean);
+
+        const { data: ttSlots } = await supabase
+          .from("subject_timetable" as any).select("subject_id, levels").eq("is_active", true);
+        const ttSubjectIds = (ttSlots || [])
+          .filter((s: any) => {
+            if (!s.levels || s.levels.length === 0) return true;
+            if (!studentLevel) return false;
+            return s.levels.includes(studentLevel);
+          })
+          .map((s: any) => s.subject_id)
+          .filter(Boolean);
+
+        const allSubjectIds = [...new Set([...subjectIds, ...ttSubjectIds])];
+        if (allSubjectIds.length === 0) { setAssignments([]); setLoading(false); return; }
+
+        const { data: asgn } = await supabase
+          .from("subject_assignments")
+          .select("*, subjects(id, title, title_ar, level, levels)")
+          .in("subject_id", allSubjectIds)
+          .order("deadline", { ascending: true });
+
+        list = (asgn || []).filter((a: any) => {
+          const subj = a.subjects;
+          if (!subj) return true;
+          const subjLevels: string[] = subj.levels || (subj.level ? [subj.level] : []);
+          if (subjLevels.length === 0) return true;
+          if (!studentLevel) return false;
+          return subjLevels.includes(studentLevel);
+        });
+      }
+
+      setAssignments(list);
+
+      const uniqueSubjects = Object.values(
+        list.reduce((acc: any, a: any) => {
+          if (a.subjects) acc[a.subjects.id] = a.subjects;
+          return acc;
+        }, {})
+      );
+      setSubjects(uniqueSubjects as any[]);
+
+      if (list.length > 0) {
+        const assignmentIds = list.map((a: any) => a.id);
+        const { data: subs } = await supabase
+          .from("assignment_submissions")
+          .select("*")
+          .eq("user_id", user.id)
+          .in("assignment_id", assignmentIds);
+
+        const subMap: Record<string, any> = {};
+        (subs || []).forEach((s: any) => { subMap[s.assignment_id] = s; });
+        setSubmissions(subMap);
+      } else {
+        setSubmissions({});
+      }
+    } catch (err) {
+      console.error("Failed to load assignments:", err);
+    }
+    setLoading(false);
+  }, [user, subjectId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  /* ── Derived filtered list ─────────────────────────── */
+  const filtered = assignments.filter(a => {
+    const sub = submissions[a.id];
+    const status = sub ? (sub.status === "graded" ? "graded" : "submitted")
+      : isOverdue(a.deadline) ? "overdue" : "pending";
+
+    if (filter !== "all" && filter !== status) return false;
+    if (subjectFilter !== "all" && a.subject_id !== subjectFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      const title = language === "ar" ? (a.title_ar || a.title) : a.title;
+      if (!title?.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  /* ── Stats ─────────────────────────────────────────── */
+  const total     = assignments.length;
+  const pending   = assignments.filter(a => !submissions[a.id] && !isOverdue(a.deadline)).length;
+  const submitted = assignments.filter(a => submissions[a.id] && submissions[a.id].status !== "graded").length;
+  const graded    = assignments.filter(a => submissions[a.id]?.status === "graded").length;
+  const overdue   = assignments.filter(a => !submissions[a.id] && isOverdue(a.deadline)).length;
+
+  const avgScore = (() => {
+    const gradedSubs = Object.values(submissions).filter((s: any) => s.grade != null);
+    if (!gradedSubs.length) return null;
+    return Math.round(gradedSubs.reduce((sum: number, s: any) => sum + Number(s.grade), 0) / gradedSubs.length);
+  })();
+
+  /* ── Status chip helper ────────────────────────────── */
+  const statusChip = (a: any) => {
+    const sub = submissions[a.id];
+    // Fully locked only when nothing was ever submitted. If the student did
+    // submit before the deadline, they keep read-only access to it (and to
+    // their grade/feedback) even after the deadline passes.
+    const locked = isOverdue(a.deadline) && !sub;
+    if (sub?.status === "graded") return { label: t("Graded", "مُصحَّح"), color: "#276749", bg: "#dcfce7", border: "#9ae6b4", icon: Award };
+    if (locked) return { label: t("Locked — deadline passed", "مغلق — انتهى الموعد"), color: "#c0392b", bg: "#fff5f5", border: "#fca5a5", icon: Lock };
+    if (sub) return { label: t("Submitted", "مُرسَل"), color: "#1d4ed8", bg: "#eff6ff", border: "#93c5fd", icon: CheckCircle };
+    const dl = daysLeft(a.deadline);
+    if (dl !== null && dl <= 2) return { label: t(`Due in ${dl}d`, `باقي ${dl} يوم`), color: "#b45309", bg: "#fffbeb", border: "#fde68a", icon: Clock };
+    return { label: t("Pending", "قيد الانتظار"), color: TMID, bg: "#f0fdf4", border: "#86efac", icon: ClipboardList };
+  };
+
+  /* ─── Main render ──────────────────────────────────── */
+  return (
+    <div style={{ background: embedded ? "transparent" : CREAM, minHeight: embedded ? "auto" : "100vh", fontFamily: "'Cairo', sans-serif" }}>
+      {!embedded && (
+        <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=Playfair+Display:wght@500;700&display=swap');`}</style>
+      )}
+      <style>{`
+        .asm-card { transition: box-shadow .18s, transform .18s; }
+        .asm-card:hover { box-shadow: 0 8px 32px rgba(15,45,31,0.13) !important; transform: translateY(-1px); }
+        .asm-card.locked:hover { transform: none; }
+        .asm-btn { transition: opacity .15s, transform .12s; }
+        .asm-btn:active { transform: scale(0.96); }
+        .asm-tab { transition: background .15s, color .15s; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
+
+      <div style={{ maxWidth: embedded ? "100%" : 720, margin: "0 auto", padding: embedded ? 0 : "20px 16px 48px", display: "flex", flexDirection: "column", gap: 18 }}>
+
+        {/* ── Header (only on the standalone page) ── */}
+        {!embedded && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button onClick={() => navigate("/student")} style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ArrowLeft style={{ width: 16, height: 16, color: TXT }} />
+            </button>
+            <div>
+              <h1 style={{ fontSize: 22, fontWeight: 900, color: TXT, margin: 0, fontFamily: "'Playfair Display', serif" }}>
+                {t("My Assignments", "واجباتي")}
+              </h1>
+              <p style={{ fontSize: 12, color: TLIT, margin: "2px 0 0" }}>
+                {t("All assignments from your classes", "جميع الواجبات من دروسك")}
+              </p>
+            </div>
           </div>
+        )}
+
+        {/* ── Stats row ── */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+          {[
+            { label: t("Pending", "قيد الانتظار"),  value: pending,   color: TMID,     icon: ClipboardList,  status: "pending" as AStatus },
+            { label: t("Submitted", "مُرسَل"),        value: submitted, color: "#1d4ed8", icon: CheckCircle,    status: "submitted" as AStatus },
+            { label: t("Graded", "مُصحَّح"),          value: graded,    color: "#276749", icon: Award,          status: "graded" as AStatus },
+            { label: t("Overdue", "متأخر"),           value: overdue,   color: "#c0392b", icon: AlertTriangle,  status: "overdue" as AStatus },
+          ].map(s => (
+            <div key={s.status} onClick={() => setFilter(filter === s.status ? "all" : s.status)}
+              className="asm-btn"
+              style={{ ...card, padding: "12px 10px", textAlign: "center", cursor: "pointer", border: `1px solid ${filter === s.status ? s.color + "55" : BORDER}`, background: filter === s.status ? s.color + "08" : "#fff" }}>
+              <s.icon style={{ width: 18, height: 18, color: s.color, marginBottom: 4 }} />
+              <div style={{ fontSize: 20, fontWeight: 900, color: TXT }}>{s.value}</div>
+              <div style={{ fontSize: 10, fontWeight: 600, color: TLIT, lineHeight: 1.2 }}>{s.label}</div>
+            </div>
+          ))}
         </div>
 
-        {isText && expanded && m.content && (
-          <div style={{ padding: "12px 16px 16px", borderTop: `1px solid ${cfg.border}`, background: cfg.bg }}>
-            <p style={{ fontSize: 13, color: "#374151", lineHeight: 1.6, margin: 0, whiteSpace: "pre-wrap" }}>{m.content}</p>
+        {/* Avg score pill */}
+        {avgScore !== null && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: `linear-gradient(135deg, ${G}, ${MG})`, borderRadius: 14 }}>
+            <TrendingUp style={{ width: 16, height: 16, color: GOLD }} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>{t("Average score across graded assignments:", "متوسط درجاتك في الواجبات:")}</span>
+            <span style={{ fontSize: 16, fontWeight: 900, color: GOLD }}>{avgScore}%</span>
+          </div>
+        )}
+
+        {/* ── Search + Filters ── */}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 180, position: "relative" }}>
+            <Search style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", width: 14, height: 14, color: TLIT }} />
+            <input
+              value={search} onChange={e => setSearch(e.target.value)}
+              placeholder={t("Search assignments…", "ابحث عن واجب…")}
+              style={{ width: "100%", paddingLeft: 36, paddingRight: 12, height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", fontSize: 13, color: TXT, outline: "none", boxSizing: "border-box" }}
+            />
+          </div>
+          {!embedded && (
+            <select
+              value={subjectFilter} onChange={e => setSubjectFilter(e.target.value)}
+              style={{ height: 38, borderRadius: 10, border: `1px solid ${BORDER}`, background: "#fff", fontSize: 13, color: TXT, padding: "0 12px", cursor: "pointer", outline: "none" }}>
+              <option value="all">{t("All Subjects", "جميع المواد")}</option>
+              {subjects.map((s: any) => (
+                <option key={s.id} value={s.id}>
+                  {language === "ar" ? (s.title_ar || s.title) : s.title}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* ── Assignment list ── */}
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: 60 }}>
+            <div style={{ width: 36, height: 36, borderRadius: "50%", border: `3px solid ${G}`, borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div style={{ ...card, padding: "48px 20px", textAlign: "center" }}>
+            <ClipboardList style={{ width: 48, height: 48, color: TLIT, margin: "0 auto 12px", opacity: .4 }} />
+            <p style={{ fontSize: 16, fontWeight: 700, color: TXT, margin: "0 0 4px" }}>{t("No assignments found", "لا توجد واجبات")}</p>
+            <p style={{ fontSize: 13, color: TLIT, margin: 0 }}>{t("You're all caught up!", "أنت منتهٍ من كل شيء!")}</p>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {filtered.map(a => {
+              const sub  = submissions[a.id];
+              const chip = statusChip(a);
+              // Once the deadline has passed with nothing submitted, the
+              // assignment is fully locked — it can no longer be opened to
+              // view or to submit (the DB trigger backs up the submit side).
+              // If the student already submitted, they keep read-only access
+              // to their work and grade/feedback after the deadline too.
+              const locked = isOverdue(a.deadline) && !sub;
+              const title = language === "ar" ? (a.title_ar || a.title) : a.title;
+              const subjTitle = language === "ar" ? (a.subjects?.title_ar || a.subjects?.title) : a.subjects?.title;
+              return (
+                <div key={a.id} className={`asm-card ${locked ? "locked" : ""}`}
+                  style={{ ...card, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.72 : 1 }}
+                  onClick={() => { if (locked) return; setSelected(a); setShowSubmit(false); }}>
+                  <div style={{ padding: "16px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                      {/* Icon */}
+                      <div style={{ width: 44, height: 44, borderRadius: 13, background: `${G}10`, border: `1px solid ${G}20`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {locked ? <Lock style={{ width: 20, height: 20, color: "#c0392b" }} /> : <ClipboardList style={{ width: 20, height: 20, color: G }} />}
+                      </div>
+                      {/* Content */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+                          <span style={{ fontSize: 15, fontWeight: 800, color: TXT }}>{title}</span>
+                          <span style={{ fontSize: 10, fontWeight: 800, color: chip.color, background: chip.bg, border: `1px solid ${chip.border}`, borderRadius: 20, padding: "2px 9px", display: "flex", alignItems: "center", gap: 4 }}>
+                            <chip.icon style={{ width: 10, height: 10 }} />
+                            {chip.label}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                          {!embedded && (
+                            <span style={{ fontSize: 11, color: TMID, display: "flex", alignItems: "center", gap: 4 }}>
+                              <BookOpen style={{ width: 11, height: 11 }} />{subjTitle}
+                            </span>
+                          )}
+                          {a.deadline && (
+                            <span style={{ fontSize: 11, color: isOverdue(a.deadline) ? "#c0392b" : TLIT, display: "flex", alignItems: "center", gap: 4 }}>
+                              <Calendar style={{ width: 11, height: 11 }} />
+                              {fmtDate(a.deadline)}
+                            </span>
+                          )}
+                          {sub?.grade != null && (
+                            <span style={{ fontSize: 11, fontWeight: 800, color: "#276749", display: "flex", alignItems: "center", gap: 4 }}>
+                              <Star style={{ width: 11, height: 11, fill: GOLD, color: GOLD }} />
+                              {sub.grade}/{a.max_score ?? 100}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {!locked && <ChevronRight style={{ width: 16, height: 16, color: TLIT, flexShrink: 0 }} />}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
 
-      {previewOpen && resolvedUrl && (
-        <PreviewOverlay url={resolvedUrl} type={m.material_type as MatType} title={m.title} onClose={() => setPreviewOpen(false)} materialId={m.id} />
+      {/* ── Detail / Submit Modal ──
+          Blocked entirely if overdue with nothing submitted (fully locked).
+          If overdue but already submitted, it opens read-only. */}
+      {selected && (!isOverdue(selected.deadline) || !!submissions[selected.id]) && (
+        <AssignmentModal
+          assignment={selected}
+          submission={submissions[selected.id]}
+          userId={user!.id}
+          language={language}
+          t={t}
+          readOnly={isOverdue(selected.deadline)}
+          onClose={() => setSelected(null)}
+          onSubmitted={async () => { await load(); setSelected(null); }}
+        />
       )}
-    </>
+    </div>
   );
 }
 
-// ══ RECORDING MINI PLAYER (fixed bottom bar) ══════════════════════════
-const REC_POS_KEY = (id: string) => `tahleem_rec_${id}`;
+/* ═══════════════════════════════════════════════════════════════
+   AssignmentModal — full-featured submission modal
+   ═══════════════════════════════════════════════════════════════ */
+function AssignmentModal({
+  assignment: a, submission: existingSub, userId,
+  language, t, onClose, onSubmitted, readOnly = false,
+}: {
+  assignment: any; submission: any; userId: string;
+  language: string; t: (en: string, ar: string) => string;
+  onClose: () => void; onSubmitted: () => void; readOnly?: boolean;
+}) {
+  const [activeTab, setActiveTab]   = useState<"details" | "submit" | "feedback">(readOnly && existingSub ? "feedback" : "details");
+  const [textInput, setTextInput]   = useState(existingSub?.text_response || "");
+  const [file, setFile]             = useState<File | null>(null);
+  const [uploading, setUploading]   = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]           = useState<string | null>(null);
+  const [comments, setComments]     = useState<any[]>([]);
+  const [commentText, setCommentText] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
 
-function RecordingMiniPlayer({ subjectId }: { subjectId: string }) {
-  const [expanded,   setExpanded]   = useState(false);
-  const [selected,   setSelected]   = useState<any>(null);
-  const [signedUrl,  setSignedUrl]  = useState<string | null>(null);
-  const [loadingUrl, setLoadingUrl] = useState(false);
-  const [playing,    setPlaying]    = useState(false);
-  const [currentTime, setCurrent]   = useState(0);
-  const [duration,   setDuration]   = useState(0);
-  const [muted,      setMuted]      = useState(false);
-  const [volume,     setVolume]     = useState(1);
-  const audioRef    = useRef<HTMLAudioElement>(null);
-  const pendingSeek = useRef(0);
+  /* Audio recorder */
+  const [recording, setRecording]       = useState(false);
+  const [audioBlob, setAudioBlob]       = useState<Blob | null>(null);
+  const [audioUrl, setAudioUrl]         = useState<string | null>(null);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const mediaRecRef  = useRef<MediaRecorder | null>(null);
+  const chunksRef    = useRef<BlobEvent["data"][]>([]);
+  const timerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [playing, setPlaying]           = useState(false);
+  const audioRef     = useRef<HTMLAudioElement | null>(null);
 
-  const { data: recordings = [] } = useQuery({
-    queryKey: ["subject-recordings", subjectId],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("class_recordings")
-        .select("*")
-        .eq("subject_id", subjectId)
-        .order("created_at", { ascending: false });
-      return data || [];
-    },
-  });
+  const title = language === "ar" ? (a.title_ar || a.title) : a.title;
+  const desc  = language === "ar" ? (a.description_ar || a.description) : a.description;
+  const question = language === "ar" ? (a.question_ar || a.question) : a.question;
+  const subjTitle = language === "ar" ? (a.subjects?.title_ar || a.subjects?.title) : a.subjects?.title;
+  const isGraded  = existingSub?.status === "graded";
+  const submitted = !!existingSub && !["draft"].includes(existingSub?.status);
+  // The deadline lock is enforced one level up (the modal is only mounted
+  // for non-overdue assignments), but "closed" is kept for the explicit
+  // status field a staff member can also set manually.
+  const closed    = a.status === "closed";
 
-  // Restore last-played recording on mount
+  // Load comments
   useEffect(() => {
-    if (!recordings.length) return;
-    try {
-      const saved = JSON.parse(localStorage.getItem(REC_POS_KEY(subjectId)) || "{}");
-      if (saved.recordingId) {
-        const rec = recordings.find((r: any) => r.id === saved.recordingId);
-        if (rec) { pendingSeek.current = saved.time ?? 0; loadRecording(rec); setExpanded(true); }
-      }
-    } catch {}
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recordings.length]);
+    if (!existingSub?.id) return;
+    supabase.from("assignment_comments" as any)
+      .select("*, profiles(full_name, role)")
+      .eq("submission_id", existingSub.id)
+      .order("created_at")
+      .then(({ data }) => { if (data) setComments(data); });
+  }, [existingSub?.id]);
 
-  const saveRecPos = (patch: any) => {
+  /* ── Audio recording ───────────────────────────────── */
+  const startRecording = async () => {
     try {
-      const cur = JSON.parse(localStorage.getItem(REC_POS_KEY(subjectId)) || "{}");
-      localStorage.setItem(REC_POS_KEY(subjectId), JSON.stringify({ ...cur, ...patch }));
-    } catch {}
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        setAudioBlob(blob);
+        setAudioUrl(URL.createObjectURL(blob));
+        stream.getTracks().forEach(t => t.stop());
+      };
+      mr.start();
+      mediaRecRef.current = mr;
+      setRecording(true);
+      setRecordSeconds(0);
+      timerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    } catch {
+      setError(t("Microphone access denied.", "تم رفض الوصول إلى الميكروفون."));
+    }
   };
 
-  const loadRecording = async (rec: any) => {
-    setSelected(rec); setPlaying(false); setCurrent(0); setSignedUrl(null);
-    if (!rec?.file_url) return;
-    setLoadingUrl(true);
-    const url = rec.file_url.startsWith("http")
-      ? rec.file_url
-      : (await getSignedUrl(rec.file_url, 7200) || null);
-    setSignedUrl(url);
-    setLoadingUrl(false);
-    saveRecPos({ recordingId: rec.id });
+  const stopRecording = () => {
+    mediaRecRef.current?.stop();
+    setRecording(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+  };
+
+  const clearAudio = () => {
+    setAudioBlob(null);
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioUrl(null);
+    setRecordSeconds(0);
+    setPlaying(false);
   };
 
   const togglePlay = () => {
@@ -967,314 +1057,490 @@ function RecordingMiniPlayer({ subjectId }: { subjectId: string }) {
     else { audioRef.current.play(); setPlaying(true); }
   };
 
-  const seek = (v: number) => {
-    if (audioRef.current) { audioRef.current.currentTime = v; setCurrent(v); }
+  const fmtSecs = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+
+  /* ── File upload ───────────────────────────────────── */
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) { setFile(f); setError(null); }
   };
 
-  const fmt = (s: number) =>
-    `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  /* ── Submit ────────────────────────────────────────── */
+  const handleSubmit = async () => {
+    if (isOverdue(a.deadline)) {
+      setError(t("The deadline for this assignment has passed. Submissions are no longer accepted.", "لقد انتهى الموعد النهائي لهذا الواجب. لم يعد التسليم مقبولاً."));
+      return;
+    }
+    if (!textInput.trim() && !file && !audioBlob) {
+      setError(t("Please provide a text answer, file, or voice recording.", "يرجى تقديم إجابة نصية أو ملف أو تسجيل صوتي."));
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      let uploadedFileUrl: string | null = existingSub?.file_url || null;
+      let uploadedAudioUrl: string | null = existingSub?.audio_url || null;
 
-  if (!recordings.length) return null;
+      // Upload file
+      if (file) {
+        setUploading(true);
+        const ext  = file.name.split(".").pop();
+        const path = `${userId}/${a.id}/file_${Date.now()}.${ext}`;
+        const res  = await uploadStorageFile("subject-files" as any, path, file, { upsert: true });
+        if (!res.success) { setError(res.error || "Upload failed"); setSubmitting(false); setUploading(false); return; }
+        uploadedFileUrl = res.path!;
+        setUploading(false);
+      }
 
-  const GOLD = "#C9A84C";
+      // Upload audio
+      if (audioBlob) {
+        setUploading(true);
+        const path = `${userId}/${a.id}/audio_${Date.now()}.webm`;
+        const res  = await uploadStorageFile("subject-files" as any, path, audioBlob, { upsert: true, contentType: "audio/webm" });
+        if (!res.success) { setError(res.error || "Audio upload failed"); setSubmitting(false); setUploading(false); return; }
+        uploadedAudioUrl = res.path!;
+        setUploading(false);
+      }
 
-  return createPortal(
-    <div style={{
-      position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 99999,
-      background: expanded ? "#0d1f14" : "linear-gradient(90deg,#0d1f14ee,#132e1eee)",
-      borderTop: "1px solid rgba(255,255,255,0.1)",
-      boxShadow: "0 -4px 24px rgba(0,0,0,0.35)",
-      transition: "all .25s",
-    }}>
-      {signedUrl && (
-        <audio
-          ref={audioRef}
-          src={signedUrl}
-          onLoadedMetadata={() => {
-            const d = audioRef.current?.duration || 0;
-            setDuration(d);
-            if (pendingSeek.current > 0 && audioRef.current) {
-              audioRef.current.currentTime = Math.min(pendingSeek.current, d);
-              setCurrent(pendingSeek.current);
-              pendingSeek.current = 0;
-            }
-          }}
-          onTimeUpdate={() => {
-            const t = audioRef.current?.currentTime || 0;
-            setCurrent(t);
-            if (Math.floor(t) % 5 === 0) saveRecPos({ time: t });
-          }}
-          onEnded={() => { setPlaying(false); saveRecPos({ time: 0 }); }}
-          style={{ display: "none" }}
-        />
-      )}
+      const payload: any = {
+        assignment_id:  a.id,
+        user_id:        userId,
+        text_response:  textInput || null,
+        file_url:       uploadedFileUrl,
+        audio_url:      uploadedAudioUrl,
+        status:         "submitted",
+        is_late:        isOverdue(a.deadline),
+        submitted_at:   new Date().toISOString(),
+        updated_at:     new Date().toISOString(),
+      };
 
-      {/* ── Collapsed bar ── */}
-      <button
-        onClick={() => setExpanded(e => !e)}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", border: "none", cursor: "pointer", background: "transparent", color: "#fff", minHeight: 52 }}
-      >
-        <div style={{ width: 30, height: 30, borderRadius: 8, background: playing ? GOLD : "rgba(201,164,76,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          {playing ? <Pause size={14} color="#111" /> : <Headphones size={14} color={GOLD} />}
+      let dbError: any = null;
+      if (existingSub?.id) {
+        const { error: upErr } = await supabase.from("assignment_submissions").update(payload).eq("id", existingSub.id);
+        dbError = upErr;
+      } else {
+        const { error: inErr } = await supabase.from("assignment_submissions").insert(payload);
+        dbError = inErr;
+      }
+      // The database also enforces the deadline (in case it passed while this
+      // modal was open), so surface that error clearly if it comes back.
+      if (dbError) {
+        setError(dbError.message?.includes("deadline")
+          ? t("The deadline for this assignment has passed. Submissions are no longer accepted.", "لقد انتهى الموعد النهائي لهذا الواجب. لم يعد التسليم مقبولاً.")
+          : dbError.message || "Submission failed");
+        setSubmitting(false);
+        return;
+      }
+      onSubmitted();
+    } catch (err: any) {
+      setError(err.message || "Submission failed");
+    }
+    setSubmitting(false);
+  };
+
+  /* ── Post comment ──────────────────────────────────── */
+  const postComment = async () => {
+    if (!commentText.trim() || !existingSub?.id) return;
+    const { data: inserted } = await supabase
+      .from("assignment_comments" as any)
+      .insert({ submission_id: existingSub.id, author_id: userId, body: commentText.trim() })
+      .select("*, profiles(full_name, role)")
+      .single();
+    if (inserted) setComments(prev => [...prev, inserted]);
+    setCommentText("");
+  };
+
+  /* ── Tabs ─────────────────────────────────────────── */
+  const tabs: { key: typeof activeTab; label: string }[] = [
+    { key: "details", label: t("Details", "التفاصيل") },
+    ...(!readOnly ? [{ key: "submit" as const, label: submitted ? t("My Submission", "إجابتي") : t("Submit", "إرسال") }] : []),
+    ...(existingSub ? [{ key: "feedback" as const, label: t("Feedback", "التغذية الراجعة") }] : []),
+  ];
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,.5)", backdropFilter: "blur(6px)", display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={onClose}>
+      <div style={{ width: "100%", maxWidth: 600, background: "#fff", borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden" }}
+        onClick={e => e.stopPropagation()}>
+
+        {/* Drag handle */}
+        <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: "#ddd" }} />
         </div>
-        <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
-          <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: "#e8f5e9" }}>
-            🎙️ Class Recordings
-          </p>
-          {selected && !expanded && (
-            <p style={{ margin: 0, fontSize: 10, color: GOLD, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {playing ? `▶ ${fmt(currentTime)} / ${fmt(duration)}` : (selected.teacher_name || "Recording selected")}
-            </p>
+
+        {/* Header */}
+        <div style={{ padding: "12px 20px 14px", borderBottom: `1px solid ${BORDER}` }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 11, color: TMID, margin: "0 0 2px", fontWeight: 700 }}>{subjTitle}</p>
+              <p style={{ fontSize: 18, fontWeight: 900, color: TXT, margin: 0, lineHeight: 1.2 }}>{title}</p>
+              {a.deadline && (
+                <p style={{ fontSize: 11, color: isOverdue(a.deadline) ? "#c0392b" : TLIT, margin: "4px 0 0", display: "flex", alignItems: "center", gap: 4 }}>
+                  <Calendar style={{ width: 11, height: 11 }} />
+                  {t("Due:", "الموعد النهائي:")} {fmtDate(a.deadline)}
+                </p>
+              )}
+            </div>
+            <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: `1px solid ${BORDER}`, background: "#f4f4f4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <X style={{ width: 15, height: 15, color: "#888" }} />
+            </button>
+          </div>
+
+          {/* Score badge */}
+          {existingSub?.grade != null && (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, background: `${GOLD}18`, border: `1px solid ${GOLD}44`, borderRadius: 20, padding: "4px 12px" }}>
+              <Star style={{ width: 13, height: 13, fill: GOLD, color: GOLD }} />
+              <span style={{ fontSize: 13, fontWeight: 800, color: G }}>{existingSub.grade} / {a.max_score ?? 100}</span>
+              <span style={{ fontSize: 11, color: TMID }}>pts</span>
+            </div>
           )}
         </div>
-        {/* Progress bar when playing + collapsed */}
-        {selected && signedUrl && !expanded && duration > 0 && (
-          <div style={{ width: 80, height: 3, background: "rgba(255,255,255,.15)", borderRadius: 2, overflow: "hidden", flexShrink: 0 }}>
-            <div style={{ width: `${(currentTime / duration) * 100}%`, height: "100%", background: GOLD, borderRadius: 2, transition: "width .5s linear" }} />
-          </div>
-        )}
-        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
-          {recordings.length} rec{recordings.length !== 1 ? "s" : ""}
-        </span>
-        {expanded ? <ChevronDown size={14} color="rgba(255,255,255,0.4)" /> : <ChevronUp size={14} color="rgba(255,255,255,0.4)" />}
-      </button>
 
-      {expanded && (
-        <div style={{ padding: "0 16px 16px", maxHeight: "55vh", overflowY: "auto" }}>
-          {/* Recording list */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: selected ? 12 : 0 }}>
-            {(recordings as any[]).map((rec: any) => {
-              const isActive = selected?.id === rec.id;
-              const dateStr  = rec.created_at ? new Date(rec.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
-              const mins     = rec.duration_seconds ? Math.floor(rec.duration_seconds / 60) : null;
-              return (
-                <button key={rec.id} onClick={() => loadRecording(rec)}
-                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${isActive ? GOLD + "60" : "rgba(255,255,255,0.07)"}`, background: isActive ? "rgba(201,164,76,0.12)" : "rgba(255,255,255,0.04)", cursor: "pointer", textAlign: "left", minHeight: 48 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, background: isActive ? GOLD : "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    {isActive && playing
-                      ? <Radio size={13} color="#111" style={{ animation: "sm-pulse 1s infinite" }} />
-                      : <Play size={12} color={isActive ? "#111" : "rgba(255,255,255,0.5)"} />}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: isActive ? GOLD : "#e8f5e9", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {rec.teacher_name || "Class Recording"}
-                    </p>
-                    <p style={{ margin: 0, fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
-                      {dateStr}{mins ? ` · ${mins}m` : ""}
-                    </p>
-                  </div>
-                  {isActive && loadingUrl && <Loader2 size={13} color={GOLD} style={{ animation: "sm-spin .8s linear infinite", flexShrink: 0 }} />}
-                </button>
-              );
-            })}
-          </div>
+        {/* Tabs */}
+        <div style={{ display: "flex", borderBottom: `1px solid ${BORDER}`, flexShrink: 0 }}>
+          {tabs.map(tab => (
+            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+              className="asm-tab"
+              style={{ flex: 1, padding: "12px 8px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: 700, color: activeTab === tab.key ? G : TLIT, borderBottom: `2px solid ${activeTab === tab.key ? G : "transparent"}` }}>
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
-          {/* Player controls */}
-          {selected && signedUrl && (
-            <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 14, padding: "14px 14px 12px", border: "1px solid rgba(255,255,255,0.08)" }}>
-              <input type="range" min={0} max={duration || 100} step={0.5} value={currentTime}
-                onChange={e => seek(parseFloat(e.target.value))}
-                style={{ width: "100%", accentColor: GOLD, height: 3, cursor: "pointer", display: "block" }} />
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "rgba(255,255,255,0.4)", marginTop: 4, marginBottom: 10 }}>
-                <span>{fmt(currentTime)}</span><span>{fmt(duration)}</span>
+        {/* Tab body */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "20px" }}>
+
+          {/* ─── DETAILS tab ─────────────────────────────── */}
+          {activeTab === "details" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {readOnly && (
+                <div style={{ background: "#fff5f5", border: "1px solid #fca5a5", borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <Lock style={{ width: 16, height: 16, color: "#c0392b", flexShrink: 0 }} />
+                  <p style={{ fontSize: 13, fontWeight: 700, color: "#c0392b", margin: 0 }}>
+                    {t("The deadline has passed — you can view your submission but can no longer change it.", "لقد انتهى الموعد النهائي — يمكنك مشاهدة إجابتك لكن لا يمكنك تغييرها بعد الآن.")}
+                  </p>
+                </div>
+              )}
+              {desc && (
+                <div style={{ background: "#f8fafb", border: `1px solid ${BORDER}`, borderRadius: 14, padding: "14px 16px" }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: TLIT, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: ".5px" }}>{t("Instructions", "التعليمات")}</p>
+                  <p style={{ fontSize: 14, color: TXT, margin: 0, lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{desc}</p>
+                </div>
+              )}
+              {question && (
+                <div style={{ background: `${G}08`, border: `1px solid ${G}20`, borderRadius: 14, padding: "14px 16px" }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: G, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: ".5px" }}>{t("Question", "السؤال")}</p>
+                  <p style={{ fontSize: 14, color: TXT, margin: 0, lineHeight: 1.65, whiteSpace: "pre-wrap", fontWeight: 600 }}>{question}</p>
+                </div>
+              )}
+              {/* Attachment from teacher */}
+              {a.file_url && (
+                <AttachmentRow url={a.file_url} label={t("Teacher's Attachment", "مرفق المعلم")} />
+              )}
+              {/* Meta info */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                {[
+                  { label: t("Max Score", "أعلى درجة"),  value: `${a.max_score ?? 100} pts` },
+                  { label: t("Subject", "المادة"),        value: subjTitle || "—" },
+                  { label: t("Deadline", "الموعد"),       value: a.deadline ? fmtDate(a.deadline) : t("No deadline", "بدون موعد") },
+                  { label: t("Allows", "يقبل"),           value: [a.allow_text !== false && t("Text","نص"), a.allow_file !== false && t("File","ملف"), a.allow_audio !== false && t("Audio","صوت")].filter(Boolean).join(" · ") },
+                ].map((m, i) => (
+                  <div key={i} style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: "10px 14px" }}>
+                    <p style={{ fontSize: 10, color: TLIT, margin: "0 0 3px", fontWeight: 700 }}>{m.label}</p>
+                    <p style={{ fontSize: 13, color: TXT, margin: 0, fontWeight: 700 }}>{m.value}</p>
+                  </div>
+                ))}
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <button onClick={() => seek(Math.max(0, currentTime - 10))}
-                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 11, padding: "2px 4px", flexShrink: 0 }}>⟪ 10s</button>
-                <button onClick={togglePlay}
-                  style={{ width: 42, height: 42, borderRadius: "50%", background: GOLD, border: "none", color: G, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: `0 2px 12px ${GOLD}66`, padding: 0 }}>
-                  {playing ? <Pause size={16} /> : <Play size={16} style={{ marginLeft: 2 }} />}
+              {!submitted && !closed && !readOnly && (
+                <button onClick={() => setActiveTab("submit")}
+                  className="asm-btn"
+                  style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: `linear-gradient(135deg, ${G}, ${MG})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer" }}>
+                  {t("Start Submission →", "ابدأ التسليم →")}
                 </button>
-                <button onClick={() => seek(Math.min(duration, currentTime + 10))}
-                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", fontSize: 11, padding: "2px 4px", flexShrink: 0 }}>10s ⟫</button>
-                <button onClick={() => { setMuted(m => !m); if (audioRef.current) audioRef.current.muted = !muted; }}
-                  style={{ background: "none", border: "none", color: "rgba(255,255,255,0.5)", cursor: "pointer", padding: 0, marginLeft: 4 }}>
-                  {muted || volume === 0 ? <VolumeX size={15} /> : <Volume2 size={15} />}
+              )}
+            </div>
+          )}
+
+          {/* ─── SUBMIT tab ──────────────────────────────── */}
+          {activeTab === "submit" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {submitted && !isGraded && (
+                <div style={{ background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <CheckCircle style={{ width: 16, height: 16, color: "#1d4ed8" }} />
+                  <p style={{ fontSize: 13, fontWeight: 700, color: "#1d4ed8", margin: 0 }}>{t("Submitted! You can still update your answer.", "تم التسليم! يمكنك تحديث إجابتك.")}</p>
+                </div>
+              )}
+              {isGraded && (
+                <div style={{ background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                  <Award style={{ width: 16, height: 16, color: "#276749" }} />
+                  <p style={{ fontSize: 13, fontWeight: 700, color: "#276749", margin: 0 }}>{t("This assignment has been graded.", "تم تصحيح هذا الواجب.")}</p>
+                </div>
+              )}
+
+              {/* Text response */}
+              {a.allow_text !== false && (
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: TLIT, display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <FileText style={{ width: 13, height: 13 }} />{t("Text Answer", "الإجابة النصية")}
+                  </label>
+                  <textarea
+                    value={textInput}
+                    onChange={e => setTextInput(e.target.value)}
+                    disabled={isGraded}
+                    placeholder={t("Write your answer here…", "اكتب إجابتك هنا…")}
+                    rows={6}
+                    style={{ width: "100%", borderRadius: 12, border: `1px solid ${BORDER}`, padding: "12px 14px", fontSize: 14, color: TXT, resize: "vertical", outline: "none", fontFamily: "'Cairo', sans-serif", background: isGraded ? "#f8f8f8" : "#fff", boxSizing: "border-box" }}
+                  />
+                </div>
+              )}
+
+              {/* File upload */}
+              {a.allow_file !== false && (
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: TLIT, display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <Paperclip style={{ width: 13, height: 13 }} />{t("Attach File", "إرفاق ملف")}
+                  </label>
+                  <input type="file" ref={fileRef} onChange={handleFileChange} style={{ display: "none" }} accept="*/*" />
+                  {existingSub?.file_url && !file && (
+                    <div style={{ marginBottom: 8 }}>
+                      <AttachmentRow url={existingSub.file_url} label={t("Your submitted file", "الملف الذي أرسلته")} />
+                    </div>
+                  )}
+                  {file && (
+                    <div style={{ background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 10, padding: "10px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                      <Paperclip style={{ width: 14, height: 14, color: "#1d4ed8" }} />
+                      <span style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 700, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+                      <button onClick={() => setFile(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#888", padding: 0 }}><X style={{ width: 13, height: 13 }} /></button>
+                    </div>
+                  )}
+                  {!isGraded && (
+                    <button onClick={() => fileRef.current?.click()}
+                      style={{ width: "100%", padding: "11px", borderRadius: 12, border: `2px dashed ${BORDER}`, background: "#f8fafb", cursor: "pointer", fontSize: 13, fontWeight: 700, color: TMID, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      <Upload style={{ width: 15, height: 15 }} />
+                      {t("Choose file", "اختر ملفاً")}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* Audio recorder */}
+              {a.allow_audio !== false && (
+                <div>
+                  <label style={{ fontSize: 12, fontWeight: 700, color: TLIT, display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <Mic style={{ width: 13, height: 13 }} />{t("Voice Recording", "التسجيل الصوتي")}
+                  </label>
+
+                  {/* Existing audio */}
+                  {existingSub?.audio_url && !audioBlob && (
+                    <ExistingAudioPlayer url={existingSub.audio_url} label={t("Your recorded answer", "تسجيلك الصوتي")} />
+                  )}
+
+                  {/* New recording UI */}
+                  {!isGraded && (
+                    <div style={{ background: "#f8fafb", border: `1px solid ${BORDER}`, borderRadius: 14, padding: "16px" }}>
+                      {!recording && !audioBlob && (
+                        <button onClick={startRecording}
+                          style={{ width: "100%", padding: "13px", borderRadius: 12, border: "none", background: `linear-gradient(135deg, #c0392b, #e74c3c)`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                          <Mic style={{ width: 16, height: 16 }} />
+                          {t("Start Recording", "ابدأ التسجيل")}
+                        </button>
+                      )}
+                      {recording && (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                          <div style={{ width: 60, height: 60, borderRadius: "50%", background: "rgba(192,57,43,0.1)", border: "2px solid #c0392b", display: "flex", alignItems: "center", justifyContent: "center", animation: "livePulse 1.2s infinite" }}>
+                            <Mic style={{ width: 26, height: 26, color: "#c0392b" }} />
+                          </div>
+                          <p style={{ fontSize: 22, fontWeight: 900, color: "#c0392b", margin: 0, fontVariantNumeric: "tabular-nums" }}>{fmtSecs(recordSeconds)}</p>
+                          <p style={{ fontSize: 12, color: TLIT, margin: 0 }}>{t("Recording…", "جارٍ التسجيل…")}</p>
+                          <button onClick={stopRecording}
+                            style={{ padding: "10px 24px", borderRadius: 12, border: "none", background: "#111", color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                            <StopCircle style={{ width: 15, height: 15 }} />{t("Stop", "إيقاف")}
+                          </button>
+                        </div>
+                      )}
+                      {audioBlob && audioUrl && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          <audio ref={audioRef} src={audioUrl} onEnded={() => setPlaying(false)} style={{ display: "none" }} />
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 12, padding: "10px 14px", border: `1px solid ${BORDER}` }}>
+                            <button onClick={togglePlay} style={{ width: 36, height: 36, borderRadius: "50%", background: G, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                              {playing ? <Pause style={{ width: 15, height: 15, color: "#fff" }} /> : <Play style={{ width: 15, height: 15, color: "#fff" }} />}
+                            </button>
+                            <div style={{ flex: 1 }}>
+                              <p style={{ fontSize: 12, fontWeight: 700, color: TXT, margin: 0 }}>{t("Recording ready", "التسجيل جاهز")}</p>
+                              <p style={{ fontSize: 11, color: TLIT, margin: 0 }}>{fmtSecs(recordSeconds)}</p>
+                            </div>
+                            <button onClick={clearAudio} style={{ background: "none", border: "none", cursor: "pointer", color: "#999", padding: 4 }}>
+                              <RotateCcw style={{ width: 14, height: 14 }} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Error */}
+              {error && (
+                <div style={{ background: "#fff5f5", border: "1px solid #fca5a5", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                  <AlertTriangle style={{ width: 14, height: 14, color: "#c0392b" }} />
+                  <p style={{ fontSize: 13, color: "#c0392b", margin: 0 }}>{error}</p>
+                </div>
+              )}
+
+              {/* Submit button */}
+              {!isGraded && (
+                <button onClick={handleSubmit} disabled={submitting || uploading}
+                  className="asm-btn"
+                  style={{ width: "100%", padding: "14px", borderRadius: 14, border: "none", background: submitting ? "#ccc" : `linear-gradient(135deg, ${G}, ${MG})`, color: "#fff", fontSize: 14, fontWeight: 800, cursor: submitting ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                  {submitting ? <Loader2 style={{ width: 16, height: 16, animation: "spin .7s linear infinite" }} /> : <Send style={{ width: 15, height: 15 }} />}
+                  {uploading ? t("Uploading…", "جارٍ الرفع…") : submitting ? t("Submitting…", "جارٍ الإرسال…") : submitted ? t("Update Submission", "تحديث الإجابة") : t("Submit Assignment", "إرسال الواجب")}
                 </button>
-                <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume}
-                  onChange={e => { const v = parseFloat(e.target.value); setVolume(v); setMuted(v === 0); if (audioRef.current) audioRef.current.volume = v; }}
-                  style={{ flex: 1, accentColor: GOLD, height: 3, cursor: "pointer" }} />
+              )}
+            </div>
+          )}
+
+          {/* ─── FEEDBACK tab ──────────────────────────── */}
+          {activeTab === "feedback" && existingSub && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Grade */}
+              {existingSub.grade != null && (
+                <div style={{ background: `linear-gradient(135deg, ${G}, ${MG})`, borderRadius: 16, padding: "16px 20px", display: "flex", alignItems: "center", gap: 16 }}>
+                  <div style={{ width: 56, height: 56, borderRadius: "50%", background: GOLD, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <span style={{ fontSize: 18, fontWeight: 900, color: G }}>{existingSub.grade}</span>
+                  </div>
+                  <div>
+                    <p style={{ fontSize: 11, color: "rgba(255,255,255,.6)", margin: "0 0 2px" }}>{t("Your Score", "درجتك")}</p>
+                    <p style={{ fontSize: 20, fontWeight: 900, color: "#fff", margin: 0 }}>{existingSub.grade} / {a.max_score ?? 100}</p>
+                    <p style={{ fontSize: 11, color: GOLDF, margin: "2px 0 0" }}>
+                      {Math.round((existingSub.grade / (a.max_score ?? 100)) * 100)}%
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Written feedback */}
+              {existingSub.feedback && (
+                <div style={{ background: "#f8fafb", border: `1px solid ${BORDER}`, borderRadius: 14, padding: "14px 16px" }}>
+                  <p style={{ fontSize: 11, fontWeight: 700, color: TLIT, margin: "0 0 6px", textTransform: "uppercase" }}>{t("Teacher's Feedback", "ملاحظات المعلم")}</p>
+                  <p style={{ fontSize: 14, color: TXT, margin: 0, lineHeight: 1.65 }}>{existingSub.feedback}</p>
+                  {existingSub.graded_at && (
+                    <p style={{ fontSize: 11, color: TLIT, margin: "8px 0 0" }}>{fmtDate(existingSub.graded_at)}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Comments thread */}
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 800, color: TXT, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 6 }}>
+                  <MessageSquare style={{ width: 14, height: 14, color: TMID }} />{t("Comments", "التعليقات")}
+                </p>
+                {comments.length === 0 ? (
+                  <p style={{ fontSize: 13, color: TLIT, textAlign: "center", padding: "16px 0" }}>{t("No comments yet.", "لا توجد تعليقات بعد.")}</p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {comments.map((c: any) => {
+                      const isMe = c.author_id === existingSub.user_id;
+                      return (
+                        <div key={c.id} style={{ display: "flex", gap: 8, flexDirection: isMe ? "row-reverse" : "row" }}>
+                          <div style={{ width: 28, height: 28, borderRadius: "50%", background: isMe ? G : "#f0f0f0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <span style={{ fontSize: 11, fontWeight: 800, color: isMe ? "#fff" : TXT }}>
+                              {(c.profiles?.full_name || "?")[0].toUpperCase()}
+                            </span>
+                          </div>
+                          <div style={{ maxWidth: "75%" }}>
+                            <div style={{ background: isMe ? G : "#f4f4f4", borderRadius: isMe ? "14px 4px 14px 14px" : "4px 14px 14px 14px", padding: "8px 12px" }}>
+                              <p style={{ fontSize: 13, color: isMe ? "#fff" : TXT, margin: 0, lineHeight: 1.5 }}>{c.body}</p>
+                            </div>
+                            <p style={{ fontSize: 10, color: TLIT, margin: "3px 4px 0", textAlign: isMe ? "right" : "left" }}>
+                              {c.profiles?.full_name || "?"} · {fmtDate(c.created_at)}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Comment input */}
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  value={commentText}
+                  onChange={e => setCommentText(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); postComment(); } }}
+                  placeholder={t("Ask a question or leave a comment…", "اسأل أو اترك تعليقاً…")}
+                  style={{ flex: 1, height: 40, borderRadius: 12, border: `1px solid ${BORDER}`, padding: "0 14px", fontSize: 13, color: TXT, outline: "none" }}
+                />
+                <button onClick={postComment} disabled={!commentText.trim()}
+                  style={{ width: 40, height: 40, borderRadius: 12, border: "none", background: commentText.trim() ? G : "#ddd", cursor: commentText.trim() ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Send style={{ width: 15, height: 15, color: "#fff" }} />
+                </button>
               </div>
             </div>
           )}
         </div>
-      )}
-    </div>,
-    document.body
+      </div>
+    </div>
   );
 }
 
-// ══ MAIN COMPONENT ═══════════════════════════════════════════════════
-interface SubjectMaterialsProps { subjectId: string; subjectTitle?: string; }
+/* ── Small helper components ─────────────────────────── */
+/* Shows an attachment inline (image / PDF preview in-place) instead of
+   sending the person to another browser tab. Other file types (docx, etc.)
+   can't be previewed by the browser either way, so those fall back to a
+   direct download — still no new tab. */
+function getExt(url: string) {
+  return (url.split("?")[0].split(".").pop() || "").toLowerCase();
+}
+const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 
-export default function SubjectMaterials({ subjectId, subjectTitle }: SubjectMaterialsProps) {
-  const { hasRole, profile } = useAuth();
-  const { t } = useLanguage();
-  const qc = useQueryClient();
-  const isPrivileged = hasRole("admin") || hasRole("teacher");
-  const { isPrivateStudent } = usePrivateStudent();
-  const studentLevel = ((profile as any)?.level || (profile as any)?.course_level || "beginner") as Level;
-
-  const [showModal,  setShowModal]  = useState(false);
-  const [editing,    setEditing]    = useState<any>(null);
-  const [search,     setSearch]     = useState("");
-  const [typeFilter, setTypeFilter] = useState<MatType | "all">("all");
-
-  const { data: materials = [], isLoading } = useQuery({
-    queryKey: ["sm-materials", subjectId],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("subject_materials")
-        .select("*")
-        .eq("subject_id", subjectId)
-        .order("sort_order", { ascending: true })
-        .order("created_at",  { ascending: false });
-      if (error) throw error;
-      return data || [];
-    },
-  });
-
-  // Cache every PDF in the background as soon as the list loads — staggered so a
-  // long materials list doesn't fetch/render them all at once on a phone. By the
-  // time a student actually taps one, it opens instantly (and works offline).
-  useEffect(() => {
-    if (!materials.length) return;
-    const pdfs = materials.filter((m: any) =>
-      (m.material_type === "PDF" || (m.file_url || "").toLowerCase().split("?")[0].endsWith(".pdf")) && m.file_url
-    );
-    const timers = pdfs.map((m: any, i: number) =>
-      setTimeout(() => prewarmPDF(m.file_url), i * 600)
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [materials]);
-
-  const handleDelete = async (m: any) => {
-    if (!confirm(`Delete "${m.title}"?`)) return;
-    try {
-      if (m.file_url && !m.file_url.startsWith("http")) {
-        await removeStorageFile(m.file_url);
-      }
-      const { error } = await supabase.from("subject_materials").delete().eq("id", m.id);
-      if (error) throw error;
-      qc.invalidateQueries({ queryKey: ["sm-materials", subjectId] });
-      toast({ title: t("Material deleted", "تم حذف المادة") });
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    }
-  };
-
-  const filtered = (materials as any[]).filter(m => {
-    const matchSearch = !search || m.title?.toLowerCase().includes(search.toLowerCase()) || m.title_ar?.toLowerCase().includes(search.toLowerCase());
-    const matchType   = typeFilter === "all" || m.material_type === typeFilter;
-    // Visibility: admins/teachers see everything
-    // Private students see 'all' + 'private'; general students see 'all' + 'general'
-    const v = m.visibility || "all";
-    const matchVisibility = isPrivileged
-      ? true
-      : isPrivateStudent
-        ? (v === "all" || v === "private")
-        : (v === "all" || v === "general");
-    return matchSearch && matchType && matchVisibility;
-  });
-
-  if (isLoading) return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {[1,2,3].map(i => <div key={i} style={{ height: 72, borderRadius: 16, background: "#F3F4F6", animation: "pulse 1.5s ease-in-out infinite" }} />)}
-      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
-    </div>
-  );
+function AttachmentRow({ url, label }: { url: string; label: string }) {
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(true);
+  useEffect(() => { getSignedUrl(url, 3600).then(u => setSignedUrl(u)); }, [url]);
+  if (!signedUrl) return null;
+  const ext = getExt(url);
+  const isImage = IMAGE_EXTS.includes(ext);
+  const isPdf = ext === "pdf";
+  const previewable = isImage || isPdf;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 72 }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes sm-spin{to{transform:rotate(360deg)}} @keyframes sm-pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
-
-      {/* Toolbar */}
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        {/* Student level badge — shows what materials they have access to */}
-        {!isPrivileged && (() => {
-          const lc = LVL_CFG[studentLevel] || LVL_CFG.beginner;
-          return (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${lc.border}`, background: lc.bg, fontSize: 11, fontWeight: 700, color: lc.text, flexShrink: 0 }}>
-              <span>📚</span>
-              <span>{t("Your level", "مستواك")}: {lc.label}</span>
-            </div>
-          );
-        })()}
-        <div style={{ position: "relative", flex: 1, minWidth: 160 }}>
-          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#9CA3AF" }} />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={t("Search materials…", "ابحث في المواد…")} style={{ ...inp, paddingLeft: 30 }} />
-        </div>
-        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value as any)} style={{ ...inp, width: "auto", minWidth: 120 }}>
-          <option value="all">All Types</option>
-          {MAT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-        </select>
-        {isPrivileged && (
-          <button type="button" onClick={() => { setEditing(null); setShowModal(true); }}
-            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg, ${G}, ${GM})`, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-            <Plus size={14} /> {t("Upload", "رفع مادة")}
-          </button>
+    <div style={{ border: "1px solid #93c5fd", borderRadius: 12, overflow: "hidden", background: "#eff6ff" }}>
+      <button onClick={() => previewable && setExpanded(v => !v)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "none", border: "none", cursor: previewable ? "pointer" : "default", textAlign: "left" }}>
+        <Download style={{ width: 15, height: 15, color: "#1d4ed8", flexShrink: 0 }} />
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#1d4ed8", flex: 1 }}>{label}</span>
+        {!previewable && (
+          <a href={signedUrl} download onClick={e => e.stopPropagation()}
+            style={{ fontSize: 11, fontWeight: 700, color: "#1d4ed8", textDecoration: "underline" }}>
+            Download
+          </a>
         )}
-      </div>
-
-      {/* Stats */}
-      {materials.length > 0 && (
-        <div style={{ display: "flex", gap: 12, padding: "10px 14px", borderRadius: 12, background: "#F9FAFB", border: "1px solid #E5E7EB", fontSize: 12, color: "#6B7280", flexWrap: "wrap" }}>
-          <span style={{ fontWeight: 700, color: G }}>{materials.length} material{materials.length !== 1 ? "s" : ""}</span>
-          {MAT_TYPES.filter(t => (materials as any[]).some(m => m.material_type === t)).map(type => (
-            <span key={type} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ color: MAT_CFG[type].text }}>●</span>
-              {(materials as any[]).filter(m => m.material_type === type).length} {type}
-            </span>
-          ))}
-        </div>
+      </button>
+      {previewable && expanded && (
+        isImage
+          ? <img src={signedUrl} alt={label} style={{ width: "100%", display: "block", maxHeight: 420, objectFit: "contain", background: "#000" }} />
+          : <iframe src={signedUrl} title={label} style={{ width: "100%", height: 420, border: "none", display: "block" }} />
       )}
+    </div>
+  );
+}
 
-      {/* List */}
-      {filtered.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "48px 24px", borderRadius: 16, border: "2px dashed #E5E7EB", background: "#FAFAFA" }}>
-          <div style={{ width: 56, height: 56, borderRadius: 16, background: "#F0FDF4", border: "1.5px solid #86EFAC", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
-            <File size={26} color={G} />
-          </div>
-          <p style={{ fontWeight: 800, fontSize: 15, color: "#374151", margin: "0 0 4px" }}>
-            {search || typeFilter !== "all" ? t("No matching materials", "لا توجد مواد مطابقة") : t("No materials yet", "لا توجد مواد بعد")}
-          </p>
-          <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>
-            {isPrivileged && !search && typeFilter === "all"
-              ? t("Click 'Upload' to add PDF, Word, Excel, Video, Audio, Images and more", "اضغط 'رفع مادة' لإضافة مواد")
-              : !isPrivileged && !search && typeFilter === "all"
-              ? t(`No materials available for your level yet`, `لا توجد مواد لمستوى ${LVL_CFG[studentLevel]?.label || studentLevel} بعد`)
-              : t("Try changing your search or filter", "جرب تغيير البحث أو المرشح")}
-          </p>
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {filtered.map(m => (
-            <MaterialCard
-              key={m.id} m={m} isPrivileged={isPrivileged}
-              onEdit={() => { setEditing(m); setShowModal(true); }}
-              onDelete={() => handleDelete(m)}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Modal */}
-      {showModal && (
-        <MaterialModal
-          ed={editing}
-          subjectId={subjectId}
-          nextSort={(materials as any[]).length}
-          onClose={() => { setShowModal(false); setEditing(null); }}
-          onSaved={() => {
-            setShowModal(false);
-            setEditing(null);
-            qc.invalidateQueries({ queryKey: ["sm-materials", subjectId] });
-          }}
-        />
-      )}
-
-      {/* Recording player — fixed bottom bar, stays visible while viewing materials */}
-      <RecordingMiniPlayer subjectId={subjectId} />
+function ExistingAudioPlayer({ url, label }: { url: string; label: string }) {
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const ref = useRef<HTMLAudioElement | null>(null);
+  useEffect(() => { getSignedUrl(url, 3600).then(u => setSignedUrl(u)); }, [url]);
+  if (!signedUrl) return null;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#f0fdf4", border: "1px solid #86efac", borderRadius: 12, padding: "10px 14px", marginBottom: 8 }}>
+      <audio ref={ref} src={signedUrl} onEnded={() => setPlaying(false)} style={{ display: "none" }} />
+      <button onClick={() => { if (playing) { ref.current?.pause(); setPlaying(false); } else { ref.current?.play(); setPlaying(true); } }}
+        style={{ width: 34, height: 34, borderRadius: "50%", background: "#276749", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {playing ? <Pause style={{ width: 14, height: 14, color: "#fff" }} /> : <Play style={{ width: 14, height: 14, color: "#fff" }} />}
+      </button>
+      <span style={{ fontSize: 12, fontWeight: 700, color: "#276749" }}>{label}</span>
     </div>
   );
 }
