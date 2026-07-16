@@ -14,6 +14,12 @@ import {
 // @ts-ignore
 import "@livekit/components-styles";
 import { Track, RoomEvent, ConnectionState, ConnectionQuality, RemoteTrackPublication, RemoteParticipant } from "livekit-client";
+// BUG FIX — this import was missing entirely. Every hook below (useState,
+// useEffect, useRef, useCallback) was relying on a global that doesn't
+// exist, throwing "useState is not defined" the instant this component
+// tried to render — which is every single time "Join Class" was pressed,
+// on every role, since they all go through this one component.
+import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
