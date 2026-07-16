@@ -1,25 +1,24 @@
 // src/pages/student/QuranPage.tsx
-// Al-Qur'an — full Mushaf-style reader for students.
-// Verses flow as one continuous passage — like a real Mushaf — and scrolling
-// past the end of a surah automatically loads the next one in, so reading
-// never has to stop and go through the surah picker or search. Tapping any
-// verse selects + plays it and opens a small action bar (play / play-from-
-// here / repeat / bookmark).
-import type { CSSProperties } from "react";
+// Al-Qur'an — true Mushaf-style reader for students: one physical page at a
+// time, turned by swipe (like a real Mushaf), not a continuous scroll feed.
+// Swipe left = next page, swipe right = previous page (matching the natural
+// right-to-left page-turn direction of an Arabic book).
+import type { CSSProperties, TouchEvent as ReactTouchEvent } from "react";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   BookOpen, Search, X, Play, Pause, Repeat, Repeat1, Star, ChevronDown,
   SkipForward, Gauge, Languages, ListMusic, Bookmark, ArrowLeft, PlusCircle,
+  ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { SURAHS, RECITERS, DEFAULT_RECITER } from "@/components/hifdh/surahData";
-import { getSurahText, getFullQuranText, searchQuranText, QuranVerse } from "@/lib/quranTextApi";
+import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage } from "@/lib/quranTextApi";
 import { listRecitationsForSurah, CustomRecitation } from "@/lib/quranRecitations";
 import { buildAyahSegments, CUSTOM_RECITER_PREFIX } from "@/lib/quranPlaybackSource";
-import { useQuranAudioEngine } from "@/hooks/useQuranAudioEngine";
+import { useQuranAudioEngine, AyahSegment } from "@/hooks/useQuranAudioEngine";
 import {
   Q_GREEN, Q_GREEN_MID, Q_GOLD, Q_GOLD_DARK, Q_PARCHMENT, Q_PARCH_ALT,
   Q_INK, Q_BORDER, Q_MUTED, Q_ARABIC_FONT,
@@ -29,26 +28,14 @@ const db: any = supabase;
 const BISMILLAH = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
 const AR_NUMERALS = ["٠","١","٢","٣","٤","٥","٦","٧","٨","٩"];
 const toArabicNum = (n: number) => String(n).split("").map(d => AR_NUMERALS[Number(d)] ?? d).join("");
+const TOTAL_PAGES = 604;
 
-const LAST_SURAH_KEY = "quran_last_surah";
+const LAST_PAGE_KEY = "quran_last_page";
 const RECITER_KEY = "quran_reciter";
 const TRANSLATION_KEY = "quran_show_translation";
+const SWIPE_THRESHOLD = 60;
 
 type SidebarTab = "surah" | "juz" | "bookmarks";
-
-interface LoadedSurah {
-  surahNumber: number;
-  verses: QuranVerse[];
-  customRecitations: CustomRecitation[];
-}
-
-async function loadSurahEntry(surahNumber: number): Promise<LoadedSurah> {
-  const [verses, customRecitations] = await Promise.all([
-    getSurahText(surahNumber, true),
-    listRecitationsForSurah(surahNumber).then(list => list.filter(r => r.is_published)).catch(() => []),
-  ]);
-  return { surahNumber, verses, customRecitations };
-}
 
 export default function QuranPage() {
   const { user, hasRole } = useAuth();
@@ -56,11 +43,11 @@ export default function QuranPage() {
   const userId = user?.id ?? null;
   const isStaff = hasRole("admin") || hasRole("teacher");
 
-  const [loadedSurahs, setLoadedSurahs] = useState<LoadedSurah[]>([]);
-  const [loadingInitial, setLoadingInitial] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [reachedEnd, setReachedEnd] = useState(false);
-  const [activeSurahNumber, setActiveSurahNumber] = useState<number>(1);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [verses, setVerses] = useState<QuranVerse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [recitationsBySurah, setRecitationsBySurah] = useState<Record<number, CustomRecitation[]>>({});
+  const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
 
   const [reciterId, setReciterId] = useState<string>(() => localStorage.getItem(RECITER_KEY) || DEFAULT_RECITER);
   const [showTranslation, setShowTranslation] = useState(() => localStorage.getItem(TRANSLATION_KEY) === "1");
@@ -82,23 +69,70 @@ export default function QuranPage() {
   const [bookmarks, setBookmarks] = useState<{ surah_number: number; ayah_number: number }[]>([]);
 
   const verseRefs = useRef<Record<string, HTMLSpanElement | null>>({});
-  const dividerObserverRef = useRef<IntersectionObserver | null>(null);
-  const bottomSentinelRef = useRef<HTMLDivElement | null>(null);
-  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const lastLoadedNumRef = useRef<number>(1);
-  const loadingMoreRef = useRef(false);
-  const reachedEndRef = useRef(false);
-
-  const activeSurah = SURAHS.find(s => s.num === activeSurahNumber) ?? SURAHS[0];
-  const activeEntry = loadedSurahs.find(e => e.surahNumber === activeSurahNumber);
+  const pageBoxRef = useRef<HTMLDivElement | null>(null);
+  const touchStartX = useRef<number | null>(null);
+  const touchDeltaX = useRef(0);
+  const [dragX, setDragX] = useState(0);
+  const loadTokenRef = useRef(0);
 
   const engine = useQuranAudioEngine();
 
-  // ── Initial load (last-read surah, or Al-Fatihah) ───────────────────────
+  const distinctSurahsOnPage = useMemo(
+    () => Array.from(new Set(verses.map(v => v.surah))).sort((a, b) => a - b),
+    [verses]
+  );
+  const primarySurahNumber = distinctSurahsOnPage[0] ?? 1;
+  const primarySurah = SURAHS.find(s => s.num === primarySurahNumber) ?? SURAHS[0];
+
+  // ── Load a page's verses + any custom recitations for surahs on it ──────
+  const goToPage = useCallback((target: number, direction: "next" | "prev" | null = null) => {
+    const clamped = Math.min(Math.max(target, 1), TOTAL_PAGES);
+    const token = ++loadTokenRef.current;
+    setSlideDir(direction);
+    setLoading(true);
+    setSelected(null);
+    engine.stop();
+    getPageText(clamped, true).then(async (v) => {
+      if (loadTokenRef.current !== token) return;
+      setVerses(v);
+      setCurrentPage(clamped);
+      localStorage.setItem(LAST_PAGE_KEY, String(clamped));
+      setLoading(false);
+      // fetch custom recitations for any surah on this page we haven't seen yet
+      const distinct = Array.from(new Set(v.map(vv => vv.surah)));
+      const missing = distinct.filter(s => !(s in recitationsBySurah));
+      if (missing.length) {
+        const results = await Promise.all(missing.map(s => listRecitationsForSurah(s).then(list => list.filter(r => r.is_published)).catch(() => [])));
+        if (loadTokenRef.current !== token) return;
+        setRecitationsBySurah(prev => {
+          const next = { ...prev };
+          missing.forEach((s, i) => { next[s] = results[i]; });
+          return next;
+        });
+      }
+      prefetchPage(clamped - 1);
+      prefetchPage(clamped + 1);
+    }).catch(() => { if (loadTokenRef.current === token) setLoading(false); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recitationsBySurah]);
+
+  const goToAyah = useCallback((surah: number, ayah: number) => {
+    setSidebarOpen(false);
+    setSearchOpen(false);
+    getAyahPage(surah, ayah).then(page => {
+      goToPage(page);
+      setTimeout(() => {
+        setSelected({ surah, ayah });
+        verseRefs.current[`${surah}-${ayah}`]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 350);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Initial load ─────────────────────────────────────────────────────
   useEffect(() => {
-    const saved = Number(localStorage.getItem(LAST_SURAH_KEY));
-    const start = saved >= 1 && saved <= 114 ? saved : 1;
-    jumpToSurah(start);
+    const saved = Number(localStorage.getItem(LAST_PAGE_KEY));
+    goToPage(saved >= 1 && saved <= TOTAL_PAGES ? saved : 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -111,15 +145,15 @@ export default function QuranPage() {
 
   // ── Reading-progress autosave (debounced) ───────────────────────────────
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || loading) return;
     const timeout = setTimeout(() => {
       db.from("quran_reading_progress").upsert(
-        { user_id: userId, last_surah: activeSurahNumber, last_ayah: selected?.ayah ?? 1, updated_at: new Date().toISOString() },
+        { user_id: userId, last_surah: primarySurahNumber, last_ayah: selected?.ayah ?? 1, updated_at: new Date().toISOString() },
         { onConflict: "user_id" }
       ).then(() => {});
     }, 1500);
     return () => clearTimeout(timeout);
-  }, [userId, activeSurahNumber, selected]);
+  }, [userId, primarySurahNumber, selected, loading]);
 
   const isBookmarked = useCallback((surah: number, ayah: number) =>
     bookmarks.some(b => b.surah_number === surah && b.ayah_number === ayah), [bookmarks]);
@@ -135,77 +169,22 @@ export default function QuranPage() {
     }
   }, [userId, isBookmarked]);
 
-  // ── Jump to a surah: clears the continuous list and starts fresh there ──
-  const jumpToSurah = useCallback((num: number, ayahToSelect?: number) => {
-    setLoadingInitial(true);
-    setReachedEnd(false);
-    reachedEndRef.current = false;
-    setSelected(null);
-    engine.stop();
-    loadSurahEntry(num).then(entry => {
-      setLoadedSurahs([entry]);
-      lastLoadedNumRef.current = num;
-      setActiveSurahNumber(num);
-      setLoadingInitial(false);
-      localStorage.setItem(LAST_SURAH_KEY, String(num));
-      if (ayahToSelect) {
-        setTimeout(() => {
-          setSelected({ surah: num, ayah: ayahToSelect });
-          verseRefs.current[`${num}-${ayahToSelect}`]?.scrollIntoView({ behavior: "smooth", block: "center" });
-        }, 300);
-      }
-    }).catch(() => setLoadingInitial(false));
-    setSidebarOpen(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── Continuous scroll: load the next surah in when nearing the bottom ──
-  const loadMore = useCallback(async () => {
-    if (loadingMoreRef.current || reachedEndRef.current) return;
-    if (lastLoadedNumRef.current >= 114) {
-      reachedEndRef.current = true;
-      setReachedEnd(true);
-      return;
-    }
-    loadingMoreRef.current = true;
-    setLoadingMore(true);
-    const next = lastLoadedNumRef.current + 1;
-    try {
-      const entry = await loadSurahEntry(next);
-      lastLoadedNumRef.current = next;
-      setLoadedSurahs(prev => [...prev, entry]);
-    } finally {
-      loadingMoreRef.current = false;
-      setLoadingMore(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const el = bottomSentinelRef.current;
-    if (!el) return;
-    const obs = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting) loadMore();
-    }, { root: scrollContainerRef.current, rootMargin: "800px 0px" });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [loadMore, loadingInitial]);
-
-  // ── Track which surah is "active" (drives the header + toolbar context) ─
-  useEffect(() => {
-    const obs = new IntersectionObserver((entries) => {
-      entries.forEach(e => {
-        if (e.isIntersecting) {
-          const num = Number((e.target as HTMLElement).dataset.surah);
-          if (num) setActiveSurahNumber(num);
-        }
-      });
-    }, { root: scrollContainerRef.current, rootMargin: "-40% 0px -55% 0px", threshold: 0 });
-    dividerObserverRef.current = obs;
-    return () => obs.disconnect();
-  }, []);
-  const registerDivider = useCallback((surahNumber: number) => (el: HTMLDivElement | null) => {
-    if (el) { el.dataset.surah = String(surahNumber); dividerObserverRef.current?.observe(el); }
-  }, []);
+  // ── Swipe handling (RTL: swipe left = next page, swipe right = previous) ─
+  const onTouchStart = (e: ReactTouchEvent) => { touchStartX.current = e.touches[0].clientX; touchDeltaX.current = 0; };
+  const onTouchMove = (e: ReactTouchEvent) => {
+    if (touchStartX.current == null) return;
+    const dx = e.touches[0].clientX - touchStartX.current;
+    touchDeltaX.current = dx;
+    setDragX(dx);
+  };
+  const onTouchEnd = () => {
+    const dx = touchDeltaX.current;
+    if (dx <= -SWIPE_THRESHOLD) goToPage(currentPage + 1, "next");
+    else if (dx >= SWIPE_THRESHOLD) goToPage(currentPage - 1, "prev");
+    setDragX(0);
+    touchStartX.current = null;
+    touchDeltaX.current = 0;
+  };
 
   useEffect(() => {
     if (autoScroll && engine.currentAyah != null && engine.currentSurah != null) {
@@ -214,40 +193,48 @@ export default function QuranPage() {
   }, [engine.currentAyah, engine.currentSurah, autoScroll]);
 
   const availableReciters = useMemo(() => {
-    const custom = (activeEntry?.customRecitations ?? []).map(r => ({
-      id: `${CUSTOM_RECITER_PREFIX}${r.id}`, label: r.reciter_name, isCustom: true,
-    }));
+    const customForPage = distinctSurahsOnPage.flatMap(s => recitationsBySurah[s] ?? []);
+    const custom = customForPage.map(r => ({ id: `${CUSTOM_RECITER_PREFIX}${r.id}`, label: r.reciter_name, isCustom: true }));
     return [...custom, ...RECITERS.map(r => ({ ...r, isCustom: false }))];
-  }, [activeEntry]);
+  }, [distinctSurahsOnPage, recitationsBySurah]);
 
   const currentReciterLabel = availableReciters.find(r => r.id === reciterId)?.label ?? availableReciters[0]?.label ?? "";
 
-  const segmentsFor = useCallback((entry: LoadedSurah) =>
-    buildAyahSegments(entry.surahNumber, entry.verses.length, reciterId, entry.customRecitations),
-  [reciterId]);
+  // Builds the segment list for ONE surah appearing on the page (only the
+  // ayat that actually fall on this page, in order).
+  const segmentsForSurahOnPage = useCallback((surahNum: number): AyahSegment[] => {
+    const meta = SURAHS.find(s => s.num === surahNum);
+    if (!meta) return [];
+    const all = buildAyahSegments(surahNum, meta.verses, reciterId, recitationsBySurah[surahNum] ?? []);
+    const ayatOnPage = new Set(verses.filter(v => v.surah === surahNum).map(v => v.ayah));
+    return all.filter(s => ayatOnPage.has(s.ayah));
+  }, [reciterId, recitationsBySurah, verses]);
 
-  const handleVerseTap = (entry: LoadedSurah, ayah: number) => {
-    setSelected({ surah: entry.surahNumber, ayah });
-    setActiveSurahNumber(entry.surahNumber);
-    engine.playAyah(entry.surahNumber, segmentsFor(entry), ayah);
+  const handleVerseTap = (surah: number, ayah: number) => {
+    setSelected({ surah, ayah });
+    const segs = segmentsForSurahOnPage(surah);
+    engine.playAyah(surah, segs, ayah);
   };
 
-  const playActiveSurahFromStart = () => {
-    if (!activeEntry) return;
-    engine.playFrom(activeEntry.surahNumber, segmentsFor(activeEntry), 1);
+  // "Play Page" — plays every ayah on the page in order, surah by surah.
+  const playPageFromStart = () => {
+    if (verses.length === 0) return;
+    const first = verses[0];
+    const segs = segmentsForSurahOnPage(first.surah);
+    engine.playFrom(first.surah, segs, first.ayah);
   };
 
   const playFromSelected = () => {
     if (!selected) return;
-    const entry = loadedSurahs.find(e => e.surahNumber === selected.surah);
-    if (!entry) return;
-    engine.playFrom(entry.surahNumber, segmentsFor(entry), selected.ayah);
+    const segs = segmentsForSurahOnPage(selected.surah);
+    engine.playFrom(selected.surah, segs, selected.ayah);
   };
 
+  const isPagePlaying = engine.isPlaying && distinctSurahsOnPage.includes(engine.currentSurah ?? -1);
   const toggleActivePlayPause = () => {
-    if (engine.isPlaying && engine.currentSurah === activeSurahNumber) engine.pause();
-    else if (engine.currentSurah === activeSurahNumber && engine.currentAyah != null) engine.resume();
-    else playActiveSurahFromStart();
+    if (isPagePlaying) engine.pause();
+    else if (engine.currentSurah != null && distinctSurahsOnPage.includes(engine.currentSurah) && engine.currentAyah != null) engine.resume();
+    else playPageFromStart();
   };
 
   // ── Search ───────────────────────────────────────────────────────────
@@ -262,10 +249,6 @@ export default function QuranPage() {
     () => (fullQuran ? searchQuranText(fullQuran, searchQuery) : []),
     [fullQuran, searchQuery]
   );
-  const jumpToResult = (v: QuranVerse) => {
-    setSearchOpen(false);
-    jumpToSurah(v.surah, v.ayah);
-  };
 
   const filteredSurahs = SURAHS.filter(s =>
     !surahQuery.trim() ||
@@ -280,6 +263,8 @@ export default function QuranPage() {
     return map;
   }, []);
 
+  const dragTranslate = Math.max(-80, Math.min(80, dragX * 0.4));
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: Q_PARCHMENT }}>
       {/* ── Header ── */}
@@ -290,8 +275,9 @@ export default function QuranPage() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>{t("Al-Qur'an Al-Kareem", "القرآن الكريم")}</div>
           <div style={{ fontSize: 12, opacity: 0.85, display: "flex", alignItems: "center", gap: 6 }}>
-            <span>{activeSurah.num}. {activeSurah.name}</span>
-            <span style={{ fontFamily: Q_ARABIC_FONT }}>{activeSurah.nameAr}</span>
+            <span>{primarySurah.num}. {primarySurah.name}</span>
+            <span style={{ fontFamily: Q_ARABIC_FONT }}>{primarySurah.nameAr}</span>
+            <span style={{ opacity: 0.6 }}>· {t("Page", "صفحة")} {currentPage}/{TOTAL_PAGES}</span>
           </div>
         </div>
         <button onClick={openSearch} style={iconBtnStyle("#fff")}><Search size={18} /></button>
@@ -309,8 +295,8 @@ export default function QuranPage() {
         </div>
 
         <button onClick={toggleActivePlayPause} style={pillBtnStyle(true)}>
-          {engine.isPlaying && engine.currentSurah === activeSurahNumber ? <Pause size={13} /> : <Play size={13} />}
-          {t("Play Surah", "تشغيل السورة")}
+          {isPagePlaying ? <Pause size={13} /> : <Play size={13} />}
+          {t("Play Page", "تشغيل الصفحة")}
         </button>
 
         <button
@@ -332,13 +318,14 @@ export default function QuranPage() {
         </button>
       </div>
 
-      {/* Reciter / speed menus render fixed + outside the toolbar so the
-          toolbar's horizontal scroll (needed to keep every control on one
-          line) never clips them, and a full-screen backdrop closes them. */}
+      {/* Reciter / speed menus render fixed + ABOVE the backdrop (fixes the
+          bug where the invisible backdrop sat above the menu and swallowed
+          every tap before it reached an option) and outside the toolbar so
+          its horizontal scroll never clips them. */}
       {reciterMenuAnchor && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 35 }} onClick={() => setReciterMenuAnchor(null)} />
-          <div style={{ ...dropdownStyle(), position: "fixed", left: reciterMenuAnchor.left, top: reciterMenuAnchor.top }}>
+          <div style={{ ...dropdownStyle(), position: "fixed", left: reciterMenuAnchor.left, top: reciterMenuAnchor.top, zIndex: 40 }}>
             {availableReciters.map(r => (
               <button key={r.id} onClick={() => { setReciterId(r.id); localStorage.setItem(RECITER_KEY, r.id); setReciterMenuAnchor(null); }}
                 style={dropdownItemStyle(r.id === reciterId)}>
@@ -360,7 +347,7 @@ export default function QuranPage() {
       {speedMenuAnchor && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 35 }} onClick={() => setSpeedMenuAnchor(null)} />
-          <div style={{ ...dropdownStyle(), position: "fixed", left: speedMenuAnchor.left, top: speedMenuAnchor.top, minWidth: 90 }}>
+          <div style={{ ...dropdownStyle(), position: "fixed", left: speedMenuAnchor.left, top: speedMenuAnchor.top, minWidth: 90, zIndex: 40 }}>
             {[0.75, 1, 1.25, 1.5].map(r => (
               <button key={r} onClick={() => { engine.setRate(r); setSpeedMenuAnchor(null); }} style={dropdownItemStyle(r === engine.rate)}>{r}x</button>
             ))}
@@ -368,72 +355,91 @@ export default function QuranPage() {
         </>
       )}
 
-      {/* ── Verse content — continuous scroll across surahs ── */}
-      <div ref={scrollContainerRef} style={{ flex: 1, overflowY: "auto", padding: "18px 16px 100px" }}>
-        {loadingInitial ? (
-          <div style={{ textAlign: "center", padding: 40, color: Q_MUTED }}>{t("Loading verses…", "جاري تحميل الآيات…")}</div>
+      {/* ── Page content — swipe left/right to turn pages ── */}
+      <div
+        ref={pageBoxRef}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+        style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "18px 16px 100px", position: "relative", touchAction: "pan-y" }}
+      >
+        {/* edge tap-zones for non-touch (desktop/mouse) page turning */}
+        <button onClick={() => goToPage(currentPage - 1, "prev")} aria-label={t("Previous page", "الصفحة السابقة")}
+          style={edgeNavStyle("left")}><ChevronLeft size={20} /></button>
+        <button onClick={() => goToPage(currentPage + 1, "next")} aria-label={t("Next page", "الصفحة التالية")}
+          style={edgeNavStyle("right")}><ChevronRight size={20} /></button>
+
+        {loading ? (
+          <div style={{ textAlign: "center", padding: 40, color: Q_MUTED }}>{t("Loading page…", "جاري تحميل الصفحة…")}</div>
         ) : (
-          <div style={{ maxWidth: 720, margin: "0 auto" }}>
-            {loadedSurahs.map(entry => {
-              const meta = SURAHS.find(s => s.num === entry.surahNumber)!;
-              return (
-                <div key={entry.surahNumber} style={{ marginBottom: 36 }}>
-                  <div ref={registerDivider(entry.surahNumber)} style={{
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 10, margin: "0 0 18px",
-                    padding: "10px 0", borderTop: `1px solid ${Q_BORDER}`, borderBottom: `1px solid ${Q_BORDER}`,
-                  }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: Q_GOLD_DARK, letterSpacing: 1 }}>
-                      {entry.surahNumber}. {meta.name.toUpperCase()}
-                    </span>
-                    <span style={{ fontFamily: Q_ARABIC_FONT, fontSize: 18, color: Q_GREEN }}>{meta.nameAr}</span>
-                  </div>
-
-                  {entry.surahNumber !== 9 && (
-                    <div style={{ textAlign: "center", fontFamily: Q_ARABIC_FONT, fontSize: 26, color: Q_INK, marginBottom: 18, opacity: 0.9 }}>
-                      {BISMILLAH}
-                    </div>
-                  )}
-
-                  <p dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontSize: 26, lineHeight: 2.1, color: Q_INK, textAlign: "justify", margin: 0 }}>
-                    {entry.verses.map(v => (
+          <div
+            key={currentPage}
+            style={{
+              maxWidth: 720, margin: "0 auto",
+              transform: `translateX(${dragTranslate}px)`,
+              animation: slideDir === "next" ? "quranPageInFromRight .28s ease" : slideDir === "prev" ? "quranPageInFromLeft .28s ease" : undefined,
+              transition: dragX === 0 ? "transform .2s ease" : "none",
+            }}
+          >
+            <div dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontSize: 26, lineHeight: 2.1, color: Q_INK, textAlign: "justify" }}>
+              {(() => {
+                let lastSurahRendered: number | null = null;
+                return verses.map((v, i) => {
+                  const showDivider = v.surah !== lastSurahRendered;
+                  lastSurahRendered = v.surah;
+                  const meta = SURAHS.find(s => s.num === v.surah)!;
+                  return (
+                    <span key={`${v.surah}-${v.ayah}`}>
+                      {showDivider && (
+                        <span style={{ display: "block", textAlign: "center", margin: i === 0 ? "0 0 18px" : "28px 0 18px" }}>
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 18px",
+                            borderTop: `1px solid ${Q_BORDER}`, borderBottom: `1px solid ${Q_BORDER}`,
+                          }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: Q_GOLD_DARK, letterSpacing: 1 }}>
+                              {meta.num}. {meta.name.toUpperCase()}
+                            </span>
+                            <span style={{ fontFamily: Q_ARABIC_FONT, fontSize: 18, color: Q_GREEN }}>{meta.nameAr}</span>
+                          </span>
+                          {v.ayah === 1 && v.surah !== 9 && (
+                            <span style={{ display: "block", fontFamily: Q_ARABIC_FONT, fontSize: 26, color: Q_INK, marginTop: 16, opacity: 0.9 }}>
+                              {BISMILLAH}
+                            </span>
+                          )}
+                        </span>
+                      )}
                       <span
-                        key={v.ayah}
-                        ref={el => { verseRefs.current[`${entry.surahNumber}-${v.ayah}`] = el; }}
-                        onClick={() => handleVerseTap(entry, v.ayah)}
+                        ref={el => { verseRefs.current[`${v.surah}-${v.ayah}`] = el; }}
+                        onClick={() => handleVerseTap(v.surah, v.ayah)}
                         style={{
                           cursor: "pointer", borderRadius: 6, padding: "2px 1px",
-                          background: (engine.currentSurah === entry.surahNumber && engine.currentAyah === v.ayah) ? Q_GOLD
-                            : (selected?.surah === entry.surahNumber && selected?.ayah === v.ayah) ? Q_PARCH_ALT : "transparent",
+                          background: (engine.currentSurah === v.surah && engine.currentAyah === v.ayah) ? Q_GOLD
+                            : (selected?.surah === v.surah && selected?.ayah === v.ayah) ? Q_PARCH_ALT : "transparent",
                           transition: "background .2s",
                         }}
                       >
                         {v.text}
                         <span style={{ fontSize: 16, color: Q_GOLD_DARK, margin: "0 3px" }}>﴿{toArabicNum(v.ayah)}﴾</span>{" "}
                       </span>
-                    ))}
-                  </p>
+                    </span>
+                  );
+                });
+              })()}
+            </div>
 
-                  {showTranslation && (
-                    <div style={{ marginTop: 24, borderTop: `1px dashed ${Q_BORDER}`, paddingTop: 16 }}>
-                      {entry.verses.map(v => (
-                        <div key={v.ayah} style={{ marginBottom: 10, fontSize: 13, color: (selected?.surah === entry.surahNumber && selected?.ayah === v.ayah) ? Q_GREEN_MID : "#444" }}>
-                          <b style={{ color: Q_GOLD_DARK }}>{v.ayah}.</b> {v.translation}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-
-            <div ref={bottomSentinelRef} style={{ height: 1 }} />
-            {loadingMore && <div style={{ textAlign: "center", padding: 20, color: Q_MUTED, fontSize: 13 }}>{t("Loading next surah…", "جاري تحميل السورة التالية…")}</div>}
-            {reachedEnd && (
-              <div style={{ textAlign: "center", padding: 40, color: Q_MUTED }}>
-                <div style={{ fontFamily: Q_ARABIC_FONT, fontSize: 22, color: Q_GREEN, marginBottom: 6 }}>صدق الله العظيم</div>
-                <div style={{ fontSize: 13 }}>{t("You've reached the end of the Qur'an.", "لقد وصلت إلى نهاية القرآن الكريم.")}</div>
+            {showTranslation && (
+              <div style={{ marginTop: 24, borderTop: `1px dashed ${Q_BORDER}`, paddingTop: 16 }}>
+                {verses.map(v => (
+                  <div key={`${v.surah}-${v.ayah}-tr`} style={{ marginBottom: 10, fontSize: 13, color: (selected?.surah === v.surah && selected?.ayah === v.ayah) ? Q_GREEN_MID : "#444" }}>
+                    <b style={{ color: Q_GOLD_DARK }}>{SURAHS.find(s => s.num === v.surah)?.name} {v.ayah}.</b> {v.translation}
+                  </div>
+                ))}
               </div>
             )}
+
+            <div style={{ textAlign: "center", marginTop: 30, fontSize: 12, color: Q_MUTED }}>
+              {t("Swipe to turn the page", "اسحب لتقليب الصفحة")} · {currentPage} / {TOTAL_PAGES}
+            </div>
           </div>
         )}
       </div>
@@ -447,10 +453,7 @@ export default function QuranPage() {
           <span style={{ fontSize: 13, fontWeight: 600 }}>{SURAHS.find(s => s.num === selected.surah)?.name} {selected.ayah}</span>
           <button onClick={() => {
             if (engine.isPlaying && engine.currentSurah === selected.surah && engine.currentAyah === selected.ayah) engine.pause();
-            else {
-              const entry = loadedSurahs.find(e => e.surahNumber === selected.surah);
-              if (entry) engine.playAyah(entry.surahNumber, segmentsFor(entry), selected.ayah);
-            }
+            else engine.playAyah(selected.surah, segmentsForSurahOnPage(selected.surah), selected.ayah);
           }} style={iconBtnStyle("#fff")}>
             {engine.isPlaying && engine.currentSurah === selected.surah && engine.currentAyah === selected.ayah ? <Pause size={16} /> : <Play size={16} />}
           </button>
@@ -493,9 +496,9 @@ export default function QuranPage() {
                 </div>
                 <div style={{ flex: 1, overflowY: "auto" }}>
                   {filteredSurahs.map(s => (
-                    <button key={s.num} onClick={() => jumpToSurah(s.num)} style={{
+                    <button key={s.num} onClick={() => { setSidebarOpen(false); goToPage(s.page); }} style={{
                       display: "flex", alignItems: "center", width: "100%", padding: "10px 14px", border: "none",
-                      borderBottom: `1px solid ${Q_PARCH_ALT}`, background: s.num === activeSurahNumber ? Q_PARCH_ALT : "#fff",
+                      borderBottom: `1px solid ${Q_PARCH_ALT}`, background: s.num === primarySurahNumber ? Q_PARCH_ALT : "#fff",
                       cursor: "pointer", textAlign: "left", gap: 10,
                     }}>
                       <span style={{ width: 26, height: 26, borderRadius: "50%", border: `1px solid ${Q_GOLD}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: Q_GOLD_DARK, flexShrink: 0 }}>{s.num}</span>
@@ -510,10 +513,10 @@ export default function QuranPage() {
             {sidebarTab === "juz" && (
               <div style={{ flex: 1, overflowY: "auto", padding: 10 }}>
                 <p style={{ fontSize: 11, color: Q_MUTED, padding: "0 4px 8px" }}>
-                  {t("Jumps to the surah where each Juz' begins.", "ينتقل إلى بداية سورة كل جزء.")}
+                  {t("Jumps to the page where each Juz' begins.", "ينتقل إلى صفحة بداية كل جزء.")}
                 </p>
                 {Array.from({ length: 30 }, (_, i) => i + 1).map(j => (
-                  <button key={j} onClick={() => jumpToSurah(juzStarts[j] ?? 1)} style={{
+                  <button key={j} onClick={() => { setSidebarOpen(false); goToPage(SURAHS.find(s => s.num === juzStarts[j])?.page ?? 1); }} style={{
                     display: "flex", justifyContent: "space-between", width: "100%", padding: "10px 12px", marginBottom: 4,
                     borderRadius: 8, border: `1px solid ${Q_BORDER}`, background: "#fff", cursor: "pointer", fontSize: 13,
                   }}>
@@ -528,7 +531,7 @@ export default function QuranPage() {
               <div style={{ flex: 1, overflowY: "auto", padding: 10 }}>
                 {bookmarks.length === 0 && <p style={{ fontSize: 13, color: Q_MUTED, padding: 10 }}>{t("No bookmarks yet — tap any verse and the star icon to save it.", "لا توجد إشارات مرجعية بعد — اضغط على أي آية ثم أيقونة النجمة لحفظها.")}</p>}
                 {bookmarks.map((b, i) => (
-                  <button key={i} onClick={() => jumpToSurah(b.surah_number, b.ayah_number)} style={{
+                  <button key={i} onClick={() => goToAyah(b.surah_number, b.ayah_number)} style={{
                     display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 12px", marginBottom: 4,
                     borderRadius: 8, border: `1px solid ${Q_BORDER}`, background: "#fff", cursor: "pointer", fontSize: 13,
                   }}>
@@ -555,7 +558,7 @@ export default function QuranPage() {
             {searchLoading && <p style={{ textAlign: "center", color: Q_MUTED, marginTop: 30 }}>{t("Loading the full text for search (first time only)…", "جاري تحميل النص الكامل للبحث (أول مرة فقط)…")}</p>}
             {!searchLoading && searchQuery && searchResults.length === 0 && <p style={{ textAlign: "center", color: Q_MUTED, marginTop: 30 }}>{t("No matches.", "لا توجد نتائج.")}</p>}
             {searchResults.map((v, i) => (
-              <button key={i} onClick={() => jumpToResult(v)} style={{
+              <button key={i} onClick={() => goToAyah(v.surah, v.ayah)} style={{
                 display: "block", width: "100%", textAlign: "right", padding: "10px 12px", marginBottom: 6,
                 borderRadius: 8, border: `1px solid ${Q_BORDER}`, background: "#fff", cursor: "pointer",
               }}>
@@ -566,6 +569,11 @@ export default function QuranPage() {
           </div>
         </div>
       )}
+
+      <style>{`
+        @keyframes quranPageInFromRight { from { opacity:0; transform:translateX(40px); } to { opacity:1; transform:translateX(0); } }
+        @keyframes quranPageInFromLeft { from { opacity:0; transform:translateX(-40px); } to { opacity:1; transform:translateX(0); } }
+      `}</style>
     </div>
   );
 }
@@ -592,4 +600,12 @@ function dropdownItemStyle(active: boolean): CSSProperties {
     display: "block", width: "100%", textAlign: "left", padding: "9px 12px", border: "none",
     background: active ? Q_PARCH_ALT : "#fff", color: Q_INK, fontSize: 13, cursor: "pointer",
   };
+}
+function edgeNavStyle(side: "left" | "right"): CSSProperties {
+  return {
+    position: "fixed", [side]: 4, top: "50%", transform: "translateY(-50%)", zIndex: 5,
+    background: "rgba(255,255,255,0.55)", border: `1px solid ${Q_BORDER}`, borderRadius: "50%",
+    width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center",
+    color: Q_GREEN, cursor: "pointer",
+  } as CSSProperties;
 }
