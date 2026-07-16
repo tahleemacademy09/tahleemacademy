@@ -29,29 +29,9 @@ import {
 import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
 
 // ─── Dark mode helpers ────────────────────────────────────────────────────────
-// We drive dark mode by toggling a `data-theme="dark"` attribute on <html>.
-// CSS variables in index.css (or injected here) handle the rest.
-// This is completely independent of React state so it's instant.
-const DM_KEY = "tahleem_dark_mode";
-
-function applyDark(enabled: boolean) {
-  // index.css defines dark-mode CSS variables under a `.dark` class selector
-  // (Tailwind/shadcn convention), not `[data-theme="dark"]`. We set both:
-  // the class so any Tailwind/shadcn-based component actually re-themes,
-  // and the data-theme attribute for any custom CSS keyed off it.
-  if (enabled) {
-    document.documentElement.classList.add("dark");
-    document.documentElement.setAttribute("data-theme", "dark");
-    document.documentElement.style.colorScheme = "dark";
-  } else {
-    document.documentElement.classList.remove("dark");
-    document.documentElement.removeAttribute("data-theme");
-    document.documentElement.style.colorScheme = "light";
-  }
-}
-
-// Apply persisted preference immediately on module load (no flash)
-applyDark(localStorage.getItem(DM_KEY) === "true");
+// Shared with src/lib/theme.ts, which is also bootstrapped on initial app load
+// (src/main.tsx) so the preference now applies on every page, not just here.
+import { DM_KEY, applyDark } from "@/lib/theme";
 
 function useDarkMode(): [boolean, (v: boolean) => void] {
   const [dark, setDark] = useState(() => localStorage.getItem(DM_KEY) === "true");
@@ -781,7 +761,7 @@ export default function ProfileSettings() {
               />
             </div>
             <p style={{ fontSize: 10.5, color: T.text2, margin: "6px 2px 0", lineHeight: 1.5 }}>
-              Currently applies to this Settings page. We're rolling it out to the rest of the app next.
+              Applies across the whole app, not just this page.
             </p>
           </PSec>
 
