@@ -14,6 +14,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
+import AudioPlayer from "@/components/exam/AudioPlayer";
+import AudioRecorder from "@/components/exam/AudioRecorder";
+import { storageSupabase } from "@/integrations/supabase/storageClient";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import { useRegistrationSettings } from "@/hooks/useRegistrationSettings";
 import {
@@ -471,6 +474,7 @@ const EntranceExamTaking = () => {
   const [exam,              setExam]              = useState<any>(null);
   const [questions,         setQuestions]         = useState<any[]>([]);
   const [answers,           setAnswers]           = useState<Record<string, string>>({});
+  const [answerData,        setAnswerData]        = useState<Record<string, any>>({});
   const [flagged,           setFlagged]           = useState<Set<string>>(new Set());
   const [currentIdx,        setCurrentIdx]        = useState(0);
   const [timeLeft,          setTimeLeft]          = useState(0);
@@ -489,11 +493,13 @@ const EntranceExamTaking = () => {
   const examActiveRef  = useRef(false);
   const submittedRef   = useRef(false);
   const answersRef     = useRef(answers);
+  const answerDataRef  = useRef(answerData);
   const timerRef       = useRef<any>(null);
   // Grace period: don't count violations for first 8 seconds after exam starts
   const examStartTimeRef = useRef<number>(0);
 
   useEffect(() => { answersRef.current = answers; }, [answers]);
+  useEffect(() => { answerDataRef.current = answerData; }, [answerData]);
 
   // ── Load exam ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -520,12 +526,13 @@ const EntranceExamTaking = () => {
         const { data: qs } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ex.id });
         setQuestions(qs || []);
 
-        const { data: ea } = await supabase.from("exam_answers").select("question_id, answer_text, is_flagged").eq("attempt_id", attemptId);
+        const { data: ea } = await supabase.from("exam_answers").select("question_id, answer_text, answer_data, is_flagged").eq("attempt_id", attemptId);
         if (ea) {
           const am: Record<string, string> = {};
+          const ad: Record<string, any> = {};
           const fl = new Set<string>();
-          ea.forEach((a: any) => { if (a.answer_text) am[a.question_id] = a.answer_text; if (a.is_flagged) fl.add(a.question_id); });
-          setAnswers(am); setFlagged(fl);
+          ea.forEach((a: any) => { if (a.answer_text) am[a.question_id] = a.answer_text; if (a.answer_data) ad[a.question_id] = a.answer_data; if (a.is_flagged) fl.add(a.question_id); });
+          setAnswers(am); setAnswerData(ad); setFlagged(fl);
         }
 
         setProcConfig({
@@ -589,11 +596,14 @@ const EntranceExamTaking = () => {
   );
 
   // ── Save answer ──────────────────────────────────────────────────────────
-  const saveAnswer = useCallback(async (qId: string, ans: string) => {
+  const saveAnswer = useCallback(async (qId: string, ans: string, data?: any) => {
     setAnswers(prev => ({ ...prev, [qId]: ans }));
+    if (data !== undefined) setAnswerData(prev => ({ ...prev, [qId]: data }));
+    const payload: any = { answer_text: ans };
+    if (data !== undefined) payload.answer_data = data;
     const { data: ex } = await supabase.from("exam_answers").select("id").eq("attempt_id", attemptId!).eq("question_id", qId).maybeSingle();
-    if (ex) { await supabase.from("exam_answers").update({ answer_text: ans, updated_at: new Date().toISOString() }).eq("id", ex.id); }
-    else { await supabase.from("exam_answers").insert({ attempt_id: attemptId!, question_id: qId, answer_text: ans }); }
+    if (ex) { await supabase.from("exam_answers").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", ex.id); }
+    else { await supabase.from("exam_answers").insert({ attempt_id: attemptId!, question_id: qId, ...payload }); }
   }, [attemptId]);
 
   // ── Toggle flag ──────────────────────────────────────────────────────────
@@ -613,9 +623,12 @@ const EntranceExamTaking = () => {
       const cur = answersRef.current;
       for (const [qId, ans] of Object.entries(cur)) {
         if (!ans) continue;
+        const extra = answerDataRef.current[qId];
+        const payload: any = { answer_text: ans };
+        if (extra !== undefined) payload.answer_data = extra;
         const { data: ex } = await supabase.from("exam_answers").select("id").eq("attempt_id", attemptId!).eq("question_id", qId).maybeSingle();
-        if (ex) await supabase.from("exam_answers").update({ answer_text: ans }).eq("id", ex.id);
-        else await supabase.from("exam_answers").insert({ attempt_id: attemptId!, question_id: qId, answer_text: ans });
+        if (ex) await supabase.from("exam_answers").update(payload).eq("id", ex.id);
+        else await supabase.from("exam_answers").insert({ attempt_id: attemptId!, question_id: qId, ...payload });
       }
       await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
 
@@ -828,6 +841,64 @@ const EntranceExamTaking = () => {
                     fontFamily: "inherit", boxSizing: "border-box" as const,
                     lineHeight: 1.7,
                   }} />
+              )}
+
+              {/* Audio — dictation (listen & type) or recitation (record voice) */}
+              {q.question_type === "audio" && (
+                q.audio_response_type === "audio" ? (
+                  // ── Recite Aloud: student reads the shown Arabic text and records themself ──
+                  <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div style={{ background: "#FFFEF5", border: "2px solid #E8D5A3", borderRadius: 14, padding: "20px 18px", textAlign: "center" }}>
+                      <p style={{ fontSize: 11, fontWeight: 800, color: "#9C7722", letterSpacing: .8, margin: "0 0 10px", textTransform: "uppercase" as const }}>
+                        📖 Recite this clearly
+                      </p>
+                      <p style={{ fontSize: 24, fontFamily: "'Amiri Quran','Amiri',serif", color: "#1A1A1A", lineHeight: 2, direction: "rtl" as const, margin: 0 }}>
+                        {q.question_text_ar || "—"}
+                      </p>
+                    </div>
+                    <AudioRecorder
+                      existingUrl={answerData[q.id]?.audioUrl}
+                      onRecordingComplete={async (blob, url) => {
+                        if (!blob.size) { toast({ title: "Recording empty.", variant: "destructive" }); return; }
+                        const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : blob.type.includes("webm") ? "webm" : "mp4";
+                        const path = `entrance-exam/${user!.id}/${attemptId}_${q.id}.${ext}`;
+                        const { error } = await storageSupabase.storage.from("exam-media").upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
+                        if (!error) {
+                          const { data: ud } = await storageSupabase.storage.from("exam-media").createSignedUrl(path, 604800);
+                          saveAnswer(q.id, "[audio_recorded]", { audioUrl: ud?.signedUrl || url, storagePath: path });
+                        } else {
+                          toast({ title: "Upload failed: " + error.message, variant: "destructive" });
+                          saveAnswer(q.id, "[audio_recorded]", { audioUrl: url });
+                        }
+                      }}
+                    />
+                    <p style={{ fontSize: 11, color: "#9CA3AF", textAlign: "center" }}>
+                      This will be reviewed by an instructor — recite at your normal pace.
+                    </p>
+                  </div>
+                ) : (
+                  // ── Listen & Type: student listens to the audio and types what they heard ──
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {q.media_url ? (
+                      <AudioPlayer src={q.media_url} title="Listen carefully" maxPlays={3} />
+                    ) : (
+                      <div style={{ padding: 12, borderRadius: 10, background: "#FEF2F2", color: "#991B1B", fontSize: 12, textAlign: "center" }}>
+                        No audio attached to this question — contact an admin.
+                      </div>
+                    )}
+                    <textarea dir="auto" rows={4} placeholder="Type what you heard… اكتب ما سمعته"
+                      value={answers[q.id] || ""} onChange={e => saveAnswer(q.id, e.target.value)}
+                      style={{
+                        width: "100%", padding: isMobile ? "14px" : "16px",
+                        borderRadius: 14, border: "2.5px solid #E5E7EB",
+                        background: "#FFFFFF", color: "#111827",
+                        fontSize: isMobile ? 15 : 16, fontWeight: 600,
+                        outline: "none", resize: "vertical" as const,
+                        fontFamily: "'Amiri',serif", boxSizing: "border-box" as const,
+                        lineHeight: 1.9,
+                      }} />
+                  </div>
+                )
               )}
             </div>
 
