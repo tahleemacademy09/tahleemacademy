@@ -3119,6 +3119,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[cBody,setCBody]=useState("");
   const[cFile,setCFile]=useState<File|null>(null);
   const[cPosting,setCPosting]=useState(false);
+  const[cVisibility,setCVisibility]=useState<"all"|"staff">("all");
   // ── Assignments section (teacher/admin manage, students view/submit) ────
   const[assignmentsOpen,setAssignmentsOpen]=useState(false);
   const[cError,setCError]=useState("");
@@ -3150,6 +3151,37 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   };
 
   useEffect(()=>{reloadMats();},[subjectId]);
+
+  // ── Realtime — without this, a new/edited/deleted material only ever
+  //    reflected for the person who made the change (their own reloadMats()
+  //    call); everyone else had to leave and rejoin the class to see it.
+  //    Subscribing here means every open panel refreshes live instead. ──
+  useEffect(()=>{
+    if(!subjectId)return;
+    const ch=supabase.channel(`subject-materials-${subjectId}`)
+      .on("postgres_changes",{event:"*",schema:"public",table:"subject_materials",filter:`subject_id=eq.${subjectId}`},
+        (payload:any)=>{
+          reloadMats();
+          // If the material someone currently has open was just removed,
+          // don't leave them staring at a broken/stale viewer — close it
+          // and tell them plainly what happened instead of a silent failure.
+          if(payload.eventType==="DELETE"){
+            const deletedId=payload.old?.id;
+            if(deletedId){
+              setOpenMats(prev=>prev.filter(e=>e.id!==deletedId));
+              setActiveMatId(prev=>{
+                if(prev===deletedId){
+                  toast({title:"This material was removed",description:"The teacher/admin deleted it.",variant:"destructive"});
+                  return null;
+                }
+                return prev;
+              });
+            }
+          }
+        }
+      ).subscribe();
+    return()=>{supabase.removeChannel(ch);};
+  },[subjectId]);
 
   // ── Open edit drawer ────────────────────────────────────────────────────
   const openEdit=(m:any)=>{
@@ -3200,7 +3232,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   };
 
   const resetComposer=()=>{
-    setCTitle("");setCBody("");setCFile(null);setCError("");
+    setCTitle("");setCBody("");setCFile(null);setCError("");setCVisibility("all");
     if(fileInputRef.current)fileInputRef.current.value="";
   };
 
@@ -3226,11 +3258,11 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
       const{error:matErr}=await supabase.from("subject_materials" as any).insert({
         subject_id:subjectId,title:finalTitle||"Shared in class",material_type:materialType,
         content:composerMode==="text"?cBody.trim():null,file_url:fileUrl,file_type:fileType,file_size:fileSize,
-        uploaded_by:user.id,session_id:sessionId||null,
+        uploaded_by:user.id,session_id:sessionId||null,visibility:isPrivileged?cVisibility:"all",
       });
       if(matErr)throw matErr;
 
-      toast({title:"✅ Shared with the class"});
+      toast({title:cVisibility==="staff"?"✅ Saved to staff notes":"✅ Shared with the class"});
       resetComposer();setComposerOpen(false);reloadMats();
     }catch(e:any){
       setCError(e?.message||"Failed to share. Please try again.");
@@ -3438,19 +3470,30 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
           <ChevronRight style={{width:13,height:13,color:"#34d399",flexShrink:0}}/>
         </button>
 
-        {/* Share with class — teacher/admin only */}
+        {/* Share with class / jot a staff-only note — teacher/admin only */}
         {isPrivileged&&(
           <div style={{margin:"10px 10px 0",borderRadius:10,border:"1px solid rgba(201,168,76,.3)",background:"rgba(201,168,76,.06)",overflow:"hidden",flexShrink:0}}>
             <button onClick={()=>setComposerOpen(v=>!v)} style={{width:"100%",padding:"12px 14px",background:"none",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:10,textAlign:"left" as const}}>
-              <div style={{fontSize:18,flexShrink:0}}>📤</div>
+              <div style={{fontSize:18,flexShrink:0}}>{cVisibility==="staff"?"🔒":"📤"}</div>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,fontWeight:700,color:"#f2dfa8",fontFamily:"'Google Sans',sans-serif"}}>Share with class</div>
-                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note or upload a file as a material</div>
+                <div style={{fontSize:13,fontWeight:700,color:"#f2dfa8",fontFamily:"'Google Sans',sans-serif"}}>{cVisibility==="staff"?"Staff note / material":"Share with class"}</div>
+                <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Post a note or upload a file — choose who can see it below</div>
               </div>
               <ChevronDown style={{width:14,height:14,color:"rgba(255,255,255,.4)",transform:composerOpen?"rotate(180deg)":"none",transition:"transform .15s",flexShrink:0}}/>
             </button>
             {composerOpen&&(
               <div style={{padding:"0 14px 14px"}}>
+                {/* Visibility toggle */}
+                <div style={{display:"flex",gap:6,marginBottom:10}}>
+                  {([["all","👥 Students"],["staff","🔒 Staff only"]] as const).map(([v,lb])=>(
+                    <button key={v} onClick={()=>setCVisibility(v as "all"|"staff")} style={{
+                      flex:1,padding:"7px 0",borderRadius:8,fontSize:12,fontWeight:600,cursor:"pointer",
+                      border:`1px solid ${cVisibility===v?"#93c5fd":"rgba(255,255,255,.12)"}`,
+                      background:cVisibility===v?"rgba(59,130,246,.18)":"transparent",
+                      color:cVisibility===v?"#dbeafe":"rgba(255,255,255,.5)",
+                    }}>{lb}</button>
+                  ))}
+                </div>
                 {/* Mode toggle */}
                 <div style={{display:"flex",gap:6,marginBottom:10}}>
                   {(["text","file"] as const).map(m=>(
@@ -3484,7 +3527,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                   width:"100%",padding:"10px",borderRadius:8,border:"none",cursor:cPosting?"default":"pointer",
                   background:cPosting?"rgba(201,168,76,.3)":"linear-gradient(135deg,#c9a84c,#a8893a)",
                   color:"#1a1408",fontWeight:700,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:6,
-                }}>{cPosting?"Sharing…":"Share with class"}</button>
+                }}>{cPosting?"Saving…":cVisibility==="staff"?"Save (staff only)":"Share with class"}</button>
               </div>
             )}
           </div>
@@ -3511,20 +3554,30 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
 
         {/* List */}
         <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
-          {mats.length>0&&<div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>UPLOADED MATERIALS</div>}
+          {mats.filter(m=>m.visibility!=="staff").length>0&&<div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>UPLOADED MATERIALS</div>}
           {busy&&<div style={{display:"flex",justifyContent:"center",padding:32}}><div style={{width:22,height:22,border:`2px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
           {!busy&&mats.length===0&&<div style={{textAlign:"center" as const,padding:"24px 16px",color:"rgba(255,255,255,.3)"}}>
             <div style={{fontSize:30,marginBottom:6}}>📭</div>
             <p style={{fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>No materials yet</p>
           </div>}
-          {mats.map(m=>{
+          {[...mats].sort((a,b)=>(a.visibility==="staff"?1:0)-(b.visibility==="staff"?1:0)).map((m,idx,arr)=>{
             const icon=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
             const resume=loadResume(m.id||"");
             const isDeleting=deletingId===m.id;
             const isEditing=editingId===m.id;
+            // Staff-only rows are grouped last — drop a section divider right
+            // before the first one. Non-staff users never receive these rows
+            // at all (enforced at the database level), so this only ever
+            // shows for admin/teacher.
+            const showStaffHeader=m.visibility==="staff"&&(idx===0||arr[idx-1].visibility!=="staff");
 
             return(
               <div key={m.id} style={{marginBottom:6}}>
+                {showStaffHeader&&(
+                  <div style={{fontSize:10,color:"#93c5fd",fontWeight:700,letterSpacing:.6,padding:"14px 2px 6px",fontFamily:"'Google Sans',sans-serif",display:"flex",alignItems:"center",gap:5}}>
+                    🔒 STAFF NOTES — not visible to students
+                  </div>
+                )}
                 {/* ── Edit drawer (slides in inline) ── */}
                 {isEditing&&isPrivileged&&(
                   <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.3)",borderRadius:10,padding:"12px 12px 10px",marginBottom:4}}>
@@ -3593,7 +3646,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                   <button onClick={()=>openMaterial(m)} style={{display:"flex",alignItems:"center",gap:10,flex:1,background:"none",border:"none",cursor:"pointer",textAlign:"left" as const,minWidth:0}}>
                     <div style={{width:36,height:36,borderRadius:8,background:"rgba(10,124,104,.2)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,flexShrink:0}}>{icon}</div>
                     <div style={{flex:1,minWidth:0}}>
-                      <p style={{margin:0,fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.title||m.name||"Untitled"}</p>
+                      <p style={{margin:0,fontSize:12,fontWeight:600,color:"#e8eaf0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{m.visibility==="staff"&&"🔒 "}{m.title||m.name||"Untitled"}</p>
                       <p style={{margin:"2px 0 0",fontSize:10,color:"rgba(255,255,255,.35)",textTransform:"capitalize" as const}}>
                         {m.material_type||"file"}
                         {resume?.time&&<span style={{marginLeft:5,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
@@ -3714,7 +3767,15 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
   },[recording]);
 
   const startRec=useCallback(async()=>{
-    if(busy||!sessionId||!subjectId)return;
+    if(busy)return;
+    if(!sessionId||!subjectId){
+      // Previously this just returned silently — clicking Record appeared to
+      // do absolutely nothing, with no error and no indicator, right when
+      // the session row hasn't finished being created yet (a few seconds
+      // after joining/starting class). Now it says so instead of no-op'ing.
+      toast({title:"Still setting up the class session…",description:"Give it a couple of seconds, then press Record again.",variant:"destructive"});
+      return;
+    }
     setBusy(true);
     try{
       const{data,error}=await supabase.functions.invoke("start-recording",{body:{session_id:sessionId,subject_id:subjectId}});
@@ -3773,7 +3834,7 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
       {!recording&&(
         <button onClick={startRec} disabled={busy} title="Start Recording" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:"rgba(239,68,68,.14)",border:"1px solid rgba(239,68,68,.35)",borderRadius:20,padding:"5px 10px",color:"#fca5a5",fontSize:11,fontWeight:700,cursor:busy?"default":"pointer",flexShrink:0,opacity:busy?.6:1}}>
           <Circle style={{width:8,height:8,fill:RED,color:RED,flexShrink:0}}/>
-          <span style={{display:"none"}} className="rec-label-desktop">{busy?"…":"REC"}</span>
+          <span>{busy?"Starting…":"REC"}</span>
         </button>
       )}
 
