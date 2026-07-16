@@ -64,6 +64,7 @@ Deno.serve(async (req) => {
     let file: File | null = null;
     let prompt = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ";
     let model = "whisper-large-v3";
+    let wantWordTimestamps = false;
 
     if (ct.includes("multipart/form-data")) {
       const form = await req.formData();
@@ -73,6 +74,7 @@ Deno.serve(async (req) => {
       if (typeof p === "string" && p.length) prompt = p;
       const m = form.get("model");
       if (typeof m === "string" && m.length) model = m;
+      wantWordTimestamps = form.get("timestamps") === "word";
     } else {
       // JSON fallback: { audio: base64, mimeType }
       const { audio, mimeType } = await req.json();
@@ -92,6 +94,10 @@ Deno.serve(async (req) => {
     fd.append("response_format", "verbose_json"); // gives per-segment no_speech_prob
     fd.append("temperature", "0");
     fd.append("prompt", prompt);
+    // Word-level timestamps — used by the admin recitation splitter to find
+    // exactly where each ayah's last word ends, instead of guessing from
+    // silence alone. Groq requires this as a repeated field.
+    if (wantWordTimestamps) fd.append("timestamp_granularities[]", "word");
 
     const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
       method: "POST",
@@ -119,7 +125,15 @@ Deno.serve(async (req) => {
           .join(" ")
       : (data?.text || "").trim();
 
-    return new Response(JSON.stringify({ text, transcript: text }), {
+    // Groq returns word timestamps as a flat `words` array on the top-level
+    // response (each { word, start, end }) when timestamp_granularities[]
+    // included "word". Passed through as-is; empty array if not requested
+    // or not returned.
+    const words = wantWordTimestamps && Array.isArray(data?.words)
+      ? data.words.map((w: any) => ({ word: String(w?.word ?? "").trim(), start: Number(w?.start ?? 0), end: Number(w?.end ?? 0) }))
+      : [];
+
+    return new Response(JSON.stringify({ text, transcript: text, words }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
