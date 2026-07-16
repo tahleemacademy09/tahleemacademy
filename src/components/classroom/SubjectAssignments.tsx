@@ -62,6 +62,49 @@ const daysLeft  = (d?: string | null) => {
   return days;
 };
 
+/* Students aren't individually "enrolled" per subject — the `enrollments`
+   table only tracks course_id, not subject_id, so filtering it by
+   subject_id silently returns nothing. Real access is level-based: a
+   student with a matching level is auto-assigned to every subject open to
+   that level, plus any course-enrollments and any admin-assigned private
+   students. Mirrors the roster logic in TeacherStudents.tsx. */
+async function fetchSubjectRoster(subjectId: string): Promise<any[]> {
+  const { data: subj } = await supabase
+    .from("subjects").select("level, levels").eq("id", subjectId).single();
+  const subjectLevels: string[] = (subj as any)?.levels?.length
+    ? (subj as any).levels
+    : ((subj as any)?.level ? [(subj as any).level] : []);
+
+  const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId);
+  const courseIds = (courses || []).map((c: any) => c.id);
+  let enrolledUserIds: string[] = [];
+  if (courseIds.length > 0) {
+    const { data: enrData } = await supabase.from("enrollments").select("user_id").in("course_id", courseIds);
+    enrolledUserIds = [...new Set((enrData || []).map((e: any) => e.user_id))];
+  }
+
+  let levelUserIds: string[] = [];
+  if (subjectLevels.length > 0) {
+    const { data: lvlStudents } = await supabase
+      .from("profiles").select("user_id")
+      .eq("role", "student")
+      .neq("student_type", "private")
+      .in("level", subjectLevels);
+    levelUserIds = (lvlStudents || []).map((p: any) => p.user_id);
+  }
+
+  const { data: pss } = await supabase
+    .from("private_student_subjects").select("student_id").eq("subject_id", subjectId);
+  const privateIds = [...new Set((pss || []).map((row: any) => row.student_id))];
+
+  const allUserIds = [...new Set([...enrolledUserIds, ...levelUserIds, ...privateIds])];
+  if (allUserIds.length === 0) return [];
+
+  const { data: profiles } = await supabase
+    .from("profiles").select("user_id, full_name, avatar_url").in("user_id", allUserIds).eq("role", "student");
+  return profiles || [];
+}
+
 type AStatus = "all" | "pending" | "submitted" | "graded" | "overdue";
 
 /* ═══════════════════════════════════════════════════════════════
@@ -103,9 +146,8 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
         .order("deadline", { ascending: false });
       setAssignments(asgn || []);
 
-      const { count } = await supabase
-        .from("enrollments").select("*", { count: "exact", head: true }).eq("subject_id", subjectId);
-      setRosterCount(count || 0);
+      const roster = await fetchSubjectRoster(subjectId);
+      setRosterCount(roster.length);
 
       if (asgn && asgn.length > 0) {
         const ids = asgn.map((a: any) => a.id);
@@ -295,6 +337,8 @@ export function AssignmentFormModal({
   const [titleAr, setTitleAr]       = useState(assignment?.title_ar || "");
   const [desc, setDesc]             = useState(assignment?.description || "");
   const [descAr, setDescAr]         = useState(assignment?.description_ar || "");
+  const [question, setQuestion]     = useState(assignment?.question || "");
+  const [questionAr, setQuestionAr] = useState(assignment?.question_ar || "");
   const [deadline, setDeadline]     = useState(assignment?.deadline ? toLocalInput(assignment.deadline) : "");
   const [maxScore, setMaxScore]     = useState(String(assignment?.max_score ?? 100));
   const [allowText, setAllowText]   = useState(assignment?.allow_text !== false);
@@ -333,6 +377,8 @@ export function AssignmentFormModal({
         title_ar: titleAr.trim() || null,
         description: desc.trim() || null,
         description_ar: descAr.trim() || null,
+        question: question.trim() || null,
+        question_ar: questionAr.trim() || null,
         deadline: new Date(deadline).toISOString(),
         max_score: Number(maxScore) || 100,
         allow_text: allowText,
@@ -384,6 +430,13 @@ export function AssignmentFormModal({
           </Field>
           <Field label={t("Instructions (Arabic, optional)", "التعليمات (عربي، اختياري)")}>
             <textarea value={descAr} onChange={e => setDescAr(e.target.value)} dir="rtl" rows={3} style={{ ...inputStyle, height: "auto", resize: "vertical" }} />
+          </Field>
+
+          <Field label={t("Question", "السؤال")}>
+            <textarea value={question} onChange={e => setQuestion(e.target.value)} rows={4} placeholder={t("What should the student answer?", "ما الذي يجب على الطالب الإجابة عنه؟")} style={{ ...inputStyle, height: "auto", resize: "vertical" }} />
+          </Field>
+          <Field label={t("Question (Arabic, optional)", "السؤال (عربي، اختياري)")}>
+            <textarea value={questionAr} onChange={e => setQuestionAr(e.target.value)} dir="rtl" rows={3} style={{ ...inputStyle, height: "auto", resize: "vertical" }} />
           </Field>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -466,14 +519,8 @@ function GradingModal({
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data: enrolled } = await supabase.from("enrollments").select("user_id").eq("subject_id", subjectId);
-    const userIds = (enrolled || []).map((e: any) => e.user_id);
-    if (userIds.length > 0) {
-      const { data: profiles } = await supabase.from("profiles").select("user_id, full_name, avatar_url").in("user_id", userIds);
-      setRoster(profiles || []);
-    } else {
-      setRoster([]);
-    }
+    const profiles = await fetchSubjectRoster(subjectId);
+    setRoster(profiles);
     const { data: submissions } = await supabase.from("assignment_submissions").select("*").eq("assignment_id", a.id);
     const map: Record<string, any> = {};
     (submissions || []).forEach((s: any) => { map[s.user_id] = s; });
@@ -984,6 +1031,7 @@ function AssignmentModal({
 
   const title = language === "ar" ? (a.title_ar || a.title) : a.title;
   const desc  = language === "ar" ? (a.description_ar || a.description) : a.description;
+  const question = language === "ar" ? (a.question_ar || a.question) : a.question;
   const subjTitle = language === "ar" ? (a.subjects?.title_ar || a.subjects?.title) : a.subjects?.title;
   const isGraded  = existingSub?.status === "graded";
   const submitted = !!existingSub && !["draft"].includes(existingSub?.status);
@@ -1213,6 +1261,12 @@ function AssignmentModal({
                 <div style={{ background: "#f8fafb", border: `1px solid ${BORDER}`, borderRadius: 14, padding: "14px 16px" }}>
                   <p style={{ fontSize: 12, fontWeight: 700, color: TLIT, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: ".5px" }}>{t("Instructions", "التعليمات")}</p>
                   <p style={{ fontSize: 14, color: TXT, margin: 0, lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{desc}</p>
+                </div>
+              )}
+              {question && (
+                <div style={{ background: `${G}08`, border: `1px solid ${G}20`, borderRadius: 14, padding: "14px 16px" }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: G, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: ".5px" }}>{t("Question", "السؤال")}</p>
+                  <p style={{ fontSize: 14, color: TXT, margin: 0, lineHeight: 1.65, whiteSpace: "pre-wrap", fontWeight: 600 }}>{question}</p>
                 </div>
               )}
               {/* Attachment from teacher */}
