@@ -5,6 +5,14 @@
 //       start/end times.
 // Both are expressed as AyahSegment[] so the rest of the engine doesn't care
 // which mode is active.
+//
+// Segments are set IMPERATIVELY via setSegments(surahNumber, segs) rather than
+// passed in as a hook argument. This matters once the reader shows more than
+// one surah at a time (continuous scroll): tapping a verse in a surah that
+// isn't the "active" one needs the engine to switch segment lists and start
+// playing in the same tick — going through React state + a dependent
+// useMemo would still be playing the PREVIOUS surah's segments for that one
+// click, because the state update hasn't re-rendered yet.
 
 import { useRef, useState, useCallback, useEffect } from "react";
 
@@ -18,11 +26,13 @@ export interface AyahSegment {
 export type RepeatMode = "off" | "verse" | "surah";
 
 interface UseQuranAudioEngineResult {
+  currentSurah: number | null;
   currentAyah: number | null;
   isPlaying: boolean;
   isBuffering: boolean;
-  playAyah: (ayah: number) => void;
-  playFrom: (ayah: number) => void;   // continuous playback from this ayah onward
+  setSegments: (surahNumber: number, segs: AyahSegment[]) => void;
+  playAyah: (surahNumber: number, segs: AyahSegment[], ayah: number) => void;
+  playFrom: (surahNumber: number, segs: AyahSegment[], ayah: number) => void;
   pause: () => void;
   resume: () => void;
   stop: () => void;
@@ -32,11 +42,12 @@ interface UseQuranAudioEngineResult {
   setRepeatMode: (m: RepeatMode) => void;
 }
 
-export function useQuranAudioEngine(segments: AyahSegment[]): UseQuranAudioEngineResult {
+export function useQuranAudioEngine(): UseQuranAudioEngineResult {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const segmentsRef = useRef(segments);
-  segmentsRef.current = segments;
+  const segmentsRef = useRef<AyahSegment[]>([]);
+  const surahRef = useRef<number | null>(null);
 
+  const [currentSurah, setCurrentSurahState] = useState<number | null>(null);
   const [currentAyah, setCurrentAyah] = useState<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
@@ -49,6 +60,12 @@ export function useQuranAudioEngine(segments: AyahSegment[]): UseQuranAudioEngin
     audio.preload = "auto";
     audioRef.current = audio;
     return () => { audio.pause(); audio.src = ""; };
+  }, []);
+
+  const setSegments = useCallback((surahNumber: number, segs: AyahSegment[]) => {
+    surahRef.current = surahNumber;
+    segmentsRef.current = segs;
+    setCurrentSurahState(surahNumber);
   }, []);
 
   const findSegment = useCallback((ayah: number) => segmentsRef.current.find(s => s.ayah === ayah), []);
@@ -133,15 +150,17 @@ export function useQuranAudioEngine(segments: AyahSegment[]): UseQuranAudioEngin
     };
   }, [currentAyah, findSegment, repeatMode, advance, playSegment]);
 
-  const playAyah = useCallback((ayah: number) => {
-    const seg = findSegment(ayah);
+  const playAyah = useCallback((surahNumber: number, segs: AyahSegment[], ayah: number) => {
+    setSegments(surahNumber, segs);
+    const seg = segs.find(s => s.ayah === ayah);
     if (seg) playSegment(seg, false);
-  }, [findSegment, playSegment]);
+  }, [setSegments, playSegment]);
 
-  const playFrom = useCallback((ayah: number) => {
-    const seg = findSegment(ayah);
+  const playFrom = useCallback((surahNumber: number, segs: AyahSegment[], ayah: number) => {
+    setSegments(surahNumber, segs);
+    const seg = segs.find(s => s.ayah === ayah);
     if (seg) playSegment(seg, true);
-  }, [findSegment, playSegment]);
+  }, [setSegments, playSegment]);
 
   const pause = useCallback(() => { audioRef.current?.pause(); setIsPlaying(false); }, []);
   const resume = useCallback(() => { audioRef.current?.play().then(() => setIsPlaying(true)).catch(() => {}); }, []);
@@ -159,8 +178,8 @@ export function useQuranAudioEngine(segments: AyahSegment[]): UseQuranAudioEngin
   }, []);
 
   return {
-    currentAyah, isPlaying, isBuffering,
-    playAyah, playFrom, pause, resume, stop,
+    currentSurah, currentAyah, isPlaying, isBuffering,
+    setSegments, playAyah, playFrom, pause, resume, stop,
     rate, setRate, repeatMode, setRepeatMode,
   };
 }
