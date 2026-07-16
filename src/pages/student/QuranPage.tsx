@@ -9,13 +9,13 @@ import { Link } from "react-router-dom";
 import {
   BookOpen, Search, X, Play, Pause, Repeat, Repeat1, Star, ChevronDown,
   SkipForward, Gauge, Languages, ListMusic, Bookmark, ArrowLeft, PlusCircle,
-  ChevronLeft, ChevronRight,
+  ChevronUp,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { SURAHS, RECITERS, DEFAULT_RECITER } from "@/components/hifdh/surahData";
-import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage } from "@/lib/quranTextApi";
+import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage, getPageLines, QuranPageLine } from "@/lib/quranTextApi";
 import { listRecitationsForSurah, CustomRecitation } from "@/lib/quranRecitations";
 import { buildAyahSegments, CUSTOM_RECITER_PREFIX } from "@/lib/quranPlaybackSource";
 import { useQuranAudioEngine, AyahSegment } from "@/hooks/useQuranAudioEngine";
@@ -45,9 +45,11 @@ export default function QuranPage() {
 
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [verses, setVerses] = useState<QuranVerse[]>([]);
+  const [pageLines, setPageLines] = useState<QuranPageLine[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [recitationsBySurah, setRecitationsBySurah] = useState<Record<number, CustomRecitation[]>>({});
   const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
 
   const [reciterId, setReciterId] = useState<string>(() => localStorage.getItem(RECITER_KEY) || DEFAULT_RECITER);
   const [showTranslation, setShowTranslation] = useState(() => localStorage.getItem(TRANSLATION_KEY) === "1");
@@ -92,12 +94,17 @@ export default function QuranPage() {
     setLoading(true);
     setSelected(null);
     engine.stop();
+    setPageLines(null);
     getPageText(clamped, true).then(async (v) => {
       if (loadTokenRef.current !== token) return;
       setVerses(v);
       setCurrentPage(clamped);
       localStorage.setItem(LAST_PAGE_KEY, String(clamped));
       setLoading(false);
+      // Best-effort: true mushaf line layout for this page. If it fails
+      // (offline, CORS, etc.) we silently keep the free-flowing fallback
+      // built from `verses` above — nothing breaks either way.
+      getPageLines(clamped).then(lines => { if (loadTokenRef.current === token) setPageLines(lines); });
       // fetch custom recitations for any surah on this page we haven't seen yet
       const distinct = Array.from(new Set(v.map(vv => vv.surah)));
       const missing = distinct.filter(s => !(s in recitationsBySurah));
@@ -179,8 +186,8 @@ export default function QuranPage() {
   };
   const onTouchEnd = () => {
     const dx = touchDeltaX.current;
-    if (dx <= -SWIPE_THRESHOLD) goToPage(currentPage + 1, "next");
-    else if (dx >= SWIPE_THRESHOLD) goToPage(currentPage - 1, "prev");
+    if (dx <= -SWIPE_THRESHOLD) goToPage(currentPage - 1, "prev");
+    else if (dx >= SWIPE_THRESHOLD) goToPage(currentPage + 1, "next");
     setDragX(0);
     touchStartX.current = null;
     touchDeltaX.current = 0;
@@ -266,55 +273,77 @@ export default function QuranPage() {
   const dragTranslate = Math.max(-80, Math.min(80, dragX * 0.4));
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: Q_PARCHMENT }}>
-      {/* ── Header ── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: Q_GREEN, color: "#fff" }}>
-        <button onClick={() => setSidebarOpen(true)} style={iconBtnStyle("#fff")}>
-          <BookOpen size={18} />
-        </button>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>{t("Al-Qur'an Al-Kareem", "القرآن الكريم")}</div>
-          <div style={{ fontSize: 12, opacity: 0.85, display: "flex", alignItems: "center", gap: 6 }}>
-            <span>{primarySurah.num}. {primarySurah.name}</span>
-            <span style={{ fontFamily: Q_ARABIC_FONT }}>{primarySurah.nameAr}</span>
-            <span style={{ opacity: 0.6 }}>· {t("Page", "صفحة")} {currentPage}/{TOTAL_PAGES}</span>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: Q_PARCHMENT, position: "relative" }}>
+      {/* ── Header + toolbar — collapsible, so the page can take the full
+          screen when the reader wants nothing but the mushaf itself. No
+          fixed pixel height is assumed: the block is simply present or
+          absent, so it always matches its real content height. ── */}
+      {!headerCollapsed && (
+        <div style={{ flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: Q_GREEN, color: "#fff" }}>
+            <button onClick={() => setSidebarOpen(true)} style={iconBtnStyle("#fff")}>
+              <BookOpen size={18} />
+            </button>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 700 }}>{t("Al-Qur'an Al-Kareem", "القرآن الكريم")}</div>
+              <div style={{ fontSize: 12, opacity: 0.85, display: "flex", alignItems: "center", gap: 6 }}>
+                <span>{primarySurah.num}. {primarySurah.name}</span>
+                <span style={{ fontFamily: Q_ARABIC_FONT }}>{primarySurah.nameAr}</span>
+                <span style={{ opacity: 0.6 }}>· {t("Page", "صفحة")} {currentPage}/{TOTAL_PAGES}</span>
+              </div>
+            </div>
+            <button onClick={openSearch} style={iconBtnStyle("#fff")}><Search size={18} /></button>
+          </div>
+
+          {/* ── Toolbar — single scrollable row, nothing wraps to a second line ── */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderBottom: `1px solid ${Q_BORDER}`,
+            background: "#fff", flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch",
+          }}>
+            <div style={{ flexShrink: 0 }}>
+              <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setReciterMenuAnchor({ left: r.left, top: r.bottom + 6 }); }} style={pillBtnStyle()}>
+                <ListMusic size={13} /> {currentReciterLabel} <ChevronDown size={12} />
+              </button>
+            </div>
+
+            <button onClick={toggleActivePlayPause} style={pillBtnStyle(true)}>
+              {isPagePlaying ? <Pause size={13} /> : <Play size={13} />}
+              {t("Play Page", "تشغيل الصفحة")}
+            </button>
+
+            <button
+              onClick={() => engine.setRepeatMode(engine.repeatMode === "off" ? "verse" : engine.repeatMode === "verse" ? "surah" : "off")}
+              style={pillBtnStyle(engine.repeatMode !== "off")}
+            >
+              {engine.repeatMode === "verse" ? <Repeat1 size={13} /> : <Repeat size={13} />}
+              {engine.repeatMode === "off" ? t("Repeat: Off", "التكرار: إيقاف") : engine.repeatMode === "verse" ? t("Repeat: Verse", "تكرار الآية") : t("Repeat: Surah", "تكرار السورة")}
+            </button>
+
+            <div style={{ flexShrink: 0 }}>
+              <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setSpeedMenuAnchor({ left: r.left, top: r.bottom + 6 }); }} style={pillBtnStyle()}>
+                <Gauge size={13} /> {engine.rate}x
+              </button>
+            </div>
+
+            <button onClick={() => { const v = !showTranslation; setShowTranslation(v); localStorage.setItem(TRANSLATION_KEY, v ? "1" : "0"); }} style={pillBtnStyle(showTranslation)}>
+              <Languages size={13} /> {t("Translation", "الترجمة")}
+            </button>
           </div>
         </div>
-        <button onClick={openSearch} style={iconBtnStyle("#fff")}><Search size={18} /></button>
-      </div>
+      )}
 
-      {/* ── Toolbar — single scrollable row, nothing wraps to a second line ── */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderBottom: `1px solid ${Q_BORDER}`,
-        background: "#fff", flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch",
-      }}>
-        <div style={{ flexShrink: 0 }}>
-          <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setReciterMenuAnchor({ left: r.left, top: r.bottom + 6 }); }} style={pillBtnStyle()}>
-            <ListMusic size={13} /> {currentReciterLabel} <ChevronDown size={12} />
-          </button>
-        </div>
-
-        <button onClick={toggleActivePlayPause} style={pillBtnStyle(true)}>
-          {isPagePlaying ? <Pause size={13} /> : <Play size={13} />}
-          {t("Play Page", "تشغيل الصفحة")}
-        </button>
-
+      {/* ── Collapse/expand tab — small centered arrow, always reachable ── */}
+      <div style={{ display: "flex", justifyContent: "center", background: headerCollapsed ? Q_PARCHMENT : "#fff", flexShrink: 0 }}>
         <button
-          onClick={() => engine.setRepeatMode(engine.repeatMode === "off" ? "verse" : engine.repeatMode === "verse" ? "surah" : "off")}
-          style={pillBtnStyle(engine.repeatMode !== "off")}
+          onClick={() => setHeaderCollapsed(v => !v)}
+          aria-label={headerCollapsed ? t("Show header", "إظهار الرأس") : t("Hide header", "إخفاء الرأس")}
+          style={{
+            width: 40, height: 15, borderRadius: "0 0 10px 10px", border: `1px solid ${Q_BORDER}`, borderTop: "none",
+            background: "#fff", color: Q_GREEN, display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", boxShadow: "0 2px 5px rgba(0,0,0,0.1)",
+          }}
         >
-          {engine.repeatMode === "verse" ? <Repeat1 size={13} /> : <Repeat size={13} />}
-          {engine.repeatMode === "off" ? t("Repeat: Off", "التكرار: إيقاف") : engine.repeatMode === "verse" ? t("Repeat: Verse", "تكرار الآية") : t("Repeat: Surah", "تكرار السورة")}
-        </button>
-
-        <div style={{ flexShrink: 0 }}>
-          <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setSpeedMenuAnchor({ left: r.left, top: r.bottom + 6 }); }} style={pillBtnStyle()}>
-            <Gauge size={13} /> {engine.rate}x
-          </button>
-        </div>
-
-        <button onClick={() => { const v = !showTranslation; setShowTranslation(v); localStorage.setItem(TRANSLATION_KEY, v ? "1" : "0"); }} style={pillBtnStyle(showTranslation)}>
-          <Languages size={13} /> {t("Translation", "الترجمة")}
+          {headerCollapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
         </button>
       </div>
 
@@ -363,12 +392,6 @@ export default function QuranPage() {
         onTouchEnd={onTouchEnd}
         style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "18px 16px 100px", position: "relative", touchAction: "pan-y" }}
       >
-        {/* edge tap-zones for non-touch (desktop/mouse) page turning */}
-        <button onClick={() => goToPage(currentPage - 1, "prev")} aria-label={t("Previous page", "الصفحة السابقة")}
-          style={edgeNavStyle("left")}><ChevronLeft size={20} /></button>
-        <button onClick={() => goToPage(currentPage + 1, "next")} aria-label={t("Next page", "الصفحة التالية")}
-          style={edgeNavStyle("right")}><ChevronRight size={20} /></button>
-
         {loading ? (
           <div style={{ textAlign: "center", padding: 40, color: Q_MUTED }}>{t("Loading page…", "جاري تحميل الصفحة…")}</div>
         ) : (
@@ -381,51 +404,95 @@ export default function QuranPage() {
               transition: dragX === 0 ? "transform .2s ease" : "none",
             }}
           >
-            <div dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontSize: 26, lineHeight: 2.1, color: Q_INK, textAlign: "justify" }}>
-              {(() => {
-                let lastSurahRendered: number | null = null;
-                return verses.map((v, i) => {
-                  const showDivider = v.surah !== lastSurahRendered;
-                  lastSurahRendered = v.surah;
-                  const meta = SURAHS.find(s => s.num === v.surah)!;
-                  return (
-                    <span key={`${v.surah}-${v.ayah}`}>
-                      {showDivider && (
-                        <span style={{ display: "block", textAlign: "center", margin: i === 0 ? "0 0 18px" : "28px 0 18px" }}>
-                          <span style={{
-                            display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 18px",
-                            borderTop: `1px solid ${Q_BORDER}`, borderBottom: `1px solid ${Q_BORDER}`,
-                          }}>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: Q_GOLD_DARK, letterSpacing: 1 }}>
-                              {meta.num}. {meta.name.toUpperCase()}
-                            </span>
-                            <span style={{ fontFamily: Q_ARABIC_FONT, fontSize: 18, color: Q_GREEN }}>{meta.nameAr}</span>
-                          </span>
-                          {v.ayah === 1 && v.surah !== 9 && (
-                            <span style={{ display: "block", fontFamily: Q_ARABIC_FONT, fontSize: 26, color: Q_INK, marginTop: 16, opacity: 0.9 }}>
-                              {BISMILLAH}
-                            </span>
-                          )}
-                        </span>
-                      )}
-                      <span
-                        ref={el => { verseRefs.current[`${v.surah}-${v.ayah}`] = el; }}
-                        onClick={() => handleVerseTap(v.surah, v.ayah)}
-                        style={{
-                          cursor: "pointer", borderRadius: 6, padding: "2px 1px",
-                          background: (engine.currentSurah === v.surah && engine.currentAyah === v.ayah) ? Q_GOLD
-                            : (selected?.surah === v.surah && selected?.ayah === v.ayah) ? Q_PARCH_ALT : "transparent",
-                          transition: "background .2s",
-                        }}
-                      >
-                        {v.text}
-                        <span style={{ fontSize: 16, color: Q_GOLD_DARK, margin: "0 3px" }}>﴿{toArabicNum(v.ayah)}﴾</span>{" "}
+            {(() => {
+              const wordSpan = (surah: number, ayah: number, text: string, isAyahEnd: boolean, key: string, isFirstOfAyah: boolean) => (
+                <span
+                  key={key}
+                  ref={isFirstOfAyah ? (el => { verseRefs.current[`${surah}-${ayah}`] = el; }) : undefined}
+                  onClick={() => handleVerseTap(surah, ayah)}
+                  style={{
+                    cursor: "pointer", borderRadius: 6, padding: "2px 1px",
+                    background: (engine.currentSurah === surah && engine.currentAyah === ayah) ? Q_GOLD
+                      : (selected?.surah === surah && selected?.ayah === ayah) ? Q_PARCH_ALT : "transparent",
+                    transition: "background .2s",
+                  }}
+                >
+                  {text}
+                  {isAyahEnd && <span style={{ fontSize: 16, color: Q_GOLD_DARK, margin: "0 3px" }}>﴿{toArabicNum(ayah)}﴾</span>}
+                  {" "}
+                </span>
+              );
+
+              const surahDivider = (surah: number, ayah: number, isFirst: boolean) => {
+                const meta = SURAHS.find(s => s.num === surah)!;
+                return (
+                  <div key={`div-${surah}`} style={{ textAlign: "center", margin: isFirst ? "0 0 18px" : "28px 0 18px" }}>
+                    <span style={{
+                      display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 18px",
+                      borderTop: `1px solid ${Q_BORDER}`, borderBottom: `1px solid ${Q_BORDER}`,
+                    }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: Q_GOLD_DARK, letterSpacing: 1 }}>
+                        {meta.num}. {meta.name.toUpperCase()}
                       </span>
+                      <span style={{ fontFamily: Q_ARABIC_FONT, fontSize: 18, color: Q_GREEN }}>{meta.nameAr}</span>
                     </span>
-                  );
-                });
-              })()}
-            </div>
+                    {ayah === 1 && surah !== 9 && (
+                      <div style={{ fontFamily: Q_ARABIC_FONT, fontSize: 26, color: Q_INK, marginTop: 16, opacity: 0.9 }}>
+                        {BISMILLAH}
+                      </div>
+                    )}
+                  </div>
+                );
+              };
+
+              // ── Preferred: true mushaf layout — one <div> per printed line,
+              // justified edge-to-edge so word position matches the physical
+              // page. Falls back to the free-flowing paragraph below if the
+              // line-layout fetch didn't succeed for this page. ──
+              if (pageLines && pageLines.length) {
+                let lastSurahRendered: number | null = null;
+                const seenAyah = new Set<string>();
+                return (
+                  <div dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontSize: 24, color: Q_INK }}>
+                    {pageLines.map(line => {
+                      const firstWord = line.words[0];
+                      const showDivider = firstWord && firstWord.surah !== lastSurahRendered;
+                      if (firstWord) lastSurahRendered = firstWord.surah;
+                      return (
+                        <div key={line.lineNumber}>
+                          {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === pageLines[0].lineNumber)}
+                          <div style={{ direction: "rtl", textAlign: "justify", textAlignLast: "justify" as any, lineHeight: 2.1 }}>
+                            {line.words.map((w, i) => {
+                              const key = `${w.surah}-${w.ayah}-${line.lineNumber}-${i}`;
+                              const ayahKey = `${w.surah}-${w.ayah}`;
+                              const isFirstOfAyah = !seenAyah.has(ayahKey);
+                              seenAyah.add(ayahKey);
+                              return wordSpan(w.surah, w.ayah, w.text, w.isAyahEnd, key, isFirstOfAyah);
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
+
+              let lastSurahRendered: number | null = null;
+              return (
+                <div dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontSize: 26, lineHeight: 2.1, color: Q_INK, textAlign: "justify" }}>
+                  {verses.map((v, i) => {
+                    const showDivider = v.surah !== lastSurahRendered;
+                    lastSurahRendered = v.surah;
+                    return (
+                      <span key={`${v.surah}-${v.ayah}`}>
+                        {showDivider && surahDivider(v.surah, v.ayah, i === 0)}
+                        {wordSpan(v.surah, v.ayah, v.text, true, `${v.surah}-${v.ayah}`, true)}
+                      </span>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {showTranslation && (
               <div style={{ marginTop: 24, borderTop: `1px dashed ${Q_BORDER}`, paddingTop: 16 }}>
@@ -601,11 +668,4 @@ function dropdownItemStyle(active: boolean): CSSProperties {
     background: active ? Q_PARCH_ALT : "#fff", color: Q_INK, fontSize: 13, cursor: "pointer",
   };
 }
-function edgeNavStyle(side: "left" | "right"): CSSProperties {
-  return {
-    position: "fixed", [side]: 4, top: "50%", transform: "translateY(-50%)", zIndex: 5,
-    background: "rgba(255,255,255,0.55)", border: `1px solid ${Q_BORDER}`, borderRadius: "50%",
-    width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center",
-    color: Q_GREEN, cursor: "pointer",
-  } as CSSProperties;
-}
+
