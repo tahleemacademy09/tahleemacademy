@@ -1,23 +1,26 @@
 /*
   src/components/AppNotifications.tsx — Tahleem Academy
   ──────────────────────────────────────────────────────
-  Mounts global hooks and UI for every authenticated user regardless
-  of which page they are on.
+  Mounts global notification infrastructure for every authenticated user,
+  regardless of which page they're on.
 
-  • useTimetableNotifications       — push subscription + class ring alerts
-  • useHifdhAssignmentNotifications — Hifdh revision reminders
-  • useNotificationNavigator        — deep-links push notification taps via
-                                      React Router (no full-page reload)
-  • InstallPWAPrompt                — "Add to Home Screen" bottom sheet
+  • usePushNotifications      — service worker + push subscription bootstrap,
+                                 SW message listener (resubscribe / click-nav)
+  • useNotificationNavigator  — deep-links push notification taps via
+                                 React Router (no full-page reload)
+  • InstallPWAPrompt          — "Add to Home Screen" bottom sheet
+
+  Note: useHifdhAssignmentNotifications (client-side polling reminders) has
+  been removed as part of the notifications rebuild. Event-specific reminders
+  (Hifdh, class rings, etc.) will come back as their own scoped DB triggers
+  that insert into `notifications` directly — see the migration file for why.
 */
-import { useTimetableNotifications } from "@/hooks/useTimetableNotifications";
-import { useHifdhAssignmentNotifications } from "@/hooks/useHifdhAssignmentNotifications";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useNotificationNavigator } from "@/hooks/useNotificationNavigator";
 import InstallPWAPrompt from "@/components/InstallPWAPrompt";
 
 export default function AppNotifications() {
-  useTimetableNotifications();
-  useHifdhAssignmentNotifications();
+  usePushNotifications();
   useNotificationNavigator();
   return <InstallPWAPrompt />;
 }
