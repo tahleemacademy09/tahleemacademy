@@ -1,5 +1,5 @@
 // src/lib/quranPlaybackSource.ts
-import { audioUrl } from "@/components/hifdh/surahData";
+import { audioUrl, DEFAULT_RECITER } from "@/components/hifdh/surahData";
 import { CustomRecitation, getRecitationAudioUrl } from "@/lib/quranRecitations";
 import { AyahSegment } from "@/hooks/useQuranAudioEngine";
 
@@ -24,6 +24,13 @@ export function buildAyahSegments(
         .sort((a, b) => a.ayah - b.ayah)
         .map(t => ({ ayah: t.ayah, src, start: t.start, end: t.end }));
     }
+    // The selected custom recitation doesn't exist for THIS surah (common in
+    // continuous-scroll mode: a custom reciter picked while reading one surah
+    // won't have a recording for the next one). Fall back to the default CDN
+    // reciter rather than treating "custom:<id>" itself as a reciter code —
+    // that would build a URL like everyayah.com/data/custom:xyz/..., which is
+    // just a 404.
+    reciterId = DEFAULT_RECITER;
   }
 
   // Default: individual per-ayah files from everyayah.com
