@@ -55,6 +55,12 @@ const fmtDate = (s?: string | null) => {
 };
 
 const isOverdue = (d?: string | null) => d ? new Date(d) < new Date() : false;
+const daysLeft  = (d?: string | null) => {
+  if (!d) return null;
+  const diff = new Date(d).getTime() - Date.now();
+  const days = Math.ceil(diff / 86_400_000);
+  return days;
+};
 
 /* ── Bilingual field renderer ──────────────────────────────────
    BUG FIX: title/description/question all have separate English and
