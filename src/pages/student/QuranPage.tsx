@@ -1,8 +1,9 @@
 // src/pages/student/QuranPage.tsx
-// Al-Qur'an — true Mushaf-style reader for students: one physical page at a
-// time, turned by swipe (like a real Mushaf), not a continuous scroll feed.
-// Swipe left = next page, swipe right = previous page (matching the natural
-// right-to-left page-turn direction of an Arabic book).
+// Al-Qur'an — true Mushaf-style reader for students: one physical, fixed-size
+// page at a time (scaled to fit the screen, never scrolled), turned by swipe
+// like a real Mushaf. Swipe right = next page (forward, Al-Fātiḥah → An-Nās,
+// ascending page numbers); swipe left = previous page. This is the reverse
+// of an English/LTR book's swipe-left-for-next.
 import type { CSSProperties, TouchEvent as ReactTouchEvent } from "react";
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
@@ -87,10 +88,24 @@ export default function QuranPage() {
 
   const verseRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const pageBoxRef = useRef<HTMLDivElement | null>(null);
+  const scaleWrapperRef = useRef<HTMLDivElement | null>(null);
   const touchStartX = useRef<number | null>(null);
+  const touchStartY = useRef<number | null>(null);
   const touchDeltaX = useRef(0);
+  // Once a touch begins, we wait for a few pixels of movement before
+  // deciding whether the person is turning the page (horizontal) or
+  // scrolling within a tall page (vertical) — decided once per gesture so a
+  // finger that drifts diagonally doesn't flip back and forth between the two.
+  const swipeAxisRef = useRef<"horizontal" | "vertical" | null>(null);
   const [dragX, setDragX] = useState(0);
   const loadTokenRef = useRef(0);
+  // Whole-page "fit to screen" scale — a real Mushaf page is a fixed size
+  // and never scrolls; everything on it (font, spacing, the surah banner)
+  // shrinks together to stay on one physical page. We measure the page's
+  // natural height and scale the entire page uniformly to fit the visible
+  // area, instead of scrolling or shrinking only some lines.
+  const [pageScale, setPageScale] = useState(1);
+  const [linesReady, setLinesReady] = useState(false);
 
   const engine = useQuranAudioEngine();
 
@@ -110,6 +125,7 @@ export default function QuranPage() {
     setSelected(null);
     engine.stop();
     setPageLines(null);
+    setLinesReady(false);
     getPageText(clamped, true).then(async (v) => {
       if (loadTokenRef.current !== token) return;
       setVerses(v);
@@ -185,7 +201,7 @@ export default function QuranPage() {
   // wrap it onto a second visual row. Re-runs whenever the page's lines
   // change or the reader column is resized (e.g. rotate, sidebar toggle).
   useLayoutEffect(() => {
-    if (!pageLines || !pageLines.length) { setLineFontSizes({}); return; }
+    if (!pageLines || !pageLines.length) { setLineFontSizes({}); setLinesReady(true); return; }
     const containerEl = linesContainerRef.current;
     if (!containerEl) return;
     let cancelled = false;
@@ -208,7 +224,7 @@ export default function QuranPage() {
           ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * width) / naturalWidth))
           : BASE_LINE_FONT_SIZE;
       }
-      if (!cancelled) setLineFontSizes(next);
+      if (!cancelled) { setLineFontSizes(next); setLinesReady(true); }
     };
 
     // Canvas text measurement silently falls back to a system font's metrics
@@ -226,6 +242,37 @@ export default function QuranPage() {
     return () => { cancelled = true; ro.disconnect(); };
   }, [pageLines]);
 
+  // ── Fit the whole page to the screen — no scrolling, ever ──────────────
+  // Once the per-line font sizes above have settled the page's *natural*
+  // height, compare that to the space actually available and shrink the
+  // entire page (banner, Bismillah, every line) by one uniform factor so
+  // it always lands exactly inside the visible area, the way a printed
+  // Mushaf page is a fixed size that never needs a scrollbar.
+  useLayoutEffect(() => {
+    const container = pageBoxRef.current;
+    const wrapper = scaleWrapperRef.current;
+    if (!container || !wrapper || !linesReady) return;
+    let raf = 0;
+    const recompute = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const availableH = container.clientHeight;
+        // Measure at natural size — a CSS transform: scale() never affects
+        // scrollHeight/clientHeight, so this stays accurate even while a
+        // previous scale is already applied.
+        const naturalH = wrapper.scrollHeight;
+        if (!availableH || !naturalH) return;
+        const next = naturalH > availableH ? Math.max(0.32, availableH / naturalH) : 1;
+        setPageScale(prev => (Math.abs(prev - next) > 0.005 ? next : prev));
+      });
+    };
+    recompute();
+    const ro = new ResizeObserver(recompute);
+    ro.observe(container);
+    ro.observe(wrapper);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  }, [pageLines, lineFontSizes, linesReady, showTranslation, currentPage, selected != null]);
+
   const isBookmarked = useCallback((surah: number, ayah: number) =>
     bookmarks.some(b => b.surah_number === surah && b.ayah_number === ayah), [bookmarks]);
 
@@ -240,21 +287,46 @@ export default function QuranPage() {
     }
   }, [userId, isBookmarked]);
 
-  // ── Swipe handling (RTL: swipe left = next page, swipe right = previous) ─
-  const onTouchStart = (e: ReactTouchEvent) => { touchStartX.current = e.touches[0].clientX; touchDeltaX.current = 0; };
+  // ── Swipe handling ───────────────────────────────────────────────────────
+  // Arabic reading order, not English: pages advance Al-Fātiḥah → An-Nās as
+  // page numbers climb, and swiping *right* moves forward to the next page
+  // (the reverse of an LTR book's swipe-left-for-next). Swiping left goes
+  // back a page. The gesture's axis is locked on first movement so a page
+  // that's tall enough to need vertical scrolling never mistakes a scroll
+  // for a page-turn just because the finger also drifted sideways a little.
+  const onTouchStart = (e: ReactTouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+    touchDeltaX.current = 0;
+    swipeAxisRef.current = null;
+  };
   const onTouchMove = (e: ReactTouchEvent) => {
-    if (touchStartX.current == null) return;
+    if (touchStartX.current == null || touchStartY.current == null) return;
     const dx = e.touches[0].clientX - touchStartX.current;
-    touchDeltaX.current = dx;
-    setDragX(dx);
+    const dy = e.touches[0].clientY - touchStartY.current;
+    if (swipeAxisRef.current == null) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; // not enough movement to tell yet
+      swipeAxisRef.current = Math.abs(dx) > Math.abs(dy) * 1.3 ? "horizontal" : "vertical";
+    }
+    if (swipeAxisRef.current === "horizontal") {
+      if (e.cancelable) e.preventDefault(); // own the gesture; don't also scroll
+      touchDeltaX.current = dx;
+      setDragX(dx);
+    }
+    // "vertical" gestures are left alone entirely — the page's normal
+    // vertical scroll (for pages taller than the fitted scale allows) handles them.
   };
   const onTouchEnd = () => {
     const dx = touchDeltaX.current;
-    if (dx <= -SWIPE_THRESHOLD) goToPage(currentPage + 1, "next");
-    else if (dx >= SWIPE_THRESHOLD) goToPage(currentPage - 1, "prev");
+    if (swipeAxisRef.current === "horizontal") {
+      if (dx >= SWIPE_THRESHOLD) goToPage(currentPage + 1, "next");
+      else if (dx <= -SWIPE_THRESHOLD) goToPage(currentPage - 1, "prev");
+    }
     setDragX(0);
     touchStartX.current = null;
+    touchStartY.current = null;
     touchDeltaX.current = 0;
+    swipeAxisRef.current = null;
   };
 
   useEffect(() => {
@@ -457,18 +529,24 @@ export default function QuranPage() {
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "18px 16px 100px", position: "relative", touchAction: "pan-y" }}
+        style={{
+          flex: 1, overflow: "hidden", padding: selected != null ? "10px 16px 60px" : "10px 16px", position: "relative",
+          touchAction: "pan-y", display: "flex", justifyContent: "center", alignItems: "flex-start",
+        }}
       >
         {loading ? (
           <div style={{ textAlign: "center", padding: 40, color: Q_MUTED }}>{t("Loading page…", "جاري تحميل الصفحة…")}</div>
         ) : (
           <div
             key={currentPage}
+            ref={scaleWrapperRef}
             style={{
-              maxWidth: 720, margin: "0 auto",
-              transform: `translateX(${dragTranslate}px)`,
-              animation: slideDir === "next" ? "quranPageInFromRight .28s ease" : slideDir === "prev" ? "quranPageInFromLeft .28s ease" : undefined,
-              transition: dragX === 0 ? "transform .2s ease" : "none",
+              width: "100%", maxWidth: 720,
+              transform: `translateX(${dragTranslate}px) scale(${pageScale})`,
+              transformOrigin: "top center",
+              opacity: linesReady ? 1 : 0,
+              animation: slideDir === "next" ? "quranPageInFromLeft .28s ease" : slideDir === "prev" ? "quranPageInFromRight .28s ease" : undefined,
+              transition: dragX === 0 ? "transform .2s ease, opacity .15s ease" : "opacity .15s ease",
             }}
           >
             {(() => {
@@ -490,21 +568,30 @@ export default function QuranPage() {
                 </span>
               );
 
+              // Ornate surah-name banner — a gold-bordered frame around a
+              // cream inner panel, echoing the printed Mushaf's decorative
+              // header band, with the Bismillah centered underneath it.
               const surahDivider = (surah: number, ayah: number, isFirst: boolean) => {
                 const meta = SURAHS.find(s => s.num === surah)!;
                 return (
-                  <div key={`div-${surah}`} style={{ textAlign: "center", margin: isFirst ? "0 0 18px" : "28px 0 18px" }}>
-                    <span style={{
-                      display: "inline-flex", alignItems: "center", gap: 10, padding: "8px 18px",
-                      borderTop: `1px solid ${Q_BORDER}`, borderBottom: `1px solid ${Q_BORDER}`,
+                  <div key={`div-${surah}`} style={{ margin: isFirst ? "0 0 16px" : "26px 0 16px" }}>
+                    <div style={{
+                      borderRadius: 10, padding: 3,
+                      background: `linear-gradient(135deg, ${Q_GOLD_DARK} 0%, ${Q_GOLD} 45%, #e9d18f 70%, ${Q_GOLD_DARK} 100%)`,
+                      boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
                     }}>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: Q_GOLD_DARK, letterSpacing: 1 }}>
-                        {meta.num}. {meta.name.toUpperCase()}
-                      </span>
-                      <span style={{ fontFamily: Q_ARABIC_FONT, fontSize: 18, color: Q_GREEN }}>{meta.nameAr}</span>
-                    </span>
+                      <div style={{
+                        borderRadius: 7, border: `1px solid ${Q_GOLD}`, background: Q_PARCH_ALT,
+                        backgroundImage: `repeating-linear-gradient(135deg, rgba(201,168,76,0.08) 0 5px, transparent 5px 11px)`,
+                        padding: "9px 16px", textAlign: "center",
+                      }}>
+                        <span style={{ fontFamily: Q_ARABIC_FONT, fontSize: 22, color: Q_GREEN, fontWeight: 700 }}>
+                          سُورَةُ {meta.nameAr}
+                        </span>
+                      </div>
+                    </div>
                     {ayah === 1 && surah !== 9 && (
-                      <div style={{ fontFamily: Q_ARABIC_FONT, fontSize: 26, color: Q_INK, marginTop: 16, opacity: 0.9 }}>
+                      <div style={{ fontFamily: Q_ARABIC_FONT, fontSize: BASE_LINE_FONT_SIZE, color: Q_INK, marginTop: 18, textAlign: "center", opacity: 0.92 }}>
                         {BISMILLAH}
                       </div>
                     )}
@@ -577,9 +664,6 @@ export default function QuranPage() {
               </div>
             )}
 
-            <div style={{ textAlign: "center", marginTop: 30, fontSize: 12, color: Q_MUTED }}>
-              {t("Swipe to turn the page", "اسحب لتقليب الصفحة")} · {currentPage} / {TOTAL_PAGES}
-            </div>
           </div>
         )}
       </div>
