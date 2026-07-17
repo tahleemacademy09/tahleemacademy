@@ -54,6 +54,8 @@ const fmtDate = (s?: string | null) => {
   return new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
 };
 
+const isOverdue = (d?: string | null) => d ? new Date(d) < new Date() : false;
+
 /* ── Bilingual field renderer ──────────────────────────────────
    BUG FIX: title/description/question all have separate English and
    Arabic ("_ar") fields, but were previously only ever shown in ONE
