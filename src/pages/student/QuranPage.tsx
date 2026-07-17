@@ -188,6 +188,7 @@ export default function QuranPage() {
     if (!pageLines || !pageLines.length) { setLineFontSizes({}); return; }
     const containerEl = linesContainerRef.current;
     if (!containerEl) return;
+    let cancelled = false;
 
     const measure = () => {
       const width = containerEl.clientWidth;
@@ -207,13 +208,22 @@ export default function QuranPage() {
           ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * width) / naturalWidth))
           : BASE_LINE_FONT_SIZE;
       }
-      setLineFontSizes(next);
+      if (!cancelled) setLineFontSizes(next);
     };
 
-    measure();
+    // Canvas text measurement silently falls back to a system font's metrics
+    // until the actual Amiri webfont has finished downloading — measuring
+    // too early gives the wrong shrink ratio for every line on the page.
+    // Wait for the real font (and re-measure once it's ready) before trusting
+    // the numbers; if it's already loaded this resolves on the next tick.
+    Promise.all([
+      document.fonts?.ready,
+      document.fonts?.load(`${BASE_LINE_FONT_SIZE}px ${Q_ARABIC_FONT}`),
+    ]).then(measure).catch(measure);
+
     const ro = new ResizeObserver(measure);
     ro.observe(containerEl);
-    return () => ro.disconnect();
+    return () => { cancelled = true; ro.disconnect(); };
   }, [pageLines]);
 
   const isBookmarked = useCallback((surah: number, ayah: number) =>
@@ -240,8 +250,8 @@ export default function QuranPage() {
   };
   const onTouchEnd = () => {
     const dx = touchDeltaX.current;
-    if (dx <= -SWIPE_THRESHOLD) goToPage(currentPage - 1, "prev");
-    else if (dx >= SWIPE_THRESHOLD) goToPage(currentPage + 1, "next");
+    if (dx <= -SWIPE_THRESHOLD) goToPage(currentPage + 1, "next");
+    else if (dx >= SWIPE_THRESHOLD) goToPage(currentPage - 1, "prev");
     setDragX(0);
     touchStartX.current = null;
     touchDeltaX.current = 0;
@@ -274,7 +284,10 @@ export default function QuranPage() {
   const handleVerseTap = (surah: number, ayah: number) => {
     setSelected({ surah, ayah });
     const segs = segmentsForSurahOnPage(surah);
-    engine.playAyah(surah, segs, ayah);
+    // Continue reciting forward from the tapped verse — unless "Repeat: Verse"
+    // is active, in which case the engine's repeat check takes priority over
+    // the continuous flag on every ayah-end and just loops this verse instead.
+    engine.playFrom(surah, segs, ayah);
   };
 
   // "Play Page" — plays every ayah on the page in order, surah by surah.
