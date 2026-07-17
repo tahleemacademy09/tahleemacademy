@@ -156,6 +156,20 @@ async function getPrefs(supabase: ReturnType<typeof createClient>, user_id: stri
   return data ? { ...DEFAULT_PREFS, ...data } : DEFAULT_PREFS;
 }
 
+// Types that already self-push web+Telegram (ring-live-class, schedule-
+// class-reminders — both call their own sendWebPush/sendTelegram directly,
+// with a richer, purpose-built payload: loud vibration pattern,
+// requireInteraction, Join/Dismiss actions). If this generic dispatcher also
+// sent web push for these types, every class ring/reminder would arrive
+// twice on web. BUT — both of those functions explicitly skip any
+// subscription whose endpoint starts with "native:" (their filters:
+// `!sub.endpoint.startsWith("native:")`), meaning FCM (native Android/iOS
+// app) users currently get NO push at all for class rings/reminders. So for
+// these types: skip web push (already covered), still send FCM (the gap).
+const SELF_DISPATCHED_WEB_TYPES = new Set([
+  "class_ring", "admin_class_ring", "class_reminder", "admin_class_reminder", "ring",
+]);
+
 function inQuietHours(prefs: Prefs): boolean {
   if (!prefs.quiet_hours_start || !prefs.quiet_hours_end) return false;
   const now = new Date();
@@ -197,6 +211,8 @@ Deno.serve(async (req) => {
     }
 
     const { user_id, title, message, link, type, priority, title_ar, message_ar } = n as any;
+    const skipWebPush = !!(type && SELF_DISPATCHED_WEB_TYPES.has(type));
+
     const prefs = await getPrefs(supabase, user_id);
     const results: Record<string, string> = {};
 
@@ -207,13 +223,19 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Quiet hours — urgent priority always bypasses (same idea as a phone call)
-    if (priority !== "urgent" && !prefs.push_enabled) {
+    // Quiet hours — urgent priority always bypasses (same idea as a phone
+    // call). "Starting now" ring types bypass too, matching the same
+    // distinction ring-live-class/schedule-class-reminders draw themselves
+    // (class_ring/ring bypass; class_reminder — the 15-min heads-up — does not).
+    const isRingType = type === "class_ring" || type === "admin_class_ring" || type === "ring";
+    const bypassQuietHours = priority === "urgent" || isRingType;
+
+    if (!bypassQuietHours && !prefs.push_enabled) {
       return new Response(JSON.stringify({ ok: true, results: { push: "skipped_preference" } }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    if (priority !== "urgent" && inQuietHours(prefs)) {
+    if (!bypassQuietHours && inQuietHours(prefs)) {
       return new Response(JSON.stringify({ ok: true, results: { push: "skipped_quiet_hours" } }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -270,6 +292,7 @@ Deno.serve(async (req) => {
         else if (result === "expired") expiredEndpoints.push(sub.endpoint);
         else fcmFailed++;
       } else if (hasVapidKeys) {
+        if (skipWebPush) { return; } // already sent directly by ring-live-class / schedule-class-reminders
         const result = await sendWebPush({ endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth }, pushPayload);
         if (result === "ok") webSent++;
         else if (result === "expired") expiredEndpoints.push(sub.endpoint);
@@ -284,7 +307,9 @@ Deno.serve(async (req) => {
       await supabase.from("push_subscriptions").delete().eq("user_id", user_id).in("endpoint", expiredEndpoints);
     }
 
-    results.web_push = `sent ${webSent}${webFailed ? ` (${webFailed} failed)` : ""}`;
+    results.web_push = skipWebPush
+      ? "handled_by_source_function"
+      : `sent ${webSent}${webFailed ? ` (${webFailed} failed)` : ""}`;
     results.fcm = `sent ${fcmSent}${fcmFailed ? ` (${fcmFailed} failed)` : ""}`;
 
     return new Response(JSON.stringify({ ok: true, results }), {
