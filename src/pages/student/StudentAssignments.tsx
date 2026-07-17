@@ -386,6 +386,7 @@ function AssignmentModal({
 
   const title = language === "ar" ? (a.title_ar || a.title) : a.title;
   const desc  = language === "ar" ? (a.description_ar || a.description) : a.description;
+  const question = language === "ar" ? (a.question_ar || a.question) : a.question;
   const subjTitle = language === "ar" ? (a.subjects?.title_ar || a.subjects?.title) : a.subjects?.title;
   const isGraded  = existingSub?.status === "graded";
   const submitted = !!existingSub && !["draft"].includes(existingSub?.status);
@@ -595,6 +596,12 @@ function AssignmentModal({
                 <div style={{ background: "#f8fafb", border: `1px solid ${BORDER}`, borderRadius: 14, padding: "14px 16px" }}>
                   <p style={{ fontSize: 12, fontWeight: 700, color: TLIT, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: ".5px" }}>{t("Instructions", "التعليمات")}</p>
                   <p style={{ fontSize: 14, color: TXT, margin: 0, lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{desc}</p>
+                </div>
+              )}
+              {question && (
+                <div style={{ background: `${G}08`, border: `1px solid ${G}20`, borderRadius: 14, padding: "14px 16px" }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: G, margin: "0 0 6px", textTransform: "uppercase", letterSpacing: ".5px" }}>{t("Question", "السؤال")}</p>
+                  <p style={{ fontSize: 14, color: TXT, margin: 0, lineHeight: 1.65, whiteSpace: "pre-wrap", fontWeight: 600 }}>{question}</p>
                 </div>
               )}
               {/* Attachment from teacher */}
