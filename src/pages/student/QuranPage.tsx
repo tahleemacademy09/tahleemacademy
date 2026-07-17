@@ -40,8 +40,8 @@ const TOTAL_PAGES = 604;
 // the "scattered" look. To match print, each line gets its own font-size,
 // measured against the actual column width and shrunk only as much as it
 // needs to fit on one row — most lines stay at BASE_LINE_FONT_SIZE.
-const BASE_LINE_FONT_SIZE = 24;
-const MIN_LINE_FONT_SIZE = 13;
+const BASE_LINE_FONT_SIZE = 27;
+const MIN_LINE_FONT_SIZE = 22;
 
 const LAST_PAGE_KEY = "quran_last_page";
 const RECITER_KEY = "quran_reciter";
@@ -76,8 +76,8 @@ export default function QuranPage() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("surah");
   const [surahQuery, setSurahQuery] = useState("");
 
-  const [reciterMenuAnchor, setReciterMenuAnchor] = useState<{ left: number; top: number } | null>(null);
-  const [speedMenuAnchor, setSpeedMenuAnchor] = useState<{ left: number; top: number } | null>(null);
+  const [reciterMenuAnchor, setReciterMenuAnchor] = useState<{ left: number; bottom: number } | null>(null);
+  const [speedMenuAnchor, setSpeedMenuAnchor] = useState<{ left: number; bottom: number } | null>(null);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -218,7 +218,7 @@ export default function QuranPage() {
         const text = line.words
           .map(w => w.text + (w.isAyahEnd ? ` ﴿${toArabicNum(w.ayah)}﴾` : ""))
           .join(" ");
-        ctx.font = `${BASE_LINE_FONT_SIZE}px ${Q_ARABIC_FONT}`;
+        ctx.font = `700 ${BASE_LINE_FONT_SIZE}px ${Q_ARABIC_FONT}`;
         const naturalWidth = ctx.measureText(text).width;
         next[line.lineNumber] = naturalWidth > width && naturalWidth > 0
           ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * width) / naturalWidth))
@@ -234,7 +234,7 @@ export default function QuranPage() {
     // the numbers; if it's already loaded this resolves on the next tick.
     Promise.all([
       document.fonts?.ready,
-      document.fonts?.load(`${BASE_LINE_FONT_SIZE}px ${Q_ARABIC_FONT}`),
+      document.fonts?.load(`700 ${BASE_LINE_FONT_SIZE}px ${Q_ARABIC_FONT}`),
     ]).then(measure).catch(measure);
 
     const ro = new ResizeObserver(measure);
@@ -433,41 +433,6 @@ export default function QuranPage() {
             </div>
             <button onClick={openSearch} style={iconBtnStyle("#fff")}><Search size={18} /></button>
           </div>
-
-          {/* ── Toolbar — single scrollable row, nothing wraps to a second line ── */}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderBottom: `1px solid ${Q_BORDER}`,
-            background: "#fff", flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch",
-          }}>
-            <div style={{ flexShrink: 0 }}>
-              <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setReciterMenuAnchor({ left: r.left, top: r.bottom + 6 }); }} style={pillBtnStyle()}>
-                <ListMusic size={13} /> {currentReciterLabel} <ChevronDown size={12} />
-              </button>
-            </div>
-
-            <button onClick={toggleActivePlayPause} style={pillBtnStyle(true)}>
-              {isPagePlaying ? <Pause size={13} /> : <Play size={13} />}
-              {t("Play Page", "تشغيل الصفحة")}
-            </button>
-
-            <button
-              onClick={() => engine.setRepeatMode(engine.repeatMode === "off" ? "verse" : engine.repeatMode === "verse" ? "surah" : "off")}
-              style={pillBtnStyle(engine.repeatMode !== "off")}
-            >
-              {engine.repeatMode === "verse" ? <Repeat1 size={13} /> : <Repeat size={13} />}
-              {engine.repeatMode === "off" ? t("Repeat: Off", "التكرار: إيقاف") : engine.repeatMode === "verse" ? t("Repeat: Verse", "تكرار الآية") : t("Repeat: Surah", "تكرار السورة")}
-            </button>
-
-            <div style={{ flexShrink: 0 }}>
-              <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setSpeedMenuAnchor({ left: r.left, top: r.bottom + 6 }); }} style={pillBtnStyle()}>
-                <Gauge size={13} /> {engine.rate}x
-              </button>
-            </div>
-
-            <button onClick={() => { const v = !showTranslation; setShowTranslation(v); localStorage.setItem(TRANSLATION_KEY, v ? "1" : "0"); }} style={pillBtnStyle(showTranslation)}>
-              <Languages size={13} /> {t("Translation", "الترجمة")}
-            </button>
-          </div>
         </div>
       )}
 
@@ -493,7 +458,7 @@ export default function QuranPage() {
       {reciterMenuAnchor && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 35 }} onClick={() => setReciterMenuAnchor(null)} />
-          <div style={{ ...dropdownStyle(), position: "fixed", left: reciterMenuAnchor.left, top: reciterMenuAnchor.top, zIndex: 40 }}>
+          <div style={{ ...dropdownStyle(), position: "fixed", top: "auto", left: reciterMenuAnchor.left, bottom: reciterMenuAnchor.bottom, zIndex: 40 }}>
             {availableReciters.map(r => (
               <button key={r.id} onClick={() => { setReciterId(r.id); localStorage.setItem(RECITER_KEY, r.id); setReciterMenuAnchor(null); }}
                 style={dropdownItemStyle(r.id === reciterId)}>
@@ -515,7 +480,7 @@ export default function QuranPage() {
       {speedMenuAnchor && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 35 }} onClick={() => setSpeedMenuAnchor(null)} />
-          <div style={{ ...dropdownStyle(), position: "fixed", left: speedMenuAnchor.left, top: speedMenuAnchor.top, minWidth: 90, zIndex: 40 }}>
+          <div style={{ ...dropdownStyle(), position: "fixed", top: "auto", left: speedMenuAnchor.left, bottom: speedMenuAnchor.bottom, minWidth: 90, zIndex: 40 }}>
             {[0.75, 1, 1.25, 1.5].map(r => (
               <button key={r} onClick={() => { engine.setRate(r); setSpeedMenuAnchor(null); }} style={dropdownItemStyle(r === engine.rate)}>{r}x</button>
             ))}
@@ -530,7 +495,9 @@ export default function QuranPage() {
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         style={{
-          flex: 1, overflow: "hidden", padding: selected != null ? "10px 16px 60px" : "10px 16px", position: "relative",
+          flex: 1, overflow: "hidden",
+          padding: selected != null ? "10px 12px 108px" : "10px 12px 56px",
+          position: "relative",
           touchAction: "pan-y", display: "flex", justifyContent: "center", alignItems: "flex-start",
         }}
       >
@@ -541,7 +508,7 @@ export default function QuranPage() {
             key={currentPage}
             ref={scaleWrapperRef}
             style={{
-              width: "100%", maxWidth: 720,
+              width: "100%", maxWidth: 800,
               transform: `translateX(${dragTranslate}px) scale(${pageScale})`,
               transformOrigin: "top center",
               opacity: linesReady ? 1 : 0,
@@ -596,7 +563,7 @@ export default function QuranPage() {
                       </div>
                     </div>
                     {ayah === 1 && surah !== 9 && (
-                      <div style={{ fontFamily: Q_ARABIC_FONT, fontSize: BASE_LINE_FONT_SIZE, color: Q_INK, marginTop: 18, textAlign: "center", opacity: 0.92 }}>
+                      <div style={{ fontFamily: Q_ARABIC_FONT, fontWeight: 700, fontSize: BASE_LINE_FONT_SIZE, color: Q_INK, marginTop: 18, textAlign: "center", opacity: 0.92 }}>
                         {BISMILLAH}
                       </div>
                     )}
@@ -615,7 +582,7 @@ export default function QuranPage() {
                 const surahBannerShown = new Set<number>();
                 const seenAyah = new Set<string>();
                 return (
-                  <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, color: Q_INK }}>
+                  <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontWeight: 700, color: Q_INK }}>
                     {pageLines.map(line => {
                       const firstWord = line.words[0];
                       const showDivider = !!firstWord && firstWord.ayah === 1 && !surahBannerShown.has(firstWord.surah);
@@ -647,7 +614,7 @@ export default function QuranPage() {
 
               const surahBannerShownFallback = new Set<number>();
               return (
-                <div dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontSize: 26, lineHeight: 2.1, color: Q_INK, textAlign: "justify" }}>
+                <div dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontWeight: 700, fontSize: BASE_LINE_FONT_SIZE, lineHeight: 2.1, color: Q_INK, textAlign: "justify" }}>
                   {verses.map((v, i) => {
                     const showDivider = v.ayah === 1 && !surahBannerShownFallback.has(v.surah);
                     if (showDivider) surahBannerShownFallback.add(v.surah);
@@ -679,7 +646,7 @@ export default function QuranPage() {
       {/* ── Selected-verse action bar ── */}
       {selected != null && (
         <div style={{
-          position: "fixed", left: 0, right: 0, bottom: 0, background: Q_GREEN, color: "#fff",
+          position: "fixed", left: 0, right: 0, bottom: 52, background: Q_GREEN, color: "#fff", zIndex: 20,
           padding: "10px 14px", display: "flex", alignItems: "center", gap: 14, boxShadow: "0 -4px 12px rgba(0,0,0,0.15)",
         }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>{SURAHS.find(s => s.num === selected.surah)?.name} {selected.ayah}</span>
@@ -699,6 +666,48 @@ export default function QuranPage() {
           <button onClick={() => { setSelected(null); engine.stop(); }} style={iconBtnStyle("#fff")}><X size={16} /></button>
         </div>
       )}
+
+      {/* ── Footer control bar — reciter, play/pause, repeat, speed and
+          translation all on one straight line, fixed to the bottom of the
+          screen. Keeping every control here (instead of a toolbar under the
+          header) leaves the entire middle of the screen free for the mushaf
+          page itself. ── */}
+      <div style={{
+        position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 15, height: 52,
+        display: "flex", alignItems: "center", gap: 6, padding: "0 8px",
+        borderTop: `1px solid ${Q_BORDER}`, background: "#fff",
+        flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch",
+        boxShadow: "0 -2px 10px rgba(0,0,0,0.06)",
+      }}>
+        <div style={{ flexShrink: 0 }}>
+          <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setReciterMenuAnchor({ left: r.left, bottom: window.innerHeight - r.top + 6 }); }} style={pillBtnStyle()}>
+            <ListMusic size={13} /> {currentReciterLabel} <ChevronDown size={12} />
+          </button>
+        </div>
+
+        <button onClick={toggleActivePlayPause} style={pillBtnStyle(true)}>
+          {isPagePlaying ? <Pause size={13} /> : <Play size={13} />}
+          {t("Play Page", "تشغيل الصفحة")}
+        </button>
+
+        <button
+          onClick={() => engine.setRepeatMode(engine.repeatMode === "off" ? "verse" : engine.repeatMode === "verse" ? "surah" : "off")}
+          style={pillBtnStyle(engine.repeatMode !== "off")}
+        >
+          {engine.repeatMode === "verse" ? <Repeat1 size={13} /> : <Repeat size={13} />}
+          {engine.repeatMode === "off" ? t("Repeat: Off", "التكرار: إيقاف") : engine.repeatMode === "verse" ? t("Repeat: Verse", "تكرار الآية") : t("Repeat: Surah", "تكرار السورة")}
+        </button>
+
+        <div style={{ flexShrink: 0 }}>
+          <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setSpeedMenuAnchor({ left: r.left, bottom: window.innerHeight - r.top + 6 }); }} style={pillBtnStyle()}>
+            <Gauge size={13} /> {engine.rate}x
+          </button>
+        </div>
+
+        <button onClick={() => { const v = !showTranslation; setShowTranslation(v); localStorage.setItem(TRANSLATION_KEY, v ? "1" : "0"); }} style={pillBtnStyle(showTranslation)}>
+          <Languages size={13} /> {t("Translation", "الترجمة")}
+        </button>
+      </div>
 
       {/* ── Sidebar: Surah / Juz / Bookmarks ── */}
       {sidebarOpen && (
@@ -803,6 +812,7 @@ export default function QuranPage() {
       )}
 
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap');
         @keyframes quranPageInFromRight { from { opacity:0; transform:translateX(40px); } to { opacity:1; transform:translateX(0); } }
         @keyframes quranPageInFromLeft { from { opacity:0; transform:translateX(-40px); } to { opacity:1; transform:translateX(0); } }
 
