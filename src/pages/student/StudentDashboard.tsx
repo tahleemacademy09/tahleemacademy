@@ -509,9 +509,9 @@ const StudentDashboard = () => {
           <div style={{ position:"absolute", top:"40%", right:-20, width:80, height:80, borderRadius:"50%", background:"rgba(201,168,76,0.06)", pointerEvents:"none" }} />
 
           <div style={{ padding: "20px 20px 0", position:"relative", zIndex:1 }}>
-            {/* Top row: Bismillah + Level/Type badge */}
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10 }}>
-              <span className="dwani-text" style={{ fontSize:13, color:"rgba(255,255,255,0.9)", fontWeight:700, letterSpacing:"0.06em", textShadow:"0 1px 6px rgba(0,0,0,0.3)", whiteSpace:"nowrap" as const }}>
+            {/* Top row: Bismillah (always centered) + Level/Type badge (flush right) */}
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"flex-end", gap:10, position:"relative", minHeight:20 }}>
+              <span className="dwani-text" style={{ position:"absolute", left:"50%", top:"50%", transform:"translate(-50%, -50%)", fontSize:13, color:"rgba(255,255,255,0.9)", fontWeight:700, letterSpacing:"0.06em", textShadow:"0 1px 6px rgba(0,0,0,0.3)", whiteSpace:"nowrap" as const }}>
                 بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
               </span>
               {/* Level / Type badge */}
@@ -537,14 +537,16 @@ const StudentDashboard = () => {
                   advanced:     { en:"Advanced",     ar:"متقدم",  bg:"rgba(239,68,68,0.2)",  color:"#fca5a5" },
                   tamhidi:      { en:"Tamhidi",      ar:"تمهيدي", bg:"rgba(99,102,241,0.2)", color:"#c7d2fe" },
                 };
-                const lc = levelLabels[rawLevel] || { en: rawLevel, ar: rawLevel, bg:"rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.8)" };
-                return rawLevel ? (
+                const lc = rawLevel
+                  ? (levelLabels[rawLevel] || { en: rawLevel, ar: rawLevel, bg:"rgba(255,255,255,0.12)", color:"rgba(255,255,255,0.8)" })
+                  : { en: "Level not set", ar: "لم يُحدد المستوى", bg:"rgba(255,255,255,0.1)", color:"rgba(255,255,255,0.7)" };
+                return (
                   <span style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:1, fontSize:10, fontWeight:800, padding:"4px 10px", borderRadius:20, flexShrink:0,
                     background:lc.bg, color:lc.color, border:`1px solid ${lc.color}44`, lineHeight:1 }}>
                     <span>{lc.en}</span>
                     <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.9 }}>{lc.ar}</span>
                   </span>
-                ) : null;
+                );
               })}
             </div>
 
