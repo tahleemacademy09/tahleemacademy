@@ -302,7 +302,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       clearInterval(iv);
       supabase.removeChannel(channel);
     };
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const markRead = async (id: string) => {
     await supabase.from("notifications").update({ is_read: true }).eq("id", id);
@@ -830,6 +831,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   <button onClick={() => { setSelectedNotif(null); setShowNotifPanel(false); navigate(selectedNotif.link); }}
                     style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background:"linear-gradient(135deg,#c0392b,#e74c3c)", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer" }}>
                     💳 Pay Now
+                  </button>
+                )}
+                {!isClassType && !isPayment && !subjectIdFromLink && selectedNotif.link?.startsWith("/") && (
+                  <button onClick={() => { setSelectedNotif(null); setShowNotifPanel(false); navigate(selectedNotif.link.split("#")[0]); }}
+                    style={{ width:"100%", padding:"14px", borderRadius:16, border:"none", background:"linear-gradient(135deg,#0f2d1f,#1a4a2e)", color:"#fff", fontSize:14, fontWeight:800, cursor:"pointer", letterSpacing:"-0.2px" }}>
+                    Go to update →
                   </button>
                 )}
                 <button onClick={() => setSelectedNotif(null)}
