@@ -512,10 +512,30 @@ function compareWords(refText: string, gotText: string): WordResult[] {
 }
 
 /**
+ * scoreFromCompareWords — the score % shown to the student MUST come from
+ * exactly the same comparison the word-by-word grid uses (compareWords'
+ * global LCS alignment), or the badge and the "X correct / Y missing" counts
+ * can silently disagree — which is exactly what was happening before this
+ * fix: scoreText()'s forward-only greedy window would desync after a single
+ * misheard/reordered word and never recover, tanking the % (e.g. 23%) while
+ * compareWords() correctly found ~83% of words present. One source of truth
+ * now feeds both the badge and the grid.
+ */
+function scoreFromCompareWords(refText: string, gotText: string): number {
+  const wordRes = compareWords(refText, gotText);
+  if (!wordRes.length) return 0;
+  const correct = wordRes.filter(w => w.status === "correct").length;
+  return Math.round((correct / wordRes.length) * 100);
+}
+
+/**
  * scoreText — sliding-window approach so Whisper's occasional verse-skip
  * doesn't penalise the whole recitation. We align the transcript against
  * the reference in 10-word windows and pick the best alignment per window,
  * which absorbs gaps caused by Whisper skipping a verse mid-transcription.
+ * @deprecated kept only for reference — superseded by scoreFromCompareWords,
+ * which is now the single source of truth for the page score. Do not wire
+ * this back up to `score` state without also updating the word grid to match.
  */
 function scoreText(transcript: string, ayahs: Ayah[], _recSecs: number): number {
   const refWords = ayahs.map(a => normalizeArabic(a.text)).join(" ").split(/\s+/).filter(Boolean);
@@ -1751,7 +1771,8 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
             return;
           }
 
-          const sc   = scoreText(tx, ayahs, capturedSecs);
+          const refFullText = ayahs.map(a => a.text).join(" ");
+          const sc   = scoreFromCompareWords(refFullText, tx);
           const errs = getErrorWords(tx, ayahs);
           const corr = getAyahCorrectness(tx, ayahs, capturedSecs);
           setLastTranscript(tx);
@@ -1784,8 +1805,10 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
   const buildStylePrompt = (ayahs?: Ayah[]): string => {
     if (ayahs && ayahs.length > 0) {
       const hint = "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ " +
-        ayahs.slice(0, 2).map(a => a.text).join(" ");
-      return hint.slice(0, 220); // Whisper prompt cap
+        ayahs.slice(0, 4).map(a => a.text).join(" ");
+      return hint.slice(0, 220); // Whisper prompt cap — slice still enforces
+      // the limit, so this only adds coverage on pages with shorter ayahs
+      // (e.g. juz 'Amma) where 2 ayahs left the prompt well under budget.
     }
     return "قرآن كريم بالتشكيل الكامل. تلاوة قرآنية بالرسم العثماني.";
   };
@@ -1972,10 +1995,19 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       return;
     }
     // play() must be called synchronously inside the click-handler user-gesture.
-    const primaryUrl = quranAyahAudioUrl(surahNum, numberInSurah, "Alafasy_128kbps");
-    const fallbackUrl = globalNum && globalNum > 0
+    // cdn.islamic.network is used as PRIMARY: everyayah.com has a known HTTPS
+    // certificate mismatch (NET::ERR_CERT_COMMON_NAME_INVALID) that makes it
+    // fail as a primary source, and by the time that failure triggered the old
+    // fallback (inside an async onerror/catch), the tap's user-gesture window
+    // had already expired on mobile — so the fallback play() was often blocked
+    // too, landing on the error state. islamic.network is reliable HTTPS and
+    // is now called first, synchronously, inside the tap handler.
+    const everyAyahUrl = quranAyahAudioUrl(surahNum, numberInSurah, "Alafasy_128kbps");
+    const islamicNetUrl = globalNum && globalNum > 0
       ? `https://cdn.islamic.network/quran/audio/128/ar.alafasy/${globalNum}.mp3`
       : null;
+    const primaryUrl = islamicNetUrl ?? everyAyahUrl;
+    const fallbackUrl = islamicNetUrl ? everyAyahUrl : null;
     console.log("[HifdhDaily] playListenAudio primary:", primaryUrl, "fallback:", fallbackUrl);
 
     const doPlay = (url: string, isFallback: boolean) => {
