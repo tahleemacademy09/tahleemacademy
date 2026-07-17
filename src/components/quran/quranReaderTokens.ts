@@ -14,4 +14,7 @@ export const Q_INK        = "#1a1007";   // Arabic ink colour
 export const Q_BORDER     = "#e8dcb8";   // hairline borders on parchment
 export const Q_MUTED      = "#8a7a52";   // secondary text on parchment
 
-export const Q_ARABIC_FONT = "'Amiri', 'Scheherazade New', serif";
+// "Amiri Quran" specifically reproduces the bold Madinah-mushaf letterforms
+// (the look in the physical Mushaf reference image), unlike plain "Amiri"
+// which is a lighter general-purpose Arabic text face. It must come first.
+export const Q_ARABIC_FONT = "'Amiri Quran', 'Amiri', 'Scheherazade New', serif";
