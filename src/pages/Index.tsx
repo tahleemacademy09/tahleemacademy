@@ -150,9 +150,10 @@ const Index = () => {
       .ta-live-text span { color:#f0c060; }
 
       /* ── HERO ── */
-      .ta-hero { position:relative; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
+      .ta-hero { position:relative; min-height:min(100vh,880px); display:flex; flex-direction:column; align-items:center; justify-content:center; overflow:hidden; }
       .ta-hero-bg { position:absolute; inset:0; background:radial-gradient(ellipse at center,#0f2e1c 0%,#0a1f12 55%,#040e06 100%); }
       .ta-hero-bg::before { content:''; position:absolute; inset:0; background-image:url('/brand-logo.png'); background-repeat:no-repeat; background-position:center; background-size:min(70vh,640px); opacity:.14; filter:saturate(1.1); }
+      @media(min-width:961px) { .ta-hero-bg::before { display:none; } }
       .ta-hero-overlay { position:absolute; inset:0; background:linear-gradient(165deg,rgba(4,14,7,.72) 0%,rgba(8,28,16,.4) 45%,rgba(4,12,7,.75) 100%); }
 
       /* Geometric star behind hero text — the signature element */
@@ -336,30 +337,6 @@ const Index = () => {
       .ta-cta-btn:hover { background:linear-gradient(135deg,#163d24,#1e5430); transform:translateY(-3px); box-shadow:0 20px 48px rgba(8,24,16,.4); }
       .ta-cta-note { font-size:12px; color:#aaa; margin-top:16px; }
 
-      /* ── FOOTER ── */
-      .ta-footer { background:#020a04; color:#888; padding:72px 24px 0; }
-      .ta-footer-top { max-width:1120px; margin:0 auto; display:grid; grid-template-columns:2fr 1fr 1fr 1.5fr; gap:56px; padding-bottom:56px; border-bottom:1px solid rgba(255,255,255,.05); }
-      .ta-footer-brand { display:flex; align-items:center; gap:14px; margin-bottom:16px; }
-      .ta-footer-logo { width:46px; height:46px; background:linear-gradient(135deg,#c9973a,#f0c060); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:22px; flex-shrink:0; }
-      .ta-footer-name { font-family:'Playfair Display',serif; font-size:19px; font-weight:700; color:#fff; line-height:1.1; }
-      .ta-footer-name-ar { font-family:'Scheherazade New',serif; font-size:15px; color:#f0c060; direction:rtl; }
-      .ta-footer-tag { font-size:13.5px; line-height:2; color:rgba(255,255,255,.32); max-width:280px; margin-bottom:24px; }
-      .ta-footer-socials { display:flex; gap:8px; flex-wrap:wrap; }
-      .ta-social { padding:8px 16px; border:1px solid rgba(240,192,96,.25); color:#f0c060; font-size:12px; text-decoration:none; transition:.2s; border-radius:4px; font-weight:700; }
-      .ta-social:hover { background:rgba(240,192,96,.1); border-color:#f0c060; }
-      .ta-footer-col-hd { font-size:10px; font-weight:900; color:#fff; margin-bottom:22px; letter-spacing:2.5px; text-transform:uppercase; padding-bottom:12px; border-bottom:1px solid rgba(240,192,96,.15); }
-      .ta-footer-links { list-style:none; display:flex; flex-direction:column; gap:12px; }
-      .ta-footer-links a { color:rgba(255,255,255,.38); text-decoration:none; font-size:13.5px; transition:.2s; cursor:pointer; }
-      .ta-footer-links a:hover { color:#f0c060; }
-      .ta-footer-contacts { list-style:none; display:flex; flex-direction:column; gap:14px; }
-      .ta-contact-row { display:flex; align-items:flex-start; gap:12px; font-size:13px; }
-      .ta-contact-icon { color:#f0c060; font-size:14px; flex-shrink:0; margin-top:2px; }
-      .ta-contact-row a { color:rgba(255,255,255,.4); text-decoration:none; transition:.2s; word-break:break-all; }
-      .ta-contact-row a:hover { color:#f0c060; }
-      .ta-footer-btm { max-width:1120px; margin:0 auto; padding:24px 0 28px; display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center; }
-      .ta-footer-dua  { font-family:'Scheherazade New',serif; font-size:24px; color:rgba(240,192,96,.5); }
-      .ta-footer-copy { font-size:11px; color:rgba(255,255,255,.18); letter-spacing:.3px; }
-
       /* ── RESPONSIVE ── */
       @media(max-width:960px) {
         .ta-pillars-intro { grid-template-columns:1fr; gap:32px; }
@@ -367,7 +344,6 @@ const Index = () => {
         .ta-courses-grid { grid-template-columns:1fr 1fr; gap:20px; }
         .ta-courses-hdr { flex-direction:column; align-items:flex-start; }
         .ta-stats-grid { grid-template-columns:1fr 1fr; }
-        .ta-footer-top { grid-template-columns:1fr 1fr; gap:36px; }
         .ta-content-grid { grid-template-columns:1fr; }
         .ta-strip-inner { gap:0; }
       }
@@ -375,7 +351,6 @@ const Index = () => {
         .ta-grid-6 { grid-template-columns:1fr; }
         .ta-courses-grid { grid-template-columns:1fr; }
         .ta-stats-grid { grid-template-columns:1fr 1fr; }
-        .ta-footer-top { grid-template-columns:1fr; }
         .ta-tabs { flex-wrap:wrap; width:100%; }
         .ta-tab { flex:1; min-width:90px; padding:11px 14px; font-size:12px; }
         .ta-btn-primary, .ta-btn-secondary { padding:14px 28px; font-size:14px; }
@@ -710,54 +685,6 @@ const Index = () => {
           <p className="ta-cta-note">Free to register · No commitment required</p>
         </div>
       </section>
-
-      {/* ══ FOOTER ══ */}
-      <footer className="ta-footer">
-        <div className="ta-footer-top">
-          <div>
-            <div className="ta-footer-brand">
-              <div className="ta-footer-logo">📖</div>
-              <div>
-                <div className="ta-footer-name">Tahleem Academy</div>
-                <div className="ta-footer-name-ar">أكاديمية التعليم</div>
-              </div>
-            </div>
-            <p className="ta-footer-tag">Empowering students to master Arabic and Islamic knowledge through structured learning and certified excellence.</p>
-            <div className="ta-footer-socials">
-              <a href="mailto:Tahleemacademy09@gmail.com" className="ta-social">✉️ Email</a>
-              <a href="https://wa.me/2348163310471" className="ta-social">💬 WhatsApp</a>
-            </div>
-          </div>
-          <div>
-            <h4 className="ta-footer-col-hd">Quick Links</h4>
-            <ul className="ta-footer-links">
-              {[{label:"🏠 Home",path:"/"},{label:"📚 Courses",path:"/courses"},{label:"ℹ️ About Us",path:"/about"},{label:"📞 Contact",path:"/contact"}].map(l => (
-                <li key={l.label}><a onClick={() => navigate(l.path)}>{l.label}</a></li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <h4 className="ta-footer-col-hd">Programs</h4>
-            <ul className="ta-footer-links">
-              {["🔤 Arabic Language","🎵 Tajweed","📖 Quran Memorisation","⚖️ Islamic Fiqh","🕌 Islamic Sciences"].map(l => (
-                <li key={l}><a href="#">{l}</a></li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <h4 className="ta-footer-col-hd">Contact Us</h4>
-            <ul className="ta-footer-contacts">
-              <li className="ta-contact-row"><span className="ta-contact-icon">✉️</span><a href="mailto:Tahleemacademy09@gmail.com">Tahleemacademy09@gmail.com</a></li>
-              <li className="ta-contact-row"><span className="ta-contact-icon">📱</span><a href="tel:+2348163310471">+234 816 331 0471</a></li>
-              <li className="ta-contact-row"><span className="ta-contact-icon">💬</span><a href="https://wa.me/2348163310471">WhatsApp Us</a></li>
-            </ul>
-          </div>
-        </div>
-        <div className="ta-footer-btm">
-          <div className="ta-footer-dua">وَقُل رَّبِّ زِدْنِي عِلْمًا</div>
-          <div className="ta-footer-copy">© 2026 Tahleem Academy · All Rights Reserved · Built with ❤️ for the Ummah</div>
-        </div>
-      </footer>
 
     </div>
   );
