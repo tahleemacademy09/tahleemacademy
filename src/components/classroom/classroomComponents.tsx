@@ -10,6 +10,7 @@
 import {
   LiveKitRoom, useRoomContext,
   useParticipants, useLocalParticipant, useTracks,
+  ControlBar,
 } from "@livekit/components-react";
 // @ts-ignore
 import "@livekit/components-styles";
@@ -245,6 +246,17 @@ export const CSS = `
   .gm-av-chevron.off { background:rgba(234,67,53,.7); }
   .gm-av-chevron:not(.off) { background:rgba(255,255,255,.06); }
   .gm-av-chevron:hover { background:rgba(255,255,255,.15); }
+
+  /* Default LiveKit ControlBar, embedded inside our own bottom bar —
+     strip its own chrome (background/border/padding/fixed height) so it
+     doesn't draw a second bar on top of ours; button look/feel stays the
+     library default. */
+  .lk-control-bar {
+    background:transparent!important; border:none!important; padding:0!important;
+    height:auto!important; min-height:0!important;
+  }
+  .lk-control-bar .lk-button-group-container,
+  .lk-control-bar .lk-button-group { flex-shrink:0; }
 
   /* Leave pill */
   .gm-leave {
@@ -4655,39 +4667,16 @@ export const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[
 /* ══ BOTTOM BAR — Google Meet premium ══ */
 export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,onLeaveClass,chatUnread,onToggleWhiteboard,whiteboardOpen,onGroupRecite,groupReciteMode,onShareMaterial,isPrivileged,canStudentWriteProp,canStudentRecProp,onPermChange,onMinimize,room,isMobile,onToggleMaterials,matPanelOpen,onSendEmoji,layout,onLayoutChange,onLaunchQuiz,onScreenShare,screenSharing,onToggleTimer,timerRunning,timerDisplay,onToggleLiveFiles,liveFilesOpen,onToggleHandQueue,onToggleAttendance,onSpotlight,onGenerateSummary,onTogglePartPanel,partPanelOpen,audioOnly,onToggleAudioOnly}:any)=>{
   const{user}=useAuth();
-  const[micOn,setMicOn]=useState(false);
-  const[camOn,setCamOn]=useState(false);
   const[handUp,setHandUp]=useState(false);
   const[moreOpen,setMoreOpen]=useState(false);
   const[emojisOpen,setEmojisOpen]=useState(false);
-  const[audioPicker,setAudioPicker]=useState(false);
-  const[videoPicker,setVideoPicker]=useState(false);
+  const[layoutOpen,setLayoutOpen]=useState(false);
   const[stuRec,setStuRec]=useState(false);
   const stuMrRef=useRef<MediaRecorder|null>(null);
   const stuChunks=useRef<Blob[]>([]);
-  const[camFacing,setCamFacing]=useState<"user"|"environment">("user");
-  const[audioDevices,setAudioDevices]=useState<MediaDeviceInfo[]>([]);
-  const[videoDevices,setVideoDevices]=useState<MediaDeviceInfo[]>([]);
-  const[selAudio,setSelAudio]=useState("");
-  const[selVideo,setSelVideo]=useState("");
   const[liveCount,setLiveCount]=useState(0);
-  const micBusy=useRef(false);
-  const camBusy=useRef(false);
-  const micBtnRef=useRef<HTMLDivElement>(null);
-  const camBtnRef=useRef<HTMLDivElement>(null);
   const moreBtnRef=useRef<HTMLDivElement>(null);
-  const[audioPickerPos,setAudioPickerPos]=useState({bottom:0,left:0});
-  const[videoPickerPos,setVideoPickerPos]=useState({bottom:0,left:0});
   const[morePos,setMorePos]=useState({bottom:0,right:0});
-
-  useEffect(()=>{
-    if(!room)return;
-    const sync=()=>{setMicOn(!!room.localParticipant?.isMicrophoneEnabled);setCamOn(!!room.localParticipant?.isCameraEnabled);};
-    sync();
-    room.on(RoomEvent.LocalTrackPublished,sync);room.on(RoomEvent.LocalTrackUnpublished,sync);
-    room.on(RoomEvent.TrackMuted,sync);room.on(RoomEvent.TrackUnmuted,sync);
-    return()=>{room.off(RoomEvent.LocalTrackPublished,sync);room.off(RoomEvent.LocalTrackUnpublished,sync);room.off(RoomEvent.TrackMuted,sync);room.off(RoomEvent.TrackUnmuted,sync);};
-  },[room]);
 
   useEffect(()=>{
     if(!room)return;
@@ -4707,61 +4696,12 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
     return{bottom,right:Math.max(8,window.innerWidth-r.right)};
   };
 
-  const openAudioPicker=async()=>{
-    try{await navigator.mediaDevices.getUserMedia({audio:true}).catch(()=>{});}catch{}
-    const all=await navigator.mediaDevices.enumerateDevices();
-    setAudioDevices(all.filter(d=>d.kind==="audioinput"));
-    try{const cur=await room.getActiveDevice("audioinput");if(cur)setSelAudio(cur);}catch{}
-    const pos=computePos(micBtnRef,"left");if(pos)setAudioPickerPos(pos as any);
-    setAudioPicker(true);setVideoPicker(false);setMoreOpen(false);setEmojisOpen(false);
-  };
-  const openVideoPicker=async()=>{
-    try{await navigator.mediaDevices.getUserMedia({video:true}).catch(()=>{});}catch{}
-    const all=await navigator.mediaDevices.enumerateDevices();
-    setVideoDevices(all.filter(d=>d.kind==="videoinput"));
-    try{const cur=await room.getActiveDevice("videoinput");if(cur)setSelVideo(cur);}catch{}
-    const pos=computePos(camBtnRef,"left");if(pos)setVideoPickerPos(pos as any);
-    setVideoPicker(true);setAudioPicker(false);setMoreOpen(false);setEmojisOpen(false);
-  };
   const openMore=()=>{
     const pos=computePos(moreBtnRef,"right");if(pos)setMorePos(pos as any);
-    setMoreOpen(v=>!v);setAudioPicker(false);setVideoPicker(false);setEmojisOpen(false);
+    setMoreOpen(v=>!v);setEmojisOpen(false);setLayoutOpen(false);
   };
-  const closeAll=()=>{setAudioPicker(false);setVideoPicker(false);setMoreOpen(false);setEmojisOpen(false);};
+  const closeAll=()=>{setMoreOpen(false);setEmojisOpen(false);setLayoutOpen(false);};
 
-  const switchAudio=async(id:string)=>{
-    try{await room.switchActiveDevice("audioinput",id);setSelAudio(id);toast({title:"Microphone switched ✓"});}
-    catch(e:any){toast({title:"Could not switch",description:e?.message,variant:"destructive"});}
-    setAudioPicker(false);
-  };
-  const switchVideo=async(id:string)=>{
-    try{await room.switchActiveDevice("videoinput",id);setSelVideo(id);toast({title:"Camera switched ✓"});}
-    catch(e:any){toast({title:"Could not switch",description:e?.message,variant:"destructive"});}
-    setVideoPicker(false);
-  };
-  const flipCamera=async()=>{
-    if(!room?.localParticipant||!camOn)return;
-    try{
-      const next=camFacing==="user"?"environment":"user";
-      await room.localParticipant.setCameraEnabled(false);
-      await new Promise(r=>setTimeout(r,200));
-      await room.localParticipant.setCameraEnabled(true,{facingMode:next}as any);
-      setCamFacing(next);toast({title:next==="environment"?"🔄 Back camera":"🔄 Front camera"});
-    }catch{toast({title:"Could not flip camera",variant:"destructive"});}
-    setVideoPicker(false);
-  };
-  const toggleMic=async()=>{
-    if(!room?.localParticipant||micBusy.current)return;
-    micBusy.current=true;
-    try{await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled);}
-    catch(e){console.error("toggleMic:",e);}finally{micBusy.current=false;}
-  };
-  const toggleCam=async()=>{
-    if(!room?.localParticipant||camBusy.current)return;
-    camBusy.current=true;
-    try{await room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled);}
-    catch(e){console.error("toggleCam:",e);}finally{camBusy.current=false;}
-  };
   const toggleHand=async()=>{
     if(!user||!sessionId)return;
     const n=!handUp;setHandUp(n);
@@ -4797,61 +4737,20 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
   const portal=typeof document!=="undefined"?document.body:null;
   const SZ=isMobile?18:20;const IS={width:SZ,height:SZ};
 
-  /* ── Google Meet style ctrl button ── */
-  const Ctrl=({icon,label,onClick,active=false,danger=false,badge=0,bRef,tooltip}:{icon:React.ReactNode;label:string;onClick:()=>void;active?:boolean;danger?:boolean;badge?:number;bRef?:any;tooltip?:string})=>(
-    <div ref={bRef} style={{position:"relative",flexShrink:0}}>
-      <button
-        className={`gm-ctrl${danger?" danger":active?" active":""}`}
-        onClick={onClick} title={tooltip||label}
-        style={{background:"none",border:"none",cursor:"pointer",padding:0,outline:"none"}}
-      >
-        <div className="gm-ctrl-icon">
-          {icon}
-          {badge>0&&<span style={{position:"absolute",top:2,right:2,background:"#ea4335",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #202124"}}>{badge>9?"9+":badge}</span>}
-        </div>
-        {!isMobile&&<span className="gm-ctrl-label">{label}</span>}
-        <div className="gm-tooltip">{tooltip||label}</div>
-      </button>
-    </div>
-  );
-
-  /* ── Device list item ── */
-  const DeviceRow=({label,selected,onClick}:{label:string;selected:boolean;onClick:()=>void})=>(
-    <button onClick={onClick} className="gm-sheet-item" style={{color:selected?"#8ab4f8":"rgba(255,255,255,.75)"}}>
-      <div style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${selected?"#8ab4f8":"rgba(255,255,255,.3)"}`,background:selected?"#8ab4f8":"transparent",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>
-        {selected&&<div style={{width:5,height:5,borderRadius:"50%",background:"#202124"}}/>}
-      </div>
-      <span style={{fontSize:13,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{label}</span>
+  /* ── More-menu row (mirrors gm-more-item styling used elsewhere) ── */
+  const MoreItem=({icon,label,onClick,color}:{icon:React.ReactNode;label:string;onClick:()=>void;color?:string})=>(
+    <button className="gm-more-item" onClick={onClick} style={color?{color}:undefined}>
+      {icon} {label}
     </button>
+  );
+  const MoreLabel=({children}:{children:React.ReactNode})=>(
+    <div style={{padding:"10px 16px 4px",fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"rgba(255,255,255,.35)",fontFamily:"'Google Sans',sans-serif"}}>{children}</div>
   );
 
   return(<>
     {/* Click-away */}
-    {(audioPicker||videoPicker||moreOpen||emojisOpen)&&portal&&createPortal(
+    {(moreOpen||emojisOpen)&&portal&&createPortal(
       <div onClick={closeAll} style={{position:"fixed",inset:0,zIndex:9100}}/>,portal
-    )}
-
-    {/* Audio picker */}
-    {audioPicker&&portal&&createPortal(
-      <div className="gm-sheet" style={{bottom:audioPickerPos.bottom,left:(audioPickerPos as any).left}}>
-        <div style={{padding:"13px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",fontSize:12,fontWeight:600,color:"rgba(255,255,255,.6)",fontFamily:"'Google Sans',sans-serif",letterSpacing:.3}}>🎤 Microphone</div>
-        {audioDevices.map(d=>(<DeviceRow key={d.deviceId} label={d.label||"Microphone "+d.deviceId.slice(0,6)} selected={selAudio===d.deviceId} onClick={()=>switchAudio(d.deviceId)}/>))}
-        {audioDevices.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:14,textAlign:"center"}}>No microphones found</p>}
-      </div>,portal
-    )}
-
-    {/* Video picker */}
-    {videoPicker&&portal&&createPortal(
-      <div className="gm-sheet" style={{bottom:videoPickerPos.bottom,left:(videoPickerPos as any).left}}>
-        <div style={{padding:"13px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",fontSize:12,fontWeight:600,color:"rgba(255,255,255,.6)",fontFamily:"'Google Sans',sans-serif",letterSpacing:.3}}>📷 Camera</div>
-        {videoDevices.map(d=>(<DeviceRow key={d.deviceId} label={d.label||"Camera "+d.deviceId.slice(0,6)} selected={selVideo===d.deviceId} onClick={()=>switchVideo(d.deviceId)}/>))}
-        {videoDevices.length>1&&(
-          <button onClick={flipCamera} className="gm-sheet-item" style={{color:"rgba(255,255,255,.7)",borderTop:"1px solid rgba(255,255,255,.07)",marginTop:0}}>
-            <SwitchCamera style={{width:14,height:14,opacity:.6,flexShrink:0}}/><span style={{fontSize:13,fontFamily:"'Google Sans',sans-serif"}}>Flip (Front / Back)</span>
-          </button>
-        )}
-        {videoDevices.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:14,textAlign:"center"}}>No cameras found</p>}
-      </div>,portal
     )}
 
     {/* Emoji tray */}
@@ -4863,190 +4762,113 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
       </div>,portal
     )}
 
-    {/* More menu — clean */}
+    {/* ══ More menu — every function beyond the default LiveKit bar lives here ══ */}
     {moreOpen&&portal&&createPortal(
-      <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right,minWidth:240}}>
-        {/* Minimize — keeps the class alive as a floating overlay so audio
-            survives Android backgrounding/tab-killing, instead of relying on
-            the OS back/home button (which some devices fully suspend). */}
-        {onMinimize&&(
-          <button className="gm-more-item" onClick={()=>{onMinimize();setMoreOpen(false);}}>
-            <Minimize2 style={{width:16,height:16,opacity:.7}}/> Minimize
-          </button>
+      <div className="gm-more-menu" style={{bottom:morePos.bottom,right:(morePos as any).right,minWidth:250,maxHeight:"72vh",overflowY:"auto"}}>
+
+        {/* ── Everyone ── */}
+        {isPrivileged
+          ?<MoreItem icon={<PenTool style={{width:16,height:16}}/>} label={whiteboardOpen?"Close Whiteboard":"Whiteboard"} onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} color={whiteboardOpen?"#34d399":"#e8eaed"}/>
+          :<MoreItem icon={<Hand style={{width:16,height:16}}/>} label={handUp?"Lower Hand":"Raise Hand"} onClick={()=>{toggleHand();setMoreOpen(false);}} color={handUp?"#fbbf24":"#e8eaed"}/>
+        }
+        {!isPrivileged&&canStudentWriteProp&&(
+          <MoreItem icon={<PenTool style={{width:16,height:16}}/>} label={whiteboardOpen?"Close Whiteboard":"Whiteboard"} onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} color={whiteboardOpen?"#34d399":"#e8eaed"}/>
         )}
-        {isMobile&&<>
-          {isPrivileged
-            ?<button className="gm-more-item" onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} style={{color:whiteboardOpen?"#34d399":"#e8eaed"}}>
-              <PenTool style={{width:16,height:16}}/> {whiteboardOpen?"Close Whiteboard":"Whiteboard"}
-            </button>
-            :<button className="gm-more-item" onClick={()=>{toggleHand();setMoreOpen(false);}} style={{color:handUp?"#fbbf24":"#e8eaed"}}>
-              <Hand style={{width:16,height:16}}/> {handUp?"Lower Hand":"Raise Hand"}
-            </button>
-          }
-          {!isPrivileged&&canStudentWriteProp&&(
-            <button className="gm-more-item" onClick={()=>{onToggleWhiteboard();setMoreOpen(false);}} style={{color:whiteboardOpen?"#34d399":"#e8eaed"}}>
-              <PenTool style={{width:16,height:16}}/> {whiteboardOpen?"Close Whiteboard":"Whiteboard"}
-            </button>
-          )}
-          {/* Screen share — mobile more menu */}
-          <button className="gm-more-item" onClick={()=>{onScreenShare();setMoreOpen(false);}} style={{color:screenSharing?"#34d399":"#e8eaed"}}>
-            <Monitor style={{width:16,height:16}}/> {screenSharing?"Stop Screen Share":"Share Screen"}
-          </button>
-        </>}
-        <button className="gm-more-item" onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}}>
-          <Smile style={{width:16,height:16,opacity:.7}}/> Send a Reaction
+        <MoreItem icon={<Users style={{width:16,height:16}}/>} label="Participants" onClick={()=>{onTogglePartPanel();setMoreOpen(false);}} color={partPanelOpen?"#8ab4f8":"#e8eaed"}/>
+        <MoreItem icon={<Smile style={{width:16,height:16,opacity:.7}}/>} label="Send a Reaction" onClick={()=>{setEmojisOpen(true);setMoreOpen(false);}}/>
+        <MoreItem icon={<Eye style={{width:16,height:16,opacity:.7}}/>} label="Subject Materials" onClick={()=>{onToggleMaterials();setMoreOpen(false);}} color={matPanelOpen?"#8ab4f8":undefined}/>
+        <MoreItem icon={<Eye style={{width:16,height:16,color:"#60a5fa"}}/>} label={liveFilesOpen?"Close Live Files":"Live Files"} onClick={()=>{onToggleLiveFiles();setMoreOpen(false);}} color={liveFilesOpen?"#34d399":undefined}/>
+        <MoreItem icon={<Timer style={{width:16,height:16,color:timerRunning?"#fbbf24":undefined}}/>} label={timerRunning?`Stop Timer (${timerDisplay})`:"Start Timer"} onClick={()=>{onToggleTimer();setMoreOpen(false);}} color={timerRunning?"#fbbf24":undefined}/>
+        <MoreItem icon={<Zap style={{width:14,height:14,color:audioOnly?"#fbbf24":"#a3e635"}}/>} label={audioOnly?"Exit Audio-Only Mode":"⚡ Audio-Only Mode"} onClick={()=>{onToggleAudioOnly?.();setMoreOpen(false);}} color={audioOnly?"#fbbf24":undefined}/>
+
+        {/* Layout — inline expandable list, reuses LAYOUT_OPTIONS */}
+        <button className="gm-more-item" onClick={()=>setLayoutOpen(v=>!v)}>
+          <LayoutGrid style={{width:16,height:16,opacity:.7}}/> Change Layout
+          <ChevronDown style={{width:13,height:13,marginLeft:"auto",opacity:.5,transform:layoutOpen?"rotate(180deg)":"none"}}/>
         </button>
-        <button className="gm-more-item" onClick={()=>{onToggleMaterials();setMoreOpen(false);}}>
-          <Eye style={{width:16,height:16,opacity:.7}}/> Subject Materials
-        </button>
-        {isPrivileged&&<>
-          <button className="gm-more-item" onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} style={{color:canStudentWriteProp?"#34d399":"#e8eaed"}}>
-            <PenTool style={{width:16,height:16}}/> {canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"}
-          </button>
-          <button className="gm-more-item" onClick={()=>{onPermChange?.("rec",!canStudentRecProp,room);setMoreOpen(false);}} style={{color:canStudentRecProp?"#f87171":"#e8eaed"}}>
-            <Circle style={{width:13,height:13,fill:canStudentRecProp?"#ef4444":"none",color:canStudentRecProp?"#ef4444":"#e8eaed"}}/> {canStudentRecProp?"Revoke Recording":"Allow Students to Record"}
-          </button>
-          <button className="gm-more-item" onClick={async()=>{
-            await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
-            try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
-            toast({title:"\uD83D\uDD07 All students muted"});setMoreOpen(false);
-          }} style={{color:"#fb923c"}}>
-            <MicOff style={{width:16,height:16}}/> Mute All Students
-          </button>
-          {/* Hand queue */}
-          <button className="gm-more-item" onClick={()=>{onToggleHandQueue();setMoreOpen(false);}}>
-            <Hand style={{width:16,height:16,color:"#fbbf24"}}/> Hand Queue
-          </button>
-          {/* Live attendance */}
-          <button className="gm-more-item" onClick={()=>{onToggleAttendance();setMoreOpen(false);}}>
-            <UserCheck style={{width:16,height:16,color:"#34d399"}}/> Live Attendance
-          </button>
-          {/* Session summary */}
-          <button className="gm-more-item" onClick={()=>{onGenerateSummary();setMoreOpen(false);}}>
-            <ClipboardList style={{width:16,height:16,color:"#60a5fa"}}/> Session Summary
-          </button>
-          {/* Feature 2: Audio-only mode — saves ~270kbps, best for weak connections */}
-          <button className="gm-more-item" onClick={()=>{onToggleAudioOnly?.();setMoreOpen(false);}} style={{color:audioOnly?"#fbbf24":undefined}}>
-            <Zap style={{width:14,height:14,color:audioOnly?"#fbbf24":"#a3e635"}}/> {audioOnly?"Exit Audio-Only Mode":"⚡ Audio-Only Mode"}
-          </button>
-        </>}
-        {!isPrivileged&&canStudentRecProp&&(
-          <button className="gm-more-item" onClick={()=>{toggleStuRecord();setMoreOpen(false);}} style={{color:stuRec?"#ef4444":"#e8eaed"}}>
-            <Circle style={{width:13,height:13,fill:stuRec?"#ef4444":"none"}}/> {stuRec?"Stop Recording":"Record Audio"}
-          </button>
+        {layoutOpen&&(
+          <div style={{padding:"2px 0 4px",background:"rgba(0,0,0,.18)"}}>
+            {LAYOUT_OPTIONS.map(o=>(
+              <button key={o.mode} className="gm-more-item" style={{paddingLeft:34,color:layout===o.mode?"#8ab4f8":undefined}} onClick={()=>{onLayoutChange(o.mode);setMoreOpen(false);setLayoutOpen(false);}}>
+                <o.icon style={{width:14,height:14}}/> {o.label} {layout===o.mode&&<span style={{marginLeft:"auto",fontSize:11}}>✓</span>}
+              </button>
+            ))}
+          </div>
         )}
 
+        {/* ── Teacher / admin tools ── */}
+        {isPrivileged&&<>
+          <MoreLabel>Teaching Tools</MoreLabel>
+          <MoreItem icon={<Zap style={{width:16,height:16,color:"#60a5fa"}}/>} label="Launch Live Quiz" onClick={()=>{onLaunchQuiz();setMoreOpen(false);}}/>
+          <MoreItem icon={<Radio style={{width:16,height:16,color:groupReciteMode?"#34d399":"#e8eaed"}}/>} label={groupReciteMode?"Stop Group Recite":"Group Recite"} onClick={()=>{onGroupRecite(room);setMoreOpen(false);}} color={groupReciteMode?"#34d399":undefined}/>
+          <MoreItem icon={<BookOpen style={{width:16,height:16,color:"#e8eaed"}}/>} label="Share Material" onClick={()=>{onShareMaterial();setMoreOpen(false);}}/>
+          <MoreItem icon={<PenTool style={{width:16,height:16}}/>} label={canStudentWriteProp?"Revoke Board Access":"Allow Students to Write"} onClick={()=>{onPermChange?.("write",!canStudentWriteProp,room);setMoreOpen(false);}} color={canStudentWriteProp?"#34d399":"#e8eaed"}/>
+          <MoreItem icon={<Circle style={{width:13,height:13,fill:canStudentRecProp?"#ef4444":"none",color:canStudentRecProp?"#ef4444":"#e8eaed"}}/>} label={canStudentRecProp?"Revoke Recording":"Allow Students to Record"} onClick={()=>{onPermChange?.("rec",!canStudentRecProp,room);setMoreOpen(false);}} color={canStudentRecProp?"#f87171":"#e8eaed"}/>
+          <MoreItem icon={<MicOff style={{width:16,height:16}}/>} label="Mute All Students" onClick={async()=>{
+            await supabase.from("class_participants").update({is_muted:true}).eq("session_id",sessionId);
+            try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"admin_mute_all"})),{reliable:true});}catch{}
+            toast({title:"🔇 All students muted"});setMoreOpen(false);
+          }} color="#fb923c"/>
+          <MoreItem icon={<Hand style={{width:16,height:16,color:"#fbbf24"}}/>} label="Hand Queue" onClick={()=>{onToggleHandQueue();setMoreOpen(false);}}/>
+          <MoreItem icon={<UserCheck style={{width:16,height:16,color:"#34d399"}}/>} label="Live Attendance" onClick={()=>{onToggleAttendance();setMoreOpen(false);}}/>
+          <MoreItem icon={<ClipboardList style={{width:16,height:16,color:"#60a5fa"}}/>} label="Session Summary" onClick={()=>{onGenerateSummary();setMoreOpen(false);}}/>
+        </>}
+
+        {/* ── Student-only ── */}
+        {!isPrivileged&&canStudentRecProp&&(
+          <MoreItem icon={<Circle style={{width:13,height:13,fill:stuRec?"#ef4444":"none"}}/>} label={stuRec?"Stop Recording":"Record Audio"} onClick={()=>{toggleStuRecord();setMoreOpen(false);}} color={stuRec?"#ef4444":"#e8eaed"}/>
+        )}
+
+        {/* Minimize — keeps the class alive as a floating overlay so audio
+            survives Android backgrounding/tab-killing. */}
+        {onMinimize&&(
+          <MoreItem icon={<Minimize2 style={{width:16,height:16,opacity:.7}}/>} label="Minimize" onClick={()=>{onMinimize();setMoreOpen(false);}}/>
+        )}
       </div>,portal
     )}
 
-    {/* ══ CONTROL BAR ══ */}
+    {/* ══ CONTROL BAR — LiveKit's default ControlBar handles mic / camera /
+        screen-share; every classroom-specific extra lives behind ⋯ More ══ */}
     <div className="cv-bar gm-bar" style={{
       height:isMobile?58:80,
-      background:isMobile?"#f1f3f4":"rgba(32,33,36,.97)",
-      backdropFilter:isMobile?"none":"blur(20px)",
-      WebkitBackdropFilter:isMobile?"none":"blur(20px)",
-      borderTop:isMobile?"none":"1px solid rgba(255,255,255,.06)",
+      background:"rgba(32,33,36,.97)",
+      backdropFilter:"blur(20px)",
+      WebkitBackdropFilter:"blur(20px)",
+      borderTop:"1px solid rgba(255,255,255,.06)",
       display:"flex",alignItems:"center",
       justifyContent:"center",
       padding:`0 ${isMobile?14:24}px calc(${isMobile?4:8}px + env(safe-area-inset-bottom,0px)) ${isMobile?14:24}px`,
       flexShrink:0,gap:isMobile?8:12,
     }}>
+      <div style={{display:"flex",alignItems:"center",flex:1,justifyContent:isMobile?"flex-start":"center",overflow:"hidden"}}>
+        <ControlBar
+          controls={{microphone:true,camera:true,screenShare:true,chat:false,leave:false}}
+          variation={isMobile?"minimal":"verbose"}
+          onDeviceError={(e:any)=>toast({title:"Device error",description:e?.message,variant:"destructive"})}
+        />
+      </div>
 
-      {isMobile ? (
-        /* ── MOBILE: Image 2 exact — light bar, rectangle pill buttons ── */
-        <>
-          {/* Mic pill + chevron */}
-          <div ref={micBtnRef} style={{display:"flex",alignItems:"center",background:"#e2e5e9",borderRadius:12,overflow:"hidden",height:44,flexShrink:0}}>
-            <button onClick={toggleMic} style={{width:46,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",color:"#202124"}}>
-              {micOn?<Mic style={{width:20,height:20,color:"#202124"}}/>:<MicOff style={{width:20,height:20,color:"#202124"}}/>}
-            </button>
-            <button onClick={openAudioPicker} style={{width:24,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",color:"#5f6368",borderLeft:"1px solid rgba(0,0,0,.08)"}}>
-              <svg width="9" height="6" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
-            </button>
-          </div>
+      {/* Timer chip — desktop only, quick glance without opening ⋯ */}
+      {timerRunning&&!isMobile&&<div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.15)",border:"1px solid rgba(251,191,36,.3)",borderRadius:20,padding:"4px 10px",animation:"timer-pulse 1s ease-in-out infinite",cursor:"pointer",flexShrink:0}} onClick={onToggleTimer}><Timer style={{width:13,height:13,color:"#fbbf24"}}/><span style={{fontSize:12,fontWeight:700,color:"#fbbf24",fontVariantNumeric:"tabular-nums"}}>{timerDisplay}</span></div>}
 
-          {/* Cam pill + chevron */}
-          <div ref={camBtnRef} style={{display:"flex",alignItems:"center",background:"#e2e5e9",borderRadius:12,overflow:"hidden",height:44,flexShrink:0}}>
-            <button onClick={toggleCam} style={{width:46,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent"}}>
-              {camOn?<Video style={{width:20,height:20,color:"#202124"}}/>:<VideoOff style={{width:20,height:20,color:"#202124"}}/>}
-            </button>
-            <button onClick={openVideoPicker} style={{width:24,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",color:"#5f6368",borderLeft:"1px solid rgba(0,0,0,.08)"}}>
-              <svg width="9" height="6" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
-            </button>
-          </div>
+      {/* Chat — kept alongside the default bar since it opens our own panel */}
+      <button className="lk-button" onClick={onToggleChat} title="Chat" style={{position:"relative",flexShrink:0}}>
+        <MessageCircle style={IS}/>
+        {chatUnread>0&&<span style={{position:"absolute",top:2,right:2,background:"#ea4335",color:"#fff",borderRadius:"50%",width:16,height:16,fontSize:9,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid #202124"}}>{chatUnread>9?"9+":chatUnread}</span>}
+      </button>
 
-          {/* Chat */}
-          <button onClick={onToggleChat} style={{width:44,height:44,borderRadius:12,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"#e2e5e9",color:"#202124",position:"relative",flexShrink:0}}>
-            <MessageCircle style={{width:20,height:20}}/>
-            {chatUnread>0&&<span style={{position:"absolute",top:5,right:5,background:"#ea4335",color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>{chatUnread>9?"9+":chatUnread}</span>}
-          </button>
+      {/* More ⋯ — every non-default-LiveKit function */}
+      <div ref={moreBtnRef} style={{flexShrink:0}}>
+        <button className="lk-button" onClick={openMore} title="More options" style={{background:moreOpen?"rgba(138,180,248,.2)":undefined}}>
+          <MoreVertical style={IS}/>
+        </button>
+      </div>
 
-          {/* More ⋮ */}
-          <div ref={moreBtnRef} style={{flexShrink:0}}>
-            <button onClick={openMore} style={{width:44,height:44,borderRadius:12,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:moreOpen?"#d2e3fc":"#e2e5e9",color:"#202124"}}>
-              <MoreVertical style={{width:20,height:20}}/>
-            </button>
-          </div>
-
-          {/* Leave */}
-          <button onClick={isPrivileged?onEndClass:onLeaveClass} style={{height:44,padding:"0 16px",borderRadius:12,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:5,background:"#ea4335",color:"#fff",flexShrink:0,boxShadow:"0 2px 8px rgba(234,67,53,.35)"}}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-              <polyline points="16 17 21 12 16 7"/>
-              <line x1="21" y1="12" x2="9" y2="12"/>
-            </svg>
-          </button>
-        </>
-      ) : (
-        /* ── DESKTOP: full Google Meet layout ── */
-        <>
-          {/* LEFT — Mic + Cam with chevrons */}
-          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-            <div ref={micBtnRef} className="gm-av-group">
-              <button className={`gm-av-main${micOn?"":" off"}`} onClick={toggleMic} title={micOn?"Mute microphone":"Unmute microphone"}>
-                {micOn?<Mic style={IS}/>:<MicOff style={IS}/>}
-              </button>
-              <button className={`gm-av-chevron${micOn?"":" off"}`} onClick={openAudioPicker} title="Microphone options">
-                <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
-              </button>
-            </div>
-            <div ref={camBtnRef} className="gm-av-group">
-              <button className={`gm-av-main${camOn?"":" off"}`} onClick={toggleCam} title={camOn?"Turn off camera":"Turn on camera"}>
-                {camOn?<Video style={IS}/>:<VideoOff style={IS}/>}
-              </button>
-              <button className={`gm-av-chevron${camOn?"":" off"}`} onClick={openVideoPicker} title="Camera options">
-                <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
-              </button>
-            </div>
-          </div>
-          {/* CENTER */}
-          <div style={{display:"flex",alignItems:"center",gap:8,flex:1,justifyContent:"center"}}>
-            {isPrivileged
-              ?<Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
-              :<Ctrl icon={<Hand style={{...IS,color:handUp?"#fbbf24":"#e8eaed"}}/>} label={handUp?"Lower":"Raise Hand"} onClick={toggleHand} active={handUp} tooltip={handUp?"Lower hand":"Raise hand"}/>
-            }
-            {!isPrivileged&&canStudentWriteProp&&(
-              <Ctrl icon={<PenTool style={{...IS,color:whiteboardOpen?"#34d399":"#e8eaed"}}/>} label="Board" onClick={onToggleWhiteboard} active={whiteboardOpen} tooltip="Whiteboard"/>
-            )}
-            {/* Screen share — all users */}
-            <Ctrl icon={screenSharing?<MonitorOff style={{...IS,color:"#34d399"}}/>:<Monitor style={{...IS,color:"#e8eaed"}}/>} label={screenSharing?"Stop Share":"Share"} onClick={onScreenShare} active={screenSharing} tooltip={screenSharing?"Stop screen share":"Share screen"}/>
-            <Ctrl icon={<MessageCircle style={{...IS,color:"#e8eaed"}}/>} label="Chat" onClick={onToggleChat} badge={chatUnread} tooltip="Open chat"/>
-            {/* Participants — desktop */}
-            <Ctrl icon={<Users style={{...IS,color:partPanelOpen?"#8ab4f8":"#e8eaed"}}/>} label="People" onClick={onTogglePartPanel} active={partPanelOpen} tooltip="Participants"/>
-            <Ctrl icon={<Smile style={{...IS,color:emojisOpen?"#fbbf24":"#e8eaed"}}/>} label="React" onClick={()=>{setEmojisOpen(v=>!v);setMoreOpen(false);setAudioPicker(false);setVideoPicker(false);}} active={emojisOpen} tooltip="Send a reaction"/>
-            {/* Timer indicator */}
-            {timerRunning&&<div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(251,191,36,.15)",border:"1px solid rgba(251,191,36,.3)",borderRadius:20,padding:"4px 10px",animation:"timer-pulse 1s ease-in-out infinite",cursor:"pointer"}} onClick={onToggleTimer}><Timer style={{width:13,height:13,color:"#fbbf24"}}/><span style={{fontSize:12,fontWeight:700,color:"#fbbf24",fontVariantNumeric:"tabular-nums"}}>{timerDisplay}</span></div>}
-            <Ctrl icon={<MoreVertical style={{...IS,color:"#e8eaed"}}/>} label="More" bRef={moreBtnRef} onClick={openMore} active={moreOpen} tooltip="More options"/>
-          </div>
-          {/* RIGHT */}
-          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-            <button className="gm-leave" onClick={isPrivileged?onEndClass:onLeaveClass}>
-              <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/>
-              {isPrivileged?"End":"Leave"}
-            </button>
-          </div>
-        </>
-      )}
+      {/* Leave / End — kept custom so "End" can wind the class down for everyone */}
+      <button className="lk-button lk-disconnect-button" onClick={isPrivileged?onEndClass:onLeaveClass} style={{flexShrink:0,width:"auto",borderRadius:24,padding:"0 20px",gap:7,fontSize:14,fontWeight:600}}>
+        <Phone style={{width:16,height:16,transform:"rotate(135deg)"}}/>
+        {!isMobile&&(isPrivileged?"End":"Leave")}
+      </button>
     </div>
   </>);
 };
