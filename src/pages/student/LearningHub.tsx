@@ -27,7 +27,7 @@ import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
 import SubjectSyllabus      from "@/components/classroom/SubjectSyllabus";
 import SubjectAssignments   from "@/components/classroom/SubjectAssignments";
 import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
-import { useTimetableNotifications } from "@/hooks/useTimetableNotifications";
+import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 
@@ -89,7 +89,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     return privateSubjectIds.has(subjectId);
   };
 
-  useTimetableNotifications();
+  usePushNotifications();
 
   const [selCourse,       setSelCourseRaw]       = useState<any | null>(null);
   const [selectedSubject, setSelectedSubjectRaw] = useState<any | null>(null);
