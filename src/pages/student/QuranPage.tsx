@@ -549,6 +549,11 @@ export default function QuranPage() {
               transition: dragX === 0 ? "transform .2s ease, opacity .15s ease" : "opacity .15s ease",
             }}
           >
+          <div className="quran-page-frame">
+            <span className="q-corner q-corner-tl" />
+            <span className="q-corner q-corner-tr" />
+            <span className="q-corner q-corner-bl" />
+            <span className="q-corner q-corner-br" />
             {(() => {
               const wordSpan = (surah: number, ayah: number, text: string, isAyahEnd: boolean, key: string, isFirstOfAyah: boolean) => (
                 <span
@@ -604,14 +609,17 @@ export default function QuranPage() {
               // page. Falls back to the free-flowing paragraph below if the
               // line-layout fetch didn't succeed for this page. ──
               if (pageLines && pageLines.length) {
-                let lastSurahRendered: number | null = null;
+                // Only the printed opening page of a surah carries its name
+                // banner — a surah that merely continues onto this page (its
+                // first ayah here is not ayah 1) must never show it again.
+                const surahBannerShown = new Set<number>();
                 const seenAyah = new Set<string>();
                 return (
                   <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, color: Q_INK }}>
                     {pageLines.map(line => {
                       const firstWord = line.words[0];
-                      const showDivider = firstWord && firstWord.surah !== lastSurahRendered;
-                      if (firstWord) lastSurahRendered = firstWord.surah;
+                      const showDivider = !!firstWord && firstWord.ayah === 1 && !surahBannerShown.has(firstWord.surah);
+                      if (showDivider) surahBannerShown.add(firstWord.surah);
                       const lineFontSize = lineFontSizes[line.lineNumber] ?? BASE_LINE_FONT_SIZE;
                       return (
                         <div key={line.lineNumber}>
@@ -637,12 +645,12 @@ export default function QuranPage() {
                 );
               }
 
-              let lastSurahRendered: number | null = null;
+              const surahBannerShownFallback = new Set<number>();
               return (
                 <div dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontSize: 26, lineHeight: 2.1, color: Q_INK, textAlign: "justify" }}>
                   {verses.map((v, i) => {
-                    const showDivider = v.surah !== lastSurahRendered;
-                    lastSurahRendered = v.surah;
+                    const showDivider = v.ayah === 1 && !surahBannerShownFallback.has(v.surah);
+                    if (showDivider) surahBannerShownFallback.add(v.surah);
                     return (
                       <span key={`${v.surah}-${v.ayah}`}>
                         {showDivider && surahDivider(v.surah, v.ayah, i === 0)}
@@ -663,7 +671,7 @@ export default function QuranPage() {
                 ))}
               </div>
             )}
-
+          </div>
           </div>
         )}
       </div>
@@ -797,6 +805,52 @@ export default function QuranPage() {
       <style>{`
         @keyframes quranPageInFromRight { from { opacity:0; transform:translateX(40px); } to { opacity:1; transform:translateX(0); } }
         @keyframes quranPageInFromLeft { from { opacity:0; transform:translateX(-40px); } to { opacity:1; transform:translateX(0); } }
+
+        /* ── Ornate Mushaf page border — a gold double-frame with small
+           corner medallions, echoing the decorative margins printed
+           around every page of a physical Qur'an. ── */
+        .quran-page-frame {
+          position: relative;
+          margin: 4px 6px 10px;
+          padding: 26px 20px 22px;
+          border-radius: 8px;
+          border: 3px solid ${Q_GOLD_DARK};
+          background:
+            radial-gradient(circle at 0% 0%, rgba(201,168,76,0.07), transparent 55%),
+            radial-gradient(circle at 100% 100%, rgba(201,168,76,0.07), transparent 55%),
+            repeating-linear-gradient(45deg, rgba(201,168,76,0.03) 0 2px, transparent 2px 16px);
+          box-shadow: 0 2px 10px rgba(31,23,8,0.08), inset 0 0 0 1px rgba(255,255,255,0.4);
+        }
+        .quran-page-frame::before {
+          content: "";
+          position: absolute; inset: 6px;
+          border: 1px solid ${Q_GOLD};
+          border-radius: 5px;
+          pointer-events: none;
+        }
+        .quran-page-frame::after {
+          content: "";
+          position: absolute; inset: 10px;
+          border: 1px solid rgba(201,168,76,0.4);
+          border-radius: 3px;
+          pointer-events: none;
+        }
+        .q-corner {
+          position: absolute; width: 15px; height: 15px;
+          background: ${Q_PARCHMENT};
+          border: 2px solid ${Q_GOLD_DARK};
+          transform: rotate(45deg);
+          z-index: 1;
+        }
+        .q-corner::after {
+          content: "";
+          position: absolute; inset: 2px;
+          border: 1px solid ${Q_GOLD};
+        }
+        .q-corner-tl { top: -8px; left: -8px; }
+        .q-corner-tr { top: -8px; right: -8px; }
+        .q-corner-bl { bottom: -8px; left: -8px; }
+        .q-corner-br { bottom: -8px; right: -8px; }
       `}</style>
     </div>
   );
