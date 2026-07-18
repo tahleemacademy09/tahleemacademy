@@ -18,10 +18,24 @@
 // app's core function depends on it (true here: live audio/video calling).
 
 import { Capacitor } from "@capacitor/core";
-import { DontKillMyApp } from "@squareetlabs/capacitor-dont-kill-my-app";
 import { logger } from "@/lib/logger";
 
 const STORAGE_KEY = "tahleem_battery_opt_prompted_v1";
+
+// Loaded lazily (not a static import) so a missing/broken native-only
+// package can never break the web bundle or the build itself. Only ever
+// actually resolved on Android native, where it must be present anyway.
+async function loadDontKillMyApp() {
+  try {
+    const mod = await import(
+      /* @vite-ignore */ "@squareetlabs/capacitor-dont-kill-my-app"
+    );
+    return mod.DontKillMyApp;
+  } catch (e) {
+    logger.warn("[BatteryOptimization] plugin unavailable:", e);
+    return null;
+  }
+}
 
 function isAndroidNative(): boolean {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
@@ -49,6 +63,8 @@ function markPrompted(): void {
  */
 export async function shouldPromptBatteryOptimization(): Promise<boolean> {
   if (!isAndroidNative() || hasPromptedBatteryOptimization()) return false;
+  const DontKillMyApp = await loadDontKillMyApp();
+  if (!DontKillMyApp) return false;
   try {
     const { isAvailable } = await DontKillMyApp.isBatterySaverPermissionAvailable();
     return isAvailable;
@@ -67,6 +83,8 @@ export async function shouldPromptBatteryOptimization(): Promise<boolean> {
 export async function requestRunInBackground(): Promise<void> {
   if (!isAndroidNative()) return;
   markPrompted();
+  const DontKillMyApp = await loadDontKillMyApp();
+  if (!DontKillMyApp) return;
   try {
     await DontKillMyApp.requestRunInBackground();
   } catch (e) {
