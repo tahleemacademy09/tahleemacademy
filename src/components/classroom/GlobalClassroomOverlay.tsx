@@ -38,13 +38,18 @@
 */
 
 import { useLiveClass } from "@/contexts/LiveClassContext";
-import { startBackgroundAudio, stopBackgroundAudio } from "@/hooks/useBackgroundAudio";
+import { startBackgroundAudio, stopBackgroundAudio, setWakeLockActive } from "@/hooks/useBackgroundAudio";
 import { enterPiPKeepAlive, exitPiPKeepAlive, setPiPSource } from "@/hooks/useBackgroundPiP";
 import { App as CapApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import ClassroomView from "@/components/classroom/ClassroomView";
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { startForegroundService, stopForegroundService } from "@/hooks/useForegroundService";
+import {
+  shouldPromptBatteryOptimization,
+  requestRunInBackground,
+  dismissBatteryOptimizationPrompt,
+} from "@/hooks/useBatteryOptimization";
 import { useLocation } from "react-router-dom";
 
 // Routes where the overlay is allowed to persist.
@@ -137,6 +142,46 @@ export default function GlobalClassroomOverlay() {
     startBackgroundAudio(title);
     return () => stopBackgroundAudio();
   }, [hasConnected, title]);
+
+  // ── Battery: only hold the screen wake lock while the camera is on ─────
+  // startBackgroundAudio() above defaults to holding the wake lock (video-
+  // safe). Once connected, this keeps it in sync with the *actual* camera
+  // state so an audio-only session (the common case — camera defaults off)
+  // lets the screen lock normally instead of staying lit for the whole
+  // class. The <audio> element + 5s heartbeat from startBackgroundAudio
+  // still run regardless, which is what actually prevents the Android JS
+  // throttle/disconnect — the wake lock was extra insurance mainly useful
+  // when there's a camera preview on screen to keep visible.
+  useEffect(() => {
+    if (!hasConnected) return;
+    setWakeLockActive(camEnabled);
+  }, [hasConnected, camEnabled]);
+
+  // ── OEM battery-optimization prompt (Android) ───────────────────────────
+  // The foreground service above stops stock Android from killing the app,
+  // but Samsung/Xiaomi/Huawei/etc. layer their own battery manager on top
+  // that can still freeze it unless the user whitelists the app there too.
+  // Ask once, only after they're actually in a live class (so the "why" is
+  // obvious), never more than once per device.
+  const [showBatteryPrompt, setShowBatteryPrompt] = useState(false);
+  useEffect(() => {
+    if (!hasConnected) return;
+    let cancelled = false;
+    shouldPromptBatteryOptimization().then(should => {
+      if (!cancelled && should) setShowBatteryPrompt(true);
+    });
+    return () => { cancelled = true; };
+  }, [hasConnected]);
+
+  const handleAllowBackground = useCallback(() => {
+    setShowBatteryPrompt(false);
+    requestRunInBackground();
+  }, []);
+
+  const handleDismissBatteryPrompt = useCallback(() => {
+    setShowBatteryPrompt(false);
+    dismissBatteryOptimizationPrompt();
+  }, []);
 
   // ── Wire MediaSession "Return to Class" / "Leave" actions ────────────
   // We update the handlers whenever the callbacks change (stable refs so
@@ -392,6 +437,77 @@ export default function GlobalClassroomOverlay() {
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c9a84c" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="9 18 15 12 9 6" />
           </svg>
+        </div>
+      )}
+
+      {/* ── "Allow background running" prompt — Android OEM battery managers ── */}
+      {showBatteryPrompt && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,.6)",
+            zIndex: 9500,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+          }}
+          onClick={handleDismissBatteryPrompt}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: "#1e2535",
+              borderRadius: 20,
+              padding: "26px 22px",
+              maxWidth: 360,
+              width: "100%",
+              boxShadow: "0 24px 60px rgba(0,0,0,.6)",
+              border: "1px solid rgba(255,255,255,.1)",
+              textAlign: "center",
+            }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#f5f0e8", marginBottom: 8 }}>
+              Keep your call connected
+            </div>
+            <div style={{ fontSize: 13, color: "rgba(255,255,255,.65)", lineHeight: 1.5, marginBottom: 20 }}>
+              Your phone's battery saver can disconnect live classes when the screen locks.
+              Allow Tahleem Academy to run in the background to keep your mic and connection alive — just like WhatsApp calls.
+            </div>
+            <button
+              onClick={handleAllowBackground}
+              style={{
+                width: "100%",
+                padding: "12px",
+                borderRadius: 12,
+                border: "none",
+                background: "linear-gradient(135deg,#0a7c68,#064E3B)",
+                color: "#fff",
+                fontSize: 14,
+                fontWeight: 700,
+                cursor: "pointer",
+                marginBottom: 10,
+              }}
+            >
+              Allow background running
+            </button>
+            <button
+              onClick={handleDismissBatteryPrompt}
+              style={{
+                width: "100%",
+                padding: "10px",
+                borderRadius: 12,
+                border: "none",
+                background: "transparent",
+                color: "rgba(255,255,255,.45)",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Not now
+            </button>
+          </div>
         </div>
       )}
 
