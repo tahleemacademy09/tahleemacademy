@@ -21,7 +21,9 @@
       Forces event-loop ticks even if Chrome background-throttles timers.
       Also re-plays the audio element if it somehow paused.
 
-  • Layer 3 — WakeLock (screen stays on while active, releases on stop)
+  • Layer 3 — WakeLock (screen stays on only while camera is active, via
+      setWakeLockActive(); released on stop). Audio-only sessions skip this —
+      Layer 1 + Layer 2 alone keep the thread alive, saving battery.
 
   • Layer 4 — MediaSession metadata + action handlers
       Shows Tahleem lock-screen card with "Return to Class" button.
@@ -51,6 +53,15 @@ let audioEl:    HTMLAudioElement | null    = null;
 let wakeLock:   WakeLockSentinel | null   = null;
 let resumeFn:   (() => void) | null       = null;
 let heartbeat:  ReturnType<typeof setInterval> | null = null;
+
+// Whether the screen wake lock should currently be held. Video sessions need
+// the screen visibly on (there's a camera preview to show); audio-only
+// sessions don't — the <audio> element (Layer 1) alone is what grants Android
+// audio focus and keeps the JS thread alive per the note above, mirroring how
+// WhatsApp keeps a voice call running without forcing the screen to stay lit.
+// Defaults to true so any caller that never calls setWakeLockActive() keeps
+// the original (video-safe) behaviour.
+let wakeLockNeeded = true;
 
 // ── Wake lock helper ─────────────────────────────────────────────────────────
 async function acquireWakeLock(): Promise<void> {
@@ -83,8 +94,9 @@ function startHeartbeat(): void {
     if (audioEl?.paused) {
       audioEl.play().catch(() => {});
     }
-    // Re-acquire wake lock if it was released (screen-off / interrupted)
-    acquireWakeLock();
+    // Re-acquire wake lock if it was released (screen-off / interrupted) —
+    // only when this session actually needs the screen kept on.
+    if (wakeLockNeeded) acquireWakeLock();
     // Ping the service worker so it doesn't sleep
     pingServiceWorker();
   }, 5_000);
@@ -176,6 +188,30 @@ export function updateMediaSessionControls(opts: {
 }
 
 /**
+ * Tell the keep-alive whether it currently needs to hold the screen wake
+ * lock — call this whenever camera state changes during a live session
+ * (e.g. from GlobalClassroomOverlay, keyed on `camEnabled`).
+ *
+ * true  → acquires the wake lock (screen stays on; needed when there's a
+ *         camera preview visible, exactly like a video call).
+ * false → releases it (screen can lock; the <audio> element + heartbeat
+ *         alone keep the JS thread alive for audio-only sessions, the same
+ *         way WhatsApp keeps a voice call running without forcing the
+ *         screen to stay lit).
+ *
+ * Safe to call before startBackgroundAudio() — it just updates the flag
+ * that startBackgroundAudio/heartbeat/resumeFn read.
+ */
+export function setWakeLockActive(needed: boolean): void {
+  wakeLockNeeded = needed;
+  if (needed) {
+    acquireWakeLock();
+  } else {
+    releaseWakeLock();
+  }
+}
+
+/**
  * Start the background audio keep-alive.
  * Safe to call multiple times — idempotent (won't create duplicate elements).
  */
@@ -200,7 +236,7 @@ export function startBackgroundAudio(title = "Live Class"): void {
   startHeartbeat();
 
   // ── WakeLock ───────────────────────────────────────────────────────────
-  acquireWakeLock();
+  if (wakeLockNeeded) acquireWakeLock();
 
   // ── MediaSession metadata ──────────────────────────────────────────────
   // Action handlers are wired by GlobalClassroomOverlay separately so they
@@ -222,7 +258,7 @@ export function startBackgroundAudio(title = "Live Class"): void {
   if (!resumeFn) {
     resumeFn = () => {
       audioEl?.play().catch(() => {});
-      acquireWakeLock();
+      if (wakeLockNeeded) acquireWakeLock();
       pingServiceWorker();
     };
     window.addEventListener("pageshow",         resumeFn);
@@ -254,6 +290,7 @@ export function stopBackgroundAudio(): void {
 
   // ── WakeLock ───────────────────────────────────────────────────────────
   releaseWakeLock();
+  wakeLockNeeded = true; // reset to default for the next session
 
   // ── MediaSession ───────────────────────────────────────────────────────
   clearMediaSession();
