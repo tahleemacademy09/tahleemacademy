@@ -53,6 +53,20 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     rollupOptions: {
+      // FIX (Vercel build failure): "@squareetlabs/capacitor-dont-kill-my-app"
+      // is a native-only Capacitor plugin, intentionally NOT in package.json —
+      // it's only ever relevant inside the real Android app, and
+      // useBatteryOptimization.ts already lazy-loads it behind an
+      // isAndroidNative() check with a try/catch specifically so a
+      // missing/broken copy of it can never break the web build. The
+      // `/* @vite-ignore */` comment on that dynamic import only suppresses
+      // Vite's OWN dev-time warning though — Rollup's production bundler
+      // still tries to statically resolve that literal specifier at build
+      // time regardless, and errors out (fatally) when it can't find it.
+      // Marking it external tells Rollup to leave the import() call alone
+      // rather than trying to resolve/bundle it — matching what Rollup's own
+      // error message recommends.
+      external: ["@squareetlabs/capacitor-dont-kill-my-app"],
       output: {
         manualChunks(id) {
           // ── vendor-react: React + ReactDOM + Scheduler ONLY ──────────────
