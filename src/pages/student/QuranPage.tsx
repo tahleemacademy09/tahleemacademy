@@ -219,9 +219,24 @@ export default function QuranPage() {
           .map(w => w.text + (w.isAyahEnd ? ` ﴿${toArabicNum(w.ayah)}﴾` : ""))
           .join(" ");
         ctx.font = `700 ${BASE_LINE_FONT_SIZE}px ${Q_ARABIC_FONT}`;
-        const naturalWidth = ctx.measureText(text).width;
-        next[line.lineNumber] = naturalWidth > width && naturalWidth > 0
-          ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * width) / naturalWidth))
+        const textWidth = ctx.measureText(text).width;
+        // FIX (words clipped at the page edge): canvas measureText only knows
+        // glyph metrics — it has no idea every word is wrapped in a tappable
+        // <span style={{ padding: "2px 1px" }}>, or that an ayah-end marker
+        // carries its own "margin: 0 3px". On a line with a dozen words those
+        // add up to real, visible pixels this measurement was silently
+        // ignoring, so a line the math called "an exact fit" actually
+        // rendered wider than the column — and since the line box clips
+        // overflow, the last word (or its tail) was sheared off at the edge
+        // instead of shrinking to fit. Add that chrome back in here, plus a
+        // small safety margin for the sub-pixel differences between canvas
+        // glyph metrics and the browser's real Arabic text shaping.
+        const ayahEndCount = line.words.reduce((n, w) => n + (w.isAyahEnd ? 1 : 0), 0);
+        const chromeOverhead = line.words.length * 2 + ayahEndCount * 6;
+        const naturalWidth = textWidth + chromeOverhead;
+        const target = width * 0.98;
+        next[line.lineNumber] = naturalWidth > target && naturalWidth > 0
+          ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * target) / naturalWidth))
           : BASE_LINE_FONT_SIZE;
       }
       if (!cancelled) { setLineFontSizes(next); setLinesReady(true); }
