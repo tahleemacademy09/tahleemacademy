@@ -433,54 +433,75 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       prefetch.current=null; // always clear after reading so Try Again fetches a new token
       if(!tk||!url){const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});if(e)throw e;if(data?.error)throw new Error(data.error);tk=data.token;url=data.url;}
       setToken(tk!);setWsUrl(url!);
-      // FIX: pick the session that is ACTUALLY live/active first, only falling back to a
-      // merely-scheduled row if none is live. Sorting by scheduled_at alone was wrong: a
-      // future pre-scheduled occurrence of a recurring class always has a later scheduled_at
-      // than today's already-live session, so it was being picked instead — causing students'
-      // attendance_logs/class_participants rows to be written against the wrong session_id.
-      // The LiveKit call itself still worked (room name is keyed off subject_id, not session
-      // id), but the admin dashboard's participant count — looked up by the real live
-      // session's id — found nothing, showing 0 while people were actually in the class.
-      const{data:liveRows}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active"]).order("actual_start_time",{ascending:false,nullsFirst:false}).limit(1);
-      let sessions=liveRows;
-      if(!sessions?.length){
-        const{data:scheduledRows}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","scheduled").order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
-        sessions=scheduledRows;
-      }
-      if(sessions?.length){
-        const freshSessionId=sessions[0].id;
-        // FIX BUG 1: Apply class settings using the freshly-retrieved session ID, not the
-        // stale sessionId state (which is null when a teacher starts a new class for the first time).
-        if(settings){await supabase.from("live_sessions").update({...settings,actual_start_time:new Date().toISOString(),status:"live"}).eq("id",freshSessionId);}
-        setSessionId(freshSessionId);setSessionInfo(sessions[0]);
-        // FIX: check for an attendance_logs row this student already has for
-        // this exact session (from an earlier stint that disconnected/logged
-        // out) before inserting a new one. Reusing it means a rejoin shows up
-        // as ONE continuous attendance record instead of a duplicate entry.
-        const{data:existingAtt}=await supabase.from("attendance_logs").select("id,duration_seconds").eq("session_id",freshSessionId).eq("user_id",user.id).maybeSingle();
-        if(existingAtt){
-          attPriorDurationRef.current=existingAtt.duration_seconds||0;
-          setAttendanceId(existingAtt.id);
-          await supabase.from("attendance_logs").update({left_at:null,device_info:navigator.userAgent}).eq("id",existingAtt.id);
-        }else{
-          attPriorDurationRef.current=0;
-          const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
-          if(att)setAttendanceId(att.id);
-        }
-        await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});
-        // FIX BUG 8: Subscribe to session-end immediately here — before the useEffect cycle —
-        // so there is no window where the teacher can end the class and students miss the event.
-        if(!isPrivileged&&!sessionEndChannelRef.current){
-          const endCh=supabase.channel(`session-end-${freshSessionId}`)
-            .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${freshSessionId}`},
-              (payload:any)=>{if(payload.new?.status==="ended"&&!intentionalLeaveRef.current)setPhase("ended");})
-            .subscribe();
-          sessionEndChannelRef.current=endCh;
-        }
-      }
+
+      // FIX ("takes a while before showing my full details"): flip to the live
+      // phase — which is what actually tells <LiveKitRoom> to connect — the
+      // moment we have a token, instead of waiting on the session lookup +
+      // attendance_logs + class_participants writes below. Those are DB
+      // bookkeeping, not prerequisites for joining the room (the LiveKit room
+      // itself is keyed off subject.id, not session_id), so they used to add
+      // 3-4 extra sequential network round trips before anyone saw video/name.
+      // They now run in the background (see bookkeeping IIFE below) and just
+      // fill in sessionId/attendanceId/etc. a moment later.
       setPhase("live");
       setHasConnected(true);   // unlock overlay PiP/minimize — user is now in the class
       try { playJoinSound(); } catch {}
+
+      // ── Background session bookkeeping — does NOT block the room connecting ──
+      (async()=>{
+        try{
+          // FIX: pick the session that is ACTUALLY live/active first, only falling back to a
+          // merely-scheduled row if none is live. Sorting by scheduled_at alone was wrong: a
+          // future pre-scheduled occurrence of a recurring class always has a later scheduled_at
+          // than today's already-live session, so it was being picked instead — causing students'
+          // attendance_logs/class_participants rows to be written against the wrong session_id.
+          // The LiveKit call itself still worked (room name is keyed off subject_id, not session
+          // id), but the admin dashboard's participant count — looked up by the real live
+          // session's id — found nothing, showing 0 while people were actually in the class.
+          const{data:liveRows}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active"]).order("actual_start_time",{ascending:false,nullsFirst:false}).limit(1);
+          let sessions=liveRows;
+          if(!sessions?.length){
+            const{data:scheduledRows}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","scheduled").order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
+            sessions=scheduledRows;
+          }
+          if(sessions?.length){
+            const freshSessionId=sessions[0].id;
+            // FIX BUG 1: Apply class settings using the freshly-retrieved session ID, not the
+            // stale sessionId state (which is null when a teacher starts a new class for the first time).
+            if(settings){await supabase.from("live_sessions").update({...settings,actual_start_time:new Date().toISOString(),status:"live"}).eq("id",freshSessionId);}
+            setSessionId(freshSessionId);setSessionInfo(sessions[0]);
+            // FIX: check for an attendance_logs row this student already has for
+            // this exact session (from an earlier stint that disconnected/logged
+            // out) before inserting a new one. Reusing it means a rejoin shows up
+            // as ONE continuous attendance record instead of a duplicate entry.
+            const{data:existingAtt}=await supabase.from("attendance_logs").select("id,duration_seconds").eq("session_id",freshSessionId).eq("user_id",user.id).maybeSingle();
+            if(existingAtt){
+              attPriorDurationRef.current=existingAtt.duration_seconds||0;
+              setAttendanceId(existingAtt.id);
+              await supabase.from("attendance_logs").update({left_at:null,device_info:navigator.userAgent}).eq("id",existingAtt.id);
+            }else{
+              attPriorDurationRef.current=0;
+              const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
+              if(att)setAttendanceId(att.id);
+            }
+            await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});
+            // FIX BUG 8: Subscribe to session-end immediately here — before the useEffect cycle —
+            // so there is no window where the teacher can end the class and students miss the event.
+            if(!isPrivileged&&!sessionEndChannelRef.current){
+              const endCh=supabase.channel(`session-end-${freshSessionId}`)
+                .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${freshSessionId}`},
+                  (payload:any)=>{if(payload.new?.status==="ended"&&!intentionalLeaveRef.current)setPhase("ended");})
+                .subscribe();
+              sessionEndChannelRef.current=endCh;
+            }
+          }
+        }catch(bookkeepErr){
+          // Non-fatal: the call itself is already connected. Attendance/participant
+          // rows just won't be recorded for this join — log for diagnosis instead
+          // of surfacing an error screen over an otherwise-working class.
+          console.warn("[ClassroomView] session bookkeeping failed:",bookkeepErr);
+        }
+      })();
     }catch(e:any){setError(e?.message||"Failed to connect");}finally{setLoading(false);}
   };
 
