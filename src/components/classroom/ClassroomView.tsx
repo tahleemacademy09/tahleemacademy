@@ -538,8 +538,12 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     isReconnectingRef.current=true;
     setReconnecting(true);
     // Exponential backoff, capped higher while backgrounded so we don't
-    // hammer the token endpoint for minutes on end.
-    const backoffMs=Math.min(1000*Math.pow(2,autoReconnectCountRef.current),backoffCapMs);
+    // hammer the token endpoint for minutes on end. Base lowered from 1000ms
+    // to 400ms so the FIRST retry (by far the most common case — a brief
+    // network blip) fires almost immediately: combined with the 1s drop
+    // debounce above, a normal reconnect now completes in ~2-3s instead of
+    // several seconds, while later attempts still back off further apart.
+    const backoffMs=Math.min(400*Math.pow(2,autoReconnectCountRef.current),backoffCapMs);
     await new Promise(r=>setTimeout(r,backoffMs));
     try{
       const{data}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}});

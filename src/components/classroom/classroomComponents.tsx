@@ -45,7 +45,7 @@ import PDFViewer, { prewarmPDF } from "./PDFViewer";
 import LiveClassFilePanel from "./LiveClassFilePanel";
 import SubjectAssignments from "./SubjectAssignments";
 import { useIsMobile }   from "@/hooks/use-mobile";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useReducer } from "react";
 
 export interface ClassroomViewProps { subject: any; onLeave: () => void; onMinimize?: () => void; autoJoin?: boolean; }
 export type LayoutMode = "grid"|"spotlight"|"horizontal"|"vertical"|"focus";
@@ -345,7 +345,7 @@ export const CSS = `
    or not. Background reconnection is allowed to be far more patient before
    giving up (see BACKGROUND_MAX_ATTEMPTS in autoReconnect below) instead of
    relying on a silent multi-minute wait to do that job.                    */
-export const WS_DROP_DEBOUNCE_MS = 3_000; // 3s — enough to ignore a single flicker, not enough to sit dead
+export const WS_DROP_DEBOUNCE_MS = 1_000; // 1s — enough to ignore a single flicker, fast enough that reconnect starts almost immediately
 
 /* ══════════════════════════════════════════════════════════════════════
    FEATURE 1: RECONNECTING OVERLAY
@@ -355,8 +355,8 @@ export const WS_DROP_DEBOUNCE_MS = 3_000; // 3s — enough to ignore a single fl
 export const ReconnectingOverlay = ({ attempt }: { attempt: number }) => {
   const [secs, setSecs] = useState(0);
   useEffect(() => {
-    // Show countdown matching the backoff: 1s, 2s, 4s, 8s, 15s cap
-    const wait = Math.min(Math.pow(2, attempt), 15);
+    // Show countdown matching the backoff: 0.4s, 0.8s, 1.6s, 3.2s... 15s cap
+    const wait = Math.min(0.4 * Math.pow(2, attempt), 15);
     setSecs(wait);
     const iv = setInterval(() => setSecs(s => Math.max(0, s - 1)), 1000);
     return () => clearInterval(iv);
@@ -396,7 +396,7 @@ export const ReconnectingOverlay = ({ attempt }: { attempt: number }) => {
       </div>
       <div style={{textAlign:"center"}}>
         <p style={{color:"#e8eaed",fontSize:15,fontWeight:600,margin:"0 0 4px",fontFamily:"'Google Sans',sans-serif"}}>{msg}</p>
-        {secs > 0 && <p style={{color:"rgba(255,255,255,.35)",fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>Retrying in {secs}s…</p>}
+        {secs > 0 && <p style={{color:"rgba(255,255,255,.35)",fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>Retrying in {Math.ceil(secs)}s…</p>}
       </div>
       {/* Soft signal bars animation */}
       <div style={{display:"flex",gap:3,alignItems:"flex-end",height:20}}>
@@ -4308,6 +4308,16 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   const[isSpeaking,setIsSpeaking]=useState(false);
   const[micEnabled,setMicEnabled]=useState(true);
   const room=useRoomContext();
+  // BUG FIX ("pic only shows for the user, others don't see it" / "takes a
+  // while to show a user's details"): name and avatar_url both come from
+  // `participant.metadata`, read fresh on every render below — but nothing
+  // was ever forcing a re-render when that metadata actually arrived or
+  // changed. In practice the tile only ever picked it up by accident, when
+  // some unrelated state (mic, speaking) happened to re-render it a moment
+  // later — which is exactly the "shows up eventually, sometimes never for
+  // other people" symptom. This tick forces an immediate re-render the
+  // instant LiveKit delivers or updates this participant's metadata/name.
+  const[,forceMetaTick]=useReducer((n:number)=>n+1,0);
 
   const attachVideo=useCallback(()=>{
     let pub=participant.getTrackPublication?.(Track.Source.Camera);
@@ -4332,14 +4342,26 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
     participant.on?.("trackMuted",attachVideo);participant.on?.("trackUnmuted",attachVideo);
     participant.on?.("trackPublished",attachVideo);participant.on?.("trackUnpublished",attachVideo);
     participant.on?.("isSpeakingChanged",onSpeak);
+    participant.on?.("participantMetadataChanged",forceMetaTick);
+    participant.on?.("participantNameChanged",forceMetaTick);
     if(isLocal){room.on(RoomEvent.LocalTrackPublished,attachVideo);room.on(RoomEvent.LocalTrackUnpublished,attachVideo);room.on(RoomEvent.TrackMuted,attachVideo);room.on(RoomEvent.TrackUnmuted,attachVideo);}
     const poll=setInterval(attachVideo,1500);
+    // Catch-up poll: metadata can arrive a beat after the participant object
+    // itself is first constructed (e.g. right as someone joins). A few quick
+    // re-renders just after mount make sure it's picked up the moment it's
+    // actually there, instead of waiting on the 1500ms track poll or a lucky
+    // unrelated event — this is what makes a newly-joined user's name/photo
+    // appear immediately rather than "after a while".
+    const metaCatchUp=[200,600,1200].map(ms=>window.setTimeout(forceMetaTick,ms));
     return()=>{
       clearInterval(poll);
+      metaCatchUp.forEach(clearTimeout);
       participant.off?.("trackSubscribed",attachVideo);participant.off?.("trackUnsubscribed",attachVideo);
       participant.off?.("trackMuted",attachVideo);participant.off?.("trackUnmuted",attachVideo);
       participant.off?.("trackPublished",attachVideo);participant.off?.("trackUnpublished",attachVideo);
       participant.off?.("isSpeakingChanged",onSpeak);
+      participant.off?.("participantMetadataChanged",forceMetaTick);
+      participant.off?.("participantNameChanged",forceMetaTick);
       if(isLocal){room.off(RoomEvent.LocalTrackPublished,attachVideo);room.off(RoomEvent.LocalTrackUnpublished,attachVideo);room.off(RoomEvent.TrackMuted,attachVideo);room.off(RoomEvent.TrackUnmuted,attachVideo);}
     };
   },[participant,attachVideo,room,isLocal]);
