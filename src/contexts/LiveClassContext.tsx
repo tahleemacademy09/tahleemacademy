@@ -39,7 +39,7 @@ import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { enterPiPKeepAlive } from "@/hooks/useBackgroundPiP";
 
 const STORAGE_KEY   = "tahleem_live_class";
-import { wasBackPressClaimed } from "@/lib/backPressClaim";
+import { wasBackPressClaimed, claimBackPress } from "@/lib/backPressClaim";
 
 const HISTORY_STATE = "tahleem-live-class";
 
@@ -225,6 +225,18 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
       // Always re-push the guard so back button keeps working for next time
       history.pushState({ [HISTORY_STATE]: true }, "");
       if (wasBackPressClaimed()) return; // a panel already handled this press
+      // FIX ("back button terminates the overlay instead of minimizing it"):
+      // popstate also fires React Router's OWN history listener, which updates
+      // location.pathname to whatever the "previous" route now is — and that
+      // update can land (and re-render) before this handler's minimize takes
+      // effect. GlobalClassroomOverlay watches location.pathname and calls
+      // leaveClass() the moment it sees a route outside its allowed prefixes,
+      // so a back-press landing on a disallowed route (e.g. a public page)
+      // could end the whole call instead of just minimizing it. Claiming the
+      // press here tells that effect "this navigation was caused by our own
+      // back-press handling, not a real navigate-away" so it skips leaveClass()
+      // for this event.
+      claimBackPress();
       // Minimize the classroom
       setState(prev => prev.inCall ? { ...prev, minimized: true, autoJoin: false } : prev);
       // Attempt PiP keep-alive — this is a real browser back-navigation event
