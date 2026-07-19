@@ -595,10 +595,6 @@ export default function QuranPage() {
             }}
           >
           <div className="quran-page-frame">
-            <span className="q-corner q-corner-tl" />
-            <span className="q-corner q-corner-tr" />
-            <span className="q-corner q-corner-bl" />
-            <span className="q-corner q-corner-br" />
             {(() => {
               const wordSpan = (surah: number, ayah: number, text: string, isAyahEnd: boolean, key: string, isFirstOfAyah: boolean) => (
                 <span
@@ -852,51 +848,13 @@ export default function QuranPage() {
         @keyframes quranPageInFromRight { from { opacity:0; transform:translateX(40px); } to { opacity:1; transform:translateX(0); } }
         @keyframes quranPageInFromLeft { from { opacity:0; transform:translateX(-40px); } to { opacity:1; transform:translateX(0); } }
 
-        /* ── Ornate Mushaf page border — a gold double-frame with small
-           corner medallions, echoing the decorative margins printed
-           around every page of a physical Qur'an. ── */
+        /* ── Mushaf page — borderless, with a thin margin so text sits
+           close to the edges. ── */
         .quran-page-frame {
           position: relative;
-          margin: 3px 4px 6px;
-          padding: 26px 14px 22px;
-          border-radius: 8px;
-          border: 3px solid ${Q_GOLD_DARK};
-          background:
-            radial-gradient(circle at 0% 0%, rgba(201,168,76,0.07), transparent 55%),
-            radial-gradient(circle at 100% 100%, rgba(201,168,76,0.07), transparent 55%),
-            repeating-linear-gradient(45deg, rgba(201,168,76,0.03) 0 2px, transparent 2px 16px);
-          box-shadow: 0 2px 10px rgba(31,23,8,0.08), inset 0 0 0 1px rgba(255,255,255,0.4);
+          margin: 0 1px 2px;
+          padding: 6px 4px 6px;
         }
-        .quran-page-frame::before {
-          content: "";
-          position: absolute; inset: 6px;
-          border: 1px solid ${Q_GOLD};
-          border-radius: 5px;
-          pointer-events: none;
-        }
-        .quran-page-frame::after {
-          content: "";
-          position: absolute; inset: 10px;
-          border: 1px solid rgba(201,168,76,0.4);
-          border-radius: 3px;
-          pointer-events: none;
-        }
-        .q-corner {
-          position: absolute; width: 15px; height: 15px;
-          background: ${Q_PARCHMENT};
-          border: 2px solid ${Q_GOLD_DARK};
-          transform: rotate(45deg);
-          z-index: 1;
-        }
-        .q-corner::after {
-          content: "";
-          position: absolute; inset: 2px;
-          border: 1px solid ${Q_GOLD};
-        }
-        .q-corner-tl { top: -8px; left: -8px; }
-        .q-corner-tr { top: -8px; right: -8px; }
-        .q-corner-bl { bottom: -8px; left: -8px; }
-        .q-corner-br { bottom: -8px; right: -8px; }
       `}</style>
     </div>
   );
