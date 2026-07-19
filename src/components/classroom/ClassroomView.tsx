@@ -951,6 +951,24 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <NetworkAdaptiveEngine/>
               {/* Participant count */}
               <ParticipantCountBadge/>
+              {/* Student "Record" control — moved here (beside the participant
+                  badge) from a separate floating pill below the header, and
+                  out of the ⋮ More menu before that. Only shown once
+                  admin/teacher has granted "Allow Students to Record"; reuses
+                  the same toggleStuRecordTop() state SubjectMaterialsPanel
+                  already drives, so both stay in sync instead of tracking
+                  two independent recordings. */}
+              {!isPrivileged&&canStudentRec&&(
+                <div className="gm-badge" onClick={toggleStuRecordTop} style={{
+                  cursor:"pointer",flexShrink:0,
+                  background: stuRec?"rgba(239,68,68,.9)":"rgba(239,68,68,.14)",
+                  border:"1px solid rgba(239,68,68,.4)",
+                  color: stuRec?"#fff":"#fca5a5",
+                }}>
+                  <Circle style={{width:8,height:8,fill: stuRec?"#fff":"#ef4444",color: stuRec?"#fff":"#ef4444",animation: stuRec?"rec-pulse 1s ease-in-out infinite":undefined}}/>
+                  <span style={{fontSize:11,fontWeight:700,fontFamily:"'Google Sans',sans-serif"}}>{stuRec?"REC":"Record"}</span>
+                </div>
+              )}
               {/* Layout switcher — desktop only */}
               {!isMobile&&<LayoutSwitcher layout={layout} onChange={setLayout}/>}
               {/* RecController — admin only, icon-only on mobile */}

@@ -4355,6 +4355,18 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   const localKnownName=user?.user_metadata?.full_name||(profile as any)?.full_name;
   const name=participant.name||(isLocal?localKnownName:undefined)||participant.identity||"User";
 
+  // FIX ("show my profile pic in the live class"): camera-off used to always
+  // show a generic grey silhouette, even though every user already has a
+  // profile photo on file. For the LOCAL participant we already have it via
+  // useAuth() (no round trip needed). For REMOTE participants, the
+  // livekit-token function now embeds avatar_url in the participant's
+  // metadata JSON (alongside role/name), so we parse that here — same
+  // source, same network-handshake timing, as participant.name above.
+  const remoteMeta=!isLocal&&participant.metadata?(()=>{try{return JSON.parse(participant.metadata);}catch{return null;}})():null;
+  const avatarUrl=isLocal?(profile as any)?.avatar_url:remoteMeta?.avatar_url;
+  const[avatarImgError,setAvatarImgError]=useState(false);
+  useEffect(()=>{setAvatarImgError(false);},[avatarUrl]);
+
   // WhatsApp-style avatar sizes
   const avatarW = pip ? "55%" : size==="small" ? "60%" : "52%";
 
@@ -4404,11 +4416,17 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
             display:"flex",alignItems:"center",justifyContent:"center",
             border: isSpeaking ? "3px solid #25D366" : "3px solid #3a4a52",
             flexShrink:0,
+            overflow:"hidden",
           }}>
-            <svg viewBox="0 0 200 220" style={{width:avatarW,height:avatarW}} fill="none">
-              <circle cx="100" cy="72" r="52" fill="#8696a0"/>
-              <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#8696a0"/>
-            </svg>
+            {avatarUrl&&!avatarImgError ? (
+              <img src={avatarUrl} alt="" onError={()=>setAvatarImgError(true)}
+                style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+            ) : (
+              <svg viewBox="0 0 200 220" style={{width:avatarW,height:avatarW}} fill="none">
+                <circle cx="100" cy="72" r="52" fill="#8696a0"/>
+                <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#8696a0"/>
+              </svg>
+            )}
           </div>
           {/* Name shown in the bottom pill (below) — no duplicate here */}
           {/* Speaking wave */}
@@ -4662,9 +4680,6 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
   const[emojisOpen,setEmojisOpen]=useState(false);
   const[audioPicker,setAudioPicker]=useState(false);
   const[videoPicker,setVideoPicker]=useState(false);
-  const[stuRec,setStuRec]=useState(false);
-  const stuMrRef=useRef<MediaRecorder|null>(null);
-  const stuChunks=useRef<Blob[]>([]);
   const[camFacing,setCamFacing]=useState<"user"|"environment">("user");
   const[audioDevices,setAudioDevices]=useState<MediaDeviceInfo[]>([]);
   const[videoDevices,setVideoDevices]=useState<MediaDeviceInfo[]>([]);
@@ -4767,25 +4782,6 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
     const n=!handUp;setHandUp(n);
     await supabase.from("class_participants").update({hand_raised:n,hand_raised_at:n?new Date().toISOString():null}).eq("session_id",sessionId).eq("student_id",user.id);
     try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"hand_raise",identity:room.localParticipant.identity,name:room.localParticipant.name||user?.user_metadata?.full_name||"Student",raised:n})),{reliable:true});}catch{}
-  };
-  const toggleStuRecord=async()=>{
-    if(stuRec){
-      stuMrRef.current?.stop();
-      stuMrRef.current!.onstop=()=>{
-        const mt=stuMrRef.current?.mimeType||"audio/webm";
-        const blob=new Blob(stuChunks.current,{type:mt});
-        const url=URL.createObjectURL(blob);
-        const a=document.createElement("a");a.href=url;a.download=`class-${Date.now()}.webm`;a.click();URL.revokeObjectURL(url);stuChunks.current=[];
-      };setStuRec(false);
-    }else{
-      try{
-        const s=await navigator.mediaDevices.getUserMedia({audio:true});
-        const mime=["audio/webm","audio/mp4","audio/ogg"].find(t=>{try{return MediaRecorder.isTypeSupported(t);}catch{return false;}})||"";
-        const mr=new MediaRecorder(s,mime?{mimeType:mime}:undefined);
-        stuChunks.current=[];mr.ondataavailable=e=>{if(e.data.size>0)stuChunks.current.push(e.data);};
-        mr.start(1000);stuMrRef.current=mr;setStuRec(true);
-      }catch{toast({title:"Microphone access denied"});}
-    }
   };
   const sendEmoji=(e:string)=>{
     setEmojisOpen(false);
@@ -4933,34 +4929,11 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
       </div>,portal
     )}
 
-    {/* FIX: once admin grants "Allow Students to Record", the only way a
-        student could find the record toggle was by opening the ⋮ More menu —
-        easy to miss entirely, so students often never noticed they'd been
-        given permission. Now a persistent red control sits at the top of the
-        screen the whole time the permission is active, matching the same
-        top-of-screen visibility as the "This class is being recorded" badge
-        shown when the teacher/admin records the whole class. Tapping it
-        starts/stops the student's own local recording — same
-        toggleStuRecord() handler the More-menu item used to call. */}
-    {!isPrivileged&&canStudentRecProp&&portal&&createPortal(
-      <button onClick={toggleStuRecord} style={{
-        position:"fixed",top:64,right:16,zIndex:9000,
-        display:"flex",alignItems:"center",gap:8,
-        background: stuRec?"rgba(239,68,68,.9)":"rgba(239,68,68,.15)",
-        border:"1px solid rgba(239,68,68,.4)",borderRadius:20,
-        padding:"6px 14px",backdropFilter:"blur(8px)",cursor:"pointer",
-        boxShadow: stuRec?"0 2px 10px rgba(239,68,68,.4)":"none",
-      }}>
-        <div style={{
-          width:8,height:8,borderRadius:"50%",
-          background: stuRec?"#fff":"#ef4444",
-          animation: stuRec?"rec-pulse 1s ease-in-out infinite":undefined,
-        }}/>
-        <span style={{fontSize:12,fontWeight:700,color: stuRec?"#fff":"#fca5a5"}}>
-          {stuRec?"Recording…":"Record"}
-        </span>
-      </button>,portal
-    )}
+    {/* Student "Record" control moved to the top header bar, beside the
+        participant-count badge — see ClassroomView's header row. It needs
+        the lifted stuRec/toggleStuRecordTop state (shared with
+        SubjectMaterialsPanel) rather than a second, separate local copy of
+        the same feature living down here in the bottom bar. */}
 
     {/* ══ CONTROL BAR ══ */}
     <div className="cv-bar gm-bar" style={{
