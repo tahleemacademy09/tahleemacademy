@@ -830,7 +830,16 @@ const LiveClassManagement = () => {
                         </div>
                       </div>
                       {isNow&&!relatedSess && (
-                        <button className="lc-btn" style={{background:G,color:"#fff",fontSize:11,padding:"6px 12px",flexShrink:0}} onClick={e=>{e.stopPropagation();}}>
+                        <button className="lc-btn" style={{background:G,color:"#fff",fontSize:11,padding:"6px 12px",flexShrink:0}} onClick={e=>{
+                          e.stopPropagation();
+                          // FIX: this button used to only stopPropagation() and do nothing —
+                          // it never called goLive/startInstantClass, so tapping "Go Live" on
+                          // the Today timetable silently did nothing. Reuse a scheduled
+                          // session for this subject if one exists, else start instantly.
+                          const scheduledSess=sessions.find(x=>x.subject_id===slot.subject_id&&x.status==="scheduled");
+                          if(scheduledSess)goLive(scheduledSess);
+                          else if(sub)startInstantClass(sub);
+                        }}>
                           Go Live
                         </button>
                       )}
