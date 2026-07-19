@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
 
     // Get display name
     const { data: profile } = await serviceClient
-      .from('profiles').select('full_name').eq('user_id', user.id).single();
+      .from('profiles').select('full_name, avatar_url').eq('user_id', user.id).single();
     const participantName = profile?.full_name || user.email || 'Anonymous';
 
     let finalRoomName: string;
@@ -180,7 +180,7 @@ Deno.serve(async (req) => {
         canSubscribe:   true,
         canPublishData: true,
       },
-      metadata: JSON.stringify({ role: roleLabel, user_id: user.id, name: participantName }),
+      metadata: JSON.stringify({ role: roleLabel, user_id: user.id, name: participantName, avatar_url: profile?.avatar_url || null }),
     };
 
     if (isPrivileged) {
