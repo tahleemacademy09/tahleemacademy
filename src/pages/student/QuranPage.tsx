@@ -76,8 +76,8 @@ export default function QuranPage() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("surah");
   const [surahQuery, setSurahQuery] = useState("");
 
-  const [reciterMenuAnchor, setReciterMenuAnchor] = useState<{ left: number; bottom: number } | null>(null);
-  const [speedMenuAnchor, setSpeedMenuAnchor] = useState<{ left: number; bottom: number } | null>(null);
+  const [reciterMenuAnchor, setReciterMenuAnchor] = useState<{ left: number; top: number } | null>(null);
+  const [speedMenuAnchor, setSpeedMenuAnchor] = useState<{ left: number; top: number } | null>(null);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -106,6 +106,15 @@ export default function QuranPage() {
   // area, instead of scrolling or shrinking only some lines.
   const [pageScale, setPageScale] = useState(1);
   const [linesReady, setLinesReady] = useState(false);
+  // Guards the swipe flash: while a page is turning, `pageLines` is briefly
+  // null (not yet fetched). Left unguarded, that null was read as "confirmed
+  // no line data" and the page popped in immediately at the *previous*
+  // page's fit-to-screen scale, then jumped again once the real lines and
+  // correct scale arrived a moment later — the "small, then normal" flicker.
+  // This timer only lets the free-flowing fallback render after a short
+  // grace period with no data, so a normal (fast) page turn always waits
+  // for the real mushaf lines and never shows the wrong-scaled fallback.
+  const pageLinesFallbackTimerRef = useRef<number | null>(null);
 
   const engine = useQuranAudioEngine();
 
@@ -124,6 +133,7 @@ export default function QuranPage() {
     setLoading(true);
     setSelected(null);
     engine.stop();
+    if (pageLinesFallbackTimerRef.current != null) { clearTimeout(pageLinesFallbackTimerRef.current); pageLinesFallbackTimerRef.current = null; }
     setPageLines(null);
     setLinesReady(false);
     getPageText(clamped, true).then(async (v) => {
@@ -133,9 +143,22 @@ export default function QuranPage() {
       localStorage.setItem(LAST_PAGE_KEY, String(clamped));
       setLoading(false);
       // Best-effort: true mushaf line layout for this page. If it fails
-      // (offline, CORS, etc.) we silently keep the free-flowing fallback
-      // built from `verses` above — nothing breaks either way.
-      getPageLines(clamped).then(lines => { if (loadTokenRef.current === token) setPageLines(lines); });
+      // (offline, CORS, etc.) we fall back to the free-flowing layout built
+      // from `verses` above — but only after a short grace period with no
+      // data, so a normal (fast) page turn always waits for the real lines
+      // instead of flashing the fallback at the wrong scale first.
+      pageLinesFallbackTimerRef.current = window.setTimeout(() => {
+        if (loadTokenRef.current === token) setPageLines(prev => prev ?? []);
+      }, 650);
+      getPageLines(clamped).then(lines => {
+        if (loadTokenRef.current !== token) return;
+        if (pageLinesFallbackTimerRef.current != null) { clearTimeout(pageLinesFallbackTimerRef.current); pageLinesFallbackTimerRef.current = null; }
+        setPageLines(lines);
+      }).catch(() => {
+        if (loadTokenRef.current !== token) return;
+        if (pageLinesFallbackTimerRef.current != null) { clearTimeout(pageLinesFallbackTimerRef.current); pageLinesFallbackTimerRef.current = null; }
+        setPageLines([]);
+      });
       // fetch custom recitations for any surah on this page we haven't seen yet
       const distinct = Array.from(new Set(v.map(vv => vv.surah)));
       const missing = distinct.filter(s => !(s in recitationsBySurah));
@@ -201,7 +224,8 @@ export default function QuranPage() {
   // wrap it onto a second visual row. Re-runs whenever the page's lines
   // change or the reader column is resized (e.g. rotate, sidebar toggle).
   useLayoutEffect(() => {
-    if (!pageLines || !pageLines.length) { setLineFontSizes({}); setLinesReady(true); return; }
+    if (pageLines === null) return; // still pending — wait for real data or the grace-period fallback, don't flash
+    if (!pageLines.length) { setLineFontSizes({}); setLinesReady(true); return; }
     const containerEl = linesContainerRef.current;
     if (!containerEl) return;
     let cancelled = false;
@@ -448,6 +472,45 @@ export default function QuranPage() {
             </div>
             <button onClick={openSearch} style={iconBtnStyle("#fff")}><Search size={18} /></button>
           </div>
+
+          {/* ── Playback controls — moved up from the old fixed footer so the
+              mushaf page itself can use the entire rest of the screen. Lives
+              in the same collapsible block as the surah bar above, so both
+              hide together. ── */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "8px 8px",
+            background: "#fff", borderBottom: `1px solid ${Q_BORDER}`,
+            flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch",
+          }}>
+            <div style={{ flexShrink: 0 }}>
+              <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setReciterMenuAnchor({ left: r.left, top: r.bottom + 6 }); }} style={pillBtnStyle()}>
+                <ListMusic size={13} /> {currentReciterLabel} <ChevronDown size={12} />
+              </button>
+            </div>
+
+            <button onClick={toggleActivePlayPause} style={pillBtnStyle(true)}>
+              {isPagePlaying ? <Pause size={13} /> : <Play size={13} />}
+              {t("Play Page", "تشغيل الصفحة")}
+            </button>
+
+            <button
+              onClick={() => engine.setRepeatMode(engine.repeatMode === "off" ? "verse" : engine.repeatMode === "verse" ? "surah" : "off")}
+              style={pillBtnStyle(engine.repeatMode !== "off")}
+            >
+              {engine.repeatMode === "verse" ? <Repeat1 size={13} /> : <Repeat size={13} />}
+              {engine.repeatMode === "off" ? t("Repeat: Off", "التكرار: إيقاف") : engine.repeatMode === "verse" ? t("Repeat: Verse", "تكرار الآية") : t("Repeat: Surah", "تكرار السورة")}
+            </button>
+
+            <div style={{ flexShrink: 0 }}>
+              <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setSpeedMenuAnchor({ left: r.left, top: r.bottom + 6 }); }} style={pillBtnStyle()}>
+                <Gauge size={13} /> {engine.rate}x
+              </button>
+            </div>
+
+            <button onClick={() => { const v = !showTranslation; setShowTranslation(v); localStorage.setItem(TRANSLATION_KEY, v ? "1" : "0"); }} style={pillBtnStyle(showTranslation)}>
+              <Languages size={13} /> {t("Translation", "الترجمة")}
+            </button>
+          </div>
         </div>
       )}
 
@@ -473,7 +536,7 @@ export default function QuranPage() {
       {reciterMenuAnchor && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 35 }} onClick={() => setReciterMenuAnchor(null)} />
-          <div style={{ ...dropdownStyle(), position: "fixed", top: "auto", left: reciterMenuAnchor.left, bottom: reciterMenuAnchor.bottom, zIndex: 40 }}>
+          <div style={{ ...dropdownStyle(), position: "fixed", top: reciterMenuAnchor.top, left: reciterMenuAnchor.left, zIndex: 40 }}>
             {availableReciters.map(r => (
               <button key={r.id} onClick={() => { setReciterId(r.id); localStorage.setItem(RECITER_KEY, r.id); setReciterMenuAnchor(null); }}
                 style={dropdownItemStyle(r.id === reciterId)}>
@@ -495,7 +558,7 @@ export default function QuranPage() {
       {speedMenuAnchor && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 35 }} onClick={() => setSpeedMenuAnchor(null)} />
-          <div style={{ ...dropdownStyle(), position: "fixed", top: "auto", left: speedMenuAnchor.left, bottom: speedMenuAnchor.bottom, minWidth: 90, zIndex: 40 }}>
+          <div style={{ ...dropdownStyle(), position: "fixed", top: speedMenuAnchor.top, left: speedMenuAnchor.left, minWidth: 90, zIndex: 40 }}>
             {[0.75, 1, 1.25, 1.5].map(r => (
               <button key={r} onClick={() => { engine.setRate(r); setSpeedMenuAnchor(null); }} style={dropdownItemStyle(r === engine.rate)}>{r}x</button>
             ))}
@@ -511,7 +574,7 @@ export default function QuranPage() {
         onTouchEnd={onTouchEnd}
         style={{
           flex: 1, overflow: "hidden",
-          padding: selected != null ? "10px 12px 108px" : "10px 12px 56px",
+          padding: selected != null ? "8px 8px 64px" : "8px 8px 10px",
           position: "relative",
           touchAction: "pan-y", display: "flex", justifyContent: "center", alignItems: "flex-start",
         }}
@@ -661,7 +724,7 @@ export default function QuranPage() {
       {/* ── Selected-verse action bar ── */}
       {selected != null && (
         <div style={{
-          position: "fixed", left: 0, right: 0, bottom: 52, background: Q_GREEN, color: "#fff", zIndex: 20,
+          position: "fixed", left: 0, right: 0, bottom: 0, background: Q_GREEN, color: "#fff", zIndex: 20,
           padding: "10px 14px", display: "flex", alignItems: "center", gap: 14, boxShadow: "0 -4px 12px rgba(0,0,0,0.15)",
         }}>
           <span style={{ fontSize: 13, fontWeight: 600 }}>{SURAHS.find(s => s.num === selected.surah)?.name} {selected.ayah}</span>
@@ -681,48 +744,6 @@ export default function QuranPage() {
           <button onClick={() => { setSelected(null); engine.stop(); }} style={iconBtnStyle("#fff")}><X size={16} /></button>
         </div>
       )}
-
-      {/* ── Footer control bar — reciter, play/pause, repeat, speed and
-          translation all on one straight line, fixed to the bottom of the
-          screen. Keeping every control here (instead of a toolbar under the
-          header) leaves the entire middle of the screen free for the mushaf
-          page itself. ── */}
-      <div style={{
-        position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 15, height: 52,
-        display: "flex", alignItems: "center", gap: 6, padding: "0 8px",
-        borderTop: `1px solid ${Q_BORDER}`, background: "#fff",
-        flexWrap: "nowrap", overflowX: "auto", WebkitOverflowScrolling: "touch",
-        boxShadow: "0 -2px 10px rgba(0,0,0,0.06)",
-      }}>
-        <div style={{ flexShrink: 0 }}>
-          <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setReciterMenuAnchor({ left: r.left, bottom: window.innerHeight - r.top + 6 }); }} style={pillBtnStyle()}>
-            <ListMusic size={13} /> {currentReciterLabel} <ChevronDown size={12} />
-          </button>
-        </div>
-
-        <button onClick={toggleActivePlayPause} style={pillBtnStyle(true)}>
-          {isPagePlaying ? <Pause size={13} /> : <Play size={13} />}
-          {t("Play Page", "تشغيل الصفحة")}
-        </button>
-
-        <button
-          onClick={() => engine.setRepeatMode(engine.repeatMode === "off" ? "verse" : engine.repeatMode === "verse" ? "surah" : "off")}
-          style={pillBtnStyle(engine.repeatMode !== "off")}
-        >
-          {engine.repeatMode === "verse" ? <Repeat1 size={13} /> : <Repeat size={13} />}
-          {engine.repeatMode === "off" ? t("Repeat: Off", "التكرار: إيقاف") : engine.repeatMode === "verse" ? t("Repeat: Verse", "تكرار الآية") : t("Repeat: Surah", "تكرار السورة")}
-        </button>
-
-        <div style={{ flexShrink: 0 }}>
-          <button onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); setSpeedMenuAnchor({ left: r.left, bottom: window.innerHeight - r.top + 6 }); }} style={pillBtnStyle()}>
-            <Gauge size={13} /> {engine.rate}x
-          </button>
-        </div>
-
-        <button onClick={() => { const v = !showTranslation; setShowTranslation(v); localStorage.setItem(TRANSLATION_KEY, v ? "1" : "0"); }} style={pillBtnStyle(showTranslation)}>
-          <Languages size={13} /> {t("Translation", "الترجمة")}
-        </button>
-      </div>
 
       {/* ── Sidebar: Surah / Juz / Bookmarks ── */}
       {sidebarOpen && (
@@ -836,8 +857,8 @@ export default function QuranPage() {
            around every page of a physical Qur'an. ── */
         .quran-page-frame {
           position: relative;
-          margin: 4px 6px 10px;
-          padding: 26px 20px 22px;
+          margin: 3px 4px 6px;
+          padding: 26px 14px 22px;
           border-radius: 8px;
           border: 3px solid ${Q_GOLD_DARK};
           background:
