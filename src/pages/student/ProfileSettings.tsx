@@ -482,7 +482,15 @@ export default function ProfileSettings() {
   const uploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file || !user) return;
     setAvatarUploading(true);
-    const path = `avatars/${user.id}.${file.name.split(".").pop()}`;
+    // FIX ("new row violates row-level security policy" on avatar upload):
+    // the path used to be `avatars/${user.id}.ext` — inside the "avatars"
+    // BUCKET that's a literal "avatars" FOLDER as the first path segment,
+    // not the user's own ID. Supabase's standard per-user storage policy
+    // checks (storage.foldername(name))[1] = auth.uid(), i.e. it expects the
+    // first folder in the path to BE the uploader's user ID — so every
+    // upload was being rejected before it ever reached disk. Putting the
+    // user's own ID as the folder (not the filename) satisfies that policy.
+    const path = `${user.id}/avatar.${file.name.split(".").pop()}`;
     const { error: upErr } = await storageSupabase.storage
       .from("avatars").upload(path, file, { upsert: true, contentType: file.type });
     if (upErr) { toast({ title: "Upload failed", description: upErr.message, variant: "destructive" }); setAvatarUploading(false); return; }
