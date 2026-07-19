@@ -4930,13 +4930,36 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
             <Zap style={{width:14,height:14,color:audioOnly?"#fbbf24":"#a3e635"}}/> {audioOnly?"Exit Audio-Only Mode":"⚡ Audio-Only Mode"}
           </button>
         </>}
-        {!isPrivileged&&canStudentRecProp&&(
-          <button className="gm-more-item" onClick={()=>{toggleStuRecord();setMoreOpen(false);}} style={{color:stuRec?"#ef4444":"#e8eaed"}}>
-            <Circle style={{width:13,height:13,fill:stuRec?"#ef4444":"none"}}/> {stuRec?"Stop Recording":"Record Audio"}
-          </button>
-        )}
-
       </div>,portal
+    )}
+
+    {/* FIX: once admin grants "Allow Students to Record", the only way a
+        student could find the record toggle was by opening the ⋮ More menu —
+        easy to miss entirely, so students often never noticed they'd been
+        given permission. Now a persistent red control sits at the top of the
+        screen the whole time the permission is active, matching the same
+        top-of-screen visibility as the "This class is being recorded" badge
+        shown when the teacher/admin records the whole class. Tapping it
+        starts/stops the student's own local recording — same
+        toggleStuRecord() handler the More-menu item used to call. */}
+    {!isPrivileged&&canStudentRecProp&&portal&&createPortal(
+      <button onClick={toggleStuRecord} style={{
+        position:"fixed",top:64,right:16,zIndex:9000,
+        display:"flex",alignItems:"center",gap:8,
+        background: stuRec?"rgba(239,68,68,.9)":"rgba(239,68,68,.15)",
+        border:"1px solid rgba(239,68,68,.4)",borderRadius:20,
+        padding:"6px 14px",backdropFilter:"blur(8px)",cursor:"pointer",
+        boxShadow: stuRec?"0 2px 10px rgba(239,68,68,.4)":"none",
+      }}>
+        <div style={{
+          width:8,height:8,borderRadius:"50%",
+          background: stuRec?"#fff":"#ef4444",
+          animation: stuRec?"rec-pulse 1s ease-in-out infinite":undefined,
+        }}/>
+        <span style={{fontSize:12,fontWeight:700,color: stuRec?"#fff":"#fca5a5"}}>
+          {stuRec?"Recording…":"Record"}
+        </span>
+      </button>,portal
     )}
 
     {/* ══ CONTROL BAR ══ */}
