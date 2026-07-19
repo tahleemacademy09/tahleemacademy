@@ -186,6 +186,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   /* ── lobby media choices ── */
   const[lobbyMic,setLobbyMic]=useState(false); // OFF by default — user must explicitly enable
   const[lobbyCam,setLobbyCam]=useState(false); // OFF by default — user must explicitly enable
+  // FIX ("lobby mic/cam choice doesn't reflect in class"): MediaAutoPublish used to decide
+  // whether this was a first-join (apply lobby choice) vs a reconnect (apply last-known toggle
+  // state) by reading `hasConnected` from LiveClassContext. But connect() below calls
+  // setHasConnected(true) in the exact same synchronous tick as setPhase("live") — the state
+  // update that mounts <LiveKitRoom> (and therefore MediaAutoPublish) in the first place. React
+  // batches both updates into one commit, so by MediaAutoPublish's FIRST-EVER render,
+  // hasConnected already reads true — making every first join look like a reconnect, so it
+  // silently ignored the mic/cam the user picked in the lobby (students, teachers, admins
+  // alike) and fell back to the default OFF/OFF state instead.
+  // Fix: track "was this the first connect() call" in a plain ref, frozen the moment connect()
+  // runs (before any state changes), and pass it down as an explicit prop instead of relying on
+  // the reactive (and, in this exact spot, already-stale) context value.
+  const everConnectedRef=useRef(false);
+  const isFirstJoinPropRef=useRef(true);
   // Background keep-alive (silent <audio>, WakeLock, MediaSession) is started/stopped
   // from GlobalClassroomOverlay via useBackgroundAudio.ts based on `hasConnected` —
   // no per-component keep-alive needed here anymore.
@@ -419,6 +433,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   },[phase,subject.title]);
 
   const connect=async(action:string,settings?:any,mediaSettings?:{micOn:boolean;cameraOn:boolean})=>{
+    // FIX: capture first-join status in a ref BEFORE setHasConnected(true)/setPhase("live")
+    // fire below — see the comment on isFirstJoinPropRef above for why this must happen here.
+    isFirstJoinPropRef.current=!everConnectedRef.current;
+    everConnectedRef.current=true;
     if(mediaSettings){setLobbyMic(mediaSettings.micOn);setLobbyCam(mediaSettings.cameraOn);}
     // Guard: user must be loaded before inserting attendance rows
     if(!user){setError("Session expired. Please refresh the page.");return;}
@@ -890,7 +908,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* VolumeBooster replaces bare RoomAudioRenderer — Web Audio pipeline: GainNode(2.2×) + DynamicsCompressor(4:1) ensures every remote voice is loud and clear without clipping, crackle, or self-playback */}
           <VolumeBooster/>
           <RoomToContextBridge />
-          <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam}/>
+          <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam} isFirstJoin={isFirstJoinPropRef.current}/>
           <MicKeepAliveFromContext />
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
           <AdminMuteListener isPrivileged={isPrivileged}/>

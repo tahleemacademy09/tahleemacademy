@@ -43,7 +43,7 @@ import { enterPiPKeepAlive, exitPiPKeepAlive, setPiPSource } from "@/hooks/useBa
 import { App as CapApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
 import ClassroomView from "@/components/classroom/ClassroomView";
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useEffect, useRef, useCallback, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { startForegroundService, stopForegroundService } from "@/hooks/useForegroundService";
 import {
   shouldPromptBatteryOptimization,
@@ -51,6 +51,7 @@ import {
   dismissBatteryOptimizationPrompt,
 } from "@/hooks/useBatteryOptimization";
 import { useLocation } from "react-router-dom";
+import { wasBackPressClaimed } from "@/lib/backPressClaim";
 
 // Routes where the overlay is allowed to persist.
 // Navigating to anything else (home, login, register) auto-calls leaveClass().
@@ -81,11 +82,78 @@ export default function GlobalClassroomOverlay() {
   useEffect(() => {
     if (!inCall) return;
     const allowed = ALLOWED_ROUTE_PREFIXES.some(p => location.pathname.startsWith(p));
-    if (!allowed) leaveClass();
+    if (allowed) return;
+    // FIX ("back button terminates the overlay instead of minimizing it"): a
+    // phone back-press fires popstate, which React Router's own listener
+    // reacts to by updating location.pathname to the previous route — that
+    // can land here as a "disallowed" pathname even though LiveClassContext's
+    // popstate handler is (in the same event) minimizing the call, not ending
+    // it. If that handler just claimed this exact back-press, trust it and
+    // skip leaveClass() — only a genuine in-app navigation (link/redirect,
+    // not a back-press) should end the call here.
+    if (wasBackPressClaimed()) return;
+    leaveClass();
   }, [location.pathname, inCall, leaveClass]);
 
   // Track whether the user explicitly minimized (button/back) vs tab-switched
   const userMinimizedRef = useRef(false);
+
+  // ── Draggable round minimized bubble (replaces the old fixed horizontal
+  //    "Return to Class" bar) ─────────────────────────────────────────────
+  // Position is stored as {x, y} distance from the bottom-right corner, in
+  // pixels, so it stays anchored sensibly across viewport-size changes
+  // (rotation, keyboard opening, etc.) instead of drifting to a stale
+  // absolute screen coordinate. null = not dragged yet → default corner.
+  const [bubblePos, setBubblePos] = useState<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{
+    dragging: boolean;
+    startClientX: number; startClientY: number;
+    startX: number; startY: number;
+    moved: boolean;
+  }>({ dragging: false, startClientX: 0, startClientY: 0, startX: 0, startY: 0, moved: false });
+  const BUBBLE_SIZE = 60;
+  const BUBBLE_MARGIN = 14;
+
+  const clampBubblePos = useCallback((x: number, y: number) => {
+    const maxX = window.innerWidth  - BUBBLE_SIZE - BUBBLE_MARGIN;
+    const maxY = window.innerHeight - BUBBLE_SIZE - BUBBLE_MARGIN;
+    return { x: Math.min(Math.max(x, BUBBLE_MARGIN), Math.max(maxX, BUBBLE_MARGIN)), y: Math.min(Math.max(y, BUBBLE_MARGIN), Math.max(maxY, BUBBLE_MARGIN)) };
+  }, []);
+
+  const handleBubblePointerDown = useCallback((e: ReactPointerEvent) => {
+    const current = bubblePos ?? { x: BUBBLE_MARGIN, y: BUBBLE_MARGIN };
+    dragRef.current = {
+      dragging: true, moved: false,
+      startClientX: e.clientX, startClientY: e.clientY,
+      startX: current.x, startY: current.y,
+    };
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+  }, [bubblePos]);
+
+  const handleBubblePointerMove = useCallback((e: ReactPointerEvent) => {
+    const d = dragRef.current;
+    if (!d.dragging) return;
+    const dx = e.clientX - d.startClientX;
+    const dy = e.clientY - d.startClientY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) d.moved = true;
+    // Bubble is positioned via right/bottom, so dragging right/down means
+    // the distance-from-edge shrinks, hence the minus sign.
+    setBubblePos(clampBubblePos(d.startX - dx, d.startY - dy));
+  }, [clampBubblePos]);
+
+  const handleBubblePointerUp = useCallback(() => {
+    const wasTap = !dragRef.current.moved;
+    dragRef.current.dragging = false;
+    if (wasTap) handleReturn();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the bubble on-screen after a rotation or keyboard-triggered resize.
+  useEffect(() => {
+    const onResize = () => setBubblePos(p => (p ? clampBubblePos(p.x, p.y) : p));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [clampBubblePos]);
 
   // FIX: snapshot mic state the moment the tab goes to background so we
   // restore exactly that state — not whatever micEnabled happens to be when
@@ -362,83 +430,81 @@ export default function GlobalClassroomOverlay() {
         />
       </div>
 
-      {/* ── "Return to Class" floating banner — shown when minimized ── */}
-      {minimized && (
-        <div
-          onClick={handleReturn}
-          style={{
-            position:       "fixed",
-            bottom:         "env(safe-area-inset-bottom, 16px)",
-            left:           "50%",
-            transform:      "translateX(-50%)",
-            zIndex:         9000,
-            display:        "flex",
-            alignItems:     "center",
-            gap:            "10px",
-            background:     "linear-gradient(135deg, #0c1f12 0%, #14290f 100%)",
-            border:         "1.5px solid #c9a84c",
-            borderRadius:   "999px",
-            padding:        "10px 20px 10px 14px",
-            cursor:         "pointer",
-            boxShadow:      "0 4px 24px rgba(0,0,0,0.45), 0 0 0 1px rgba(201,168,76,0.15)",
-            userSelect:     "none",
-            WebkitUserSelect: "none",
-            whiteSpace:     "nowrap",
-          }}
-        >
-          {/* Pulsing live dot */}
-          <span style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 10, height: 10 }}>
-            <span style={{
-              position:     "absolute",
-              width:        "100%",
-              height:       "100%",
-              borderRadius: "50%",
-              background:   "#ef4444",
-              opacity:      0.6,
-              animation:    "tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite",
-            }} />
-            <span style={{
-              position:     "relative",
-              width:        8,
-              height:       8,
-              borderRadius: "50%",
-              background:   "#ef4444",
-              display:      "block",
-            }} />
-          </span>
+      {/* ── Round draggable "minimized call" bubble — replaces the old fixed
+         horizontal "Return to Class" bar. Tap = return to class. Drag = move
+         it anywhere on screen (position persists, in px from bottom-right,
+         while this component stays mounted). Pointer events give us mouse +
+         touch + pen with one code path, and pointer capture means the drag
+         keeps tracking even if the finger/cursor leaves the small bubble. ── */}
+      {minimized && (() => {
+        const pos = bubblePos ?? { x: BUBBLE_MARGIN, y: BUBBLE_MARGIN };
+        return (
+          <div
+            onPointerDown={handleBubblePointerDown}
+            onPointerMove={handleBubblePointerMove}
+            onPointerUp={handleBubblePointerUp}
+            onPointerCancel={handleBubblePointerUp}
+            style={{
+              position:      "fixed",
+              right:         `calc(${pos.x}px + env(safe-area-inset-right, 0px))`,
+              bottom:        `calc(${pos.y}px + env(safe-area-inset-bottom, 0px))`,
+              zIndex:        9000,
+              width:         BUBBLE_SIZE,
+              height:        BUBBLE_SIZE,
+              borderRadius:  "50%",
+              background:    "linear-gradient(135deg, #0c1f12 0%, #14290f 100%)",
+              border:        "2px solid #c9a84c",
+              display:       "flex",
+              alignItems:    "center",
+              justifyContent: "center",
+              cursor:        "grab",
+              boxShadow:     "0 6px 20px rgba(0,0,0,0.5), 0 0 0 1px rgba(201,168,76,0.15)",
+              userSelect:    "none",
+              WebkitUserSelect: "none",
+              touchAction:   "none", // let us handle all drag movement ourselves
+            }}
+            title={`${title} — tap to return, drag to move`}
+          >
+            {/* Pulsing live dot, top-right of the bubble */}
+            <span style={{ position: "absolute", top: 4, right: 4, display: "flex", alignItems: "center", justifyContent: "center", width: 10, height: 10 }}>
+              <span style={{
+                position:     "absolute",
+                width:        "100%",
+                height:       "100%",
+                borderRadius: "50%",
+                background:   "#ef4444",
+                opacity:      0.6,
+                animation:    "tahleem-ping 1.4s cubic-bezier(0,0,0.2,1) infinite",
+              }} />
+              <span style={{
+                position:     "relative",
+                width:        8,
+                height:       8,
+                borderRadius: "50%",
+                background:   "#ef4444",
+                display:      "block",
+              }} />
+            </span>
 
-          {/* Subject name */}
-          <span style={{
-            color:      "#f5f0e8",
-            fontSize:   "13px",
-            fontWeight: 600,
-            maxWidth:   "160px",
-            overflow:   "hidden",
-            textOverflow: "ellipsis",
-          }}>
-            {title}
-          </span>
+            {/* Mic-off indicator, so a glance tells you if you're muted while minimized */}
+            {!micEnabled && (
+              <span style={{ position: "absolute", bottom: 3, right: 3, width: 16, height: 16, borderRadius: "50%", background: "#ef4444", display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px solid #0c1f12" }}>
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                  <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
+                  <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23" />
+                </svg>
+              </span>
+            )}
 
-          {/* Divider */}
-          <span style={{ width: 1, height: 14, background: "rgba(201,168,76,0.35)" }} />
-
-          {/* CTA */}
-          <span style={{
-            color:       "#c9a84c",
-            fontSize:    "12px",
-            fontWeight:  700,
-            letterSpacing: "0.02em",
-            textTransform: "uppercase",
-          }}>
-            Return to Class
-          </span>
-
-          {/* Chevron */}
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#c9a84c" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-        </div>
-      )}
+            {/* Center glyph */}
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#c9a84c" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M23 7l-7 5 7 5V7z" />
+              <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+            </svg>
+          </div>
+        );
+      })()}
 
       {/* ── "Allow background running" prompt — Android OEM battery managers ── */}
       {showBatteryPrompt && (

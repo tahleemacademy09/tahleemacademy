@@ -858,7 +858,7 @@ export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) =
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // VolumeBooster — routes every remote audio track through a Web Audio pipeline:
-//   MediaStreamSource → GainNode (2.2×) → DynamicsCompressor → speakers
+//   MediaStreamSource(s) → GainNode (2.2×) → DynamicsCompressor → ONE real <audio> element
 //
 // Why this exists:
 //   1. LiveKit publishes at 64 kbps; a GainNode amplifies every remote voice
@@ -867,11 +867,33 @@ export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) =
 //      everyone is consistently audible without the "pumping" crackle that
 //      aggressive ratios (12:1) produce on poor networks.
 //   3. We deliberately SKIP the local participant so you never hear yourself.
-//   4. Each track gets its own source node so 2+ people can speak at once
-//      with zero interference — Web Audio mixes them natively.
-//   5. If the AudioContext is still suspended when a track arrives (common on
-//      mobile before first gesture), the <audio> fallback plays unmuted and is
-//      migrated to the Web Audio pipeline once the AC resumes.
+//   4. Every remote track gets its own source node feeding the SAME gain node,
+//      so 2-3 people can speak at once with zero interference — Web Audio
+//      mixes them natively into one signal.
+//
+//   5. FIX — "I hear myself" echo + "2-3 people talking causes noise/garble":
+//      The pipeline used to end at `ac.destination`, and — separately — every
+//      remote track also got its own individual <audio> element (muted once
+//      Web Audio took over, unmuted as a fallback otherwise). Two problems
+//      followed from that:
+//        a) `ac.destination` sends audio straight to the OS output WITHOUT
+//           going through a real HTML media element. Chrome/Android's
+//           built-in echo canceller (echoCancellation: true on the mic
+//           constraints) reliably picks up its playback reference from real
+//           <audio>/<video> elements — routing straight to ac.destination is
+//           a known way to make the browser's AEC blind to what's actually
+//           being played, which is exactly what caused mic self-echo,
+//           especially over a phone's built-in speaker (no headphones).
+//        b) Running N separate <audio> elements (or a mix of muted-element +
+//           web-audio-node per remote participant) plays overlapping copies
+//           of the mixed signal through slightly different output paths /
+//           latencies at once → comb-filtering ("metallic"/garbled sound)
+//           exactly when 2-3 people spoke simultaneously.
+//      Fix: mix every remote source into ONE MediaStreamAudioDestinationNode,
+//      and play THAT through exactly one real, unmuted <audio> element. There
+//      is now only one thing ever hitting the speaker, so the browser's AEC
+//      has a single clean reference to cancel against, and there's no
+//      possibility of two overlapping playback paths causing comb-filtering.
 // ═══════════════════════════════════════════════════════════════════════════════
 // Base amplification factor for VolumeBooster before the user's adjustable
 // audioBoost multiplier (Settings → Audio → Volume Boost) is applied.
@@ -885,36 +907,22 @@ export const VolumeBooster = () => {
   const acRef        = useRef<AudioContext | null>(null);
   const gainRef      = useRef<GainNode | null>(null);
   const compRef      = useRef<DynamicsCompressorNode | null>(null);
-  // Map trackSid → { source, audioEl } so we can clean up properly
-  const nodesRef     = useRef<Map<string, { source: MediaStreamAudioSourceNode; el: HTMLAudioElement }>>(new Map());
-  // FIX: track whether Web Audio pipeline is usable; fall back to plain <audio> if not
-  const webAudioOkRef = useRef<boolean>(true);
+  const destRef      = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const outElRef     = useRef<HTMLAudioElement | null>(null);
+  // Map trackSid → source node — one per remote participant, all feeding the same gain node.
+  const sourcesRef   = useRef<Map<string, MediaStreamAudioSourceNode>>(new Map());
+  // Only used in the rare case Web Audio is entirely unavailable (very old browsers).
+  const fallbackElsRef = useRef<Map<string, HTMLAudioElement>>(new Map());
+  const webAudioOkRef  = useRef<boolean>(true);
 
-  // ── Helper: resume AudioContext and, once running, migrate any fallback <audio>
-  //    elements (created while AC was suspended) into the Web Audio pipeline.
-  //    Fixes "teacher joined but I heard nothing for 30 s" on iOS/Android where
-  //    the first gesture comes after tracks have already arrived.
   const tryResumeAC = useCallback(() => {
-    const ac   = acRef.current;
-    const gain = gainRef.current;
+    const ac = acRef.current;
     if (!ac || ac.state !== "suspended") return;
-    ac.resume().then(() => {
-      if (!gain || !webAudioOkRef.current) return;
-      for (const [, node] of nodesRef.current) {
-        if (!node.el.muted && node.source == null) {
-          try {
-            const ms2 = new MediaStream((node.el.srcObject as MediaStream).getTracks());
-            const src = ac.createMediaStreamSource(ms2);
-            src.connect(gain);
-            (node as any).source = src;
-            node.el.muted = true; // hand off to Web Audio — silence the element
-          } catch {}
-        }
-      }
-    }).catch(() => { webAudioOkRef.current = false; });
+    ac.resume().catch(() => { webAudioOkRef.current = false; });
   }, []);
 
-  // ── 1. Build the Web Audio pipeline once ────────────────────────────────────
+  // ── 1. Build the Web Audio pipeline once: gain → compressor → single
+  //    MediaStreamDestination → single real <audio> element ──────────────────
   useEffect(() => {
     try {
       // Use native sample rate — avoids resampling artifacts on device DAC.
@@ -941,9 +949,31 @@ export const VolumeBooster = () => {
       comp.release.value   = 0.25;  // 250 ms → slow enough to avoid pumping
       compRef.current = comp;
 
-      // Pipeline: source(s) → gain → compressor → speakers
+      // Single mix-down destination — every remote participant's source node
+      // connects to `gain` above, so this destination always carries the
+      // FULL mix of everyone currently talking, correctly summed by Web Audio.
+      const dest = ac.createMediaStreamDestination();
+      destRef.current = dest;
+
+      // Pipeline: source(s) → gain → compressor → single destination
       gain.connect(comp);
-      comp.connect(ac.destination);
+      comp.connect(dest);
+
+      // The ONE real <audio> element for the whole call. This is what the
+      // browser's echo canceller uses as its playback reference — a single
+      // unmuted media element is the reliable pattern across Chrome/Android/
+      // iOS, unlike routing straight to ac.destination or running several
+      // elements in parallel (see the comment block above this component).
+      const el = document.createElement("audio");
+      el.srcObject = dest.stream;
+      el.autoplay  = true;
+      el.muted     = false;
+      el.volume    = 1.0;
+      try { (el as any).audioPlaybackHint = "playback"; } catch {}
+      el.style.display = "none";
+      document.body.appendChild(el);
+      el.play().catch(() => {});
+      outElRef.current = el;
     } catch {
       webAudioOkRef.current = false;
     }
@@ -969,6 +999,7 @@ export const VolumeBooster = () => {
       document.removeEventListener("touchend",         resume);
       document.removeEventListener("keydown",          resume);
       document.removeEventListener("visibilitychange", onVis);
+      try { outElRef.current?.pause(); outElRef.current?.remove(); } catch {}
       acRef.current?.close().catch(() => {});
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -982,7 +1013,9 @@ export const VolumeBooster = () => {
     if (gainRef.current) gainRef.current.gain.value = BASE_GAIN * audioBoost;
   }, [audioBoost]);
 
-  // ── 2. Connect / disconnect tracks as participants join or leave ─────────────
+  // ── 2. Connect / disconnect per-participant source nodes as people join or
+  //    leave / start or stop talking — all feed into the SAME gain node, so
+  //    Web Audio mixes concurrent speakers natively with zero interference. ──
   useEffect(() => {
     const ac   = acRef.current;
     const gain = gainRef.current;
@@ -1006,50 +1039,44 @@ export const VolumeBooster = () => {
       const sid = pub.trackSid;
       activeIds.add(sid);
 
-      if (!nodesRef.current.has(sid)) {
-        // Try the Web Audio path FIRST (gain + compression).
-        // Running BOTH Web Audio AND an unmuted <audio> simultaneously causes the
-        // same track to play through two pipelines with slightly different latency
-        // → comb-filtering / metallic crackle. One path only.
-        let source: MediaStreamAudioSourceNode | null = null;
-        let useWebAudio = false;
-        if (ac && gain && webAudioOkRef.current && ac.state === "running") {
+      if (ac && gain && webAudioOkRef.current) {
+        if (!sourcesRef.current.has(sid)) {
           try {
-            const ms2 = new MediaStream([pub.track.mediaStreamTrack]);
-            source = ac.createMediaStreamSource(ms2);
+            const ms = new MediaStream([pub.track.mediaStreamTrack]);
+            const source = ac.createMediaStreamSource(ms);
             source.connect(gain);
-            useWebAudio = true;
-          } catch { source = null; useWebAudio = false; }
+            sourcesRef.current.set(sid, source);
+          } catch {}
         }
-
-        // <audio> element — always created as the fallback anchor.
-        // • Web Audio running  → element MUTED  (prevents double-playback / crackle)
-        // • Web Audio blocked  → element UNMUTED (students always hear audio)
-        // tryResumeAC() will migrate it to Web Audio once the AC wakes up.
+      } else if (!fallbackElsRef.current.has(sid)) {
+        // Extremely rare: Web Audio unavailable entirely. Fall back to a
+        // single element per track — not ideal (no shared AEC reference,
+        // no gain boost) but keeps audio audible rather than silent.
         const ms = new MediaStream([pub.track.mediaStreamTrack]);
         const el = document.createElement("audio");
         el.srcObject = ms;
         el.autoplay  = true;
-        el.muted     = useWebAudio;
+        el.muted     = false;
         el.volume    = 1.0;
-        // Jitter buffer hint: "playback" tells the browser to buffer slightly more
-        // aggressively — smooths over packet bursts on poor networks and reduces
-        // the dropout / crackling artifacts during congestion.
         try { (el as any).audioPlaybackHint = "playback"; } catch {}
         el.style.display = "none";
         document.body.appendChild(el);
         el.play().catch(() => {});
-
-        nodesRef.current.set(sid, { source: source as any, el });
+        fallbackElsRef.current.set(sid, el);
       }
     }
 
-    // Disconnect tracks that are no longer subscribed
-    for (const [sid, { source, el }] of nodesRef.current) {
+    // Disconnect/remove tracks that are no longer subscribed
+    for (const [sid, source] of sourcesRef.current) {
       if (!activeIds.has(sid)) {
-        try { source?.disconnect(); } catch {}
+        try { source.disconnect(); } catch {}
+        sourcesRef.current.delete(sid);
+      }
+    }
+    for (const [sid, el] of fallbackElsRef.current) {
+      if (!activeIds.has(sid)) {
         try { el.pause(); el.srcObject = null; el.remove(); } catch {}
-        nodesRef.current.delete(sid);
+        fallbackElsRef.current.delete(sid);
       }
     }
   }, [tracks]);
@@ -1057,18 +1084,21 @@ export const VolumeBooster = () => {
   // ── 3. Full cleanup on unmount ───────────────────────────────────────────────
   useEffect(() => {
     return () => {
-      for (const { source, el } of nodesRef.current.values()) {
-        try { source?.disconnect(); } catch {}
+      for (const source of sourcesRef.current.values()) {
+        try { source.disconnect(); } catch {}
+      }
+      sourcesRef.current.clear();
+      for (const el of fallbackElsRef.current.values()) {
         try { el.pause(); el.srcObject = null; el.remove(); } catch {}
       }
-      nodesRef.current.clear();
+      fallbackElsRef.current.clear();
     };
   }, []);
 
   return null; // pure audio processing — no visible UI
 };
 
-export const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobbyMic?: boolean; lobbyCam?: boolean }) => {
+export const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false, isFirstJoin = true }: { lobbyMic?: boolean; lobbyCam?: boolean; isFirstJoin?: boolean }) => {
   const room = useRoomContext();
   // FIX BUG 5: Capture the latest lobby values in a ref so the async effect always
   // reads the current state even if React batches the prop update after mount.
@@ -1086,22 +1116,30 @@ export const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false }: { lobby
   // reverted mic/cam to whatever they were in the pre-join lobby, undoing
   // whatever the student changed since joining.
   //
-  // Fix: `hasConnected` (in LiveClassContext, which lives ABOVE the
-  // remounted <LiveKitRoom> and therefore survives reconnects) is false
-  // only before the very first successful join. So:
-  //   - first-ever mount (hasConnected === false): apply the lobby choice.
-  //   - any later remount (hasConnected === true, i.e. a reconnect):
+  // FIX ("lobby mic/cam choice doesn't reflect in class" — students, teachers,
+  // and admins alike): this used to read `hasConnected` straight from
+  // LiveClassContext to tell first-join apart from reconnect. But the caller
+  // (ClassroomView.connect()) sets that context flag true in the very same
+  // synchronous batch that mounts this component for the first time, so by
+  // the time this ever rendered, hasConnected already read true — every
+  // first join looked like a reconnect and the lobby's mic/cam choice was
+  // silently discarded in favor of the (still-default, OFF) last-known
+  // state. `isFirstJoin` is now passed down explicitly from a ref that
+  // ClassroomView freezes BEFORE that state batch fires, so it reflects the
+  // truth at connect-time instead of the post-batch value.
+  //   - first-ever mount (isFirstJoin === true): apply the lobby choice.
+  //   - any later remount (isFirstJoin === false, i.e. a reconnect):
   //     re-apply the user's LAST KNOWN toggle state (camEnabled/micEnabled
   //     from context, kept fresh by RoomToContextBridge) instead of the
   //     stale lobby snapshot — a reconnect restores what the student
   //     actually had a moment ago, not what they had before ever joining.
-  const { hasConnected, micEnabled, camEnabled } = useLiveClass();
+  const { micEnabled, camEnabled } = useLiveClass();
   const lastKnownRef = useRef({ micEnabled, camEnabled });
   lastKnownRef.current = { micEnabled, camEnabled };
 
   useEffect(() => {
     let cancelled = false;
-    const isReconnect = hasConnected; // true only on remounts after the first join
+    const isReconnect = !isFirstJoin; // true only on remounts after the first join
     const init = async () => {
       // Slightly longer delay so LiveKit finishes its own track setup first
       await new Promise(r => setTimeout(r, 450));
