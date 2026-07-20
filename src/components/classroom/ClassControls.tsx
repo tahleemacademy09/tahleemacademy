@@ -375,12 +375,6 @@ const ClassControls = ({
     };
   }, [room, setCtxMicEnabled, setCtxCamEnabled]);
 
-  // ── Register live toggle functions into context refs ──────────────────
-  useEffect(() => {
-    toggleMicFnRef.current = toggleMic;
-    toggleCamFnRef.current = toggleCam;
-  }, [toggleMic, toggleCam, toggleMicFnRef, toggleCamFnRef]);
-
   // ── Mic toggle — busy-guarded ─────────────────────────────────────────
   const toggleMic = useCallback(async () => {
     if (micBusy.current) return;
@@ -412,6 +406,12 @@ const ClassControls = ({
       camBusy.current = false;
     }
   }, [room, t, setCtxCamEnabled]);
+
+  // ── Register live toggle functions into context refs ──────────────────
+  useEffect(() => {
+    toggleMicFnRef.current = toggleMic;
+    toggleCamFnRef.current = toggleCam;
+  }, [toggleMic, toggleCam, toggleMicFnRef, toggleCamFnRef]);
 
   // ── Screen share ──────────────────────────────────────────────────────
   const toggleScreenShare = useCallback(async () => {
