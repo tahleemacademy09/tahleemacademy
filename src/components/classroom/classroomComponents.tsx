@@ -139,7 +139,8 @@ export const CSS = `
     transition: box-shadow .2s ease;
   }
   .gm-tile.speaking {
-    animation: speak-glow 1.8s ease-in-out infinite;
+    /* Intentionally no edge glow/border animation here — the waveform
+       (.gm-wave-tile) is the only element that should move while speaking. */
   }
 
   /* Control bar button base */
@@ -4452,17 +4453,10 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
       style={{
         width:"100%",height:"100%",
         borderRadius: pip ? 16 : 0,
-        // FIX: border is now ALWAYS 3px (transparent when not speaking) instead of
-        // toggling between "none" and "3px solid". Voice-activity detection flips
-        // isSpeaking on/off rapidly during normal conversation (pauses between words),
-        // and since the border eats into the content box, that repeated 0px→3px→0px
-        // swing was shrinking/growing the video's rendered area every time — that's
-        // the "shake" people were seeing. Reserving the 3px permanently and only
-        // animating the *color* means the box size never changes, so the video stays
-        // perfectly still while still giving a clear WhatsApp-style speaking indicator.
-        border: isSpeaking ? "3px solid #25D366" : "3px solid transparent",
+        // Border is fixed (no green speaking ring) — only the in-tile waveform
+        // should move/change when a participant is speaking.
+        border: "3px solid transparent",
         overflow:"hidden",
-        transition:"border-color .2s",
         background: "#111",
       }}
     >
@@ -4490,7 +4484,7 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
             borderRadius:"50%",
             background:"#2a3942",
             display:"flex",alignItems:"center",justifyContent:"center",
-            border: isSpeaking ? "3px solid #25D366" : "3px solid #3a4a52",
+            border: "3px solid #3a4a52",
             flexShrink:0,
             overflow:"hidden",
           }}>
@@ -4506,11 +4500,6 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
           </div>
           {/* Name shown in the bottom pill (below) — no duplicate here */}
         </div>
-      )}
-
-      {/* Speaking glow ring over video */}
-      {isSpeaking&&hasVideo&&(
-        <div style={{position:"absolute",inset:0,border:"3px solid #25D366",borderRadius:"inherit",pointerEvents:"none"}}/>
       )}
 
       {/* Speaking waveform — overlaid inside the participant's square (works over
