@@ -934,9 +934,35 @@ export const VolumeBooster = () => {
 
   const tryResumeAC = useCallback(() => {
     const ac = acRef.current;
-    if (!ac || ac.state !== "suspended") return;
-    ac.resume().catch(() => { webAudioOkRef.current = false; });
-  }, []);
+    if (ac && ac.state === "suspended") {
+      ac.resume().catch(() => { webAudioOkRef.current = false; });
+    }
+    // FIX ("we can't hear each other at all" — everyone, not just one
+    // person): this function used to ONLY resume the AudioContext. But the
+    // actual sound comes out of `outElRef.current`, a separate real <audio>
+    // element — and browsers can independently block ITS play() call under
+    // autoplay policy, regardless of AudioContext state. That first
+    // `el.play()` below (fired the instant the pipeline is built, likely
+    // before any user has tapped anything) can get silently rejected — and
+    // nothing was ever retrying it. Result: the AudioContext resumes fine,
+    // every remote track connects fine, the local speaking waveform still
+    // works (that's pure local mic detection, no playback involved) — but
+    // the one element that actually outputs sound stays paused forever, so
+    // NOBODY hears ANYONE for the whole class. Retrying play() here, on the
+    // exact same click/touch/keydown/visibility events already wired up
+    // below, closes that gap the same way tryResumeAC already closes it for
+    // the AudioContext.
+    const el = outElRef.current;
+    if (el && el.paused) {
+      el.play().catch(() => {});
+    }
+    // Belt-and-suspenders: LiveKit's own official RoomAudioRenderer (used
+    // successfully in the guest classroom, which has never had this bug)
+    // relies on room.startAudio() to clear the browser's blocked-playback
+    // state for anything LiveKit manages internally. Harmless no-op if
+    // there's nothing for it to unblock, cheap to call every time.
+    room?.startAudio?.().catch(() => {});
+  }, [room]);
 
   // ── 1. Build the Web Audio pipeline once: gain → compressor → single
   //    MediaStreamDestination → single real <audio> element ──────────────────
@@ -1010,12 +1036,39 @@ export const VolumeBooster = () => {
     };
     document.addEventListener("visibilitychange", onVis, { passive: true });
 
+    // FIX ("we can't hear each other at all"): last-resort safety net. On
+    // the strictest autoplay policies (notably iOS Safari), the very first
+    // el.play() above can be rejected, and even the retries wired to
+    // click/touch/keydown above only help once one of THOSE specific events
+    // fires. If nobody happens to trigger one of those in the first few
+    // seconds, everyone sits in total silence with no idea why. This
+    // heartbeat checks a few seconds in, and if playback is still stuck
+    // paused, shows a one-time, explicit "tap to enable audio" prompt so
+    // there's always a guaranteed way to recover — the user doesn't have to
+    // guess that tapping the mic button or anywhere else might fix it.
+    let audioPromptShown = false;
+    const stuckCheck = setInterval(() => {
+      const el = outElRef.current;
+      if (!el || !el.paused || audioPromptShown) {
+        if (el && !el.paused) clearInterval(stuckCheck);
+        return;
+      }
+      audioPromptShown = true;
+      toast({
+        title: "🔊 Tap anywhere to enable audio",
+        description: "Your browser blocked audio from starting automatically. Tap anywhere on the screen to hear the class.",
+      });
+      // Keep listening for the next tap even after the prompt — the normal
+      // `resume` listener above will pick it up and call play() again.
+    }, 4000);
+
     return () => {
       document.removeEventListener("click",            resume);
       document.removeEventListener("touchstart",       resume);
       document.removeEventListener("touchend",         resume);
       document.removeEventListener("keydown",          resume);
       document.removeEventListener("visibilitychange", onVis);
+      clearInterval(stuckCheck);
       try { outElRef.current?.pause(); outElRef.current?.remove(); } catch {}
       acRef.current?.close().catch(() => {});
     };
@@ -1042,6 +1095,13 @@ export const VolumeBooster = () => {
     // may succeed here even on Android/iOS before a separate gesture event fires.
     if (ac && ac.state === "suspended") {
       ac.resume().catch(() => { webAudioOkRef.current = false; });
+    }
+    // Same fix as tryResumeAC above: the <audio> element is a separate thing
+    // from the AudioContext and can be stuck paused on its own. Retry it
+    // here too, since this effect fires the moment someone's audio track
+    // actually shows up — exactly when playback matters most.
+    if (outElRef.current?.paused) {
+      outElRef.current.play().catch(() => {});
     }
 
     const activeIds = new Set<string>();
