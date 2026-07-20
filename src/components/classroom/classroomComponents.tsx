@@ -1331,6 +1331,16 @@ export const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
   // Guard against overlapping republish attempts (heartbeat + track event
   // both firing close together).
   const repairingRef = useRef(false);
+  // FIX ("others can't hear me and I have no idea why"): the mic icon in the
+  // control bar only reflects `isMicrophoneEnabled` — whether the user has
+  // TOGGLED the mic on — not whether the underlying capture device is
+  // actually alive. A track can go silently muted/ended (OS killed the
+  // capture, another app grabbed the mic, Android background suspension)
+  // while the icon still shows "on" and the user has no way to know their
+  // audio stopped reaching anyone. This repair loop already detects and
+  // fixes that — it just never told the user it happened. Now it does, with
+  // a small cooldown so a flaky connection doesn't spam toasts.
+  const lastWarnRef = useRef(0);
 
   useEffect(() => {
     const lp = () => room?.localParticipant;
@@ -1355,6 +1365,18 @@ export const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
 
       if (!dead) return;
 
+      // Tell the user immediately — don't wait to see if the repair below
+      // even works. Silence here is exactly the "I have no idea what's
+      // wrong" problem: their mic died and nothing on screen said so.
+      const now = Date.now();
+      if (now - lastWarnRef.current > 20_000) {
+        lastWarnRef.current = now;
+        toast({
+          title: "🎤 Microphone reconnecting…",
+          description: "Your mic stopped sending audio — reconnecting it now. If this keeps happening, check that no other app is using your microphone.",
+        });
+      }
+
       repairingRef.current = true;
       try {
         // Full cycle (off → on) forces LiveKit to grab a fresh getUserMedia
@@ -1363,10 +1385,20 @@ export const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
         await p.setMicrophoneEnabled(false);
         await new Promise(r => setTimeout(r, 150));
         await p.setMicrophoneEnabled(true);
-      } catch {
+      } catch (e: any) {
         // getUserMedia can legitimately fail while the tab is fully
         // suspended (screen truly locked, no JS running at all) — the
-        // heartbeat below will retry on the next tick or on resume.
+        // heartbeat below will retry on the next tick or on resume. But if
+        // it fails while the tab IS visible, that's a real, fixable
+        // problem (permission revoked, device grabbed by another app) —
+        // tell the user plainly instead of retrying forever in silence.
+        if (document.visibilityState === "visible") {
+          toast({
+            title: "🎤 Microphone couldn't reconnect",
+            description: e?.message || "Please check your microphone permission and that no other app is using it, then toggle your mic off and on.",
+            variant: "destructive",
+          });
+        }
       } finally {
         repairingRef.current = false;
       }
