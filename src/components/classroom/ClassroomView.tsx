@@ -8,7 +8,7 @@
 */
 
 import {
-  LiveKitRoom, useRoomContext,
+  LiveKitRoom, useRoomContext, RoomAudioRenderer,
   useParticipants, useLocalParticipant, useTracks,
 } from "@livekit/components-react";
 // @ts-ignore
@@ -47,6 +47,7 @@ import ClassChatPanel    from "./ClassChatPanel";
 import ClassParticipants from "./ClassParticipants";
 import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
+import ClassControls     from "./ClassControls";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
 import PDFViewer, { prewarmPDF } from "./PDFViewer";
 import LiveClassFilePanel from "./LiveClassFilePanel";
@@ -905,8 +906,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             },
             videoCaptureDefaults:{resolution:{width:960,height:540,frameRate:24},facingMode:"user"}, // bumped from 640×480/20fps for a visibly crisper default picture
           }} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
-          {/* VolumeBooster replaces bare RoomAudioRenderer — Web Audio pipeline: GainNode(2.2×) + DynamicsCompressor(4:1) ensures every remote voice is loud and clear without clipping, crackle, or self-playback */}
-          <VolumeBooster/>
+          {/* FIX ("waveform shows but no voice is heard", and vice versa): this used to be
+              VolumeBooster — a hand-built Web Audio pipeline (GainNode + DynamicsCompressor +
+              a manually-created <audio> element) routing every remote mic track. That pipeline
+              could silently stop passing real audio (suspended AudioContext, a stale
+              MediaStreamTrack reference after a reconnect, autoplay policy) while the in-tile
+              waveform kept animating regardless — it's driven independently by LiveKit's own
+              speaking-detection, not by this pipeline. RoomAudioRenderer is LiveKit's own
+              battle-tested audio renderer — the exact same one GuestClassroom already uses
+              with no reports of this bug — and re-attaches automatically on reconnects/track
+              changes, so waveform and actual audio can no longer drift apart. */}
+          <RoomAudioRenderer/>
           <RoomToContextBridge />
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam} isFirstJoin={isFirstJoinPropRef.current}/>
           <MicKeepAliveFromContext />
@@ -1206,16 +1216,36 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               onDecline={()=>{setGroupReciteDialog(false);setGroupRecite(false);}}
             />
           )}
-          <BottomBarBridge sessionId={sessionId||""} onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}} onToggleParticipants={()=>setPartOpen(v=>!v)} onEndClass={()=>setShowEnd(true)} onLeaveClass={leaveSession} chatUnread={chatUnread} onToggleWhiteboard={()=>setWbOpen(v=>!v)} whiteboardOpen={wbOpen} onGroupRecite={handleGroupRecite} groupReciteMode={groupRecite} onShareMaterial={()=>setMatPicker(true)} isPrivileged={isPrivileged} canStudentWriteProp={canStudentWrite} canStudentRecProp={canStudentRec} onPermChange={(type:any,allow:any,room:any)=>handlePermChange(type,allow,room)} onMinimize={onMinimize} onToggleMaterials={toggleMatPanel} matPanelOpen={matPanelOpen} onSendEmoji={addFloatingEmoji} layout={layout} onLayoutChange={setLayout} onLaunchQuiz={()=>setQuizOpen(true)}
-            onScreenShare={toggleScreenShare} screenSharing={screenSharing}
-            onToggleTimer={()=>setTimerOpen(v=>!v)} timerRunning={timerRunning} timerDisplay={fmtTimer(timerSeconds)}
-            onToggleLiveFiles={()=>setLiveFilesOpen(v=>!v)} liveFilesOpen={liveFilesOpen}
+          {/* RESET TO GUESTROOM DEFAULT — same control bar, same props shape GuestClassroom
+              already uses successfully. The classroom-only extras (whiteboard, materials,
+              group recite, layout, timer, live files, hand queue, attendance, summary,
+              audio-only) that don't exist in guestroom now live in the one ClassroomExtrasMenu
+              — the "3 dots" — floating just above it, instead of a whole second bespoke bar. */}
+          <ClassControls
+            sessionId={sessionId||""}
+            isHostOverride={isPrivileged}
+            onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}}
+            onToggleParticipants={()=>{setPartOpen(v=>!v);setPartPanelOpen(v=>!v);}}
+            onEndClass={()=>setShowEnd(true)}
+            onLeaveClass={leaveSession}
+            chatUnread={chatUnread}
+            onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
+            onLaunchQuiz={()=>setQuizOpen(true)}
+          />
+          <ClassroomExtrasMenu
+            isPrivileged={isPrivileged}
+            whiteboardOpen={wbOpen} onToggleWhiteboard={()=>setWbOpen(v=>!v)}
+            onShareMaterial={()=>setMatPicker(true)}
+            matPanelOpen={matPanelOpen} onToggleMaterials={toggleMatPanel}
+            groupReciteMode={groupRecite} onGroupRecite={()=>handleGroupRecite(roomRef.current)}
+            layout={layout} onLayoutChange={setLayout}
+            timerRunning={timerRunning} timerDisplay={fmtTimer(timerSeconds)} onToggleTimer={()=>setTimerOpen(v=>!v)}
+            liveFilesOpen={liveFilesOpen} onToggleLiveFiles={()=>setLiveFilesOpen(v=>!v)}
             onToggleHandQueue={()=>setHandQueueOpen(v=>!v)}
             onToggleAttendance={()=>setAttendanceOpen(v=>!v)}
-            onSpotlight={(id:string)=>setSpotlightId(prev=>prev===id?null:id)}
             onGenerateSummary={generateSessionSummary}
-            onTogglePartPanel={()=>setPartPanelOpen(v=>!v)} partPanelOpen={partPanelOpen}
             audioOnly={audioOnlyActive} onToggleAudioOnly={()=>setAudioOnlyActive(v=>!v)}
+            onMinimize={onMinimize}
           />
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
@@ -1291,6 +1321,72 @@ const MatViewerInlineBridge=({material,isPrivileged,onClose,onMinimize}:any)=>{
     onClose();
     if(isPrivileged){try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"mat_close"})),{reliable:true});}catch{}}
   }}/>;
+};
+
+/* ══ CLASSROOM EXTRAS MENU — the "3 dots" ══
+   GuestClassroom's ClassControls already ships its own built-in "More" menu
+   (reactions, raise hand, launch poll, launch quiz, mute-all, captions, blur,
+   screen share) — that's the classroom's default now too, unchanged.
+   This second, classroom-only 3-dot button sits right beside it and holds
+   everything guestroom doesn't have: whiteboard, subject materials, group
+   recite, layout switching, timer, live files, hand-raise queue, attendance,
+   session summary, audio-only mode. Nothing here is new logic — every item
+   just calls the same handlers/state ClassroomView already owned; this is
+   purely a new, single place to reach them from. */
+const ClassroomExtrasMenu=({
+  isPrivileged,whiteboardOpen,onToggleWhiteboard,onShareMaterial,matPanelOpen,onToggleMaterials,
+  groupReciteMode,onGroupRecite,layout,onLayoutChange,timerRunning,timerDisplay,onToggleTimer,
+  liveFilesOpen,onToggleLiveFiles,onToggleHandQueue,onToggleAttendance,onGenerateSummary,
+  audioOnly,onToggleAudioOnly,onMinimize,
+}:any)=>{
+  const[open,setOpen]=useState(false);
+  const Item=({icon,label,onClick,active}:any)=>(
+    <button onClick={()=>{onClick();setOpen(false);}} style={{
+      width:"100%",display:"flex",alignItems:"center",gap:10,padding:"11px 16px",
+      background:active?"rgba(138,180,248,.12)":"none",border:"none",cursor:"pointer",
+      color:active?"#8ab4f8":"rgba(255,255,255,.85)",
+      fontSize:13,fontWeight:active?600:400,textAlign:"left",
+      borderBottom:"1px solid rgba(255,255,255,.06)",fontFamily:"'Google Sans',sans-serif",
+    }}>{icon}<span style={{flex:1}}>{label}</span>{active&&<span style={{fontSize:11}}>✓</span>}</button>
+  );
+  return(
+    <>
+      <button onClick={()=>setOpen(v=>!v)} title="More classroom tools" style={{
+        position:"fixed",bottom:88,right:14,zIndex:70,
+        width:44,height:44,borderRadius:"50%",border:"1px solid rgba(255,255,255,.12)",
+        background:open?"rgba(138,180,248,.18)":"rgba(32,33,36,.92)",backdropFilter:"blur(12px)",
+        color:open?"#8ab4f8":"#e8eaed",display:"flex",alignItems:"center",justifyContent:"center",
+        cursor:"pointer",boxShadow:"0 4px 16px rgba(0,0,0,.35)",
+      }}>
+        <MoreVertical style={{width:20,height:20}}/>
+      </button>
+      {open&&createPortal(
+        <>
+          <div onClick={()=>setOpen(false)} style={{position:"fixed",inset:0,zIndex:9150}}/>
+          <div style={{
+            position:"fixed",bottom:96,right:14,zIndex:9160,minWidth:230,maxWidth:280,
+            background:"#2D2E30",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,
+            overflow:"hidden",boxShadow:"0 8px 36px rgba(0,0,0,.65)",animation:"fade-in .15s ease",
+            maxHeight:"70vh",overflowY:"auto",
+          }}>
+            <div style={{padding:"10px 16px",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",color:"rgba(255,255,255,.35)"}}>Classroom Tools</div>
+            <Item icon={<PenTool style={{width:16,height:16,opacity:.8}}/>} label={whiteboardOpen?"Close Whiteboard":"Whiteboard"} onClick={onToggleWhiteboard} active={whiteboardOpen}/>
+            <Item icon={<BookOpen style={{width:16,height:16,opacity:.8}}/>} label={matPanelOpen?"Close Materials":"Subject Materials"} onClick={onToggleMaterials} active={matPanelOpen}/>
+            {isPrivileged&&<Item icon={<Layers style={{width:16,height:16,opacity:.8}}/>} label="Share Material" onClick={onShareMaterial}/>}
+            {isPrivileged&&<Item icon={<Radio style={{width:16,height:16,opacity:.8}}/>} label={groupReciteMode?"Stop Group Recite":"Start Group Recite"} onClick={onGroupRecite} active={groupReciteMode}/>}
+            <div style={{padding:"10px 16px 4px"}}><LayoutSwitcher layout={layout} onChange={onLayoutChange}/></div>
+            {isPrivileged&&<Item icon={<Timer style={{width:16,height:16,opacity:.8}}/>} label={timerRunning?`Timer (${timerDisplay})`:"Start Timer"} onClick={onToggleTimer} active={timerRunning}/>}
+            <Item icon={<ClipboardList style={{width:16,height:16,opacity:.8}}/>} label={liveFilesOpen?"Close Live Files":"Live Files"} onClick={onToggleLiveFiles} active={liveFilesOpen}/>
+            {isPrivileged&&<Item icon={<Bell style={{width:16,height:16,opacity:.8}}/>} label="Hand Queue" onClick={onToggleHandQueue}/>}
+            {isPrivileged&&<Item icon={<UserCheck style={{width:16,height:16,opacity:.8}}/>} label="Live Attendance" onClick={onToggleAttendance}/>}
+            {isPrivileged&&<Item icon={<ClipboardList style={{width:16,height:16,opacity:.8}}/>} label="Session Summary" onClick={onGenerateSummary}/>}
+            <Item icon={<Zap style={{width:16,height:16,opacity:.8}}/>} label={audioOnly?"Exit Audio-Only Mode":"Audio-Only Mode"} onClick={onToggleAudioOnly} active={audioOnly}/>
+            {onMinimize&&<Item icon={<Minimize2 style={{width:16,height:16,opacity:.8}}/>} label="Minimize" onClick={onMinimize}/>}
+          </div>
+        </>,document.body
+      )}
+    </>
+  );
 };
 
 export default ClassroomView;
