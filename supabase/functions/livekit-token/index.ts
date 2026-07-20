@@ -39,15 +39,26 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'LiveKit not configured' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    // Get user role
+    // ── PERF FIX ("takes ~16s before my details show up"): these three lookups
+    // (my roles, my profile, the subject) don't depend on each other at all, but
+    // were being awaited one after another — three full network round trips to
+    // Postgres, stacked, before the token was ever returned. The client doesn't
+    // show ANYTHING (video, name, avatar) until this function responds, because
+    // ClassroomView.connect() only flips to the "live" phase after it has the
+    // token. Cold Deno-edge + Postgres round trips are commonly 1-5s+ each on a
+    // slower connection, so three in a row easily adds up to the 16s being seen.
+    // Running them together with Promise.all cuts that to the cost of the single
+    // slowest query instead of the sum of all three.
     const serviceClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const { data: roles } = await serviceClient.from('user_roles').select('role').eq('user_id', user.id);
+    const [{ data: roles }, { data: profile }, subjectResult] = await Promise.all([
+      serviceClient.from('user_roles').select('role').eq('user_id', user.id),
+      serviceClient.from('profiles').select('full_name, avatar_url').eq('user_id', user.id).single(),
+      subject_id
+        ? serviceClient.from('subjects').select('*').eq('id', subject_id).single()
+        : Promise.resolve({ data: null, error: null } as any),
+    ]);
     const userRoles    = roles?.map((r: any) => r.role) || [];
     const isPrivileged = userRoles.includes('admin') || userRoles.includes('teacher');
-
-    // Get display name
-    const { data: profile } = await serviceClient
-      .from('profiles').select('full_name, avatar_url').eq('user_id', user.id).single();
     const participantName = profile?.full_name || user.email || 'Anonymous';
 
     let finalRoomName: string;
@@ -60,8 +71,7 @@ Deno.serve(async (req) => {
 
     // ── MODE B: Live class (subject_id — existing behaviour) ──────────────
     } else if (subject_id) {
-      const { data: subject, error: subjectError } = await serviceClient
-        .from('subjects').select('*').eq('id', subject_id).single();
+      const { data: subject, error: subjectError } = subjectResult;
 
       if (subjectError || !subject) {
         return new Response(JSON.stringify({ error: 'Subject not found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
@@ -124,14 +134,16 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Log activity
-      await serviceClient.from('activity_logs').insert({
+      // Log activity — fire-and-forget. This is pure bookkeeping and was
+      // previously `await`ed, adding a 4th sequential round trip before the
+      // token (and therefore the student's video/name/avatar) could appear.
+      serviceClient.from('activity_logs').insert({
         user_id:     user.id,
         action:      action === 'start_session' ? 'start_live_class' : 'join_live_class',
         entity_type: 'subject',
         entity_id:   subject_id,
         metadata:    { room: finalRoomName, role: roleLabel },
-      });
+      }).then(({ error }) => { if (error) console.warn('[livekit-token] activity log failed:', error); });
 
     } else {
       return new Response(JSON.stringify({ error: 'subject_id or room_name required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
