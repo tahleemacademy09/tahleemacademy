@@ -199,6 +199,22 @@ export const CSS = `
     animation: speak-bar .7s ease-in-out infinite;
   }
 
+  /* In-tile speaking waveform — overlays the participant's square (video or avatar)
+     while they're actively talking, instead of only a tiny indicator in the corner. */
+  .gm-wave-tile {
+    position:absolute; left:50%; bottom:14px; transform:translateX(-50%);
+    display:flex; align-items:center; justify-content:center; gap:3px;
+    height:26px; padding:6px 12px; border-radius:14px;
+    background:rgba(0,0,0,.4); backdrop-filter:blur(6px);
+    pointer-events:none; z-index:2;
+    animation: fade-in .18s ease both;
+  }
+  .gm-wave-tile-bar {
+    width:3px; height:100%; border-radius:2px; background:#25D366;
+    animation: speak-bar-tile .9s ease-in-out infinite;
+  }
+  @keyframes speak-bar-tile { 0%,100% { transform:scaleY(.25); } 50% { transform:scaleY(1); } }
+
   /* Bar animation */
   .gm-bar { animation: bar-reveal .3s cubic-bezier(.34,1.2,.64,1) both; }
 
@@ -4489,20 +4505,23 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
             )}
           </div>
           {/* Name shown in the bottom pill (below) — no duplicate here */}
-          {/* Speaking wave */}
-          {isSpeaking&&!pip&&(
-            <div className="gm-wave" style={{marginTop:2}}>
-              {[0,1,2,3].map(i=>(
-                <div key={i} className="gm-wave-bar" style={{background:"#25D366",animationDelay:`${i*.1}s`}}/>
-              ))}
-            </div>
-          )}
         </div>
       )}
 
       {/* Speaking glow ring over video */}
       {isSpeaking&&hasVideo&&(
         <div style={{position:"absolute",inset:0,border:"3px solid #25D366",borderRadius:"inherit",pointerEvents:"none"}}/>
+      )}
+
+      {/* Speaking waveform — overlaid inside the participant's square (works over
+          both live video and the camera-off avatar), so it reads as audio activity
+          coming from that tile rather than a small badge in the corner. */}
+      {isSpeaking&&!pip&&(
+        <div className="gm-wave-tile">
+          {[0,1,2,3,4].map(i=>(
+            <div key={i} className="gm-wave-tile-bar" style={{animationDelay:`${i*.12}s`}}/>
+          ))}
+        </div>
       )}
 
       {/* Name pill — bottom-left, only on non-pip tiles */}
@@ -4515,13 +4534,9 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
           maxWidth:"calc(100% - 20px)",pointerEvents:"none",
         }}>
           {isSpeaking&&micEnabled ? (
-            // WhatsApp-style "live" indicator — pulsing dot + animated bars, replaces the static mic while the person is actually talking
-            <span style={{display:"inline-flex",alignItems:"center",gap:4,flexShrink:0}}>
-              <span style={{width:7,height:7,borderRadius:"50%",background:"#25D366",animation:"pip-pulse 1s ease-in-out infinite",flexShrink:0}}/>
-              <span className="gm-wave">
-                {[0,1,2].map(i=>(<div key={i} className="gm-wave-bar" style={{background:"#25D366",animationDelay:`${i*.12}s`}}/>))}
-              </span>
-            </span>
+            // Pulsing dot — the full waveform now lives in the center of the tile,
+            // so this just confirms it's this participant's mic that's live.
+            <span style={{width:7,height:7,borderRadius:"50%",background:"#25D366",animation:"pip-pulse 1s ease-in-out infinite",flexShrink:0}}/>
           ) : micEnabled
             ? <Mic style={{width:12,height:12,color:"rgba(255,255,255,.75)",flexShrink:0}}/>
             : <MicOff style={{width:12,height:12,color:"#ef4444",flexShrink:0}}/>
