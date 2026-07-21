@@ -8,17 +8,18 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Hand, Mic, MicOff, Video, VideoOff, UserMinus, Pin, PinOff } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-
-let useParticipantsHook: (() => any[]) | null = null;
-let useRoomContextHook: (() => any) | null = null;
-try {
-  const lk = require("@livekit/components-react");
-  useParticipantsHook  = lk.useParticipants;
-  useRoomContextHook   = lk.useRoomContext;
-} catch {
-  useParticipantsHook  = () => [];
-  useRoomContextHook   = () => null;
-}
+// BUG FIX ("participant count always shows 0 even with more users online"):
+// this used to load useParticipants/useRoomContext via a runtime require()
+// wrapped in try/catch. require() doesn't exist in the browser — Vite ships
+// an ES module bundle, not CommonJS — so that call threw a ReferenceError on
+// every single render, every time, and the catch branch silently replaced
+// both hooks with `() => []` / `() => null`. livekitParticipants was
+// therefore ALWAYS an empty array and liveCount ALWAYS 0, no matter how many
+// people were actually in the room — the whole live-count path was dead code
+// from day one. Plain static imports (used everywhere else this hook is
+// consumed in the app) work correctly since this component is only ever
+// rendered inside a <LiveKitRoom> provider.
+import { useParticipants, useRoomContext } from "@livekit/components-react";
 
 interface ClassParticipantsProps {
   sessionId:       string;
@@ -35,8 +36,8 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent, isPrivil
   const { hasRole } = useAuth();
   const isPrivileged = isPrivilegedProp ?? (hasRole("admin") || hasRole("teacher"));
 
-  const livekitParticipants: any[] = useParticipantsHook ? useParticipantsHook() : [];
-  const roomCtx = useRoomContextHook ? useRoomContextHook() : null;
+  const livekitParticipants: any[] = useParticipants();
+  const roomCtx = useRoomContext();
   const room = roomProp || roomCtx;
   const liveCount = livekitParticipants.length;
 

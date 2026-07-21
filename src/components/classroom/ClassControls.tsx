@@ -44,6 +44,10 @@ interface ClassControlsProps {
   onLaunchQuiz:          () => void;
   /** Override privilege check — set true for guest/public-class hosts who don't have admin/teacher roles */
   isHostOverride?:       boolean;
+  /** Extra items rendered inside the same three-dot dropdown, after the built-in
+      options and before End/Leave. Lets a caller (e.g. the classroom) add its own
+      tools without a second three-dot button. Unused by default (guestroom). */
+  extraMenuItems?:       React.ReactNode;
 }
 
 const REACTION_EMOJIS = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
@@ -318,7 +322,7 @@ const SettingsModal = ({ onClose, room }: { onClose: () => void; room: any }) =>
    ───────────────────────────────────────────────────────────────────────── */
 const ClassControls = ({
   sessionId, onToggleChat, onToggleParticipants, onEndClass, onLeaveClass,
-  chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride,
+  chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride, extraMenuItems,
 }: ClassControlsProps) => {
   const room = useRoomContext();
   const { user, hasRole } = useAuth();
@@ -595,42 +599,9 @@ const ClassControls = ({
           </Button>
 
           {/* Cam */}
-          <Button size="sm" className={`${btnBase} ${camEnabled ? btnOn : "bg-muted"}`} style={camEnabled ? btnStyle : {background:"rgba(255,255,255,.08)",color:"rgba(255,255,255,.4)"}} onClick={toggleCam}>
+          <Button size="sm" className={`${btnBase} ${camEnabled ? btnOn : btnOff}`} style={camEnabled ? btnStyle : {}} onClick={toggleCam}>
             {camEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
             <span className="hidden sm:inline">{camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
-          </Button>
-
-          {/* Screen share */}
-          <Button size="sm"
-            className={`${btnBase} ${screenSharing ? btnOff : btnNeutral}`}
-            style={screenSharing ? {} : btnStyle}
-            onClick={toggleScreenShare}>
-            {screenSharing ? <MonitorOff className="h-4 w-4" /> : <Monitor className="h-4 w-4" />}
-            <span className="hidden sm:inline">{screenSharing ? t("Stop","إيقاف") : t("Share","مشاركة")}</span>
-          </Button>
-        </div>
-
-        {/* ── CENTER: Captions · Blur ── (Hand & Reactions moved to three-dot menu) ── */}
-        <div className="flex items-center gap-1">
-
-          {/* Captions (Google Meet parity) */}
-          <Button size="sm"
-            className={`${btnBase} ${captionsOn ? "bg-blue-600/80 text-white hover:bg-blue-600" : btnNeutral}`}
-            style={captionsOn ? {} : btnStyle}
-            onClick={toggleCaptions}
-            title={t("Live Captions","الترجمة المباشرة")}>
-            {captionsOn ? <Captions className="h-4 w-4" /> : <CaptionsOff className="h-4 w-4" />}
-            <span className="hidden lg:inline">{t("CC","ترجمة")}</span>
-          </Button>
-
-          {/* Background blur */}
-          <Button size="sm"
-            className={`${btnBase} ${blurOn ? "bg-purple-600/80 text-white hover:bg-purple-600" : btnNeutral}`}
-            style={blurOn ? {} : btnStyle}
-            onClick={toggleBlur}
-            title={t("Background blur","تشويش الخلفية")}>
-            <Blend className="h-4 w-4" />
-            <span className="hidden lg:inline">{t("Blur","تشويش")}</span>
           </Button>
         </div>
 
@@ -754,7 +725,17 @@ const ClassControls = ({
                   {screenSharing ? <MonitorOff className="h-4 w-4 mr-2" /> : <Monitor className="h-4 w-4 mr-2" />}
                   {screenSharing ? t("Stop Sharing","إيقاف المشاركة") : t("Share Screen","مشاركة الشاشة")}
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
+              </div>
+
+              {extraMenuItems && (
+                <>
+                  <DropdownMenuSeparator />
+                  <div style={{padding:"4px 0"}}>{extraMenuItems}</div>
+                </>
+              )}
+
+              <DropdownMenuSeparator />
+              <div style={{padding:"4px 0"}}>
                 <DropdownMenuItem onClick={isPrivileged ? onEndClass : onLeaveClass} style={{margin:"0 4px",borderRadius:8}}>
                   <LogOut className="h-4 w-4 mr-2 text-destructive" />
                   <span className="text-destructive">
