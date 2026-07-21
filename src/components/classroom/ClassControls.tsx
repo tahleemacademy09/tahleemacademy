@@ -587,10 +587,10 @@ const ClassControls = ({
 
       {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
       <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
-      <div className="h-16 flex items-center justify-between px-2 md:px-4 gap-1 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
+      <div className="h-16 flex items-center px-2 md:px-4 gap-1 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
 
         {/* ── LEFT: Mic · Cam · Cam-flip · Screen ── */}
-        <div className="flex items-center gap-1">
+        <div className="flex flex-1 items-center justify-evenly gap-1">
 
           {/* Mic */}
           <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} style={micEnabled ? btnStyle : {}} onClick={toggleMic}>
@@ -606,7 +606,7 @@ const ClassControls = ({
         </div>
 
         {/* ── RIGHT: Chat · Participants · Settings · More · End ── */}
-        <div className="flex items-center gap-1">
+        <div className="flex flex-1 items-center justify-evenly gap-1">
 
           {/* Chat */}
           <Button size="sm" className={`${btnBase} ${btnNeutral} relative`} style={btnStyle} onClick={onToggleChat}>
@@ -630,7 +630,7 @@ const ClassControls = ({
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64 p-0 overflow-visible" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:16}}>
+            <DropdownMenuContent align="end" className="w-64 p-0 overflow-visible" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,zIndex:9999}}>
 
               {/* ── Emoji Reactions Row ── */}
               <div style={{padding:"10px 12px 6px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
