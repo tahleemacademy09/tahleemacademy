@@ -1,7 +1,7 @@
 // src/components/layout/TeacherLayout.tsx
 // Fully rebuilt: 5 nav groups, all 20 teacher pages linked, badge counts, notification bell.
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -15,9 +15,13 @@ import {
 } from "lucide-react";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
 
-const TL_G    = "#064E3B";
-const TL_GM   = "#0a5c3e";
-const TL_GOLD = "#C9A84C";
+// Same greens/gold used everywhere else in the app (student sidebar,
+// TeacherDashboard.tsx, SubjectAssignments/SubjectMaterials) — this file used
+// to hardcode a different teal (#064E3B), which is why the teacher nav looked
+// like a different colour from the rest of the platform.
+const TL_G    = "#0f2d1f";
+const TL_GM   = "#1a4731";
+const TL_GOLD = "#c9a84c";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 const isActive = (pathname: string, to: string, exact = false) =>
@@ -167,11 +171,17 @@ const TeacherLayout = () => {
   }, [location.pathname]);
 
   // ── Grading badge ───────────────────────────────────────────────
+  const teacherSubjectIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!user) return;
     (async () => {
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const subIds = (subs || []).map((s: any) => s.id);
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const subIds = [...new Set([
+        ...((subs || []).map((s: any) => s.id)),
+        ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
+      ])];
+      teacherSubjectIdsRef.current = new Set(subIds);
       if (!subIds.length) return;
       const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subIds);
       const cIds = (courses || []).map((c: any) => c.id);
@@ -189,6 +199,28 @@ const TeacherLayout = () => {
   }, [user]);
 
   // ── Notifications ───────────────────────────────────────────────
+  // A notification is "course-scoped" when its link encodes a subject id
+  // (class reminders: `reminder:{sessionId}:{minsAhead}:{subjectId}`, or
+  // attendance-review deep links: `/teacher/attendance?subjectId=...`).
+  // Those only belong on the bell if that subject is actually one the
+  // teacher teaches — guards against a stale/reassigned class still
+  // notifying the old teacher. Non-course notifications (payments, admin
+  // announcements, support replies) are left untouched.
+  const extractSubjectId = (link?: string | null): string | null => {
+    if (!link) return null;
+    const reminderMatch = link.match(/^reminder:[^:]+:[^:]+:(.+)$/);
+    if (reminderMatch) return reminderMatch[1];
+    const qsMatch = link.match(/[?&]subjectId=([^&]+)/);
+    if (qsMatch) return decodeURIComponent(qsMatch[1]);
+    return null;
+  };
+  const belongsToTeacher = (n: any) => {
+    const sid = extractSubjectId(n.link);
+    if (!sid) return true; // not course-scoped — always show
+    if (teacherSubjectIdsRef.current.size === 0) return true; // scope not loaded yet — don't hide anything
+    return teacherSubjectIdsRef.current.has(sid);
+  };
+
   useEffect(() => {
     if (!user) return;
     const load = async () => {
@@ -198,14 +230,14 @@ const TeacherLayout = () => {
         .eq("user_id", user.id)
         .order("created_at", { ascending: false })
         .limit(30);
-      const list = data || [];
+      const list = (data || []).filter(belongsToTeacher);
       setNotifList(list);
       setUnreadNotifs(list.filter((n: any) => !n.is_read).length);
     };
     load();
     const ch = supabase.channel(`teacher-notifs:${user.id}`)
       .on("postgres_changes" as any, { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
-        (p: any) => { setNotifList(prev => [p.new, ...prev]); setUnreadNotifs(n => n + 1); })
+        (p: any) => { if (!belongsToTeacher(p.new)) return; setNotifList(prev => [p.new, ...prev]); setUnreadNotifs(n => n + 1); })
       .subscribe();
     const iv = setInterval(load, 20000);
     return () => { clearInterval(iv); supabase.removeChannel(ch); };
@@ -226,9 +258,7 @@ const TeacherLayout = () => {
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: TL_G }}>
       {/* Header */}
       <div style={{ padding: "16px 14px 12px", borderBottom: "1px solid rgba(255,255,255,.1)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: TL_GOLD, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <BookOpen size={17} color={TL_G} />
-        </div>
+        <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 36, height: 36, borderRadius: 10, objectFit: "contain", flexShrink: 0, background: TL_GOLD }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 900, color: "#fff", fontFamily: "serif" }}>{t("Tahleem", "تعليم")}</div>
           <div style={{ fontSize: 9, color: TL_GOLD, fontWeight: 800, letterSpacing: "0.09em" }}>{t("TEACHER PORTAL", "بوابة المعلم")}</div>
@@ -360,9 +390,7 @@ const TeacherLayout = () => {
               <Menu size={20} color={TL_G} />
             </button>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
-              <div style={{ width: 28, height: 28, borderRadius: 8, background: TL_GOLD, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <BookOpen size={14} color={TL_G} />
-              </div>
+              <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 28, height: 28, borderRadius: 8, objectFit: "contain", background: TL_GOLD }} />
               <span style={{ fontWeight: 900, fontSize: 15, color: TL_G, fontFamily: "serif" }}>
                 {t("Tahleem", "تعليم")}{" "}
                 <span style={{ color: TL_GOLD, fontSize: 11, fontFamily: "system-ui" }}>{t("Teacher", "المعلم")}</span>
