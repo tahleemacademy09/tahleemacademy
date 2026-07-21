@@ -47,6 +47,7 @@ import ClassChatPanel    from "./ClassChatPanel";
 import ClassParticipants from "./ClassParticipants";
 import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
+import AttendanceQuickReview from "./AttendanceQuickReview";
 import ClassControls     from "./ClassControls";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
@@ -210,6 +211,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   useScreenWakeLock(phase === "live");
 
   const[sessionId,setSessionId]=useState<string|null>(null);const[sessionInfo,setSessionInfo]=useState<any>(null);
+  const[showAttendanceReview,setShowAttendanceReview]=useState(false);
   const[attendanceId,setAttendanceId]=useState<string|null>(null);const[joinedAt]=useState(Date.now());
   // FIX: when a student disconnects (logs out, force-closes the app, hard network
   // drop) and later rejoins, we now reuse their EXISTING attendance_logs row for
@@ -612,6 +614,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         // FIX: pre-fill manual_attendance from who actually joined, instead of
         // leaving it for the teacher to mark every student by hand afterwards.
         if(user)syncManualAttendanceFromSession(sessionId,subject,user.id).catch(()=>{});
+        if(isPrivileged)setShowAttendanceReview(true); // pop up immediately instead of waiting on the notification
         if(user)await supabase.from("class_chat_messages").insert({session_id:sessionId,sender_id:user.id,message:t("Class has ended","انتهت الحصة"),type:"system"});
         // 2. Broadcast class_ended via LiveKit data channel so students disconnect immediately
         // (faster than waiting for DB subscription)
@@ -798,7 +801,12 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     );
   };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
-  if(phase==="ended")return<ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={participantCountRef.current} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />;
+  if(phase==="ended")return<>
+    <ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={participantCountRef.current} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />
+    {isPrivileged&&showAttendanceReview&&sessionId&&(
+      <AttendanceQuickReview sessionId={sessionId} subject={subject} onDone={()=>setShowAttendanceReview(false)} />
+    )}
+  </>;
   if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
   if(loading)return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:"#202124"}}>
