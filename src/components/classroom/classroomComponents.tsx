@@ -38,6 +38,48 @@ import {
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
 import ClassParticipants from "./ClassParticipants";
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROOT CAUSE FIX — "nobody can hear each other in class" (intermittent, both
+// sides, no error shown):
+//
+// room.localParticipant.setMicrophoneEnabled()/setCameraEnabled() are NOT safe
+// to call concurrently. Internally each call does getUserMedia → publishTrack
+// (or unpublishTrack) → SDP renegotiation with the server over the SAME signal
+// connection. This app has (at least) seven independent places that call one
+// of these with zero coordination between them: ClassControls' toggle button,
+// AdminMuteListener (teacher force-mute), MediaAutoPublish (applies the lobby
+// choice ~450ms after every join/reconnect), MicKeepAliveFromContext's repair
+// heartbeat (runs every 8s, plus on every visibility/focus/track-ended/mute
+// event), GroupReciteAutoMic, and RoomToContextBridge's toggle/restore
+// functions (used by the minimized pill). Each of those guards against
+// double-firing ITSELF, but nothing stops two of them firing at once — e.g.
+// the 8s keep-alive heartbeat landing in the same tick as a teacher's
+// force-mute, or MediaAutoPublish's delayed apply landing while
+// GroupReciteAutoMic is also toggling the mic on join.
+//
+// When two of these race, the SECOND publishTrack/unpublishTrack call can
+// start renegotiating before the first one's SDP offer/answer has finished.
+// LiveKit's local state (`isMicrophoneEnabled`) still flips to whatever the
+// last call requested — so the UI (mic icon, waveform) looks completely
+// normal — but the underlying track publication can be left half-negotiated
+// and never actually reaches the server, so no other participant ever
+// receives it. That's exactly the reported symptom: mic shows as on, nothing
+// looks wrong, but the room is silent.
+//
+// Fix: every mic/cam mutation across the whole classroom now funnels through
+// this single per-room promise chain, so LiveKit only ever runs one
+// enable/disable negotiation at a time no matter which component triggered
+// it. This doesn't change what any of them does — it just guarantees they
+// can no longer step on each other.
+const mediaOpChains = new WeakMap<object, Promise<any>>();
+export function queueMediaOp<T>(room: any, op: () => Promise<T>): Promise<T> {
+  if (!room) return op();
+  const prevChain = mediaOpChains.get(room) || Promise.resolve();
+  const result = prevChain.then(op, op); // run regardless of whether the previous queued op failed
+  mediaOpChains.set(room, result.catch(() => {}));
+  return result;
+}
 import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
@@ -448,7 +490,7 @@ export const useAudioOnlyMode = () => {
     try {
       if (!audioOnly) {
         // Enable audio-only: camera off, reduce audio bitrate to 16kbps
-        await lp.setCameraEnabled(false);
+        await queueMediaOp(room, () => lp.setCameraEnabled(false));
         // Reduce audio encoding quality to save ~14kbps more
         const micPub = lp.getTrackPublication(Track.Source.Microphone);
         if (micPub?.track) {
@@ -467,7 +509,7 @@ export const useAudioOnlyMode = () => {
         toast({ title: "📵 Audio-only mode", description: "Camera off — using minimal bandwidth." });
       } else {
         // Restore camera + normal audio bitrate
-        await lp.setCameraEnabled(true);
+        await queueMediaOp(room, () => lp.setCameraEnabled(true));
         const micPub = lp.getTrackPublication(Track.Source.Microphone);
         if (micPub?.track) {
           try {
@@ -542,7 +584,7 @@ export const useConnectionHeartbeat = (sessionId: string | null, active: boolean
         // still true), turn it back on now that the ping is healthy again.
         if (disabledByUsRef.current && cameraAutoDisabledByNetwork.current && room?.localParticipant) {
           try {
-            await room.localParticipant.setCameraEnabled(true);
+            await queueMediaOp(room, () => room.localParticipant.setCameraEnabled(true));
             cameraAutoDisabledByNetwork.current = false;
             disabledByUsRef.current = false;
             toast({ title: "📷 Connection recovered", description: "Camera restored." });
@@ -557,7 +599,7 @@ export const useConnectionHeartbeat = (sessionId: string | null, active: boolean
         const liveKitAgrees = lp?.connectionQuality === ConnectionQuality.Poor
                             || lp?.connectionQuality === ConnectionQuality.Lost;
         if (missRef.current >= 3 && liveKitAgrees && lp && lp.isCameraEnabled) {
-          try { await lp.setCameraEnabled(false); } catch {}
+          try { await queueMediaOp(room, () => lp.setCameraEnabled(false)); } catch {}
           cameraAutoDisabledByNetwork.current = true;
           disabledByUsRef.current = true;
           toast({
@@ -794,7 +836,7 @@ export const AudioOnlyBridge = ({ active }: { active: boolean }) => {
     (async () => {
       try {
         if (active) {
-          await lp.setCameraEnabled(false);
+          await queueMediaOp(room, () => lp.setCameraEnabled(false));
           // Drop audio bitrate to 16kbps
           const micPub = lp.getTrackPublication(Track.Source.Microphone);
           const sender = (micPub?.track as any)?.sender as RTCRtpSender | undefined;
@@ -803,7 +845,7 @@ export const AudioOnlyBridge = ({ active }: { active: boolean }) => {
             if (p.encodings?.[0]) { p.encodings[0].maxBitrate = 16000; await sender.setParameters(p); }
           }
         } else {
-          await lp.setCameraEnabled(true);
+          await queueMediaOp(room, () => lp.setCameraEnabled(true));
           const micPub = lp.getTrackPublication(Track.Source.Microphone);
           const sender = (micPub?.track as any)?.sender as RTCRtpSender | undefined;
           if (sender) {
@@ -854,15 +896,15 @@ export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) =
         const msg = JSON.parse(new TextDecoder().decode(payload));
         const myIdentity = room.localParticipant.identity;
         if (msg.type === "admin_mute_all") {
-          room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+          queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(false)).catch(() => {});
           toast({ title: "🔇 Muted by teacher" });
         }
         if (msg.type === "force_mute" && (!msg.target || msg.target === myIdentity)) {
-          room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+          queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(false)).catch(() => {});
           toast({ title: "🔇 Your mic was muted by the teacher" });
         }
         if (msg.type === "force_cam_off" && (!msg.target || msg.target === myIdentity)) {
-          room.localParticipant.setCameraEnabled(false).catch(() => {});
+          queueMediaOp(room, () => room.localParticipant.setCameraEnabled(false)).catch(() => {});
           toast({ title: "📷 Your camera was turned off by the teacher" });
         }
       } catch {}
@@ -1166,8 +1208,8 @@ export const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false, isFirstJo
         const { mic, cam } = isReconnect
           ? { mic: lastKnownRef.current.micEnabled, cam: lastKnownRef.current.camEnabled }
           : { mic: optsRef.current.lobbyMic,        cam: optsRef.current.lobbyCam };
-        if (lp.isMicrophoneEnabled !== mic) await lp.setMicrophoneEnabled(mic);
-        if (lp.isCameraEnabled     !== cam) await lp.setCameraEnabled(cam);
+        if (lp.isMicrophoneEnabled !== mic) await queueMediaOp(room, () => lp.setMicrophoneEnabled(mic));
+        if (lp.isCameraEnabled     !== cam) await queueMediaOp(room, () => lp.setCameraEnabled(cam));
       } catch {}
     };
     init();
@@ -1360,9 +1402,13 @@ export const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
         // Full cycle (off → on) forces LiveKit to grab a fresh getUserMedia
         // track rather than trying to resume a dead one, which is what
         // actually recovers audio after Android suspends/kills the capture.
-        await p.setMicrophoneEnabled(false);
-        await new Promise(r => setTimeout(r, 150));
-        await p.setMicrophoneEnabled(true);
+        // Queued as a single op so this whole off→wait→on cycle can't be
+        // interleaved with some other component's mic/cam call mid-cycle.
+        await queueMediaOp(room, async () => {
+          await p.setMicrophoneEnabled(false);
+          await new Promise(r => setTimeout(r, 150));
+          await p.setMicrophoneEnabled(true);
+        });
       } catch {
         // getUserMedia can legitimately fail while the tab is fully
         // suspended (screen truly locked, no JS running at all) — the
@@ -1454,12 +1500,12 @@ export const GroupReciteAutoMic=({active,isPrivileged}:{active:boolean;isPrivile
     if(!room?.localParticipant)return;
     if(active){
       wasActiveRef.current=true;
-      room.localParticipant.setMicrophoneEnabled(true).catch(()=>{});
+      queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(true)).catch(()=>{});
       return;
     }
     if(!isPrivileged&&wasActiveRef.current){
       wasActiveRef.current=false;
-      room.localParticipant.setMicrophoneEnabled(false).catch(()=>{});
+      queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(false)).catch(()=>{});
     }
   },[active,isPrivileged,room]);
   return null;
@@ -4165,8 +4211,10 @@ export const useNetworkQuality=()=>{
         if(q==="poor"){
           if(!camPub?.track)return;
           cameraAutoDisabledByNetwork.current=false; // staying on, just at lower res — not an auto-off
-          await lp.setCameraEnabled(false);
-          await lp.setCameraEnabled(true,{resolution:{width:320,height:240,frameRate:10}} as any);
+          await queueMediaOp(room, async () => {
+            await lp.setCameraEnabled(false);
+            await lp.setCameraEnabled(true,{resolution:{width:320,height:240,frameRate:10}} as any);
+          });
         }else if(q==="lost"){
           // Audio-only mode: camera off saves ~270kbps — best way to stay alive on 2G/edge.
           // BUG FIX ("camera turns itself back on"): mark this specific off as
@@ -4175,7 +4223,7 @@ export const useNetworkQuality=()=>{
           // their camera. Without this flag, any manual camera-off followed
           // by ANY later quality recovery event would silently force it back
           // on with no interaction from the user.
-          if(camPub?.track){ cameraAutoDisabledByNetwork.current=true; await lp.setCameraEnabled(false); }
+          if(camPub?.track){ cameraAutoDisabledByNetwork.current=true; await queueMediaOp(room, () => lp.setCameraEnabled(false)); }
         }else if(q==="good"||q==="excellent"){
           // BUG FIX: this used to read lastQualityRef.current here, but the
           // caller had already overwritten that ref to the NEW label (q)
@@ -4189,7 +4237,7 @@ export const useNetworkQuality=()=>{
           if(prevQ==="lost"){
             if(cameraAutoDisabledByNetwork.current){
               cameraAutoDisabledByNetwork.current=false;
-              await lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any);
+              await queueMediaOp(room, () => lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any));
             } // else: camera was off because the STUDENT turned it off — leave it off
           }else if(prevQ==="poor"){
             // BUG FIX ("camera turns itself on with nobody pressing it"):
@@ -4205,8 +4253,10 @@ export const useNetworkQuality=()=>{
             // interaction. Now it only re-applies the higher resolution if
             // the camera is already enabled — never turns it on.
             if(lp.isCameraEnabled){
-              await lp.setCameraEnabled(false);
-              await lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any);
+              await queueMediaOp(room, async () => {
+                await lp.setCameraEnabled(false);
+                await lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any);
+              });
             }
           }
         }
@@ -4839,9 +4889,11 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
     if(!room?.localParticipant||!camOn)return;
     try{
       const next=camFacing==="user"?"environment":"user";
-      await room.localParticipant.setCameraEnabled(false);
-      await new Promise(r=>setTimeout(r,200));
-      await room.localParticipant.setCameraEnabled(true,{facingMode:next}as any);
+      await queueMediaOp(room, async () => {
+        await room.localParticipant.setCameraEnabled(false);
+        await new Promise(r=>setTimeout(r,200));
+        await room.localParticipant.setCameraEnabled(true,{facingMode:next}as any);
+      });
       setCamFacing(next);toast({title:next==="environment"?"🔄 Back camera":"🔄 Front camera"});
     }catch{toast({title:"Could not flip camera",variant:"destructive"});}
     setVideoPicker(false);
@@ -4849,13 +4901,13 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
   const toggleMic=async()=>{
     if(!room?.localParticipant||micBusy.current)return;
     micBusy.current=true;
-    try{await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled);}
+    try{await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled));}
     catch(e){console.error("toggleMic:",e);}finally{micBusy.current=false;}
   };
   const toggleCam=async()=>{
     if(!room?.localParticipant||camBusy.current)return;
     camBusy.current=true;
-    try{await room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled);}
+    try{await queueMediaOp(room, () => room.localParticipant.setCameraEnabled(!room.localParticipant.isCameraEnabled));}
     catch(e){console.error("toggleCam:",e);}finally{camBusy.current=false;}
   };
   const toggleHand=async()=>{
@@ -5143,7 +5195,7 @@ export const RoomToContextBridge = () => {
     toggleMicFnRef.current = async () => {
       try {
         const next = !room.localParticipant.isMicrophoneEnabled;
-        await room.localParticipant.setMicrophoneEnabled(next);
+        await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(next));
         setMicEnabled(next);
       } catch {}
     };
@@ -5155,7 +5207,7 @@ export const RoomToContextBridge = () => {
         // later network-quality-recovery event could still force the
         // camera back on/off based on a stale reason.
         cameraAutoDisabledByNetwork.current = false;
-        await room.localParticipant.setCameraEnabled(next);
+        await queueMediaOp(room, () => room.localParticipant.setCameraEnabled(next));
         setCamEnabled(next);
       } catch {}
     };
@@ -5176,7 +5228,7 @@ export const RoomToContextBridge = () => {
       try {
         const lp = room.localParticipant;
         if (!lp.isMicrophoneEnabled) {
-          await lp.setMicrophoneEnabled(true);
+          await queueMediaOp(room, () => lp.setMicrophoneEnabled(true));
           setMicEnabled(true);
         }
       } catch {}

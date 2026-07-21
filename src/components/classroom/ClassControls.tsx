@@ -17,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useLiveClass } from "@/contexts/LiveClassContext";
+import { queueMediaOp } from "./classroomComponents";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -385,7 +386,7 @@ const ClassControls = ({
     micBusy.current = true;
     try {
       const next = !room.localParticipant.isMicrophoneEnabled;
-      await room.localParticipant.setMicrophoneEnabled(next);
+      await queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(next));
       setMicEnabled(next);
       setCtxMicEnabled(next);
     } catch (e: any) {
@@ -401,7 +402,7 @@ const ClassControls = ({
     camBusy.current = true;
     try {
       const next = !room.localParticipant.isCameraEnabled;
-      await room.localParticipant.setCameraEnabled(next);
+      await queueMediaOp(room, () => room.localParticipant.setCameraEnabled(next));
       setCamEnabled(next);
       setCtxCamEnabled(next);
     } catch (e: any) {
