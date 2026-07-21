@@ -587,52 +587,45 @@ const ClassControls = ({
 
       {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
       <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
-      <div className="h-16 flex items-center px-2 md:px-4 gap-1 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
+      <div className="h-16 flex items-center justify-evenly px-2 md:px-4 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
 
-        {/* ── LEFT: Mic · Cam · Cam-flip · Screen ── */}
-        <div className="flex flex-1 items-center justify-evenly gap-1">
+        {/* Mic */}
+        <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} style={micEnabled ? btnStyle : {}} onClick={toggleMic}>
+          {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+          <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
+        </Button>
 
-          {/* Mic */}
-          <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} style={micEnabled ? btnStyle : {}} onClick={toggleMic}>
-            {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-            <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
-          </Button>
+        {/* Cam */}
+        <Button size="sm" className={`${btnBase} ${camEnabled ? btnOn : btnOff}`} style={camEnabled ? btnStyle : {}} onClick={toggleCam}>
+          {camEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+          <span className="hidden sm:inline">{camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
+        </Button>
 
-          {/* Cam */}
-          <Button size="sm" className={`${btnBase} ${camEnabled ? btnOn : btnOff}`} style={camEnabled ? btnStyle : {}} onClick={toggleCam}>
-            {camEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-            <span className="hidden sm:inline">{camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
-          </Button>
-        </div>
+        {/* Chat */}
+        <Button size="sm" className={`${btnBase} ${btnNeutral} relative`} style={btnStyle} onClick={onToggleChat}>
+          <MessageCircle className="h-4 w-4" />
+          {chatUnread > 0 && (
+            <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full h-4 w-4 text-[10px] flex items-center justify-center">
+              {chatUnread}
+            </span>
+          )}
+        </Button>
 
-        {/* ── RIGHT: Chat · Participants · Settings · More · End ── */}
-        <div className="flex flex-1 items-center justify-evenly gap-1">
+        {/* Participants */}
+        <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle} onClick={onToggleParticipants}>
+          <Users className="h-4 w-4" />
+        </Button>
 
-          {/* Chat */}
-          <Button size="sm" className={`${btnBase} ${btnNeutral} relative`} style={btnStyle} onClick={onToggleChat}>
-            <MessageCircle className="h-4 w-4" />
-            {chatUnread > 0 && (
-              <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full h-4 w-4 text-[10px] flex items-center justify-center">
-                {chatUnread}
-              </span>
-            )}
-          </Button>
+        {/* More menu */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle}>
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64 p-0 overflow-visible" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,zIndex:9999,"--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
 
-          {/* Participants */}
-          <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle} onClick={onToggleParticipants}>
-            <Users className="h-4 w-4" />
-          </Button>
-
-          {/* More menu */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle}>
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64 p-0 overflow-visible" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,zIndex:9999}}>
-
-              {/* ── Emoji Reactions Row ── */}
+            {/* ── Emoji Reactions Row ── */}
               <div style={{padding:"10px 12px 6px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
                 <p style={{fontSize:10,fontWeight:700,letterSpacing:1.1,color:"rgba(255,255,255,.4)",margin:"0 0 8px",textTransform:"uppercase"}}>😊 Reactions</p>
                 {/* Full emoji row */}
@@ -753,8 +746,7 @@ const ClassControls = ({
             onClick={isPrivileged ? onEndClass : onLeaveClass}>
             <Phone className="h-4 w-4 rotate-[135deg]" />
             <span className="hidden sm:inline">{isPrivileged ? t("End","إنهاء") : t("Leave","مغادرة")}</span>
-          </Button>
-        </div>
+        </Button>
       </div>
     </>
   );
