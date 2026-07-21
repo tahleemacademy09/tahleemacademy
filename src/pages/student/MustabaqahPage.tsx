@@ -25,6 +25,7 @@ import {
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { Track, RoomEvent, ConnectionState } from "livekit-client";
+import { queueMediaOp } from "@/components/classroom/classroomComponents";
 import {
   Mic, MicOff, Video, VideoOff, Bell, Play, Trophy, Users,
   Plus, Clock, BookOpen, CheckCircle, RefreshCw, ChevronRight,
@@ -546,31 +547,32 @@ const LiveVideoGrid = ({
 /* ── Camera controls — ONLY for judge + active participant ──────── */
 const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boolean }) => {
   const { localParticipant } = useLocalParticipant();
+  const room = useRoomContext();
   const [camOn, setCamOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
 
   useEffect(() => {
     if (isJudge) {
-      localParticipant.setCameraEnabled(true).then(()=>setCamOn(true)).catch(()=>{});
-      localParticipant.setMicrophoneEnabled(true).then(()=>setMicOn(true)).catch(()=>{});
+      queueMediaOp(room, () => localParticipant.setCameraEnabled(true)).then(()=>setCamOn(true)).catch(()=>{});
+      queueMediaOp(room, () => localParticipant.setMicrophoneEnabled(true)).then(()=>setMicOn(true)).catch(()=>{});
     }
   }, [isJudge]);
 
   useEffect(() => {
     if (isActive && !isJudge) {
-      localParticipant.setMicrophoneEnabled(true).then(()=>setMicOn(true)).catch(()=>{});
-      localParticipant.setCameraEnabled(true).then(()=>setCamOn(true)).catch(()=>{});
+      queueMediaOp(room, () => localParticipant.setMicrophoneEnabled(true)).then(()=>setMicOn(true)).catch(()=>{});
+      queueMediaOp(room, () => localParticipant.setCameraEnabled(true)).then(()=>setCamOn(true)).catch(()=>{});
     }
   }, [isActive, isJudge]);
 
   return (
     <div style={{display:"flex",gap:6,justifyContent:"center"}}>
-      <button onClick={async()=>{ const n=!micOn; await localParticipant.setMicrophoneEnabled(n); setMicOn(n); }}
+      <button onClick={async()=>{ const n=!micOn; await queueMediaOp(room, () => localParticipant.setMicrophoneEnabled(n)); setMicOn(n); }}
         style={{background:micOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${micOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:8,padding:"4px 8px",cursor:"pointer",color:micOn?GREEN:"rgba(255,255,255,.7)",display:"flex",flexDirection:"column",alignItems:"center",gap:1,fontFamily:"Cairo,sans-serif",fontWeight:700,minWidth:40,transition:"all .2s"}}>
         {micOn?<Mic size={12}/>:<MicOff size={12}/>}
         <span style={{fontSize:8,lineHeight:1.2}}>{micOn?"On":"Mute"}</span>
       </button>
-      <button onClick={async()=>{ const n=!camOn; await localParticipant.setCameraEnabled(n); setCamOn(n); }}
+      <button onClick={async()=>{ const n=!camOn; await queueMediaOp(room, () => localParticipant.setCameraEnabled(n)); setCamOn(n); }}
         style={{background:camOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${camOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:8,padding:"4px 8px",cursor:"pointer",color:camOn?GREEN:"rgba(255,255,255,.7)",display:"flex",flexDirection:"column",alignItems:"center",gap:1,fontFamily:"Cairo,sans-serif",fontWeight:700,minWidth:40,transition:"all .2s"}}>
         {camOn?<Video size={12}/>:<VideoOff size={12}/>}
         <span style={{fontSize:8,lineHeight:1.2}}>Cam</span>
