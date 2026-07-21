@@ -532,82 +532,36 @@ export const useAudioOnlyMode = () => {
 };
 
 /* ══════════════════════════════════════════════════════════════════════
-   FEATURE 5: CONNECTION HEARTBEAT PING
-   Sends a lightweight Supabase ping every 15s. If several consecutive
-   pings fail AND LiveKit's own connection quality agrees things are bad,
-   proactively drops video before LiveKit even detects the quality drop.
-
-   ROOT-CAUSE FIX ("camera turns itself off / unclicks by itself, often
-   right after opening materials"):
-   1. `.single()` throws whenever the query returns 0 OR MORE THAN 1 row.
-      A stale/duplicated `live_sessions` row for this id (a known separate
-      data bug) made this "ping" fail on EVERY call, forever — switched to
-      `.maybeSingle()` which never throws just because of row count, so a
-      duplicate/missing row can no longer masquerade as a dead connection.
-   2. This ping has nothing to do with the actual media connection — it's
-      a plain REST call, so it competes for bandwidth/HTTP connection
-      slots with whatever else is happening (e.g. opening a subject
-      material triggers a materials-list fetch + PDF pre-warm downloads).
-      On a throttled/slow connection those bursts alone were enough to
-      delay this unrelated ping past 2 cycles and trip a false "weak
-      connection" verdict. Now it's ignored while the tab is backgrounded
-      (visibilitychange throttles timers anyway and produces bogus
-      misses), needs 3 misses instead of 2, and — critically — is
-      corroborated against LiveKit's OWN connection-quality reading
-      before it's allowed to touch the camera at all.
-   3. It never set `cameraAutoDisabledByNetwork`, so the *other* recovery
-      logic (useNetworkQuality, below) had no idea this hook had turned
-      the camera off and could never turn it back on — the camera just
-      stayed off for the rest of the class with no way back except the
-      student noticing and re-clicking it themselves. Now it sets the
-      flag AND restores the camera itself once pings succeed again.
+   FEATURE 5: CONNECTION HEARTBEAT PING (diagnostics only)
+   Sends a lightweight Supabase ping every 15s. Previously this also forced
+   the camera off after consecutive failures corroborated by LiveKit's own
+   connection-quality reading — that behaviour has been removed entirely per
+   request. The camera is never auto-disabled or auto-restored because of
+   network conditions; the ping below no longer has any effect on media.
    ══════════════════════════════════════════════════════════════════════ */
+// NOTE: this hook used to force the camera off after 3 missed connectivity
+// pings corroborated by a "poor"/"lost" LiveKit connection-quality reading,
+// then try to silently restore it later. Removed entirely per request — the
+// camera must never be auto-disabled (or auto re-enabled) because of network
+// conditions. Those repeated setCameraEnabled(false)/(true) cycles were also
+// a real source of visible freezes/hangs during class, since every toggle
+// renegotiates the peer connection. Quality adaptation is now left entirely
+// to LiveKit's own simulcast/dynacast (see publishDefaults in
+// ClassroomView.tsx), which swaps encoding layers server-side with no
+// renegotiation and no camera restart. The heartbeat ping itself is kept
+// (harmless, useful if reintroduced later for pure diagnostics) but it no
+// longer touches media tracks in any way.
 export const useConnectionHeartbeat = (sessionId: string | null, active: boolean) => {
   const room = useRoomContext();
-  const missRef  = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const disabledByUsRef = useRef(false); // true only while THIS hook turned the camera off
 
   useEffect(() => {
     if (!active || !sessionId) return;
     const ping = async () => {
-      // Backgrounded tabs throttle/delay fetches for reasons that have
-      // nothing to do with actual network health — don't let that count.
       if (document.visibilityState === "hidden") return;
       try {
-        const { error } = await supabase
-          .from("live_sessions").select("id").eq("id", sessionId).maybeSingle();
-        if (error) throw error;
-        missRef.current = 0; // success — reset miss counter
-        // Recovery: if WE were the ones who turned the camera off, and the
-        // student hasn't since toggled it themselves in the meantime (flag
-        // still true), turn it back on now that the ping is healthy again.
-        if (disabledByUsRef.current && cameraAutoDisabledByNetwork.current && room?.localParticipant) {
-          try {
-            await queueMediaOp(room, () => room.localParticipant.setCameraEnabled(true));
-            cameraAutoDisabledByNetwork.current = false;
-            disabledByUsRef.current = false;
-            toast({ title: "📷 Connection recovered", description: "Camera restored." });
-          } catch {}
-        }
-      } catch {
-        missRef.current += 1;
-        // Require 3 consecutive misses (not 2) AND corroboration from LiveKit's
-        // own connection-quality signal — a lone flaky REST call is not
-        // sufficient evidence the actual media connection is degraded.
-        const lp: any = room?.localParticipant;
-        const liveKitAgrees = lp?.connectionQuality === ConnectionQuality.Poor
-                            || lp?.connectionQuality === ConnectionQuality.Lost;
-        if (missRef.current >= 3 && liveKitAgrees && lp && lp.isCameraEnabled) {
-          try { await queueMediaOp(room, () => lp.setCameraEnabled(false)); } catch {}
-          cameraAutoDisabledByNetwork.current = true;
-          disabledByUsRef.current = true;
-          toast({
-            title: "⚠️ Weak connection detected",
-            description: "Camera turned off to keep audio running.",
-          });
-        }
-      }
+        await supabase.from("live_sessions").select("id").eq("id", sessionId).maybeSingle();
+      } catch {}
     };
     timerRef.current = setInterval(ping, 15_000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
@@ -4138,13 +4092,15 @@ export const RoomSettingsModal = ({ onClose, room }: { onClose: () => void; room
 
 /* ══ PARTICIPANT TILE — WhatsApp call style ══ */
 /* ══ NETWORK QUALITY INDICATOR ══
-   Uses LiveKit's ConnectionQuality events on the local participant.
-   Shows a signal-bar badge in the top bar and a toast warning when quality drops.
-   Also applies adaptive video constraints to reduce strain on a poor connection:
-     Poor  → 240p 10fps (still connected, much less bandwidth)
-     Lost  → 180p 8fps  (last-resort, barely anything)
-     Good  → 480p 24fps restored
-   This dramatically reduces the chance of a full disconnect caused by bandwidth saturation. */
+   Uses LiveKit's ConnectionQuality events on the local participant to drive
+   a signal-bar badge only. This NO LONGER forces any video/audio downgrade,
+   camera-off, or "poor connection" toast — quality adaptation is handled
+   entirely by LiveKit's own simulcast/dynacast on the server side (see
+   publishDefaults in ClassroomView.tsx). Removed per request: the previous
+   behaviour of auto-shrinking the camera to 320x240/10fps (or turning it off
+   entirely) whenever the network dipped was itself a common cause of visible
+   freezes, since every step involved disabling and re-enabling the camera
+   track (a renegotiation, not a cheap operation). */
 
 export const QUALITY_LABELS: Record<string,string> = {
   excellent: "Excellent",
@@ -4178,13 +4134,13 @@ export const SignalBars=({quality}:{quality:string})=>{
   );
 };
 
-/* The hook: listens to LiveKit quality changes on the local participant
-   and applies adaptive video constraints to prevent disconnect on poor network. */
+/* The hook: listens to LiveKit quality changes on the local participant and
+   exposes a label for display only. Deliberately does NOT touch camera,
+   microphone, or encoder settings in response to network conditions — no
+   auto-degrade, no auto camera-off, no "poor connection" toast. */
 export const useNetworkQuality=()=>{
   const room=useRoomContext();
   const[quality,setQuality]=useState<string>("unknown");
-  const lastToastRef=useRef<number>(0);
-  const lastQualityRef=useRef<string>("unknown");
 
   useEffect(()=>{
     if(!room)return;
@@ -4198,103 +4154,16 @@ export const useNetworkQuality=()=>{
                    :q===ConnectionQuality.Good?"good"
                    :q===ConnectionQuality.Poor?"poor"
                    :q===ConnectionQuality.Lost?"lost":"unknown";
-        setQuality(label); lastQualityRef.current=label;
+        setQuality(label);
       }
     };
     readCurrent();
     const initTimer=setTimeout(readCurrent,2000);
 
-    const applyAdaptiveVideo=async(q:string,prevQ:string)=>{
-      if(!lp)return;
-      try{
-        const camPub=lp.getTrackPublication(Track.Source.Camera);
-        if(q==="poor"){
-          if(!camPub?.track)return;
-          cameraAutoDisabledByNetwork.current=false; // staying on, just at lower res — not an auto-off
-          await queueMediaOp(room, async () => {
-            await lp.setCameraEnabled(false);
-            await lp.setCameraEnabled(true,{resolution:{width:320,height:240,frameRate:10}} as any);
-          });
-        }else if(q==="lost"){
-          // Audio-only mode: camera off saves ~270kbps — best way to stay alive on 2G/edge.
-          // BUG FIX ("camera turns itself back on"): mark this specific off as
-          // network-driven so the recovery branch below only restores video
-          // when WE turned it off — never when the student manually disabled
-          // their camera. Without this flag, any manual camera-off followed
-          // by ANY later quality recovery event would silently force it back
-          // on with no interaction from the user.
-          if(camPub?.track){ cameraAutoDisabledByNetwork.current=true; await queueMediaOp(room, () => lp.setCameraEnabled(false)); }
-        }else if(q==="good"||q==="excellent"){
-          // BUG FIX: this used to read lastQualityRef.current here, but the
-          // caller had already overwritten that ref to the NEW label (q)
-          // before calling this function — so these branches compared q
-          // against itself and never matched "lost"/"poor". Net effect:
-          // video never actually restored to full resolution/framerate
-          // after recovering from a network dip; it silently stayed
-          // degraded for the rest of the class. Now takes the previous
-          // quality explicitly as a parameter, captured before the ref
-          // was updated, so recovery actually fires.
-          if(prevQ==="lost"){
-            if(cameraAutoDisabledByNetwork.current){
-              cameraAutoDisabledByNetwork.current=false;
-              await queueMediaOp(room, () => lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any));
-            } // else: camera was off because the STUDENT turned it off — leave it off
-          }else if(prevQ==="poor"){
-            // BUG FIX ("camera turns itself on with nobody pressing it"):
-            // this branch used to call setCameraEnabled(true) unconditionally
-            // on every poor→good/excellent recovery. The "poor" degrade path
-            // above only ever touches an ALREADY-publishing camera (it
-            // early-returns via `if(!camPub?.track)return;`), so it never
-            // turns a camera on — but this recovery path had no matching
-            // guard, so if the student's camera was off for any reason
-            // (never turned on this class, or manually turned off) and the
-            // connection merely dipped through "poor" on its way back to
-            // "good", this line switched their camera ON for them with zero
-            // interaction. Now it only re-applies the higher resolution if
-            // the camera is already enabled — never turns it on.
-            if(lp.isCameraEnabled){
-              await queueMediaOp(room, async () => {
-                await lp.setCameraEnabled(false);
-                await lp.setCameraEnabled(true,{resolution:{width:960,height:540,frameRate:24}} as any);
-              });
-            }
-          }
-        }
-      }catch{}
-    };
-
-    // Feature 3: Adaptive audio bitrate — reduce Opus on poor/lost, but keep
-    // enough headroom that voices stay intelligible instead of muffled.
-    const applyAdaptiveBitrate=async(q:string)=>{
-      if(!lp)return;
-      try{
-        const micPub=lp.getTrackPublication(Track.Source.Microphone);
-        if(!micPub?.track)return;
-        const sender=(micPub.track as any)?.sender as RTCRtpSender|undefined;
-        if(!sender)return;
-        const params=sender.getParameters();
-        if(!params.encodings?.length)return;
-        if(q==="poor"){
-          params.encodings[0].maxBitrate=24000; // 24kbps — clearer than the old 20kbps floor
-        }else if(q==="lost"){
-          params.encodings[0].maxBitrate=16000; // 16kbps — still usable, clearer than 12kbps
-        }else if(q==="good"||q==="excellent"){
-          params.encodings[0].maxBitrate=40000; // restore to the new 40kbps default
-        }
-        await sender.setParameters(params);
-      }catch{}
-    };
-
     // BUG FIX — "network bar doesn't function at all":
     // RoomEvent.ConnectionQualityChanged fires as (quality, participant) —
-    // quality FIRST, participant SECOND. This handler had the parameters
-    // swapped: (_participant, q). That meant `_participant` was actually
-    // receiving the ConnectionQuality enum value, so `_participant?.identity`
-    // was always undefined — never equal to `lp?.identity` — so the guard
-    // below returned early on every single event, forever. setQuality()
-    // never ran again after the initial mount read, toasts never fired, and
-    // adaptive video/bitrate never adjusted. The badge only ever showed
-    // whatever readCurrent() saw once at mount.
+    // quality FIRST, participant SECOND. An earlier version had these
+    // swapped, so the identity guard below always failed silently.
     const onQualityChanged=(q:ConnectionQuality,_participant:any)=>{
       if(_participant?.identity!==lp?.identity)return;
       const label=q===ConnectionQuality.Excellent?"excellent"
@@ -4302,23 +4171,6 @@ export const useNetworkQuality=()=>{
                  :q===ConnectionQuality.Poor?"poor"
                  :q===ConnectionQuality.Lost?"lost":"unknown";
       setQuality(label);
-      const now=Date.now();
-      if((label==="poor"||label==="lost")&&now-lastToastRef.current>30_000){
-        lastToastRef.current=now;
-        toast({
-          title:label==="lost"?"⚠️ Very Weak Network":"⚠️ Poor Network",
-          description:label==="lost"
-            ?"Camera turned off to keep audio alive. You can still hear and speak."
-            :"Network weak — video reduced to prevent disconnection.",
-        });
-      }
-      if((label==="good"||label==="excellent")&&(lastQualityRef.current==="poor"||lastQualityRef.current==="lost")){
-        toast({title:"✅ Network Recovered",description:"Connection quality is good again."});
-      }
-      const prevLabel=lastQualityRef.current; // capture BEFORE overwriting — see BUG FIX note in applyAdaptiveVideo
-      lastQualityRef.current=label;
-      applyAdaptiveVideo(label,prevLabel);
-      applyAdaptiveBitrate(label);
     };
 
     room.on(RoomEvent.ConnectionQualityChanged,onQualityChanged);
@@ -4527,13 +4379,16 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         background: "#111",
       }}
     >
-      {/* Live video — local camera is mirrored (selfie-style, scaleX(-1)) so it feels
-          natural to look at, exactly like every other self-view in this codebase
-          (ClassLobby, Mustabaqah, exam verification) and every camera app. Remote
-          participants are NEVER mirrored — what they broadcast is what everyone
-          else (including them) sees, unflipped. */}
+      {/* Live video — NOT mirrored, for local or remote. Previously the local
+          camera was flipped (scaleX(-1), selfie-style) purely for the
+          viewer's own comfort — but that meant what a person saw of
+          themselves in the lobby/class never matched what everyone else on
+          the call actually saw (text on clothing, which hand they raised,
+          which way they pointed — all reversed on their own screen only).
+          Showing the exact same, unflipped frame to everyone means what you
+          see is exactly what the class sees. */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
-        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none"}}
       />
 
       {/* Camera-off avatar — WhatsApp dark grey background + large silhouette */}

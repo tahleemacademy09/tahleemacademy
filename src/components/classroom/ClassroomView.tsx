@@ -75,7 +75,6 @@ import {
   flushDataQueue,
   DataQueueFlusher,
   useScreenWakeLock,
-  cameraAutoDisabledByNetwork,
   ReconnectMonitor,
   ConnectionStateBanner,
   AudioOnlyBridge,
@@ -906,14 +905,54 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // Qur'an class where teachers deliberately pause between words
               // for tajweed correction, it can eat exactly the sound a
               // student needs to hear. Bandwidth savings aren't worth it here.
-              audioPreset:{maxBitrate:64000}, // bumped from 40kbps — mono voice at 64kbps has real headroom for the pronunciation detail (madd, ghunnah, makharij) that matters in recitation, still light on data
+              audioPreset:{maxBitrate:64000}, // mono voice at 64kbps has real headroom for the pronunciation detail (madd, ghunnah, makharij) that matters in recitation, still light on data
               dtx:false,  // was true — see note above
               red:true,   // redundant audio encoding — recovers from packet loss
               stopMicTrackOnMute:false,
-              videoEncoding:{maxBitrate:900_000,maxFramerate:24}, // bumped from 500kbps/20fps — noticeably sharper on decent connections; adaptive-quality logic below still steps this down automatically on poor/lost connections
+              // Base (top) encoding layer — this is what a strong-network
+              // viewer receives. Bumped for a visibly crisper default picture.
+              videoEncoding:{maxBitrate:1_500_000,maxFramerate:30},
               backupCodec:true,
+              // SIMULCAST — this is the correct, LiveKit-native way to adapt
+              // video quality to each viewer's network, replacing the old
+              // approach of the sender repeatedly disabling/re-enabling their
+              // own camera at a lower resolution whenever ANYONE's network
+              // dipped. With simulcast, three layers are encoded and sent to
+              // the server at once; the SFU hands each *viewer* whichever
+              // layer suits their own connection, entirely server-side, with
+              // no renegotiation and no visible freeze on the sender's end.
+              // This is what actually fixes "hanging/delayed video" — the
+              // old logic's setCameraEnabled(false)+setCameraEnabled(true)
+              // cycles were themselves a source of stalls, since each one
+              // renegotiates the peer connection.
+              simulcast:true,
+              videoSimulcastLayers:[
+                {width:320, height:180, encoding:{maxBitrate:150_000, maxFramerate:15}},
+                {width:640, height:360, encoding:{maxBitrate:500_000, maxFramerate:24}},
+                {width:1280,height:720, encoding:{maxBitrate:1_500_000,maxFramerate:30}},
+              ],
             },
-            videoCaptureDefaults:{resolution:{width:960,height:540,frameRate:24},facingMode:"user"}, // bumped from 640×480/20fps for a visibly crisper default picture
+            videoCaptureDefaults:{
+              // Bumped to a genuine 720p default — the prior 960×540 was
+              // itself fairly soft, and every network-quality dip used to cut
+              // it further to 320×240. That auto-cut is gone (see above), so
+              // the camera now simply stays at a sharp, stable resolution for
+              // the whole class.
+              resolution:{width:1280,height:720,frameRate:30},
+              facingMode:"user",
+              // Explicit ideal aspect ratio — without this, a phone's front
+              // camera (which is very often natively 3:4 / 4:3, not 16:9)
+              // gets forced into the requested 16:9 box by cropping the
+              // image tighter than the sensor's real field of view. That
+              // crop is what makes a phone's picture look "zoomed in" next
+              // to a laptop webcam (which is natively 16:9 already) — the
+              // person has to physically back away just to appear the same
+              // size as they would on a desktop. Asking for 16:9 as an
+              // "ideal" (not exact) lets the browser choose the closest
+              // native mode instead of aggressively cropping every device
+              // the same way.
+              aspectRatio:16/9,
+            } as any,
           }} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           {/* FIX ("waveform shows but no voice is heard", and vice versa): this used to be
               VolumeBooster — a hand-built Web Audio pipeline (GainNode + DynamicsCompressor +

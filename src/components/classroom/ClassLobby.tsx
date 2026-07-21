@@ -191,10 +191,12 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
           boxShadow: "0 12px 48px rgba(0,0,0,.6)",
         }}>
           <div style={{ position: "relative", paddingTop: "56.25%" }}>
+            {/* Not mirrored — matches the live classroom view exactly, so what
+                you see here in the lobby is exactly what everyone else sees
+                once you join, with no left/right flip surprise. */}
             <video ref={videoRef} autoPlay playsInline muted style={{
               position: "absolute", inset: 0, width: "100%", height: "100%",
               objectFit: "cover", display: cameraOn ? "block" : "none",
-              transform: "scaleX(-1)",
             }} />
             {!cameraOn && (
               <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, background: "#0a1a12" }}>

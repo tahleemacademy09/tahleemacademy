@@ -62,10 +62,10 @@ const MORE_EMOJIS = [
    Full device picker (mic, speaker/Bluetooth, camera), noise-cancel,
    video quality — matches Google Meet's settings panel.
    ───────────────────────────────────────────────────────────────────────── */
-const SettingsModal = ({ onClose, room }: { onClose: () => void; room: any }) => {
+const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; room: any; initialTab?: "audio" | "video" | "tips" }) => {
   const { t } = useLanguage();
   const { audioBoost, setAudioBoost } = useLiveClass();
-  const [tab, setTab] = useState<"audio" | "video" | "tips">("audio");
+  const [tab, setTab] = useState<"audio" | "video" | "tips">(initialTab || "audio");
 
   // Devices
   const [audioIn,   setAudioIn]   = useState<MediaDeviceInfo[]>([]);
@@ -113,17 +113,33 @@ const SettingsModal = ({ onClose, room }: { onClose: () => void; room: any }) =>
 
   const applyQuality = async (q: "low" | "medium" | "high") => {
     setQuality(q);
-    const bitrate = q === "low" ? 150_000 : q === "medium" ? 700_000 : 2_500_000;
-    const fps     = q === "low" ? 15 : q === "medium" ? 20 : 30;
+    const preset = q === "low"
+      ? { width: 320,  height: 180, frameRate: 15, bitrate: 150_000 }
+      : q === "medium"
+      ? { width: 640,  height: 360, frameRate: 24, bitrate: 500_000 }
+      : { width: 1280, height: 720, frameRate: 30, bitrate: 1_500_000 };
     try {
+      const lp = room.localParticipant;
+      // Actually re-capture the camera at the target resolution — just
+      // touching the sender's bitrate/framerate (the old behaviour) left the
+      // camera capturing at the same resolution the whole time, so picking
+      // "Low" never actually looked any different. Re-enabling the camera at
+      // the new resolution genuinely changes the picture, and also updates
+      // the simulcast layers' effective ceiling for this stream.
+      if (lp.isCameraEnabled) {
+        await queueMediaOp(room, async () => {
+          await lp.setCameraEnabled(false);
+          await lp.setCameraEnabled(true, { resolution: { width: preset.width, height: preset.height, frameRate: preset.frameRate } } as any);
+        });
+      }
       for (const pub of Array.from(room.localParticipant.trackPublications.values()) as any[]) {
         if (pub.track?.kind === "video" && pub.source !== Track.Source.ScreenShare) {
           const sender = (pub.track as any)?.sender;
           if (sender) {
             const params = sender.getParameters();
             if (params.encodings?.length) {
-              params.encodings[0].maxBitrate   = bitrate;
-              params.encodings[0].maxFramerate = fps;
+              params.encodings[0].maxBitrate   = preset.bitrate;
+              params.encodings[0].maxFramerate = preset.frameRate;
               await sender.setParameters(params);
             }
           }
@@ -354,8 +370,49 @@ const ClassControls = ({
   const [showReactions, setShowReactions] = useState(false);
   const [showMoreEmojis, setShowMoreEmojis] = useState(false);
   const [showSettings,  setShowSettings]  = useState(false);
+  const [settingsTab,   setSettingsTab]   = useState<"audio" | "video" | "tips">("audio");
   const [floatingEmoji, setFloatingEmoji] = useState<{ emoji: string; id: number } | null>(null);
   const [raisedHandName, setRaisedHandName] = useState<string | null>(null);
+
+  // ── Quick video quality switcher (three-dot menu) ─────────────────────
+  // Lets a student/teacher switch quality with one tap, right from the
+  // three-dot menu, instead of having to dig into Settings. Actually
+  // re-captures the camera at the chosen resolution (not just a bitrate
+  // tweak) so the change is genuinely visible.
+  const [videoQuality, setVideoQuality] = useState<"low" | "medium" | "high">("high");
+  const applyVideoQuality = useCallback(async (q: "low" | "medium" | "high") => {
+    setVideoQuality(q);
+    const preset = q === "low"
+      ? { width: 320,  height: 180, frameRate: 15, bitrate: 150_000 }
+      : q === "medium"
+      ? { width: 640,  height: 360, frameRate: 24, bitrate: 500_000 }
+      : { width: 1280, height: 720, frameRate: 30, bitrate: 1_500_000 };
+    try {
+      const lp = room.localParticipant;
+      if (lp.isCameraEnabled) {
+        await queueMediaOp(room, async () => {
+          await lp.setCameraEnabled(false);
+          await lp.setCameraEnabled(true, { resolution: { width: preset.width, height: preset.height, frameRate: preset.frameRate } } as any);
+        });
+      }
+      for (const pub of Array.from(lp.trackPublications.values()) as any[]) {
+        if (pub.track?.kind === "video" && pub.source !== Track.Source.ScreenShare) {
+          const sender = (pub.track as any)?.sender;
+          if (sender) {
+            const params = sender.getParameters();
+            if (params.encodings?.length) {
+              params.encodings[0].maxBitrate   = preset.bitrate;
+              params.encodings[0].maxFramerate = preset.frameRate;
+              await sender.setParameters(params);
+            }
+          }
+        }
+      }
+      toast({ title: t(`Video quality: ${q}`, `جودة الفيديو: ${q}`) });
+    } catch (e: any) {
+      toast({ title: t("Couldn't change quality", "تعذر تغيير الجودة"), description: e?.message, variant: "destructive" });
+    }
+  }, [room, t]);
 
   // ── Sync state from LiveKit track-published / muted events ───────────
   useEffect(() => {
@@ -584,7 +641,7 @@ const ClassControls = ({
       )}
 
       {/* ── Settings modal ── */}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} room={room} />}
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} room={room} initialTab={settingsTab} />}
 
       {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
       <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
@@ -707,6 +764,24 @@ const ClassControls = ({
                 </>
               )}
 
+              {/* ── Video Quality — quick switch, right here, no digging into Settings ── */}
+              <div style={{padding:"8px 12px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
+                <p style={{fontSize:10,fontWeight:700,letterSpacing:1.1,color:"rgba(255,255,255,.4)",margin:"0 0 8px",textTransform:"uppercase"}}>📶 {t("Video Quality","جودة الفيديو")}</p>
+                <div style={{display:"flex",gap:6}}>
+                  {(["low","medium","high"] as const).map(q => (
+                    <button key={q} onClick={() => applyVideoQuality(q)} style={{
+                      flex:1, padding:"8px 4px", borderRadius:8, border:"1px solid", cursor:"pointer",
+                      fontSize:11.5, fontWeight:600,
+                      borderColor: videoQuality === q ? "#22c55e" : "rgba(255,255,255,.12)",
+                      background:  videoQuality === q ? "rgba(34,197,94,.14)" : "rgba(255,255,255,.04)",
+                      color: videoQuality === q ? "#22c55e" : "rgba(255,255,255,.6)",
+                    }}>
+                      {q === "low" ? t("Low","منخفض") : q === "medium" ? t("Medium","متوسط") : t("High","عالي")}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* ── General options ── */}
               <div style={{padding:"4px 0"}}>
                 <DropdownMenuItem onClick={toggleCaptions} style={{margin:"0 4px",borderRadius:8}}>
@@ -718,6 +793,9 @@ const ClassControls = ({
                 <DropdownMenuItem onClick={toggleScreenShare} style={{margin:"0 4px",borderRadius:8}}>
                   {screenSharing ? <MonitorOff className="h-4 w-4 mr-2" /> : <Monitor className="h-4 w-4 mr-2" />}
                   {screenSharing ? t("Stop Sharing","إيقاف المشاركة") : t("Share Screen","مشاركة الشاشة")}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => { setSettingsTab("video"); setShowSettings(true); }} style={{margin:"0 4px",borderRadius:8}}>
+                  <Settings className="h-4 w-4 mr-2" /> {t("Settings","الإعدادات")}
                 </DropdownMenuItem>
               </div>
 
