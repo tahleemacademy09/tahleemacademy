@@ -623,7 +623,7 @@ const ClassControls = ({
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64 p-0 overflow-visible" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,zIndex:9999,"--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
+          <DropdownMenuContent align="end" className="w-64 p-0" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,zIndex:9999,maxHeight:"var(--radix-dropdown-menu-content-available-height)",overflowY:"auto","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
 
             {/* ── Emoji Reactions Row ── */}
               <div style={{padding:"10px 12px 6px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
