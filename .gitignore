@@ -12,6 +12,11 @@ dist
 dist-ssr
 *.local
 
+# Package lock files (regenerated from package.json)
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
@@ -23,3 +28,8 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Build cache
+.vite
+.cache
+*.tsbuildinfo
