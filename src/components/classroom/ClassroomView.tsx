@@ -8,7 +8,7 @@
 */
 
 import {
-  LiveKitRoom, useRoomContext, RoomAudioRenderer,
+  LiveKitRoom, useRoomContext, RoomAudioRenderer, StartAudio,
   useParticipants, useLocalParticipant, useTracks,
 } from "@livekit/components-react";
 // @ts-ignore
@@ -917,6 +917,19 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               with no reports of this bug — and re-attaches automatically on reconnects/track
               changes, so waveform and actual audio can no longer drift apart. */}
           <RoomAudioRenderer/>
+          {/* SAFETY NET: browsers can silently block RoomAudioRenderer's <audio>
+              elements from actually playing (autoplay policy) even though everything
+              connected fine — the room shows "canPlaybackAudio: false" instead of
+              throwing anywhere visible. When that happens NOBODY hears ANYBODY
+              (exactly this symptom), while speaking waveforms keep animating since
+              those come from LiveKit's audio-level detection, not from playback.
+              StartAudio renders nothing when playback is already fine, and shows a
+              single tap-to-enable banner the moment the room detects it's blocked —
+              tapping it calls room.startAudio() and immediately unblocks every
+              participant's audio, no reconnect needed. */}
+          <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9500,display:"flex",justifyContent:"center"}}>
+            <StartAudio label="🔊 Tap to enable classroom audio"/>
+          </div>
           <RoomToContextBridge />
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam} isFirstJoin={isFirstJoinPropRef.current}/>
           <MicKeepAliveFromContext />

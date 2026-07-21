@@ -934,35 +934,9 @@ export const VolumeBooster = () => {
 
   const tryResumeAC = useCallback(() => {
     const ac = acRef.current;
-    if (ac && ac.state === "suspended") {
-      ac.resume().catch(() => { webAudioOkRef.current = false; });
-    }
-    // FIX ("we can't hear each other at all" — everyone, not just one
-    // person): this function used to ONLY resume the AudioContext. But the
-    // actual sound comes out of `outElRef.current`, a separate real <audio>
-    // element — and browsers can independently block ITS play() call under
-    // autoplay policy, regardless of AudioContext state. That first
-    // `el.play()` below (fired the instant the pipeline is built, likely
-    // before any user has tapped anything) can get silently rejected — and
-    // nothing was ever retrying it. Result: the AudioContext resumes fine,
-    // every remote track connects fine, the local speaking waveform still
-    // works (that's pure local mic detection, no playback involved) — but
-    // the one element that actually outputs sound stays paused forever, so
-    // NOBODY hears ANYONE for the whole class. Retrying play() here, on the
-    // exact same click/touch/keydown/visibility events already wired up
-    // below, closes that gap the same way tryResumeAC already closes it for
-    // the AudioContext.
-    const el = outElRef.current;
-    if (el && el.paused) {
-      el.play().catch(() => {});
-    }
-    // Belt-and-suspenders: LiveKit's own official RoomAudioRenderer (used
-    // successfully in the guest classroom, which has never had this bug)
-    // relies on room.startAudio() to clear the browser's blocked-playback
-    // state for anything LiveKit manages internally. Harmless no-op if
-    // there's nothing for it to unblock, cheap to call every time.
-    room?.startAudio?.().catch(() => {});
-  }, [room]);
+    if (!ac || ac.state !== "suspended") return;
+    ac.resume().catch(() => { webAudioOkRef.current = false; });
+  }, []);
 
   // ── 1. Build the Web Audio pipeline once: gain → compressor → single
   //    MediaStreamDestination → single real <audio> element ──────────────────
@@ -1036,39 +1010,12 @@ export const VolumeBooster = () => {
     };
     document.addEventListener("visibilitychange", onVis, { passive: true });
 
-    // FIX ("we can't hear each other at all"): last-resort safety net. On
-    // the strictest autoplay policies (notably iOS Safari), the very first
-    // el.play() above can be rejected, and even the retries wired to
-    // click/touch/keydown above only help once one of THOSE specific events
-    // fires. If nobody happens to trigger one of those in the first few
-    // seconds, everyone sits in total silence with no idea why. This
-    // heartbeat checks a few seconds in, and if playback is still stuck
-    // paused, shows a one-time, explicit "tap to enable audio" prompt so
-    // there's always a guaranteed way to recover — the user doesn't have to
-    // guess that tapping the mic button or anywhere else might fix it.
-    let audioPromptShown = false;
-    const stuckCheck = setInterval(() => {
-      const el = outElRef.current;
-      if (!el || !el.paused || audioPromptShown) {
-        if (el && !el.paused) clearInterval(stuckCheck);
-        return;
-      }
-      audioPromptShown = true;
-      toast({
-        title: "🔊 Tap anywhere to enable audio",
-        description: "Your browser blocked audio from starting automatically. Tap anywhere on the screen to hear the class.",
-      });
-      // Keep listening for the next tap even after the prompt — the normal
-      // `resume` listener above will pick it up and call play() again.
-    }, 4000);
-
     return () => {
       document.removeEventListener("click",            resume);
       document.removeEventListener("touchstart",       resume);
       document.removeEventListener("touchend",         resume);
       document.removeEventListener("keydown",          resume);
       document.removeEventListener("visibilitychange", onVis);
-      clearInterval(stuckCheck);
       try { outElRef.current?.pause(); outElRef.current?.remove(); } catch {}
       acRef.current?.close().catch(() => {});
     };
@@ -1095,13 +1042,6 @@ export const VolumeBooster = () => {
     // may succeed here even on Android/iOS before a separate gesture event fires.
     if (ac && ac.state === "suspended") {
       ac.resume().catch(() => { webAudioOkRef.current = false; });
-    }
-    // Same fix as tryResumeAC above: the <audio> element is a separate thing
-    // from the AudioContext and can be stuck paused on its own. Retry it
-    // here too, since this effect fires the moment someone's audio track
-    // actually shows up — exactly when playback matters most.
-    if (outElRef.current?.paused) {
-      outElRef.current.play().catch(() => {});
     }
 
     const activeIds = new Set<string>();
@@ -1391,16 +1331,6 @@ export const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
   // Guard against overlapping republish attempts (heartbeat + track event
   // both firing close together).
   const repairingRef = useRef(false);
-  // FIX ("others can't hear me and I have no idea why"): the mic icon in the
-  // control bar only reflects `isMicrophoneEnabled` — whether the user has
-  // TOGGLED the mic on — not whether the underlying capture device is
-  // actually alive. A track can go silently muted/ended (OS killed the
-  // capture, another app grabbed the mic, Android background suspension)
-  // while the icon still shows "on" and the user has no way to know their
-  // audio stopped reaching anyone. This repair loop already detects and
-  // fixes that — it just never told the user it happened. Now it does, with
-  // a small cooldown so a flaky connection doesn't spam toasts.
-  const lastWarnRef = useRef(0);
 
   useEffect(() => {
     const lp = () => room?.localParticipant;
@@ -1425,18 +1355,6 @@ export const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
 
       if (!dead) return;
 
-      // Tell the user immediately — don't wait to see if the repair below
-      // even works. Silence here is exactly the "I have no idea what's
-      // wrong" problem: their mic died and nothing on screen said so.
-      const now = Date.now();
-      if (now - lastWarnRef.current > 20_000) {
-        lastWarnRef.current = now;
-        toast({
-          title: "🎤 Microphone reconnecting…",
-          description: "Your mic stopped sending audio — reconnecting it now. If this keeps happening, check that no other app is using your microphone.",
-        });
-      }
-
       repairingRef.current = true;
       try {
         // Full cycle (off → on) forces LiveKit to grab a fresh getUserMedia
@@ -1445,20 +1363,10 @@ export const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
         await p.setMicrophoneEnabled(false);
         await new Promise(r => setTimeout(r, 150));
         await p.setMicrophoneEnabled(true);
-      } catch (e: any) {
+      } catch {
         // getUserMedia can legitimately fail while the tab is fully
         // suspended (screen truly locked, no JS running at all) — the
-        // heartbeat below will retry on the next tick or on resume. But if
-        // it fails while the tab IS visible, that's a real, fixable
-        // problem (permission revoked, device grabbed by another app) —
-        // tell the user plainly instead of retrying forever in silence.
-        if (document.visibilityState === "visible") {
-          toast({
-            title: "🎤 Microphone couldn't reconnect",
-            description: e?.message || "Please check your microphone permission and that no other app is using it, then toggle your mic off and on.",
-            variant: "destructive",
-          });
-        }
+        // heartbeat below will retry on the next tick or on resume.
       } finally {
         repairingRef.current = false;
       }
@@ -1528,12 +1436,29 @@ export const MicKeepAliveFromContext = () => {
 
 export const GroupReciteAutoMic=({active,isPrivileged}:{active:boolean;isPrivileged:boolean})=>{
   const room=useRoomContext();
+  // BUG FIX ("no one can hear anyone in the classroom", GuestClassroom has no
+  // equivalent of this component at all — which is exactly why it "works well"
+  // there): the !active branch used to fire unconditionally, including on this
+  // component's very FIRST mount. `active` (groupRecite) starts false by
+  // default, so the instant ANY non-privileged participant joined class, this
+  // effect ran once with active=false and immediately force-disabled their
+  // microphone — silently undoing whatever MediaAutoPublish had just enabled
+  // from their lobby choice. Every student's mic was being killed within
+  // ~450ms of joining, every single class, every single time (and again on
+  // every reconnect, since a new <LiveKitRoom> remounts this component too).
+  // wasActiveRef only becomes true once group recite has genuinely been
+  // switched ON for this component instance, so the mute branch below can now
+  // only fire on a real ON→OFF transition — never on mount/reconnect.
+  const wasActiveRef=useRef(false);
   useEffect(()=>{
     if(!room?.localParticipant)return;
     if(active){
+      wasActiveRef.current=true;
       room.localParticipant.setMicrophoneEnabled(true).catch(()=>{});
+      return;
     }
-    if(!active&&!isPrivileged){
+    if(!isPrivileged&&wasActiveRef.current){
+      wasActiveRef.current=false;
       room.localParticipant.setMicrophoneEnabled(false).catch(()=>{});
     }
   },[active,isPrivileged,room]);
