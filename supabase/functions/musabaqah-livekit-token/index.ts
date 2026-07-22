@@ -67,15 +67,18 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Check user role
-    const { data: roles } = await serviceClient
-      .from("user_roles").select("role").eq("user_id", user.id);
-    const userRoles   = roles?.map((r: any) => r.role) || [];
-    const isPrivileged = userRoles.includes("admin") || userRoles.includes("teacher");
-
-    // Get display name
-    const { data: profile } = await serviceClient
-      .from("profiles").select("full_name").eq("user_id", user.id).single();
+    // PERF FIX: mirrors the same fix already applied in livekit-token/index.ts
+    // ("takes ~16s before my details show up") — these two lookups (my roles,
+    // my profile) don't depend on each other at all, but were being awaited
+    // one after another, stacking two full Postgres round trips before the
+    // token could be returned. Running them together with Promise.all cuts
+    // that to the cost of the single slowest query instead of the sum of both.
+    const [{ data: roles }, { data: profile }] = await Promise.all([
+      serviceClient.from("user_roles").select("role").eq("user_id", user.id),
+      serviceClient.from("profiles").select("full_name").eq("user_id", user.id).single(),
+    ]);
+    const userRoles      = roles?.map((r: any) => r.role) || [];
+    const isPrivileged    = userRoles.includes("admin") || userRoles.includes("teacher");
     const participantName = profile?.full_name || user.email || "Anonymous";
 
     const roomName = `musabaqah-${room_code.toUpperCase()}`;
