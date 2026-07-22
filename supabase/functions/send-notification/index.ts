@@ -12,7 +12,7 @@
   Every notification is treated the same way; event-specific behaviour
   belongs in whatever trigger inserts the row, not in dispatch.
 
-  Called by: trg_dispatch_notification (AFTER INSERT ON public.notifications)
+  Called by: trg_dispatch_notification_on_insert (AFTER INSERT ON public.notifications)
   Body: { notification_id: string }
 */
 
