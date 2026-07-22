@@ -291,7 +291,7 @@ export const CSS = `
   .gm-av-main {
     width:48px; height:48px; display:flex; align-items:center; justify-content:center;
     background:rgba(255,255,255,.1); border:none; cursor:pointer; color:#fff;
-    transition:background .15s;
+    transition:background .15s; border-radius:28px;
   }
   .gm-av-main.off { background:#ea4335; }
   .gm-av-main:hover { background:rgba(255,255,255,.18); }
@@ -4379,14 +4379,13 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         background: "#111",
       }}
     >
-      {/* Live video — NOT mirrored, for local or remote. Previously the local
-          camera was flipped (scaleX(-1), selfie-style) purely for the
-          viewer's own comfort — but that meant what a person saw of
-          themselves in the lobby/class never matched what everyone else on
-          the call actually saw (text on clothing, which hand they raised,
-          which way they pointed — all reversed on their own screen only).
-          Showing the exact same, unflipped frame to everyone means what you
-          see is exactly what the class sees. */}
+      {/* Live video — NOT mirrored, for local or remote. A mirror flips
+          left/right; a person looking at you face-to-face does not — this
+          shows the true, real-life orientation (text on clothing, which
+          hand is raised, which way someone points, all read correctly).
+          Every viewer, including the camera's own owner in their own
+          preview, sees this exact same unflipped frame — what you see of
+          yourself is exactly what everyone else in the class sees of you. */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
         style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none"}}
       />
@@ -4668,12 +4667,32 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
   const[videoPicker,setVideoPicker]=useState(false);
   const[camFacing,setCamFacing]=useState<"user"|"environment">("user");
   const[audioDevices,setAudioDevices]=useState<MediaDeviceInfo[]>([]);
+  const[audioOutDevices,setAudioOutDevices]=useState<MediaDeviceInfo[]>([]); // speaker/headset/bluetooth output
   const[videoDevices,setVideoDevices]=useState<MediaDeviceInfo[]>([]);
   const[selAudio,setSelAudio]=useState("");
+  const[selAudioOut,setSelAudioOut]=useState(""); // active speaker/output device
   const[selVideo,setSelVideo]=useState("");
   const[liveCount,setLiveCount]=useState(0);
   const micBusy=useRef(false);
   const camBusy=useRef(false);
+  // Long-press support: holding the main mic/cam button (not just the small
+  // chevron) opens the same device-options sheet — mic → mic/speaker/
+  // headset/bluetooth picker, cam → camera list + front/back flip. A quick
+  // tap still toggles mic/cam as normal; only a sustained press (450ms)
+  // opens the sheet, and we suppress the click that follows a long-press so
+  // it doesn't also toggle the mic/cam right after opening the menu.
+  const lpTimer=useRef<any>(null);
+  const lpFired=useRef(false);
+  const startLongPress=(cb:()=>void)=>{
+    lpFired.current=false;
+    clearTimeout(lpTimer.current);
+    lpTimer.current=setTimeout(()=>{lpFired.current=true;cb();},450);
+  };
+  const cancelLongPress=()=>{clearTimeout(lpTimer.current);};
+  const clickAfterLongPress=(action:()=>void)=>{
+    if(lpFired.current){lpFired.current=false;return;} // sheet already opened — swallow the click
+    action();
+  };
   const micBtnRef=useRef<HTMLDivElement>(null);
   const camBtnRef=useRef<HTMLDivElement>(null);
   const moreBtnRef=useRef<HTMLDivElement>(null);
@@ -4712,7 +4731,11 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
     try{await navigator.mediaDevices.getUserMedia({audio:true}).catch(()=>{});}catch{}
     const all=await navigator.mediaDevices.enumerateDevices();
     setAudioDevices(all.filter(d=>d.kind==="audioinput"));
+    // Speaker/headset/Bluetooth output — browser labels whatever the OS
+    // reports (e.g. "Bluetooth Headset", "AirPods", device's own name).
+    setAudioOutDevices(all.filter(d=>d.kind==="audiooutput"));
     try{const cur=await room.getActiveDevice("audioinput");if(cur)setSelAudio(cur);}catch{}
+    try{const cur=await room.getActiveDevice("audiooutput");if(cur)setSelAudioOut(cur);}catch{}
     const pos=computePos(micBtnRef,"left");if(pos)setAudioPickerPos(pos as any);
     setAudioPicker(true);setVideoPicker(false);setMoreOpen(false);setEmojisOpen(false);
   };
@@ -4733,6 +4756,18 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
   const switchAudio=async(id:string)=>{
     try{await room.switchActiveDevice("audioinput",id);setSelAudio(id);toast({title:"Microphone switched ✓"});}
     catch(e:any){toast({title:"Could not switch",description:e?.message,variant:"destructive"});}
+    setAudioPicker(false);
+  };
+  const switchAudioOut=async(id:string)=>{
+    try{
+      await room.switchActiveDevice("audiooutput",id);
+      setSelAudioOut(id);
+      toast({title:"Speaker switched ✓"});
+    }catch(e:any){
+      // setSinkId isn't supported in every browser (notably iOS Safari) —
+      // fail gracefully rather than leaving the user with a stuck spinner.
+      toast({title:"Could not switch speaker",description:e?.message||"Not supported on this browser",variant:"destructive"});
+    }
     setAudioPicker(false);
   };
   const switchVideo=async(id:string)=>{
@@ -4815,12 +4850,16 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
       <div onClick={closeAll} style={{position:"fixed",inset:0,zIndex:9100}}/>,portal
     )}
 
-    {/* Audio picker */}
+    {/* Audio picker — microphone AND speaker/headset/Bluetooth output */}
     {audioPicker&&portal&&createPortal(
-      <div className="gm-sheet" style={{bottom:audioPickerPos.bottom,left:(audioPickerPos as any).left}}>
+      <div className="gm-sheet" style={{bottom:audioPickerPos.bottom,left:(audioPickerPos as any).left,maxHeight:"70vh",overflowY:"auto"}}>
         <div style={{padding:"13px 16px",borderBottom:"1px solid rgba(255,255,255,.07)",fontSize:12,fontWeight:600,color:"rgba(255,255,255,.6)",fontFamily:"'Google Sans',sans-serif",letterSpacing:.3}}>🎤 Microphone</div>
         {audioDevices.map(d=>(<DeviceRow key={d.deviceId} label={d.label||"Microphone "+d.deviceId.slice(0,6)} selected={selAudio===d.deviceId} onClick={()=>switchAudio(d.deviceId)}/>))}
         {audioDevices.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:14,textAlign:"center"}}>No microphones found</p>}
+
+        <div style={{padding:"13px 16px",borderTop:"1px solid rgba(255,255,255,.07)",borderBottom:"1px solid rgba(255,255,255,.07)",fontSize:12,fontWeight:600,color:"rgba(255,255,255,.6)",fontFamily:"'Google Sans',sans-serif",letterSpacing:.3}}>🔊 Speaker / Headset / Bluetooth</div>
+        {audioOutDevices.map(d=>(<DeviceRow key={d.deviceId} label={d.label||"Speaker "+d.deviceId.slice(0,6)} selected={selAudioOut===d.deviceId} onClick={()=>switchAudioOut(d.deviceId)}/>))}
+        {audioOutDevices.length===0&&<p style={{fontSize:12,color:"rgba(255,255,255,.3)",padding:14,textAlign:"center"}}>No output devices found (or not supported on this browser)</p>}
       </div>,portal
     )}
 
@@ -4939,23 +4978,27 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
       {isMobile ? (
         /* ── MOBILE: Image 2 exact — light bar, rectangle pill buttons ── */
         <>
-          {/* Mic pill + chevron */}
+          {/* Mic pill — long-press for mic & speaker options */}
           <div ref={micBtnRef} style={{display:"flex",alignItems:"center",background:"#e2e5e9",borderRadius:12,overflow:"hidden",height:44,flexShrink:0}}>
-            <button onClick={toggleMic} style={{width:46,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",color:"#202124"}}>
+            <button
+              onClick={()=>clickAfterLongPress(toggleMic)}
+              onMouseDown={()=>startLongPress(openAudioPicker)} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress}
+              onTouchStart={()=>startLongPress(openAudioPicker)} onTouchEnd={cancelLongPress} onTouchCancel={cancelLongPress}
+              title="Tap to mute/unmute · Hold for mic & speaker options"
+              style={{width:56,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",color:"#202124"}}>
               {micOn?<Mic style={{width:20,height:20,color:"#202124"}}/>:<MicOff style={{width:20,height:20,color:"#202124"}}/>}
-            </button>
-            <button onClick={openAudioPicker} style={{width:24,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",color:"#5f6368",borderLeft:"1px solid rgba(0,0,0,.08)"}}>
-              <svg width="9" height="6" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
             </button>
           </div>
 
-          {/* Cam pill + chevron */}
+          {/* Cam pill — long-press for camera options / flip */}
           <div ref={camBtnRef} style={{display:"flex",alignItems:"center",background:"#e2e5e9",borderRadius:12,overflow:"hidden",height:44,flexShrink:0}}>
-            <button onClick={toggleCam} style={{width:46,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent"}}>
+            <button
+              onClick={()=>clickAfterLongPress(toggleCam)}
+              onMouseDown={()=>startLongPress(openVideoPicker)} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress}
+              onTouchStart={()=>startLongPress(openVideoPicker)} onTouchEnd={cancelLongPress} onTouchCancel={cancelLongPress}
+              title="Tap to turn camera on/off · Hold for camera options"
+              style={{width:56,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent"}}>
               {camOn?<Video style={{width:20,height:20,color:"#202124"}}/>:<VideoOff style={{width:20,height:20,color:"#202124"}}/>}
-            </button>
-            <button onClick={openVideoPicker} style={{width:24,height:44,border:"none",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",background:"transparent",color:"#5f6368",borderLeft:"1px solid rgba(0,0,0,.08)"}}>
-              <svg width="9" height="6" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
             </button>
           </div>
 
@@ -4987,19 +5030,21 @@ export const BottomBar=({sessionId,onToggleChat,onToggleParticipants,onEndClass,
           {/* LEFT — Mic + Cam with chevrons */}
           <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
             <div ref={micBtnRef} className="gm-av-group">
-              <button className={`gm-av-main${micOn?"":" off"}`} onClick={toggleMic} title={micOn?"Mute microphone":"Unmute microphone"}>
+              <button className={`gm-av-main${micOn?"":" off"}`}
+                onClick={()=>clickAfterLongPress(toggleMic)}
+                onMouseDown={()=>startLongPress(openAudioPicker)} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress}
+                onTouchStart={()=>startLongPress(openAudioPicker)} onTouchEnd={cancelLongPress} onTouchCancel={cancelLongPress}
+                title={(micOn?"Mute microphone":"Unmute microphone")+" · Hold for mic & speaker options"}>
                 {micOn?<Mic style={IS}/>:<MicOff style={IS}/>}
-              </button>
-              <button className={`gm-av-chevron${micOn?"":" off"}`} onClick={openAudioPicker} title="Microphone options">
-                <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
               </button>
             </div>
             <div ref={camBtnRef} className="gm-av-group">
-              <button className={`gm-av-main${camOn?"":" off"}`} onClick={toggleCam} title={camOn?"Turn off camera":"Turn on camera"}>
+              <button className={`gm-av-main${camOn?"":" off"}`}
+                onClick={()=>clickAfterLongPress(toggleCam)}
+                onMouseDown={()=>startLongPress(openVideoPicker)} onMouseUp={cancelLongPress} onMouseLeave={cancelLongPress}
+                onTouchStart={()=>startLongPress(openVideoPicker)} onTouchEnd={cancelLongPress} onTouchCancel={cancelLongPress}
+                title={(camOn?"Turn off camera":"Turn on camera")+" · Hold for camera options"}>
                 {camOn?<Video style={IS}/>:<VideoOff style={IS}/>}
-              </button>
-              <button className={`gm-av-chevron${camOn?"":" off"}`} onClick={openVideoPicker} title="Camera options">
-                <svg width="8" height="5" viewBox="0 0 8 5" fill="currentColor"><path d="M4 5L0 0h8z"/></svg>
               </button>
             </div>
           </div>
