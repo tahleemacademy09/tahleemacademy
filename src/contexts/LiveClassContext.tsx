@@ -254,9 +254,20 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const joinClass = useCallback((subject: any, opts?: { autoJoin?: boolean }) => {
     clearPersist();
     guardPushed.current = false; // reset so the effect pushes a fresh guard
+    // FIX ("class starts before I actually join"): every "Join Class" button
+    // across the app (dashboard cards, teaching hub, admin management, deep
+    // links, reminder notifications) was calling joinClass with
+    // { autoJoin: true }, which made ClassroomView skip ClassLobby entirely
+    // and connect to LiveKit the instant this fired — before the user ever
+    // saw a mic/camera preview or pressed a real "Join"/"Start" button.
+    // `opts.autoJoin` is intentionally ignored here now — autoJoin is only
+    // ever true when `restore()` (above) brings back an ALREADY-CONNECTED
+    // class after a page refresh, which is the one case where skipping the
+    // lobby is correct (the user was already in the room). Every fresh join
+    // now always lands on the lobby and requires an explicit tap.
     setState({
       activeSubject: subject, inCall: true, minimized: false,
-      autoJoin: opts?.autoJoin ?? false, micEnabled: false,
+      autoJoin: false, micEnabled: false,
       camEnabled: false, hasConnected: false,
     });
     if ("Notification" in window && Notification.permission === "default") {
