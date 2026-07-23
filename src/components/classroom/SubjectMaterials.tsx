@@ -4,9 +4,10 @@
     ─────────────────────────────────────────────────────────────────────────
     Role-aware:
     • Admin / Teacher → MaterialManager: upload/edit/delete files & links for
-      this subject (PDF, Video, Audio, Image, Document), set level + downloadable.
-    • Student / Public → MaterialViewer: browse + open/download, filtered to
-      their own level (or "all"-level materials).
+      this subject (PDF, Video, Audio, Image, Document), set downloadable.
+    • Student / Public → MaterialViewer: browse + open/download every
+      material uploaded for the subject (no per-material level filter —
+      each academic level already has its own subject).
 
     Backed by the `subject_materials` table (see admin/MaterialsManagement.tsx
     for the original schema this mirrors) and the `subject-materials` storage
@@ -22,10 +23,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useAcademicLevels, getLevelDisplay } from "@/hooks/useAcademicLevels";
+import MaterialsViewer from "./MaterialsViewer";
 import {
   FileText, Video, Music, Image as ImageIcon, File as FileIcon,
-  Upload, Plus, X, Trash2, Pencil, Download, ExternalLink, Eye,
+  Upload, Plus, X, Trash2, Pencil,
   Loader2, FolderOpen, Search,
 } from "lucide-react";
 
@@ -73,33 +74,6 @@ function detectType(file: File): MaterialType {
   return "Document";
 }
 
-async function resolveUrl(fileUrl: string): Promise<string> {
-  if (!fileUrl) return "";
-  if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
-
-  // Try the public URL first — works if the bucket is genuinely public.
-  const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(fileUrl);
-  if (pub?.publicUrl) {
-    try {
-      const res = await fetch(pub.publicUrl, { method: "HEAD" });
-      if (res.ok) return pub.publicUrl;
-    } catch {
-      /* network hiccup — fall through to signed URL */
-    }
-  }
-
-  // Public URL 404'd (bucket isn't actually public, or needs auth) —
-  // fall back to a signed URL for the logged-in user.
-  const { data: signed, error } = await supabase.storage
-    .from(BUCKET)
-    .createSignedUrl(fileUrl, 3600);
-  if (error) {
-    console.error("[SubjectMaterials] could not resolve file URL:", error.message, fileUrl);
-    return pub?.publicUrl || "";
-  }
-  return signed?.signedUrl || pub?.publicUrl || "";
-}
-
 /* ═══════════════════════════════════════════════════════════════
    Entry point — branches by role
    ═══════════════════════════════════════════════════════════════ */
@@ -117,13 +91,12 @@ export default function SubjectMaterials({ subjectId, subjectTitle }: { subjectI
 const emptyForm = {
   title: "", title_ar: "", description: "",
   material_type: "Document" as MaterialType,
-  level: "all", is_downloadable: true,
+  is_downloadable: true,
 };
 
 function MaterialManager({ subjectId }: { subjectId?: string }) {
   const { user } = useAuth();
   const { t } = useLanguage();
-  const { data: levels } = useAcademicLevels();
 
   const [materials, setMaterials] = useState<any[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -165,7 +138,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
     setForm({
       title: m.title || "", title_ar: m.title_ar || "", description: m.description || "",
       material_type: (m.material_type as MaterialType) || "Document",
-      level: m.level || "all", is_downloadable: m.is_downloadable ?? true,
+      is_downloadable: m.is_downloadable ?? true,
     });
     setSelectedFile(null);
     setShowForm(true);
@@ -209,7 +182,6 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
         material_type: form.material_type,
         file_url,
         file_size,
-        level: form.level,
         is_downloadable: form.is_downloadable,
         uploaded_by: user.id,
         sort_order: editing?.sort_order ?? materials.length,
@@ -290,7 +262,6 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
         {filtered.map(m => {
           const cfg = TYPE_CFG[(m.material_type as MaterialType) || "Document"] || TYPE_CFG.Document;
           const Icon = cfg.icon;
-          const levelLabel = m.level === "all" ? t("All levels", "كل المستويات") : getLevelDisplay(m.level, levels).name_en;
           return (
             <div key={m.id} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
               <div style={{ width: 40, height: 40, borderRadius: 11, background: cfg.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -300,14 +271,10 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
                 <div style={{ fontWeight: 700, fontSize: 13.5, color: TXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.title}</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 3 }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: cfg.color, background: cfg.bg, borderRadius: 20, padding: "1px 8px" }}>{m.material_type}</span>
-                  <span style={{ fontSize: 10, color: TLIT }}>{levelLabel}</span>
                   {m.file_size && <span style={{ fontSize: 10, color: TLIT }}>· {fmtSize(m.file_size)}</span>}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                <IconBtn onClick={async () => { const url = await resolveUrl(m.file_url); if (url) window.open(url, "_blank"); }} title={t("Preview", "معاينة")}>
-                  <Eye size={15} color={TMID} />
-                </IconBtn>
                 <IconBtn onClick={() => openEdit(m)} title={t("Edit", "تعديل")}>
                   <Pencil size={15} color={TMID} />
                 </IconBtn>
@@ -319,6 +286,19 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
           );
         })}
       </div>
+
+      {/* Preview & Download — same in-app viewer used for students in the
+          classroom, so admins can open/download every file type without
+          leaving the page (PDF, video, audio, image, YouTube, Office docs,
+          plain text, links, or any other file). */}
+      {filtered.length > 0 && (
+        <div>
+          <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, color: TLIT, margin: "4px 0 8px" }}>
+            {t("Preview & Download", "معاينة وتحميل")}
+          </p>
+          <MaterialsViewer materials={filtered} />
+        </div>
+      )}
 
       {/* Upload / edit sheet */}
       {showForm && (
@@ -340,19 +320,11 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
                 <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} style={{ ...fieldInput, resize: "vertical" as const }} />
               </label>
 
-              <div style={{ display: "flex", gap: 10 }}>
-                <label style={{ ...fieldLabel, flex: 1 }}>{t("Type", "النوع")}
-                  <select value={form.material_type} onChange={e => setForm(f => ({ ...f, material_type: e.target.value as MaterialType }))} style={fieldInput}>
-                    {MATERIAL_TYPES.map(mt => <option key={mt} value={mt}>{mt}</option>)}
-                  </select>
-                </label>
-                <label style={{ ...fieldLabel, flex: 1 }}>{t("Level", "المستوى")}
-                  <select value={form.level} onChange={e => setForm(f => ({ ...f, level: e.target.value }))} style={fieldInput}>
-                    <option value="all">{t("All levels", "كل المستويات")}</option>
-                    {(levels || []).map(l => <option key={l.slug} value={l.slug}>{l.name_en}</option>)}
-                  </select>
-                </label>
-              </div>
+              <label style={fieldLabel}>{t("Type", "النوع")}
+                <select value={form.material_type} onChange={e => setForm(f => ({ ...f, material_type: e.target.value as MaterialType }))} style={fieldInput}>
+                  {MATERIAL_TYPES.map(mt => <option key={mt} value={mt}>{mt}</option>)}
+                </select>
+              </label>
 
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: TXT }}>
                 <input type="checkbox" checked={form.is_downloadable} onChange={e => setForm(f => ({ ...f, is_downloadable: e.target.checked }))} />
@@ -415,14 +387,13 @@ function IconBtn({ children, onClick, title }: { children: React.ReactNode; onCl
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   STUDENT / PUBLIC VIEW — browse + open/download
+   STUDENT / PUBLIC VIEW — same in-app viewer used in the classroom,
+   so students can open or download every file type right here
+   (PDF, video, audio, image, YouTube, Office docs, text, links, etc.)
    ═══════════════════════════════════════════════════════════════ */
 function MaterialViewer({ subjectId }: { subjectId?: string }) {
-  const { profile } = useAuth();
-  const { t } = useLanguage();
   const [materials, setMaterials] = useState<any[]>([]);
   const [loading, setLoading]     = useState(true);
-  const [opening, setOpening]     = useState<string | null>(null);
 
   useEffect(() => {
     if (!subjectId) { setLoading(false); return; }
@@ -438,15 +409,8 @@ function MaterialViewer({ subjectId }: { subjectId?: string }) {
     })();
   }, [subjectId]);
 
-  const studentLevel = profile?.level || (profile as any)?.course_level || "";
-  const visible = materials.filter(m => !m.level || m.level === "all" || m.level === studentLevel);
-
-  const open = async (m: any) => {
-    setOpening(m.id);
-    const url = await resolveUrl(m.file_url);
-    setOpening(null);
-    if (url) window.open(url, "_blank");
-  };
+  // No level filter — each academic level has its own subject, so every
+  // material uploaded to this subject is visible to every enrolled student.
 
   if (loading) {
     return (
@@ -456,38 +420,5 @@ function MaterialViewer({ subjectId }: { subjectId?: string }) {
     );
   }
 
-  if (visible.length === 0) {
-    return (
-      <div style={{ ...card, textAlign: "center", padding: "42px 20px" }}>
-        <FolderOpen size={34} color={TLIT} style={{ opacity: .4, margin: "0 auto 10px" }} />
-        <p style={{ fontWeight: 800, fontSize: 15, color: TXT, margin: "0 0 4px" }}>{t("No materials yet", "لا توجد مواد بعد")}</p>
-        <p style={{ fontSize: 13, color: TMID, margin: 0 }}>{t("Your teacher hasn't uploaded anything for this subject yet.", "لم يرفع معلمك أي مادة بعد.")}</p>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {visible.map(m => {
-        const cfg = TYPE_CFG[(m.material_type as MaterialType) || "Document"] || TYPE_CFG.Document;
-        const Icon = cfg.icon;
-        return (
-          <div key={m.id} style={{ ...card, padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-            <div style={{ width: 40, height: 40, borderRadius: 11, background: cfg.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Icon size={17} color={cfg.color} />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 13.5, color: TXT, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.title}</div>
-              {m.description && <div style={{ fontSize: 11.5, color: TMID, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.description}</div>}
-            </div>
-            <button onClick={() => open(m)} disabled={opening === m.id}
-              style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10, border: "none", background: G, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-              {opening === m.id ? <Loader2 className="animate-spin" size={13} /> : m.is_downloadable ? <Download size={13} /> : <ExternalLink size={13} />}
-              {m.is_downloadable ? t("Download", "تحميل") : t("View", "عرض")}
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
+  return <MaterialsViewer materials={materials} />;
 }

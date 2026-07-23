@@ -15,6 +15,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { supabase } from "@/integrations/supabase/client";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
 import { Button } from "@/components/ui/button";
 import {
@@ -75,11 +76,30 @@ const K: Record<FileKind, { icon: React.ElementType; bg: string; border: string;
 
 const fmtSize = (b?: number) => !b ? "" : b < 1048576 ? `${(b/1024).toFixed(0)} KB` : `${(b/1048576).toFixed(1)} MB`;
 
+const MATERIALS_BUCKET = "subject-materials";
+
 async function resolveUrl(fileUrl: string): Promise<string> {
   if (!fileUrl) return "";
   if (fileUrl.startsWith("http")) return fileUrl;
-  const data = { signedUrl: await getSignedUrl(fileUrl, 3600) };
-  return data?.signedUrl || "";
+
+  // Materials live in the `subject-materials` bucket (see SubjectMaterials.tsx),
+  // which is a different bucket than the one getSignedUrl() defaults to for
+  // non-recording paths — resolve against the correct bucket directly.
+  const { data: pub } = supabase.storage.from(MATERIALS_BUCKET).getPublicUrl(fileUrl);
+  if (pub?.publicUrl) {
+    try {
+      const res = await fetch(pub.publicUrl, { method: "HEAD" });
+      if (res.ok || res.status === 304) return pub.publicUrl;
+    } catch { /* fall through to signed URL */ }
+  }
+
+  const { data: signed, error } = await supabase.storage
+    .from(MATERIALS_BUCKET).createSignedUrl(fileUrl, 3600);
+  if (error) {
+    console.error("[MaterialsViewer] could not resolve file URL:", error.message, fileUrl);
+    return pub?.publicUrl || "";
+  }
+  return signed?.signedUrl || pub?.publicUrl || "";
 }
 
 /* ══════════════════════════════════════════════════════════════
