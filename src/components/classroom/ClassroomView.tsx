@@ -177,8 +177,16 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       .then(({data}:{data:any[]|null})=>{
         if(cancelled||!data)return;
         const pdfs=data.filter(m=>m.file_url&&(m.material_type==="PDF"||m.material_type==="document"||(m.file_url||"").toLowerCase().split("?")[0].endsWith(".pdf")));
+        // FIX ("slow to load once the class connects"): this used to start
+        // downloading PDFs almost immediately (i*600ms, so the first one
+        // began well under a second after mount) — right when the LiveKit
+        // token fetch and ICE/DTLS handshake are also competing for the
+        // connection. Pushing the first prewarm out and spacing the rest
+        // further apart gives the actual class connection priority; PDFs
+        // still finish caching well before a student realistically opens
+        // the Materials panel.
         pdfs.forEach((m,i)=>{
-          timers.push(setTimeout(()=>{ if(!cancelled) prewarmPDF(m.file_url); },i*600));
+          timers.push(setTimeout(()=>{ if(!cancelled) prewarmPDF(m.file_url); },4000+i*1200));
         });
       })
       .catch(()=>{}); // best-effort — Materials panel will still load normally if this fails
@@ -269,6 +277,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[sessionId,phase,user?.id]);
   const[sideTab,setSideTab]=useState<"chat"|"polls">("chat");const[showEnd,setShowEnd]=useState(false);
+  // FIX ("student can exit with a single accidental tap"): the Leave button
+  // (both the phone-icon button and its dropdown twin) called leaveSession()
+  // directly with zero confirmation — one mis-tap dropped a student straight
+  // out of class. Teachers already get a confirm step via the End-class
+  // dialog; students now get an equivalent lightweight confirm before
+  // leaveSession() actually runs.
+  const[showLeaveConfirm,setShowLeaveConfirm]=useState(false);
   // FIX BUG 2: quizOpen state — LiveQuizOverlay was permanently disabled with hardcoded isOpen={false}
   const[quizOpen,setQuizOpen]=useState(false);
   const[wbOpen,setWbOpen]=useState(false);const[matOpen,setMatOpen]=useState<any>(null);const[matPicker,setMatPicker]=useState(false);const[matPanelOpen,setMatPanelOpen]=useState(false);
@@ -1295,7 +1310,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             onToggleChat={()=>{setChatOpen(v=>!v);if(!chatOpen)setChatUnread(0);}}
             onToggleParticipants={()=>{setPartOpen(v=>!v);setPartPanelOpen(v=>!v);}}
             onEndClass={()=>setShowEnd(true)}
-            onLeaveClass={leaveSession}
+            onLeaveClass={()=>setShowLeaveConfirm(true)}
             chatUnread={chatUnread}
             onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
             onLaunchQuiz={()=>setQuizOpen(true)}
@@ -1388,6 +1403,22 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <button onClick={endSession} style={{width:"100%",padding:"13px",borderRadius:24,border:"none",background:"#ea4335",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Google Sans',sans-serif",boxShadow:"0 2px 12px rgba(234,67,53,.4)"}}>{t("End for all","إنهاء للجميع")}</button>
               <button onClick={()=>{setShowEnd(false);leaveSession();}} style={{width:"100%",padding:"12px",borderRadius:24,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.8)",fontSize:14,fontWeight:400,cursor:"pointer",fontFamily:"'Google Sans',sans-serif"}}>{t("Leave but keep open","غادر لكن أبقِ الحصة")}</button>
               <button onClick={()=>setShowEnd(false)} style={{width:"100%",padding:"12px",borderRadius:24,border:"none",background:"transparent",color:"rgba(255,255,255,.4)",fontSize:14,cursor:"pointer",fontFamily:"'Google Sans',sans-serif"}}>{t("Cancel","إلغاء")}</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+      {showLeaveConfirm&&createPortal(
+        <div style={{position:"fixed",inset:0,zIndex:9500,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.6)",backdropFilter:"blur(8px)"}} onClick={()=>setShowLeaveConfirm(false)}>
+          <div style={{background:"#2D2E30",borderRadius:20,padding:"32px 28px 24px",width:"100%",maxWidth:380,margin:"0 16px",boxShadow:"0 24px 64px rgba(0,0,0,.7)",border:"1px solid rgba(255,255,255,.08)",animation:"fade-in .18s ease"}} onClick={e=>e.stopPropagation()}>
+            <div style={{width:56,height:56,borderRadius:"50%",background:"rgba(234,67,53,.12)",border:"1px solid rgba(234,67,53,.2)",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 18px"}}>
+              <Phone style={{width:22,height:22,color:"#ea4335",transform:"rotate(135deg)"}}/>
+            </div>
+            <h2 style={{textAlign:"center",fontSize:18,fontWeight:500,color:"#e8eaed",marginBottom:8,fontFamily:"'Google Sans Display',sans-serif"}}>{t("Leave the class?","مغادرة الحصة؟")}</h2>
+            <p style={{textAlign:"center",fontSize:14,color:"rgba(255,255,255,.45)",marginBottom:28,lineHeight:1.6,fontFamily:"'Google Sans',sans-serif"}}>{t("You can rejoin later while the class is still live.","يمكنك الانضمام مرة أخرى لاحقًا ما دامت الحصة مباشرة.")}</p>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <button onClick={()=>{setShowLeaveConfirm(false);leaveSession();}} style={{width:"100%",padding:"13px",borderRadius:24,border:"none",background:"#ea4335",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"'Google Sans',sans-serif",boxShadow:"0 2px 12px rgba(234,67,53,.4)"}}>{t("Leave class","مغادرة الحصة")}</button>
+              <button onClick={()=>setShowLeaveConfirm(false)} style={{width:"100%",padding:"12px",borderRadius:24,border:"1px solid rgba(255,255,255,.15)",background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.8)",fontSize:14,fontWeight:400,cursor:"pointer",fontFamily:"'Google Sans',sans-serif"}}>{t("Cancel","إلغاء")}</button>
             </div>
           </div>
         </div>,
