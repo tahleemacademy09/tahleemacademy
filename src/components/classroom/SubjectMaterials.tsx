@@ -76,8 +76,28 @@ function detectType(file: File): MaterialType {
 async function resolveUrl(fileUrl: string): Promise<string> {
   if (!fileUrl) return "";
   if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(fileUrl);
-  return data?.publicUrl || "";
+
+  // Try the public URL first — works if the bucket is genuinely public.
+  const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(fileUrl);
+  if (pub?.publicUrl) {
+    try {
+      const res = await fetch(pub.publicUrl, { method: "HEAD" });
+      if (res.ok) return pub.publicUrl;
+    } catch {
+      /* network hiccup — fall through to signed URL */
+    }
+  }
+
+  // Public URL 404'd (bucket isn't actually public, or needs auth) —
+  // fall back to a signed URL for the logged-in user.
+  const { data: signed, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(fileUrl, 3600);
+  if (error) {
+    console.error("[SubjectMaterials] could not resolve file URL:", error.message, fileUrl);
+    return pub?.publicUrl || "";
+  }
+  return signed?.signedUrl || pub?.publicUrl || "";
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -418,7 +438,8 @@ function MaterialViewer({ subjectId }: { subjectId?: string }) {
     })();
   }, [subjectId]);
 
-  const visible = materials.filter(m => !m.level || m.level === "all" || m.level === profile?.level);
+  const studentLevel = profile?.level || (profile as any)?.course_level || "";
+  const visible = materials.filter(m => !m.level || m.level === "all" || m.level === studentLevel);
 
   const open = async (m: any) => {
     setOpening(m.id);
