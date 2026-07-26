@@ -5,7 +5,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { resolveTasjeelStep, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
-import { lovable } from "@/integrations/lovable";
 
 import { Loader2, Mail, Lock, Eye, EyeOff, Check, Globe, BookOpen } from "lucide-react";
 import { motion } from "framer-motion";
@@ -131,19 +130,22 @@ const Login = () => {
 
   const handleGoogleSignIn = async () => {
     try {
-      const result: any = await lovable.auth.signInWithOAuth("google", {
-        redirect_uri: `${window.location.origin}/auth/callback`,
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
       });
-      if (result?.error) {
+      if (error) {
         toast({
           title: t("Sign-in failed", "فشل تسجيل الدخول"),
-          description: result.error.message || "Google sign-in could not start.",
+          description: error.message || "Google sign-in could not start.",
           variant: "destructive",
         });
-        return;
       }
-      // If redirected: browser navigates to Google — nothing else to do
-      // If tokens received: AuthContext picks up the session automatically
+      // On success the browser navigates to Google — nothing else to do here.
+      // AuthContext picks up the session automatically once the user returns
+      // via /auth/callback.
     } catch (err: any) {
       toast({
         title: t("Sign-in failed", "فشل تسجيل الدخول"),
