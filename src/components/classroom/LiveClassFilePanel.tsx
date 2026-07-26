@@ -31,7 +31,7 @@ const TEAL = "#0D9488";
 const TEALL= "#F0FDFA";
 
 const BUCKET  = "subject-files";
-const MAIN_URL = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
+const MAIN_URL = import.meta.env.VITE_SUPABASE_URL || "https://zqniborlnbpkjdmyssnl.supabase.co";
 
 /* ── types ── */
 interface LCFile {
