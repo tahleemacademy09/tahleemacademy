@@ -314,7 +314,7 @@ const PublicClassManagement = () => {
     try {
       const session = await supabase.auth.getSession();
       const token   = session.data.session?.access_token;
-      const url     = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
+      const url     = import.meta.env.VITE_SUPABASE_URL || "https://zqniborlnbpkjdmyssnl.supabase.co";
       const name    = (displayName || "").trim() || user?.user_metadata?.full_name || "Teacher";
       const res     = await fetch(`${url}/functions/v1/public-class-token`, {
         method: "POST",
@@ -410,7 +410,7 @@ const PublicClassManagement = () => {
     if (!emailSubject.trim() || !emailBody.trim()) { toast.error("Subject and body required"); return; }
     setSending(true);
     try {
-      const supaUrl = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
+      const supaUrl = import.meta.env.VITE_SUPABASE_URL || "https://zqniborlnbpkjdmyssnl.supabase.co";
       const session = await supabase.auth.getSession();
       const tkn     = session.data.session?.access_token;
       const payload: any = { subject: emailSubject, body_text: emailBody };
