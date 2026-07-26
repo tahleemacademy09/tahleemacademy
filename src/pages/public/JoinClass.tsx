@@ -97,7 +97,7 @@ const JoinClass = () => {
     setError("");
 
     try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://wvqeubhupkddtkcdwqcm.supabase.co";
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://zqniborlnbpkjdmyssnl.supabase.co";
       const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY || "";
       const res = await fetch(`${supabaseUrl}/functions/v1/public-class-token`, {
         method: "POST",
