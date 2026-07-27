@@ -49,6 +49,11 @@ interface ClassControlsProps {
       options and before End/Leave. Lets a caller (e.g. the classroom) add its own
       tools without a second three-dot button. Unused by default (guestroom). */
   extraMenuItems?:       React.ReactNode;
+  /** When true, the camera button is disabled and greyed out for everyone —
+      driven by an admin/teacher-wide "force audio-only" broadcast. No one
+      (including the admin who set it) can turn their camera back on until
+      the admin reverts it from the three-dot menu. */
+  camLocked?:            boolean;
 }
 
 const REACTION_EMOJIS = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
@@ -339,7 +344,7 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
    ───────────────────────────────────────────────────────────────────────── */
 const ClassControls = ({
   sessionId, onToggleChat, onToggleParticipants, onEndClass, onLeaveClass,
-  chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride, extraMenuItems,
+  chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride, extraMenuItems, camLocked,
 }: ClassControlsProps) => {
   const room = useRoomContext();
   const { user, hasRole } = useAuth();
@@ -455,6 +460,10 @@ const ClassControls = ({
 
   // ── Cam toggle — busy-guarded ─────────────────────────────────────────
   const toggleCam = useCallback(async () => {
+    if (camLocked) {
+      toast({ title: t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم"), description: t("Audio-only mode is active for everyone right now.", "وضع الصوت فقط مفعّل للجميع الآن.") });
+      return;
+    }
     if (camBusy.current) return;
     camBusy.current = true;
     try {
@@ -653,10 +662,16 @@ const ClassControls = ({
           <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
         </Button>
 
-        {/* Cam */}
-        <Button size="sm" className={`${btnBase} ${camEnabled ? btnOn : btnOff}`} style={camEnabled ? btnStyle : {}} onClick={toggleCam}>
-          {camEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-          <span className="hidden sm:inline">{camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
+        {/* Cam — greyed out and locked while admin has forced audio-only mode room-wide */}
+        <Button
+          size="sm"
+          className={`${btnBase} ${camLocked ? "" : camEnabled ? btnOn : btnOff}`}
+          style={camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : (camEnabled ? btnStyle : {})}
+          onClick={toggleCam}
+          title={camLocked ? t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم") : undefined}
+        >
+          {camEnabled && !camLocked ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+          <span className="hidden sm:inline">{camLocked ? t("Locked","مقفل") : camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
         </Button>
 
         {/* Chat */}
@@ -686,13 +701,13 @@ const ClassControls = ({
             {/* ── Emoji Reactions Row ── */}
               <div style={{padding:"10px 12px 6px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
                 <p style={{fontSize:10,fontWeight:700,letterSpacing:1.1,color:"rgba(255,255,255,.4)",margin:"0 0 8px",textTransform:"uppercase"}}>😊 Reactions</p>
-                {/* Full emoji row */}
-                <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:showMoreEmojis?0:4}}>
+                {/* Reaction row — single line, horizontally scrollable so it never wraps */}
+                <div style={{display:"flex",flexWrap:"nowrap",gap:4,overflowX:"auto",overflowY:"hidden",paddingBottom:2,scrollbarWidth:"none"}}>
                   {REACTION_EMOJIS.map(e => (
                     <button
                       key={e}
                       onClick={() => sendReaction(e)}
-                      style={{fontSize:20,background:"rgba(255,255,255,.07)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer",transition:"transform .12s, background .1s"}}
+                      style={{flexShrink:0,fontSize:20,background:"rgba(255,255,255,.07)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer",transition:"transform .12s, background .1s"}}
                       onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.25)")}
                       onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}
                     >{e}</button>
@@ -700,17 +715,17 @@ const ClassControls = ({
                   {/* Add more toggle */}
                   <button
                     onClick={() => setShowMoreEmojis(v => !v)}
-                    style={{fontSize:13,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"4px 8px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontWeight:600}}
+                    style={{flexShrink:0,fontSize:13,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"4px 8px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontWeight:600}}
                   >{showMoreEmojis ? "Less ▲" : "+ More"}</button>
                 </div>
-                {/* Extended emoji grid */}
+                {/* Extended emoji grid — also kept to one scrollable line for consistency */}
                 {showMoreEmojis && (
-                  <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6,padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.06)"}}>
+                  <div style={{display:"flex",flexWrap:"nowrap",gap:4,overflowX:"auto",overflowY:"hidden",marginTop:6,padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.06)",scrollbarWidth:"none"}}>
                     {MORE_EMOJIS.map(e => (
                       <button
                         key={e}
                         onClick={() => sendReaction(e)}
-                        style={{fontSize:20,background:"rgba(255,255,255,.05)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer",transition:"transform .12s"}}
+                        style={{flexShrink:0,fontSize:20,background:"rgba(255,255,255,.05)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer",transition:"transform .12s"}}
                         onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.25)")}
                         onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}
                       >{e}</button>
@@ -746,16 +761,12 @@ const ClassControls = ({
                 </div>
               )}
 
-              {/* ── Host tools ── */}
+              {/* ── Host tools ──
+                   Launch Poll and Live Quiz removed from here — decluttered per request.
+                   (Polls/Quiz can still be launched from their dedicated panels elsewhere.) */}
               {isPrivileged && (
                 <>
                   <div style={{padding:"4px 0"}}>
-                    <DropdownMenuItem onClick={onLaunchPoll} style={{margin:"0 4px",borderRadius:8}}>
-                      <BarChart3 className="h-4 w-4 mr-2" /> {t("Launch Poll","إطلاق تصويت")}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={onLaunchQuiz} style={{margin:"0 4px",borderRadius:8}}>
-                      <Zap className="h-4 w-4 mr-2" /> {t("Live Quiz","اختبار مباشر")}
-                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={muteAllStudents} style={{margin:"0 4px",borderRadius:8}}>
                       <MicOff className="h-4 w-4 mr-2" /> {t("Mute All Students","كتم الجميع")}
                     </DropdownMenuItem>
@@ -764,36 +775,13 @@ const ClassControls = ({
                 </>
               )}
 
-              {/* ── Video Quality — quick switch, right here, no digging into Settings ── */}
-              <div style={{padding:"8px 12px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
-                <p style={{fontSize:10,fontWeight:700,letterSpacing:1.1,color:"rgba(255,255,255,.4)",margin:"0 0 8px",textTransform:"uppercase"}}>📶 {t("Video Quality","جودة الفيديو")}</p>
-                <div style={{display:"flex",gap:6}}>
-                  {(["low","medium","high"] as const).map(q => (
-                    <button key={q} onClick={() => applyVideoQuality(q)} style={{
-                      flex:1, padding:"8px 4px", borderRadius:8, border:"1px solid", cursor:"pointer",
-                      fontSize:11.5, fontWeight:600,
-                      borderColor: videoQuality === q ? "#22c55e" : "rgba(255,255,255,.12)",
-                      background:  videoQuality === q ? "rgba(34,197,94,.14)" : "rgba(255,255,255,.04)",
-                      color: videoQuality === q ? "#22c55e" : "rgba(255,255,255,.6)",
-                    }}>
-                      {q === "low" ? t("Low","منخفض") : q === "medium" ? t("Medium","متوسط") : t("High","عالي")}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* ── General options ── */}
+              {/* ── General options ──
+                   Decluttered per request: Video Quality now lives only inside
+                   Settings → Video tab, and Turn On Captions / Blur Background /
+                   Share Screen have been removed entirely (for students AND
+                   admin/teacher) to keep this menu short. Settings is the only
+                   item left here. */}
               <div style={{padding:"4px 0"}}>
-                <DropdownMenuItem onClick={toggleCaptions} style={{margin:"0 4px",borderRadius:8}}>
-                  <Captions className="h-4 w-4 mr-2" /> {captionsOn ? t("Turn Off Captions","إيقاف الترجمة") : t("Turn On Captions","تشغيل الترجمة")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={toggleBlur} style={{margin:"0 4px",borderRadius:8}}>
-                  <Blend className="h-4 w-4 mr-2" /> {blurOn ? t("Remove Background Blur","إزالة التشويش") : t("Blur Background","تشويش الخلفية")}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={toggleScreenShare} style={{margin:"0 4px",borderRadius:8}}>
-                  {screenSharing ? <MonitorOff className="h-4 w-4 mr-2" /> : <Monitor className="h-4 w-4 mr-2" />}
-                  {screenSharing ? t("Stop Sharing","إيقاف المشاركة") : t("Share Screen","مشاركة الشاشة")}
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => { setSettingsTab("video"); setShowSettings(true); }} style={{margin:"0 4px",borderRadius:8}}>
                   <Settings className="h-4 w-4 mr-2" /> {t("Settings","الإعدادات")}
                 </DropdownMenuItem>

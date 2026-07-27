@@ -813,6 +813,46 @@ export const AudioOnlyBridge = ({ active }: { active: boolean }) => {
   return null;
 };
 
+/* ══ PROFILE SYNC BRIDGE — inside LiveKitRoom ══
+   FIX ("when a user changes their profile pic it should show for everyone in
+   the room"): ParticipantTile already reads name/avatar for REMOTE users from
+   participant.metadata, and already re-renders instantly whenever LiveKit
+   fires participantMetadataChanged — that part was already wired up. What was
+   missing was anything that ever pushed a NEW metadata value after the
+   initial one baked into the join token. This listens for the local user's
+   own `profiles` row changing (avatar_url or full_name) and calls
+   localParticipant.setMetadata() with the fresh values — that single call is
+   what fans out to every other participant's tile in real time. Requires the
+   join token's video grant to include canUpdateOwnMetadata: true (added to
+   supabase/functions/livekit-token). */
+export const ProfileSyncBridge = () => {
+  const room = useRoomContext();
+  const { user, refreshProfile } = useAuth();
+  useEffect(() => {
+    if (!user?.id || !room) return;
+    const ch = supabase.channel(`profile-sync-${user.id}-${room.name}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles", filter: `user_id=eq.${user.id}` },
+        async (payload: any) => {
+          // Keep AuthContext's cached profile in sync too (fixes the local
+          // user's own tile, which reads avatar_url from useAuth(), not metadata).
+          refreshProfile().catch(() => {});
+          try {
+            const lp = room.localParticipant;
+            const existing = lp.metadata ? JSON.parse(lp.metadata) : {};
+            const next = {
+              ...existing,
+              name: payload.new?.full_name ?? existing.name,
+              avatar_url: payload.new?.avatar_url ?? existing.avatar_url,
+            };
+            await lp.setMetadata(JSON.stringify(next));
+          } catch { /* canUpdateOwnMetadata missing on an old/unrefreshed token — silently skip */ }
+        })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [user?.id, room, refreshProfile]);
+  return null;
+};
+
 /* ══ HEARTBEAT BRIDGE — inside LiveKitRoom ══ */
 export const HeartbeatBridge = ({ sessionId, active }: { sessionId: string | null; active: boolean }) => {
   useConnectionHeartbeat(sessionId, active);
@@ -1177,7 +1217,7 @@ export const MediaAutoPublish = ({ lobbyMic = false, lobbyCam = false, isFirstJo
 };
 
 /* ══ ROOM DATA LISTENER ══ */
-export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded,roomRef }:any) => {
+export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,onMatClose,onWbAllowWrite,onRecAllowed,onEmojiReact,onGroupRecite,onHandRaise,onAdminMuteAll,onClassEnded,onForceAudioOnly,roomRef }:any) => {
   const room = useRoomContext();
   useEffect(() => {
     // FIX BUG 10: Store room in a React ref instead of window.__lkRoom__ global.
@@ -1207,6 +1247,7 @@ export const RoomDataListener = ({ onWbOpen,onWbClose,strokesBuffer,onMatOpen,on
         if(msg.type==="group_recite")     onGroupRecite?.(msg.active);
         if(msg.type==="hand_raise")       onHandRaise?.(msg.identity||participant?.identity, msg.name, msg.raised);
         if(msg.type==="admin_mute_all")   onAdminMuteAll?.();
+        if(msg.type==="force_audio_only") onForceAudioOnly?.(msg.active);
         if(msg.type==="class_ended")      onClassEnded?.();
       } catch {}
     };

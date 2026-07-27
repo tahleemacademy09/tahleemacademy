@@ -78,6 +78,7 @@ import {
   ReconnectMonitor,
   ConnectionStateBanner,
   AudioOnlyBridge,
+  ProfileSyncBridge,
   HeartbeatBridge,
   WbSyncBridge,
   AdminMuteListener,
@@ -314,6 +315,18 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const stuMrRefTop=useRef<MediaRecorder|null>(null);
   // Feature 2: Audio-only mode (manual + auto on poor network)
   const[audioOnlyActive,setAudioOnlyActive]=useState(false);
+  // Admin/teacher-wide forced audio-only — when true, EVERY participant's camera is
+  // off and locked (grey/disabled Cam button) until the admin/teacher reverts it.
+  // Broadcast via LiveKit data channel ("force_audio_only") so it applies to
+  // everyone in the room, not just the person who toggled it.
+  const[forcedAudioOnly,setForcedAudioOnly]=useState(false);
+  const toggleForcedAudioOnly=()=>{
+    const next=!forcedAudioOnly;
+    setForcedAudioOnly(next);
+    setAudioOnlyActive(next); // drives AudioOnlyBridge to actually flip the admin's own camera
+    try{roomRef.current?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"force_audio_only",active:next})),{reliable:true});}catch{}
+    toast({title:next?"📵 Audio-only mode ON for everyone — cameras locked off":"🎥 Audio-only mode ended — cameras unlocked"});
+  };
   const stuChunksTop=useRef<Blob[]>([]);
   const toggleStuRecordTop=async()=>{
     if(stuRec){
@@ -1019,11 +1032,12 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           />
           {/* Feature 2: audio-only bridge — applies camera/bitrate changes from outside LiveKitRoom */}
           <AudioOnlyBridge active={audioOnlyActive}/>
+          <ProfileSyncBridge/>
           {/* Feature 5: heartbeat — proactively degrades video before LiveKit detects drop */}
           <HeartbeatBridge sessionId={sessionId} active={phase==="live"}/>
           {/* Feature 9: data channel queue flusher — replays queued messages on reconnect */}
           <DataQueueFlusher roomRef={roomRef}/>
-          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}}
+          <RoomDataListener onWbOpen={()=>setWbOpen(true)} onWbClose={()=>setWbOpen(false)} strokesBuffer={wbBuffer} onMatOpen={mat=>{setMatOpen(mat);setMatMinimized(false);}} onMatClose={()=>{setMatOpen(null);setMatMinimized(false);}} onWbAllowWrite={allow=>setCanStudentWrite(allow)} onRecAllowed={allow=>setCanStudentRec(allow)} onEmojiReact={(emoji:string,sender:string)=>addFloatingEmoji(emoji,sender)} onGroupRecite={handleGroupReciteFromTeacher} onHandRaise={handleHandRaise} onAdminMuteAll={()=>{}} onForceAudioOnly={(active:boolean)=>{setForcedAudioOnly(active);setAudioOnlyActive(active);}}
             onClassEnded={!isPrivileged?()=>setPhase("ended"):undefined} roomRef={roomRef}/>{/* FIX BUG 10: pass roomRef */}
           {reconnecting&&<ReconnectingOverlay attempt={autoReconnectCountRef.current}/>}
           {/* ══ FEATURE 4: CONNECTION STATE BANNER — shown during LiveKit's own reconnect ══ */}
@@ -1314,6 +1328,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             chatUnread={chatUnread}
             onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
             onLaunchQuiz={()=>setQuizOpen(true)}
+            camLocked={forcedAudioOnly}
             extraMenuItems={
               <>
                 <DropdownMenuItem onClick={()=>setWbOpen(v=>!v)} style={{margin:"0 4px",borderRadius:8}}>
@@ -1332,22 +1347,44 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                     <Bell style={{width:16,height:16,marginRight:8}}/> Hand Queue
                   </DropdownMenuItem>
                 )}
-                {isPrivileged&&(
-                  <DropdownMenuItem onClick={()=>setAttendanceOpen(v=>!v)} style={{margin:"0 4px",borderRadius:8}}>
-                    <UserCheck style={{width:16,height:16,marginRight:8}}/> Live Attendance
+                {isPrivileged?(
+                  // Admin/teacher: this is now a room-wide broadcast — turning it on
+                  // forces every participant's camera off and greys out their Cam
+                  // button until the admin turns it off again from right here.
+                  <DropdownMenuItem onClick={toggleForcedAudioOnly} style={{margin:"0 4px",borderRadius:8}}>
+                    <Zap style={{width:16,height:16,marginRight:8}}/> {forcedAudioOnly?"Exit Audio-Only Mode (All)":"Audio-Only Mode (All)"}
+                  </DropdownMenuItem>
+                ):(
+                  // Student: personal bandwidth-saving toggle for their own camera only —
+                  // disabled while the teacher has forced it room-wide.
+                  <DropdownMenuItem
+                    onClick={()=>{ if(!forcedAudioOnly) setAudioOnlyActive(v=>!v); }}
+                    style={{margin:"0 4px",borderRadius:8,opacity:forcedAudioOnly?0.5:1,cursor:forcedAudioOnly?"not-allowed":"pointer"}}
+                  >
+                    <Zap style={{width:16,height:16,marginRight:8}}/> {forcedAudioOnly?"Audio-Only Mode (set by teacher)":audioOnlyActive?"Exit Audio-Only Mode":"Audio-Only Mode"}
                   </DropdownMenuItem>
                 )}
-                <DropdownMenuItem onClick={()=>setAudioOnlyActive(v=>!v)} style={{margin:"0 4px",borderRadius:8}}>
-                  <Zap style={{width:16,height:16,marginRight:8}}/> {audioOnlyActive?"Exit Audio-Only Mode":"Audio-Only Mode"}
-                </DropdownMenuItem>
-                {onMinimize&&(
-                  <DropdownMenuItem onClick={onMinimize} style={{margin:"0 4px",borderRadius:8}}>
-                    <Minimize2 style={{width:16,height:16,marginRight:8}}/> Minimize
+                {isPrivileged&&(
+                  <DropdownMenuItem onClick={()=>handlePermChange("rec",!canStudentRec,roomRef.current)} style={{margin:"0 4px",borderRadius:8}}>
+                    <Video style={{width:16,height:16,marginRight:8}}/> {canStudentRec?"Disallow Student Recording":"Allow Students to Record"}
                   </DropdownMenuItem>
                 )}
               </>
             }
           />
+          {/* Dedicated minimize button — Minimize was removed from the ⋮ menu for both
+              roles to declutter it, but the action itself still needs a home. */}
+          {onMinimize&&(
+            <button onClick={onMinimize} title="Minimize" style={{
+              position:"fixed",top:64,right:14,zIndex:120,
+              width:36,height:36,borderRadius:"50%",
+              background:"rgba(32,33,36,.92)",border:"1px solid rgba(255,255,255,.12)",
+              color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+              boxShadow:"0 2px 10px rgba(0,0,0,.35)",
+            }}>
+              <Minimize2 style={{width:16,height:16}}/>
+            </button>
+          )}
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           {/* FIX BUG 2: LiveQuizOverlay now controlled by quizOpen state — was permanently disabled with hardcoded isOpen={false} */}
