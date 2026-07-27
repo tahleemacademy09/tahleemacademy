@@ -115,7 +115,7 @@ const QuickLink = ({ icon: Icon, label, to, onNavigate, color = G }: { icon: any
 /* ════════════════════════════════════════════════════════════════ */
 export default function AdminSettings() {
   const { language, setLanguage } = useLanguage();
-  const { user, signOut }          = useAuth();
+  const { user, signOut, refreshProfile }          = useAuth();
   const { toast }                  = useToast();
   const navigate                   = useNavigate();
   const avatarRef                  = useRef<HTMLInputElement>(null);
@@ -409,6 +409,7 @@ export default function AdminSettings() {
       { user_id: user.id, avatar_url: data.publicUrl, updated_at: new Date().toISOString() },
       { onConflict: "user_id" }
     );
+    await refreshProfile();
     setAvatarUploading(false);
     toast({ title: "✅ Photo updated!" });
   };
