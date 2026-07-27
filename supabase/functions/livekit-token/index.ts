@@ -191,6 +191,11 @@ Deno.serve(async (req) => {
         canPublish:     true,
         canSubscribe:   true,
         canPublishData: true,
+        // Lets a participant push a fresh metadata JSON (name/avatar_url) for
+        // themselves mid-call — e.g. changing their profile picture — without
+        // needing to reconnect. Everyone else's client already listens for
+        // participantMetadataChanged and re-renders that tile automatically.
+        canUpdateOwnMetadata: true,
       },
       metadata: JSON.stringify({ role: roleLabel, user_id: user.id, name: participantName, avatar_url: profile?.avatar_url || null }),
     };
