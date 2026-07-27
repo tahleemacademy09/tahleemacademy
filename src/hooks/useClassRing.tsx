@@ -228,65 +228,117 @@ export function useClassRing() {
   }, [isStudent, triggerRing]);
 
   // ── Listen: Supabase Realtime — live_sessions going live ─────────────────
+  //
+  // FIX (background-eviction): this channel used to stay open on every page,
+  // for the whole session, all the time — an always-on WebSocket connection
+  // that made mobile Chrome/Safari far more aggressive about killing the tab
+  // the instant it was backgrounded (even for a few seconds), since browsers
+  // specifically target tabs holding live network connections for reclaiming
+  // memory. Push notifications (usePushNotifications/sw.js) already deliver
+  // the ring while we're backgrounded or the tab is dead — so the realtime
+  // channel here only needs to exist while the tab is actually visible in the
+  // foreground. We tear it down on hidden and rebuild it on visible.
   useEffect(() => {
     if (!isStudent || !user) return;
 
-    const channel = supabase
-      .channel("live-class-ring")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "live_sessions" },
-        async (payload: any) => {
-          const session = payload.new;
-          if (session?.status !== "live") return;
-          if (payload.old?.status === "live") return; // already live
+    const channelRef: { current: ReturnType<typeof supabase.channel> | null } = { current: null };
 
-          // Get subject info
-          const { data: subject } = await supabase
-            .from("subjects")
-            .select("title, title_ar, levels, level, teacher_id")
-            .eq("id", session.subject_id)
-            .maybeSingle();
+    const handleLiveSession = async (payload: any) => {
+      const session = payload.new;
+      if (session?.status !== "live") return;
+      if (payload.old?.status === "live") return; // already live
 
-          // Check this student should see this class
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("level, student_type")
-            .eq("user_id", user.id)
-            .maybeSingle();
+      // Get subject info
+      const { data: subject } = await supabase
+        .from("subjects")
+        .select("title, title_ar, levels, level, teacher_id")
+        .eq("id", session.subject_id)
+        .maybeSingle();
 
-          const subjectLevels: string[] = (subject as any)?.levels ||
-            ((subject as any)?.level ? [(subject as any).level] : []);
-          const studentLevel = (profile as any)?.level;
+      // Check this student should see this class
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("level, student_type")
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-          // Level filter
-          if (subjectLevels.length > 0 && studentLevel && !subjectLevels.includes(studentLevel)) {
-            return; // this class isn't for this student's level
-          }
+      const subjectLevels: string[] = (subject as any)?.levels ||
+        ((subject as any)?.level ? [(subject as any).level] : []);
+      const studentLevel = (profile as any)?.level;
 
-          // Get teacher name
-          let teacherName = "Your teacher";
-          if ((subject as any)?.teacher_id) {
-            const { data: tp } = await supabase
-              .from("profiles")
-              .select("full_name")
-              .eq("user_id", (subject as any).teacher_id)
-              .maybeSingle();
-            teacherName = (tp as any)?.full_name || teacherName;
-          }
+      // Level filter
+      if (subjectLevels.length > 0 && studentLevel && !subjectLevels.includes(studentLevel)) {
+        return; // this class isn't for this student's level
+      }
 
-          triggerRing({
-            class_id:     session.id,
-            class_title:  (subject as any)?.title || "Class",
-            teacher_name: teacherName,
-            join_url:     `/student/live-classes?subject=${session.subject_id}`,
-            ring_id:      `realtime-${session.id}`,
-          });
-        }
-      )
-      .subscribe();
+      // Get teacher name
+      let teacherName = "Your teacher";
+      if ((subject as any)?.teacher_id) {
+        const { data: tp } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("user_id", (subject as any).teacher_id)
+          .maybeSingle();
+        teacherName = (tp as any)?.full_name || teacherName;
+      }
 
-    return () => { supabase.removeChannel(channel); };
+      triggerRing({
+        class_id:     session.id,
+        class_title:  (subject as any)?.title || "Class",
+        teacher_name: teacherName,
+        join_url:     `/student/live-classes?subject=${session.subject_id}`,
+        ring_id:      `realtime-${session.id}`,
+      });
+    };
+
+    const subscribe = () => {
+      if (channelRef.current) return; // already subscribed
+      channelRef.current = supabase
+        .channel("live-class-ring")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "live_sessions" },
+          handleLiveSession
+        )
+        .subscribe();
+    };
+
+    const unsubscribe = () => {
+      if (!channelRef.current) return;
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    };
+
+    // Catch up on anything that went live while we were unsubscribed —
+    // push notifications already alerted the user, this just avoids
+    // completely missing the in-app overlay for a session that's still live.
+    const catchUp = async () => {
+      const { data } = await supabase
+        .from("live_sessions")
+        .select("id, subject_id, status, started_at")
+        .eq("status", "live")
+        .order("started_at", { ascending: false })
+        .limit(1);
+      const session = data?.[0];
+      if (session) await handleLiveSession({ new: session, old: { status: "scheduled" } });
+    };
+
+    if (document.visibilityState === "visible") subscribe();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        subscribe();
+        catchUp();
+      } else {
+        unsubscribe();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      unsubscribe();
+    };
   }, [isStudent, user, triggerRing]);
 
   const handleJoin = () => {
