@@ -709,9 +709,12 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
           .from("profiles").select("level").eq("user_id", user.id).single();
         const studentLevel: string | null = (profileData as any)?.level || null;
 
+        // NOTE: enrollments.course_id (not subject_id) is the real column —
+        // every other query against this table filters/selects by course_id.
+        // The subject_id version was returning a 400 from PostgREST every time.
         const { data: enrollments } = await supabase
-          .from("enrollments").select("subject_id").eq("user_id", user.id);
-        const subjectIds = (enrollments || []).map((e: any) => e.subject_id).filter(Boolean);
+          .from("enrollments").select("course_id").eq("user_id", user.id);
+        const subjectIds = (enrollments || []).map((e: any) => e.course_id).filter(Boolean);
 
         const { data: ttSlots } = await supabase
           .from("subject_timetable" as any).select("subject_id, levels").eq("is_active", true);
