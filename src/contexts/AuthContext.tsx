@@ -65,6 +65,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchingRef = useRef<string | null>(null); // userId currently being fetched
   const profileRef  = useRef<UserProfile | null>(null); // mirrors profile state for use in closures
 
+  // FIX (always-reloads-on-resume bug): whether to show the blocking full-page
+  // spinner is decided below using this flag, NOT profileRef.current.
+  // profileRef.current only gets set if fetchUserData *succeeds* — but on a
+  // slow/flaky connection (or a legitimate user with no profile row yet) it
+  // can stay null forever. Keying off profileRef.current meant every auth
+  // event after that (including the getSession() call the resume/visibility
+  // listener below fires every time the user un-minimizes) saw "no profile
+  // yet" and set loading=true again, unmounting the entire app behind
+  // ProtectedRoute's spinner — indistinguishable from a hard reload to the
+  // user, even though nothing actually reloaded.
+  // initialLoadDoneRef is set exactly once, after the FIRST fetch attempt
+  // finishes (success, final failure, or safety-timeout), and never again —
+  // so the blocking spinner can only ever appear once per session.
+  const initialLoadDoneRef = useRef(false);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -146,6 +161,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           fetchingRef.current = null;
           setLoading(false);
         }
+        initialLoadDoneRef.current = true;
       }
     };
 
@@ -173,6 +189,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (mountedRef.current) {
         console.warn("[AuthContext] Safety timeout — forcing loading=false");
         timedOutRef.current = true;
+        initialLoadDoneRef.current = true; // never show the blocking spinner again this session
         setLoading(false);
       }
     }, 8000);
@@ -213,16 +230,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setMustChangePassword(mustChange);
 
       if (sess?.user) {
-        // Only show the full-page spinner on FIRST load (profile not yet fetched).
-        // On resume/token-refresh cycles, the profile is already in memory —
-        // setting loading=true here unmounts the entire dashboard and causes the
-        // "reload on minimize" bug on Android WebView.
-        if (!profileRef.current) setLoading(true);
+        // Only show the full-page spinner on the true FIRST load of this
+        // session. On resume/token-refresh cycles (or if the very first
+        // profile fetch happened to be slow/fail), initialLoadDoneRef is
+        // already true — setting loading=true here would unmount the entire
+        // dashboard and cause the "reload on minimize" bug.
+        if (!initialLoadDoneRef.current) setLoading(true);
         fetchUserData(sess.user.id);
       } else {
         // Signed out — clear everything immediately
         fetchingRef.current = null;
         profileRef.current  = null;
+        initialLoadDoneRef.current = false;
         setRoles([]);
         setProfile(null);
         setMustChangePassword(false);
@@ -251,6 +270,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     fetchingRef.current = null;
+    initialLoadDoneRef.current = false;
     await supabase.auth.signOut();
     if (mountedRef.current) {
       setUser(null);
