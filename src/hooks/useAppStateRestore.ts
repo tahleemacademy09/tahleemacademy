@@ -40,11 +40,18 @@ const KEY_SAVED_AT = "ta_restore_saved_at";
 // Max age — don't restore state older than 30 minutes (user likely meant to restart)
 const MAX_AGE_MS = 30 * 60 * 1000;
 
-// Pages we never auto-restore to (auth, onboarding, payment flows)
+// Pages we never auto-restore to (auth, onboarding, payment flows).
+// NOTE: these must be kept in sync with the actual route paths in App.tsx —
+// several of these had drifted out of sync with the real routes (e.g.
+// "/admin-login" vs the real "/admin-secure", "/register-continue" vs the
+// real "/auth/register-continue", "/force-change-password" vs the real
+// "/change-password", "/student/onboarding" vs the real "/onboarding"),
+// which silently made this guard a no-op on exactly the student-pipeline
+// pages it was meant to protect.
 const SKIP_RESTORE_PATHS = [
-  "/login", "/admin-login", "/register", "/register-continue",
-  "/registration-complete", "/reset-password", "/force-change-password",
-  "/student/onboarding", "/student/payment", "/student/enrollment-payment",
+  "/login", "/admin-secure", "/register", "/auth/register-continue",
+  "/registration-complete", "/reset-password", "/change-password",
+  "/onboarding", "/student/payment", "/student/enrollment-payment",
   "/student/entrance-exam",
 ];
 
@@ -108,14 +115,33 @@ export function useAppStateRestore() {
     if (restoredRef.current) return;
     restoredRef.current = true;
 
+    // Never hijack navigation while sitting on an auth/registration page —
+    // those pages (Login.tsx, RegisterContinue.tsx, etc.) own their own
+    // post-auth redirect logic (role checks, tasjeel step resolution, payment
+    // gating). If this effect ALSO navigates away on mount, the two
+    // navigations land back-to-back and look like the page reloading right
+    // after login. This is exactly why the bug only ever showed up for
+    // students: the student pipeline is the only flow with a page like this
+    // (Login.tsx) that does its own competing navigate() on mount — admin
+    // has no equivalent multi-step pipeline page racing against this effect.
+    if (shouldSkip(location.pathname)) return;
+
     const saved = getSavedState();
     if (!saved) return;
 
     const currentPath = location.pathname + location.search + location.hash;
     const savedFull   = saved.path + saved.search + saved.hash;
 
-    // Only restore if we're at root or a different page
-    const isAtRoot = location.pathname === "/" || location.pathname === "/login";
+    // Only restore if we're at the true cold-start root ("/").
+    // IMPORTANT: do NOT treat "/login" as a restore trigger. Login.tsx already
+    // owns post-auth navigation (it resolves role + tasjeel step and picks the
+    // correct destination). If this effect ALSO navigates away from "/login"
+    // on mount, both navigations land back-to-back — that double-navigate is
+    // exactly what showed up as "the page refreshes right after logging in"
+    // for students. Admins never hit this because they sign in at
+    // "/admin-secure", not "/login", so this isAtRoot check never matched for
+    // them — which is why the bug only ever showed up on the student side.
+    const isAtRoot = location.pathname === "/";
     if (savedFull !== currentPath || isAtRoot) {
       // Navigate back to where user was
       navigate(saved.path + saved.search + saved.hash, { replace: true });
