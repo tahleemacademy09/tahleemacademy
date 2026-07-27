@@ -282,6 +282,14 @@ export default function AdminSettings() {
         toast({ title: "✅ Push notifications enabled!" });
       } else if (result === "denied") {
         toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+      } else {
+        // "error" or any other unexpected outcome — surface it so the admin
+        // isn't left staring at a silently-off toggle with no explanation.
+        toast({
+          title: "Couldn't enable push notifications",
+          description: "Something went wrong setting up push on this device. Please refresh and try again, or check that your browser allows notifications for this site.",
+          variant: "destructive",
+        });
       }
     } else {
       try {
