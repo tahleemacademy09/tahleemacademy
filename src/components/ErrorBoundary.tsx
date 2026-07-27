@@ -7,6 +7,7 @@
 //   triggers one auto-reload. Clears automatically after 60 s.
 
 import React from "react";
+import { isDebugMode } from "@/lib/debugMode";
 
 interface State {
   hasError:      boolean;
@@ -57,11 +58,7 @@ export class ErrorBoundary extends React.Component<
     // in the console once) to skip the auto-reload entirely and see the real
     // error on screen immediately, with full stack trace. Remove/unset to
     // restore normal auto-reload behavior for real users.
-    const debugMode =
-      new URLSearchParams(window.location.search).get("ta_debug") === "1" ||
-      (() => { try { return localStorage.getItem("ta_debug") === "1"; } catch { return false; } })();
-
-    if (debugMode) {
+    if (isDebugMode()) {
       console.error("[ErrorBoundary] ta_debug=1 — auto-reload skipped, showing error:", error.stack);
       return; // falls through to render() persistent-error screen below
     }
@@ -93,9 +90,7 @@ export class ErrorBoundary extends React.Component<
     // If a fallback was supplied, render it silently (no crash screen, no reload)
     if (this.props.fallback !== undefined) return this.props.fallback;
 
-    const debugMode =
-      new URLSearchParams(window.location.search).get("ta_debug") === "1" ||
-      (() => { try { return localStorage.getItem("ta_debug") === "1"; } catch { return false; } })();
+    const debugMode = isDebugMode();
 
     // Show spinner while auto-reload is in progress (never in debug mode —
     // we want the error screen with full details immediately).
