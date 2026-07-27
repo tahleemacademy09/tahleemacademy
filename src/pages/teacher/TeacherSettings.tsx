@@ -116,7 +116,7 @@ const SaveBtn = ({ fn, saving }: { fn: () => void; saving: boolean }) => (
 
 export default function TeacherSettings() {
   const { language, setLanguage } = useLanguage();
-  const { user, signOut }          = useAuth();
+  const { user, signOut, refreshProfile }          = useAuth();
   const { toast }                  = useToast();
   const navigate                   = useNavigate();
   const avatarRef                  = useRef<HTMLInputElement>(null);
@@ -652,6 +652,10 @@ export default function TeacherSettings() {
     const { data } = storageSupabase.storage.from("avatars").getPublicUrl(path);
     setForm(f => ({ ...f, avatar_url: data.publicUrl + "?t=" + Date.now() }));
     await supabase.from("profiles").upsert({ user_id: user.id, avatar_url: data.publicUrl, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+    // Same fix as student ProfileSettings: refresh cached profile immediately,
+    // and ProfileSyncBridge in the classroom pushes it into LiveKit metadata
+    // so students already in the call see the new photo too.
+    await refreshProfile();
     setAvatarUploading(false);
     toast({ title: "✅ Photo updated!" });
   };
