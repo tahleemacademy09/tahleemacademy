@@ -43,19 +43,32 @@ const TasjeelGuard = ({ children }: TasjeelGuardProps) => {
     if (!user) return;
     // roles is empty after auth finished — query directly as safety net
     setDirectRoleLoading(true);
-    supabase
+    let cancelled = false;
+
+    // FIX: same class of bug as ProtectedRoute's fallback query and the
+    // user_roles check in useTasjeel — this had NO timeout at all, so a
+    // stalled connection left directRoleLoading stuck true forever and the
+    // spinner below never cleared. Race against a 5s timeout instead.
+    const timeoutPromise = new Promise<{ data: null }>((resolve) =>
+      setTimeout(() => resolve({ data: null }), 5000)
+    );
+    const queryPromise = supabase
       .from("user_roles")
       .select("role")
-      .eq("user_id", user.id)
-      .then(({ data }) => {
-        const r = (data || []).map((d: any) => d.role);
-        if (r.includes("admin") || r.includes("teacher")) {
-          setDirectRole(r.find((x: string) => x === "admin") ?? "teacher");
-        } else {
-          setDirectRole("student");
-        }
-        setDirectRoleLoading(false);
-      });
+      .eq("user_id", user.id);
+
+    Promise.race([queryPromise, timeoutPromise]).then(({ data }) => {
+      if (cancelled) return;
+      const r = (data || []).map((d: any) => d.role);
+      if (r.includes("admin") || r.includes("teacher")) {
+        setDirectRole(r.find((x: string) => x === "admin") ?? "teacher");
+      } else {
+        setDirectRole("student");
+      }
+      setDirectRoleLoading(false);
+    });
+
+    return () => { cancelled = true; };
   }, [authLoading, roles, user]);
 
   // ── Still loading ──────────────────────────────────────────────────────
