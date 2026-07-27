@@ -26,7 +26,7 @@ import {
   Camera, Save, Lock, LogOut, Trash2,
   Eye, EyeOff, Loader2, AlertTriangle, Moon, Sun,
 } from "lucide-react";
-import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
+import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 
 // ─── Dark mode helpers ────────────────────────────────────────────────────────
 // Shared with src/lib/theme.ts, which is also bootstrapped on initial app load
@@ -424,6 +424,63 @@ export default function ProfileSettings() {
     }
   };
 
+  // ── Master "All Notifications" toggle ─────────────────────────────────
+  // Turning this ON does a hard reset of push (unsubscribes any stale
+  // subscription, wipes old DB rows, re-requests permission fresh) so it
+  // also recovers someone who previously blocked/ignored the prompt — then
+  // switches every channel on. Turning it OFF unsubscribes push and
+  // switches every channel off. Either way it saves immediately.
+  const [masterToggling, setMasterToggling] = useState(false);
+  const allNotifsOn = Object.values(notifs).every(Boolean);
+
+  const handleMasterToggle = async (v: boolean) => {
+    if (!user) return;
+    setMasterToggling(true);
+    if (v) {
+      const result = await hardResetPushNotifications(user.id);
+      if (result === "denied") {
+        setPushBlocked(true);
+        setMasterToggling(false);
+        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+        return;
+      }
+      const next = {
+        push_notifications:         result === "granted",
+        email_notifications:        true,
+        whatsapp_notifications:     true,
+        class_reminder:             true,
+        exam_reminder:              true,
+        results_notification:       true,
+        new_recording_alert:        true,
+        announcement_notifications: true,
+      };
+      setNotifs(next);
+      setPushBlocked(false);
+      const { push_notifications: _skip, ...toSave } = next;
+      await supabase.from("student_preferences" as any)
+        .upsert({ user_id: user.id, ...toSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+      toast({ title: "✅ All notifications turned on" });
+    } else {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) { await sub.unsubscribe(); }
+        await supabase.from("push_subscriptions" as any).delete().eq("user_id", user.id);
+      } catch {}
+      const next = {
+        push_notifications: false, email_notifications: false, whatsapp_notifications: false,
+        class_reminder: false, exam_reminder: false, results_notification: false,
+        new_recording_alert: false, announcement_notifications: false,
+      };
+      setNotifs(next);
+      const { push_notifications: _skip, ...toSave } = next;
+      await supabase.from("student_preferences" as any)
+        .upsert({ user_id: user.id, ...toSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+      toast({ title: "All notifications turned off" });
+    }
+    setMasterToggling(false);
+  };
+
   const saveNotifs = async () => {
     if (!user) return;
     if (!notifsLoaded) return;  // don't save stale defaults before DB load completes
@@ -634,6 +691,21 @@ export default function ProfileSettings() {
 
         {/* ── NOTIFICATIONS TAB ───────────────────────────────────── */}
         {tab === "notifications" && <>
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "14px 16px", borderRadius: 14, marginBottom: 12,
+            background: allNotifsOn ? (dark ? "rgba(5,150,105,.12)" : "#ECFDF5") : (dark ? T.surface2 : "#F9FAFB"),
+            border: `1.5px solid ${allNotifsOn ? (dark ? "rgba(5,150,105,.4)" : "#86EFAC") : T.border}`,
+          }}>
+            <div>
+              <p style={{ fontWeight: 800, fontSize: 14, color: T.text, margin: 0 }}>All Notifications</p>
+              <p style={{ fontSize: 11.5, color: T.text2, margin: "2px 0 0", lineHeight: 1.5 }}>
+                {masterToggling ? "Updating…" : allNotifsOn ? "Everything is on" : "Turn everything on or off at once"}
+              </p>
+            </div>
+            <Switch checked={allNotifsOn} disabled={masterToggling} onCheckedChange={handleMasterToggle} />
+          </div>
+
           {pushBlocked && (
             <div style={{ background: dark ? "#450a0a" : "#FEF2F2", border: `1px solid ${dark ? "#7f1d1d" : "#FECACA"}`, borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", alignItems: "flex-start", gap: 10 }}>
               <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>🔕</span>
