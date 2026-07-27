@@ -17,7 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
-import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
+import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 import { applyDark, isDarkModeEnabled, DM_KEY } from "@/lib/theme";
 import {
   Camera, Save, Lock, LogOut, Eye, EyeOff,
@@ -236,7 +236,11 @@ export default function TeacherSettings() {
         accepts_group:    tp.accepts_group    ?? true,
       });
 
-      const { data: pd } = await (supabase as any).from("student_preferences").select("*").eq("user_id", user.id).maybeSingle();
+      // FIX: this used to read from student_preferences (copy-paste from the
+      // student settings page) — that table doesn't have most of the columns
+      // below at all, so this silently never loaded anything real. Teachers
+      // now have their own teacher_preferences table.
+      const { data: pd } = await (supabase as any).from("teacher_preferences").select("*").eq("user_id", user.id).maybeSingle();
       if (pd) {
         const d = pd as any;
         setNotifs(n => ({ ...n,
@@ -545,10 +549,65 @@ export default function TeacherSettings() {
     }
   };
 
+  // ── Master "All Notifications" toggle ─────────────────────────────────
+  // ON hard-resets push (recovers someone who previously blocked/ignored the
+  // permission prompt) then switches every channel on. OFF unsubscribes push
+  // and switches every channel off. Saves immediately either way.
+  const [masterToggling, setMasterToggling] = useState(false);
+  const allNotifsOn = Object.values(notifs).every(Boolean);
+
+  const handleMasterToggle = async (v: boolean) => {
+    if (!user) return;
+    setMasterToggling(true);
+    if (v) {
+      const result = await hardResetPushNotifications(user.id);
+      if (result === "denied") {
+        setPushBlocked(true);
+        setMasterToggling(false);
+        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+        return;
+      }
+      const next = {
+        push_notifications: result === "granted", email_notifications: true, whatsapp_notifications: true,
+        class_reminder: true, announcement_notifications: true, new_recording_alert: true,
+        new_student_assignment: true, exam_submission_alert: true, student_message_alert: true,
+        session_booking_alert: true, grading_reminder: true,
+      };
+      setNotifs(next);
+      setPushBlocked(false);
+      const { push_notifications: _skip, ...toSave } = next;
+      await (supabase as any).from("teacher_preferences")
+        .upsert({ user_id: user.id, ...toSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+      toast({ title: "✅ All notifications turned on" });
+    } else {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+        await (supabase as any).from("push_subscriptions").delete().eq("user_id", user.id);
+      } catch {}
+      const next = {
+        push_notifications: false, email_notifications: false, whatsapp_notifications: false,
+        class_reminder: false, announcement_notifications: false, new_recording_alert: false,
+        new_student_assignment: false, exam_submission_alert: false, student_message_alert: false,
+        session_booking_alert: false, grading_reminder: false,
+      };
+      setNotifs(next);
+      const { push_notifications: _skip, ...toSave } = next;
+      await (supabase as any).from("teacher_preferences")
+        .upsert({ user_id: user.id, ...toSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+      toast({ title: "All notifications turned off" });
+    }
+    setMasterToggling(false);
+  };
+
   const saveNotifs = async () => {
     if (!user) return; setSaving(true);
     const { push_notifications: _skip, ...notifsToSave } = notifs;
-    const { error } = await (supabase as any).from("student_preferences")
+    // FIX: was writing to student_preferences with columns that table doesn't
+    // have (new_student_assignment, exam_submission_alert, etc.) — every save
+    // failed with a schema-cache error. Now writes to teacher_preferences.
+    const { error } = await (supabase as any).from("teacher_preferences")
       .upsert({ user_id: user.id, ...notifsToSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
     setSaving(false);
     error ? toast({ title: "Save failed", description: error.message, variant: "destructive" })
@@ -557,7 +616,7 @@ export default function TeacherSettings() {
 
   const savePrefs = async () => {
     if (!user) return; setSaving(true);
-    const { error } = await (supabase as any).from("student_preferences").upsert({
+    const { error } = await (supabase as any).from("teacher_preferences").upsert({
       user_id: user.id, language: prefs.language, dark_mode: prefs.dark_mode,
       autoplay_recordings: prefs.autoplay_recordings, playback_speed: prefs.playback_speed,
       default_subject_view: prefs.default_view,
@@ -582,7 +641,12 @@ export default function TeacherSettings() {
   const uploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file || !user) return;
     setAvatarUploading(true);
-    const path = `avatars/${user.id}.${file.name.split(".").pop()}`;
+    // FIX: path used to be `avatars/${user.id}.ext` — inside the "avatars"
+    // bucket, "avatars" is a literal folder there, not the user's own ID.
+    // Supabase's per-user storage policy expects the first path segment to
+    // BE the uploader's user ID, so every upload was rejected before it
+    // reached disk (same bug already fixed in student ProfileSettings).
+    const path = `${user.id}/avatar.${file.name.split(".").pop()}`;
     const { error: upErr } = await storageSupabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
     if (upErr) { toast({ title: "Upload failed", description: upErr.message, variant: "destructive" }); setAvatarUploading(false); return; }
     const { data } = storageSupabase.storage.from("avatars").getPublicUrl(path);
@@ -809,6 +873,21 @@ export default function TeacherSettings() {
             NOTIFICATIONS
         ════════════════════════════════════════════════════════ */}
         {tab === "notifications" && <>
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "14px 16px", borderRadius: 14, marginBottom: 12,
+            background: allNotifsOn ? "#ECFDF5" : "#F9FAFB",
+            border: `1.5px solid ${allNotifsOn ? "#86EFAC" : "#E5E7EB"}`,
+          }}>
+            <div>
+              <p style={{ fontWeight: 800, fontSize: 14, color: "#111827", margin: 0 }}>All Notifications</p>
+              <p style={{ fontSize: 11.5, color: "#6B7280", margin: "2px 0 0", lineHeight: 1.5 }}>
+                {masterToggling ? "Updating…" : allNotifsOn ? "Everything is on" : "Turn everything on or off at once"}
+              </p>
+            </div>
+            <Switch checked={allNotifsOn} disabled={masterToggling} onCheckedChange={handleMasterToggle} />
+          </div>
+
           {pushBlocked && (
             <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", gap: 10 }}>
               <span style={{ fontSize: 20, flexShrink: 0 }}>🔕</span>
