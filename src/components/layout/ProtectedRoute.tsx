@@ -41,17 +41,33 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     if (authLoading || roles.length > 0 || !user) return;
     // roles is empty after auth — check directly
     setFallbackLoading(true);
-    supabase
+    let cancelled = false;
+
+    // FIX: this query previously had no timeout at all — unlike every other
+    // Supabase call gating a loading state elsewhere in this codebase. If it
+    // stalled (same iOS/Android WebView stalled-connection issue documented
+    // in AuthContext and useTasjeel), fallbackLoading never flipped back to
+    // false and the spinner above (`authLoading || fallbackLoading`) spun
+    // forever with no way out — exactly the "still spinning after minimize
+    // and go back" symptom. Race against a 5s timeout instead.
+    const timeoutPromise = new Promise<{ data: null }>((resolve) =>
+      setTimeout(() => resolve({ data: null }), 5000)
+    );
+    const queryPromise = supabase
       .from("user_roles")
       .select("role")
-      .eq("user_id", user.id)
-      .then(({ data }) => {
-        const r = (data || []).map((d: any) => d.role);
-        if (r.includes("admin"))        setFallbackRole("admin");
-        else if (r.includes("teacher")) setFallbackRole("teacher");
-        else                            setFallbackRole("student");
-        setFallbackLoading(false);
-      });
+      .eq("user_id", user.id);
+
+    Promise.race([queryPromise, timeoutPromise]).then(({ data }) => {
+      if (cancelled) return;
+      const r = (data || []).map((d: any) => d.role);
+      if (r.includes("admin"))        setFallbackRole("admin");
+      else if (r.includes("teacher")) setFallbackRole("teacher");
+      else                            setFallbackRole("student");
+      setFallbackLoading(false);
+    });
+
+    return () => { cancelled = true; };
   }, [authLoading, roles, user]);
 
   if (authLoading || fallbackLoading) return <Spinner />;
