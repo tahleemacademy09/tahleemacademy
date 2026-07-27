@@ -263,8 +263,17 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const [notifList, setNotifList] = useState<any[]>([]);
   const [selectedNotif, setSelectedNotif] = useState<any>(null);
 
+  // FIX (background-eviction): this used to keep a realtime WebSocket
+  // channel AND a 15s poll running on every page, for the whole session,
+  // even while the tab was backgrounded — exactly the kind of "live
+  // background connection" that makes mobile Chrome/Safari kill a
+  // minimized tab within seconds instead of leaving it suspended. Push
+  // notifications already deliver these while we're backgrounded, so both
+  // the channel and the poll now only run while the tab is actually
+  // visible; we resync once immediately whenever it becomes visible again.
   useEffect(() => {
     if (!user) return;
+
     const load = async () => {
       const { data } = await supabase
         .from("notifications")
@@ -276,31 +285,51 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       setNotifList(list);
       setUnreadNotifs(list.filter((n: any) => !n.is_read).length);
     };
-    load();
 
-    const channel = supabase
-      .channel(`notifications:${user.id}`)
-      .on(
-        "postgres_changes" as any,
-        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
-        (payload: any) => {
-          setNotifList(prev => [payload.new, ...prev]);
-          setUnreadNotifs(p => p + 1);
-        }
-      )      .on(
-        "postgres_changes" as any,
-        { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
-        (payload: any) => {
-          setNotifList(prev => prev.map((n: any) => n.id === payload.new.id ? payload.new : n));
-          setUnreadNotifs(prev => Math.max(0, prev - (payload.old?.is_read === false && payload.new?.is_read === true ? 1 : 0)));
-        }
-      )
-      .subscribe();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let iv: ReturnType<typeof setInterval> | null = null;
 
-    const iv = setInterval(load, 15000);
+    const start = () => {
+      if (channel) return; // already running
+      load();
+      channel = supabase
+        .channel(`notifications:${user.id}`)
+        .on(
+          "postgres_changes" as any,
+          { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+          (payload: any) => {
+            setNotifList(prev => [payload.new, ...prev]);
+            setUnreadNotifs(p => p + 1);
+          }
+        )
+        .on(
+          "postgres_changes" as any,
+          { event: "UPDATE", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+          (payload: any) => {
+            setNotifList(prev => prev.map((n: any) => n.id === payload.new.id ? payload.new : n));
+            setUnreadNotifs(prev => Math.max(0, prev - (payload.old?.is_read === false && payload.new?.is_read === true ? 1 : 0)));
+          }
+        )
+        .subscribe();
+      iv = setInterval(load, 15000);
+    };
+
+    const stop = () => {
+      if (iv) { clearInterval(iv); iv = null; }
+      if (channel) { supabase.removeChannel(channel); channel = null; }
+    };
+
+    if (document.visibilityState === "visible") start();
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") start();
+      else stop();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
-      clearInterval(iv);
-      supabase.removeChannel(channel);
+      document.removeEventListener("visibilitychange", onVisibility);
+      stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
