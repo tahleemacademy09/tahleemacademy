@@ -52,6 +52,20 @@ export class ErrorBoundary extends React.Component<
     // don't auto-reload — just render the fallback silently.
     if (this.props.fallback !== undefined) return;
 
+    // ── Debug bypass ─────────────────────────────────────────────────────
+    // Add ?ta_debug=1 to the URL (or run `localStorage.setItem('ta_debug','1')`
+    // in the console once) to skip the auto-reload entirely and see the real
+    // error on screen immediately, with full stack trace. Remove/unset to
+    // restore normal auto-reload behavior for real users.
+    const debugMode =
+      new URLSearchParams(window.location.search).get("ta_debug") === "1" ||
+      (() => { try { return localStorage.getItem("ta_debug") === "1"; } catch { return false; } })();
+
+    if (debugMode) {
+      console.error("[ErrorBoundary] ta_debug=1 — auto-reload skipped, showing error:", error.stack);
+      return; // falls through to render() persistent-error screen below
+    }
+
     const key = errorKey(error);
     const alreadyReloaded = sessionStorage.getItem(key);
 
@@ -79,8 +93,13 @@ export class ErrorBoundary extends React.Component<
     // If a fallback was supplied, render it silently (no crash screen, no reload)
     if (this.props.fallback !== undefined) return this.props.fallback;
 
-    // Show spinner while auto-reload is in progress
-    if (didAutoReload || !sessionStorage.getItem(errorKey(error))) {
+    const debugMode =
+      new URLSearchParams(window.location.search).get("ta_debug") === "1" ||
+      (() => { try { return localStorage.getItem("ta_debug") === "1"; } catch { return false; } })();
+
+    // Show spinner while auto-reload is in progress (never in debug mode —
+    // we want the error screen with full details immediately).
+    if (!debugMode && (didAutoReload || !sessionStorage.getItem(errorKey(error)))) {
       return (
         <div style={{
           display: "flex", flexDirection: "column", alignItems: "center",
@@ -134,7 +153,7 @@ export class ErrorBoundary extends React.Component<
           Reload Page
         </button>
         {error?.message && (
-          <details style={{ marginTop: 28, maxWidth: 480, textAlign: "left" }}>
+          <details style={{ marginTop: 28, maxWidth: 480, textAlign: "left" }} open={debugMode}>
             <summary style={{ color: "#9ca3af", fontSize: 12, cursor: "pointer" }}>
               ▶ Error details
             </summary>
@@ -144,6 +163,7 @@ export class ErrorBoundary extends React.Component<
               whiteSpace: "pre-wrap", overflowWrap: "anywhere",
             }}>
               {error.name}: {error.message}
+              {debugMode && error.stack ? `\n\n${error.stack}` : ""}
             </pre>
           </details>
         )}
