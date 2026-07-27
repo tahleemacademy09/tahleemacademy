@@ -233,11 +233,25 @@ export function useTasjeel() {
     // "completed" immediately without querying tasjeel_progress at all.
     // This prevents stale tasjeel rows (e.g. from accidental student enrollment)
     // from ever routing a teacher to the student registration screens.
+    //
+    // FIX: this query previously had no timeout guard, unlike every other
+    // Supabase call in this hook. A try/catch only saves you from a *rejected*
+    // promise — it does nothing if the promise simply never resolves. On a
+    // stalled connection (iOS WebKit can hang concurrent connections to the
+    // same host — see the guard below), `await` would hang forever, so
+    // setLoading(false) was never reached and tasjeelLoading stayed true
+    // permanently, leaving StudentDashboard's spinner stuck with no retry.
+    // Same Promise.race pattern as resolveTasjeelStep — race against a 5s
+    // timeout instead of waiting on it indefinitely.
     try {
-      const { data: roleData } = await supabase
+      const roleTimeout = new Promise<{ data: null }>((resolve) =>
+        setTimeout(() => resolve({ data: null }), 5000)
+      );
+      const roleQuery = supabase
         .from("user_roles")
         .select("role")
         .eq("user_id", userId);
+      const { data: roleData } = await Promise.race([roleQuery, roleTimeout]);
       const userRoles = (roleData || []).map((r: any) => r.role);
       if (userRoles.includes("admin") || userRoles.includes("teacher")) {
         setCurrentStep("completed");
