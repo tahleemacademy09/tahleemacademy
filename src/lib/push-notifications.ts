@@ -160,6 +160,44 @@ export async function ensureSubscribed(userId: string): Promise<void> {
   }
 }
 
+// ── Public: hard reset (used by the master "All Notifications" toggle) ──────
+// If a user previously blocked/ignored notifications, simply calling
+// subscribe again often does nothing useful — the old subscription may be
+// stale, orphaned rows may be sitting in push_subscriptions from a prior
+// browser/device, and the permission prompt won't re-appear on its own.
+// This clears all of that out first: unsubscribes whatever the current
+// browser session holds, deletes EVERY push_subscriptions row for this user
+// (not just the one matching the current endpoint), then asks for permission
+// fresh and subscribes clean. Use this from a settings "master" toggle;
+// use enablePushNotifications for the plain per-channel toggle.
+export async function hardResetPushNotifications(userId: string): Promise<"granted" | "denied" | "error"> {
+  if (typeof Notification === "undefined" || !("serviceWorker" in navigator)) return "error";
+  try {
+    const reg = await ensureServiceWorker();
+    if (reg) {
+      try {
+        const oldSub = await reg.pushManager.getSubscription();
+        if (oldSub) await oldSub.unsubscribe();
+      } catch { /* ignore — proceed to wipe DB rows regardless */ }
+    }
+
+    // Wipe every stored subscription row for this user, not just this device's.
+    await supabase.from("push_subscriptions").delete().eq("user_id", userId);
+
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") return permission === "denied" ? "denied" : "error";
+
+    const freshReg = reg ?? (await ensureServiceWorker());
+    if (!freshReg) return "error";
+
+    await ensureSubscribed(userId);
+    return "granted";
+  } catch (err) {
+    console.warn("[push] hardResetPushNotifications failed:", err);
+    return "error";
+  }
+}
+
 // ── Public: user-gesture triggered (from a banner/button onClick) ──────────
 
 export async function enablePushNotifications(userId: string): Promise<"granted" | "denied" | "error"> {
