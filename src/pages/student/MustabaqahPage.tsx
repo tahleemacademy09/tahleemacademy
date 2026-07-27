@@ -271,6 +271,15 @@ const isRegistrationOpen = (comp: {registration_deadline?:string|null; registrat
   return new Date(comp.registration_deadline).getTime() > Date.now();
 };
 
+/** Purely time-based: has the registration deadline itself passed, regardless
+ *  of any manual override? This drives the "your code is now unlocked" gate
+ *  on the registered/holding screen — the deadline, not the override, is what
+ *  decides when a registered participant may enter their code. */
+const deadlinePassed = (comp?: {registration_deadline?:string|null}|null) => {
+  if (!comp?.registration_deadline) return false;
+  return new Date(comp.registration_deadline).getTime() <= Date.now();
+};
+
 const fmt = (s:number) => `${Math.floor(s/60)}:${String(Math.max(0,s)%60).padStart(2,"0")}`;
 
 const NumberTilePicker = ({ tiles, pickedNum, onPick, canPick, stage }: { tiles:Tile[]; pickedNum:number|null; onPick:(t:Tile)=>void; canPick:boolean; stage:number }) => (
@@ -613,12 +622,14 @@ interface Competition {
   registration_deadline?:string|null; registration_override?:"auto"|"open"|"closed";
   queue_reveal_active?:boolean; queue_box_count?:number;
   revealed_participant_ids?:string[]; results_reveal_active?:boolean;
+  juz_options?:number[]|null;
 }
 interface Participant {
   id:string; competition_id:string; user_id?:string; participant_name:string; school?:string;
   queue_position:number; status:PStatus; total_score:number; stage_scores:Record<string,number>;
   bell_counts:Record<string,number>; proctor_flagged:boolean; camera_on:boolean; created_at:string;
   queue_box_id?:number|null;
+  access_code?:string|null; assigned_juz?:number|null;
 }
 interface Attempt {
   id:string; competition_id:string; participant_id:string; stage_number:number;
@@ -681,7 +692,7 @@ export default function MustabaqahPage() {
   const navigate = useNavigate();
   const canJudge = hasRole?.("admin")||hasRole?.("teacher");
 
-  type View = "list"|"setup"|"join"|"role_select"|"arena"|"results";
+  type View = "list"|"setup"|"join"|"registered"|"role_select"|"arena"|"results";
   const [view,         setView]         = useState<View>("list");
   const [userRole,     setUserRole]     = useState<"judge"|"participant"|"observer"|null>(null);
   const [loading,      setLoading]      = useState(false);
@@ -738,8 +749,13 @@ export default function MustabaqahPage() {
   const [chatInput,      setChatInput]     = useState("");
   const [form, setForm] = useState({title:"",description:"",scope_type:"juz30",total_stages:5,time_limit:300,use_criteria:true,tiles_per_stage:10,use_custom_q:false,custom_questions:"",
     juz_number:1, hizb_number:1, range_surah_start:1, range_ayah_start:1, range_surah_end:1, range_ayah_end:7,
-    registration_deadline:"" as string});
-  const [joinForm, setJoinForm] = useState({room_code:"",name:profile?.full_name||"",school:profile?.school||""});
+    registration_deadline:"" as string, juz_options:[] as number[]});
+  const [joinForm, setJoinForm] = useState({room_code:"",name:profile?.full_name||"",school:profile?.school||"",juz:undefined as number|undefined});
+  // Live countdown (ms remaining) to a competition's registration_deadline —
+  // drives the "registered" holding screen: shows the countdown while it's
+  // running, then flips to the access-code entry prompt once it hits zero.
+  const [regCountdownMs, setRegCountdownMs] = useState<number|null>(null);
+  const [accessCodeInput, setAccessCodeInput] = useState("");
 
   // ── Q-Settings panel (live editing of questions from arena) ──────
   const [showQSettings,    setShowQSettings]    = useState(false);
@@ -779,6 +795,20 @@ export default function MustabaqahPage() {
     }
     if (view==="list") localStorage.removeItem("musabaqah_session");
   },[view, competition?.id, userRole, myParticipant?.id]);
+
+  // ── Registration countdown ────────────────────────────────────────
+  // While the participant is on the "registered" holding screen, tick down
+  // to competition.registration_deadline every second. Once it reaches zero
+  // the screen swaps from "here's your code, come back later" to "enter your
+  // code now" — see the "registered" view below.
+  useEffect(() => {
+    if (view!=="registered" || !competition?.registration_deadline) { setRegCountdownMs(null); return; }
+    const deadline = new Date(competition.registration_deadline).getTime();
+    const tick = () => setRegCountdownMs(Math.max(0, deadline - Date.now()));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [view, competition?.registration_deadline]);
 
   // ── On mount, try to restore saved session ───────────────────────
   const [savedSession, setSavedSession] = useState<{competitionId:string;roomCode:string;userRole:string;participantId:string|null}|null>(null);
@@ -1701,6 +1731,7 @@ export default function MustabaqahPage() {
       status:"open",room_code,created_by:user?.id,use_criteria_scoring:form.use_criteria,
       registration_deadline: form.registration_deadline ? new Date(form.registration_deadline).toISOString() : null,
       registration_override: "auto",
+      juz_options: form.juz_options.length ? form.juz_options : null,
     } as any).select().single();
     setLoading(false);
     if (error) { toast({title:"Error",description:error.message,variant:"destructive"}); return; }
@@ -1715,6 +1746,17 @@ export default function MustabaqahPage() {
     toast({title:`🏆 Created! Code: ${room_code}`});
   };
 
+  // Shared routing for "I already have a participant row for this comp" —
+  // used by joinCompetition (rejoin), openComp, and chooseRole. A participant
+  // still sitting at "pending" on a competition with a deadline hasn't
+  // unlocked their access code yet, so they land back on the registered/
+  // countdown screen instead of the arena.
+  const enterAsExistingParticipant = async (comp:Competition, participant:Participant) => {
+    setCompetition(comp); setMyParticipant(participant); setUserRole("participant");
+    if (participant.status==="pending" && comp.registration_deadline) { setView("registered"); return; }
+    setView("arena"); await fetchLkToken(comp.room_code);
+  };
+
   const joinCompetition = async () => {
     const code=joinForm.room_code.trim().toUpperCase(), name=joinForm.name.trim();
     if (!code||!name) { toast({title:"Enter code and name"}); return; }
@@ -1722,22 +1764,62 @@ export default function MustabaqahPage() {
     const {data:comp,error:compErr}=await supabase.from("musabaqah_competitions" as any).select("*").eq("room_code",code).maybeSingle();
     if (compErr||!comp) { toast({title:"Not found",description:`No competition: ${code}`,variant:"destructive"}); setLoading(false); return; }
     const {data:existing}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",(comp as Competition).id).eq("user_id",user?.id).maybeSingle();
-    if (existing) { setCompetition(comp as Competition); setMyParticipant(existing as Participant); setUserRole("participant"); setLoading(false); setView("arena"); await fetchLkToken(code); return; }
+    if (existing) { setLoading(false); await enterAsExistingParticipant(comp as Competition, existing as Participant); return; }
     if ((comp as Competition).status==="completed") { toast({title:"This competition has ended",variant:"destructive"}); setLoading(false); return; }
     if (!isRegistrationOpen(comp as Competition)) {
       toast({title:"Registration closed",description:"This musabaqah is no longer accepting new registrations.",variant:"destructive"});
       setLoading(false); return;
     }
-    const {count}=await supabase.from("musabaqah_participants" as any).select("id",{count:"exact",head:true}).eq("competition_id",(comp as Competition).id);
-    const {data:participant,error:insertErr}=await supabase.from("musabaqah_participants" as any).insert({
-      competition_id:(comp as Competition).id,user_id:user?.id||null,participant_name:name,school:joinForm.school||null,
-      queue_position:(count??0)+1,status:"pending",total_score:0,stage_scores:{},bell_counts:{},proctor_flagged:false,camera_on:false,
-    }).select().single();
+    const compRow = comp as Competition;
+    if (compRow.juz_options?.length && !joinForm.juz) { toast({title:"Please select your Juz"}); setLoading(false); return; }
+    const {count}=await supabase.from("musabaqah_participants" as any).select("id",{count:"exact",head:true}).eq("competition_id",compRow.id);
+
+    // Personal access code — distinct from the shared room_code. Retry a
+    // couple of times on the rare chance of a collision with another
+    // participant's code (unique index enforces this server-side).
+    let participant:any=null, insertErr:any=null;
+    for (let attempt=0; attempt<3 && !participant; attempt++) {
+      const access_code = genCode();
+      const res = await supabase.from("musabaqah_participants" as any).insert({
+        competition_id:compRow.id,user_id:user?.id||null,participant_name:name,school:joinForm.school||null,
+        queue_position:(count??0)+1,status:"pending",total_score:0,stage_scores:{},bell_counts:{},proctor_flagged:false,camera_on:false,
+        access_code, assigned_juz: joinForm.juz ?? null,
+      }).select().single();
+      if (!res.error) { participant = res.data; break; }
+      insertErr = res.error;
+      if (res.error.code !== "23505") break; // only retry on unique-violation (duplicate access_code)
+    }
     setLoading(false);
-    if (insertErr) { toast({title:"Failed",description:insertErr.message,variant:"destructive"}); return; }
-    setCompetition(comp as Competition); setMyParticipant(participant as Participant); setUserRole("participant");
-    setView("arena"); await fetchLkToken(code);
-    toast({title:"✅ Registered!",description:`Your room code is ${code} — save it to come back anytime.`});
+    if (!participant) { toast({title:"Failed",description:insertErr?.message||"Could not register",variant:"destructive"}); return; }
+    setCompetition(compRow); setMyParticipant(participant as Participant); setUserRole("participant");
+    if (compRow.registration_deadline) {
+      setView("registered");
+      toast({title:"🎉 You're registered!",description:`Your personal code is ${participant.access_code} — save it, you'll need it to enter once the deadline passes.`});
+    } else {
+      setView("arena"); await fetchLkToken(code);
+      toast({title:"✅ Registered!",description:`Your personal code is ${participant.access_code} — save it to come back anytime.`});
+    }
+  };
+
+  // Participant enters their personal access code once the registration
+  // deadline has passed, to "log in" to the waiting room.
+  const activateWithCode = async () => {
+    if (!competition) return;
+    const codeInput = accessCodeInput.trim().toUpperCase();
+    if (!codeInput) { toast({title:"Enter your code"}); return; }
+    setLoading(true);
+    const {data:p,error}=await supabase.from("musabaqah_participants" as any)
+      .select("*").eq("competition_id",competition.id).eq("access_code",codeInput).maybeSingle();
+    setLoading(false);
+    if (error || !p) { toast({title:"Invalid code",description:"Double-check your personal code and try again.",variant:"destructive"}); return; }
+    const participant = p as Participant;
+    if (participant.status==="pending") {
+      await supabase.from("musabaqah_participants" as any).update({status:"waiting"}).eq("id",participant.id);
+      participant.status = "waiting";
+    }
+    setMyParticipant(participant); setUserRole("participant");
+    setView("arena"); await fetchLkToken(competition.room_code);
+    toast({title:`👋 Welcome, ${participant.participant_name}!`});
   };
 
   const openComp = async (comp:Competition) => {
@@ -1758,7 +1840,7 @@ export default function MustabaqahPage() {
     setQSettingsStage(comp.current_stage);
     if (canJudge) { setView("role_select"); return; }
     const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",comp.id).eq("user_id",user?.id).single();
-    if (data) { setMyParticipant(data as Participant); setUserRole("participant"); setView("arena"); await fetchLkToken(comp.room_code); }
+    if (data) { await enterAsExistingParticipant(comp, data as Participant); }
     else setView("role_select");
   };
 
@@ -1767,10 +1849,11 @@ export default function MustabaqahPage() {
     if (roleId==="judge"||roleId==="observer") { setView("arena"); if (competition) await fetchLkToken(competition.room_code); return; }
     if (competition) {
       const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",competition.id).eq("user_id",user?.id).single();
-      if (data) { setMyParticipant(data as Participant); setView("arena"); await fetchLkToken(competition.room_code); }
+      if (data) { await enterAsExistingParticipant(competition, data as Participant); }
       else setView("join");
     }
   };
+
 
   const sendChat = () => {
     const text=chatInput.trim(); if (!text) return;
@@ -2154,7 +2237,24 @@ export default function MustabaqahPage() {
             <Label>Registration Deadline (optional)</Label>
             <input type="datetime-local" value={form.registration_deadline} onChange={e=>setForm(f=>({...f,registration_deadline:e.target.value}))}
               style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14,colorScheme:"dark"}}/>
-            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Leave blank for no deadline. Registration auto-closes at this time — you can always reopen it manually from the arena.</div>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Leave blank for no deadline. Registration auto-closes at this time — you can always reopen it manually from the arena. If set, participants register ahead of time and get a personal code that unlocks the waiting room once this deadline passes.</div>
+          </div>
+          <div style={{marginBottom:16}}>
+            <Label>Juz Options for Registration (optional)</Label>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {Array.from({length:30},(_,i)=>i+1).map(n=>{
+                const active = form.juz_options.includes(n);
+                return (
+                  <button key={n} type="button" onClick={()=>setForm(f=>({...f,juz_options: active ? f.juz_options.filter(x=>x!==n) : [...f.juz_options,n]}))}
+                    style={{background:active?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${active?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:8,padding:"6px 10px",cursor:"pointer",color:active?GOLD:"rgba(255,255,255,.6)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12,minWidth:34}}>
+                    {n}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>
+              {form.juz_options.length ? `Participants will pick their Juz from ${form.juz_options.length} option${form.juz_options.length>1?"s":""} when they register.` : "Leave empty to skip Juz selection during registration."}
+            </div>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
             <div><Label>Total Stages</Label>
@@ -2221,6 +2321,10 @@ export default function MustabaqahPage() {
       <GlobalStyles/><IslamicBackground/>
       <div className="anim-slide-up glass-card" style={{position:"relative",zIndex:1,width:"100%",maxWidth:440,borderRadius:24,padding:"32px 24px"}}>
         <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:20,fontSize:13,display:"flex",alignItems:"center",gap:6}}><ArrowLeft size={14}/> Back</button>
+        <div style={{textAlign:"center",marginBottom:20}}>
+          <h2 style={{fontFamily:"Cinzel,sans-serif",color:"#fff",fontSize:19,margin:"0 0 4px",fontWeight:700}}>Register</h2>
+          <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:0}}>{competition?.title}</p>
+        </div>
         <div style={{marginBottom:16}}>
           <Label>Room Code</Label>
           <input value={joinForm.room_code} onChange={e=>setJoinForm(f=>({...f,room_code:e.target.value.toUpperCase()}))} placeholder="AB3XY7" maxLength={6}
@@ -2228,14 +2332,93 @@ export default function MustabaqahPage() {
         </div>
         <Inp label="Your Full Name" value={joinForm.name} onChange={(e:any)=>setJoinForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Ahmad Muhammad"/>
         <Inp label="School / Institute (optional)" value={joinForm.school} onChange={(e:any)=>setJoinForm(f=>({...f,school:e.target.value}))} placeholder="e.g. Tahleem Academy"/>
+        {!!competition?.juz_options?.length && (
+          <div style={{marginBottom:16}}>
+            <Label>Your Juz</Label>
+            <select value={joinForm.juz ?? ""} onChange={e=>setJoinForm(f=>({...f,juz:e.target.value?Number(e.target.value):undefined}))}
+              style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14}}>
+              <option value="" style={{background:G}}>Select the Juz you'll recite...</option>
+              {competition.juz_options.map(n=><option key={n} value={n} style={{background:G}}>Juz {n}</option>)}
+            </select>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Set by the organizer for this competition.</div>
+          </div>
+        )}
+        {competition?.registration_deadline && (
+          <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.2)",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:12,color:"rgba(255,255,255,.55)"}}>
+            After you register you'll get a personal code. The competition opens for that code at{" "}
+            <strong style={{color:GOLD}}>{new Date(competition.registration_deadline).toLocaleString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</strong>.
+          </div>
+        )}
         <button className="gold-btn" onClick={joinCompetition} disabled={loading} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:loading?"not-allowed":"pointer",fontSize:16,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?.7:1,marginTop:8}}>
-          {loading?<Loader2 size={18} style={{animation:"spin 1s linear infinite"}}/>:<LogIn size={18}/>}{loading?"Joining...":"Join Competition"}
+          {loading?<Loader2 size={18} style={{animation:"spin 1s linear infinite"}}/>:<LogIn size={18}/>}{loading?"Registering...":"Register"}
         </button>
       </div>
     </div>
   );
 
-  /* ── ROLE SELECT ── */
+  /* ── REGISTERED (holding screen: shows personal code + countdown, then the code-entry gate once the deadline passes) ── */
+  if (view==="registered" && competition && myParticipant) {
+    const unlocked = !competition.registration_deadline || (regCountdownMs !== null && regCountdownMs <= 0);
+    const totalSecs = regCountdownMs !== null ? Math.floor(regCountdownMs/1000) : 0;
+    const dd = Math.floor(totalSecs/86400), hh = Math.floor((totalSecs%86400)/3600), mm = Math.floor((totalSecs%3600)/60), ss = totalSecs%60;
+    return (
+      <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <GlobalStyles/><IslamicBackground/>
+        <div className="anim-slide-up glass-card" style={{position:"relative",zIndex:1,width:"100%",maxWidth:440,borderRadius:24,padding:"32px 24px",textAlign:"center"}}>
+          <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:16,fontSize:13,display:"flex",alignItems:"center",gap:6}}><ArrowLeft size={14}/> Back</button>
+          <div style={{fontSize:44,marginBottom:8}}>{unlocked?"🔓":"🎉"}</div>
+          <h2 style={{fontFamily:"Cinzel,sans-serif",color:"#fff",fontSize:19,margin:"0 0 4px",fontWeight:700}}>{competition.title}</h2>
+          <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:"0 0 20px"}}>
+            {unlocked ? "Registration has closed — enter your code to join the waiting room" : "You're registered! Save your code below."}
+          </p>
+
+          <div style={{marginBottom:20}}>
+            <Label>Your Name</Label>
+            <div style={{color:"#fff",fontWeight:700,fontSize:16,marginBottom:10}}>{myParticipant.participant_name}</div>
+            {myParticipant.assigned_juz && (
+              <span style={{display:"inline-block",background:"rgba(74,222,128,.12)",border:"1px solid rgba(74,222,128,.3)",color:"#4ADE80",borderRadius:20,padding:"4px 12px",fontSize:12,fontWeight:700}}>
+                📖 Juz {myParticipant.assigned_juz}
+              </span>
+            )}
+          </div>
+
+          <div style={{marginBottom:20}}>
+            <Label>Your Personal Code</Label>
+            <div onClick={(e:any)=>copyCode(myParticipant.access_code||"",e)} style={{cursor:"pointer",background:"rgba(201,168,76,.1)",border:"2px solid rgba(201,168,76,.4)",borderRadius:14,padding:"16px 20px",color:GOLD,fontSize:28,fontWeight:900,letterSpacing:8}}>
+              {myParticipant.access_code}
+            </div>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:6}}>Tap to copy · you'll need this to enter the waiting room</div>
+          </div>
+
+          {!unlocked ? (
+            <div>
+              <Label>Opens In</Label>
+              <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:6}}>
+                {[[dd,"d"],[hh,"h"],[mm,"m"],[ss,"s"]].map(([v,u]:any)=>(
+                  <div key={u} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"10px 14px",minWidth:56}}>
+                    <div style={{color:GOLD,fontWeight:900,fontSize:22,fontFamily:"Cinzel,serif"}}>{String(v).padStart(2,"0")}</div>
+                    <div style={{color:"rgba(255,255,255,.35)",fontSize:10,textTransform:"uppercase"}}>{u}</div>
+                  </div>
+                ))}
+              </div>
+              <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0}}>Come back once the countdown ends and enter your code above.</p>
+            </div>
+          ) : (
+            <div style={{marginTop:8}}>
+              <Label>Enter Your Code</Label>
+              <input value={accessCodeInput} onChange={e=>setAccessCodeInput(e.target.value.toUpperCase())} placeholder={myParticipant.access_code||"CODE"} maxLength={6}
+                style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:14,padding:"14px 20px",color:"#fff",fontSize:22,fontWeight:800,letterSpacing:6,textAlign:"center",textTransform:"uppercase",marginBottom:14}}/>
+              <button className="gold-btn" onClick={activateWithCode} disabled={loading} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:loading?"not-allowed":"pointer",fontSize:16,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?.7:1}}>
+                {loading?<Loader2 size={18} style={{animation:"spin 1s linear infinite"}}/>:<LogIn size={18}/>}{loading?"Entering...":"Enter Waiting Room"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+
   if (view==="role_select"&&competition) {
     const ROLES=canJudge
       ?[{id:"judge",icon:"⚖️",title:"Judge / Host",desc:"Control flow, call participants, reveal questions, ring bell, score recitations",color:GOLD},
@@ -2855,7 +3038,14 @@ export default function MustabaqahPage() {
                     {participants.filter(p=>p.status==="pending").map(p=>(
                       <div key={p.id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
                         <Avatar name={p.participant_name} size={26}/>
-                        <div style={{flex:1,minWidth:0}}><div style={{color:"#fff",fontWeight:700,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>{p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>{p.school}</div>}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{color:"#fff",fontWeight:700,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                            {p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:10}}>{p.school}</div>}
+                            {p.assigned_juz&&<div style={{color:"#4ADE80",fontSize:10,fontWeight:700}}>Juz {p.assigned_juz}</div>}
+                            {p.access_code&&<div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1}}>Code: {p.access_code}</div>}
+                          </div>
+                        </div>
                         <button onClick={()=>approveParticipant(p)} style={{background:"rgba(34,197,94,.15)",color:GREEN,border:`1px solid ${GREEN}44`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontWeight:700,fontSize:11,flexShrink:0,fontFamily:"Cairo,sans-serif"}}>Admit</button>
                       </div>
                     ))}
