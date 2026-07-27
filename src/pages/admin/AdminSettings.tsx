@@ -29,7 +29,7 @@ import {
   CreditCard, UserCog, Calendar, AlertTriangle, CheckCircle,
   Sun, Moon, Coffee,
 } from "lucide-react";
-import { enablePushNotifications } from "@/components/NotificationPermissionBanner";
+import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 
 /* ── Palette ────────────────────────────────────────────────────── */
 const G    = "#064E3B";
@@ -297,6 +297,56 @@ export default function AdminSettings() {
     }
   };
 
+  /* ── Master "All Notifications" toggle ────────────────────────
+     ON hard-resets push (recovers an admin who previously blocked/ignored
+     the permission prompt) then switches every channel on. OFF unsubscribes
+     push and switches every channel off. Saves immediately either way. */
+  const [masterToggling, setMasterToggling] = useState(false);
+  const allNotifsOn = Object.values(notifs).every(Boolean);
+
+  const handleMasterToggle = async (v: boolean) => {
+    if (!user) return;
+    setMasterToggling(true);
+    if (v) {
+      const result = await hardResetPushNotifications(user.id);
+      if (result === "denied") {
+        setMasterToggling(false);
+        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+        return;
+      }
+      const next = {
+        push_notifications: result === "granted", email_notifications: true, whatsapp_notifications: true,
+        new_registration_alert: true, payment_alert: true, exam_submission_alert: true,
+        recitation_submission_alert: true, student_complaint_alert: true,
+        daily_summary_email: true, announcement_notifications: true,
+      };
+      setNotifs(next);
+      const { push_notifications: _skip, ...toSave } = next;
+      await supabase.from("admin_preferences" as any)
+        .upsert({ user_id: user.id, ...toSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+      toast({ title: "✅ All notifications turned on" });
+    } else {
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+        await supabase.from("push_subscriptions" as any).delete().eq("user_id", user.id);
+      } catch {}
+      const next = {
+        push_notifications: false, email_notifications: false, whatsapp_notifications: false,
+        new_registration_alert: false, payment_alert: false, exam_submission_alert: false,
+        recitation_submission_alert: false, student_complaint_alert: false,
+        daily_summary_email: false, announcement_notifications: false,
+      };
+      setNotifs(next);
+      const { push_notifications: _skip, ...toSave } = next;
+      await supabase.from("admin_preferences" as any)
+        .upsert({ user_id: user.id, ...toSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+      toast({ title: "All notifications turned off" });
+    }
+    setMasterToggling(false);
+  };
+
   /* ── Save notification preferences ──────────────────────────── */
   const saveNotifs = async () => {
     if (!user) return;
@@ -340,7 +390,12 @@ export default function AdminSettings() {
   const uploadAvatar = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file || !user) return;
     setAvatarUploading(true);
-    const path = `avatars/${user.id}.${file.name.split(".").pop()}`;
+    // FIX: path used to be `avatars/${user.id}.ext` — inside the "avatars"
+    // bucket, "avatars" is a literal folder there, not the user's own ID.
+    // Supabase's per-user storage policy expects the first path segment to
+    // BE the uploader's user ID, so every upload was rejected before it
+    // reached disk (same bug already fixed in student ProfileSettings).
+    const path = `${user.id}/avatar.${file.name.split(".").pop()}`;
     const { error: upErr } = await storageSupabase.storage
       .from("avatars").upload(path, file, { upsert: true, contentType: file.type });
     if (upErr) {
@@ -521,6 +576,21 @@ export default function AdminSettings() {
 
         {/* ════════ NOTIFICATIONS TAB ════════ */}
         {tab === "notifications" && <>
+
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "14px 16px", borderRadius: 14, marginBottom: 12,
+            background: allNotifsOn ? "#ECFDF5" : "#F9FAFB",
+            border: `1.5px solid ${allNotifsOn ? "#86EFAC" : "#E5E7EB"}`,
+          }}>
+            <div>
+              <p style={{ fontWeight: 800, fontSize: 14, color: "#111827", margin: 0 }}>All Notifications</p>
+              <p style={{ fontSize: 11.5, color: "#6B7280", margin: "2px 0 0", lineHeight: 1.5 }}>
+                {masterToggling ? "Updating…" : allNotifsOn ? "Everything is on" : "Turn everything on or off at once"}
+              </p>
+            </div>
+            <Switch checked={allNotifsOn} disabled={masterToggling} onCheckedChange={handleMasterToggle} />
+          </div>
 
           {/* Push notification enable card */}
           {typeof Notification !== "undefined" && Notification.permission === "denied" && (
