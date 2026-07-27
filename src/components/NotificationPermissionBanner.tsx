@@ -23,12 +23,12 @@
 import { useState, useEffect } from "react";
 import { Bell, BellOff, X, Smartphone } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { enablePushNotifications, ensureSubscribed } from "@/lib/push-notifications";
+import { enablePushNotifications, ensureSubscribed, hardResetPushNotifications } from "@/lib/push-notifications";
 
 // Re-exported for AdminSettings.tsx / TeacherSettings.tsx / ProfileSettings.tsx,
 // which import this directly from here (matching the old file's local export).
 // The real implementation now lives in src/lib/push-notifications.ts.
-export { enablePushNotifications };
+export { enablePushNotifications, hardResetPushNotifications };
 
 const SESSION_KEY = "tahleem_notif_banner_dismissed";
 const NB_G = "#064E3B";
