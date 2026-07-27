@@ -28,6 +28,30 @@ import {
 } from "lucide-react";
 import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 
+// ─── Save resilience helpers ──────────────────────────────────────────────────
+// "AbortError: signal is aborted without reason" is not a real server/validation
+// error — it's the browser/OS killing the in-flight request (screen lock, app
+// backgrounded, weak signal dropping mid-request). Retry once transparently,
+// and if it still fails, show the user a friendly message instead of the raw
+// browser error text.
+async function withRetry<T>(fn: () => Promise<{ data: T; error: any }>): Promise<{ data: T; error: any }> {
+  let result = await fn();
+  const isAbort = result.error && (result.error.name === "AbortError" || /abort/i.test(String(result.error.message)));
+  if (isAbort) result = await fn();
+  return result;
+}
+
+function saveErrorToast(toast: ReturnType<typeof useToast>["toast"], error: any) {
+  const isAbort = error.name === "AbortError" || /abort/i.test(String(error.message));
+  toast({
+    title: isAbort ? "Connection interrupted" : "Save failed",
+    description: isAbort
+      ? "Your save didn't go through — please check your connection and try again."
+      : error.message,
+    variant: "destructive",
+  });
+}
+
 // ─── Dark mode helpers ────────────────────────────────────────────────────────
 // Shared with src/lib/theme.ts, which is also bootstrapped on initial app load
 // (src/main.tsx) so the preference now applies on every page, not just here.
@@ -365,12 +389,14 @@ export default function ProfileSettings() {
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
-    const { error } = await supabase.from("profiles").upsert(
-      { ...sanitise(form), user_id: user.id, updated_at: new Date().toISOString() },
-      { onConflict: "user_id" }
+    const { error } = await withRetry(() =>
+      supabase.from("profiles").upsert(
+        { ...sanitise(form), user_id: user.id, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" }
+      )
     );
     setSaving(false);
-    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
+    if (error) saveErrorToast(toast, error);
     else       toast({ title: "✅ Profile saved!" });
   };
 
@@ -491,20 +517,24 @@ export default function ProfileSettings() {
     // push_notifications is browser-state only (controlled by the OS permission),
     // not a DB column — strip it before saving to student_preferences
     const { push_notifications: _skip, ...notifsToSave } = notifs;
-    const { error } = await supabase.from("student_preferences" as any)
-      .upsert({ user_id: user.id, ...notifsToSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+    const { error } = await withRetry(() =>
+      supabase.from("student_preferences" as any)
+        .upsert({ user_id: user.id, ...notifsToSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" })
+    );
     setSaving(false);
-    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
+    if (error) saveErrorToast(toast, error);
     else       toast({ title: "✅ Notifications saved" });
   };
 
   const savePrefs = async () => {
     if (!user) return;
     setSaving(true);
-    const { error } = await supabase.from("student_preferences" as any)
-      .upsert({ user_id: user.id, ...prefs, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" });
+    const { error } = await withRetry(() =>
+      supabase.from("student_preferences" as any)
+        .upsert({ user_id: user.id, ...prefs, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" })
+    );
     setSaving(false);
-    if (error) toast({ title: "Save failed", description: error.message, variant: "destructive" });
+    if (error) saveErrorToast(toast, error);
     else {
       if (prefs.language !== language) setLanguage(prefs.language as any);
       toast({ title: "✅ Preferences saved" });
