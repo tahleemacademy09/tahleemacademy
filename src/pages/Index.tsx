@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { resolveTasjeelStep, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 
 const dayOfYear = () =>
   Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
@@ -55,11 +57,51 @@ const SEERAH = [
 
 const Index = () => {
   const navigate = useNavigate();
+  const { user, roles, loading: authLoading } = useAuth();
   const [liveClass, setLiveClass] = useState<{ title: string; room_code: string } | null>(null);
   const [liveClassChecked, setLiveClassChecked] = useState(false);
   const [showEnrollGuide, setShowEnrollGuide] = useState(false);
   const [activeReflection, setActiveReflection] = useState<"verse"|"hadith"|"seerah">("verse");
   const [upcomingEvent, setUpcomingEvent] = useState<{ event: typeof ISLAMIC_EVENTS[0]; daysAway: number } | null>(null);
+
+  // ── Skip the marketing page entirely for an already-logged-in user ────────
+  // This is what makes the PWA "always land on the dashboard": start_url is
+  // "/", which renders this component. Without this check, a signed-in user
+  // reopening the app (or the browser) would see the public homepage instead
+  // of going straight back into their dashboard — the persisted Supabase
+  // session was still valid, this page just never looked at it. Uses the same
+  // resolver Login.tsx uses so a mid-registration student still lands on the
+  // correct Tasjeel step instead of being dropped into a half-built dashboard.
+  useEffect(() => {
+    if (authLoading || !user) return; // no session, or still resolving it — show the homepage
+
+    const isAdmin   = roles.includes("admin");
+    const isTeacher = roles.includes("teacher");
+    if (isAdmin)   { navigate("/admin",   { replace: true }); return; }
+    if (isTeacher) { navigate("/teacher", { replace: true }); return; }
+
+    (async () => {
+      try {
+        const step = await resolveTasjeelStep(user.id, user.email_confirmed_at, 5000);
+        navigate(step === "completed" ? "/student" : (TASJEEL_ROUTES[step] ?? "/student"), { replace: true });
+      } catch {
+        navigate("/student", { replace: true });
+      }
+    })();
+  }, [user, roles, authLoading, navigate]);
+
+  // While AuthContext is still resolving the persisted session, or once we know
+  // there IS one (redirect effect above is about to fire), show a blank loader
+  // instead of the marketing homepage — prevents a flash of "/" before the
+  // dashboard redirect lands.
+  if (authLoading || user) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#0f2419" }}>
+        <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #C9973A", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
 
   const doy         = dayOfYear();
   const dailyVerse  = VERSES[doy % VERSES.length];
