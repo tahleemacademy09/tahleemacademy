@@ -630,6 +630,7 @@ interface Participant {
   bell_counts:Record<string,number>; proctor_flagged:boolean; camera_on:boolean; created_at:string;
   queue_box_id?:number|null;
   access_code?:string|null; assigned_juz?:number|null;
+  role?:"judge"|"participant"|"observer"|null;
 }
 interface Attempt {
   id:string; competition_id:string; participant_id:string; stage_number:number;
@@ -692,7 +693,7 @@ export default function MustabaqahPage() {
   const navigate = useNavigate();
   const canJudge = hasRole?.("admin")||hasRole?.("teacher");
 
-  type View = "list"|"setup"|"join"|"registered"|"role_select"|"arena"|"results";
+  type View = "list"|"setup"|"join"|"registered"|"preroom"|"settings"|"judge_gate"|"observer_gate"|"role_select"|"arena"|"results"|"leaderboard";
   const [view,         setView]         = useState<View>("list");
   const [userRole,     setUserRole]     = useState<"judge"|"participant"|"observer"|null>(null);
   const [loading,      setLoading]      = useState(false);
@@ -702,6 +703,9 @@ export default function MustabaqahPage() {
   const [attempts,     setAttempts]     = useState<Attempt[]>([]);
   const [myParticipant,setMyParticipant]= useState<Participant|null>(null);
   const [onlineUsers,  setOnlineUsers]  = useState<{name:string;role:string}[]>([]);
+  const [judgeCodes,      setJudgeCodes]      = useState<string[]>([]);
+  const [judgeCodeInput,  setJudgeCodeInput]  = useState("");
+  const [observerNameInput, setObserverNameInput] = useState("");
   const [activeP,        setActiveP]       = useState<Participant|null>(null);
   const [currentAttempt, setCurAttempt]    = useState<Attempt|null>(null);
   const [bellCount,      setBellCount]     = useState(0);
@@ -802,7 +806,7 @@ export default function MustabaqahPage() {
   // the screen swaps from "here's your code, come back later" to "enter your
   // code now" — see the "registered" view below.
   useEffect(() => {
-    if (view!=="registered" || !competition?.registration_deadline) { setRegCountdownMs(null); return; }
+    if ((view!=="registered"&&view!=="preroom") || !competition?.registration_deadline) { setRegCountdownMs(null); return; }
     const deadline = new Date(competition.registration_deadline).getTime();
     const tick = () => setRegCountdownMs(Math.max(0, deadline - Date.now()));
     tick();
@@ -1683,6 +1687,17 @@ export default function MustabaqahPage() {
 
   /** Reveal the lowest-ranked not-yet-announced participant — builds the
    *  ceremony from last place up to the winner. */
+  /** Judge-only: unlock the leaderboard for everyone else without ending the
+   *  competition — separate from terminateSession/advanceStage, which end
+   *  the whole session. Reveals then proceed one participant at a time via
+   *  the same revealParticipant/revealNextInOrder used on the results page. */
+  const releaseLeaderboard = async () => {
+    if (!competition) return;
+    await supabase.from("musabaqah_competitions" as any).update({ results_reveal_active: true, revealed_participant_ids: [] } as any).eq("id", competition.id);
+    setCompetition(c=>c?{...c, results_reveal_active:true, revealed_participant_ids:[]}:c);
+    broadcast("REVEAL_START", { revealed_participant_ids: [] });
+  };
+
   const revealNextInOrder = () => {
     for (let i = rankedParticipants.length - 1; i >= 0; i--) {
       if (!revealedIds.includes(rankedParticipants[i].id)) { revealParticipant(rankedParticipants[i].id); return; }
@@ -1696,6 +1711,16 @@ export default function MustabaqahPage() {
     broadcast("COMP_START", {});
     setJudgeTab("controls"); // jump straight to Controls so Call button is visible
     toast({title:"🎯 Competition started! Call the first participant."});
+  };
+
+  const ensureJudgeCodes = async (comp: Competition): Promise<string[]> => {
+    const existing: string[] = comp.scope_config?.judge_codes ?? [];
+    if (existing.length >= 2) return existing;
+    const codes = [existing[0]||genCode(), existing[1]||genCode()];
+    const newConfig = { ...(comp.scope_config||{}), judge_codes: codes };
+    await supabase.from("musabaqah_competitions" as any).update({ scope_config: newConfig } as any).eq("id", comp.id);
+    setCompetition(c=>c&&c.id===comp.id?{...c,scope_config:newConfig}:c);
+    return codes;
   };
 
   const createCompetition = async () => {
@@ -1726,6 +1751,7 @@ export default function MustabaqahPage() {
         juz_number: form.juz_number, hizb_number: form.hizb_number,
         range_surah_start: form.range_surah_start, range_ayah_start: form.range_ayah_start,
         range_surah_end: form.range_surah_end, range_ayah_end: form.range_ayah_end,
+        judge_codes: [genCode(), genCode()],
       },
       total_stages:form.total_stages,current_stage:1,time_limit_seconds:form.time_limit,
       status:"open",room_code,created_by:user?.id,use_criteria_scoring:form.use_criteria,
@@ -1838,15 +1864,117 @@ export default function MustabaqahPage() {
     }
     setStageQuestions(sqText);
     setQSettingsStage(comp.current_stage);
-    if (canJudge) { setView("role_select"); return; }
+    if (canJudge) {
+      const {data:roster}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",comp.id).order("queue_position");
+      if (roster) setParticipants(roster as Participant[]);
+      // Mandatory registration: a judge/admin can't enter the room without
+      // having claimed one of the (max 2) judge codes for this competition.
+      const mine = (roster as Participant[]|null)?.find(p=>p.user_id===user?.id && p.role==="judge");
+      if (mine) { setMyParticipant(mine); setView("preroom"); return; }
+      const codes = await ensureJudgeCodes(comp);
+      setJudgeCodes(codes); setJudgeCodeInput("");
+      setView("judge_gate");
+      return;
+    }
     const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",comp.id).eq("user_id",user?.id).single();
     if (data) { await enterAsExistingParticipant(comp, data as Participant); }
     else setView("role_select");
   };
 
+  // ── Standalone Settings page (gear icon on a competition card) ────
+  // Same live-editable Q-settings state used inside the arena drawer,
+  // just entered directly from the list without opening the room.
+  const openSettings = async (comp: Competition) => {
+    setCompetition(comp);
+    const cqs: string[] = comp.scope_config?.custom_questions ?? [];
+    setLiveCustomQ(cqs.join("\n"));
+    setLiveInstructions(comp.description||"");
+    const sq: Record<string,string[]> = comp.scope_config?.stage_questions ?? {};
+    const sqText: Record<string,string> = {};
+    for (let i=1; i<=comp.total_stages; i++) {
+      sqText[String(i)] = (sq[String(i)] ?? []).join("\n");
+    }
+    setStageQuestions(sqText);
+    setQSettingsStage(comp.current_stage);
+    setJudgeCodes(await ensureJudgeCodes(comp));
+    setView("settings");
+  };
+
+  // ── Judge-code gate: a judge/admin must claim one of the max-2 codes ──
+  const claimJudgeCode = async () => {
+    if (!competition || !user) return;
+    const code = judgeCodeInput.trim().toUpperCase();
+    if (!judgeCodes.includes(code)) { toast({title:"Invalid judge code",variant:"destructive"}); return; }
+    setLoading(true);
+    // Someone else already holding this exact code takes the slot — a code is one seat.
+    const {data:holder} = await supabase.from("musabaqah_participants" as any)
+      .select("*").eq("competition_id",competition.id).eq("role","judge").eq("access_code",code).maybeSingle();
+    if (holder && (holder as Participant).user_id && (holder as Participant).user_id!==user.id) {
+      setLoading(false);
+      toast({title:"That judge code is already claimed",variant:"destructive"});
+      return;
+    }
+    const {data:mine} = await supabase.from("musabaqah_participants" as any)
+      .select("*").eq("competition_id",competition.id).eq("user_id",user.id).eq("role","judge").maybeSingle();
+    let row = mine as Participant|null;
+    if (!row) {
+      const {data:inserted,error} = await supabase.from("musabaqah_participants" as any).insert({
+        competition_id: competition.id, user_id: user.id,
+        participant_name: profile?.full_name || "Judge", role: "judge",
+        access_code: code, status: "waiting", queue_position: 0,
+        total_score: 0, stage_scores: {}, bell_counts: {}, proctor_flagged: false, camera_on: false,
+      } as any).select().single();
+      setLoading(false);
+      if (error) { toast({title:"Couldn't register",description:error.message,variant:"destructive"}); return; }
+      row = inserted as Participant;
+    } else {
+      setLoading(false);
+    }
+    setMyParticipant(row);
+    setParticipants(p=>[...p.filter(x=>x.id!==row!.id), row!]);
+    setView("preroom");
+  };
+
+  // ── Observer/attendee gate: view-only access now requires name registration ──
+  const registerObserver = async () => {
+    if (!competition || !observerNameInput.trim()) { toast({title:"Enter your name"}); return; }
+    setLoading(true);
+    const {data:existing} = await supabase.from("musabaqah_participants" as any)
+      .select("*").eq("competition_id",competition.id).eq("user_id",user?.id||"").eq("role","observer").maybeSingle();
+    let row = existing as Participant|null;
+    if (!row) {
+      const {data:inserted,error} = await supabase.from("musabaqah_participants" as any).insert({
+        competition_id: competition.id, user_id: user?.id,
+        participant_name: observerNameInput.trim(), role: "observer",
+        status: "waiting", queue_position: 0,
+        total_score: 0, stage_scores: {}, bell_counts: {}, proctor_flagged: false, camera_on: false,
+      } as any).select().single();
+      setLoading(false);
+      if (error) { toast({title:"Couldn't register",description:error.message,variant:"destructive"}); return; }
+      row = inserted as Participant;
+    } else {
+      setLoading(false);
+    }
+    setMyParticipant(row);
+    setUserRole("observer");
+    setView("arena");
+    if (competition) await fetchLkToken(competition.room_code);
+  };
+
   const chooseRole = async (roleId:string) => {
     setUserRole(roleId as any);
-    if (roleId==="judge"||roleId==="observer") { setView("arena"); if (competition) await fetchLkToken(competition.room_code); return; }
+    if (roleId==="judge") { setView("arena"); if (competition) await fetchLkToken(competition.room_code); return; }
+    if (roleId==="observer") {
+      // Mandatory registration: view-only attendees must give at least a name before entering.
+      if (competition && user) {
+        const {data:existing} = await supabase.from("musabaqah_participants" as any)
+          .select("*").eq("competition_id",competition.id).eq("user_id",user.id).eq("role","observer").maybeSingle();
+        if (existing) { setMyParticipant(existing as Participant); setView("arena"); await fetchLkToken(competition.room_code); return; }
+      }
+      setObserverNameInput(profile?.full_name||"");
+      setView("observer_gate");
+      return;
+    }
     if (competition) {
       const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",competition.id).eq("user_id",user?.id).single();
       if (data) { await enterAsExistingParticipant(competition, data as Participant); }
@@ -1868,6 +1996,15 @@ export default function MustabaqahPage() {
     if (!competition) return;
     await supabase.from("musabaqah_participants" as any).update({ status: "waiting" }).eq("id", p.id);
     broadcast("PARTICIPANT_APPROVED", { participant_id: p.id });
+    loadParticipants();
+  };
+
+  const admitAllPending = async () => {
+    if (!competition) return;
+    const ids = participants.filter(p=>p.status==="pending").map(p=>p.id);
+    if (!ids.length) return;
+    await supabase.from("musabaqah_participants" as any).update({ status: "waiting" }).in("id", ids);
+    ids.forEach(id=>broadcast("PARTICIPANT_APPROVED", { participant_id: id }));
     loadParticipants();
   };
 
@@ -2167,6 +2304,8 @@ export default function MustabaqahPage() {
                   </button>
                 </div>
               </div>
+              <button onClick={async e=>{e.stopPropagation(); setCompetition(c); const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",c.id).order("queue_position"); if(data) setParticipants(data as Participant[]); setView("leaderboard");}} style={{background:"rgba(96,165,250,.1)",border:"1px solid rgba(96,165,250,.3)",borderRadius:9,padding:"7px 9px",cursor:"pointer",color:"#60a5fa",display:"flex",alignItems:"center"}}><Award size={14}/></button>
+              {canJudge&&<button onClick={e=>{e.stopPropagation();openSettings(c);}} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.25)",borderRadius:9,padding:"7px 9px",cursor:"pointer",color:GOLD,display:"flex",alignItems:"center"}}><Settings size={14}/></button>}
               {canJudge&&<button onClick={e=>{e.stopPropagation();setDeleteModal(c);}} style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.25)",borderRadius:9,padding:"7px 9px",cursor:"pointer",color:RED}}>🗑️</button>}
               <ChevronRight size={16} color="rgba(255,255,255,.2)"/>
             </div>
@@ -2418,6 +2557,431 @@ export default function MustabaqahPage() {
     );
   }
 
+
+  /* ── PREROOM (judges/admins land here after tapping a card — deadline countdown, full registrant list, then Enter Room) ── */
+  if (view==="preroom" && competition) {
+    const hasDeadline = !!competition.registration_deadline;
+    const closed = !hasDeadline || (regCountdownMs !== null && regCountdownMs <= 0);
+    const totalSecs = regCountdownMs !== null ? Math.floor(regCountdownMs/1000) : 0;
+    const dd = Math.floor(totalSecs/86400), hh = Math.floor((totalSecs%86400)/3600), mm = Math.floor((totalSecs%3600)/60), ss = totalSecs%60;
+    return (
+      <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",overflowY:"auto",paddingBottom:100}}>
+        <GlobalStyles/><IslamicBackground/>
+        <div style={{position:"relative",zIndex:1,padding:"16px 20px 0"}}>
+          <button onClick={()=>setView("list")} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"8px 14px",cursor:"pointer",color:"rgba(255,255,255,.6)",display:"flex",alignItems:"center",gap:6,fontSize:13,fontFamily:"Cairo,sans-serif"}}>
+            <ArrowLeft size={14}/> Back
+          </button>
+        </div>
+
+        <div style={{position:"relative",zIndex:1,maxWidth:520,margin:"0 auto",padding:"20px 16px 0"}}>
+          <div className="glass-card anim-slide-up" style={{borderRadius:20,padding:"22px 20px",textAlign:"center",marginBottom:16}}>
+            <h2 style={{fontFamily:"Cinzel,sans-serif",color:"#fff",fontSize:19,margin:"0 0 4px",fontWeight:700}}>{competition.title}</h2>
+            <div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:8,marginBottom:hasDeadline&&!closed?16:0}}>
+              <span style={{color:GOLD,fontWeight:800,letterSpacing:2,fontSize:13}}>{competition.room_code}</span>
+              <span style={{color:"rgba(255,255,255,.3)",fontSize:12}}>· {competition.total_stages} Stages</span>
+            </div>
+            {hasDeadline && !closed && (
+              <div>
+                <div style={{color:"rgba(255,255,255,.35)",fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Registration Closes In</div>
+                <div style={{display:"flex",justifyContent:"center",gap:8}}>
+                  {[[dd,"d"],[hh,"h"],[mm,"m"],[ss,"s"]].map(([v,u]:any)=>(
+                    <div key={u} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"9px 12px",minWidth:48}}>
+                      <div style={{color:GOLD,fontWeight:900,fontSize:18,fontFamily:"Cinzel,serif"}}>{String(v).padStart(2,"0")}</div>
+                      <div style={{color:"rgba(255,255,255,.35)",fontSize:9,textTransform:"uppercase"}}>{u}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {hasDeadline && closed && (
+              <div style={{color:RED,fontSize:12,fontWeight:700,marginTop:6}}>Registration closed</div>
+            )}
+          </div>
+
+          <div className="glass-card" style={{borderRadius:18,padding:"16px 18px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>Registered Participants</div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{background:"rgba(201,168,76,.15)",border:"1px solid rgba(201,168,76,.3)",color:GOLD,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:800}}>{participants.length}</span>
+                {participants.some(p=>p.status==="pending") && (
+                  <button onClick={admitAllPending} style={{background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.4)",color:GREEN,borderRadius:9,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif"}}>Admit All</button>
+                )}
+              </div>
+            </div>
+            {participants.length===0 ? (
+              <p style={{color:"rgba(255,255,255,.3)",fontSize:12,textAlign:"center",padding:"16px 0",margin:0}}>No one has registered yet</p>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:340,overflowY:"auto"}}>
+                {participants.map(p=>(
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.08)",borderRadius:12,padding:"9px 12px"}}>
+                    <div style={{width:32,height:32,borderRadius:9,background:"rgba(201,168,76,.15)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,color:GOLD,fontWeight:800,fontSize:13}}>
+                      {p.participant_name?.[0]?.toUpperCase()||"?"}
+                    </div>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{color:"#fff",fontSize:13,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                      {p.assigned_juz&&<div style={{color:"rgba(255,255,255,.35)",fontSize:10}}>Juz {p.assigned_juz}</div>}
+                    </div>
+                    <span style={{fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:20,background:p.status==="completed"?"rgba(96,165,250,.15)":p.status==="pending"?"rgba(255,255,255,.08)":`${GREEN}22`,color:p.status==="completed"?"#60a5fa":p.status==="pending"?"rgba(255,255,255,.4)":GREEN}}>
+                      {p.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>setView("leaderboard")} style={{flex:1,background:"rgba(255,255,255,.07)",color:"#fff",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:14,padding:"14px 0",fontWeight:700,cursor:"pointer",fontSize:14,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <Award size={16}/> Leaderboard
+            </button>
+            <button className="gold-btn" onClick={()=>setView("role_select")} style={{flex:2,color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:"pointer",fontSize:16,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <LogIn size={18}/> Enter Room
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── STANDALONE SETTINGS PAGE (gear icon on a card — same live Q-settings state as the old in-arena drawer, now a full page) ── */
+  if (view==="settings" && competition) {
+    return (
+      <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",overflowY:"auto",paddingBottom:100}}>
+        <GlobalStyles/><IslamicBackground/>
+        <div style={{position:"relative",zIndex:1,padding:"16px 20px 0"}}>
+          <button onClick={()=>setView("list")} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"8px 14px",cursor:"pointer",color:"rgba(255,255,255,.6)",display:"flex",alignItems:"center",gap:6,fontSize:13,fontFamily:"Cairo,sans-serif"}}>
+            <ArrowLeft size={14}/> Back
+          </button>
+        </div>
+
+        <div style={{position:"relative",zIndex:1,maxWidth:520,margin:"0 auto",padding:"18px 16px 0"}}>
+          <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:16}}>
+            <div style={{width:36,height:36,borderRadius:10,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><Wand2 size={16} color={G}/></div>
+            <div>
+              <div style={{color:"#fff",fontWeight:800,fontSize:16}}>Question Settings</div>
+              <div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>{competition.title} — set questions & instructions per stage</div>
+            </div>
+          </div>
+
+          {/* ── Judge codes — max 2 seats, distribute one to each judge so they can register in ── */}
+          <div className="glass-card" style={{borderRadius:16,padding:"14px 16px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+              <Users size={13} color={GOLD}/>
+              <div style={{color:GOLD,fontWeight:800,fontSize:12,letterSpacing:.5}}>Judge Codes (max 2 seats)</div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              {judgeCodes.map((code,i)=>(
+                <button key={i} onClick={(e:any)=>copyCode(code,e)} style={{flex:1,background:"rgba(201,168,76,.1)",border:"1.5px solid rgba(201,168,76,.35)",borderRadius:11,padding:"10px 8px",cursor:"pointer",textAlign:"center"}}>
+                  <div style={{color:"rgba(255,255,255,.35)",fontSize:9,marginBottom:3}}>Judge {i+1}</div>
+                  <div style={{color:GOLD,fontWeight:900,letterSpacing:3,fontSize:15}}>{code}</div>
+                </button>
+              ))}
+            </div>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:8,lineHeight:1.6}}>Give one code to each judge — tap a code to copy. A judge claims a seat by entering it the first time they open this competition.</div>
+          </div>
+
+          <div style={{display:"flex",padding:"0 0 4px",gap:7}}>
+            {([["manual","📝 Questions"],["ai","✨ AI Generate"]] as const).map(([t,l])=>(
+              <button key={t} onClick={()=>setQSettingsTab(t)} style={{flex:1,background:qSettingsTab===t?"rgba(201,168,76,.2)":"rgba(255,255,255,.04)",border:qSettingsTab===t?"1px solid rgba(201,168,76,.4)":"1px solid rgba(255,255,255,.1)",borderRadius:9,padding:"9px 0",color:qSettingsTab===t?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{l}</button>
+            ))}
+          </div>
+
+          {qSettingsTab==="manual"&&(
+            <div style={{padding:"14px 0 4px"}}>
+              <div style={{color:"rgba(255,255,255,.4)",fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Editing Stage</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {Array.from({length:competition.total_stages},(_,i)=>{
+                  const s=i+1;
+                  const hasQ=(stageQuestions[String(s)]||"").trim().length>0;
+                  const isCurrent=s===competition.current_stage;
+                  return(
+                    <button key={s} onClick={()=>setQSettingsStage(s)}
+                      style={{background:qSettingsStage===s?`${GOLD}22`:"rgba(255,255,255,.04)",border:`1.5px solid ${qSettingsStage===s?GOLD:hasQ?"rgba(34,197,94,.4)":"rgba(255,255,255,.12)"}`,borderRadius:9,padding:"5px 12px",cursor:"pointer",color:qSettingsStage===s?GOLD:hasQ?GREEN:"rgba(255,255,255,.45)",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",position:"relative",display:"flex",alignItems:"center",gap:4}}>
+                      S{s}{isCurrent&&<span style={{fontSize:8,background:`${GOLD}33`,color:GOLD,borderRadius:4,padding:"1px 4px",lineHeight:1.3}}>NOW</span>}
+                      {hasQ&&<span style={{width:5,height:5,borderRadius:"50%",background:GREEN,flexShrink:0}}/>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div style={{padding:"10px 0 0"}}>
+            {qSettingsTab==="manual"&&(
+              <>
+                <div style={{background:"rgba(34,197,94,.07)",border:"1px solid rgba(34,197,94,.25)",borderRadius:12,padding:"10px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
+                  <Shuffle size={13} color={GREEN} style={{flexShrink:0}}/>
+                  <div style={{flex:1}}>
+                    <div style={{color:GREEN,fontWeight:700,fontSize:12}}>Fill all stages from Quran scope</div>
+                    <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginTop:1}}>Auto-distributes unique ayahs across all {competition.total_stages} stages from {competition.scope_type}. No AI needed.</div>
+                  </div>
+                  <button onClick={autoFillAllStages}
+                    style={{background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.35)",borderRadius:9,padding:"6px 11px",cursor:"pointer",color:GREEN,fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0,whiteSpace:"nowrap"}}>
+                    Auto-fill
+                  </button>
+                </div>
+                <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
+                  <strong style={{color:GOLD}}>Stage {qSettingsStage} questions</strong> — one per line.{" "}
+                  <span style={{color:"rgba(255,255,255,.3)"}}>Leave empty to use random Quran passages.</span>
+                </div>
+                <textarea
+                  value={stageQuestions[String(qSettingsStage)]||""}
+                  onChange={e=>setStageQuestions(sq=>({...sq,[String(qSettingsStage)]:e.target.value}))}
+                  placeholder={"Al-Fatiha full\nAl-Baqarah 1-5\nSurah Al-Ikhlas complete\n..."}
+                  rows={7}
+                  style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:11,padding:"11px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box"}}
+                />
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                  <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:3}}>
+                    {(stageQuestions[String(qSettingsStage)]||"").split("\n").filter(s=>s.trim()).length} questions for Stage {qSettingsStage}
+                    {(stageQuestions[String(qSettingsStage)]||"").includes("§") &&
+                      <span style={{color:GREEN,marginLeft:5}}>· verse text enabled ✓</span>}
+                  </div>
+                  <button onClick={()=>setStageQuestions(sq=>({...sq,[String(qSettingsStage)]:""}))}
+                    style={{background:"none",border:"none",color:"rgba(239,68,68,.5)",fontSize:10,cursor:"pointer",fontFamily:"Cairo,sans-serif",padding:0}}>
+                    Clear Stage {qSettingsStage}
+                  </button>
+                </div>
+
+                <details style={{marginBottom:10}}>
+                  <summary style={{color:"rgba(255,255,255,.35)",fontSize:11,cursor:"pointer",userSelect:"none",marginBottom:6}}>
+                    📋 All-stages fallback list ({liveCustomQ.split("\n").filter(s=>s.trim()).length} entries)
+                  </summary>
+                  <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginBottom:4}}>Used only if a stage has no specific questions above.</div>
+                  <textarea
+                    value={liveCustomQ}
+                    onChange={e=>setLiveCustomQ(e.target.value)}
+                    placeholder={"Al-Fatiha full\nAl-Baqarah 1-5\n..."}
+                    rows={4}
+                    style={{width:"100%",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.1)",borderRadius:9,padding:"9px 11px",color:"rgba(255,255,255,.7)",fontSize:12,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.6,boxSizing:"border-box"}}
+                  />
+                </details>
+
+                <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5,display:"flex",alignItems:"center",gap:3}}><Eye size={10}/> Instructions for Participants</div>
+                <textarea value={liveInstructions} onChange={e=>setLiveInstructions(e.target.value)} placeholder={"e.g. Recite with proper Tajweed rules. Begin with Bismillah."} rows={3} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.15)",borderRadius:11,padding:"9px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"vertical",lineHeight:1.7,boxSizing:"border-box",marginBottom:14}}/>
+              </>
+            )}
+            {qSettingsTab==="ai"&&(
+              <>
+                <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.2)",borderRadius:11,padding:"11px 13px",marginBottom:12,display:"flex",alignItems:"flex-start",gap:7}}>
+                  <Sparkles size={13} color={GOLD} style={{flexShrink:0,marginTop:2}}/>
+                  <div style={{color:"rgba(255,255,255,.6)",fontSize:12,lineHeight:1.7}}>
+                    AI generates questions for <strong style={{color:GOLD}}>Stage {qSettingsStage}</strong>. They're added to that stage's list for review before saving.
+                  </div>
+                </div>
+                <div style={{marginBottom:12}}>
+                  <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Target Stage</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {Array.from({length:competition.total_stages},(_,i)=>{
+                      const s=i+1;
+                      return(
+                        <button key={s} onClick={()=>setQSettingsStage(s)}
+                          style={{background:qSettingsStage===s?`${GOLD}22`:"rgba(255,255,255,.04)",border:`1.5px solid ${qSettingsStage===s?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:9,padding:"5px 12px",cursor:"pointer",color:qSettingsStage===s?GOLD:"rgba(255,255,255,.45)",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif"}}>
+                          S{s}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div style={{marginBottom:11}}>
+                  <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Prompt / Scope</div>
+                  <textarea value={aiPrompt} onChange={e=>setAiPrompt(e.target.value)} placeholder={"e.g. Juz 30 short surahs for junior students"} rows={3} style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:11,padding:"11px 13px",color:"#fff",fontSize:13,fontFamily:"Cairo,sans-serif",resize:"none",lineHeight:1.7,boxSizing:"border-box"}}/>
+                </div>
+                <div style={{marginBottom:14}}>
+                  <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Count</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {[5,8,10,12,15,20].map(n=>(
+                      <button key={n} onClick={()=>setAiQCount(n)} style={{background:aiQCount===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${aiQCount===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",color:aiQCount===n?GOLD:"rgba(255,255,255,.55)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12}}>{n}</button>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={generateAIQuestions} disabled={aiGenLoading||!aiPrompt.trim()} style={{width:"100%",background:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.08)":`linear-gradient(135deg,${GOLD},${GOLDD})`,color:aiGenLoading||!aiPrompt.trim()?"rgba(255,255,255,.3)":G,border:"none",borderRadius:11,padding:"13px",cursor:aiGenLoading||!aiPrompt.trim()?"not-allowed":"pointer",fontWeight:800,fontSize:14,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:7,marginBottom:14,transition:"all .2s"}}>
+                  {aiGenLoading?<><Loader2 size={15} style={{animation:"spin 1s linear infinite"}}/> Generating…</>:<><Sparkles size={15}/> Generate {aiQCount} Questions for Stage {qSettingsStage}</>}
+                </button>
+              </>
+            )}
+          </div>
+
+          <div style={{display:"flex",gap:8,paddingTop:6}}>
+            <button onClick={()=>setView("list")} style={{flex:1,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:11,padding:"13px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontWeight:700,fontSize:13,fontFamily:"Cairo,sans-serif"}}>Cancel</button>
+            <button onClick={async()=>{await saveQSettings();setView("list");}} style={{flex:2,background:`linear-gradient(135deg,${GOLD},${GOLDD})`,border:"none",borderRadius:11,padding:"13px",cursor:"pointer",color:G,fontWeight:800,fontSize:13,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:7}}>
+              <CheckCircle size={14}/> Save All Changes
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── JUDGE GATE (mandatory registration — a judge/admin must claim one of the 2 judge codes before entering the room) ── */
+  if (view==="judge_gate" && competition) {
+    return (
+      <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <GlobalStyles/><IslamicBackground/>
+        <div className="anim-slide-up glass-card" style={{position:"relative",zIndex:1,width:"100%",maxWidth:420,borderRadius:24,padding:"32px 24px"}}>
+          <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:16,fontSize:13,display:"flex",alignItems:"center",gap:6}}><ArrowLeft size={14}/> Back</button>
+          <div style={{textAlign:"center",marginBottom:20}}>
+            <div style={{fontSize:40,marginBottom:8}}>⚖️</div>
+            <h2 style={{fontFamily:"Cinzel,sans-serif",color:"#fff",fontSize:18,margin:"0 0 4px",fontWeight:700}}>Judge Registration</h2>
+            <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:0}}>Enter your judge code for <strong style={{color:GOLD}}>{competition.title}</strong> — there are only 2 seats.</p>
+          </div>
+          <Label>Judge Code</Label>
+          <input value={judgeCodeInput} onChange={e=>setJudgeCodeInput(e.target.value.toUpperCase())} placeholder="XXXXXX" maxLength={6}
+            style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:14,padding:"14px 20px",color:"#fff",fontSize:20,fontWeight:800,letterSpacing:6,textAlign:"center",textTransform:"uppercase",marginBottom:16,boxSizing:"border-box"}}/>
+          <button className="gold-btn" onClick={claimJudgeCode} disabled={loading||judgeCodeInput.trim().length<6} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:loading?"not-allowed":"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?.7:1}}>
+            {loading?<Loader2 size={18} style={{animation:"spin 1s linear infinite"}}/>:<LogIn size={18}/>}{loading?"Registering...":"Claim Judge Seat"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── OBSERVER GATE (mandatory registration — view-only attendees must give a name before entering) ── */
+  if (view==="observer_gate" && competition) {
+    return (
+      <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <GlobalStyles/><IslamicBackground/>
+        <div className="anim-slide-up glass-card" style={{position:"relative",zIndex:1,width:"100%",maxWidth:420,borderRadius:24,padding:"32px 24px"}}>
+          <button onClick={()=>setView("role_select")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:16,fontSize:13,display:"flex",alignItems:"center",gap:6}}><ArrowLeft size={14}/> Back</button>
+          <div style={{textAlign:"center",marginBottom:20}}>
+            <div style={{fontSize:40,marginBottom:8}}>👁️</div>
+            <h2 style={{fontFamily:"Cinzel,sans-serif",color:"#fff",fontSize:18,margin:"0 0 4px",fontWeight:700}}>Watch & Follow</h2>
+            <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:0}}>Just your name — view-only access to <strong style={{color:GOLD}}>{competition.title}</strong>.</p>
+          </div>
+          <Label>Your Name</Label>
+          <input value={observerNameInput} onChange={e=>setObserverNameInput(e.target.value)} placeholder="Full name"
+            style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 16px",color:"#fff",fontSize:15,marginBottom:16,boxSizing:"border-box"}}/>
+          <button className="gold-btn" onClick={registerObserver} disabled={loading||!observerNameInput.trim()} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:loading?"not-allowed":"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?.7:1}}>
+            {loading?<Loader2 size={18} style={{animation:"spin 1s linear infinite"}}/>:<LogIn size={18}/>}{loading?"Registering...":"Continue as Viewer"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── LEADERBOARD (live — averaged judge scores, viewable anytime, no reveal ceremony) ── */
+  if (view==="leaderboard" && competition) {
+    const sorted = rankedParticipants.filter(p=>p.role!=="judge"&&p.role!=="observer");
+    const medals=["🥇","🥈","🥉"];
+    const released = !!competition.results_reveal_active;
+    const allRevealed = released && sorted.length>0 && sorted.every(p=>revealedIds.includes(p.id));
+
+    // Non-judges get nothing at all until the admin releases it.
+    if (!canJudge && !released) {
+      return (
+        <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <GlobalStyles/><IslamicBackground/>
+          <div className="anim-slide-up glass-card" style={{position:"relative",zIndex:1,width:"100%",maxWidth:380,borderRadius:22,padding:"36px 24px",textAlign:"center"}}>
+            <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:16,fontSize:13,display:"flex",alignItems:"center",gap:6}}><ArrowLeft size={14}/> Back</button>
+            <div style={{fontSize:44,marginBottom:10}}>🔒</div>
+            <h2 style={{fontFamily:"Cinzel,sans-serif",color:"#fff",fontSize:17,margin:"0 0 6px",fontWeight:700}}>Leaderboard Not Released Yet</h2>
+            <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:0,lineHeight:1.6}}>The judges will unveil results once every participant has been called.</p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",overflowY:"auto",paddingBottom:60}}>
+        <GlobalStyles/><IslamicBackground/>
+
+        {revealSpotlight && (
+          <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,.82)",backdropFilter:"blur(6px)"}}>
+            <div className="anim-slide-up" style={{textAlign:"center",padding:"32px 40px",background:"rgba(10,20,15,.9)",border:`1.5px solid ${GOLD}55`,borderRadius:24,boxShadow:"0 0 60px rgba(201,168,76,.25)"}}>
+              <div style={{color:"rgba(255,255,255,.4)",fontSize:13,fontWeight:700,letterSpacing:2,marginBottom:6}}>IN POSITION</div>
+              <div style={{fontSize:56,fontWeight:900,color:GOLD,fontFamily:"Cinzel,serif",lineHeight:1}}>#{revealSpotlight.rank}</div>
+              <Avatar name={revealSpotlight.participant.participant_name} size={64} active/>
+              <div style={{color:"#fff",fontWeight:800,fontSize:20,marginTop:10}}>{revealSpotlight.participant.participant_name}</div>
+              <div style={{color:GREEN,fontWeight:900,fontSize:32,fontFamily:"Cinzel,serif",marginTop:6}}>{revealSpotlight.participant.total_score} pts</div>
+            </div>
+          </div>
+        )}
+
+        <div style={{position:"relative",zIndex:1,padding:"16px 20px 0"}}>
+          <button onClick={()=>setView(canJudge?"preroom":"list")} style={{background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:10,padding:"8px 14px",cursor:"pointer",color:"rgba(255,255,255,.6)",display:"flex",alignItems:"center",gap:6,fontSize:13,fontFamily:"Cairo,sans-serif"}}>
+            <ArrowLeft size={14}/> Back
+          </button>
+        </div>
+        <div style={{position:"relative",zIndex:1,maxWidth:600,margin:"0 auto",padding:"20px 16px 0"}}>
+          <div style={{textAlign:"center",marginBottom:20}}>
+            <div style={{fontSize:44,marginBottom:6}}>🏆</div>
+            <h1 style={{fontFamily:"Cinzel,serif",color:GOLD,fontSize:22,margin:"0 0 4px",fontWeight:700}}>Leaderboard</h1>
+            <p style={{color:"rgba(255,255,255,.4)",margin:0,fontSize:12}}>
+              {competition.title}
+              {canJudge && !released && " · only judges can see this — release it once everyone's been called"}
+              {released && !allRevealed && ` · ${sorted.filter(p=>revealedIds.includes(p.id)).length}/${sorted.length} revealed`}
+            </p>
+          </div>
+
+          {/* ── Judge-only controls: release it, then unveil last place → first ── */}
+          {canJudge && !released && (
+            <div className="glass-card" style={{borderRadius:16,padding:14,marginBottom:20,textAlign:"center"}}>
+              <p style={{color:"rgba(255,255,255,.45)",fontSize:12,margin:"0 0 10px"}}>You can see live scores below. Everyone else is locked out until you release it.</p>
+              <button onClick={releaseLeaderboard} style={{width:"100%",background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:G,border:"none",borderRadius:11,padding:"12px",cursor:"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:14}}>
+                🔓 Release Leaderboard to Everyone
+              </button>
+            </div>
+          )}
+          {canJudge && released && !allRevealed && (
+            <div className="glass-card" style={{borderRadius:16,padding:14,marginBottom:20}}>
+              <div style={{color:GOLD,fontWeight:800,fontSize:13,marginBottom:10}}>🎺 Unveil Results</div>
+              <button onClick={revealNextInOrder} disabled={revealBusy} style={{width:"100%",background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:G,border:"none",borderRadius:11,padding:"12px",cursor:revealBusy?"not-allowed":"pointer",fontWeight:900,fontFamily:"Cairo,sans-serif",fontSize:14,marginBottom:10,opacity:revealBusy?.6:1}}>
+                Reveal Next (starts from last place)
+              </button>
+              <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginBottom:6}}>Or tap any rank to unveil it directly:</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
+                {sorted.map((p,i)=>{
+                  const rank=i+1; const done=revealedIds.includes(p.id);
+                  return (
+                    <button key={p.id} onClick={()=>revealParticipant(p.id)} disabled={done||revealBusy} style={{background:done?`${GREEN}18`:"rgba(255,255,255,.06)",border:`1px solid ${done?GREEN+"55":"rgba(255,255,255,.15)"}`,borderRadius:9,padding:"8px 4px",cursor:done?"default":"pointer",color:done?GREEN:"#fff",fontWeight:800,fontSize:12,opacity:revealBusy&&!done?.5:1}}>
+                      {done?"✓":`#${rank}`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="glass-card" style={{borderRadius:20,overflow:"hidden"}}>
+            {sorted.length===0 ? (
+              <p style={{color:"rgba(255,255,255,.3)",fontSize:13,textAlign:"center",padding:"30px 0",margin:0}}>No scores yet</p>
+            ) : sorted.map((p,i)=>{
+              // Judges always see real numbers. Everyone else only sees a row
+              // once the judge has tapped reveal for that specific participant —
+              // unrevealed rows stay blurred/locked, even after release.
+              const unlocked = canJudge || revealedIds.includes(p.id);
+              const stageCount = Object.keys(p.stage_scores||{}).length;
+              const avg = stageCount>0 ? Math.round((p.total_score/stageCount)*10)/10 : 0;
+              return (
+                <div key={p.id} className={unlocked&&released?"anim-slide-up":undefined} style={{padding:"12px 20px",borderBottom:"1px solid rgba(255,255,255,.05)",display:"flex",alignItems:"center",gap:12,background:unlocked&&i<3?"rgba(201,168,76,.04)":"transparent",opacity:unlocked?1:.45,filter:unlocked?"none":"blur(3px)"}}>
+                  <span style={{width:28,textAlign:"center",color:!unlocked?"rgba(255,255,255,.2)":i<3?GOLD:"rgba(255,255,255,.25)",fontWeight:800}}>{!unlocked?"🔒":i<3?medals[i]:`#${i+1}`}</span>
+                  <Avatar name={p.participant_name} size={34} active={unlocked&&i===0}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{color:"#fff",fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                    {p.school&&<div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>{p.school}</div>}
+                  </div>
+                  {unlocked && (
+                    <div style={{display:"flex",gap:4}}>
+                      {Array.from({length:competition.total_stages},(_,si)=>(
+                        <div key={si} style={{background:"rgba(255,255,255,.05)",borderRadius:6,padding:"2px 7px",textAlign:"center",fontSize:11}}>
+                          <div style={{color:GOLD,fontWeight:700}}>{(p.stage_scores||{})[si+1]??"-"}</div>
+                          <div style={{color:"rgba(255,255,255,.2)",fontSize:9}}>S{si+1}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{textAlign:"right",minWidth:64}}>
+                    <div style={{color:unlocked?GOLD:"rgba(255,255,255,.2)",fontWeight:900,fontSize:18}}>{unlocked?p.total_score:"?"}</div>
+                    {unlocked && <div style={{color:"rgba(255,255,255,.25)",fontSize:9}}>avg {avg}/stage</div>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (view==="role_select"&&competition) {
     const ROLES=canJudge
