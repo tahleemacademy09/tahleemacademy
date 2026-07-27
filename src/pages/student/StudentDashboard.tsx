@@ -81,14 +81,17 @@ const AssignmentPreview = ({ userId, t, language, navigate }: { userId: string; 
       const { data: profileData } = await supabase.from("profiles").select("level").eq("user_id", userId).single();
       const studentLevel: string | null = (profileData as any)?.level || null;
 
-      const { data: enrollments } = await supabase.from("enrollments").select("subject_id").eq("user_id", userId);
+      // NOTE: enrollments.course_id (not subject_id) is the real column —
+      // every other query against this table filters/selects by course_id.
+      // The subject_id version was returning a 400 from PostgREST every time.
+      const { data: enrollments } = await supabase.from("enrollments").select("course_id").eq("user_id", userId);
       const { data: ttSlots }     = await supabase.from("subject_timetable" as any).select("subject_id, levels").eq("is_active", true);
       const ttIds = (ttSlots||[]).filter((s:any) => {
         if (!s.levels || s.levels.length === 0) return true;
         if (!studentLevel) return false;
         return s.levels.includes(studentLevel);
       }).map((s:any)=>s.subject_id);
-      const ids = [...new Set([...(enrollments||[]).map((e:any)=>e.subject_id), ...ttIds])].filter(Boolean);
+      const ids = [...new Set([...(enrollments||[]).map((e:any)=>e.course_id), ...ttIds])].filter(Boolean);
       if (!ids.length) { setLoading(false); return; }
       const { data: asgn } = await supabase.from("subject_assignments").select("*, subjects(id,title,title_ar,level,levels)").in("subject_id", ids).order("deadline",{ascending:true}).limit(10);
       const list = (asgn || []).filter((a:any) => {
@@ -403,8 +406,11 @@ const StudentDashboard = () => {
         { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${effectiveUserId}` },
         (payload) => {
           setNotifications(prev => [payload.new as any, ...prev]);
-          // Browser notification if permitted
-          if (Notification.permission === 'granted') {
+          // Browser notification if permitted — guard 'Notification in window'
+          // first: some Capacitor/WebView contexts don't define it at all, and
+          // referencing it directly throws a ReferenceError that ErrorBoundary
+          // catches and silently reloads the whole page on.
+          if ('Notification' in window && Notification.permission === 'granted') {
             new Notification(payload.new.title || 'Tahleem Academy', {
               body: payload.new.message || '',
               icon: '/favicon.ico',
