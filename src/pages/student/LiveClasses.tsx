@@ -55,6 +55,12 @@ const LiveClasses = () => {
   });
 
   // ── Subjects ────────────────────────────────────────
+  // FIX ("takes a while to show info"): this list rarely changes minute-to-minute,
+  // but with no cache config react-query refetched it (and blanked the screen back
+  // to the loading skeleton) on every single visit to this tab. staleTime keeps the
+  // previously-fetched data on screen instantly while a background refresh happens,
+  // so returning users see their subjects immediately instead of waiting on a
+  // network round trip every time.
   const { data: allSubjects, isLoading } = useQuery({
     queryKey: ["active-subjects"],
     queryFn: async () => {
@@ -63,6 +69,9 @@ const LiveClasses = () => {
       if (error) throw error;
       return data;
     },
+    staleTime: 5 * 60_000,       // treat as fresh for 5 min — no refetch-blank on tab revisit
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
   });
 
   // Filter: private students (without general access) only see assigned subjects
