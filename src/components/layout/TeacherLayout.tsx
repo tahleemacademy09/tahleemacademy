@@ -221,6 +221,10 @@ const TeacherLayout = () => {
     return teacherSubjectIdsRef.current.has(sid);
   };
 
+  // FIX (background-eviction): channel + poll now only run while the tab is
+  // visible — see the matching fix/comment in DashboardLayout.tsx and
+  // useClassRing.tsx for the full reasoning (always-on WebSocket connections
+  // make mobile browsers kill a minimized tab within seconds).
   useEffect(() => {
     if (!user) return;
     const load = async () => {
@@ -234,13 +238,29 @@ const TeacherLayout = () => {
       setNotifList(list);
       setUnreadNotifs(list.filter((n: any) => !n.is_read).length);
     };
-    load();
-    const ch = supabase.channel(`teacher-notifs:${user.id}`)
-      .on("postgres_changes" as any, { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
-        (p: any) => { if (!belongsToTeacher(p.new)) return; setNotifList(prev => [p.new, ...prev]); setUnreadNotifs(n => n + 1); })
-      .subscribe();
-    const iv = setInterval(load, 20000);
-    return () => { clearInterval(iv); supabase.removeChannel(ch); };
+
+    let ch: ReturnType<typeof supabase.channel> | null = null;
+    let iv: ReturnType<typeof setInterval> | null = null;
+
+    const start = () => {
+      if (ch) return;
+      load();
+      ch = supabase.channel(`teacher-notifs:${user.id}`)
+        .on("postgres_changes" as any, { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+          (p: any) => { if (!belongsToTeacher(p.new)) return; setNotifList(prev => [p.new, ...prev]); setUnreadNotifs(n => n + 1); })
+        .subscribe();
+      iv = setInterval(load, 20000);
+    };
+    const stop = () => {
+      if (iv) { clearInterval(iv); iv = null; }
+      if (ch) { supabase.removeChannel(ch); ch = null; }
+    };
+
+    if (document.visibilityState === "visible") start();
+    const onVisibility = () => { if (document.visibilityState === "visible") start(); else stop(); };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => { document.removeEventListener("visibilitychange", onVisibility); stop(); };
   }, [user]);
 
   const markRead = async (id: string) => {
