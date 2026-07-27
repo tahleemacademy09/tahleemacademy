@@ -64,19 +64,17 @@ if ("serviceWorker" in navigator) {
           if (!newWorker) return;
           newWorker.addEventListener("statechange", () => {
             if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-              // A real update (page is already controlled by a previous SW).
-              // FIX: previously this only informed the UI via the banner and
-              // waited for the user to notice it and tap "Update" — most
-              // people never did, so bug fixes shipped to sw.js (e.g. the
-              // notification-click → classroom deep-link routing) silently
-              // never reached already-installed phones. tryApplyUpdate() is
-              // still fully gated on isReloadSafe() + tab visible, so a live
-              // class or exam is still never interrupted — we just no longer
-              // require an extra manual tap on top of that safety gate.
+              // Detecting an update no longer applies it automatically — it only
+              // surfaces the banner. The ONLY thing that can ever call
+              // tryApplyUpdate() now is the user explicitly tapping "Update" in
+              // that banner (see the ta:apply-update listener above). Nothing
+              // reloads on its own — not on resume, not on redeploy, not while
+              // hidden. A plain manual browser refresh will also pick up the
+              // new version as soon as every open tab of the app has closed
+              // (standard service-worker behavior) — or immediately, the
+              // moment you tap Update.
               waitingWorker = newWorker;
-              updateRequested = true;
               window.dispatchEvent(new Event("ta:update-available"));
-              tryApplyUpdate(); // applies now if already safe+visible; otherwise the listeners below retry
             }
             // If there's no existing controller, this is a first install —
             // the browser activates it on its own; nothing for us to do.
