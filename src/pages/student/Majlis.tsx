@@ -602,15 +602,47 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   },[showMessageMenu,showDeleteSheet,showAttachSheet,showNewSheet,showStudentProfile,showGroupInfo,showSettings,showHamburger,showForwardSheet,selectMode,editingMsg,replyTo,showChatSearch,showHeaderMenu,mobileShowChat]);
 
   // Online presence
+  //
+  // FIX (recurring reload on minimize — students only): this channel used to
+  // stay open for the entire time Majlis was mounted, background or not. An
+  // always-on Realtime WebSocket is exactly what makes Android/Chrome treat a
+  // backgrounded tab as evictable — it gets killed within seconds of the app
+  // being minimized instead of just suspended, so returning to it looks like
+  // a full reload. Teachers/admins never hit this because they have no
+  // equivalent always-on chat socket. Same fix already applied to
+  // DashboardLayout's notifications channel and useClassRing's realtime
+  // listener: tear the socket down the moment the tab is hidden, rebuild it
+  // (and re-sync presence) the moment it's visible again.
   useEffect(()=>{
     if(!user) return;
-    const pCh=supabase.channel("online-presence")
-      .on("presence",{event:"sync"},()=>{
-        const ids=new Set<string>(Object.values(pCh.presenceState()).flatMap((s:any)=>s.map((x:any)=>x.user_id)));
-        setOnlineUsers(ids);
-      })
-      .subscribe(async s=>{if(s==="SUBSCRIBED") await pCh.track({user_id:user.id});});
-    return ()=>{supabase.removeChannel(pCh);};
+    let pCh: ReturnType<typeof supabase.channel> | null = null;
+
+    const build = () => {
+      if (pCh) return; // already open
+      pCh = supabase.channel("online-presence")
+        .on("presence",{event:"sync"},()=>{
+          const ids=new Set<string>(Object.values(pCh!.presenceState()).flatMap((s:any)=>s.map((x:any)=>x.user_id)));
+          setOnlineUsers(ids);
+        })
+        .subscribe(async s=>{if(s==="SUBSCRIBED") await pCh!.track({user_id:user.id});});
+    };
+    const teardown = () => {
+      if (!pCh) return;
+      supabase.removeChannel(pCh);
+      pCh = null;
+    };
+
+    if (document.visibilityState === "visible") build();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") build();
+      else teardown();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return ()=>{
+      document.removeEventListener("visibilitychange", onVisibility);
+      teardown();
+    };
   },[user]);
 
   // Load channels
@@ -758,48 +790,81 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
     };
     load();
 
-    const rCh=supabase.channel(`majlis-${activeChannelId}`)
-      .on("postgres_changes",{event:"*",schema:"public",table:"chat_messages",filter:`channel_id=eq.${activeChannelId}`},p=>{
-        if(p.eventType==="INSERT"){
-          const nm=p.new as unknown as ChatMessage;
-          // Skip if this user deleted this message locally
-          const dmSet=new Set<string>((()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})());
-          if(dmSet.has(nm.id)) return;
-          setMessages(prev=>{
-            const updated=prev.find(m=>m.id===nm.id)?prev:[...prev,nm];
-            try { sessionStorage.setItem(`majlis_msgs_${nm.channel_id}`, JSON.stringify(updated)); } catch {}
-            return updated;
-          });
-          if(nm.user_id!==user?.id){
-            playSound("receive",settings.notifSound);
-            if(navigator.vibrate&&settings.notifVibration) navigator.vibrate(100);
-            setUnreadCounts(prev=>({...prev,[nm.channel_id]:(prev[nm.channel_id]||0)+1}));
+    // FIX (recurring reload on minimize — students only): same root cause as
+    // the online-presence channel above — a second always-on Realtime socket
+    // per open chat, which never closed while the tab was backgrounded. Only
+    // keep it open while the chat is actually visible on screen; tear it down
+    // on hide and rebuild it (plus re-run load() as a catch-up) on return, so
+    // the socket never gives Android/Chrome a reason to evict the tab while
+    // it's minimized.
+    let rCh: ReturnType<typeof supabase.channel> | null = null;
+
+    const buildChannel = () => {
+      if (rCh) return; // already open
+      rCh=supabase.channel(`majlis-${activeChannelId}`)
+        .on("postgres_changes",{event:"*",schema:"public",table:"chat_messages",filter:`channel_id=eq.${activeChannelId}`},p=>{
+          if(p.eventType==="INSERT"){
+            const nm=p.new as unknown as ChatMessage;
+            // Skip if this user deleted this message locally
+            const dmSet=new Set<string>((()=>{try{return JSON.parse(localStorage.getItem(`majlis_deleted_${user?.id||"anon"}`)||"[]");}catch{return [];}})());
+            if(dmSet.has(nm.id)) return;
+            setMessages(prev=>{
+              const updated=prev.find(m=>m.id===nm.id)?prev:[...prev,nm];
+              try { sessionStorage.setItem(`majlis_msgs_${nm.channel_id}`, JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+            if(nm.user_id!==user?.id){
+              playSound("receive",settings.notifSound);
+              if(navigator.vibrate&&settings.notifVibration) navigator.vibrate(100);
+              setUnreadCounts(prev=>({...prev,[nm.channel_id]:(prev[nm.channel_id]||0)+1}));
+            }
+            if(!profiles[nm.user_id])
+              supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level").eq("user_id",nm.user_id).maybeSingle()
+                .then(({data})=>{if(data)setProfiles(prev=>({...prev,[(data as any).user_id]:data as unknown as UserProfile}));});
+          } else if(p.eventType==="UPDATE"){
+            setMessages(prev=>{
+              const updated=prev.map(m=>m.id===(p.new as any).id?p.new as unknown as ChatMessage:m);
+              try { sessionStorage.setItem(cacheKey, JSON.stringify(updated)); } catch {}
+              return updated;
+            });
+          } else if(p.eventType==="DELETE"){
+            setMessages(prev=>{
+              const updated=prev.filter(m=>m.id!==(p.old as any).id);
+              try { sessionStorage.setItem(cacheKey, JSON.stringify(updated)); } catch {}
+              return updated;
+            });
           }
-          if(!profiles[nm.user_id])
-            supabase.from("profiles").select("user_id,full_name,full_name_ar,avatar_url,level").eq("user_id",nm.user_id).maybeSingle()
-              .then(({data})=>{if(data)setProfiles(prev=>({...prev,[(data as any).user_id]:data as unknown as UserProfile}));});
-        } else if(p.eventType==="UPDATE"){
-          setMessages(prev=>{
-            const updated=prev.map(m=>m.id===(p.new as any).id?p.new as unknown as ChatMessage:m);
-            try { sessionStorage.setItem(cacheKey, JSON.stringify(updated)); } catch {}
-            return updated;
-          });
-        } else if(p.eventType==="DELETE"){
-          setMessages(prev=>{
-            const updated=prev.filter(m=>m.id!==(p.old as any).id);
-            try { sessionStorage.setItem(cacheKey, JSON.stringify(updated)); } catch {}
-            return updated;
-          });
-        }
-      })
-      .on("broadcast",{event:"typing"},p=>{
-        if(p.payload.userId!==user?.id){
-          setTypingUsers(prev=>[...new Set([...prev,p.payload.name])]);
-          clearTimeout(typingTimerRef.current);
-          typingTimerRef.current=setTimeout(()=>setTypingUsers([]),3000);
-        }
-      }).subscribe();
-    return ()=>{ cancelled = true; supabase.removeChannel(rCh); };
+        })
+        .on("broadcast",{event:"typing"},p=>{
+          if(p.payload.userId!==user?.id){
+            setTypingUsers(prev=>[...new Set([...prev,p.payload.name])]);
+            clearTimeout(typingTimerRef.current);
+            typingTimerRef.current=setTimeout(()=>setTypingUsers([]),3000);
+          }
+        }).subscribe();
+    };
+    const teardownChannel = () => {
+      if (!rCh) return;
+      supabase.removeChannel(rCh);
+      rCh = null;
+    };
+
+    if (document.visibilityState === "visible") buildChannel();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        buildChannel();
+        load(); // catch up on anything sent while we were backgrounded
+      } else {
+        teardownChannel();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return ()=>{
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      teardownChannel();
+    };
   },[activeChannelId]);
 
   useEffect(()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; },[messages]);
