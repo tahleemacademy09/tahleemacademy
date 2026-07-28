@@ -8,7 +8,7 @@
 //   3. Cache name bumped to tahleem-v10 — forces old v9 cache (with stale chunks)
 //      to be deleted on activate.
 
-const CACHE_NAME = "tahleem-v11";
+const CACHE_NAME = "tahleem-v12";
 const ICON       = "/icons/icon-192x192.png";
 const BADGE      = "/icons/icon-96x96.png";
 
@@ -192,25 +192,25 @@ self.addEventListener("fetch", e => {
   // SW caching JS chunks causes stale bundles to persist across deploys.
   if (/\/assets\/.*\.(js|css)(\?.*)?$/.test(e.request.url)) return;
 
-  // Navigation requests: serve cached shell, revalidate in background
+  // Navigation requests: network-first. index.html is served with
+  // Cache-Control: no-store precisely so every navigation gets the current
+  // deployment's asset hashes — a stale cached shell here means the browser
+  // tries to load JS chunks from a previous deploy that no longer exist,
+  // which throws ChunkLoadError and (via ErrorBoundary) triggers the
+  // reload-loop-on-resume bug. Cache is now only a fallback for genuinely
+  // offline use, not the default response.
   if (e.request.mode === "navigate") {
     e.respondWith(
-      caches.open(CACHE_NAME).then(async cache => {
-        const cached = await cache.match("/");
-        if (cached) {
-          // Revalidate shell in background (stale-while-revalidate)
-          e.waitUntil(
-            fetch("/").then(fresh => {
-              if (fresh.ok) cache.put("/", fresh.clone());
-            }).catch(() => {})
-          );
-          return cached;
+      fetch(e.request).then(response => {
+        if (response.ok) {
+          const toCache = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put("/", toCache));
         }
-        // No cache yet — fetch and cache
-        return fetch(e.request).then(response => {
-          if (response.ok) cache.put("/", response.clone());
-          return response;
-        }).catch(() => Response.error());
+        return response;
+      }).catch(async () => {
+        const cache = await caches.open(CACHE_NAME);
+        const cached = await cache.match("/");
+        return cached || Response.error();
       })
     );
     return;
