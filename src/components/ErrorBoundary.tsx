@@ -38,8 +38,49 @@ function errorKey(err: Error | null): string {
   // like an infinite reload loop instead of a single self-healing reload.
   // Bucket all chunk errors under one stable key regardless of which hash.
   if (isChunkError(err)) return "eb_reloaded_chunk_load_error";
-  // Use first 60 chars of message to keep key manageable
-  return `eb_reloaded_${(err.message || err.name || "err").slice(0, 60).replace(/\W+/g, "_")}`;
+  // FIX (silent infinite reload loop — looks exactly like a stuck spinner):
+  // this used to key on the raw first 60 chars of err.message. If the SAME
+  // underlying bug's message happens to embed anything that varies between
+  // occurrences (a record id, a UUID, a count, a timestamp), every single
+  // occurrence produces a different key — so "alreadyReloaded" never matches,
+  // and the app reload-loops forever, each cycle showing the "Updating…"
+  // spinner for ~400ms before crashing and reloading again. To the user this
+  // is indistinguishable from a spinner that never resolves. Strip out the
+  // common shapes of dynamic content BEFORE truncating so repeat occurrences
+  // of the same bug always collapse to the same key.
+  const normalized = (err.message || err.name || "err")
+    .replace(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/g, "UUID")
+    .replace(/\b\d+\b/g, "N")
+    .slice(0, 60);
+  return `eb_reloaded_${err.name || "Error"}_${normalized}`.replace(/\W+/g, "_");
+}
+
+// FIX (belt-and-suspenders): no matter what causes errorKey() to be unstable
+// (a bug we haven't anticipated, a third-party error format, etc.), the app
+// must NEVER be able to auto-reload silently more than a handful of times in
+// a row. Once this cap is hit, we always fall through to the persistent
+// "Something went wrong" screen with the real error details instead of
+// reloading again — so a loop can, at worst, flash the spinner a few times
+// and then stop and show the user (and us) what's actually happening.
+const MAX_AUTO_RELOADS = 3;
+const RELOAD_COUNT_KEY = "eb_reload_count";
+const RELOAD_COUNT_TS_KEY = "eb_reload_count_ts";
+const RELOAD_COUNT_WINDOW_MS = 60_000;
+
+function getRecentReloadCount(): number {
+  try {
+    const ts = Number(sessionStorage.getItem(RELOAD_COUNT_TS_KEY) || "0");
+    if (!ts || Date.now() - ts > RELOAD_COUNT_WINDOW_MS) return 0;
+    return Number(sessionStorage.getItem(RELOAD_COUNT_KEY) || "0");
+  } catch {
+    return 0;
+  }
+}
+function bumpRecentReloadCount(): void {
+  try {
+    sessionStorage.setItem(RELOAD_COUNT_KEY, String(getRecentReloadCount() + 1));
+    sessionStorage.setItem(RELOAD_COUNT_TS_KEY, String(Date.now()));
+  } catch {}
 }
 
 export class ErrorBoundary extends React.Component<
@@ -71,14 +112,25 @@ export class ErrorBoundary extends React.Component<
 
     const key = errorKey(error);
     const alreadyReloaded = sessionStorage.getItem(key);
+    const recentReloads = getRecentReloadCount();
 
-    if (!alreadyReloaded) {
+    if (!alreadyReloaded && recentReloads < MAX_AUTO_RELOADS) {
       sessionStorage.setItem(key, Date.now().toString());
+      bumpRecentReloadCount();
       setTimeout(() => sessionStorage.removeItem(key), 60_000);
       setTimeout(() => window.location.reload(), 400);
       this.setState({ didAutoReload: true });
       return;
     }
+
+    if (recentReloads >= MAX_AUTO_RELOADS) {
+      console.error(
+        "[ErrorBoundary] Hit MAX_AUTO_RELOADS — stopping auto-reload loop and " +
+        "showing the persistent error screen. This means the SAME crash kept " +
+        "recurring immediately after each reload:", error.name, error.message
+      );
+    }
+    // Falls through to render()'s persistent-error screen below.
   }
 
   handleReload = () => {
