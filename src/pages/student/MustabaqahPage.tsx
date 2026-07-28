@@ -280,6 +280,18 @@ const deadlinePassed = (comp?: {registration_deadline?:string|null}|null) => {
   return new Date(comp.registration_deadline).getTime() <= Date.now();
 };
 
+/** The session start time is a SEPARATE thing from the registration deadline —
+ *  the deadline only stops new sign-ups; the session start is set later by
+ *  the admin/judge and is what actually opens the code-entry gate. A
+ *  registered participant sits in "awaiting session" until this is set, then
+ *  counts down to it, and only once it has arrived can they unlock with
+ *  their code. If a competition never had a deadline in the first place,
+ *  registration is instant-join and this whole gate is skipped entirely. */
+const sessionStarted = (comp?: {session_start_at?:string|null}|null) => {
+  if (!comp?.session_start_at) return false;
+  return new Date(comp.session_start_at).getTime() <= Date.now();
+};
+
 const fmt = (s:number) => `${Math.floor(s/60)}:${String(Math.max(0,s)%60).padStart(2,"0")}`;
 
 const NumberTilePicker = ({ tiles, pickedNum, onPick, canPick, stage }: { tiles:Tile[]; pickedNum:number|null; onPick:(t:Tile)=>void; canPick:boolean; stage:number }) => (
@@ -624,6 +636,7 @@ interface Competition {
   total_stages:number; current_stage:number; time_limit_seconds:number; status:CompStatus;
   current_participant_id?:string|null; room_code:string; created_by:string; created_at:string; use_criteria_scoring:boolean;
   registration_deadline?:string|null; registration_override?:"auto"|"open"|"closed";
+  session_start_at?:string|null;
   queue_reveal_active?:boolean; queue_box_count?:number;
   revealed_participant_ids?:string[]; results_reveal_active?:boolean;
   juz_options?:number[]|null;
@@ -633,7 +646,7 @@ interface Participant {
   queue_position:number; status:PStatus; total_score:number; stage_scores:Record<string,number>;
   bell_counts:Record<string,number>; proctor_flagged:boolean; camera_on:boolean; created_at:string;
   queue_box_id?:number|null;
-  access_code?:string|null; assigned_juz?:number|null;
+  access_code?:string|null; assigned_juz?:number|null; code_acknowledged?:boolean;
   role?:"judge"|"participant"|"observer"|null;
 }
 interface Attempt {
@@ -702,6 +715,7 @@ export default function MustabaqahPage() {
   const [userRole,     setUserRole]     = useState<"judge"|"participant"|"observer"|null>(null);
   const [loading,      setLoading]      = useState(false);
   const [competitions, setCompetitions] = useState<Competition[]>([]);
+  const [unreadInfoIds, setUnreadInfoIds] = useState<Set<string>>(new Set());
   const [competition,  setCompetition]  = useState<Competition|null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [attempts,     setAttempts]     = useState<Attempt[]>([]);
@@ -763,7 +777,13 @@ export default function MustabaqahPage() {
   // drives the "registered" holding screen: shows the countdown while it's
   // running, then flips to the access-code entry prompt once it hits zero.
   const [regCountdownMs, setRegCountdownMs] = useState<number|null>(null);
+  // Live countdown (ms remaining) to a competition's admin-set session_start_at —
+  // separate from the registration deadline above. Drives the "awaiting session"
+  // → "session starts in…" → "enter your code" progression on the holding screen.
+  const [sessionCountdownMs, setSessionCountdownMs] = useState<number|null>(null);
   const [accessCodeInput, setAccessCodeInput] = useState("");
+  const [ackingCode, setAckingCode] = useState(false);
+  const [sessionTimeInput, setSessionTimeInput] = useState("");
 
   // ── Q-Settings panel (live editing of questions from arena) ──────
   const [showQSettings,    setShowQSettings]    = useState(false);
@@ -817,6 +837,20 @@ export default function MustabaqahPage() {
     const iv = setInterval(tick, 1000);
     return () => clearInterval(iv);
   }, [view, competition?.registration_deadline]);
+
+  // ── Session-start countdown ───────────────────────────────────────
+  // Once the admin sets competition.session_start_at, tick down to it on the
+  // holding/preroom screens. Independent of the registration-deadline
+  // countdown above — a participant can be well past the deadline and still
+  // sitting in "awaiting session" with no countdown at all until this is set.
+  useEffect(() => {
+    if ((view!=="registered"&&view!=="preroom") || !competition?.session_start_at) { setSessionCountdownMs(null); return; }
+    const target = new Date(competition.session_start_at).getTime();
+    const tick = () => setSessionCountdownMs(Math.max(0, target - Date.now()));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [view, competition?.session_start_at]);
 
   // ── On mount, try to restore saved session ───────────────────────
   const [savedSession, setSavedSession] = useState<{competitionId:string;roomCode:string;userRole:string;participantId:string|null}|null>(null);
@@ -912,6 +946,30 @@ export default function MustabaqahPage() {
   const loadCompetitions = async () => {
     const {data} = await supabase.from("musabaqah_competitions" as any).select("*").order("created_at",{ascending:false});
     if (data) setCompetitions(data as Competition[]);
+    await loadUnreadInfoIds();
+  };
+
+  // ── Card-level red dot ─────────────────────────────────────────────
+  // A competition gets a red dot on its list card whenever the signed-in
+  // user has an unread notification linking back to it (e.g. the admin just
+  // set/updated the session start time). Cleared when they open that card.
+  const loadUnreadInfoIds = async () => {
+    if (!user) return;
+    const {data} = await supabase.from("notifications" as any)
+      .select("id,link").eq("user_id",user.id).eq("is_read",false).like("link","%/musabaqah/recitation?comp=%");
+    if (!data) return;
+    const ids = new Set<string>();
+    (data as any[]).forEach(n=>{ const m=/comp=([a-zA-Z0-9-]+)/.exec(n.link||""); if (m) ids.add(m[1]); });
+    setUnreadInfoIds(ids);
+  };
+
+  // Marks this competition's info notifications read (called when a
+  // participant opens it) so its red dot clears on both the card and bell.
+  const clearUnreadInfo = async (compId:string) => {
+    if (!user) return;
+    setUnreadInfoIds(prev => { const n=new Set(prev); n.delete(compId); return n; });
+    await supabase.from("notifications" as any).update({is_read:true,read_at:new Date().toISOString()})
+      .eq("user_id",user.id).eq("is_read",false).like("link",`%/musabaqah/recitation?comp=${compId}%`);
   };
 
   const loadParticipants = useCallback(async () => {
@@ -1824,10 +1882,45 @@ export default function MustabaqahPage() {
     setCompetition(compRow); setMyParticipant(participant as Participant); setUserRole("participant");
     if (compRow.registration_deadline) {
       setView("registered");
-      toast({title:"🎉 You're registered!",description:`Your personal code is ${participant.access_code} — save it, you'll need it to enter once the deadline passes.`});
+      toast({title:"🎉 Successfully registered!",description:"Awaiting session — you'll get a one-time look at your personal code next, so make sure to save it."});
     } else {
       setView("arena"); await fetchLkToken(code);
       toast({title:"✅ Registered!",description:`Your personal code is ${participant.access_code} — save it to come back anytime.`});
+    }
+  };
+
+  // Participant confirms they've saved their personal code — flips
+  // code_acknowledged so it is never displayed again after this. From then
+  // on the holding screen only tells them to contact the admin if it's lost.
+  const acknowledgeCode = async () => {
+    if (!myParticipant) return;
+    setAckingCode(true);
+    await supabase.from("musabaqah_participants" as any).update({ code_acknowledged: true }).eq("id", myParticipant.id);
+    setAckingCode(false);
+    setMyParticipant(p => p ? { ...p, code_acknowledged: true } : p);
+  };
+
+  // Admin/judge sets (or updates) the session start time — separate action
+  // from the registration deadline. Notifies every registered/waiting
+  // participant so the red-dot + notification center picks it up.
+  const setSessionStartTime = async () => {
+    if (!competition || !sessionTimeInput) return;
+    setLoading(true);
+    const iso = new Date(sessionTimeInput).toISOString();
+    const { error } = await supabase.from("musabaqah_competitions" as any).update({ session_start_at: iso } as any).eq("id", competition.id);
+    setLoading(false);
+    if (error) { toast({title:"Couldn't set session time", description:error.message, variant:"destructive"}); return; }
+    setCompetition(c => c ? { ...c, session_start_at: iso } : c);
+    const when = new Date(iso).toLocaleString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"});
+    toast({title:"⏰ Session time set", description:`Participants will see a countdown to ${when}.`});
+    const notifyIds = participants.filter(p=>p.role!=="judge"&&p.user_id).map(p=>p.user_id!);
+    if (notifyIds.length) {
+      await supabase.from("notifications" as any).insert(notifyIds.map(uid=>({
+        user_id: uid, type: "musabaqah_session_set", priority: "normal",
+        title: "Musabaqah session time set", title_ar: null,
+        message: `${competition.title}: the session starts ${when}.`, message_ar: null,
+        link: `/musabaqah/recitation?comp=${competition.id}`, is_read: false,
+      })));
     }
   };
 
@@ -1853,6 +1946,7 @@ export default function MustabaqahPage() {
   };
 
   const openComp = async (comp:Competition) => {
+    clearUnreadInfo(comp.id);
     setCompetition(comp); setChatMessages([]); setUserRole(null);
     setJudgeTimerDuration(comp.time_limit_seconds);
     setJoinForm(f=>({...f,room_code:comp.room_code,name:f.name||profile?.full_name||"",school:f.school||profile?.school||""}));
@@ -2071,7 +2165,7 @@ export default function MustabaqahPage() {
 
   const copyCode = (code:string,e:React.MouseEvent) => {
     e.stopPropagation(); navigator.clipboard?.writeText(code).catch(()=>{});
-    setCopyFlash(true); setTimeout(()=>setCopyFlash(false),1800); toast({title:`📋 ${code}`});
+    setCopyFlash(true); setTimeout(()=>setCopyFlash(false),1800);
   };
 
   const waiting = participants.filter(p=>p.status==="waiting");
@@ -2286,8 +2380,11 @@ export default function MustabaqahPage() {
           ) : shown.map((c,i)=>(
             <div key={c.id} onClick={()=>openComp(c)} className={`glass-card stagger-${Math.min(i+2,5)}`}
               style={{borderRadius:18,padding:"16px 18px",cursor:"pointer",border:`1.5px solid rgba(201,168,76,${c.status==="active"?.55:.18})`,display:"flex",alignItems:"center",gap:12,marginBottom:12,boxShadow:c.status==="active"?"0 0 30px rgba(201,168,76,.15)":"none"}}>
-              <div style={{width:48,height:48,borderRadius:14,flexShrink:0,background:c.status==="active"?`linear-gradient(135deg,${GOLD},${GOLDD})`:c.status==="completed"?"rgba(96,165,250,.15)":"rgba(255,255,255,.08)",border:`1.5px solid ${c.status==="active"?GOLD:c.status==="completed"?"rgba(96,165,250,.35)":"rgba(201,168,76,.2)"}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <div style={{position:"relative",width:48,height:48,borderRadius:14,flexShrink:0,background:c.status==="active"?`linear-gradient(135deg,${GOLD},${GOLDD})`:c.status==="completed"?"rgba(96,165,250,.15)":"rgba(255,255,255,.08)",border:`1.5px solid ${c.status==="active"?GOLD:c.status==="completed"?"rgba(96,165,250,.35)":"rgba(201,168,76,.2)"}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
                 {c.status==="active"?<Radio size={22} color={G}/>:c.status==="completed"?<Award size={22} color="#60a5fa"/>:<Trophy size={22} color={GOLD}/>}
+                {unreadInfoIds.has(c.id) && (
+                  <span style={{position:"absolute",top:-3,right:-3,width:11,height:11,borderRadius:"50%",background:RED,border:"2px solid #0a1f12"}}/>
+                )}
               </div>
               <div style={{flex:1,minWidth:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:4,flexWrap:"wrap"}}>
@@ -2380,7 +2477,7 @@ export default function MustabaqahPage() {
             <Label>Registration Deadline (optional)</Label>
             <input type="datetime-local" value={form.registration_deadline} onChange={e=>setForm(f=>({...f,registration_deadline:e.target.value}))}
               style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"12px 14px",color:"#fff",fontSize:14,colorScheme:"dark"}}/>
-            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Leave blank for no deadline. Registration auto-closes at this time — you can always reopen it manually from the arena. If set, participants register ahead of time and get a personal code that unlocks the waiting room once this deadline passes.</div>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:4}}>Leave blank for no deadline. Registration auto-closes at this time — you can always reopen it manually from the arena. Once closed, participants wait for you to separately set a session start time (from the room, before entering) — that's what actually opens their code-entry gate.</div>
           </div>
           <div style={{marginBottom:16}}>
             <Label>Juz Options for Registration (optional)</Label>
@@ -2488,8 +2585,9 @@ export default function MustabaqahPage() {
         )}
         {competition?.registration_deadline && (
           <div style={{background:"rgba(201,168,76,.08)",border:"1px solid rgba(201,168,76,.2)",borderRadius:12,padding:"10px 14px",marginBottom:16,fontSize:12,color:"rgba(255,255,255,.55)"}}>
-            After you register you'll get a personal code. The competition opens for that code at{" "}
+            Registration closes{" "}
             <strong style={{color:GOLD}}>{new Date(competition.registration_deadline).toLocaleString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</strong>.
+            You'll get a personal code once — save it. The waiting room opens once the organizer schedules the session.
           </div>
         )}
         <button className="gold-btn" onClick={joinCompetition} disabled={loading} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:loading?"not-allowed":"pointer",fontSize:16,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?.7:1,marginTop:8}}>
@@ -2499,21 +2597,43 @@ export default function MustabaqahPage() {
     </div>
   );
 
-  /* ── REGISTERED (holding screen: shows personal code + countdown, then the code-entry gate once the deadline passes) ── */
+  /* ── REGISTERED (holding screen) ──────────────────────────────────
+     Phases, in order:
+       1. beforeDeadline   — registration still open; informational countdown to the deadline
+       2. awaitingSession  — deadline passed, admin hasn't set a session start yet; no countdown
+       3. countingToSession— admin set session_start_at; countdown to it
+       4. readyToEnter     — session start has arrived; code-entry gate opens
+     The participant's own access code is shown ONCE — right after registering,
+     while code_acknowledged is still false — then never displayed again. */
   if (view==="registered" && competition && myParticipant) {
-    const unlocked = !competition.registration_deadline || (regCountdownMs !== null && regCountdownMs <= 0);
-    const totalSecs = regCountdownMs !== null ? Math.floor(regCountdownMs/1000) : 0;
-    const dd = Math.floor(totalSecs/86400), hh = Math.floor((totalSecs%86400)/3600), mm = Math.floor((totalSecs%3600)/60), ss = totalSecs%60;
+    const deadlineDone = deadlinePassed(competition);
+    const hasSessionTime = !!competition.session_start_at;
+    const sessionDone = sessionStarted(competition);
+    const phase: "beforeDeadline"|"awaitingSession"|"countingToSession"|"readyToEnter" =
+      !deadlineDone ? "beforeDeadline" : !hasSessionTime ? "awaitingSession" : !sessionDone ? "countingToSession" : "readyToEnter";
+    const needsCodeReveal = !myParticipant.code_acknowledged;
+
+    const regSecs = regCountdownMs !== null ? Math.floor(regCountdownMs/1000) : 0;
+    const rdd = Math.floor(regSecs/86400), rhh = Math.floor((regSecs%86400)/3600), rmm = Math.floor((regSecs%3600)/60), rss = regSecs%60;
+    const sesSecs = sessionCountdownMs !== null ? Math.floor(sessionCountdownMs/1000) : 0;
+    const sdd = Math.floor(sesSecs/86400), shh = Math.floor((sesSecs%86400)/3600), smm = Math.floor((sesSecs%3600)/60), sss = sesSecs%60;
+
+    const headline = needsCodeReveal ? "🎉" : phase==="readyToEnter" ? "🔓" : phase==="countingToSession" ? "⏳" : phase==="awaitingSession" ? "🕊️" : "🎉";
+    const subtitle =
+      needsCodeReveal ? "Successfully registered — save your code below." :
+      phase==="beforeDeadline" ? "You're registered! Registration is still open." :
+      phase==="awaitingSession" ? "Successfully registered — awaiting session." :
+      phase==="countingToSession" ? "Session starts soon — hang tight." :
+      "The session has started — enter your code to join the waiting room.";
+
     return (
       <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
         <GlobalStyles/><IslamicBackground/>
         <div className="anim-slide-up glass-card" style={{position:"relative",zIndex:1,width:"100%",maxWidth:440,borderRadius:24,padding:"32px 24px",textAlign:"center"}}>
           <button onClick={()=>setView("list")} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",marginBottom:16,fontSize:13,display:"flex",alignItems:"center",gap:6}}><ArrowLeft size={14}/> Back</button>
-          <div style={{fontSize:44,marginBottom:8}}>{unlocked?"🔓":"🎉"}</div>
+          <div style={{fontSize:44,marginBottom:8}}>{headline}</div>
           <h2 style={{fontFamily:"Cinzel,sans-serif",color:"#fff",fontSize:19,margin:"0 0 4px",fontWeight:700}}>{competition.title}</h2>
-          <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:"0 0 20px"}}>
-            {unlocked ? "Registration has closed — enter your code to join the waiting room" : "You're registered! Save your code below."}
-          </p>
+          <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:"0 0 20px"}}>{subtitle}</p>
 
           <div style={{marginBottom:20}}>
             <Label>Your Name</Label>
@@ -2525,31 +2645,65 @@ export default function MustabaqahPage() {
             )}
           </div>
 
-          <div style={{marginBottom:20}}>
-            <Label>Your Personal Code</Label>
-            <div onClick={(e:any)=>copyCode(myParticipant.access_code||"",e)} style={{cursor:"pointer",background:"rgba(201,168,76,.1)",border:"2px solid rgba(201,168,76,.4)",borderRadius:14,padding:"16px 20px",color:GOLD,fontSize:28,fontWeight:900,letterSpacing:8}}>
-              {myParticipant.access_code}
+          {needsCodeReveal ? (
+            /* One-time reveal: shown exactly until the participant confirms they've saved it. */
+            <div style={{marginBottom:20,background:"rgba(239,68,68,.06)",border:"1.5px solid rgba(239,68,68,.25)",borderRadius:16,padding:"18px 16px"}}>
+              <div style={{color:RED,fontSize:11,fontWeight:800,letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>⚠ Save This Now — Shown Only Once</div>
+              <div onClick={(e:any)=>copyCode(myParticipant.access_code||"",e)} style={{cursor:"pointer",background:"rgba(201,168,76,.1)",border:"2px solid rgba(201,168,76,.4)",borderRadius:14,padding:"16px 20px",color:GOLD,fontSize:28,fontWeight:900,letterSpacing:8,marginBottom:10}}>
+                {myParticipant.access_code}
+              </div>
+              <p style={{color:"rgba(255,255,255,.4)",fontSize:11,margin:"0 0 14px"}}>Tap to copy. Screenshot or write it down — after you confirm, it won't be shown here again. If you lose it later, you'll need to contact the admin.</p>
+              <button className="gold-btn" onClick={acknowledgeCode} disabled={ackingCode} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"14px",fontWeight:800,cursor:ackingCode?"not-allowed":"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:ackingCode?.7:1}}>
+                {ackingCode?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:<CheckCircle size={16}/>} I've saved my code
+              </button>
             </div>
-            <div style={{color:"rgba(255,255,255,.3)",fontSize:11,marginTop:6}}>Tap to copy · you'll need this to enter the waiting room</div>
-          </div>
+          ) : phase!=="readyToEnter" && (
+            <div style={{marginBottom:20,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"12px 16px"}}>
+              <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:0}}>Lost your code? Contact the admin — it can't be shown here again.</p>
+            </div>
+          )}
 
-          {!unlocked ? (
+          {!needsCodeReveal && phase==="beforeDeadline" && (
             <div>
-              <Label>Opens In</Label>
+              <Label>Registration Closes In</Label>
               <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:6}}>
-                {[[dd,"d"],[hh,"h"],[mm,"m"],[ss,"s"]].map(([v,u]:any)=>(
+                {[[rdd,"d"],[rhh,"h"],[rmm,"m"],[rss,"s"]].map(([v,u]:any)=>(
                   <div key={u} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"10px 14px",minWidth:56}}>
                     <div style={{color:GOLD,fontWeight:900,fontSize:22,fontFamily:"Cinzel,serif"}}>{String(v).padStart(2,"0")}</div>
                     <div style={{color:"rgba(255,255,255,.35)",fontSize:10,textTransform:"uppercase"}}>{u}</div>
                   </div>
                 ))}
               </div>
-              <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0}}>Come back once the countdown ends and enter your code above.</p>
+              <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0}}>Once registration closes you'll wait here for the admin to schedule the session.</p>
             </div>
-          ) : (
+          )}
+
+          {!needsCodeReveal && phase==="awaitingSession" && (
+            <div>
+              <div style={{fontSize:28,marginBottom:6}}>🕊️</div>
+              <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:0}}>The admin hasn't scheduled the session yet. Come back once it's set — you'll see a countdown here.</p>
+            </div>
+          )}
+
+          {!needsCodeReveal && phase==="countingToSession" && (
+            <div>
+              <Label>Session Starts In</Label>
+              <div style={{display:"flex",justifyContent:"center",gap:10,marginBottom:6}}>
+                {[[sdd,"d"],[shh,"h"],[smm,"m"],[sss,"s"]].map(([v,u]:any)=>(
+                  <div key={u} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"10px 14px",minWidth:56}}>
+                    <div style={{color:GOLD,fontWeight:900,fontSize:22,fontFamily:"Cinzel,serif"}}>{String(v).padStart(2,"0")}</div>
+                    <div style={{color:"rgba(255,255,255,.35)",fontSize:10,textTransform:"uppercase"}}>{u}</div>
+                  </div>
+                ))}
+              </div>
+              <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0}}>Come back once the countdown ends and enter your code.</p>
+            </div>
+          )}
+
+          {!needsCodeReveal && phase==="readyToEnter" && (
             <div style={{marginTop:8}}>
               <Label>Enter Your Code</Label>
-              <input value={accessCodeInput} onChange={e=>setAccessCodeInput(e.target.value.toUpperCase())} placeholder={myParticipant.access_code||"CODE"} maxLength={6}
+              <input value={accessCodeInput} onChange={e=>setAccessCodeInput(e.target.value.toUpperCase())} placeholder="CODE" maxLength={6}
                 style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:14,padding:"14px 20px",color:"#fff",fontSize:22,fontWeight:800,letterSpacing:6,textAlign:"center",textTransform:"uppercase",marginBottom:14}}/>
               <button className="gold-btn" onClick={activateWithCode} disabled={loading} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"16px",fontWeight:800,cursor:loading?"not-allowed":"pointer",fontSize:16,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:loading?.7:1}}>
                 {loading?<Loader2 size={18} style={{animation:"spin 1s linear infinite"}}/>:<LogIn size={18}/>}{loading?"Entering...":"Enter Waiting Room"}
@@ -2601,6 +2755,31 @@ export default function MustabaqahPage() {
               <div style={{color:RED,fontSize:12,fontWeight:700,marginTop:6}}>Registration closed</div>
             )}
           </div>
+
+          {hasDeadline && (
+            <div className="glass-card" style={{borderRadius:18,padding:"16px 18px",marginBottom:16}}>
+              <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Session Start Time</div>
+              {competition.session_start_at ? (
+                <div style={{marginBottom:12}}>
+                  <div style={{color:GOLD,fontWeight:800,fontSize:15,marginBottom:2}}>
+                    {new Date(competition.session_start_at).toLocaleString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                  </div>
+                  <div style={{color: sessionStarted(competition) ? GREEN : "rgba(255,255,255,.35)", fontSize:11, fontWeight:700}}>
+                    {sessionStarted(competition) ? "Session has started — the code gate is open" : "Countdown showing to registered participants"}
+                  </div>
+                </div>
+              ) : (
+                <p style={{color:"rgba(255,255,255,.35)",fontSize:12,margin:"0 0 12px"}}>Not set yet — registered participants are waiting, with no countdown shown, until you set this.</p>
+              )}
+              <div style={{display:"flex",gap:8}}>
+                <input type="datetime-local" value={sessionTimeInput} onChange={e=>setSessionTimeInput(e.target.value)}
+                  style={{flex:1,background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.25)",borderRadius:12,padding:"10px 12px",color:"#fff",fontSize:13,colorScheme:"dark"}}/>
+                <button onClick={setSessionStartTime} disabled={loading||!sessionTimeInput} style={{background:`linear-gradient(135deg,${GOLD},${GOLDD})`,color:G,border:"none",borderRadius:12,padding:"0 16px",cursor:loading||!sessionTimeInput?"not-allowed":"pointer",fontWeight:800,fontSize:13,fontFamily:"Cairo,sans-serif",opacity:loading||!sessionTimeInput?.6:1}}>
+                  {competition.session_start_at?"Update":"Set"}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="glass-card" style={{borderRadius:18,padding:"16px 18px",marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
