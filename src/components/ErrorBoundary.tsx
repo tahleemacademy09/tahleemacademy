@@ -32,6 +32,12 @@ function isChunkError(err: Error | null): boolean {
 /** Stable key for this particular error so we only auto-reload once per error. */
 function errorKey(err: Error | null): string {
   if (!err) return "unknown";
+  // Chunk-load errors embed a content-hashed filename that changes on every
+  // deploy, so keying on the raw message let a new deploy's stale-chunk
+  // error bypass the "only reload once" guard every single time — looking
+  // like an infinite reload loop instead of a single self-healing reload.
+  // Bucket all chunk errors under one stable key regardless of which hash.
+  if (isChunkError(err)) return "eb_reloaded_chunk_load_error";
   // Use first 60 chars of message to keep key manageable
   return `eb_reloaded_${(err.message || err.name || "err").slice(0, 60).replace(/\W+/g, "_")}`;
 }
