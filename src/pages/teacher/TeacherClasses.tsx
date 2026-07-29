@@ -16,6 +16,7 @@
 */
 
 import { useEffect, useState, useRef, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -101,6 +102,8 @@ const TeacherClasses = () => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkHandled = useRef(false);
 
   const [sessions, setSessions] = useState<any[]>([]);
   const [subjects, setSubjects] = useState<any[]>([]);
@@ -287,6 +290,39 @@ const TeacherClasses = () => {
       title_ar: sub?.title_ar || "",
     });
   };
+
+  // ── Deep-link from notification ─────────────────────────────────────────────
+  // schedule-class-reminders / ring-live-class send teachers here with
+  // ?subject=<id> so tapping the notification lands on this exact class
+  // instead of just the generic classes list. Prefer a session that's
+  // actually live right now; fall back to the soonest upcoming one for
+  // that subject (covers the 15-min-early tap, before the class goes live).
+  useEffect(() => {
+    if (deepLinkHandled.current) return;
+    if (loading || sessions.length === 0) return;
+
+    const subjectId = searchParams.get("subject");
+    if (!subjectId) return;
+
+    const candidates = sessions.filter((s: any) => s.subject_id === subjectId);
+    if (candidates.length === 0) { deepLinkHandled.current = true; return; }
+
+    const live = candidates.find((s: any) => s.status === "live");
+    const upcoming = candidates
+      .filter((s: any) => s.scheduled_at && isFuture(new Date(s.scheduled_at)))
+      .sort((a: any, b: any) => new Date(a.scheduled_at).getTime() - new Date(b.scheduled_at).getTime())[0];
+
+    const target = live || upcoming;
+    deepLinkHandled.current = true;
+
+    if (target) {
+      openClassroom(target);
+      // Drop the query param so a page refresh doesn't re-trigger the join.
+      const next = new URLSearchParams(searchParams);
+      next.delete("subject");
+      setSearchParams(next, { replace: true });
+    }
+  }, [loading, sessions, searchParams, setSearchParams]);
 
   // ── Reminder scheduling ─────────────────────────────────────────────────────
   const scheduleRemindersForSession = useCallback(async (s: any) => {
