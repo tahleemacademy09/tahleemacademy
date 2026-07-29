@@ -280,6 +280,14 @@ const deadlinePassed = (comp?: {registration_deadline?:string|null}|null) => {
   return new Date(comp.registration_deadline).getTime() <= Date.now();
 };
 
+/** A competition with a deadline can't have anyone admitted out of the
+ *  "pending" queue until that deadline has actually passed (or the judge
+ *  manually closed registration) — otherwise late registrants would be
+ *  competing against people who already started. Competitions with no
+ *  deadline at all are instant-join and this lock never applies to them. */
+const admissionsLocked = (comp: {registration_deadline?:string|null; registration_override?:string}) =>
+  !!comp.registration_deadline && isRegistrationOpen(comp);
+
 /** The session start time is a SEPARATE thing from the registration deadline —
  *  the deadline only stops new sign-ups; the session start is set later by
  *  the admin/judge and is what actually opens the code-entry gate. A
@@ -2092,6 +2100,7 @@ export default function MustabaqahPage() {
 
   const approveParticipant = async (p: Participant) => {
     if (!competition) return;
+    if (admissionsLocked(competition)) { toast({title:"Registration still open", description:"Admissions unlock once the registration deadline passes.", variant:"destructive"}); return; }
     await supabase.from("musabaqah_participants" as any).update({ status: "waiting" }).eq("id", p.id);
     broadcast("PARTICIPANT_APPROVED", { participant_id: p.id });
     loadParticipants();
@@ -2099,6 +2108,7 @@ export default function MustabaqahPage() {
 
   const admitAllPending = async () => {
     if (!competition) return;
+    if (admissionsLocked(competition)) { toast({title:"Registration still open", description:"Admissions unlock once the registration deadline passes.", variant:"destructive"}); return; }
     const ids = participants.filter(p=>p.status==="pending").map(p=>p.id);
     if (!ids.length) return;
     await supabase.from("musabaqah_participants" as any).update({ status: "waiting" }).in("id", ids);
@@ -2787,7 +2797,11 @@ export default function MustabaqahPage() {
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span style={{background:"rgba(201,168,76,.15)",border:"1px solid rgba(201,168,76,.3)",color:GOLD,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:800}}>{participants.length}</span>
                 {participants.some(p=>p.status==="pending") && (
-                  <button onClick={admitAllPending} style={{background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.4)",color:GREEN,borderRadius:9,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif"}}>Admit All</button>
+                  admissionsLocked(competition) ? (
+                    <span style={{color:"rgba(255,255,255,.35)",fontSize:10,fontWeight:700}}>🔒 Admits after deadline</span>
+                  ) : (
+                    <button onClick={admitAllPending} style={{background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.4)",color:GREEN,borderRadius:9,padding:"5px 10px",cursor:"pointer",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif"}}>Admit All</button>
+                  )
                 )}
               </div>
             </div>
@@ -3781,7 +3795,9 @@ export default function MustabaqahPage() {
                 </div>
                 {participants.filter(p=>p.status==="pending").length>0&&(
                   <div style={{background:"rgba(167,139,250,.07)",border:"1px solid rgba(167,139,250,.2)",borderRadius:9,padding:"9px",marginBottom:7}}>
-                    <div style={{color:"#a78bfa",fontSize:9,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>⏳ Awaiting Approval</div>
+                    <div style={{color:"#a78bfa",fontSize:9,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6}}>
+                      ⏳ Awaiting Approval{admissionsLocked(competition)&&<span style={{color:"rgba(255,255,255,.35)",fontWeight:600,textTransform:"none",letterSpacing:0}}> · 🔒 opens once registration closes</span>}
+                    </div>
                     {participants.filter(p=>p.status==="pending").map(p=>(
                       <div key={p.id} style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
                         <Avatar name={p.participant_name} size={26}/>
@@ -3793,7 +3809,9 @@ export default function MustabaqahPage() {
                             {p.access_code&&<div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1}}>Code: {p.access_code}</div>}
                           </div>
                         </div>
-                        <button onClick={()=>approveParticipant(p)} style={{background:"rgba(34,197,94,.15)",color:GREEN,border:`1px solid ${GREEN}44`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontWeight:700,fontSize:11,flexShrink:0,fontFamily:"Cairo,sans-serif"}}>Admit</button>
+                        {!admissionsLocked(competition) && (
+                          <button onClick={()=>approveParticipant(p)} style={{background:"rgba(34,197,94,.15)",color:GREEN,border:`1px solid ${GREEN}44`,borderRadius:7,padding:"4px 10px",cursor:"pointer",fontWeight:700,fontSize:11,flexShrink:0,fontFamily:"Cairo,sans-serif"}}>Admit</button>
+                        )}
                       </div>
                     ))}
                   </div>
