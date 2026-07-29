@@ -14,6 +14,7 @@ import {
   ChevronRight, Bell, BookMarked, Clock,
 } from "lucide-react";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
+import { useClassRing } from "@/hooks/useClassRing";
 
 // Same greens/gold used everywhere else in the app (student sidebar,
 // TeacherDashboard.tsx, SubjectAssignments/SubjectMaterials) — this file used
@@ -129,6 +130,7 @@ const TeacherLayout = () => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile, user } = useAuth();
   const location = useLocation();
+  const { ringOverlay } = useClassRing();
 
   const [sidebarOpen,   setSidebarOpen]   = useState(false);
   const [isMobile,      setIsMobile]      = useState(false);
@@ -518,6 +520,7 @@ const TeacherLayout = () => {
           <Outlet />
         </main>
       </div>
+      {ringOverlay}
     </div>
   );
 };
