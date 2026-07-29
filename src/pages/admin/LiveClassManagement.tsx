@@ -9,8 +9,8 @@
     • ATTENDANCE — general attendance overview by subject and by level
 */
 
-import { useEffect, useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button }   from "@/components/ui/button";
 import { Input }    from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -114,6 +114,8 @@ const LiveClassManagement = () => {
   const { user }    = useAuth();
   const { toast }   = useToast();
   const navigate    = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkHandled = useRef(false);
   const { joinClass } = useLiveClass();
   const { data: academicLevels = [] } = useAcademicLevels();
 
@@ -248,6 +250,40 @@ const LiveClassManagement = () => {
     joinClass({id:subject.id,title:subject.title,title_ar:subject.title_ar||"",livekit_room_name:subject.livekit_room_name},{autoJoin:true});
     fetchData();
   };
+
+  // View an already-live session without re-flipping its status (unlike
+  // goLive, which is for admin-initiated starts).
+  const viewLive = (session:any) => {
+    const subject = subjects.find(s=>s.id===session.subject_id);
+    if (!subject) return;
+    joinClass({id:subject.id,title:subject.title,title_ar:subject.title_ar||"",livekit_room_name:subject.livekit_room_name},{autoJoin:true});
+  };
+
+  // ── Deep-link from notification ─────────────────────────────────────────────
+  // schedule-class-reminders / ring-live-class send admins here with
+  // ?subject=<id>. If that subject has a session live right now, join it
+  // directly; otherwise switch to the "today" tab scoped to that subject so
+  // the admin lands on the right context instead of a generic dashboard.
+  useEffect(() => {
+    if (deepLinkHandled.current) return;
+    if (loading) return;
+
+    const subjectId = searchParams.get("subject");
+    if (!subjectId) return;
+    deepLinkHandled.current = true;
+
+    const liveMatch = liveNow.find(s => s.subject_id === subjectId);
+    if (liveMatch) {
+      setActiveTab("live");
+      viewLive(liveMatch);
+    } else {
+      setActiveTab("today");
+    }
+
+    const next = new URLSearchParams(searchParams);
+    next.delete("subject");
+    setSearchParams(next, { replace: true });
+  }, [loading, sessions, searchParams, setSearchParams]);
 
   /* Start an instant (unscheduled) live session for a subject that has no sessions yet */
   const startInstantClass = async (sub: any) => {
