@@ -171,7 +171,14 @@ export function useClassRing() {
   const countdownRef = useRef<any>(null);
   const dismissTimer = useRef<any>(null);
 
-  const isStudent = user && !hasRole("admin") && !hasRole("teacher");
+  const isAdmin   = !!user && hasRole("admin");
+  const isTeacher = !!user && hasRole("teacher") && !isAdmin;
+  const isStudent = !!user && !isAdmin && !isTeacher;
+  // Any authenticated role can now ring — admins and teachers get the same
+  // full-screen incoming-call overlay students always had. Audience
+  // filtering (who a given class is relevant to) happens per-role below,
+  // not by blocking the overlay itself.
+  const canRing = !!user;
 
   const dismiss = useCallback(() => {
     stopRingRef.current?.();
@@ -183,7 +190,7 @@ export function useClassRing() {
   }, []);
 
   const triggerRing = useCallback((info: RingInfo) => {
-    if (!isStudent) return;
+    if (!canRing) return;
     if (seenRingsRef.current.has(info.ring_id)) return;
     seenRingsRef.current.add(info.ring_id);
 
@@ -206,11 +213,11 @@ export function useClassRing() {
 
     // Auto-dismiss after 60s
     dismissTimer.current = setTimeout(dismiss, 60_000);
-  }, [isStudent, dismiss]);
+  }, [canRing, dismiss]);
 
   // ── Listen: Service Worker postMessage ────────────────────────────────────
   useEffect(() => {
-    if (!isStudent || !("serviceWorker" in navigator)) return;
+    if (!canRing || !("serviceWorker" in navigator)) return;
 
     const handler = (event: MessageEvent) => {
       if (event.data?.type !== "CLASS_RING") return;
@@ -225,7 +232,7 @@ export function useClassRing() {
 
     navigator.serviceWorker.addEventListener("message", handler);
     return () => navigator.serviceWorker.removeEventListener("message", handler);
-  }, [isStudent, triggerRing]);
+  }, [canRing, triggerRing]);
 
   // ── Listen: Supabase Realtime — live_sessions going live ─────────────────
   //
@@ -239,7 +246,7 @@ export function useClassRing() {
   // channel here only needs to exist while the tab is actually visible in the
   // foreground. We tear it down on hidden and rebuild it on visible.
   useEffect(() => {
-    if (!isStudent || !user) return;
+    if (!canRing || !user) return;
 
     const channelRef: { current: ReturnType<typeof supabase.channel> | null } = { current: null };
 
@@ -255,21 +262,28 @@ export function useClassRing() {
         .eq("id", session.subject_id)
         .maybeSingle();
 
-      // Check this student should see this class
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("level, student_type")
-        .eq("user_id", user.id)
-        .maybeSingle();
+      // ── Audience filter, per role ─────────────────────────────────────
+      if (isStudent) {
+        // Students only ring for classes matching their level.
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("level, student_type")
+          .eq("user_id", user.id)
+          .maybeSingle();
 
-      const subjectLevels: string[] = (subject as any)?.levels ||
-        ((subject as any)?.level ? [(subject as any).level] : []);
-      const studentLevel = (profile as any)?.level;
+        const subjectLevels: string[] = (subject as any)?.levels ||
+          ((subject as any)?.level ? [(subject as any).level] : []);
+        const studentLevel = (profile as any)?.level;
 
-      // Level filter
-      if (subjectLevels.length > 0 && studentLevel && !subjectLevels.includes(studentLevel)) {
-        return; // this class isn't for this student's level
+        if (subjectLevels.length > 0 && studentLevel && !subjectLevels.includes(studentLevel)) {
+          return; // this class isn't for this student's level
+        }
+      } else if (isTeacher) {
+        // Teachers only ring for their own classes.
+        if ((subject as any)?.teacher_id !== user.id) return;
       }
+      // Admins: no filter — ring for every class, matching the backend's
+      // notifyAdminsForClass behaviour (admins are notified for all classes).
 
       // Get teacher name
       let teacherName = "Your teacher";
@@ -282,11 +296,19 @@ export function useClassRing() {
         teacherName = (tp as any)?.full_name || teacherName;
       }
 
+      // Join URL differs by role — teacher/admin land on their own class
+      // management views, not the student live-classes page.
+      const joinUrl = isStudent
+        ? `/student/live-classes?subject=${session.subject_id}&autoJoin=true`
+        : isTeacher
+          ? `/teacher/classes?subject=${session.subject_id}`
+          : `/admin/live-classes?subject=${session.subject_id}`;
+
       triggerRing({
         class_id:     session.id,
         class_title:  (subject as any)?.title || "Class",
         teacher_name: teacherName,
-        join_url:     `/student/live-classes?subject=${session.subject_id}`,
+        join_url:     joinUrl,
         ring_id:      `realtime-${session.id}`,
       });
     };
@@ -339,7 +361,7 @@ export function useClassRing() {
       document.removeEventListener("visibilitychange", onVisibility);
       unsubscribe();
     };
-  }, [isStudent, user, triggerRing]);
+  }, [canRing, isStudent, isTeacher, user, triggerRing]);
 
   const handleJoin = () => {
     if (!ringInfo) return;
