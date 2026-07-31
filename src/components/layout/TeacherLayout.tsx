@@ -11,7 +11,7 @@ import {
   LogOut, Globe, Menu, X, Settings, Trophy, MessageSquare,
   CheckSquare, Mic, BookOpen, GraduationCap, BarChart2,
   Megaphone, Calendar, Headphones, Radio, ChevronDown,
-  ChevronRight, Bell, BookMarked, Clock,
+  ChevronRight, Bell, BookMarked, Clock, Trash2,
 } from "lucide-react";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
 import { useClassRing } from "@/hooks/useClassRing";
@@ -113,9 +113,12 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
   },
 
   // ── Al-Musābaqah ─────────────────────────────────────────────────
+  // Points to the hub (Quiz Arena + Qur'an Recitation), same as student/admin,
+  // instead of jumping straight to /live-quiz — teachers need the Recitation
+  // option too since they can judge it.
   {
     type: "link",
-    link: { to: "/live-quiz", icon: Trophy, label: t("Al-Musābaqah 🏆", "المسابقة 🏆") },
+    link: { to: "/teacher/musabaqah", icon: Trophy, label: t("Al-Musābaqah 🏆", "المسابقة 🏆") },
   },
 
   // ── Settings ─────────────────────────────────────────────────────
@@ -269,6 +272,28 @@ const TeacherLayout = () => {
     await supabase.from("notifications").update({ is_read: true }).eq("id", id);
     setNotifList(p => p.map(n => n.id === id ? { ...n, is_read: true } : n));
     setUnreadNotifs(p => Math.max(0, p - 1));
+  };
+
+  const markAllNotifsRead = async () => {
+    if (!user || unreadNotifs === 0) return;
+    setNotifList(p => p.map(n => ({ ...n, is_read: true })));
+    setUnreadNotifs(0);
+    await supabase.from("notifications").update({ is_read: true }).eq("user_id", user.id).eq("is_read", false);
+  };
+
+  const deleteOneNotif = async (id: string) => {
+    const wasUnread = notifList.find(n => n.id === id)?.is_read === false;
+    setNotifList(p => p.filter(n => n.id !== id));
+    if (wasUnread) setUnreadNotifs(p => Math.max(0, p - 1));
+    await supabase.from("notifications").delete().eq("id", id);
+  };
+
+  const deleteAllNotifs = async () => {
+    if (!user || notifList.length === 0) return;
+    if (!window.confirm(t("Delete all notifications? This can't be undone.", "هل تريد حذف جميع الإشعارات؟ لا يمكن التراجع عن هذا."))) return;
+    setNotifList([]);
+    setUnreadNotifs(0);
+    await supabase.from("notifications").delete().eq("user_id", user.id);
   };
 
   const badges = { grading: gradingBadge };
@@ -480,7 +505,7 @@ const TeacherLayout = () => {
           <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.5)" }} onClick={() => setShowNotifs(false)}>
             <div style={{ position: "absolute", top: 0, left: 0, right: 0, maxHeight: "80vh", background: "#fff", borderRadius: "0 0 24px 24px", boxShadow: "0 8px 40px rgba(0,0,0,.18)", display: "flex", flexDirection: "column", overflow: "hidden" }}
               onClick={e => e.stopPropagation()}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: TL_G }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: TL_G, gap: 10, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <Bell size={16} color={TL_GOLD} />
                   <span style={{ fontWeight: 800, color: "#fff", fontSize: 15 }}>{t("Notifications", "الإشعارات")}</span>
@@ -488,7 +513,25 @@ const TeacherLayout = () => {
                     <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "2px 8px" }}>{unreadNotifs}</span>
                   )}
                 </div>
-                <button onClick={() => setShowNotifs(false)} style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(255,255,255,.15)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {unreadNotifs > 0 && (
+                    <button onClick={markAllNotifsRead} style={{
+                      fontSize: 10.5, fontWeight: 700, padding: "5px 10px", borderRadius: 20,
+                      background: "rgba(201,168,76,0.2)", color: TL_GOLD, border: `1px solid ${TL_GOLD}55`, cursor: "pointer",
+                    }}>
+                      {t("Read all", "قراءة الكل")}
+                    </button>
+                  )}
+                  {notifList.length > 0 && (
+                    <button onClick={deleteAllNotifs} style={{
+                      fontSize: 10.5, fontWeight: 700, padding: "5px 10px", borderRadius: 20,
+                      background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.8)", border: "1px solid rgba(255,255,255,0.2)", cursor: "pointer",
+                    }}>
+                      {t("Delete all", "حذف الكل")}
+                    </button>
+                  )}
+                  <button onClick={() => setShowNotifs(false)} style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(255,255,255,.15)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>✕</button>
+                </div>
               </div>
               <div style={{ overflowY: "auto", flex: 1 }}>
                 {notifList.length === 0
@@ -508,6 +551,13 @@ const TeacherLayout = () => {
                         </p>
                       </div>
                       {!n.is_read && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#EF4444", flexShrink: 0, marginTop: 4 }} />}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteOneNotif(n.id); }}
+                        aria-label={t("Delete notification", "حذف الإشعار")}
+                        style={{ width: 26, height: 26, borderRadius: 8, border: "none", background: "transparent", color: "#C4C4C4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2 }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   ))}
               </div>
