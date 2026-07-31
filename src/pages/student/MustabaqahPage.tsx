@@ -717,6 +717,11 @@ export default function MustabaqahPage() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const canJudge = hasRole?.("admin")||hasRole?.("teacher");
+  // Only admins manage competitions at the platform level (create / edit settings /
+  // delete). Teachers still judge live sessions via canJudge above — they just do it
+  // by claiming a judge code (see judge_gate / claimJudgeCode) instead of getting
+  // free rein over every competition's setup.
+  const isAdmin = hasRole?.("admin");
 
   type View = "list"|"setup"|"join"|"registered"|"preroom"|"settings"|"judge_gate"|"observer_gate"|"role_select"|"arena"|"results"|"leaderboard";
   const [view,         setView]         = useState<View>("list");
@@ -2448,7 +2453,7 @@ export default function MustabaqahPage() {
         )}
 
           <div className="stagger-2" style={{display:"flex",gap:8,marginBottom:16}}>
-            {isJudge&&<button className="gold-btn" onClick={()=>setView("setup")} style={{flex:1,color:G,border:"none",borderRadius:14,padding:"14px 0",fontWeight:800,cursor:"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}><Plus size={18}/> New Competition</button>}
+            {isAdmin&&<button className="gold-btn" onClick={()=>setView("setup")} style={{flex:1,color:G,border:"none",borderRadius:14,padding:"14px 0",fontWeight:800,cursor:"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}><Plus size={18}/> New Competition</button>}
             <button onClick={()=>setView("join")} style={{flex:1,background:"rgba(255,255,255,.07)",color:"#fff",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:14,padding:"14px 0",fontWeight:700,cursor:"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}><LogIn size={18}/> Join with Code</button>
             <button onClick={loadCompetitions} style={{background:"rgba(255,255,255,.06)",color:"rgba(255,255,255,.4)",border:"1.5px solid rgba(255,255,255,.1)",borderRadius:14,padding:"14px 16px",cursor:"pointer"}}><RefreshCw size={16}/></button>
           </div>
@@ -2456,7 +2461,8 @@ export default function MustabaqahPage() {
             <div className="stagger-3 glass-card" style={{textAlign:"center",padding:"48px 24px",borderRadius:20,color:"rgba(255,255,255,.3)"}}>
               <Trophy size={44} color="rgba(201,168,76,.2)" style={{marginBottom:12}}/>
               <p style={{margin:0,fontWeight:600}}>No active competitions</p>
-              {isJudge&&<p style={{margin:"6px 0 0",fontSize:13,opacity:.6}}>Create one to get started</p>}
+              {isAdmin&&<p style={{margin:"6px 0 0",fontSize:13,opacity:.6}}>Create one to get started</p>}
+              {canJudge&&!isAdmin&&<p style={{margin:"6px 0 0",fontSize:13,opacity:.6}}>Ask an admin for a judge code once one is open</p>}
             </div>
           ) : shown.map((c,i)=>(
             <div key={c.id} onClick={()=>openComp(c)} className={`glass-card stagger-${Math.min(i+2,5)}`}
@@ -2491,14 +2497,14 @@ export default function MustabaqahPage() {
                 </div>
               </div>
               <button onClick={async e=>{e.stopPropagation(); setCompetition(c); const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",c.id).order("queue_position"); if(data) setParticipants(data as Participant[]); setView("leaderboard");}} style={{background:"rgba(96,165,250,.1)",border:"1px solid rgba(96,165,250,.3)",borderRadius:9,padding:"7px 9px",cursor:"pointer",color:"#60a5fa",display:"flex",alignItems:"center"}}><Award size={14}/></button>
-              {canJudge&&<button onClick={e=>{e.stopPropagation();openSettings(c);}} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.25)",borderRadius:9,padding:"7px 9px",cursor:"pointer",color:GOLD,display:"flex",alignItems:"center"}}><Settings size={14}/></button>}
-              {canJudge&&<button onClick={e=>{e.stopPropagation();setDeleteModal(c);}} style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.25)",borderRadius:9,padding:"7px 9px",cursor:"pointer",color:RED}}>🗑️</button>}
+              {isAdmin&&<button onClick={e=>{e.stopPropagation();openSettings(c);}} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.25)",borderRadius:9,padding:"7px 9px",cursor:"pointer",color:GOLD,display:"flex",alignItems:"center"}}><Settings size={14}/></button>}
+              {isAdmin&&<button onClick={e=>{e.stopPropagation();setDeleteModal(c);}} style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.25)",borderRadius:9,padding:"7px 9px",cursor:"pointer",color:RED}}>🗑️</button>}
               <ChevronRight size={16} color="rgba(255,255,255,.2)"/>
             </div>
           ))}
           {isJudge&&<div className="stagger-5" style={{marginTop:8,background:"rgba(201,168,76,.06)",border:"1px solid rgba(201,168,76,.15)",borderRadius:14,padding:"12px 16px",display:"flex",gap:10,alignItems:"flex-start"}}>
             <Crown size={15} color={GOLD} style={{flexShrink:0,marginTop:2}}/>
-            <p style={{color:"rgba(255,255,255,.45)",fontSize:12,margin:0,lineHeight:1.7}}><strong style={{color:GOLD}}>Judge mode:</strong> Create competitions, call participants, reveal questions, ring bell, score recitations in real time.</p>
+            <p style={{color:"rgba(255,255,255,.45)",fontSize:12,margin:0,lineHeight:1.7}}>{isAdmin?<><strong style={{color:GOLD}}>Judge mode:</strong> Create competitions, call participants, reveal questions, ring bell, score recitations in real time.</>:<><strong style={{color:GOLD}}>Judge mode:</strong> Tap a competition and enter the judge code an admin shares with you to join — you'll see the countdown to the session and can call, question, and score participants live.</>}</p>
           </div>}
         </div>
       </div>
@@ -2814,6 +2820,10 @@ export default function MustabaqahPage() {
     const closed = !hasDeadline || (regCountdownMs !== null && regCountdownMs <= 0);
     const totalSecs = regCountdownMs !== null ? Math.floor(regCountdownMs/1000) : 0;
     const dd = Math.floor(totalSecs/86400), hh = Math.floor((totalSecs%86400)/3600), mm = Math.floor((totalSecs%3600)/60), ss = totalSecs%60;
+    // Read-only session countdown for teachers/judges who aren't admins — they
+    // shouldn't see (or be able to touch) the session-time setter below.
+    const sesSecs = sessionCountdownMs !== null ? Math.floor(sessionCountdownMs/1000) : 0;
+    const psdd = Math.floor(sesSecs/86400), pshh = Math.floor((sesSecs%86400)/3600), psmm = Math.floor((sesSecs%3600)/60), psss = sesSecs%60;
     return (
       <div style={{minHeight:"100vh",position:"relative",fontFamily:"Cairo,sans-serif",overflowY:"auto",paddingBottom:100}}>
         <GlobalStyles/><IslamicBackground/>
@@ -2848,7 +2858,7 @@ export default function MustabaqahPage() {
             )}
           </div>
 
-          {hasDeadline && (
+          {hasDeadline && isAdmin && (
             <div className="glass-card" style={{borderRadius:18,padding:"16px 18px",marginBottom:16}}>
               <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Session Start Time</div>
               {competition.session_start_at ? (
@@ -2873,12 +2883,39 @@ export default function MustabaqahPage() {
             </div>
           )}
 
+          {/* Teacher/judge (non-admin) view: read-only countdown to the session — no
+              ability to set or edit the time, just watch it and wait for the code gate. */}
+          {hasDeadline && !isAdmin && (
+            <div className="glass-card" style={{borderRadius:18,padding:"16px 18px",marginBottom:16,textAlign:"center"}}>
+              <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:10}}>Session Start Time</div>
+              {!competition.session_start_at ? (
+                <p style={{color:"rgba(255,255,255,.35)",fontSize:12,margin:0}}>The admin hasn't scheduled the session yet. Come back once it's set — you'll see a countdown here.</p>
+              ) : sessionStarted(competition) ? (
+                <div style={{color:GREEN,fontSize:13,fontWeight:800}}>🔓 Session has started — you're good to enter</div>
+              ) : (
+                <div>
+                  <div style={{color:"rgba(255,255,255,.5)",fontSize:12,marginBottom:8}}>
+                    {new Date(competition.session_start_at).toLocaleString("en",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                  </div>
+                  <div style={{display:"flex",justifyContent:"center",gap:8}}>
+                    {[[psdd,"d"],[pshh,"h"],[psmm,"m"],[psss,"s"]].map(([v,u]:any)=>(
+                      <div key={u} style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,padding:"9px 12px",minWidth:48}}>
+                        <div style={{color:GOLD,fontWeight:900,fontSize:18,fontFamily:"Cinzel,serif"}}>{String(v).padStart(2,"0")}</div>
+                        <div style={{color:"rgba(255,255,255,.35)",fontSize:9,textTransform:"uppercase"}}>{u}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="glass-card" style={{borderRadius:18,padding:"16px 18px",marginBottom:16}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
               <div style={{color:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>Registered Participants</div>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span style={{background:"rgba(201,168,76,.15)",border:"1px solid rgba(201,168,76,.3)",color:GOLD,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:800}}>{participants.length}</span>
-                {participants.some(p=>p.status==="pending") && (
+                {isAdmin && participants.some(p=>p.status==="pending") && (
                   admissionsLocked(competition) ? (
                     <span style={{color:"rgba(255,255,255,.35)",fontSize:10,fontWeight:700}}>🔒 Admits after deadline</span>
                   ) : (
