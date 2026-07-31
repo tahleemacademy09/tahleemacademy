@@ -735,8 +735,20 @@ export default function MustabaqahPage() {
   const [activeP,        setActiveP]       = useState<Participant|null>(null);
   const [currentAttempt, setCurAttempt]    = useState<Attempt|null>(null);
   const [bellCount,      setBellCount]     = useState(0);
+  const [minorCount,     setMinorCount]    = useState(0); // -0.5 each
+  const [majorCount,     setMajorCount]    = useState(0); // -1 each
   const [bellFlash,      setBellFlash]     = useState(false);
   const [stopFlash,      setStopFlash]     = useState(false);
+  // Per-stage question type: "recitation" (default — pick a tile & recite),
+  // "tajweed" or "waqf" (judge grades each configured question correct/wrong).
+  const [stageTypes, setStageTypes] = useState<Record<string,"recitation"|"tajweed"|"waqf">>({});
+  // Admin-configurable point values, stored on scope_config so they travel with the competition.
+  const [scoringConfig, setScoringConfig] = useState({ minor_error: 0.5, major_error: 1, wrong_answer: 10 });
+  // For a tajweed/waqf stage: correct/wrong per question line, keyed by question index.
+  const [tajweedAnswers, setTajweedAnswers] = useState<Record<number,"correct"|"wrong">>({});
+  // Local-only toggle so a room with multiple judges can split duties: one taps
+  // errors while reciting, another is the one who finalizes and submits the score.
+  const [judgeSubrole, setJudgeSubrole] = useState<"scorer"|"marker">("scorer");
   // Countdown timer
   const [timerActive,    setTimerActive]   = useState(false);
   const [countdownValue, setCountdownValue] = useState<number|null>(null); // 3-2-1 pre-recitation countdown (visual only — the real timer starts after it finishes)
@@ -1143,6 +1155,7 @@ export default function MustabaqahPage() {
     const ch = supabase.channel(`musabaqah:${competition.id}`,{config:{broadcast:{ack:false}}})
       .on("broadcast",{event:"BELL"},({payload}:any)=>{
         setBellFlash(true); setBellCount(payload.count??0);
+        if (payload.severity==="minor") setMinorCount(c=>c+1); else if (payload.severity==="major") setMajorCount(c=>c+1);
         setTimeout(()=>setBellFlash(false),2500);
         getACtx().state==="running"?playBell():getACtx().resume().then(playBell);
       })
@@ -1160,7 +1173,7 @@ export default function MustabaqahPage() {
       })
       .on("broadcast",{event:"CALLED"},({payload}:any)=>{
         loadParticipants();
-        setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current=0;
+        setBellCount(0); setMinorCount(0); setMajorCount(0); setTajweedAnswers({}); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current=0;
         setTimerExpired(false); setShowScore(false); setPinnedUserId(null);
         setPickedTile(null); setStageTiles([]); setAyahText(null); setPickerParticipantId(null);
         setPickerStage(1);
@@ -1376,7 +1389,7 @@ export default function MustabaqahPage() {
 
   const callParticipant = async (p:Participant) => {
     if (!competition) return;
-    setBellCount(0); setTimerSecs(judgeTimerDuration); setElapsedSecs(0); elapsedRef.current=0;
+    setBellCount(0); setMinorCount(0); setMajorCount(0); setTajweedAnswers({}); setTimerSecs(judgeTimerDuration); setElapsedSecs(0); elapsedRef.current=0;
     setTimerExpired(false); setShowScore(false);
     setScoreBreak({tajweed:"",memorize:"",fluency:"",voice:""}); setJudgeComment("");
     setPickedTile(null); setAyahText(null);
@@ -1474,14 +1487,16 @@ export default function MustabaqahPage() {
     },1000);
   };
 
-  // ✅ Bell — INSTANT: sound + broadcast first, DB async
-  const ringBell = () => {
-    const n=bellCount+1;
-    setBellCount(n);           // state
+  // ✅ Error tap — INSTANT: sound + broadcast first, DB async.
+  // Minor errors (yellow) deduct 0.5, major errors (red) deduct 1 — both configurable per competition.
+  const ringError = (severity: "minor"|"major") => {
+    const n = bellCount + 1;
+    setBellCount(n);
+    if (severity === "minor") setMinorCount(c => c + 1); else setMajorCount(c => c + 1);
     playBell();                // sound — instant
     setBellFlash(true);        // visual
     setTimeout(()=>setBellFlash(false),2500);
-    broadcast("BELL",{count:n}); // network broadcast — fast (no await)
+    broadcast("BELL",{count:n, severity}); // network broadcast — fast (no await)
     // DB update async, does NOT block the above
     if (currentAttempt) {
       supabase.from("musabaqah_attempts" as any).update({bell_count:n}).eq("id",currentAttempt.id);
@@ -1554,7 +1569,7 @@ export default function MustabaqahPage() {
       if (competition?.use_criteria_scoring) {
         SCORING_CRITERIA.forEach(c => { const v = Math.min(Number(scoreBreak[c.key]) || 0, c.max); breakdown[c.key] = v; total += v; });
       } else { total = Number(scoreBreak.tajweed) || 0; }
-      total = Math.max(0, total - bellCount * 2);
+      total = Math.max(0, total - errorPenalty);
 
       // Upsert THIS judge's own score row (one row per judge per attempt)
       const { data: myRow } = await supabase.from("musabaqah_judge_scores" as any)
@@ -1649,7 +1664,7 @@ export default function MustabaqahPage() {
         setPickerParticipantId(activeP.id);
         setTilePickerCollapsed(false);
         setCurAttempt(null);
-        setBellCount(0);
+        setBellCount(0); setMinorCount(0); setMajorCount(0);
         setTimerSecs(judgeTimerDuration);
         setElapsedSecs(0);
         elapsedRef.current = 0;
@@ -1690,7 +1705,7 @@ export default function MustabaqahPage() {
         toast({ title: `🏆 All ${competition.total_stages} stages complete! Total: ${newTotal} pts (mean of ${judgeCount} judge${judgeCount>1?"s":""})` });
 
         setActiveP(null); setCurAttempt(null); setShowScore(false);
-        setBellCount(0); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current = 0;
+        setBellCount(0); setMinorCount(0); setMajorCount(0); setTajweedAnswers({}); setTimerSecs(0); setElapsedSecs(0); elapsedRef.current = 0;
         setTimerActive(false); setTimerExpired(false);
         setShowTilePicker(false); setPickedTile(null); setAyahText(null);
         setActiveParticipantStage(1); setMyScoreSubmitted(false);
@@ -2019,10 +2034,19 @@ export default function MustabaqahPage() {
     setLiveInstructions(comp.description||"");
     const sq: Record<string,string[]> = comp.scope_config?.stage_questions ?? {};
     const sqText: Record<string,string> = {};
+    const st: Record<string,string> = comp.scope_config?.stage_types ?? {};
+    const stObj: Record<string,"recitation"|"tajweed"|"waqf"> = {};
     for (let i=1; i<=comp.total_stages; i++) {
       sqText[String(i)] = (sq[String(i)] ?? []).join("\n");
+      stObj[String(i)] = (st[String(i)] as any) || "recitation";
     }
     setStageQuestions(sqText);
+    setStageTypes(stObj);
+    setScoringConfig({
+      minor_error: comp.scope_config?.scoring_config?.minor_error ?? 0.5,
+      major_error: comp.scope_config?.scoring_config?.major_error ?? 1,
+      wrong_answer: comp.scope_config?.scoring_config?.wrong_answer ?? 10,
+    });
     setQSettingsStage(comp.current_stage);
     setJudgeCodes(await ensureJudgeCodes(comp));
     setView("settings");
@@ -2231,9 +2255,32 @@ export default function MustabaqahPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [competition?.status, isJudge]);
   const totalCrit = competition?.use_criteria_scoring ? SCORING_CRITERIA.reduce((s,c)=>s+(Number(scoreBreak[c.key])||0),0) : Number(scoreBreak.tajweed)||0;
-  const finalScore = Math.max(0,totalCrit-bellCount*2);
+  const errorPenalty = Math.round((minorCount*scoringConfig.minor_error + majorCount*scoringConfig.major_error) * 10) / 10;
+  const finalScore = Math.max(0,totalCrit-errorPenalty);
+  const currentStageType: "recitation"|"tajweed"|"waqf" = (competition?.scope_config?.stage_types?.[String(activeParticipantStage)]) || "recitation";
+  const currentStageQuestions: string[] = competition?.scope_config?.stage_questions?.[String(activeParticipantStage)] ?? [];
+  const tajweedWrongCount = Object.values(tajweedAnswers).filter(v=>v==="wrong").length;
+  const tajweedAutoScore = Math.max(0, 100 - tajweedWrongCount*scoringConfig.wrong_answer);
   const timerWarning = timerSecs > 0 && timerSecs <= 30;
   const timerDanger  = timerSecs > 0 && timerSecs <= 10;
+
+  // Recitation stage, non-criteria mode: default the base score to 100 so the
+  // "Your score" line auto-reflects the error deduction live, but an admin/judge
+  // can still overwrite the number by hand.
+  useEffect(() => {
+    if (!showScorePanel || competition?.use_criteria_scoring) return;
+    if (currentStageType !== "recitation") return;
+    if (scoreBreak.tajweed === "") setScoreBreak(s => ({ ...s, tajweed: "100" }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showScorePanel, currentStageType]);
+
+  // Tajweed/waqf stage: keep the score field synced to 100 minus (wrong answers × penalty),
+  // while still leaving it editable for a manual override.
+  useEffect(() => {
+    if (!showScorePanel || currentStageType==="recitation") return;
+    setScoreBreak(s => ({ ...s, tajweed: String(tajweedAutoScore) }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tajweedAutoScore, showScorePanel, currentStageType]);
 
   // ── Back navigation ──────────────────────────────────────────────
   const goBack = () => {
@@ -2256,6 +2303,8 @@ export default function MustabaqahPage() {
       ...(competition.scope_config||{}),
       custom_questions: qList,
       stage_questions: stageQMap,
+      stage_types: stageTypes,
+      scoring_config: scoringConfig,
     };
     await supabase.from("musabaqah_competitions" as any)
       .update({ scope_config: newConfig, description: liveInstructions } as any)
@@ -2920,6 +2969,31 @@ export default function MustabaqahPage() {
             <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:8,lineHeight:1.6}}>Give one code to each judge — tap a code to copy, or add more codes if more teachers are judging. A judge claims a seat by entering it the first time they open this competition.</div>
           </div>
 
+          {/* ── Scoring configuration — how much each error/wrong answer costs ── */}
+          <div className="glass-card" style={{borderRadius:16,padding:"14px 16px",marginBottom:16}}>
+            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
+              <Award size={13} color={GOLD}/>
+              <div style={{color:GOLD,fontWeight:800,fontSize:12,letterSpacing:.5}}>Scoring Configuration</div>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}}>
+              {([
+                ["minor_error","Minor Error","yellow bell"],
+                ["major_error","Major Error","red bell"],
+                ["wrong_answer","Wrong Answer","tajweed/waqf"],
+              ] as const).map(([key,label,hint])=>(
+                <div key={key}>
+                  <div style={{color:"rgba(255,255,255,.4)",fontSize:9,marginBottom:3}}>{label}</div>
+                  <input type="number" min={0} step={key==="wrong_answer"?1:0.5}
+                    value={scoringConfig[key]}
+                    onChange={e=>setScoringConfig(c=>({...c,[key]:Number(e.target.value)||0}))}
+                    style={{width:"100%",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:7,padding:"7px 8px",color:"#fff",fontSize:14,textAlign:"center"}}/>
+                  <div style={{color:"rgba(255,255,255,.25)",fontSize:9,marginTop:3,textAlign:"center"}}>{hint}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:8,lineHeight:1.6}}>Points deducted per tap during recitation stages, and per wrong answer on Tajweed/Waqf stages. Saved with the rest of these settings below.</div>
+          </div>
+
           <div style={{display:"flex",padding:"0 0 4px",gap:7}}>
             {([["manual","📝 Questions"],["ai","✨ AI Generate"]] as const).map(([t,l])=>(
               <button key={t} onClick={()=>setQSettingsTab(t)} style={{flex:1,background:qSettingsTab===t?"rgba(201,168,76,.2)":"rgba(255,255,255,.04)",border:qSettingsTab===t?"1px solid rgba(201,168,76,.4)":"1px solid rgba(255,255,255,.1)",borderRadius:9,padding:"9px 0",color:qSettingsTab===t?GOLD:"rgba(255,255,255,.4)",fontWeight:700,fontSize:12,cursor:"pointer",fontFamily:"Cairo,sans-serif",transition:"all .2s"}}>{l}</button>
@@ -2942,6 +3016,21 @@ export default function MustabaqahPage() {
                     </button>
                   );
                 })}
+              </div>
+              <div style={{marginTop:10}}>
+                <div style={{color:"rgba(255,255,255,.4)",fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Stage {qSettingsStage} Type</div>
+                <div style={{display:"flex",gap:6}}>
+                  {(["recitation","tajweed","waqf"] as const).map(t=>(
+                    <button key={t} onClick={()=>setStageTypes(s=>({...s,[String(qSettingsStage)]:t}))} style={{flex:1,background:(stageTypes[String(qSettingsStage)]||"recitation")===t?`${GOLD}22`:"rgba(255,255,255,.04)",border:`1.5px solid ${(stageTypes[String(qSettingsStage)]||"recitation")===t?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:9,padding:"7px 0",cursor:"pointer",color:(stageTypes[String(qSettingsStage)]||"recitation")===t?GOLD:"rgba(255,255,255,.45)",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif",textTransform:"capitalize"}}>
+                      {t==="recitation"?"🎙️ Recitation":t==="tajweed"?"📖 Tajweed":"⏸️ Waqf"}
+                    </button>
+                  ))}
+                </div>
+                <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:6,lineHeight:1.5}}>
+                  {(stageTypes[String(qSettingsStage)]||"recitation")==="recitation"
+                    ? "Reciter picks a tile and recites — scored /100 with live error deduction."
+                    : "The questions below become correct/wrong checks the judge marks live, each wrong answer deducting the configured penalty."}
+                </div>
               </div>
             </div>
           )}
@@ -3526,16 +3615,24 @@ export default function MustabaqahPage() {
         )}
       </div>
 
-      {/* ══ ACTION BAR — immediately below video, always accessible ══ */}
-      {isJudge && activeP?.status==="reciting" && (
-        <div style={{flexShrink:0,display:"grid",gridTemplateColumns:"1.4fr 1fr",gap:8,padding:"8px 12px",background:"rgba(4,12,6,.98)",borderBottom:"1px solid rgba(201,168,76,.08)"}}>
-          <button onClick={ringBell} style={{background:`linear-gradient(135deg,${GOLD},#e8c96a 40%,${GOLDD})`,color:G,border:"none",borderRadius:12,padding:"13px 0",cursor:"pointer",fontWeight:900,fontSize:15,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxShadow:"0 4px 20px rgba(201,168,76,.4)",position:"relative",userSelect:"none"}}>
-            {bellCount>0&&<span style={{position:"absolute",top:5,right:7,background:RED,color:"#fff",borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:900}}>{bellCount}</span>}
-            <Bell size={18} strokeWidth={2.5}/> Ring Bell
+      {/* ══ ACTION BAR — immediately below video, always accessible.
+          Also stays visible while awarding marks (showScorePanel) so a judge
+          can still log an error they missed, or correct one, before submitting. ══ */}
+      {isJudge && (activeP?.status==="reciting" || showScorePanel) && (
+        <div style={{flexShrink:0,display:"grid",gridTemplateColumns:activeP?.status==="reciting"?"1fr 1fr 0.8fr":"1fr 1fr",gap:8,padding:"8px 12px",background:"rgba(4,12,6,.98)",borderBottom:"1px solid rgba(201,168,76,.08)"}}>
+          <button onClick={()=>ringError("minor")} style={{background:"linear-gradient(135deg,#facc15,#eab308)",color:"#3f2d00",border:"none",borderRadius:12,padding:"13px 0",cursor:"pointer",fontWeight:900,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxShadow:"0 4px 20px rgba(250,204,21,.35)",position:"relative",userSelect:"none"}}>
+            {minorCount>0&&<span style={{position:"absolute",top:5,right:7,background:RED,color:"#fff",borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:900}}>{minorCount}</span>}
+            <Bell size={16} strokeWidth={2.5}/> Minor −{scoringConfig.minor_error}
           </button>
-          <button onClick={signalStop} style={{background:`linear-gradient(135deg,${RED},#dc2626)`,color:"#fff",border:"none",borderRadius:12,padding:"13px 0",cursor:"pointer",fontWeight:800,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxShadow:"0 4px 16px rgba(239,68,68,.3)",userSelect:"none"}}>
-            <StopCircle size={16}/> Stop
+          <button onClick={()=>ringError("major")} style={{background:`linear-gradient(135deg,${RED},#dc2626)`,color:"#fff",border:"none",borderRadius:12,padding:"13px 0",cursor:"pointer",fontWeight:900,fontSize:14,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxShadow:"0 4px 20px rgba(239,68,68,.35)",position:"relative",userSelect:"none"}}>
+            {majorCount>0&&<span style={{position:"absolute",top:5,right:7,background:"#fff",color:RED,borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,fontWeight:900}}>{majorCount}</span>}
+            <Bell size={16} strokeWidth={2.5}/> Major −{scoringConfig.major_error}
           </button>
+          {activeP?.status==="reciting" && (
+          <button onClick={signalStop} style={{background:"rgba(255,255,255,.1)",color:"#fff",border:"1px solid rgba(255,255,255,.2)",borderRadius:12,padding:"13px 0",cursor:"pointer",fontWeight:800,fontSize:13,display:"flex",alignItems:"center",justifyContent:"center",gap:5,userSelect:"none"}}>
+            <StopCircle size={15}/> Stop
+          </button>
+          )}
         </div>
       )}
       {isJudge && pickedTile && activeP && activeP.status!=="reciting" && activeP.status!=="completed" && (
@@ -3612,7 +3709,7 @@ export default function MustabaqahPage() {
                   <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                     <span style={{color:STATUS_COLOR[activeP.status],fontSize:10,fontWeight:700}}>{STATUS_ICON[activeP.status]} {STATUS_LABEL[activeP.status]}</span>
                     {timerActive&&<span style={{color:timerDanger?RED:timerWarning?GOLD:GREEN,fontWeight:800,fontSize:12,display:"flex",alignItems:"center",gap:2}}><Clock size={9}/>{fmt(timerSecs)}</span>}
-                    {bellCount>0&&<span style={{color:GOLD,fontSize:10}}>🔔×{bellCount} −{bellCount*2}pts</span>}
+                    {bellCount>0&&<span style={{color:GOLD,fontSize:10}}>🔔×{bellCount} −{errorPenalty}pts</span>}
                   </div>
                   {/* Stage progress dots for current participant */}
                   <div style={{display:"flex",alignItems:"center",gap:4,marginTop:4}}>
@@ -3730,6 +3827,17 @@ export default function MustabaqahPage() {
                       📝 Stage {activeParticipantStage} Score — {activeP?.participant_name}
                       {activeP?.status==="reciting"&&<span style={{color:GREEN,fontSize:10,fontWeight:700,background:`${GREEN}22`,borderRadius:5,padding:"2px 6px"}}>● scoring live</span>}
                     </div>
+                    {/* Split duties when more than one judge is present: one can just tap errors
+                        while reciting, another finalizes and submits the score. */}
+                    {presentJudges.length>1&&(
+                      <div style={{display:"flex",gap:6,marginBottom:9}}>
+                        {(["scorer","marker"] as const).map(r=>(
+                          <button key={r} onClick={()=>setJudgeSubrole(r)} style={{flex:1,background:judgeSubrole===r?`${GOLD}22`:"rgba(255,255,255,.05)",border:`1px solid ${judgeSubrole===r?GOLD:"rgba(255,255,255,.12)"}`,borderRadius:8,padding:"6px 0",cursor:"pointer",color:judgeSubrole===r?GOLD:"rgba(255,255,255,.45)",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif"}}>
+                            {r==="scorer"?"🖊️ I'm the Scorer":"🔔 I'm Marking Errors"}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {/* Multi-judge status: who else in the room has already submitted */}
                     {presentJudges.length>1&&(
                       <div style={{display:"flex",flexWrap:"wrap",gap:5,marginBottom:9}}>
@@ -3748,18 +3856,44 @@ export default function MustabaqahPage() {
                           </div>
                         ))}
                       </div>
+                    ) : currentStageType!=="recitation" ? (
+                      <div style={{marginBottom:9}}>
+                        <div style={{color:"rgba(255,255,255,.5)",fontSize:11,marginBottom:6,display:"flex",justifyContent:"space-between"}}>
+                          <span>{currentStageType==="tajweed"?"Tajweed":"Waqf"} Questions — mark each</span>
+                          <span style={{color:GOLD}}>−{scoringConfig.wrong_answer} per wrong</span>
+                        </div>
+                        {currentStageQuestions.length===0 ? (
+                          <div style={{color:"rgba(255,255,255,.3)",fontSize:11,padding:"8px 0"}}>No questions configured for this stage yet — add some in Settings.</div>
+                        ) : (
+                          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:6}}>
+                            {currentStageQuestions.map((q,i)=>(
+                              <div key={i} style={{display:"flex",alignItems:"center",gap:8,background:"rgba(255,255,255,.03)",borderRadius:8,padding:"7px 9px"}}>
+                                <span style={{flex:1,minWidth:0,color:"#fff",fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{q}</span>
+                                <button onClick={()=>setTajweedAnswers(a=>({...a,[i]:"correct"}))} style={{background:tajweedAnswers[i]==="correct"?`${GREEN}33`:"rgba(255,255,255,.06)",border:`1px solid ${tajweedAnswers[i]==="correct"?GREEN:"rgba(255,255,255,.15)"}`,borderRadius:6,padding:"5px 9px",cursor:"pointer",color:tajweedAnswers[i]==="correct"?GREEN:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,flexShrink:0}}>✓</button>
+                                <button onClick={()=>setTajweedAnswers(a=>({...a,[i]:"wrong"}))} style={{background:tajweedAnswers[i]==="wrong"?`${RED}33`:"rgba(255,255,255,.06)",border:`1px solid ${tajweedAnswers[i]==="wrong"?RED:"rgba(255,255,255,.15)"}`,borderRadius:6,padding:"5px 9px",cursor:"pointer",color:tajweedAnswers[i]==="wrong"?RED:"rgba(255,255,255,.4)",fontSize:11,fontWeight:700,flexShrink:0}}>✕</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div style={{color:"rgba(255,255,255,.5)",fontSize:11,marginBottom:3}}>Score /100 (auto — editable)</div>
+                        <input type="number" min={0} max={100} value={scoreBreak.tajweed} onChange={e=>setScoreBreak(s=>({...s,tajweed:e.target.value}))} style={{width:"100%",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:7,padding:"9px",color:"#fff",fontSize:16}}/>
+                      </div>
                     ):(
                       <div style={{marginBottom:9}}>
-                        <div style={{color:"rgba(255,255,255,.5)",fontSize:11,marginBottom:3}}>Score /100</div>
+                        <div style={{color:"rgba(255,255,255,.5)",fontSize:11,marginBottom:3}}>Score /100 (auto — editable)</div>
                         <input type="number" min={0} max={100} value={scoreBreak.tajweed} onChange={e=>setScoreBreak(s=>({...s,tajweed:e.target.value}))} style={{width:"100%",background:"rgba(255,255,255,.07)",border:"1px solid rgba(255,255,255,.12)",borderRadius:7,padding:"9px",color:"#fff",fontSize:16}}/>
                       </div>
                     )}
                     <input value={judgeComment} onChange={e=>setJudgeComment(e.target.value)} placeholder="Judge's comment (optional)" style={{width:"100%",background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:7,padding:"7px 11px",color:"#fff",fontSize:12,marginBottom:9}}/>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:9}}>
-                      {bellCount>0&&<span style={{color:GOLD,fontSize:11}}>⚠️ −{bellCount*2} penalty</span>}
+                      {bellCount>0&&<span style={{color:GOLD,fontSize:11}}>⚠️ −{errorPenalty} penalty</span>}
                       <span style={{color:GREEN,fontWeight:800,fontSize:14,marginLeft:"auto"}}>Your score: {finalScore}/100</span>
                     </div>
-                    {myScoreSubmitted ? (
+                    {judgeSubrole==="marker" ? (
+                      <div style={{textAlign:"center",padding:"9px",background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.1)",borderRadius:9,color:"rgba(255,255,255,.4)",fontSize:12}}>
+                        You're marking errors — the judge set as Scorer submits the final score.
+                      </div>
+                    ) : myScoreSubmitted ? (
                       <div style={{textAlign:"center",padding:"9px",background:`${GREEN}12`,border:`1px solid ${GREEN}33`,borderRadius:9,color:GREEN,fontWeight:700,fontSize:12}}>
                         ✓ Your score is in — waiting for {Math.max(0,presentJudges.filter(j=>j.user_id!==user?.id).length-(judgeScores[currentAttempt?.id||""]||[]).filter(r=>r.judge_user_id!==user?.id).length)} other judge(s)
                       </div>
@@ -4001,7 +4135,7 @@ export default function MustabaqahPage() {
                     })}
                     <span style={{color:GREEN,fontWeight:800,fontSize:11}}>Stage {pickerStage}/{competition.total_stages}</span>
                   </div>
-                  {bellCount>0&&<div style={{color:RED,fontWeight:700,fontSize:11,marginTop:2}}>🔔 {bellCount} error{bellCount!==1?"s":""} · −{bellCount*2} pts</div>}
+                  {bellCount>0&&<div style={{color:RED,fontWeight:700,fontSize:11,marginTop:2}}>🔔 {bellCount} error{bellCount!==1?"s":""} · −{errorPenalty} pts</div>}
                 </div>
                 {pickedTile&&(
                   <div style={{background:"rgba(0,0,0,.3)",border:"1px solid rgba(255,255,255,.08)",borderRadius:11,padding:"11px"}}>
