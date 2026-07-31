@@ -2430,11 +2430,15 @@ export default function MustabaqahPage() {
                   {c.status==="open"&&!isRegistrationOpen(c)&&(
                     <><span style={{color:"rgba(255,255,255,.15)"}}>·</span><span style={{color:RED,fontSize:10,fontWeight:700}}>Registration Closed</span></>
                   )}
-                  <span style={{color:"rgba(255,255,255,.15)"}}>·</span>
-                  <button onClick={e=>copyCode(c.room_code,e)} style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
-                    <span style={{color:GOLD,fontWeight:800,letterSpacing:2,fontSize:12}}>{c.room_code}</span>
-                    <span style={{fontSize:10,color:"rgba(201,168,76,.5)"}}>📋</span>
-                  </button>
+                  {canJudge && (
+                    <>
+                      <span style={{color:"rgba(255,255,255,.15)"}}>·</span>
+                      <button onClick={e=>copyCode(c.room_code,e)} style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+                        <span style={{color:GOLD,fontWeight:800,letterSpacing:2,fontSize:12}}>{c.room_code}</span>
+                        <span style={{fontSize:10,color:"rgba(201,168,76,.5)"}}>📋</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
               <button onClick={async e=>{e.stopPropagation(); setCompetition(c); const {data}=await supabase.from("musabaqah_participants" as any).select("*").eq("competition_id",c.id).order("queue_position"); if(data) setParticipants(data as Participant[]); setView("leaderboard");}} style={{background:"rgba(96,165,250,.1)",border:"1px solid rgba(96,165,250,.3)",borderRadius:9,padding:"7px 9px",cursor:"pointer",color:"#60a5fa",display:"flex",alignItems:"center"}}><Award size={14}/></button>
