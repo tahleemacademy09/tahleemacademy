@@ -73,9 +73,14 @@ function resolvePath(link: string | null): string | null {
 }
 
 export default function NotificationBell() {
-  const { items, unreadCount, markRead, markAllRead } = useNotifications();
+  const { items, unreadCount, markRead, markAllRead, deleteAll } = useNotifications();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
+
+  const handleDeleteAll = () => {
+    if (items.length === 0) return;
+    if (window.confirm("Delete all notifications? This can't be undone.")) deleteAll();
+  };
 
   const handleClick = (n: AppNotification) => {
     if (!n.is_read) markRead(n.id);
@@ -139,14 +144,25 @@ export default function NotificationBell() {
                   <p style={{ margin: 0, fontWeight: 600, fontSize: 10, color: "rgba(201,168,76,0.85)", fontFamily: "serif" }}>الإشعارات</p>
                 </div>
               </div>
-              {unreadCount > 0 && (
-                <button onClick={markAllRead} style={{
-                  fontSize: 10.5, fontWeight: 700, padding: "5px 10px", borderRadius: 20,
-                  background: "rgba(201,168,76,0.15)", color: GOLD, border: "1px solid rgba(201,168,76,0.3)", cursor: "pointer",
-                }}>
-                  Mark all read
-                </button>
-              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {unreadCount > 0 && (
+                  <button onClick={markAllRead} style={{
+                    fontSize: 10.5, fontWeight: 700, padding: "5px 10px", borderRadius: 20,
+                    background: "rgba(201,168,76,0.15)", color: GOLD, border: "1px solid rgba(201,168,76,0.3)", cursor: "pointer",
+                  }}>
+                    Mark all read
+                  </button>
+                )}
+                {items.length > 0 && (
+                  <button onClick={handleDeleteAll} style={{
+                    fontSize: 10.5, fontWeight: 700, padding: "5px 10px", borderRadius: 20,
+                    background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.75)",
+                    border: "1px solid rgba(255,255,255,0.18)", cursor: "pointer",
+                  }}>
+                    Delete all
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* List */}
