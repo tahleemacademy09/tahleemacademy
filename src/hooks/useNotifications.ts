@@ -118,5 +118,19 @@ export function useNotifications() {
       .eq("is_read", false);
   }, [user]);
 
-  return { items, unreadCount, loading, hasMore, loadMore, markRead, markAllRead, refresh: () => load({ reset: true }) };
+  const deleteOne = useCallback(async (id: string) => {
+    const wasUnread = items.find((n) => n.id === id)?.is_read === false;
+    setItems((prev) => prev.filter((n) => n.id !== id));
+    if (wasUnread) setUnreadCount((c) => Math.max(0, c - 1));
+    await supabase.from("notifications").delete().eq("id", id);
+  }, [items]);
+
+  const deleteAll = useCallback(async () => {
+    if (!user) return;
+    setItems([]);
+    setUnreadCount(0);
+    await supabase.from("notifications").delete().eq("user_id", user.id);
+  }, [user]);
+
+  return { items, unreadCount, loading, hasMore, loadMore, markRead, markAllRead, deleteOne, deleteAll, refresh: () => load({ reset: true }) };
 }
