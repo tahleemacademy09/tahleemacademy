@@ -1785,12 +1785,34 @@ export default function MustabaqahPage() {
 
   const ensureJudgeCodes = async (comp: Competition): Promise<string[]> => {
     const existing: string[] = comp.scope_config?.judge_codes ?? [];
-    if (existing.length >= 2) return existing;
-    const codes = [existing[0]||genCode(), existing[1]||genCode()];
+    if (existing.length > 0) return existing; // don't cap — respect however many the admin has generated
+    const codes = [genCode(), genCode()]; // starting pair; more can be added anytime from Settings
     const newConfig = { ...(comp.scope_config||{}), judge_codes: codes };
     await supabase.from("musabaqah_competitions" as any).update({ scope_config: newConfig } as any).eq("id", comp.id);
     setCompetition(c=>c&&c.id===comp.id?{...c,scope_config:newConfig}:c);
     return codes;
+  };
+
+  // Admin can generate additional judge codes any time a competition needs more judge seats
+  // (e.g. a bigger panel, or extra teachers volunteering to judge).
+  const addJudgeCode = async () => {
+    if (!competition) return;
+    const existing: string[] = competition.scope_config?.judge_codes ?? judgeCodes;
+    const codes = [...existing, genCode()];
+    const newConfig = { ...(competition.scope_config||{}), judge_codes: codes };
+    await supabase.from("musabaqah_competitions" as any).update({ scope_config: newConfig } as any).eq("id", competition.id);
+    setCompetition(c=>c&&c.id===competition.id?{...c,scope_config:newConfig}:c);
+    setJudgeCodes(codes);
+    toast({title:"New judge code added"});
+  };
+
+  const removeJudgeCode = async (code: string) => {
+    if (!competition) return;
+    const codes = (competition.scope_config?.judge_codes ?? judgeCodes).filter((c:string)=>c!==code);
+    const newConfig = { ...(competition.scope_config||{}), judge_codes: codes };
+    await supabase.from("musabaqah_competitions" as any).update({ scope_config: newConfig } as any).eq("id", competition.id);
+    setCompetition(c=>c&&c.id===competition.id?{...c,scope_config:newConfig}:c);
+    setJudgeCodes(codes);
   };
 
   const createCompetition = async () => {
@@ -2006,7 +2028,7 @@ export default function MustabaqahPage() {
     setView("settings");
   };
 
-  // ── Judge-code gate: a judge/admin must claim one of the max-2 codes ──
+  // ── Judge-code gate: a judge/admin must claim one of the (however many) judge codes ──
   const claimJudgeCode = async () => {
     if (!competition || !user) return;
     const code = judgeCodeInput.trim().toUpperCase();
@@ -2656,20 +2678,26 @@ export default function MustabaqahPage() {
           </div>
 
           {needsCodeReveal ? (
-            /* One-time reveal: shown exactly until the participant confirms they've saved it. */
+            /* First time: extra emphasis so they know to save it, but it stays visible after too now. */
             <div style={{marginBottom:20,background:"rgba(239,68,68,.06)",border:"1.5px solid rgba(239,68,68,.25)",borderRadius:16,padding:"18px 16px"}}>
-              <div style={{color:RED,fontSize:11,fontWeight:800,letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>⚠ Save This Now — Shown Only Once</div>
+              <div style={{color:RED,fontSize:11,fontWeight:800,letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>⚠ Save This Now</div>
               <div onClick={(e:any)=>copyCode(myParticipant.access_code||"",e)} style={{cursor:"pointer",background:"rgba(201,168,76,.1)",border:"2px solid rgba(201,168,76,.4)",borderRadius:14,padding:"16px 20px",color:GOLD,fontSize:28,fontWeight:900,letterSpacing:8,marginBottom:10}}>
                 {myParticipant.access_code}
               </div>
-              <p style={{color:"rgba(255,255,255,.4)",fontSize:11,margin:"0 0 14px"}}>Tap to copy. Screenshot or write it down — after you confirm, it won't be shown here again. If you lose it later, you'll need to contact the admin.</p>
+              <p style={{color:"rgba(255,255,255,.4)",fontSize:11,margin:"0 0 14px"}}>Tap to copy. Screenshot or write it down — you'll still be able to see it here while you wait for the session.</p>
               <button className="gold-btn" onClick={acknowledgeCode} disabled={ackingCode} style={{width:"100%",color:G,border:"none",borderRadius:14,padding:"14px",fontWeight:800,cursor:ackingCode?"not-allowed":"pointer",fontSize:15,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8,opacity:ackingCode?.7:1}}>
-                {ackingCode?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:<CheckCircle size={16}/>} I've saved my code
+                {ackingCode?<Loader2 size={16} style={{animation:"spin 1s linear infinite"}}/>:<CheckCircle size={16}/>} Got it
               </button>
             </div>
           ) : phase!=="readyToEnter" && (
-            <div style={{marginBottom:20,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"12px 16px"}}>
-              <p style={{color:"rgba(255,255,255,.4)",fontSize:12,margin:0}}>Lost your code? Contact the admin — it can't be shown here again.</p>
+            /* Not their first visit, and not time to enter yet — still show the code so anyone
+               who didn't copy it the first time isn't stuck waiting to contact the admin. */
+            <div style={{marginBottom:20,background:"rgba(255,255,255,.04)",border:"1px solid rgba(255,255,255,.1)",borderRadius:14,padding:"14px 16px"}}>
+              <div style={{color:"rgba(255,255,255,.35)",fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:8}}>Your Code</div>
+              <div onClick={(e:any)=>copyCode(myParticipant.access_code||"",e)} style={{cursor:"pointer",background:"rgba(201,168,76,.1)",border:"1.5px solid rgba(201,168,76,.35)",borderRadius:12,padding:"12px 16px",color:GOLD,fontSize:22,fontWeight:900,letterSpacing:6,marginBottom:8}}>
+                {myParticipant.access_code}
+              </div>
+              <p style={{color:"rgba(255,255,255,.35)",fontSize:11,margin:0}}>Tap to copy. You'll enter this once the session starts.</p>
             </div>
           )}
 
@@ -2712,6 +2740,7 @@ export default function MustabaqahPage() {
 
           {!needsCodeReveal && phase==="readyToEnter" && (
             <div style={{marginTop:8}}>
+              <p style={{color:"rgba(255,255,255,.3)",fontSize:11,margin:"0 0 10px"}}>Your code is <span style={{color:GOLD,fontWeight:800,letterSpacing:2}}>{myParticipant.access_code}</span> — tap below to copy, or type it in.</p>
               <Label>Enter Your Code</Label>
               <input value={accessCodeInput} onChange={e=>setAccessCodeInput(e.target.value.toUpperCase())} placeholder="CODE" maxLength={6}
                 style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(201,168,76,.3)",borderRadius:14,padding:"14px 20px",color:"#fff",fontSize:22,fontWeight:800,letterSpacing:6,textAlign:"center",textTransform:"uppercase",marginBottom:14}}/>
@@ -2860,21 +2889,31 @@ export default function MustabaqahPage() {
             </div>
           </div>
 
-          {/* ── Judge codes — max 2 seats, distribute one to each judge so they can register in ── */}
+          {/* ── Judge codes — generate as many seats as you need, one per judge ── */}
           <div className="glass-card" style={{borderRadius:16,padding:"14px 16px",marginBottom:16}}>
-            <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:10}}>
-              <Users size={13} color={GOLD}/>
-              <div style={{color:GOLD,fontWeight:800,fontSize:12,letterSpacing:.5}}>Judge Codes (max 2 seats)</div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+              <div style={{display:"flex",alignItems:"center",gap:7}}>
+                <Users size={13} color={GOLD}/>
+                <div style={{color:GOLD,fontWeight:800,fontSize:12,letterSpacing:.5}}>Judge Codes ({judgeCodes.length} seat{judgeCodes.length===1?"":"s"})</div>
+              </div>
+              <button onClick={addJudgeCode} style={{background:"rgba(201,168,76,.15)",border:"1px solid rgba(201,168,76,.4)",borderRadius:8,padding:"5px 10px",cursor:"pointer",color:GOLD,fontWeight:700,fontSize:11,display:"flex",alignItems:"center",gap:4,fontFamily:"Cairo,sans-serif"}}>
+                <Plus size={12}/> Add code
+              </button>
             </div>
-            <div style={{display:"flex",gap:8}}>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {judgeCodes.map((code,i)=>(
-                <button key={i} onClick={(e:any)=>copyCode(code,e)} style={{flex:1,background:"rgba(201,168,76,.1)",border:"1.5px solid rgba(201,168,76,.35)",borderRadius:11,padding:"10px 8px",cursor:"pointer",textAlign:"center"}}>
-                  <div style={{color:"rgba(255,255,255,.35)",fontSize:9,marginBottom:3}}>Judge {i+1}</div>
-                  <div style={{color:GOLD,fontWeight:900,letterSpacing:3,fontSize:15}}>{code}</div>
-                </button>
+                <div key={code} style={{position:"relative",flex:"1 1 90px",minWidth:90}}>
+                  <button onClick={(e:any)=>copyCode(code,e)} style={{width:"100%",background:"rgba(201,168,76,.1)",border:"1.5px solid rgba(201,168,76,.35)",borderRadius:11,padding:"10px 8px",cursor:"pointer",textAlign:"center"}}>
+                    <div style={{color:"rgba(255,255,255,.35)",fontSize:9,marginBottom:3}}>Judge {i+1}</div>
+                    <div style={{color:GOLD,fontWeight:900,letterSpacing:3,fontSize:15}}>{code}</div>
+                  </button>
+                  {judgeCodes.length>1 && (
+                    <button onClick={()=>removeJudgeCode(code)} aria-label="Remove judge code" style={{position:"absolute",top:-6,right:-6,width:18,height:18,borderRadius:"50%",background:"#EF4444",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,lineHeight:1}}>×</button>
+                  )}
+                </div>
               ))}
             </div>
-            <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:8,lineHeight:1.6}}>Give one code to each judge — tap a code to copy. A judge claims a seat by entering it the first time they open this competition.</div>
+            <div style={{color:"rgba(255,255,255,.3)",fontSize:10,marginTop:8,lineHeight:1.6}}>Give one code to each judge — tap a code to copy, or add more codes if more teachers are judging. A judge claims a seat by entering it the first time they open this competition.</div>
           </div>
 
           <div style={{display:"flex",padding:"0 0 4px",gap:7}}>
