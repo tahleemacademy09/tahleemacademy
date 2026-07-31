@@ -11,7 +11,7 @@
 */
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bell, Check } from "lucide-react";
+import { Bell, Check, Trash2 } from "lucide-react";
 import { useNotifications, type AppNotification } from "@/hooks/useNotifications";
 
 const GREEN = "#0f2d1f";
@@ -63,7 +63,7 @@ const FILTERS = [
 ] as const;
 
 export default function NotificationsPage() {
-  const { items, unreadCount, loading, hasMore, loadMore, markRead, markAllRead } = useNotifications();
+  const { items, unreadCount, loading, hasMore, loadMore, markRead, markAllRead, deleteOne, deleteAll } = useNotifications();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const navigate = useNavigate();
 
@@ -79,6 +79,16 @@ export default function NotificationsPage() {
     if (!n.is_read) markRead(n.id);
     const path = resolvePath(n.link);
     if (path) navigate(path);
+  };
+
+  const handleDeleteAll = () => {
+    if (items.length === 0) return;
+    if (window.confirm("Delete all notifications? This can't be undone.")) deleteAll();
+  };
+
+  const handleDeleteOne = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    deleteOne(id);
   };
 
   return (
@@ -97,15 +107,26 @@ export default function NotificationsPage() {
             <p style={{ margin: 0, fontSize: 11, color: GOLD, fontFamily: "serif" }}>الإشعارات</p>
           </div>
         </div>
-        {unreadCount > 0 && (
-          <button onClick={markAllRead} style={{
-            display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700,
-            padding: "8px 14px", borderRadius: 20, background: `${GOLD}18`, color: "#8a6d1f",
-            border: `1px solid ${GOLD}40`, cursor: "pointer",
-          }}>
-            <Check size={13} /> Mark all read
-          </button>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {unreadCount > 0 && (
+            <button onClick={markAllRead} style={{
+              display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700,
+              padding: "8px 14px", borderRadius: 20, background: `${GOLD}18`, color: "#8a6d1f",
+              border: `1px solid ${GOLD}40`, cursor: "pointer",
+            }}>
+              <Check size={13} /> Mark all read
+            </button>
+          )}
+          {items.length > 0 && (
+            <button onClick={handleDeleteAll} style={{
+              display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700,
+              padding: "8px 14px", borderRadius: 20, background: "#f2f2f2", color: "#a33",
+              border: "1px solid #e5c5c5", cursor: "pointer",
+            }}>
+              <Trash2 size={13} /> Delete all
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filter tabs */}
@@ -177,6 +198,17 @@ export default function NotificationsPage() {
                       <p style={{ margin: "4px 0 0", fontSize: 12.5, color: "#555", lineHeight: 1.5 }}>{n.message}</p>
                       <p style={{ margin: "6px 0 0", fontSize: 10.5, color: "#aaa" }}>{formatTime(n.created_at)}</p>
                     </div>
+                    <button
+                      onClick={(e) => handleDeleteOne(e, n.id)}
+                      aria-label="Delete notification"
+                      style={{
+                        flexShrink: 0, width: 28, height: 28, borderRadius: 8, border: "none",
+                        background: "transparent", color: "#bbb", cursor: "pointer",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 );
               })}
