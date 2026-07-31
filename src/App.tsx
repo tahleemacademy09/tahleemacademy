@@ -279,6 +279,7 @@ const App = () => (
                     <Route path="/teacher/hifdh"            element={<TeacherHifdhReview />} />
                     <Route path="/teacher/hifdh-tracker"    element={<HifdhRevisionTracker />} />
                     <Route path="/teacher/majlis"           element={<TeacherMajlis />} />
+                    <Route path="/teacher/musabaqah"        element={<MusabaqahHub />} />
                     <Route path="/teacher/settings"         element={<TeacherSettings />} />
                   </Route>
 
