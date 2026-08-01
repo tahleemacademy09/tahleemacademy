@@ -72,10 +72,18 @@ export function useNotifications() {
     if (!user) return;
     load({ reset: true });
     fetchUnreadCount();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
-    channelRef.current = supabase
-      .channel(`notifications:${user.id}`)
-      .on(
+  // Realtime socket is only held open while the tab is visible. An always-on
+  // WebSocket is what makes Android evict a backgrounded tab (looks like a
+  // reload on return); on resume we rebuild it and re-sync as catch-up.
+  useVisibleRealtime(
+    () => {
+      if (!user) return null;
+      channelRef.current = supabase
+        .channel(`notifications:${user.id}`)
+        .on(
         "postgres_changes" as any,
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
         (payload: any) => {
@@ -93,13 +101,16 @@ export function useNotifications() {
           }
         },
       )
-      .subscribe();
-
-    return () => {
-      if (channelRef.current) supabase.removeChannel(channelRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
+        .subscribe();
+      return channelRef.current;
+    },
+    [user?.id],
+    () => {
+      if (!user) return;
+      load({ reset: true });
+      fetchUnreadCount();
+    },
+  );
 
   const markRead = useCallback(async (id: string) => {
     setItems((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
