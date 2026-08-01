@@ -142,7 +142,12 @@ export function useAppStateRestore() {
     // "/admin-secure", not "/login", so this isAtRoot check never matched for
     // them — which is why the bug only ever showed up on the student side.
     const isAtRoot = location.pathname === "/";
-    if (savedFull !== currentPath || isAtRoot) {
+    // A normal component remount can happen while the browser is already on
+    // the correct deep route. Never navigate in that case (or from one deep
+    // route to another stale saved route): navigation itself tears down the
+    // student layout and looks like a reload. Restoration is only for a real
+    // native/WebView cold start that has fallen back to the root document.
+    if (isAtRoot && savedFull !== currentPath) {
       // Navigate back to where user was
       navigate(saved.path + saved.search + saved.hash, { replace: true });
 
