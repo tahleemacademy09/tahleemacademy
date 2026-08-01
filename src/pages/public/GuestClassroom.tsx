@@ -857,7 +857,7 @@ const GuestClassroom = () => {
       supabase.from("public_classes")
         .update({ status: "ended", actual_end_time: new Date().toISOString() })
         .eq("id", classId)
-        .then(() => {}).catch(() => {});
+        .then(() => {}, () => {});
     }
   }, [classId]);
 

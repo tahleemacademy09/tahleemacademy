@@ -384,7 +384,7 @@ const PublicClassManagement = () => {
       is_featured:  false,
       status:       "scheduled",
       scheduled_at: null,
-    });
+    } as any);
     if (error) { toast.error("Duplicate failed"); return; }
     toast.success("Class duplicated — edit it to set a new date");
     setMoreMenu(null);

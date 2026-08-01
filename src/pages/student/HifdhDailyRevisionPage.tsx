@@ -130,6 +130,7 @@ interface Assignment {
 }
 interface DailyLog {
   id: string; log_date: string; completed: boolean;
+  assignment_id?: string | null;
   avg_score: number | null; pages_revised: number | null;
   duration_secs: number | null;
   acknowledged_at?: string | null;
