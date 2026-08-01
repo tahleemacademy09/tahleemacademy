@@ -961,9 +961,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // renegotiates the peer connection.
               simulcast:true,
               videoSimulcastLayers:[
-                {width:320,height:180, encoding:{maxBitrate:150_000, maxFramerate:15}},
-                {width:640,height:360, encoding:{maxBitrate:500_000, maxFramerate:24}},
-                {width:1280,height:720, encoding:{maxBitrate:1_500_000,maxFramerate:30}},
+                {width:320,height:180,resolution:{width:320,height:180,frameRate:15},encoding:{maxBitrate:150_000,maxFramerate:15}},
+                {width:640,height:360,resolution:{width:640,height:360,frameRate:24},encoding:{maxBitrate:500_000,maxFramerate:24}},
+                {width:1280,height:720,resolution:{width:1280,height:720,frameRate:30},encoding:{maxBitrate:1_500_000,maxFramerate:30}},
               ],
             },
             videoCaptureDefaults:{
