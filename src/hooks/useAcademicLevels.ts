@@ -69,17 +69,22 @@ export function useAcademicLevels() {
     gcTime: 30 * 60 * 1000,
   });
 
-  useEffect(() => {
-    const ch = supabase
-      .channel("academic_levels_realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "academic_levels" },
-        () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [qc]);
+  // Socket is only held open while the tab is visible — an always-on Realtime
+  // connection makes Android evict the backgrounded tab, which looks like a
+  // full page reload on return. Rebuild + invalidate on resume instead.
+  useVisibleRealtime(
+    () =>
+      supabase
+        .channel("academic_levels_realtime")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "academic_levels" },
+          () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
+        )
+        .subscribe(),
+    [qc],
+    () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
+  );
 
   return query;
 }
@@ -94,17 +99,19 @@ export function useAllAcademicLevels() {
     staleTime: 60 * 1000,
   });
 
-  useEffect(() => {
-    const ch = supabase
-      .channel("academic_levels_admin_realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "academic_levels" },
-        () => qc.invalidateQueries({ queryKey: ["academic_levels"] }),
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [qc]);
+  useVisibleRealtime(
+    () =>
+      supabase
+        .channel("academic_levels_admin_realtime")
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "academic_levels" },
+          () => qc.invalidateQueries({ queryKey: ["academic_levels"] }),
+        )
+        .subscribe(),
+    [qc],
+    () => qc.invalidateQueries({ queryKey: ["academic_levels"] }),
+  );
 
   return query;
 }
