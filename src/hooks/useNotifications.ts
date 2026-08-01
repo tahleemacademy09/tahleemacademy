@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useVisibleRealtime } from "@/hooks/useVisibleRealtime";
 
 export type AppNotification = {
   id: string;
