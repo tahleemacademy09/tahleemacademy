@@ -397,11 +397,16 @@ const StudentDashboard = () => {
   }, [effectiveUserId]);
 
   // ── Realtime notifications — live updates ─────────
-  useEffect(() => {
-    if (!effectiveUserId) return;
-    const channel = supabase
-      .channel('student-notifications')
-      .on(
+  // Realtime socket kept open ONLY while the tab is visible. A backgrounded tab
+  // holding an open WebSocket is what makes Android evict it outright, which on
+  // return looks exactly like a full page reload (students only — the staff
+  // dashboards don't stack several of these sockets).
+  useVisibleRealtime(
+    () => {
+      if (!effectiveUserId) return null;
+      return supabase
+        .channel('student-notifications')
+        .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${effectiveUserId}` },
         (payload) => {
@@ -418,14 +423,17 @@ const StudentDashboard = () => {
           }
         }
       )
-      .subscribe();
+        .subscribe();
+    },
+    [effectiveUserId],
+  );
 
+  useEffect(() => {
+    if (!effectiveUserId) return;
     // Request notification permission
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
-
-    return () => { supabase.removeChannel(channel); };
   }, [effectiveUserId]);
 
   const calendarYear = calendarMonth.getFullYear();
