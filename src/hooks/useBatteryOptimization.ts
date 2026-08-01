@@ -27,10 +27,12 @@ const STORAGE_KEY = "tahleem_battery_opt_prompted_v1";
 // actually resolved on Android native, where it must be present anyway.
 async function loadDontKillMyApp() {
   try {
-    const mod = await import(
-      /* @vite-ignore */ "@squareetlabs/capacitor-dont-kill-my-app"
-    );
-    return mod.DontKillMyApp;
+    // Built at runtime so neither Vite (dev) nor Rollup (build) tries to
+    // statically resolve this native-only package, which is intentionally
+    // not present in package.json.
+    const spec = ["@squareetlabs", "capacitor-dont-kill-my-app"].join("/");
+    const mod: any = await import(/* @vite-ignore */ spec);
+    return mod.DontKillMyApp ?? mod.default?.DontKillMyApp ?? null;
   } catch (e) {
     logger.warn("[BatteryOptimization] plugin unavailable:", e);
     return null;
