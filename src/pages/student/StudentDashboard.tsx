@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
+import { useVisibleRealtime } from "@/hooks/useVisibleRealtime";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Clock, BookOpen, ClipboardList, Bell, TrendingUp, Calendar,
