@@ -205,7 +205,8 @@ export default function NotificationManagement() {
         const { data } = await supabase.from("profiles").select("user_id");
         userIds = (data ?? []).map((u: any) => u.user_id);
       } else {
-        const { data } = await supabase.from("user_roles").select("user_id").eq("role", audience);
+        const role = audience as "admin" | "student" | "teacher";
+        const { data } = await supabase.from("user_roles").select("user_id").eq("role", role);
         userIds = (data ?? []).map((u: any) => u.user_id);
       }
 

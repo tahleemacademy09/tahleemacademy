@@ -367,7 +367,7 @@ const ClassControls = ({
   // ── Google-Meet-style extras ──────────────────────────────────────────
   const [captionsOn,    setCaptionsOn]    = useState(false);
   const [blurOn,        setBlurOn]        = useState(false);
-  const captionsRef = useRef<SpeechRecognition | null>(null);
+  const captionsRef = useRef<any>(null);
   const [captions, setCaptions] = useState("");
 
   // ── Other UI state ────────────────────────────────────────────────────

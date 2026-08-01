@@ -171,7 +171,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   const countOneRepRef     = useRef<() => void>(() => {});
   const pendingRestoreRef  = useRef<Saved | null>(null);
   const repsPerVerseRef    = useRef<number>(5);
-  const verseRefs          = useRef<Record<number, HTMLDivElement | null>>({});
+  const verseRefs          = useRef<Record<number, HTMLSpanElement | null>>({});
 
   /* ══════════════════════════════════════════════════════════════════════
    * STREAMING TRANSCRIPTION
@@ -495,7 +495,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
       // ── Persist session to DB ─────────────────────────────────────────
       supabase.auth.getUser().then(({ data }) => {
         if (!data?.user) return;
-        const surah = SURAHS.find(s => s.number === surahNum);
+        const surah = SURAHS[surahNum - 1];
         const versesCount = sessionAyahsRef.current.length;
         const totalReps   = stepsRef.current.reduce((a, s) => a + s.reps, 0);
         // Estimate score as completion rate (they reached the end = 100)

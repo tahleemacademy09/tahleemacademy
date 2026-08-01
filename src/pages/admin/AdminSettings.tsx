@@ -276,7 +276,6 @@ export default function AdminSettings() {
             icon: "/icons/icon-192x192.png",
             badge: "/icons/icon-96x96.png",
             tag: "push-enabled-confirm",
-            vibrate: [200, 100, 200],
           });
         } catch {}
         toast({ title: "✅ Push notifications enabled!" });

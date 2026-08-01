@@ -104,6 +104,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { signOut, profile } = useAuth();
   const { currentStep } = useTasjeel();
   const location = useLocation();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 

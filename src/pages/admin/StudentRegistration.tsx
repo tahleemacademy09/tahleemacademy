@@ -188,7 +188,7 @@ const VirtualSessionPanel = ({ s, onRefresh }: { s: any; onRefresh: () => void }
   const [accepting, setAccepting] = useState(false);
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [tasjeelSubject, setTasjeelSubject] = useState<any>(null);
-  const { levels } = useAcademicLevels();
+  const { data: levels = [] } = useAcademicLevels();
 
   const rec      = s.recitation || {};
   const prof     = s.profiles   || {};
@@ -795,7 +795,7 @@ const FlowSettings = () => {
             <p style={{ fontWeight: 700, fontSize: 12, color: G, margin: "0 0 2px" }}>Platform: Tahleem Academy LiveKit</p>
             <p style={{ fontSize: 11, color: "#6B7280", margin: 0 }}>Virtual evaluations are conducted directly inside the app via LiveKit rooms. A dedicated Tasjeel room is created per student from the Pipeline tab.</p>
           </div>
-          <SettingRow label="Auto-notify on Session Confirm" sub="Push notification when admin approves session" checked={!!draft.notify_on_session_confirm ?? true} onChange={(v: boolean) => set({ notify_on_session_confirm: v })} />
+          <SettingRow label="Auto-notify on Session Confirm" sub="Push notification when admin approves session" checked={draft.notify_on_session_confirm ?? true} onChange={(v: boolean) => set({ notify_on_session_confirm: v })} />
           <div style={{ marginTop: 10 }}>
             <label style={{ fontSize: 11, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 4 }}>INSTRUCTIONS FOR STUDENT</label>
             <textarea rows={3} value={draft.virtual_session_instructions || ""} onChange={e => set({ virtual_session_instructions: e.target.value })}
@@ -808,10 +808,10 @@ const FlowSettings = () => {
       <Grp>
         <GrpHead icon={Bell} title="Notification Triggers" />
         <GrpBody>
-          <SettingRow label="New Registration Alert"   sub="Notify admin when a new student signs up"         checked={!!draft.notify_admin_new_reg ?? true}  onChange={(v: boolean) => set({ notify_admin_new_reg: v })} />
-          <SettingRow label="Payment Received Alert"   sub="Notify admin when payment is confirmed"           checked={!!draft.notify_admin_payment ?? true}  onChange={(v: boolean) => set({ notify_admin_payment: v })} />
-          <SettingRow label="Exam Submitted Alert"     sub="Notify admin when student completes exam"         checked={!!draft.notify_admin_exam ?? true}     onChange={(v: boolean) => set({ notify_admin_exam: v })} />
-          <SettingRow label="Level Assigned Notif."    sub="Notify student when placed in a level"            checked={!!draft.notify_student_level ?? true}  onChange={(v: boolean) => set({ notify_student_level: v })} />
+          <SettingRow label="New Registration Alert"   sub="Notify admin when a new student signs up"         checked={draft.notify_admin_new_reg ?? true}  onChange={(v: boolean) => set({ notify_admin_new_reg: v })} />
+          <SettingRow label="Payment Received Alert"   sub="Notify admin when payment is confirmed"           checked={draft.notify_admin_payment ?? true}  onChange={(v: boolean) => set({ notify_admin_payment: v })} />
+          <SettingRow label="Exam Submitted Alert"     sub="Notify admin when student completes exam"         checked={draft.notify_admin_exam ?? true}     onChange={(v: boolean) => set({ notify_admin_exam: v })} />
+          <SettingRow label="Level Assigned Notif."    sub="Notify student when placed in a level"            checked={draft.notify_student_level ?? true}  onChange={(v: boolean) => set({ notify_student_level: v })} />
         </GrpBody>
       </Grp>
 

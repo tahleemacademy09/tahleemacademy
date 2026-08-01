@@ -384,6 +384,7 @@ export default function QuranRevisionHub({ userId }: Props) {
   const [recording, setRecording]   = useState(false);
   const [recTime, setRecTime]       = useState(0);
   const [pageVisible, setPageVisible] = useState(true); // hides when recording
+  const [, setAudioPath] = useState<string | null>(null);
   const mediaRecRef   = useRef<MediaRecorder | null>(null);
   const recChunksRef  = useRef<Blob[]>([]);
   const recTimerRef   = useRef<any>(null);
@@ -1217,7 +1218,7 @@ export default function QuranRevisionHub({ userId }: Props) {
     setExResult(null);
     try {
       const q = exercises[exIdx];
-      const transcript = await transcribeAudio(blob, q?.missingText ?? q?.promptText);
+      const transcript = await transcribeAudio(blob, q?.missingText ?? "");
       if (!q) { setExEvaluating(false); return; }
 
       let score = 0;

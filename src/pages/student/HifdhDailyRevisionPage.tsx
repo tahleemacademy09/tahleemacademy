@@ -138,6 +138,7 @@ interface DailyLog {
     audio_url?: string | null;
     recitation_score?: number; test_score?: number;
     pages_done?: number[];
+    teacher_override?: any;
   };
 }
 interface AyahWord { text: string; line_number: number; }
@@ -2062,7 +2063,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
 
   const retryPage = () => {
     setRetryMsg(RETRY_MSGS[retryCount%RETRY_MSGS.length]);
-    setScore(null); setRetryCount(c=>c+1); setRecSecs(0); setRevealedWordCount(0); setPhase("reading");
+    setScore(null); setRetryCount(c=>c+1); setRecSecs(0); setPhase("reading");
   };
 
   const pickAnswer=(i:number)=>{ const a=[...answers]; a[qIdx]=i; setAnswers(a); };

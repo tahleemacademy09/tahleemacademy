@@ -145,7 +145,7 @@ const LiveClassManagement = () => {
     subject_id:"", topic:"", topic_ar:"", scheduled_at:"",
     duration_minutes:60, recording_enabled:true, chat_enabled:true,
     hand_raise_enabled:true, waiting_room_enabled:true,
-    homework:"", homework_ar:"",
+    homework:"", homework_ar:"", quiz_code:"",
   });
 
   useEffect(() => { const iv = setInterval(()=>setNow(new Date()),10000); return ()=>clearInterval(iv); },[]);
