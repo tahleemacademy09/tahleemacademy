@@ -1,8 +1,8 @@
 // src/components/ErrorBoundary.tsx
 // Fixed:
 // • ChunkLoadError (Vite lazy chunk 404 after Vercel redeploy) → auto-reloads silently
-// • ANY React runtime error → auto-reloads once silently (e.g. React error #310)
-// • Second error after reload → shows friendly UI with Reload button
+// • ChunkLoadError after a deployment → auto-reloads once silently
+// • Runtime errors never hard-reload the active page; they show the error UI
 // • Prevents reload loop: per-error key in sessionStorage so each unique error only
 //   triggers one auto-reload. Clears automatically after 60 s.
 
@@ -114,7 +114,12 @@ export class ErrorBoundary extends React.Component<
     const alreadyReloaded = sessionStorage.getItem(key);
     const recentReloads = getRecentReloadCount();
 
-    if (!alreadyReloaded && recentReloads < MAX_AUTO_RELOADS) {
+    // A hard reload is a valid recovery only for a stale lazy-loaded chunk
+    // after deployment. Reloading for an ordinary React error destroys page
+    // state and, on Android resume, was perceived as the student page
+    // remounting. Runtime failures now stop at the boundary so the current URL
+    // and saved state remain intact and the underlying error stays observable.
+    if (isChunkError(error) && !alreadyReloaded && recentReloads < MAX_AUTO_RELOADS) {
       sessionStorage.setItem(key, Date.now().toString());
       bumpRecentReloadCount();
       setTimeout(() => sessionStorage.removeItem(key), 60_000);
@@ -123,7 +128,7 @@ export class ErrorBoundary extends React.Component<
       return;
     }
 
-    if (recentReloads >= MAX_AUTO_RELOADS) {
+    if (isChunkError(error) && recentReloads >= MAX_AUTO_RELOADS) {
       console.error(
         "[ErrorBoundary] Hit MAX_AUTO_RELOADS — stopping auto-reload loop and " +
         "showing the persistent error screen. This means the SAME crash kept " +
@@ -152,7 +157,7 @@ export class ErrorBoundary extends React.Component<
 
     // Show spinner while auto-reload is in progress (never in debug mode —
     // we want the error screen with full details immediately).
-    if (!debugMode && (didAutoReload || !sessionStorage.getItem(errorKey(error)))) {
+    if (!debugMode && didAutoReload) {
       return (
         <div style={{
           display: "flex", flexDirection: "column", alignItems: "center",

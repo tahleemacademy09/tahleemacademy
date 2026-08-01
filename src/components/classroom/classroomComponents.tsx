@@ -3866,7 +3866,7 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
         }else{
           setRecording(false);
         }
-      }).catch(()=>{});
+       },()=>{});
     return()=>{cancelled=true;};
   },[sessionId]);
 

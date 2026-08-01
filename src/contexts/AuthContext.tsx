@@ -105,10 +105,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // onAuthStateChange's existing TOKEN_REFRESHED branch (below) already handles the
   // resulting session update silently.
   useEffect(() => {
+    let wakeInFlight = false;
+    let lastWakeCheckAt = 0;
+
     const wakeSession = () => {
-      supabase.auth.getSession().catch((err) => {
-        console.warn("[AuthContext] resume session check failed:", err);
-      });
+      // Android emits visibilitychange, focus, pageshow and Capacitor resume
+      // together for one foreground transition. Calling getSession for every
+      // signal can start several concurrent refreshes and emit several auth
+      // events, making student-only guards appear to remount. Collapse the
+      // burst into one non-blocking check.
+      const now = Date.now();
+      if (wakeInFlight || now - lastWakeCheckAt < 2_000) return;
+      wakeInFlight = true;
+      lastWakeCheckAt = now;
+      supabase.auth.getSession()
+        .catch((err) => {
+          console.warn("[AuthContext] resume session check failed:", err);
+        })
+        .finally(() => { wakeInFlight = false; });
     };
     const onVis = () => { if (document.visibilityState === "visible") wakeSession(); };
     document.addEventListener("visibilitychange", onVis);
@@ -217,9 +231,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // re-fetch. Setting loading=true here causes ProtectedRoute to render the
       // full-page spinner every single time the user switches back to the app.
       if (_event === "TOKEN_REFRESHED") {
-        // Only update the session/user objects — no spinner, no DB fetch.
+        // Keep the existing User object identity when the account did not
+        // change. Numerous student hooks consume `user`; replacing it merely
+        // because the access token rotated used to restart their effects and
+        // looked like a page remount after returning from the background.
         setSession(sess);
-        setUser(sess?.user ?? null);
+        setUser((current) => {
+          const next = sess?.user ?? null;
+          return current?.id === next?.id ? current : next;
+        });
         return;
       }
 

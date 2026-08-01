@@ -119,6 +119,13 @@ const Toggle = ({ on, onToggle, label }: { on: boolean; onToggle: () => void; la
 const StudentCard = ({ s, onRefresh }: { s: any; onRefresh: () => void }) => {
   const { toast } = useToast();
   const navigate  = useNavigate();
+  const { data: academicLevels = [] } = useAcademicLevels();
+  const levelFromPct = (pct: number): string => {
+    if (!academicLevels.length) return pct >= 70 ? "advanced" : pct >= 40 ? "intermediate" : "beginner";
+    if (pct >= 70) return academicLevels[academicLevels.length - 1]?.slug || "advanced";
+    if (pct >= 40) return academicLevels[Math.floor(academicLevels.length / 2)]?.slug || "intermediate";
+    return academicLevels[0]?.slug || "beginner";
+  };
   const [open, setOpen]           = useState(false);
   const [selLevel, setSelLevel]   = useState("");
   const [assigning, setAssigning] = useState(false);

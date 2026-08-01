@@ -30,6 +30,7 @@ const GM   = "#075E54";
 const GOLD = "#C9A84C";
 type MatType = "PDF"|"Video"|"Audio"|"Link"|"Text"|"Image"|"Document";
 type SortKey = "sort_order"|"title_asc"|"title_desc"|"level";
+type Level = string;
 type ContentTab = "syllabus"|"materials"|"lessons";
 
 const MATERIAL_TYPES: MatType[] = ["PDF","Video","Audio","Link","Text","Image","Document"];

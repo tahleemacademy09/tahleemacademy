@@ -1255,7 +1255,7 @@ export default function QuranRevisionHub({ userId, autoStart = false }: Props) {
     setExResult(null);
     try {
       const q = exercises[exIdx];
-      const transcript = await transcribeAudio(blob, q?.missingText ?? q?.promptText);
+      const transcript = await transcribeAudio(blob, q?.missingText ?? "");
       if (!q) { setExEvaluating(false); return; }
 
       let score = 0;

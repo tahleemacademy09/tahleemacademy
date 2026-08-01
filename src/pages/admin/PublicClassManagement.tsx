@@ -250,7 +250,7 @@ const PublicClassManagement = () => {
       allow_guest_camera: form.allow_guest_camera, allow_guest_mic: form.allow_guest_mic,
       chat_enabled: form.chat_enabled, raise_hand_enabled: form.raise_hand_enabled,
       recording_enabled: form.recording_enabled, is_featured: form.is_featured,
-    });
+    } as any);
     setSaving(false);
     if (error) { toast.error(error.message); return; }
     toast.success("Class created!");
@@ -384,7 +384,7 @@ const PublicClassManagement = () => {
       is_featured:  false,
       status:       "scheduled",
       scheduled_at: null,
-    });
+    } as any);
     if (error) { toast.error("Duplicate failed"); return; }
     toast.success("Class duplicated — edit it to set a new date");
     setMoreMenu(null);

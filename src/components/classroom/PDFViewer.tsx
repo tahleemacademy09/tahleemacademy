@@ -64,7 +64,8 @@ async function stashBytes(url: string, data: Uint8Array | ArrayBuffer) {
   if (!("caches" in window)) return;
   try {
     const cache = await caches.open(OFFLINE_CACHE_NAME);
-    await cache.put(url, new Response(data, { headers: { "Content-Type": "application/pdf" } }));
+    const body = data instanceof ArrayBuffer ? data : data.slice().buffer;
+    await cache.put(url, new Response(body, { headers: { "Content-Type": "application/pdf" } }));
   } catch { /* quota / unsupported — just means next open re-streams, still works */ }
 }
 
