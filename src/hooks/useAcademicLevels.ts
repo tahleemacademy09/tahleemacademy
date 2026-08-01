@@ -14,9 +14,9 @@
     compares `profile.level === 'beginner'` continues to work unchanged.
   • The new `tamhidi` slug is purely additive.
 */
-import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useVisibleRealtime } from "@/hooks/useVisibleRealtime";
 
 export interface AcademicLevel {
   id: string;
