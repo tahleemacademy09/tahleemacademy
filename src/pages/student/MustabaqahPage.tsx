@@ -479,6 +479,52 @@ const LiveVideoGrid = ({
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants   = useRemoteParticipants();
 
+  // ── Draggable PiP tile stack ────────────────────────────────────────
+  // The overlay tile stack (top-right by default) can otherwise sit on top
+  // of other UI. Let the viewer drag it anywhere within the video area;
+  // position is per-viewer only (not synced) and resets on remount.
+  const pipContainerRef = useRef<HTMLDivElement>(null);
+  const [pipOffset, setPipOffset] = useState({ x: 0, y: 0 });
+  const pipDrag = useRef<{ startX:number; startY:number; origX:number; origY:number; moved:boolean } | null>(null);
+
+  const onPipPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+    pipDrag.current = { startX: e.clientX, startY: e.clientY, origX: pipOffset.x, origY: pipOffset.y, moved: false };
+  };
+  const onPipPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = pipDrag.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (!d.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) d.moved = true;
+    if (!d.moved) return;
+    const el = pipContainerRef.current;
+    const parent = el?.parentElement;
+    let nx = d.origX + dx, ny = d.origY + dy;
+    if (el && parent) {
+      // offsetLeft/Top reflect the resting (untransformed) position, so we
+      // can clamp the translate so the tile stack never leaves the video area.
+      const minX = -el.offsetLeft, maxX = parent.clientWidth - el.offsetLeft - el.offsetWidth;
+      const minY = -el.offsetTop,  maxY = parent.clientHeight - el.offsetTop - el.offsetHeight;
+      nx = Math.min(maxX, Math.max(minX, nx));
+      ny = Math.min(maxY, Math.max(minY, ny));
+    }
+    setPipOffset({ x: nx, y: ny });
+  };
+  const onPipPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = pipDrag.current;
+    if (d?.moved) {
+      // Swallow the click that would otherwise fire on the tile underneath
+      // the pointer (would swap the pinned feed right after a drag).
+      const el = pipContainerRef.current;
+      if (el) {
+        const suppress = (ev: Event) => { ev.stopPropagation(); ev.preventDefault(); el.removeEventListener("click", suppress, true); };
+        el.addEventListener("click", suppress, true);
+      }
+    }
+    pipDrag.current = null;
+  };
+
   const getMeta = (p:any) => { try { return JSON.parse(p?.metadata||"{}"); } catch { return {}; } };
   const localMeta  = getMeta(localParticipant);
   const iAmJudge   = localMeta.role === "judge";
@@ -557,13 +603,25 @@ const LiveVideoGrid = ({
         )}
       </div>
 
-      {/* ── Switchable overlay tiles — every other judge + the active participant ── */}
+      {/* ── Switchable overlay tiles — every other judge + the active participant ──
+          Draggable: press-and-drag anywhere on the stack (including the grip
+          at top) to move it out of the way of other controls. */}
       {overlayFeeds.length>0 && (
-        <div style={{position:"absolute",top:8,right:8,display:"flex",flexDirection:"column",gap:6,zIndex:8,maxHeight:"calc(100% - 60px)",overflowY:"auto"}}>
+        <div ref={pipContainerRef}
+          onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove}
+          onPointerUp={onPipPointerUp} onPointerCancel={onPipPointerUp}
+          style={{position:"absolute",top:8,right:8,display:"flex",flexDirection:"column",gap:6,zIndex:8,
+            maxHeight:"calc(100% - 60px)",overflowY:"auto",
+            transform:`translate(${pipOffset.x}px,${pipOffset.y}px)`,
+            touchAction:"none",cursor:"grab"}}>
+          {/* Grip handle — visual affordance that this stack can be dragged */}
+          <div style={{width:76,display:"flex",justifyContent:"center",padding:"2px 0",flexShrink:0}}>
+            <div style={{width:26,height:4,borderRadius:2,background:"rgba(255,255,255,.35)"}}/>
+          </div>
           {overlayFeeds.map(f=>{
             const isMe = f.userId===(localMeta.user_id||"me");
             return (
-              <button key={f.userId} onClick={()=>onPin(f.userId)} style={{width:76,height:100,borderRadius:11,overflow:"hidden",position:"relative",border:`2px solid rgba(201,168,76,.55)`,boxShadow:"0 4px 16px rgba(0,0,0,.6)",background:"#111",padding:0,cursor:"pointer"}}>
+              <button key={f.userId} onClick={()=>onPin(f.userId)} style={{width:76,height:100,borderRadius:11,overflow:"hidden",position:"relative",border:`2px solid rgba(201,168,76,.55)`,boxShadow:"0 4px 16px rgba(0,0,0,.6)",background:"#111",padding:0,cursor:"pointer",touchAction:"none"}}>
                 {renderTile(f,isMe)}
                 <div style={{position:"absolute",bottom:0,left:0,right:0,background:"linear-gradient(to top,rgba(0,0,0,.85),transparent)",padding:"10px 3px 3px",textAlign:"center"}}>
                   <span style={{color:"rgba(255,255,255,.75)",fontSize:8,fontWeight:700}}>{isMe?"YOU":f.kind==="judge"?`⚖️ ${f.name.split(" ")[0]}`:`🎙️ ${f.name.split(" ")[0]}`}</span>
@@ -3642,9 +3700,11 @@ export default function MustabaqahPage() {
         {/* Islamic ornament corners */}
         <div style={{position:"absolute",top:0,left:0,fontSize:22,opacity:.18,color:GOLD,lineHeight:1,padding:4,pointerEvents:"none"}}>❁</div>
         <div style={{position:"absolute",top:0,right:0,fontSize:22,opacity:.18,color:GOLD,lineHeight:1,padding:4,pointerEvents:"none",transform:"scaleX(-1)"}}>❁</div>
-        {/* Compact mic/cam overlay — always visible inside LiveKitRoom context */}
+        {/* Compact mic/cam overlay — always visible inside LiveKitRoom context.
+            Bottom-right, clear of the top-right PiP tile stack (which is now
+            also draggable, but this avoids the default overlap entirely). */}
         {withControls&&(
-          <div style={{position:"absolute",top:8,right:8,zIndex:5,pointerEvents:"auto"}}>
+          <div style={{position:"absolute",bottom:8,right:8,zIndex:5,pointerEvents:"auto"}}>
             <div style={{background:"rgba(0,0,0,.65)",backdropFilter:"blur(10px)",borderRadius:10,padding:"4px 6px",display:"flex",gap:4}}>
               <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge}/>
             </div>
