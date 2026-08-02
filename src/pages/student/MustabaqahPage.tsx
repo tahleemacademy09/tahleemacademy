@@ -2372,22 +2372,30 @@ export default function MustabaqahPage() {
     if (!aiPrompt.trim()) { toast({title:"Enter a prompt",variant:"destructive"}); return; }
     setAiGenLoading(true);
     try {
+      const stageKey = String(qSettingsStage);
+      const stageType: "recitation"|"tajweed"|"waqf" = stageTypes[stageKey] || "recitation";
+
+      const basePromptByType: Record<"recitation"|"tajweed"|"waqf", string> = {
+        recitation: `Generate exactly ${aiQCount} concise Quran recitation competition passage assignments. Each item should be on its own line, formatted simply like: "Al-Fatiha full" or "Al-Baqarah 1-5" or "Surah Al-Ikhlas complete". No numbering, no bullets, just one item per line.`,
+        tajweed: `Generate exactly ${aiQCount} Tajweed rule questions for a live Qur'an competition judge to read aloud and mark correct/wrong. Each question should ask the participant to identify or explain a specific tajweed rule (e.g. Idghaam, Ikhfaa, Qalqalah, Madd, Ghunnah, Iqlaab, Noon Sakinah/Tanween rules) as it applies in a specific ayah. Each item on its own line, phrased as a short direct question, e.g. "What tajweed rule applies to the noon sakinah in Surah Al-Baqarah, Ayah 3?". No numbering, no bullets, no answers included — just the question, one per line.`,
+        waqf: `Generate exactly ${aiQCount} Waqf (stopping/pause sign) questions for a live Qur'an competition judge to read aloud and mark correct/wrong. Each question should ask the participant to identify the correct waqf sign, or whether stopping is permitted/preferred/prohibited, at a specific point in a specific ayah. Each item on its own line, phrased as a short direct question, e.g. "Is it permissible to stop after 'ٱلرَّحِيمِ' in Surah Al-Fatiha, Ayah 3?". No numbering, no bullets, no answers included — just the question, one per line.`,
+      };
+
       const { data, error } = await supabase.functions.invoke("tahleem-ai", {
         body: {
           action: "generate",
-          prompt: `Generate exactly ${aiQCount} concise Islamic recitation competition questions or passage assignments for a Quran/Islamic studies competition. Each item should be on its own line, formatted simply like: "Al-Fatiha full" or "Al-Baqarah 1-5" or "Surah Al-Ikhlas complete". No numbering, no bullets, just one item per line. Topic/scope context: ${aiPrompt}`,
+          prompt: `${basePromptByType[stageType]} Topic/scope context: ${aiPrompt}`,
         }
       });
       if (error) throw new Error(error.message);
       const raw = (data?.text || data?.content?.[0]?.text || "") as string;
       if (!raw.trim()) throw new Error("Empty response from AI");
       const lines = raw.split("\n").map((s:string)=>s.replace(/^[\d\-\*\.\)]+\s*/,"").trim()).filter((s:string)=>s.length>3);
-      const stageKey = String(qSettingsStage);
       const existing = (stageQuestions[stageKey]||"").trim();
       const merged = existing ? existing + "\n" + lines.join("\n") : lines.join("\n");
       setStageQuestions(sq=>({...sq, [stageKey]: merged}));
       setQSettingsTab("manual");
-      toast({ title: `✨ Generated ${lines.length} questions for Stage ${qSettingsStage} — review & save` });
+      toast({ title: `✨ Generated ${lines.length} ${stageType} questions for Stage ${qSettingsStage} — review & save` });
     } catch(e:any) {
       // AI failed — offer to auto-fill from scope instead
       toast({
