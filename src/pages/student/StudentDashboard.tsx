@@ -553,7 +553,7 @@ const StudentDashboard = () => {
                     <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.9 }}>{lc.ar}</span>
                   </span>
                 );
-              })}
+              })()}
             </div>
 
             {/* Hijri date — its own centered line */}
