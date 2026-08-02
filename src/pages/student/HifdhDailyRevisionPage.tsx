@@ -2201,14 +2201,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       },{onConflict:"student_id,log_date"});
 
       // Notify admins and assigned teacher
-      const {data:pf}=await supabase.from("profiles").select("full_name,assigned_teacher_id").eq("user_id" as any,userId).maybeSingle();
+      const {data:pf}=await (supabase as any).from("profiles").select("full_name,assigned_teacher_id").eq("user_id",userId).maybeSingle();
       const name=(pf as any)?.full_name||"A student";
       const assignedTeacher=(pf as any)?.assigned_teacher_id;
       const modeLabel=assignment.mode==="juz"?"Juz":assignment.mode==="hizb"?"Hizb":"Surah";
       const items=assignment.selected_items.slice(0,3).join(", ");
       const msg=`${modeLabel} ${items} — Recitation: ${recAvg}% · Test: ${tScore}% · Overall: ${overall}% · ${todayPages.length} page${todayPages.length>1?"s":""} done`;
       const notifBase={title:`📖 ${name} completed Daily Hifdh Revision`,message:msg,type:"hifdh_complete",is_read:false,created_at:new Date().toISOString()};
-      const {data:admins}=await supabase.from("profiles").select("user_id").eq("role","admin" as any);
+      const {data:admins}=await (supabase as any).from("profiles").select("user_id").eq("role","admin");
       const recipients=[...(admins||[]).map((a:any)=>a.user_id)];
       if(assignedTeacher && !recipients.includes(assignedTeacher)) recipients.push(assignedTeacher);
       for(const uid of recipients){
@@ -3891,7 +3891,7 @@ export default function HifdhDailyRevisionPage() {
       setUserId(uid);
 
       const [{data:pf},{data:asgnAll},{data:lgs}] = await Promise.all([
-        supabase.from("profiles").select("full_name").eq("user_id" as any,uid).maybeSingle(),
+        (supabase as any).from("profiles").select("full_name").eq("user_id",uid).maybeSingle(),
         (supabase as any).from("hifdh_daily_assignments")
           .select("*").eq("student_id",uid).eq("active",true).order("created_at",{ascending:true}),
         (supabase as any).from("hifdh_daily_logs")

@@ -711,7 +711,6 @@ const LK_OPTIONS = {
   dynacast: true,
   adaptiveStream: true,
   publishDefaults: {
-    videoSimulcastLayers: [{ width: 640, height: 480, encoding: { maxBitrate: 900_000, maxFramerate: 24 } }],
     dtx: true,
     red: true,
   },

@@ -80,7 +80,7 @@ const SubjectManagement = () => {
   const { data: privateStudents } = useQuery({
     queryKey: ["private-students-list"],
     queryFn: async () => {
-      const { data: types } = await supabase.from("profiles").select("user_id, full_name, full_name_ar, student_id").eq("student_type" as any, "private");
+      const { data: types } = await (supabase as any).from("profiles").select("user_id, full_name, full_name_ar, student_id").eq("student_type", "private");
       return types || [];
     },
   });
