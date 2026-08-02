@@ -299,8 +299,10 @@ export function useTasjeel() {
     let didTimeout = false;
     const timeoutId = setTimeout(() => {
       didTimeout = true;
-      console.warn("[useTasjeel] fetch timed out — showing retry screen");
-      setCurrentStep("timeout");
+      console.warn("[useTasjeel] fetch timed out");
+      // Never replace an already validated completed dashboard just because
+      // the resume-time revalidation is temporarily offline.
+      if (!hasCompletedCache(userId)) setCurrentStep("timeout");
       setLoading(false);
     }, 6000);
 
@@ -320,7 +322,7 @@ export function useTasjeel() {
       }
     } catch {
       if (!didTimeout) {
-        setCurrentStep("timeout");
+        if (!hasCompletedCache(userId)) setCurrentStep("timeout");
       }
     } finally {
       clearTimeout(timeoutId);
