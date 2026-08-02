@@ -917,14 +917,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                 return Math.min(500*Math.pow(1.5,context.retryCount),8_000);
               },
             },
-            // Feature 6: Force TCP TURN relay so the call survives restrictive
-            // school/office WiFi that blocks UDP. LiveKit will still prefer UDP/STUN
-            // when available — this just ensures a fallback is always ready.
-            rtcConfig:{
-              iceTransportPolicy:"all",  // "relay" would force TURN-only; "all" = best effort
-              bundlePolicy:"max-bundle", // fewer ICE candidates = faster connect on slow nets
-              iceCandidatePoolSize:2,    // pre-gather 2 candidates to speed up ICE
-            },
             audioCaptureDefaults:{
               echoCancellation:true,noiseSuppression:true,autoGainControl:true,
               sampleRate:48000,channelCount:1,

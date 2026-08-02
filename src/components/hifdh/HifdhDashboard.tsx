@@ -180,34 +180,34 @@ export default function HifdhDashboard({
 
     Promise.all([
       // ── Revision sessions (written by HifdhRevision) ─────────────────
-      supabase.from("hifdh_revision_sessions")
+      (supabase as any).from("hifdh_revision_sessions")
         .select("page_number,score,duration_seconds,created_at,stage")
         .eq("student_id", userId)
         .order("created_at", { ascending: false })
         .limit(90),
 
       // ── Revision progress (pages completed) ──────────────────────────
-      supabase.from("hifdh_revision_progress")
+      (supabase as any).from("hifdh_revision_progress")
         .select("page_number,completed,best_score,completed_at")
         .eq("user_id", userId)
         .order("completed_at", { ascending: false }),
 
       // ── Memorization sessions (written by HifdhMemorization) ─────────
-      supabase.from("hifdh_memorization_sessions")
+      (supabase as any).from("hifdh_memorization_sessions")
         .select("surah_name,verses_count,score,duration_seconds,created_at")
         .eq("student_id", userId)
         .order("created_at", { ascending: false })
         .limit(90),
 
       // ── Test sessions (written by HifdhTest) ─────────────────────────
-      supabase.from("hifdh_test_sessions")
+      (supabase as any).from("hifdh_test_sessions")
         .select("surah_name,score,duration_seconds,created_at")
         .eq("student_id", userId)
         .order("created_at", { ascending: false })
         .limit(90),
 
       // ── Daily tasks ───────────────────────────────────────────────────
-      supabase.from("hifdh_daily_tasks")
+      (supabase as any).from("hifdh_daily_tasks")
         .select("*")
         .eq("user_id", userId)
         .eq("target_date", new Date().toISOString().split("T")[0])
