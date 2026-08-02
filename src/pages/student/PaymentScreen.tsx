@@ -234,7 +234,7 @@ const EnrollmentPayment = () => {
       .eq("amount", amount)
       .eq("is_active", true)
       .maybeSingle();
-    const planId: string | null = matchedPlan?.id || null;
+    const planId: string | null = (matchedPlan as any)?.id || null;
 
     // Pre-create a pending payment row so the webhook UPDATE can find it
     await supabase.from("payments" as any).insert({
@@ -314,13 +314,14 @@ const EnrollmentPayment = () => {
       .maybeSingle();
 
     if (existingSub) {
-      const extendBase = existingSub.end_date && new Date(existingSub.end_date) > new Date()
-        ? new Date(existingSub.end_date) : new Date();
+      const subscription = existingSub as any;
+      const extendBase = subscription.end_date && new Date(subscription.end_date) > new Date()
+        ? new Date(subscription.end_date) : new Date();
       const extendEnd = new Date(extendBase);
       extendEnd.setMonth(extendEnd.getMonth() + durationMonths);
       await supabase.from("student_subscriptions" as any)
         .update({ end_date: extendEnd.toISOString().split("T")[0], status: "active" })
-        .eq("id", existingSub.id);
+        .eq("id", subscription.id);
     } else {
       await supabase.from("student_subscriptions" as any).insert({
         student_id: user.id,

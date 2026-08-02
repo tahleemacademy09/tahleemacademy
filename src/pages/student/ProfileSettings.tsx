@@ -389,8 +389,8 @@ export default function ProfileSettings() {
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
-    const { error } = await withRetry(() =>
-      supabase.from("profiles").upsert(
+    const { error } = await withRetry(async () =>
+      await supabase.from("profiles").upsert(
         { ...sanitise(form), user_id: user.id, updated_at: new Date().toISOString() },
         { onConflict: "user_id" }
       )
@@ -419,7 +419,6 @@ export default function ProfileSettings() {
             icon: "/icons/icon-192x192.png",
             badge: "/icons/icon-96x96.png",
             tag: "push-enabled-confirm",
-            vibrate: [200, 100, 200],
           });
         } catch {}
         toast({ title: "✅ Push notifications enabled!" });
@@ -517,8 +516,8 @@ export default function ProfileSettings() {
     // push_notifications is browser-state only (controlled by the OS permission),
     // not a DB column — strip it before saving to student_preferences
     const { push_notifications: _skip, ...notifsToSave } = notifs;
-    const { error } = await withRetry(() =>
-      supabase.from("student_preferences" as any)
+    const { error } = await withRetry(async () =>
+      await supabase.from("student_preferences" as any)
         .upsert({ user_id: user.id, ...notifsToSave, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" })
     );
     setSaving(false);
@@ -529,8 +528,8 @@ export default function ProfileSettings() {
   const savePrefs = async () => {
     if (!user) return;
     setSaving(true);
-    const { error } = await withRetry(() =>
-      supabase.from("student_preferences" as any)
+    const { error } = await withRetry(async () =>
+      await supabase.from("student_preferences" as any)
         .upsert({ user_id: user.id, ...prefs, updated_at: new Date().toISOString() } as any, { onConflict: "user_id" })
     );
     setSaving(false);

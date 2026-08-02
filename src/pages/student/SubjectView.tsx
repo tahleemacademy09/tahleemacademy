@@ -432,7 +432,7 @@ const SubjectView = () => {
 
         {/* ═══ TAB 4: Materials ═══ */}
         <TabsContent value="materials" className="mt-4">
-          <SubjectMaterials subjectId={subjectId!} subjectTitle={subject?.name} />
+          <SubjectMaterials subjectId={subjectId!} subjectTitle={subject?.title} />
         </TabsContent>
 
         {/* ═══ TAB: Tasks / Assignments ═══ */}

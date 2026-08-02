@@ -342,7 +342,7 @@ const StudentDashboard = () => {
 
       // ── Filter timetable slots to only what this student should see ────
       // Get student's level and private subject IDs first
-      const privateIds = new Set((privateSubjectsRes?.data || []).map((r: any) => r.subject_id));
+      const privateIds = new Set<string>((privateSubjectsRes?.data || []).map((r: any) => String(r.subject_id)));
       setPrivateSubjectIds(privateIds);
 
       const studentLevel     = (studentProfileData as any)?.level || (displayProfile as any)?.level || null;
@@ -521,7 +521,7 @@ const StudentDashboard = () => {
                 بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ
               </span>
               {/* Level / Type badge */}
-              {(() => {
+              {((): React.ReactNode => {
                 const rawLevel = (displayProfile as any)?.level || (displayProfile as any)?.course_level;
                 if (isPrivateStudent) {
                   const hasAccess = allowGeneralAccess;
