@@ -16,7 +16,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase as typedSupabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -33,6 +33,8 @@ import {
   PhoneCall, List, LayoutGrid, Volume2, Crown, ArrowLeft,
   TimerReset, AlertTriangle, Settings, Wand2, Wifi, WifiOff, Sparkles, Eye, Shuffle,
 } from "lucide-react";
+
+const supabase: any = typedSupabase;
 
 const G    = "#0f2d1f";
 const GM   = "#163d28";
@@ -838,7 +840,6 @@ const LK_OPTIONS = {
   dynacast: true,
   adaptiveStream: true,
   publishDefaults: {
-    videoSimulcastLayers: [{ width: 640, height: 480, encoding: { maxBitrate: 900_000, maxFramerate: 24 } }],
     dtx: true,
     red: true,
   },
@@ -2157,7 +2158,7 @@ export default function MustabaqahPage() {
       } as any).eq("id", currentAttempt.id);
 
       const newStageScores = { ...(activeP.stage_scores || {}), [activeParticipantStage]: total };
-      const newTotal = Object.values(newStageScores).reduce((s: number, v: any) => s + (Number(v) || 0), 0);
+      const newTotal: number = Object.values(newStageScores).reduce<number>((s, v) => s + (Number(v) || 0), 0);
       await supabase.from("musabaqah_participants" as any).update({ stage_scores: newStageScores, total_score: newTotal } as any).eq("id", activeP.id);
       setActiveP(p => p ? { ...p, stage_scores: newStageScores, total_score: newTotal } : p);
       loadAttempts(); loadParticipants();
@@ -2174,7 +2175,7 @@ export default function MustabaqahPage() {
    *  flow above. Recalculates total_score as the sum of all stage scores. */
   const correctRosterStageScore = async (p: Participant, stageNum: number, newScore: number) => {
     const newStageScores = { ...(p.stage_scores || {}), [stageNum]: newScore };
-    const newTotal = Object.values(newStageScores).reduce((s: number, v: any) => s + (Number(v) || 0), 0);
+    const newTotal: number = Object.values(newStageScores).reduce<number>((s, v) => s + (Number(v) || 0), 0);
     await supabase.from("musabaqah_participants" as any).update({ stage_scores: newStageScores, total_score: newTotal } as any).eq("id", p.id);
     setParticipants(ps => ps.map(x => x.id === p.id ? { ...x, stage_scores: newStageScores, total_score: newTotal } : x));
     if (activeP?.id === p.id) setActiveP(a => a ? { ...a, stage_scores: newStageScores, total_score: newTotal } : a);

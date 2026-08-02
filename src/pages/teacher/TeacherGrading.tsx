@@ -241,7 +241,7 @@ const TeacherGrading = () => {
                 </div>
 
                 {/* Media */}
-                {q.media_url && <AdminAudioPlayer url={q.media_url} />}
+                {q.media_url && <AdminAudioPlayer src={q.media_url} />}
 
                 {/* MCQ options */}
                 {isMCQ && opts.length > 0 && (
@@ -271,7 +271,7 @@ const TeacherGrading = () => {
                   <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F9FAFB", border: "1px solid #E5E7EB", marginBottom: 12 }}>
                     <p style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", margin: "0 0 4px" }}>{t("Student's Answer", "إجابة الطالب")}:</p>
                     {q.question_type === "audio" && studentAns.startsWith("http") ? (
-                      <AdminAudioPlayer url={studentAns} />
+                      <AdminAudioPlayer src={studentAns} />
                     ) : (
                       <p style={{ fontSize: 13, color: G, margin: 0, lineHeight: 1.6 }}>{studentAns}</p>
                     )}

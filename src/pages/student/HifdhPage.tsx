@@ -41,7 +41,7 @@ export default function HifdhPage() {
     supabase.auth.getUser().then(async ({ data }) => {
       if (!data?.user) return;
       setUserId(data.user.id);
-      const { data: pf } = await supabase
+      const { data: pf } = await (supabase as any)
         .from("profiles").select("full_name")
         .eq("user_id" as any, data.user.id).maybeSingle();
       if ((pf as any)?.full_name) setStudentName((pf as any).full_name);

@@ -10,6 +10,8 @@ import { Loader2, Save, CheckCircle2, AlertCircle, BookOpen } from "lucide-react
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 
+type Level = string;
+
 const LEVEL_STYLE_STATIC: Record<string, { label: string; labelAr: string; color: string; bg: string }> = {
   beginner:     { label: "Beginner",     labelAr: "مبتدئ",     color: "#16A34A", bg: "#F0FDF4" },
   intermediate: { label: "Intermediate", labelAr: "متوسط",     color: "#2563EB", bg: "#EFF6FF" },

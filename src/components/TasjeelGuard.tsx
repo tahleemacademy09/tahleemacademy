@@ -69,7 +69,7 @@ const TasjeelGuard = ({ children }: TasjeelGuardProps) => {
     });
 
     return () => { cancelled = true; };
-  }, [authLoading, roles, user]);
+  }, [authLoading, roles, user?.id]);
 
   // ── Still loading ──────────────────────────────────────────────────────
   if (authLoading || tasjeelLoading || directRoleLoading) return <Spinner />;

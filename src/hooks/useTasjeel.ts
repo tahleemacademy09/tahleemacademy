@@ -15,6 +15,27 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 
+const COMPLETED_CACHE_PREFIX = "ta_tasjeel_completed:";
+
+function hasCompletedCache(userId: string | null): boolean {
+  if (!userId) return false;
+  try {
+    return localStorage.getItem(`${COMPLETED_CACHE_PREFIX}${userId}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistCompletedCache(userId: string, step: string): void {
+  try {
+    const key = `${COMPLETED_CACHE_PREFIX}${userId}`;
+    if (step === "completed") localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
+  } catch {
+    // Storage can be unavailable in private mode; the live query still works.
+  }
+}
+
 // ── Step → route mapping ───────────────────────────────────────────────────
 // SINGLE SOURCE OF TRUTH. Previously Login.tsx and TasjeelGuard each kept their
 // own copy of this map and they drifted apart (e.g. enrollment/payment pointed
@@ -217,6 +238,7 @@ export function useTasjeel() {
   // This prevents the StudentDashboard gate from firing with currentStep=null.
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [loading,     setLoading]     = useState(true);
+  const cachedCompleted = hasCompletedCache(userId);
 
   const fetchStep = useCallback(async () => {
     // Don't resolve until auth itself has finished initialising
@@ -262,7 +284,10 @@ export function useTasjeel() {
       // Non-fatal — continue to tasjeel_progress check
     }
 
-    setLoading(true);
+    // A completed registration is stable. Preserve the already-authorized
+    // student screen while silently revalidating after an Android WebView
+    // remount instead of replacing it with a full-page spinner.
+    if (!hasCompletedCache(userId)) setLoading(true);
 
     // ── iOS timeout guard ──────────────────────────────────────────────────
     // On iOS, WebKit can stall concurrent connections to the same host.
@@ -274,8 +299,10 @@ export function useTasjeel() {
     let didTimeout = false;
     const timeoutId = setTimeout(() => {
       didTimeout = true;
-      console.warn("[useTasjeel] fetch timed out — showing retry screen");
-      setCurrentStep("timeout");
+      console.warn("[useTasjeel] fetch timed out");
+      // Never replace an already validated completed dashboard just because
+      // the resume-time revalidation is temporarily offline.
+      if (!hasCompletedCache(userId)) setCurrentStep("timeout");
       setLoading(false);
     }, 6000);
 
@@ -291,10 +318,11 @@ export function useTasjeel() {
       const step = await resolveTasjeelStep(userId, user?.email_confirmed_at);
       if (!didTimeout) {
         setCurrentStep(step);
+        persistCompletedCache(userId, step);
       }
     } catch {
       if (!didTimeout) {
-        setCurrentStep("timeout");
+        if (!hasCompletedCache(userId)) setCurrentStep("timeout");
       }
     } finally {
       clearTimeout(timeoutId);
@@ -316,6 +344,7 @@ export function useTasjeel() {
     // (A 400 here usually means an RLS UPDATE policy is missing; see the
     // supabase/migrations note below for the fix.)
     setCurrentStep(nextStep);
+    persistCompletedCache(userId, nextStep);
     try {
       const { error } = await supabase
         .from("tasjeel_progress")
@@ -329,5 +358,10 @@ export function useTasjeel() {
     }
   }, [userId]);
 
-  return { currentStep, loading, refresh: fetchStep, advanceStep };
+  return {
+    currentStep: currentStep ?? (cachedCompleted ? "completed" : null),
+    loading: cachedCompleted ? false : loading,
+    refresh: fetchStep,
+    advanceStep,
+  };
 }

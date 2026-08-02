@@ -24,6 +24,7 @@ import {
 const MATERIAL_TYPES = ["PDF", "Video", "Audio", "Link", "Text", "Image", "Document"] as const;
 
 type MatType = typeof MATERIAL_TYPES[number];
+type Level = string;
 
 // ── Helpers ─────────────────────────────────────────────
 const LEVEL_COLORS_STATIC: Record<string, { bg: string; text: string; border: string; dot: string }> = {

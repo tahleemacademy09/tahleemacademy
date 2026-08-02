@@ -664,7 +664,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
         if(ch.type!=="dm") return ch;
         const {data:members}=await supabase.from("chat_members" as any)
           .select("user_id").eq("channel_id",ch.id);
-        const partnerRow=(members||[]).find((m:any)=>m.user_id!==user!.id);
+        const partnerRow=((members||[]) as any[]).find((m:any)=>m.user_id!==user!.id);
         if(!partnerRow) return ch;
         const partnerId=partnerRow.user_id;
         const {data:partnerProf}=await supabase.from("profiles")
@@ -1614,7 +1614,7 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
                 {icon:<Pin size={16}/>,label:(m as any).is_pinned?"Unpin":"Pin",fn:()=>pinMessage(m)},
                 ...(isMe&&Date.now()-new Date(m.created_at).getTime()<EDIT_WINDOW&&m.content_type==="text"?[{icon:<Edit2 size={16}/>,label:"Edit",fn:()=>{setEditingMsg(m);setInput(m.text||"");setShowMessageMenu(null);inputRef.current?.focus();}}]:[]),
                 {icon:<CheckSquare size={16}/>,label:"Select",fn:()=>{setSelectMode(true);setSelectedIds(new Set([m.id]));setShowMessageMenu(null);}},
-                {icon:<Trash2 size={16}/>,label:"Delete",fn:()=>{setShowMessageMenu(null);setShowDeleteSheet(m.id);}},
+                {icon:<Trash2 size={16}/>,label:"Delete",fn:()=>{setShowMessageMenu(null);setShowDeleteSheet({id:m.id,isOwner:isMe});}},
               ].map((item,i)=>(
                 <button key={i} onClick={item.fn} style={{width:"100%",display:"flex",alignItems:"center",gap:14,padding:"13px 18px",background:"none",border:"none",cursor:"pointer",color:textMain,fontSize:14,borderBottom:`1px solid ${divider}`}}>
                   <span style={{color:WA_GREEN}}>{item.icon}</span>{item.label}

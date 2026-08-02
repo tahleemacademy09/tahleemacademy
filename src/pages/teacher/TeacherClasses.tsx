@@ -64,7 +64,7 @@ function fireNotification(title: string, body: string, tag: string) {
     // Try service worker notification first (works when screen is locked)
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.ready
-        .then(reg => reg.showNotification(title, { body, tag, icon: "/favicon.ico", badge: "/favicon.ico", vibrate: [200, 100, 200] }))
+        .then(reg => reg.showNotification(title, { body, tag, icon: "/favicon.ico", badge: "/favicon.ico" }))
         .catch(() => new Notification(title, { body, tag, icon: "/favicon.ico" }));
     } else {
       new Notification(title, { body, tag, icon: "/favicon.ico" });
@@ -197,7 +197,7 @@ const TeacherClasses = () => {
       .eq("is_active", true)
       .eq("teacher_id", user.id);
     const seenTT = new Set(timetableSlots.map((s: any) => s.id));
-    for (const s of (ttDirect || [])) {
+    for (const s of ((ttDirect || []) as any[])) {
       if (!seenTT.has(s.id)) { seenTT.add(s.id); timetableSlots.push(s); }
     }
 

@@ -368,8 +368,8 @@ export default function HifdhRevisionTracker() {
         const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", userId);
         const subIds = (subs||[]).map((s:any)=>s.id);
         if (subIds.length) {
-          const { data: enr } = await supabase.from("enrollments").select("user_id").in("subject_id", subIds);
-          studentIds = [...new Set((enr||[]).map((e:any)=>e.user_id))];
+          const { data: enr } = await (supabase as any).from("enrollments").select("user_id").in("subject_id", subIds);
+          studentIds = [...new Set<string>((enr||[]).map((e:any)=>String(e.user_id)))];
         }
       }
 

@@ -109,7 +109,7 @@ const PaymentManagement = () => {
     const [pr, plr, sr, subr] = await Promise.all([
       supabase.from("payments" as any).select("*").order("created_at", { ascending:false }),
       supabase.from("payment_plans" as any).select("*").order("amount"),
-      supabase.from("profiles").select("*").eq("role" as any, "student").order("full_name"),
+      (supabase as any).from("profiles").select("*").eq("role", "student").order("full_name"),
       supabase.from("student_subscriptions" as any).select("*"),
     ]);
 

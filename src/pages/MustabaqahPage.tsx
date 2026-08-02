@@ -16,7 +16,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase as typedSupabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -33,6 +33,11 @@ import {
   PhoneCall, List, LayoutGrid, Volume2, Crown, ArrowLeft,
   TimerReset, AlertTriangle, Settings, Wand2, Wifi, WifiOff, Sparkles, Eye, Shuffle,
 } from "lucide-react";
+
+// These extension tables intentionally predate the generated database schema.
+// Keep this page on the centralized client while avoiding invalid relationship
+// inference until the generated schema includes the Musabaqah tables.
+const supabase: any = typedSupabase;
 
 const G    = "#0f2d1f";
 const GM   = "#163d28";
@@ -706,7 +711,6 @@ const LK_OPTIONS = {
   dynacast: true,
   adaptiveStream: true,
   publishDefaults: {
-    videoSimulcastLayers: [{ width: 640, height: 480, encoding: { maxBitrate: 900_000, maxFramerate: 24 } }],
     dtx: true,
     red: true,
   },
