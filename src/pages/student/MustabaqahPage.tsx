@@ -366,18 +366,26 @@ const QueueBoxGrid = ({ boxCount, participants, myParticipantId, canPick, onPick
 
 /** Read-only ordered roster so participants (not just the judge) can see who
  *  else is in the queue and where they stand. */
-const QueueList = ({ list, myId, activeId }: { list:Participant[]; myId:string|null; activeId:string|null }) => (
+const QueueList = ({ list, myId, activeId, micRequests, onMicTap }: { list:Participant[]; myId:string|null; activeId:string|null; micRequests?:Set<string>; onMicTap?:(p:Participant)=>void }) => (
   <div style={{marginTop:10,textAlign:"left"}}>
-    {[...list].sort((a,b)=>a.queue_position-b.queue_position).map(p=>(
+    {[...list].sort((a,b)=>a.queue_position-b.queue_position).map(p=>{
+      const wantsMic = !!micRequests?.has(p.id);
+      return(
       <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:9,marginBottom:4,
-        background: p.id===myId?"rgba(201,168,76,.12)":p.id===activeId?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",
-        border: p.id===myId?`1px solid ${GOLD}55`:"1px solid rgba(255,255,255,.05)"}}>
+        background: wantsMic?"rgba(34,197,94,.1)":p.id===myId?"rgba(201,168,76,.12)":p.id===activeId?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",
+        border: wantsMic?`1px solid ${GREEN}66`:p.id===myId?`1px solid ${GOLD}55`:"1px solid rgba(255,255,255,.05)"}}>
         <span style={{color:GOLD,fontWeight:800,fontSize:11,width:22,flexShrink:0}}>#{p.queue_position}</span>
+        {wantsMic && (
+          <button onClick={()=>onMicTap?.(p)} title="Wants to talk" style={{background:"none",border:"none",padding:0,cursor:onMicTap?"pointer":"default",display:"flex",flexShrink:0,animation:"timerPulse 1s ease-in-out infinite"}}>
+            <Mic size={13} color={GREEN}/>
+          </button>
+        )}
         <Avatar name={p.participant_name} size={26}/>
         <span style={{color:"#fff",fontSize:12,fontWeight:p.id===myId?800:600,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}{p.id===myId?" (You)":""}</span>
         <span style={{fontSize:14}}>{STATUS_ICON[p.status]}</span>
       </div>
-    ))}
+      );
+    })}
   </div>
 );
 
@@ -806,6 +814,7 @@ export default function MustabaqahPage() {
   const [judgeCodeInput,  setJudgeCodeInput]  = useState("");
   const [observerNameInput, setObserverNameInput] = useState("");
   const [activeP,        setActiveP]       = useState<Participant|null>(null);
+  const [micRequests,    setMicRequests]   = useState<Set<string>>(new Set()); // participant ids who've raised their hand to talk while waiting
   const [currentAttempt, setCurAttempt]    = useState<Attempt|null>(null);
   const [bellCount,      setBellCount]     = useState(0);
   const [minorCount,     setMinorCount]    = useState(0); // -0.5 each
@@ -1315,6 +1324,25 @@ export default function MustabaqahPage() {
           toast({title:"▶️ Start reciting now!"});
         }
       })
+      .on("broadcast",{event:"CALL_CANCELLED"},({payload}:any)=>{
+        // Judge cancelled a stuck call (e.g. stuck on question picking) to call someone else.
+        loadParticipants();
+        setShowScore(false); setShowTilePicker(false); setTimerExpired(false); setTimerActive(false);
+        setPickedTile(null); setStageTiles([]); setAyahText(null); setPickerParticipantId(null);
+        const mine=myParticipantRef.current;
+        if (mine && payload.participant_id===mine.id) {
+          setMyParticipant(p=>p?{...p,status:"waiting"}:p);
+          if (mine) myParticipantRef.current={...mine,status:"waiting"};
+          toast({title:"Call cancelled",description:"You're back in the waiting queue."});
+        }
+      })
+      .on("broadcast",{event:"MIC_REQUEST"},({payload}:any)=>{
+        setMicRequests(prev=>{
+          const next=new Set(prev);
+          if (payload.requesting) next.add(payload.participant_id); else next.delete(payload.participant_id);
+          return next;
+        });
+      })
       .on("broadcast",{event:"SCORE_SUBMITTED"},({payload}:any)=>{
         loadParticipants(); loadAttempts();
         setShowScore(false); setShowTilePicker(false); setTimerExpired(false);
@@ -1545,6 +1573,42 @@ export default function MustabaqahPage() {
 
     // Re-broadcast after DB write to catch late subscribers
     setTimeout(()=>broadcast("TILES_SHOWN",{tiles,stage:1,picker_participant_id:p.id}), 800);
+  };
+
+  // Judge cancels the current call — used when a participant is stuck (e.g. on
+  // question picking) and the judge needs to free them up and call someone else.
+  // Reverts the called participant back to "waiting" instead of leaving them stuck.
+  const cancelCall = async () => {
+    if (!activeP || !competition) return;
+    const cancelledId = activeP.id;
+    broadcast("CALL_CANCELLED",{participant_id:cancelledId});
+    setActiveP(null); setShowTilePicker(false); setStageTiles([]); setPickedTile(null); setAyahText(null);
+    setShowScore(false); setCurAttempt(null); setTimerActive(false); setTimerExpired(false); setPickerParticipantId(null);
+    await Promise.all([
+      supabase.from("musabaqah_participants" as any).update({status:"waiting"}).eq("id",cancelledId),
+      supabase.from("musabaqah_competitions" as any).update({current_participant_id:null} as any).eq("id",competition.id),
+    ]);
+    loadParticipants();
+  };
+
+  // Waiting participant raises/lowers their hand to ask to speak — surfaced as a
+  // mic icon in front of their name for the judge (and others) to see live.
+  const toggleMicRequest = () => {
+    if (!myParticipant) return;
+    const requesting = !micRequests.has(myParticipant.id);
+    setMicRequests(prev=>{
+      const next=new Set(prev);
+      if (requesting) next.add(myParticipant.id); else next.delete(myParticipant.id);
+      return next;
+    });
+    broadcast("MIC_REQUEST",{participant_id:myParticipant.id, requesting});
+  };
+
+  // Judge taps the mic icon next to a waiting participant's name to acknowledge
+  // and clear their raised-hand request (e.g. after letting them speak briefly).
+  const clearMicRequest = (p:Participant) => {
+    setMicRequests(prev=>{ const next=new Set(prev); next.delete(p.id); return next; });
+    broadcast("MIC_REQUEST",{participant_id:p.id, requesting:false});
   };
 
   const pickTile = (tile:Tile) => {
@@ -4042,6 +4106,9 @@ export default function MustabaqahPage() {
                       const isOnline=onlineUsers.some(u=>u.name===p.participant_name||u.name===p.participant_name.split(" ")[0]);
                       return(
                         <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`,borderRadius:11,padding:"11px 13px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:6,boxShadow:"0 2px 12px rgba(201,168,76,.1)",transition:"all .15s"}}>
+                          {micRequests.has(p.id) && (
+                            <span title="Wants to talk" style={{display:"flex",flexShrink:0,animation:"timerPulse 1s ease-in-out infinite"}}><Mic size={14} color={GREEN}/></span>
+                          )}
                           <div style={{position:"relative",flexShrink:0}}>
                             <Avatar name={p.participant_name} size={34}/>
                             <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:isOnline?GREEN:RED,border:"2px solid #050f08"}}/>
@@ -4081,6 +4148,16 @@ export default function MustabaqahPage() {
                             <Play size={18}/> {countdownValue!==null?`Starting in ${countdownValue}…`:`▶ Start Reciting — ${activeP.participant_name}`}
                           </button>
                         )}
+                      </div>
+                    )}
+                    {/* Stuck on question picking (or unresponsive after being called)?
+                        Let the judge free this slot and call someone else instead of
+                        being stuck waiting on this participant forever. */}
+                    {activeP.status!=="reciting"&&activeP.status!=="completed"&&countdownValue===null&&(
+                      <div style={{padding:"0 9px 9px"}}>
+                        <button onClick={cancelCall} style={{width:"100%",background:"rgba(239,68,68,.08)",color:RED,border:`1px solid ${RED}44`,borderRadius:9,padding:"9px",cursor:"pointer",fontWeight:700,fontSize:11,fontFamily:"Cairo,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:5}}>
+                          <RefreshCw size={12}/> Cancel & Call Someone Else
+                        </button>
                       </div>
                     )}
                   </div>
@@ -4264,6 +4341,11 @@ export default function MustabaqahPage() {
                       return(
                         <div key={p.id} style={{background:isActive?"rgba(201,168,76,.06)":"rgba(255,255,255,.02)",border:`1px solid ${isActive?`${GOLD}33`:"rgba(255,255,255,.05)"}`,borderRadius:8,padding:"7px 9px",display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                           <span style={{color:"rgba(255,255,255,.2)",fontSize:9,width:12,flexShrink:0}}>#{p.queue_position}</span>
+                          {micRequests.has(p.id) && (
+                            <button onClick={()=>clearMicRequest(p)} title="Wants to talk — tap to acknowledge" style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",flexShrink:0,animation:"timerPulse 1s ease-in-out infinite"}}>
+                              <Mic size={12} color={GREEN}/>
+                            </button>
+                          )}
                           <Avatar name={p.participant_name} size={24} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
                           <div style={{flex:1,minWidth:0}}><div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div></div>
                           <span style={{color:STATUS_COLOR[p.status],fontSize:9,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]}</span>
@@ -4279,7 +4361,12 @@ export default function MustabaqahPage() {
                       {participants.filter(p=>p.status!=="pending").map(p=>{
                         const isActive=p.id===activeP?.id;
                         return(
-                          <div key={p.id} style={{background:isActive?`${GOLD}15`:"rgba(255,255,255,.03)",border:`1px solid ${isActive?GOLD:"rgba(255,255,255,.07)"}`,borderRadius:9,padding:"9px 5px",textAlign:"center"}}>
+                          <div key={p.id} style={{background:isActive?`${GOLD}15`:micRequests.has(p.id)?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",border:`1px solid ${isActive?GOLD:micRequests.has(p.id)?`${GREEN}66`:"rgba(255,255,255,.07)"}`,borderRadius:9,padding:"9px 5px",textAlign:"center",position:"relative"}}>
+                            {micRequests.has(p.id) && (
+                              <button onClick={()=>clearMicRequest(p)} title="Wants to talk — tap to acknowledge" style={{position:"absolute",top:4,left:4,background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",animation:"timerPulse 1s ease-in-out infinite"}}>
+                                <Mic size={11} color={GREEN}/>
+                              </button>
+                            )}
                             <Avatar name={p.participant_name} size={28} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
                             <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:9,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
                             <div style={{color:STATUS_COLOR[p.status],fontSize:8,fontWeight:700,marginTop:2}}>{STATUS_ICON[p.status]}</div>
@@ -4330,7 +4417,10 @@ export default function MustabaqahPage() {
                         {pickedTile&&<div style={{color:GOLD,fontSize:11,marginTop:2}}>📖 {pickedTile.label}</div>}
                       </div>
                     )}
-                    <QueueList list={participants.filter(p=>p.status!=="pending")} myId={myParticipant.id} activeId={activeP?.id??null}/>
+                    <button onClick={toggleMicRequest} style={{marginTop:10,width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:micRequests.has(myParticipant.id)?`${GREEN}22`:"rgba(255,255,255,.05)",border:`1.5px solid ${micRequests.has(myParticipant.id)?GREEN:"rgba(255,255,255,.15)"}`,borderRadius:10,padding:"9px",cursor:"pointer",color:micRequests.has(myParticipant.id)?GREEN:"rgba(255,255,255,.55)",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif"}}>
+                      <Mic size={13}/> {micRequests.has(myParticipant.id)?"Requested to Talk — Tap to Cancel":"Request to Talk"}
+                    </button>
+                    <QueueList list={participants.filter(p=>p.status!=="pending")} myId={myParticipant.id} activeId={activeP?.id??null} micRequests={micRequests}/>
                   </>
                 )}
               </div>
