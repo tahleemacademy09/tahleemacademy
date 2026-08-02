@@ -636,7 +636,7 @@ const LiveVideoGrid = ({
 };
 
 /* ── Camera controls — ONLY for judge + active participant ──────── */
-const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boolean }) => {
+const CameraControls = ({ isActive, isJudge, videoAllowed }: { isActive:boolean; isJudge:boolean; videoAllowed:boolean }) => {
   const { localParticipant } = useLocalParticipant();
   const room = useRoomContext();
   const [camOn, setCamOn] = useState(false);
@@ -644,17 +644,25 @@ const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boole
 
   useEffect(() => {
     if (isJudge) {
-      queueMediaOp(room, () => localParticipant.setCameraEnabled(true)).then(()=>setCamOn(true)).catch(()=>{});
       queueMediaOp(room, () => localParticipant.setMicrophoneEnabled(true)).then(()=>setMicOn(true)).catch(()=>{});
+      if (videoAllowed) queueMediaOp(room, () => localParticipant.setCameraEnabled(true)).then(()=>setCamOn(true)).catch(()=>{});
     }
-  }, [isJudge]);
+  }, [isJudge, videoAllowed]);
 
   useEffect(() => {
     if (isActive && !isJudge) {
       queueMediaOp(room, () => localParticipant.setMicrophoneEnabled(true)).then(()=>setMicOn(true)).catch(()=>{});
-      queueMediaOp(room, () => localParticipant.setCameraEnabled(true)).then(()=>setCamOn(true)).catch(()=>{});
+      if (videoAllowed) queueMediaOp(room, () => localParticipant.setCameraEnabled(true)).then(()=>setCamOn(true)).catch(()=>{});
     }
-  }, [isActive, isJudge]);
+  }, [isActive, isJudge, videoAllowed]);
+
+  // If the admin turns video off mid-session while my camera is already on,
+  // switch it off — audio keeps flowing untouched.
+  useEffect(() => {
+    if (!videoAllowed && camOn) {
+      queueMediaOp(room, () => localParticipant.setCameraEnabled(false)).then(()=>setCamOn(false)).catch(()=>{});
+    }
+  }, [videoAllowed]);
 
   return (
     <div style={{display:"flex",gap:6,justifyContent:"center"}}>
@@ -663,11 +671,13 @@ const CameraControls = ({ isActive, isJudge }: { isActive:boolean; isJudge:boole
         {micOn?<Mic size={12}/>:<MicOff size={12}/>}
         <span style={{fontSize:8,lineHeight:1.2}}>{micOn?"On":"Mute"}</span>
       </button>
-      <button onClick={async()=>{ const n=!camOn; await queueMediaOp(room, () => localParticipant.setCameraEnabled(n)); setCamOn(n); }}
-        style={{background:camOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${camOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:8,padding:"4px 8px",cursor:"pointer",color:camOn?GREEN:"rgba(255,255,255,.7)",display:"flex",flexDirection:"column",alignItems:"center",gap:1,fontFamily:"Cairo,sans-serif",fontWeight:700,minWidth:40,transition:"all .2s"}}>
-        {camOn?<Video size={12}/>:<VideoOff size={12}/>}
-        <span style={{fontSize:8,lineHeight:1.2}}>Cam</span>
-      </button>
+      {videoAllowed && (
+        <button onClick={async()=>{ const n=!camOn; await queueMediaOp(room, () => localParticipant.setCameraEnabled(n)); setCamOn(n); }}
+          style={{background:camOn?`${GREEN}22`:"rgba(0,0,0,.6)",border:`1.5px solid ${camOn?GREEN:"rgba(255,255,255,.3)"}`,borderRadius:8,padding:"4px 8px",cursor:"pointer",color:camOn?GREEN:"rgba(255,255,255,.7)",display:"flex",flexDirection:"column",alignItems:"center",gap:1,fontFamily:"Cairo,sans-serif",fontWeight:700,minWidth:40,transition:"all .2s"}}>
+          {camOn?<Video size={12}/>:<VideoOff size={12}/>}
+          <span style={{fontSize:8,lineHeight:1.2}}>Cam</span>
+        </button>
+      )}
     </div>
   );
 };
@@ -1005,7 +1015,6 @@ export default function MustabaqahPage() {
 
   const fetchLkToken = useCallback(async (roomCode:string) => {
     setLkError(""); setVideoDisabled(false);
-    if (competitionRef.current?.scope_config?.video_enabled === false) return; // admin turned video off — don't request camera/mic or a token
     try {
       const {data,error} = await supabase.functions.invoke("musabaqah-livekit-token",{body:{room_code: roomCode}});
       if (error) throw new Error(error.message);
@@ -3706,7 +3715,7 @@ export default function MustabaqahPage() {
         {withControls&&(
           <div style={{position:"absolute",bottom:8,right:8,zIndex:5,pointerEvents:"auto"}}>
             <div style={{background:"rgba(0,0,0,.65)",backdropFilter:"blur(10px)",borderRadius:10,padding:"4px 6px",display:"flex",gap:4}}>
-              <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge}/>
+              <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge} videoAllowed={!adminVideoOff}/>
             </div>
           </div>
         )}
@@ -3719,16 +3728,6 @@ export default function MustabaqahPage() {
       </div>
     );
 
-    // Admin has turned video off for this competition — distinct from a
-    // technical failure, so no Retry button (there's nothing to retry).
-    if (adminVideoOff) return inner(
-      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
-        <div style={{fontSize:40,opacity:.15}}>﷽</div>
-        <span style={{color:"rgba(255,255,255,.25)",fontSize:12}}>Video disabled for this competition</span>
-        {isJudge&&<span style={{color:"rgba(255,255,255,.15)",fontSize:10}}>Tap the video icon in Controls to turn it back on</span>}
-      </div>
-    );
-
     // Fallback: video disabled — no LiveKitRoom, no CameraControls
     if (videoDisabled) return inner(
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
@@ -3738,14 +3737,25 @@ export default function MustabaqahPage() {
     );
 
     // Connected: LiveKitRoom wraps everything — pass withControls=true so
-    // CameraControls renders safely inside the room context
+    // CameraControls renders safely inside the room context. Audio ALWAYS
+    // connects here regardless of the admin video toggle — only the camera
+    // track (video={!adminVideoOff}) and the video grid are gated, so mic
+    // stays fully functional when video is turned off for the competition.
     if (lkConnected && livekitToken && livekitUrl) return (
-      <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={true} options={LK_OPTIONS}>
+      <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={!adminVideoOff} options={LK_OPTIONS}>
         <RoomAudioRenderer/>
         <AudioEnabler onEnabled={()=>setAudioReady(true)}/>
         {inner(
-          <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={true} activePStatus={activeP?.status??null} pinnedUserId={pinnedUserId} onPin={setPinnedUserId}/>,
-          true  // always show mic/cam controls to all connected users
+          adminVideoOff ? (
+            <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
+              <div style={{fontSize:40,opacity:.15}}>﷽</div>
+              <span style={{color:"rgba(255,255,255,.25)",fontSize:12}}>Video disabled for this competition — audio only</span>
+              {isJudge&&<span style={{color:"rgba(255,255,255,.15)",fontSize:10}}>Tap the video icon in Controls to turn it back on</span>}
+            </div>
+          ) : (
+            <LiveVideoGrid activeUserId={activeP?.user_id??null} isJudge={isJudge} isObserver={isObserver} allowControls={true} activePStatus={activeP?.status??null} pinnedUserId={pinnedUserId} onPin={setPinnedUserId}/>
+          ),
+          true  // always show mic (+ cam, when allowed) controls to all connected users
         )}
       </LiveKitRoom>
     );
