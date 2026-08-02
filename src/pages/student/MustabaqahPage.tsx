@@ -2212,6 +2212,21 @@ export default function MustabaqahPage() {
     setView("results");
   };
 
+  // Undo an "End Session for All" — puts the competition back to "active" so
+  // the judge can resume calling/scoring participants. Individual participants'
+  // statuses/scores are untouched (they stay however they were left), only the
+  // competition-level status + results-reveal flags are reverted.
+  const reviveSession = async () => {
+    if (!competition) return;
+    const ok = window.confirm("Reopen this session? It will go live again and the results screen will be hidden until you end it.");
+    if (!ok) return;
+    await supabase.from("musabaqah_competitions" as any).update({ status: "active", results_reveal_active: false, revealed_participant_ids: [] } as any).eq("id", competition.id);
+    setCompetition(c=>c?{...c, status:"active", results_reveal_active:false, revealed_participant_ids:[]}:c);
+    broadcast("SESSION_REVIVED");
+    setView("arena");
+    toast({ title: "Session reopened" });
+  };
+
   // ── Results reveal ceremony (judge only) ───────────────────────────
   // Scores stay hidden from everyone until the judge reveals them, one rank
   // at a time — either sequentially starting from last place, or by tapping
@@ -4576,9 +4591,15 @@ export default function MustabaqahPage() {
                 <button onClick={()=>setView("results")} style={{background:"transparent",color:"rgba(255,255,255,.3)",border:"1px solid rgba(255,255,255,.08)",borderRadius:8,padding:"8px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:11,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
                   <Award size={11}/> View Live Standings
                 </button>
-                <button onClick={terminateSession} style={{background:"rgba(239,68,68,.07)",color:RED,border:`1px solid ${RED}33`,borderRadius:8,padding:"8px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
-                  <StopCircle size={11}/> End Session for All
-                </button>
+                {competition.status==="completed"?(
+                  <button onClick={reviveSession} style={{background:"rgba(34,197,94,.1)",color:GREEN,border:`1px solid ${GREEN}44`,borderRadius:8,padding:"8px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
+                    <Radio size={11}/> Revive Session
+                  </button>
+                ):(
+                  <button onClick={terminateSession} style={{background:"rgba(239,68,68,.07)",color:RED,border:`1px solid ${RED}33`,borderRadius:8,padding:"8px",cursor:"pointer",fontFamily:"Cairo,sans-serif",fontSize:11,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
+                    <StopCircle size={11}/> End Session for All
+                  </button>
+                )}
               </div>
             )}
 
