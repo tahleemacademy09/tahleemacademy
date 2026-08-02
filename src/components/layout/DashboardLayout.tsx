@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTasjeel } from "@/hooks/useTasjeel";
 import { usePaymentAccess } from "@/hooks/usePaymentAccess";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
@@ -23,7 +24,6 @@ import PaymentBanner from "./PaymentBanner";
 import HolidayBanner from "./HolidayBanner";
 import AdminPaymentIndicator from "./AdminPaymentIndicator";
 import ImpersonationBanner from "./ImpersonationBanner";
-import { useClassRing } from "@/hooks/useClassRing";
 
 interface DashboardLayoutProps { role: "student" | "admin"; }
 
@@ -101,18 +101,14 @@ const PaymentLockScreen = () => {
 const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile } = useAuth();
+  const { currentStep } = useTasjeel();
   const location = useLocation();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  // ── Class ring overlay — fires automatically at timetable class time ──────
-  const { ringOverlay } = useClassRing();
-
   // ── Level-pending: lock most features until admin assigns a level ─────────
-  // Mid-registration students are filtered by TasjeelGuard before this layout
-  // mounts, so the layout must not launch a second registration query.
-  const levelPending = false;
+  const levelPending = role === "student" && currentStep !== null && currentStep !== "completed";
 
   // ── Payment-locking: block features when student subscription is locked ──
   const { accessStatus: paymentStatus, isLoading: paymentLoading } = usePaymentAccess();
@@ -537,8 +533,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ height: "100dvh" }}>
-      {/* Ring overlay — full-screen when class starts, null otherwise */}
-      {ringOverlay}
       <aside className="hidden w-60 flex-col bg-sidebar md:flex flex-shrink-0 border-r border-sidebar-border">
         <SidebarContent />
       </aside>
