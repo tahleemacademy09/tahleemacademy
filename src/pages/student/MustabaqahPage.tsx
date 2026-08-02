@@ -781,6 +781,14 @@ export default function MustabaqahPage() {
   const [audioReady,     setAudioReady]    = useState(false);
   const [stageTiles,     setStageTiles]    = useState<Tile[]>([]);
   const [pickedTile,     setPickedTile]    = useState<Tile|null>(null);
+  // Questions (by "surah:ayah" or, for tajweed/waqf template lines, by their
+  // exact text) that a participant has already picked. Tracked across ALL
+  // stages so buildTiles never re-offers the same question to a later
+  // participant, in this stage or any other. Updated both locally (the
+  // picker's own client) and via the QUESTION_PICKED broadcast (every other
+  // client on the channel, including the judge/host who builds each new
+  // participant's tile set).
+  const [usedTileKeys,   setUsedTileKeys]  = useState<Set<string>>(new Set());
   const [showTilePicker, setShowTilePicker]= useState(false);
   const [pickerParticipantId, setPickerParticipantId] = useState<string|null>(null);
   const [ayahText,       setAyahText]      = useState<string|null>(null);
@@ -816,6 +824,7 @@ export default function MustabaqahPage() {
   const [qSettingsStage,   setQSettingsStage]   = useState<number>(1); // which stage's questions are being edited
   const [stageQuestions,   setStageQuestions]   = useState<Record<string,string>>({}); // stageNum -> newline-separated questions
   const [liveCustomQ,      setLiveCustomQ]      = useState("");   // editable custom questions text (all-stages fallback)
+  const [autoFillGuide,    setAutoFillGuide]    = useState("");   // optional keyword to narrow no-AI auto-fill (e.g. a surah name)
   const [aiPrompt,         setAiPrompt]         = useState("");
   const [aiQCount,         setAiQCount]         = useState(10);
   const [aiGenLoading,     setAiGenLoading]     = useState(false);
@@ -1210,6 +1219,7 @@ export default function MustabaqahPage() {
       })
       .on("broadcast",{event:"QUESTION_PICKED"},({payload}:any)=>{
         const tile=payload.tile as Tile; setPickedTile(tile);
+        markTileUsed(tile); // sync exclusion to every client, incl. the host who builds future tile sets
         if (tile?.surah>0) fetchAyah(tile.surah,tile.ayah);
         getACtx().state==="running"?playTilePick():getACtx().resume().then(playTilePick);
       })
@@ -1334,6 +1344,16 @@ export default function MustabaqahPage() {
   /** Parse one line from Q-Settings into a Tile.
    *  Auto-generated lines carry a §surahNum:ayahNum suffix so we can
    *  reconstruct the full Tile (with surah>0) and trigger fetchAyah. */
+  /** Stable identity for a tile/question, used to track what's already been
+   *  picked so it isn't offered again. Verse-based tiles key on surah:ayah;
+   *  free-text (tajweed/waqf template) lines key on their own text. */
+  const tileKey = (t: Tile) => (t.surah > 0 ? `${t.surah}:${t.ayah}` : t.label);
+  const markTileUsed = (t: Tile) => {
+    const key = tileKey(t);
+    if (!key) return;
+    setUsedTileKeys(prev => (prev.has(key) ? prev : new Set(prev).add(key)));
+  };
+
   const parseTileLine = (line: string, num: number): Tile => {
     const match = line.match(/§(\d+):(\d+)$/);
     if (match) {
@@ -1354,40 +1374,54 @@ export default function MustabaqahPage() {
     const count = comp.scope_config?.tiles_per_stage ?? 10;
     const stageKey = String(stageNum ?? comp.current_stage);
 
-    // 1. Prefer per-stage questions from the live editor
+    // 1. Prefer per-stage questions from the live editor. The pool can hold up
+    //    to 30 questions (see autoFillStage); each call here draws only
+    //    `count` of the ones NOT already picked by an earlier participant, so
+    //    the same question never comes up twice across the whole competition.
     const stageLive = stageQuestions[stageKey]?.split("\n").map(s=>s.trim()).filter(Boolean) ?? [];
     const stageDb: string[] = comp.scope_config?.stage_questions?.[stageKey] ?? [];
     const stageSpecific = stageLive.length > 0 ? stageLive : stageDb;
     if (stageSpecific.length > 0) {
-      return Array.from(
-        {length: Math.min(count, stageSpecific.length)},
-        (_, i) => parseTileLine(stageSpecific[i], i + 1)
-      );
+      const parsed = stageSpecific.map((line,i) => parseTileLine(line, i+1));
+      const fresh = parsed.filter(t => !usedTileKeys.has(tileKey(t)));
+      // If every question in the pool has already been used (e.g. more
+      // participants than unique questions), fall back to reusing rather
+      // than showing an empty picker.
+      const source = fresh.length > 0 ? fresh : parsed;
+      const shuffled = [...source].sort(() => Math.random() - 0.5);
+      return shuffled.slice(0, count).map((t, i) => ({ ...t, num: i + 1 }));
     }
 
     // 2. Fall back to flat custom questions (all-stages list, sliced by stage)
     const liveList = liveCustomQ.split("\n").map(s=>s.trim()).filter(Boolean);
     const customs: string[] = liveList.length > 0 ? liveList : (comp.scope_config?.custom_questions ?? []);
     if (customs.length > 0) {
+      const parsed = customs.map((line,i) => parseTileLine(line, i+1));
+      const fresh = parsed.filter(t => !usedTileKeys.has(tileKey(t)));
+      const source = fresh.length > 0 ? fresh : parsed;
       const stageOffset = (comp.current_stage - 1) * count;
-      const slice = customs.slice(stageOffset, stageOffset + count);
-      const effective = slice.length > 0 ? slice : customs.slice(0, count);
-      return Array.from(
-        {length: Math.min(count, effective.length)},
-        (_, i) => parseTileLine(effective[i] ?? genQuestion(comp.scope_type).label, i + 1)
-      );
+      const slice = source.slice(stageOffset, stageOffset + count);
+      const effective = slice.length > 0 ? slice : source.slice(0, count);
+      return effective.slice(0, count).map((t, i) => ({ ...t, num: i + 1 }));
     }
 
     // 3. Fall back to a pre-fetched Juz/Hizb/custom-range pool, else random Quran passages
     const scopePool = comp.scope_config?.scope_pool as ScopeAyah[] | undefined;
     if (scopePool && scopePool.length > 0) {
-      const shuffled = [...scopePool].sort(()=>Math.random()-0.5).slice(0, count);
+      const fresh = scopePool.filter(p => !usedTileKeys.has(`${p.surah}:${p.ayah}`));
+      const source = fresh.length > 0 ? fresh : scopePool;
+      const shuffled = [...source].sort(()=>Math.random()-0.5).slice(0, count);
       return shuffled.map((p,i) => ({
         num:i+1, label:`${p.surahName} — Ayah ${p.ayah}`, labelAr:`سورة ${p.surahAr} — الآية ${p.ayah}`,
         surah:p.surah, ayah:p.ayah, surahName:p.surahName, surahAr:p.surahAr,
       }));
     }
-    return genTiles(comp.scope_type, count);
+    // Retry a handful of times to avoid handing out an already-used random pair
+    let tiles = genTiles(comp.scope_type, count);
+    for (let attempt = 0; attempt < 5 && tiles.some(t => usedTileKeys.has(tileKey(t))); attempt++) {
+      tiles = genTiles(comp.scope_type, count);
+    }
+    return tiles;
   };
 
   // ── JUDGE ACTIONS ────────────────────────────────────────────────
@@ -1433,6 +1467,7 @@ export default function MustabaqahPage() {
 
   const pickTile = (tile:Tile) => {
     setPickedTile(tile);
+    markTileUsed(tile); // don't offer this question again, in this or any stage
     if (tile.surah>0) fetchAyah(tile.surah,tile.ayah);
     playTilePick(); broadcast("QUESTION_PICKED",{tile});
     // Auto-collapse the picker grid after picking so question is front and centre
@@ -2325,47 +2360,95 @@ export default function MustabaqahPage() {
   };
 
   // ── AI question generation ───────────────────────────────────────
-  /** Auto-fill all stages with Quran questions from the competition's scope,
-   *  distributing a unique set of tiles to each stage. No AI needed. */
-  const autoFillAllStages = () => {
+  /** Generic no-AI question banks for Tajweed/Waqf stages. These are rotated
+   *  across a picked ayah reference so admins get a ready-to-review starting
+   *  point without needing the AI Generate tab. They are templates, not
+   *  verified per-ayah tajweed analysis — admins should review before saving. */
+  const TAJWEED_RULE_BANK = [
+    "Idghaam (with Ghunnah)", "Idghaam (without Ghunnah)", "Ikhfa",
+    "Qalqalah", "Madd (natural)", "Madd (necessary)", "Ghunnah",
+    "Iqlaab", "Noon Sakinah / Tanween rule", "Meem Sakinah rule",
+  ];
+  const WAQF_SIGN_BANK = [
+    "Waqf Lazim (compulsory stop)", "Waqf Jaiz (permissible stop)",
+    "Waqf Mamnu' (stopping prohibited)", "Waslu Awla (continuing preferred)",
+    "Saktah (brief pause, no breath)",
+  ];
+
+  /** Auto-fill ONE stage (the currently-selected editing stage) with
+   *  questions from the competition's scope — no AI needed. Branches on the
+   *  stage's type: Recitation gets verse-reference tiles (with a §surah:ayah
+   *  suffix so verse text loads live); Tajweed/Waqf get template questions
+   *  built around a picked ayah, since those stages are graded correct/wrong
+   *  rather than recited. An optional `guide` keyword narrows the ayah pool
+   *  to surahs matching that word (e.g. "Fatiha", "short surahs" → no match
+   *  falls back to the full scope pool). */
+  const AUTOFILL_POOL_SIZE = 30; // each stage's auto-filled question bank holds up to this many
+
+  const autoFillStage = (stageNum: number, guide?: string) => {
     if (!competition) return;
-    const count = competition.scope_config?.tiles_per_stage ?? 10;
-    const total = competition.total_stages;
-    const pool = competition.scope_type === "juz30"
+    const poolSize = Math.min(AUTOFILL_POOL_SIZE, competition.scope_config?.tiles_per_stage
+      ? Math.max(AUTOFILL_POOL_SIZE, competition.scope_config.tiles_per_stage) : AUTOFILL_POOL_SIZE);
+    const stageKey = String(stageNum);
+    const stageType: "recitation"|"tajweed"|"waqf" = stageTypes[stageKey] || "recitation";
+
+    let pool = competition.scope_type === "juz30"
       ? SURAHS.filter(s => s.juz === 30)
       : competition.scope_type === "juz29"
       ? SURAHS.filter(s => s.juz >= 29)
       : SURAHS;
 
-    // Build a large unique pool of {surah, ayah} pairs, shuffled
-    const needed = count * total;
-    const seen = new Set<string>();
-    const pairs: {s: typeof SURAHS[0], a: number}[] = [];
+    const g = (guide || "").trim().toLowerCase();
+    if (g) {
+      const narrowed = pool.filter(s => s.en.toLowerCase().includes(g) || s.ar.includes(guide!.trim()));
+      if (narrowed.length > 0) pool = narrowed;
+    }
 
-    for (let attempt = 0; attempt < needed * 8 && pairs.length < needed; attempt++) {
+    // Don't repeat an ayah that's already used in another stage's live list,
+    // or that a participant has already been asked (tracked in usedTileKeys
+    // across the whole competition).
+    const usedElsewhere = new Set<string>(usedTileKeys);
+    for (let i = 1; i <= competition.total_stages; i++) {
+      if (i === stageNum) continue;
+      (stageQuestions[String(i)] || "").split("\n").forEach(line => {
+        const m = line.match(/§(\d+):(\d+)/);
+        if (m) usedElsewhere.add(`${m[1]}:${m[2]}`);
+      });
+    }
+
+    const seen = new Set<string>(usedElsewhere);
+    const pairs: {s: typeof SURAHS[0], a: number}[] = [];
+    for (let attempt = 0; attempt < poolSize * 20 && pairs.length < poolSize; attempt++) {
       const s = pool[Math.floor(Math.random() * pool.length)];
       const a = Math.floor(Math.random() * s.v) + 1;
       const key = `${s.n}:${a}`;
       if (!seen.has(key)) { seen.add(key); pairs.push({s, a}); }
     }
-    // Pad if scope is too small
-    while (pairs.length < needed) {
+    while (pairs.length < poolSize) { // pad if the (possibly narrowed) scope is too small
       const s = pool[Math.floor(Math.random() * pool.length)];
       const a = Math.floor(Math.random() * s.v) + 1;
       pairs.push({s, a});
     }
 
-    // Format: "Al-'Alaq — Ayah 16 §96:16"
-    // The §surah:ayah suffix is parsed by parseTileLine/buildTiles to produce
-    // a proper Tile with surah>0, which triggers fetchAyah to load the verse text.
-    const questions = pairs.map(({s, a}) => `${s.en} — Ayah ${a} §${s.n}:${a}`);
-
-    const newSQ: Record<string, string> = {};
-    for (let i = 0; i < total; i++) {
-      newSQ[String(i + 1)] = questions.slice(i * count, (i + 1) * count).join("\n");
+    let questions: string[];
+    if (stageType === "recitation") {
+      // §surah:ayah suffix is parsed by parseTileLine/buildTiles to produce a
+      // proper Tile with surah>0, which triggers fetchAyah to load verse text.
+      questions = pairs.map(({s, a}) => `${s.en} — Ayah ${a} §${s.n}:${a}`);
+    } else {
+      // Tajweed/Waqf questions are shown as plain text to the judge (no tile
+      // picker), so we don't append the § suffix here.
+      const bank = stageType === "tajweed" ? TAJWEED_RULE_BANK : WAQF_SIGN_BANK;
+      questions = pairs.map(({s, a}, i) => {
+        const rule = bank[i % bank.length];
+        return stageType === "tajweed"
+          ? `What tajweed rule applies in ${s.en}, Ayah ${a}? (e.g. ${rule})`
+          : `Is stopping permitted at this point in ${s.en}, Ayah ${a}? (${rule})`;
+      });
     }
-    setStageQuestions(newSQ);
-    toast({ title: `✅ ${count} unique verses set for each of ${total} stages — verse text will load during recitation` });
+
+    setStageQuestions(sq => ({ ...sq, [stageKey]: questions.join("\n") }));
+    toast({ title: `✅ ${questions.length} ${stageType} question${questions.length > 1 ? "s" : ""} set for Stage ${stageNum}${g ? ` — guided by "${guide}"` : ""}` });
   };
 
   const generateAIQuestions = async () => {
@@ -2608,7 +2691,7 @@ export default function MustabaqahPage() {
           <div style={{marginBottom:16}}>
             <Label>Tiles per stage</Label>
             <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {[5,8,10,12,15,20].map(n=>(
+              {[5,8,10,12,15,20,25,30].map(n=>(
                 <button key={n} onClick={()=>setForm(f=>({...f,tiles_per_stage:n}))}
                   style={{background:form.tiles_per_stage===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${form.tiles_per_stage===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:10,padding:"8px 16px",cursor:"pointer",color:form.tiles_per_stage===n?GOLD:"rgba(255,255,255,.6)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:13}}>
                   {n}
@@ -3083,16 +3166,25 @@ export default function MustabaqahPage() {
           <div style={{padding:"10px 0 0"}}>
             {qSettingsTab==="manual"&&(
               <>
-                <div style={{background:"rgba(34,197,94,.07)",border:"1px solid rgba(34,197,94,.25)",borderRadius:12,padding:"10px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
-                  <Shuffle size={13} color={GREEN} style={{flexShrink:0}}/>
-                  <div style={{flex:1}}>
-                    <div style={{color:GREEN,fontWeight:700,fontSize:12}}>Fill all stages from Quran scope</div>
-                    <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginTop:1}}>Auto-distributes unique ayahs across all {competition.total_stages} stages from {competition.scope_type}. No AI needed.</div>
+                <div style={{background:"rgba(34,197,94,.07)",border:"1px solid rgba(34,197,94,.25)",borderRadius:12,padding:"10px 13px",marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                    <Shuffle size={13} color={GREEN} style={{flexShrink:0}}/>
+                    <div style={{flex:1}}>
+                      <div style={{color:GREEN,fontWeight:700,fontSize:12}}>Fill Stage {qSettingsStage} from Quran scope</div>
+                      <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginTop:1}}>
+                        {(stageTypes[String(qSettingsStage)]||"recitation")==="recitation"
+                          ? `Picks unique verses from ${competition.scope_type}. No AI needed.`
+                          : `Generates template ${stageTypes[String(qSettingsStage)]} questions from ${competition.scope_type} — review before saving.`}
+                      </div>
+                    </div>
+                    <button onClick={()=>autoFillStage(qSettingsStage, autoFillGuide)}
+                      style={{background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.35)",borderRadius:9,padding:"6px 11px",cursor:"pointer",color:GREEN,fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0,whiteSpace:"nowrap"}}>
+                      Auto-fill
+                    </button>
                   </div>
-                  <button onClick={autoFillAllStages}
-                    style={{background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.35)",borderRadius:9,padding:"6px 11px",cursor:"pointer",color:GREEN,fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0,whiteSpace:"nowrap"}}>
-                    Auto-fill
-                  </button>
+                  <input value={autoFillGuide} onChange={e=>setAutoFillGuide(e.target.value)}
+                    placeholder="Optional: guide with a surah name (e.g. \"Fatiha\") — leave blank for any surah in scope"
+                    style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"7px 10px",color:"#fff",fontSize:11,fontFamily:"Cairo,sans-serif"}}/>
                 </div>
                 <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
                   <strong style={{color:GOLD}}>Stage {qSettingsStage} questions</strong> — one per line.{" "}
@@ -3164,7 +3256,7 @@ export default function MustabaqahPage() {
                 <div style={{marginBottom:14}}>
                   <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Count</div>
                   <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                    {[5,8,10,12,15,20].map(n=>(
+                    {[5,8,10,12,15,20,25,30].map(n=>(
                       <button key={n} onClick={()=>setAiQCount(n)} style={{background:aiQCount===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${aiQCount===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",color:aiQCount===n?GOLD:"rgba(255,255,255,.55)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12}}>{n}</button>
                     ))}
                   </div>
@@ -4277,17 +4369,26 @@ export default function MustabaqahPage() {
             <div style={{flex:1,overflowY:"auto",padding:"10px 14px 0"}}>
               {qSettingsTab==="manual"&&competition&&(
                 <>
-                  {/* Quick-fill banner — one click populates all stages from scope */}
-                  <div style={{background:"rgba(34,197,94,.07)",border:"1px solid rgba(34,197,94,.25)",borderRadius:12,padding:"10px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:10}}>
-                    <Shuffle size={13} color={GREEN} style={{flexShrink:0}}/>
-                    <div style={{flex:1}}>
-                      <div style={{color:GREEN,fontWeight:700,fontSize:12}}>Fill all stages from Quran scope</div>
-                      <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginTop:1}}>Auto-distributes unique ayahs across all {competition.total_stages} stages from {competition.scope_type}. No AI needed.</div>
+                  {/* Quick-fill banner — one click fills the currently-selected stage from scope */}
+                  <div style={{background:"rgba(34,197,94,.07)",border:"1px solid rgba(34,197,94,.25)",borderRadius:12,padding:"10px 13px",marginBottom:12}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                      <Shuffle size={13} color={GREEN} style={{flexShrink:0}}/>
+                      <div style={{flex:1}}>
+                        <div style={{color:GREEN,fontWeight:700,fontSize:12}}>Fill Stage {qSettingsStage} from Quran scope</div>
+                        <div style={{color:"rgba(255,255,255,.35)",fontSize:10,marginTop:1}}>
+                          {(stageTypes[String(qSettingsStage)]||"recitation")==="recitation"
+                            ? `Picks unique verses from ${competition.scope_type}. No AI needed.`
+                            : `Generates template ${stageTypes[String(qSettingsStage)]} questions from ${competition.scope_type} — review before saving.`}
+                        </div>
+                      </div>
+                      <button onClick={()=>autoFillStage(qSettingsStage, autoFillGuide)}
+                        style={{background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.35)",borderRadius:9,padding:"6px 11px",cursor:"pointer",color:GREEN,fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0,whiteSpace:"nowrap"}}>
+                        Auto-fill
+                      </button>
                     </div>
-                    <button onClick={autoFillAllStages}
-                      style={{background:"rgba(34,197,94,.15)",border:"1px solid rgba(34,197,94,.35)",borderRadius:9,padding:"6px 11px",cursor:"pointer",color:GREEN,fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif",flexShrink:0,whiteSpace:"nowrap"}}>
-                      Auto-fill
-                    </button>
+                    <input value={autoFillGuide} onChange={e=>setAutoFillGuide(e.target.value)}
+                      placeholder="Optional: guide with a surah name (e.g. \"Fatiha\") — leave blank for any surah in scope"
+                      style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"7px 10px",color:"#fff",fontSize:11,fontFamily:"Cairo,sans-serif"}}/>
                   </div>
                   <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
                     <strong style={{color:GOLD}}>Stage {qSettingsStage} questions</strong> — one per line.{" "}
@@ -4363,7 +4464,7 @@ export default function MustabaqahPage() {
                   <div style={{marginBottom:14}}>
                     <div style={{color:GOLD,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Count</div>
                     <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                      {[5,8,10,12,15,20].map(n=>(
+                      {[5,8,10,12,15,20,25,30].map(n=>(
                         <button key={n} onClick={()=>setAiQCount(n)} style={{background:aiQCount===n?`${GOLD}22`:"rgba(255,255,255,.06)",border:`1.5px solid ${aiQCount===n?GOLD:"rgba(255,255,255,.15)"}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",color:aiQCount===n?GOLD:"rgba(255,255,255,.55)",fontFamily:"Cairo,sans-serif",fontWeight:700,fontSize:12}}>{n}</button>
                       ))}
                     </div>
