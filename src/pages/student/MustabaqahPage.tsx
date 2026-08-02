@@ -865,7 +865,7 @@ export default function MustabaqahPage() {
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [attempts,     setAttempts]     = useState<Attempt[]>([]);
   const [myParticipant,setMyParticipant]= useState<Participant|null>(null);
-  const [onlineUsers,  setOnlineUsers]  = useState<{name:string;role:string}[]>([]);
+  const [onlineUsers,  setOnlineUsers]  = useState<{name:string;role:string;user_id?:string}[]>([]);
   const [judgeCodes,      setJudgeCodes]      = useState<string[]>([]);
   const [judgeCodeInput,  setJudgeCodeInput]  = useState("");
   const [observerNameInput, setObserverNameInput] = useState("");
@@ -1560,7 +1560,7 @@ export default function MustabaqahPage() {
     ch.on("presence",{event:"sync"},()=>{
       const state=ch.presenceState() as Record<string,any[]>;
       const flat = Object.values(state).flat() as any[];
-      setOnlineUsers(flat.map((u:any)=>({name:u.name||"Guest",role:u.role||"observer"})));
+      setOnlineUsers(flat.map((u:any)=>({name:u.name||"Guest",role:u.role||"observer",user_id:u.user_id as string|undefined})));
       // De-dupe judges by user_id (one judge could have multiple tabs/presence entries)
       const judgeMap = new Map<string,{user_id:string;name:string}>();
       flat.filter((u:any)=>u.role==="judge"&&u.user_id).forEach((u:any)=>judgeMap.set(u.user_id,{user_id:u.user_id,name:u.name||"Judge"}));
@@ -1718,6 +1718,11 @@ export default function MustabaqahPage() {
     broadcast("CALL_CANCELLED",{participant_id:cancelledId});
     setActiveP(null); setShowTilePicker(false); setStageTiles([]); setPickedTile(null); setAyahText(null);
     setShowScore(false); setCurAttempt(null); setTimerActive(false); setTimerExpired(false); setPickerParticipantId(null);
+    // Clear it locally (and in the ref loadParticipants reads from) BEFORE
+    // reloading — otherwise loadParticipants still sees the old
+    // current_participant_id, re-fetches this now-"waiting" participant, and
+    // sets them right back as activeP, silently undoing the cancel.
+    setCompetition(c=>c?{...c,current_participant_id:null}:c);
     await Promise.all([
       supabase.from("musabaqah_participants" as any).update({status:"waiting"}).eq("id",cancelledId),
       supabase.from("musabaqah_competitions" as any).update({current_participant_id:null} as any).eq("id",competition.id),
@@ -1748,6 +1753,19 @@ export default function MustabaqahPage() {
   // Judge taps a live (green) mic icon to force-mute that participant remotely.
   const forceMuteParticipant = (p:Participant) => {
     broadcast("FORCE_MUTE",{participant_id:p.id});
+  };
+
+  // Shared online/offline check used anywhere we show a participant's presence
+  // dot (roster list, call list). Matches by user_id when the participant has
+  // a linked account (reliable — presence tracks the signed-in user's id), and
+  // only falls back to a normalized name comparison for participants without
+  // one (e.g. registered by an admin, no login).
+  const isParticipantOnline = (p:Participant) => {
+    const norm=(s:string)=>s.trim().toLowerCase().replace(/\s+/g," ");
+    return onlineUsers.some(u=>
+      (p.user_id&&u.user_id&&u.user_id===p.user_id) ||
+      (!p.user_id && norm(u.name)===norm(p.participant_name))
+    );
   };
 
   // Shared mic-status icon shown beside every participant's name in the judge's
@@ -2178,6 +2196,7 @@ export default function MustabaqahPage() {
     if (activeP?.id === p.id) {
       setActiveP(null); setShowTilePicker(false); setStageTiles([]); setPickedTile(null); setAyahText(null);
       setShowScore(false); setCurAttempt(null); setTimerActive(false); setTimerExpired(false); setPickerParticipantId(null);
+      setCompetition(c=>c?{...c,current_participant_id:null}:c);
       await supabase.from("musabaqah_competitions" as any).update({ current_participant_id: null } as any).eq("id", competition.id);
     }
     toast({ title: `${p.participant_name} marked as ${status === "completed" ? "Done" : "Waiting"}` });
@@ -4403,7 +4422,7 @@ export default function MustabaqahPage() {
                       </div>
                     </div>
                     {waiting.slice(0,6).map(p=>{
-                      const isOnline=onlineUsers.some(u=>u.name===p.participant_name||u.name===p.participant_name.split(" ")[0]);
+                      const isOnline=isParticipantOnline(p);
                       return(
                         <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`,borderRadius:11,padding:"11px 13px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:6,boxShadow:"0 2px 12px rgba(201,168,76,.1)",transition:"all .15s"}}>
                           {renderMicIcon(p, 14)}
@@ -4605,6 +4624,27 @@ export default function MustabaqahPage() {
 
             {judgeTab==="roster"&&(
               <div>
+                {/* Everyone currently connected to this session — judges,
+                    observers, and participants — regardless of registration
+                    status. The per-row dots below only cover registered
+                    participants, so this fills in the rest (co-judges,
+                    parents/observers watching). */}
+                <div style={{background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.08)",borderRadius:9,padding:"8px 10px",marginBottom:9}}>
+                  <div style={{color:GREEN,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:6,display:"flex",alignItems:"center",gap:4}}>
+                    <Wifi size={10}/> {onlineUsers.length} Online Now
+                  </div>
+                  {onlineUsers.length===0
+                    ? <div style={{color:"rgba(255,255,255,.3)",fontSize:11}}>No one connected right now.</div>
+                    : (
+                      <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                        {onlineUsers.map((u,i)=>(
+                          <span key={i} style={{background:"rgba(34,197,94,.1)",border:`1px solid ${GREEN}33`,borderRadius:20,padding:"3px 9px",fontSize:11,color:"rgba(255,255,255,.75)",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:4}}>
+                            {u.role==="judge"?"⚖️":u.role==="participant"?"🎙️":"👁️"} {u.name}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                </div>
                 {/* Registration status + manual close/reopen (deadline handles the rest automatically) */}
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.08)",borderRadius:9,padding:"8px 10px",marginBottom:9}}>
                   <div style={{minWidth:0}}>
@@ -4673,7 +4713,12 @@ export default function MustabaqahPage() {
                             <span style={{color:"rgba(255,255,255,.2)",fontSize:9,width:12,flexShrink:0}}>#{p.queue_position}</span>
                             {renderMicIcon(p, 12)}
                             <Avatar name={p.participant_name} size={24} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
-                            <div style={{flex:1,minWidth:0}}><div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div></div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
+                              <span style={{color:isParticipantOnline(p)?GREEN:"rgba(255,255,255,.3)",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",gap:2}}>
+                                {isParticipantOnline(p)?<Wifi size={8}/>:<WifiOff size={8}/>}{isParticipantOnline(p)?"Online":"Offline"}
+                              </span>
+                            </div>
                             <span style={{color:STATUS_COLOR[p.status],fontSize:9,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]}</span>
                             {p.total_score>0&&<span style={{color:GOLD,fontWeight:800,fontSize:11,flexShrink:0}}>{p.total_score}</span>}
                             {competition.status==="active"&&p.status==="waiting"&&!activeP&&(
@@ -4734,7 +4779,10 @@ export default function MustabaqahPage() {
                         return(
                           <div key={p.id} style={{background:isActive?`${GOLD}15`:micRequests.has(p.id)?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",border:`1px solid ${isActive?GOLD:micRequests.has(p.id)?`${GREEN}66`:"rgba(255,255,255,.07)"}`,borderRadius:9,padding:"9px 5px",textAlign:"center",position:"relative"}}>
                             <div style={{position:"absolute",top:4,left:4}}>{renderMicIcon(p, 11)}</div>
-                            <Avatar name={p.participant_name} size={28} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
+                            <div style={{position:"relative",display:"inline-block"}}>
+                              <Avatar name={p.participant_name} size={28} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
+                              <div style={{position:"absolute",bottom:0,right:0,width:7,height:7,borderRadius:"50%",background:isParticipantOnline(p)?GREEN:RED,border:"1.5px solid #050f08"}}/>
+                            </div>
                             <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:9,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
                             <div style={{color:STATUS_COLOR[p.status],fontSize:8,fontWeight:700,marginTop:2}}>{STATUS_ICON[p.status]}</div>
                             {p.total_score>0&&<div style={{color:GOLD,fontWeight:900,fontSize:12,marginTop:2}}>{p.total_score}</div>}
