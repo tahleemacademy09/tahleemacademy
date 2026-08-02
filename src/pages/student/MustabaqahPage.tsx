@@ -918,6 +918,10 @@ export default function MustabaqahPage() {
   const isJudge = canJudge && userRole!=="observer" && userRole!=="participant";
   const isObserver = userRole==="observer";
   const iAmParticipantActive = !isJudge && myParticipant && (myParticipant.status==="called"||myParticipant.status==="reciting");
+  // Admin (judge) can turn live video off for the whole competition — everyone
+  // falls back to the audio/no-video placeholder. Defaults to enabled (true)
+  // when the setting has never been touched, so existing competitions are unaffected.
+  const adminVideoOff = competition?.scope_config?.video_enabled === false;
 
   // Countdown timer + elapsed tracker
   useEffect(()=>{
@@ -943,6 +947,7 @@ export default function MustabaqahPage() {
 
   const fetchLkToken = useCallback(async (roomCode:string) => {
     setLkError(""); setVideoDisabled(false);
+    if (competitionRef.current?.scope_config?.video_enabled === false) return; // admin turned video off — don't request camera/mic or a token
     try {
       const {data,error} = await supabase.functions.invoke("musabaqah-livekit-token",{body:{room_code: roomCode}});
       if (error) throw new Error(error.message);
@@ -1098,6 +1103,11 @@ export default function MustabaqahPage() {
         : { num: activeParticipantStage, label: latest.scope_label, labelAr: latest.scope_label_ar, surah: 0, ayah: 0, surahName: "", surahAr: "" };
       setPickedTile(tile);
       setCurAttempt(latest);
+      // Restore exact error counts from the DB — nothing resets to zero on a
+      // refresh or dropped connection mid-recitation.
+      setBellCount(latest.bell_count ?? 0);
+      setMinorCount((latest.score_breakdown as any)?.__minor ?? 0);
+      setMajorCount((latest.score_breakdown as any)?.__major ?? 0);
       if (tile.surah > 0) fetchAyah(tile.surah, tile.ayah);
 
       // Reconstruct the real time remaining from how long ago this attempt began
@@ -1286,6 +1296,11 @@ export default function MustabaqahPage() {
       .on("broadcast",{event:"SETTINGS_UPDATE"},({payload}:any)=>{
         // Push instructions update to all non-judge viewers
         if (payload.instructions!==undefined) setLiveInstructions(payload.instructions);
+      })
+      .on("broadcast",{event:"VIDEO_TOGGLE"},({payload}:any)=>{
+        // Admin flipped the video-on/video-off switch for everyone — reflect
+        // it immediately without waiting for a DB round-trip.
+        setCompetition(c=>c?{...c, scope_config:{...(c.scope_config||{}), video_enabled: payload.enabled}}:c);
       })
       .on("broadcast",{event:"QUEUE_REVEAL_START"},({payload}:any)=>{
         setCompetition(c=>c?{...c, queue_box_count:payload.boxCount??0, queue_reveal_active:true}:c);
@@ -1531,15 +1546,23 @@ export default function MustabaqahPage() {
   // Minor errors (yellow) deduct 0.5, major errors (red) deduct 1 — both configurable per competition.
   const ringError = (severity: "minor"|"major") => {
     const n = bellCount + 1;
+    const nextMinor = severity==="minor" ? minorCount+1 : minorCount;
+    const nextMajor = severity==="major" ? majorCount+1 : majorCount;
     setBellCount(n);
-    if (severity === "minor") setMinorCount(c => c + 1); else setMajorCount(c => c + 1);
+    if (severity === "minor") setMinorCount(nextMinor); else setMajorCount(nextMajor);
     playBell();                // sound — instant
     setBellFlash(true);        // visual
     setTimeout(()=>setBellFlash(false),2500);
     broadcast("BELL",{count:n, severity}); // network broadcast — fast (no await)
-    // DB update async, does NOT block the above
+    // DB update async, does NOT block the above. Minor/major split is stored
+    // inside score_breakdown (no schema change needed) so a refresh or
+    // reconnect mid-recitation can restore the exact counts instead of
+    // silently resetting them to zero.
     if (currentAttempt) {
-      supabase.from("musabaqah_attempts" as any).update({bell_count:n}).eq("id",currentAttempt.id);
+      supabase.from("musabaqah_attempts" as any).update({
+        bell_count:n,
+        score_breakdown:{ ...(currentAttempt.score_breakdown||{}), __minor:nextMinor, __major:nextMajor },
+      }).eq("id",currentAttempt.id);
     }
   };
 
@@ -1870,6 +1893,26 @@ export default function MustabaqahPage() {
     setJudgeCodes(codes);
   };
 
+  // Admin toggle: turn live video on/off for the whole competition. Persists
+  // to scope_config (so it survives refresh / late joiners via the normal DB
+  // load) and broadcasts instantly so everyone already connected switches
+  // over without needing to refresh.
+  const toggleVideoEnabled = async () => {
+    if (!competition) return;
+    const nextEnabled = !(competition.scope_config?.video_enabled ?? true);
+    const newConfig = { ...(competition.scope_config||{}), video_enabled: nextEnabled };
+    setCompetition(c=>c&&c.id===competition.id?{...c,scope_config:newConfig}:c); // instant local
+    broadcast("VIDEO_TOGGLE", { enabled: nextEnabled });
+    toast({ title: nextEnabled ? "📹 Video enabled for this competition" : "🚫 Video disabled for this competition" });
+    const { error } = await supabase.from("musabaqah_competitions" as any).update({ scope_config: newConfig } as any).eq("id", competition.id);
+    if (error) {
+      // Roll back local state if the DB write failed so we don't show a state
+      // that isn't actually persisted (would be lost on refresh / to other users).
+      setCompetition(c=>c&&c.id===competition.id?{...c,scope_config:competition.scope_config}:c);
+      toast({ title: "Couldn't save video setting", description: error.message, variant: "destructive" });
+    }
+  };
+
   const createCompetition = async () => {
     if (!form.title.trim()) { toast({title:"Enter a title"}); return; }
     setLoading(true);
@@ -1899,6 +1942,7 @@ export default function MustabaqahPage() {
         range_surah_start: form.range_surah_start, range_ayah_start: form.range_ayah_start,
         range_surah_end: form.range_surah_end, range_ayah_end: form.range_ayah_end,
         judge_codes: [genCode(), genCode()],
+        video_enabled: true,
       },
       total_stages:form.total_stages,current_stage:1,time_limit_seconds:form.time_limit,
       status:"open",room_code,created_by:user?.id,use_criteria_scoring:form.use_criteria,
@@ -3183,7 +3227,7 @@ export default function MustabaqahPage() {
                     </button>
                   </div>
                   <input value={autoFillGuide} onChange={e=>setAutoFillGuide(e.target.value)}
-                    placeholder="Optional: guide with a surah name (e.g. \"Fatiha\") — leave blank for any surah in scope"
+                    placeholder={'Optional: guide with a surah name (e.g. "Fatiha") — leave blank for any surah in scope'}
                     style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"7px 10px",color:"#fff",fontSize:11,fontFamily:"Cairo,sans-serif"}}/>
                 </div>
                 <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
@@ -3615,6 +3659,16 @@ export default function MustabaqahPage() {
       </div>
     );
 
+    // Admin has turned video off for this competition — distinct from a
+    // technical failure, so no Retry button (there's nothing to retry).
+    if (adminVideoOff) return inner(
+      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
+        <div style={{fontSize:40,opacity:.15}}>﷽</div>
+        <span style={{color:"rgba(255,255,255,.25)",fontSize:12}}>Video disabled for this competition</span>
+        {isJudge&&<span style={{color:"rgba(255,255,255,.15)",fontSize:10}}>Tap the video icon in Controls to turn it back on</span>}
+      </div>
+    );
+
     // Fallback: video disabled — no LiveKitRoom, no CameraControls
     if (videoDisabled) return inner(
       <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
@@ -3876,6 +3930,10 @@ export default function MustabaqahPage() {
               </div>
               <button onClick={()=>{ setQSettingsStage(competition.current_stage); setShowQSettings(true); }} style={{background:"rgba(201,168,76,.1)",border:"1px solid rgba(201,168,76,.25)",borderRadius:8,padding:"7px 9px",cursor:"pointer",color:GOLD,display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
                 <Wand2 size={12}/><span style={{fontSize:10,fontWeight:700}}>Q</span>
+              </button>
+              <button onClick={toggleVideoEnabled} title={adminVideoOff?"Turn video on for everyone":"Turn video off for everyone"}
+                style={{background:adminVideoOff?"rgba(239,68,68,.12)":"rgba(34,197,94,.1)",border:`1px solid ${adminVideoOff?"rgba(239,68,68,.35)":"rgba(34,197,94,.3)"}`,borderRadius:8,padding:"7px 9px",cursor:"pointer",color:adminVideoOff?RED:GREEN,display:"flex",alignItems:"center",gap:3,flexShrink:0}}>
+                {adminVideoOff?<VideoOff size={12}/>:<Video size={12}/>}
               </button>
             </div>
 
@@ -4387,7 +4445,7 @@ export default function MustabaqahPage() {
                       </button>
                     </div>
                     <input value={autoFillGuide} onChange={e=>setAutoFillGuide(e.target.value)}
-                      placeholder="Optional: guide with a surah name (e.g. \"Fatiha\") — leave blank for any surah in scope"
+                      placeholder={'Optional: guide with a surah name (e.g. "Fatiha") — leave blank for any surah in scope'}
                       style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"7px 10px",color:"#fff",fontSize:11,fontFamily:"Cairo,sans-serif"}}/>
                   </div>
                   <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
