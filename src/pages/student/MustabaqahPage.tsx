@@ -1552,20 +1552,20 @@ export default function MustabaqahPage() {
         setCompetition(c=>c?{...c, results_reveal_active:true, revealed_participant_ids:payload.revealed_participant_ids??[]}:c);
       })
       .on("postgres_changes" as any,{event:"*",schema:"public",table:"musabaqah_participants",filter:`competition_id=eq.${competition.id}`},()=>{ loadParticipants(); })
+      .on("presence",{event:"sync"},()=>{
+        const state=ch.presenceState() as Record<string,any[]>;
+        const flat = Object.values(state).flat() as any[];
+        setOnlineUsers(flat.map((u:any)=>({name:u.name||"Guest",role:u.role||"observer",user_id:u.user_id as string|undefined})));
+        // De-dupe judges by user_id (one judge could have multiple tabs/presence entries)
+        const judgeMap = new Map<string,{user_id:string;name:string}>();
+        flat.filter((u:any)=>u.role==="judge"&&u.user_id).forEach((u:any)=>judgeMap.set(u.user_id,{user_id:u.user_id,name:u.name||"Judge"}));
+        setPresentJudges(Array.from(judgeMap.values()));
+      })
       .subscribe(async()=>{
         const myName=myParticipantRef.current?.participant_name||profile?.full_name||"Guest";
         const myR=isJudge?"judge":myParticipantRef.current?"participant":"observer";
         await ch.track({name:myName,role:myR,user_id:user?.id});
       });
-    ch.on("presence",{event:"sync"},()=>{
-      const state=ch.presenceState() as Record<string,any[]>;
-      const flat = Object.values(state).flat() as any[];
-      setOnlineUsers(flat.map((u:any)=>({name:u.name||"Guest",role:u.role||"observer",user_id:u.user_id as string|undefined})));
-      // De-dupe judges by user_id (one judge could have multiple tabs/presence entries)
-      const judgeMap = new Map<string,{user_id:string;name:string}>();
-      flat.filter((u:any)=>u.role==="judge"&&u.user_id).forEach((u:any)=>judgeMap.set(u.user_id,{user_id:u.user_id,name:u.name||"Judge"}));
-      setPresentJudges(Array.from(judgeMap.values()));
-    });
     channelRef.current=ch;
     return ()=>{ supabase.removeChannel(ch); };
   },[competition?.id]);
