@@ -3227,7 +3227,7 @@ export default function MustabaqahPage() {
                     </button>
                   </div>
                   <input value={autoFillGuide} onChange={e=>setAutoFillGuide(e.target.value)}
-                    placeholder="Optional: guide with a surah name (e.g. \"Fatiha\") — leave blank for any surah in scope"
+                    placeholder={'Optional: guide with a surah name (e.g. "Fatiha") — leave blank for any surah in scope'}
                     style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"7px 10px",color:"#fff",fontSize:11,fontFamily:"Cairo,sans-serif"}}/>
                 </div>
                 <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
@@ -4445,7 +4445,7 @@ export default function MustabaqahPage() {
                       </button>
                     </div>
                     <input value={autoFillGuide} onChange={e=>setAutoFillGuide(e.target.value)}
-                      placeholder="Optional: guide with a surah name (e.g. \"Fatiha\") — leave blank for any surah in scope"
+                      placeholder={'Optional: guide with a surah name (e.g. "Fatiha") — leave blank for any surah in scope'}
                       style={{width:"100%",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"7px 10px",color:"#fff",fontSize:11,fontFamily:"Cairo,sans-serif"}}/>
                   </div>
                   <div style={{color:"rgba(255,255,255,.45)",fontSize:11,marginBottom:6,lineHeight:1.6}}>
