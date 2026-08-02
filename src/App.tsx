@@ -2,8 +2,8 @@
    App.tsx — Tahleem Academy
    Routing configuration with lazy-loaded pages
 ═══════════════════════════════════════════════════════════════════════════════*/
-import { lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { lazy, Suspense, useEffect } from "react";
+import { BrowserRouter, Routes, Route, useNavigate } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toaster";
@@ -24,6 +24,7 @@ import RecordingPlayerProvider from "@/contexts/RecordingPlayerContext";
 const GlobalClassroomOverlay = lazy(() => import("./components/classroom/GlobalClassroomOverlay"));
 import AppNotifications from "@/components/AppNotifications";
 import { useAppStateRestore } from "@/hooks/useAppStateRestore";
+import { setNavigateRef } from "@/lib/nativeApp";
 
 // ── Public pages ───────────────────────────────────────────────────────────
 const Index                = lazy(() => import("./pages/Index"));
@@ -353,6 +354,15 @@ const App = () => (
 // Restores route + scroll after Android WebView kills the backgrounded tab
 function AppStateRestorer() {
   useAppStateRestore();
+
+  // Give nativeApp.ts a way to navigate through the SPA router instead of
+  // doing a hard window.location.assign() for deep links / notification taps.
+  const navigate = useNavigate();
+  useEffect(() => {
+    setNavigateRef((path: string) => navigate(path));
+    return () => setNavigateRef(null);
+  }, [navigate]);
+
   return null;
 }
 
