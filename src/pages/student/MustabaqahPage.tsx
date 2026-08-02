@@ -4924,22 +4924,31 @@ export default function MustabaqahPage() {
               <div className="glass-card" style={{borderRadius:14,padding:"18px",textAlign:"center"}}>
                 <div style={{fontSize:36,marginBottom:5}}>✅</div>
                 <div style={{color:GREEN,fontWeight:800,fontSize:15}}>All Stages Complete!</div>
-                <div style={{color:GOLD,fontWeight:900,fontSize:36,marginTop:5}}>{myParticipant.total_score}</div>
-                <div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>Total Points</div>
-                {/* Per-stage scores breakdown */}
-                {Object.keys(myParticipant.stage_scores||{}).length>0&&(
-                  <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:12,flexWrap:"wrap"}}>
-                    {Array.from({length:competition.total_stages},(_,i)=>{
-                      const s=i+1;
-                      const score=(myParticipant.stage_scores||{})[s];
-                      return score!==undefined?(
-                        <div key={s} style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(201,168,76,.2)",borderRadius:8,padding:"6px 10px",minWidth:44}}>
-                          <div style={{color:"rgba(255,255,255,.35)",fontSize:9,fontWeight:700,letterSpacing:.5}}>S{s}</div>
-                          <div style={{color:GOLD,fontWeight:800,fontSize:14}}>{score}</div>
-                        </div>
-                      ):null;
-                    })}
-                  </div>
+                {competition.results_reveal_active ? (
+                  <>
+                    <div style={{color:GOLD,fontWeight:900,fontSize:36,marginTop:5}}>{myParticipant.total_score}</div>
+                    <div style={{color:"rgba(255,255,255,.35)",fontSize:11}}>Total Points</div>
+                    {/* Per-stage scores breakdown */}
+                    {Object.keys(myParticipant.stage_scores||{}).length>0&&(
+                      <div style={{display:"flex",justifyContent:"center",gap:6,marginTop:12,flexWrap:"wrap"}}>
+                        {Array.from({length:competition.total_stages},(_,i)=>{
+                          const s=i+1;
+                          const score=(myParticipant.stage_scores||{})[s];
+                          return score!==undefined?(
+                            <div key={s} style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(201,168,76,.2)",borderRadius:8,padding:"6px 10px",minWidth:44}}>
+                              <div style={{color:"rgba(255,255,255,.35)",fontSize:9,fontWeight:700,letterSpacing:.5}}>S{s}</div>
+                              <div style={{color:GOLD,fontWeight:800,fontSize:14}}>{score}</div>
+                            </div>
+                          ):null;
+                        })}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div style={{fontSize:28,marginTop:8}}>🔒</div>
+                    <div style={{color:"rgba(255,255,255,.4)",fontSize:12,marginTop:4,lineHeight:1.6}}>Your score is locked until the judges release the leaderboard for everyone.</div>
+                  </>
                 )}
               </div>
             )}
