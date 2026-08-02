@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useTasjeel } from "@/hooks/useTasjeel";
 import { usePaymentAccess } from "@/hooks/usePaymentAccess";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
@@ -102,7 +101,6 @@ const PaymentLockScreen = () => {
 const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile } = useAuth();
-  const { currentStep } = useTasjeel();
   const location = useLocation();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -112,7 +110,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { ringOverlay } = useClassRing();
 
   // ── Level-pending: lock most features until admin assigns a level ─────────
-  const levelPending = role === "student" && currentStep !== null && currentStep !== "completed";
+  // Mid-registration students are filtered by TasjeelGuard before this layout
+  // mounts, so the layout must not launch a second registration query.
+  const levelPending = false;
 
   // ── Payment-locking: block features when student subscription is locked ──
   const { accessStatus: paymentStatus, isLoading: paymentLoading } = usePaymentAccess();
