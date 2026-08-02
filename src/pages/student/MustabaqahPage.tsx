@@ -366,19 +366,25 @@ const QueueBoxGrid = ({ boxCount, participants, myParticipantId, canPick, onPick
 
 /** Read-only ordered roster so participants (not just the judge) can see who
  *  else is in the queue and where they stand. */
-const QueueList = ({ list, myId, activeId, micRequests, onMicTap }: { list:Participant[]; myId:string|null; activeId:string|null; micRequests?:Set<string>; onMicTap?:(p:Participant)=>void }) => (
+const QueueList = ({ list, myId, activeId, micRequests, onMicTap, liveMicStatus }: { list:Participant[]; myId:string|null; activeId:string|null; micRequests?:Set<string>; onMicTap?:(p:Participant)=>void; liveMicStatus?:Record<string,{micOn:boolean;speaking:boolean}> }) => (
   <div style={{marginTop:10,textAlign:"left"}}>
     {[...list].sort((a,b)=>a.queue_position-b.queue_position).map(p=>{
       const wantsMic = !!micRequests?.has(p.id);
+      const st = p.user_id ? liveMicStatus?.[p.user_id] : undefined;
+      const isOn = !!st?.micOn;
       return(
       <div key={p.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 9px",borderRadius:9,marginBottom:4,
-        background: wantsMic?"rgba(34,197,94,.1)":p.id===myId?"rgba(201,168,76,.12)":p.id===activeId?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",
-        border: wantsMic?`1px solid ${GREEN}66`:p.id===myId?`1px solid ${GOLD}55`:"1px solid rgba(255,255,255,.05)"}}>
+        background: (wantsMic||isOn)?"rgba(34,197,94,.1)":p.id===myId?"rgba(201,168,76,.12)":p.id===activeId?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",
+        border: (wantsMic||isOn)?`1px solid ${GREEN}66`:p.id===myId?`1px solid ${GOLD}55`:"1px solid rgba(255,255,255,.05)"}}>
         <span style={{color:GOLD,fontWeight:800,fontSize:11,width:22,flexShrink:0}}>#{p.queue_position}</span>
-        {wantsMic && (
+        {isOn ? (
+          <span title="Mic live" style={{display:"flex",flexShrink:0,color:GREEN,animation:st?.speaking?"timerPulse .6s ease-in-out infinite":undefined}}><Mic size={13}/></span>
+        ) : wantsMic ? (
           <button onClick={()=>onMicTap?.(p)} title="Wants to talk" style={{background:"none",border:"none",padding:0,cursor:onMicTap?"pointer":"default",display:"flex",flexShrink:0,animation:"timerPulse 1s ease-in-out infinite"}}>
             <Mic size={13} color={GREEN}/>
           </button>
+        ) : (
+          <span style={{display:"flex",flexShrink:0,color:"rgba(255,255,255,.18)"}}><MicOff size={13}/></span>
         )}
         <Avatar name={p.participant_name} size={26}/>
         <span style={{color:"#fff",fontSize:12,fontWeight:p.id===myId?800:600,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}{p.id===myId?" (You)":""}</span>
@@ -644,11 +650,20 @@ const LiveVideoGrid = ({
 };
 
 /* ── Camera controls — ONLY for judge + active participant ──────── */
-const CameraControls = ({ isActive, isJudge, videoAllowed }: { isActive:boolean; isJudge:boolean; videoAllowed:boolean }) => {
+const CameraControls = ({ isActive, isJudge, videoAllowed, forceMuteToken }: { isActive:boolean; isJudge:boolean; videoAllowed:boolean; forceMuteToken?:number }) => {
   const { localParticipant } = useLocalParticipant();
   const room = useRoomContext();
   const [camOn, setCamOn] = useState(false);
   const [micOn, setMicOn] = useState(false);
+
+  // Judge force-muted this user from the roster — disable the mic locally.
+  // Skipped on the very first render (token starts at 0) so mounting doesn't mute anyone.
+  const prevMuteToken = useRef(forceMuteToken);
+  useEffect(() => {
+    if (forceMuteToken===undefined || forceMuteToken===prevMuteToken.current) return;
+    prevMuteToken.current = forceMuteToken;
+    queueMediaOp(room, () => localParticipant.setMicrophoneEnabled(false)).then(()=>setMicOn(false)).catch(()=>{});
+  }, [forceMuteToken]);
 
   useEffect(() => {
     if (isJudge) {
@@ -688,6 +703,47 @@ const CameraControls = ({ isActive, isJudge, videoAllowed }: { isActive:boolean;
       )}
     </div>
   );
+};
+
+// Tracks every connected user's live mic (on/off) + speaking state from inside
+// the LiveKitRoom context, and reports it up to the parent page (which lives
+// outside the room) so the roster can show a real mic status beside each name.
+const AudioStateSync = ({ onUpdate }: { onUpdate:(map:Record<string,{micOn:boolean;speaking:boolean}>)=>void }) => {
+  const room = useRoomContext();
+  useEffect(() => {
+    if (!room) return;
+    const getMeta = (p:any) => { try { return JSON.parse(p?.metadata||"{}"); } catch { return {}; } };
+    const recompute = () => {
+      const map: Record<string,{micOn:boolean;speaking:boolean}> = {};
+      const speakingIds = new Set((room.activeSpeakers||[]).map((s:any)=>s.identity));
+      const all:any[] = [room.localParticipant, ...Array.from(room.remoteParticipants?.values?.()||[])];
+      all.forEach((p:any) => {
+        const meta = getMeta(p);
+        if (!meta.user_id) return;
+        const micPub = p.getTrackPublication?.(Track.Source.Microphone);
+        map[meta.user_id] = { micOn: !!micPub && !micPub.isMuted, speaking: speakingIds.has(p.identity) };
+      });
+      onUpdate(map);
+    };
+    recompute();
+    room.on(RoomEvent.TrackMuted, recompute);
+    room.on(RoomEvent.TrackUnmuted, recompute);
+    room.on(RoomEvent.ActiveSpeakersChanged, recompute);
+    room.on(RoomEvent.ParticipantConnected, recompute);
+    room.on(RoomEvent.ParticipantDisconnected, recompute);
+    room.on(RoomEvent.LocalTrackPublished, recompute);
+    room.on(RoomEvent.LocalTrackUnpublished, recompute);
+    return () => {
+      room.off(RoomEvent.TrackMuted, recompute);
+      room.off(RoomEvent.TrackUnmuted, recompute);
+      room.off(RoomEvent.ActiveSpeakersChanged, recompute);
+      room.off(RoomEvent.ParticipantConnected, recompute);
+      room.off(RoomEvent.ParticipantDisconnected, recompute);
+      room.off(RoomEvent.LocalTrackPublished, recompute);
+      room.off(RoomEvent.LocalTrackUnpublished, recompute);
+    };
+  }, [room, onUpdate]);
+  return null;
 };
 
 const AudioEnabler = ({ onEnabled }: { onEnabled: () => void }) => {
@@ -815,6 +871,8 @@ export default function MustabaqahPage() {
   const [observerNameInput, setObserverNameInput] = useState("");
   const [activeP,        setActiveP]       = useState<Participant|null>(null);
   const [micRequests,    setMicRequests]   = useState<Set<string>>(new Set()); // participant ids who've raised their hand to talk while waiting
+  const [liveMicStatus,  setLiveMicStatus] = useState<Record<string,{micOn:boolean;speaking:boolean}>>({}); // user_id -> real-time mic state, fed by AudioStateSync
+  const [forceMuteToken, setForceMuteToken]= useState(0); // bumped when I (this device) get force-muted by the judge
   const [currentAttempt, setCurAttempt]    = useState<Attempt|null>(null);
   const [bellCount,      setBellCount]     = useState(0);
   const [minorCount,     setMinorCount]    = useState(0); // -0.5 each
@@ -1336,6 +1394,13 @@ export default function MustabaqahPage() {
           toast({title:"Call cancelled",description:"You're back in the waiting queue."});
         }
       })
+      .on("broadcast",{event:"FORCE_MUTE"},({payload}:any)=>{
+        const mine=myParticipantRef.current;
+        if (mine && payload.participant_id===mine.id) {
+          setForceMuteToken(t=>t+1);
+          toast({title:"🔇 Your mic was muted by the judge"});
+        }
+      })
       .on("broadcast",{event:"MIC_REQUEST"},({payload}:any)=>{
         setMicRequests(prev=>{
           const next=new Set(prev);
@@ -1609,6 +1674,35 @@ export default function MustabaqahPage() {
   const clearMicRequest = (p:Participant) => {
     setMicRequests(prev=>{ const next=new Set(prev); next.delete(p.id); return next; });
     broadcast("MIC_REQUEST",{participant_id:p.id, requesting:false});
+  };
+
+  // Judge taps a live (green) mic icon to force-mute that participant remotely.
+  const forceMuteParticipant = (p:Participant) => {
+    broadcast("FORCE_MUTE",{participant_id:p.id});
+  };
+
+  // Shared mic-status icon shown beside every participant's name in the judge's
+  // roster/call lists: green + pulsing while they're actually speaking, green
+  // (tap to mute) while their mic is live but quiet, pulsing (tap to acknowledge)
+  // while they've raised a hand to talk, and dim MicOff otherwise.
+  const renderMicIcon = (p:Participant, size=12) => {
+    const st = p.user_id ? liveMicStatus[p.user_id] : undefined;
+    const isOn = !!st?.micOn;
+    if (isOn) {
+      return (
+        <button onClick={()=>forceMuteParticipant(p)} title="Live — tap to mute" style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",flexShrink:0,color:GREEN,animation:st?.speaking?"timerPulse .6s ease-in-out infinite":undefined}}>
+          <Mic size={size}/>
+        </button>
+      );
+    }
+    if (micRequests.has(p.id)) {
+      return (
+        <button onClick={()=>clearMicRequest(p)} title="Wants to talk — tap to acknowledge" style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",flexShrink:0,color:GREEN,animation:"timerPulse 1s ease-in-out infinite"}}>
+          <Mic size={size}/>
+        </button>
+      );
+    }
+    return <span style={{display:"flex",flexShrink:0,color:"rgba(255,255,255,.18)"}}><MicOff size={size}/></span>;
   };
 
   const pickTile = (tile:Tile) => {
@@ -3779,7 +3873,7 @@ export default function MustabaqahPage() {
         {withControls&&(
           <div style={{position:"absolute",bottom:8,right:8,zIndex:5,pointerEvents:"auto"}}>
             <div style={{background:"rgba(0,0,0,.65)",backdropFilter:"blur(10px)",borderRadius:10,padding:"4px 6px",display:"flex",gap:4}}>
-              <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge} videoAllowed={!adminVideoOff}/>
+              <CameraControls isActive={!!iAmParticipantActive} isJudge={isJudge} videoAllowed={!adminVideoOff} forceMuteToken={forceMuteToken}/>
             </div>
           </div>
         )}
@@ -3809,6 +3903,7 @@ export default function MustabaqahPage() {
       <LiveKitRoom serverUrl={livekitUrl} token={livekitToken} connect={lkConnected} audio={true} video={!adminVideoOff} options={LK_OPTIONS}>
         <RoomAudioRenderer/>
         <AudioEnabler onEnabled={()=>setAudioReady(true)}/>
+        <AudioStateSync onUpdate={setLiveMicStatus}/>
         {inner(
           adminVideoOff ? (
             <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:8}}>
@@ -4106,9 +4201,7 @@ export default function MustabaqahPage() {
                       const isOnline=onlineUsers.some(u=>u.name===p.participant_name||u.name===p.participant_name.split(" ")[0]);
                       return(
                         <button key={p.id} onClick={()=>callParticipant(p)} style={{width:"100%",background:`${GOLD}0e`,border:`1.5px solid ${GOLD}44`,borderRadius:11,padding:"11px 13px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,textAlign:"left",fontFamily:"Cairo,sans-serif",marginBottom:6,boxShadow:"0 2px 12px rgba(201,168,76,.1)",transition:"all .15s"}}>
-                          {micRequests.has(p.id) && (
-                            <span title="Wants to talk" style={{display:"flex",flexShrink:0,animation:"timerPulse 1s ease-in-out infinite"}}><Mic size={14} color={GREEN}/></span>
-                          )}
+                          {renderMicIcon(p, 14)}
                           <div style={{position:"relative",flexShrink:0}}>
                             <Avatar name={p.participant_name} size={34}/>
                             <div style={{position:"absolute",bottom:0,right:0,width:9,height:9,borderRadius:"50%",background:isOnline?GREEN:RED,border:"2px solid #050f08"}}/>
@@ -4341,11 +4434,7 @@ export default function MustabaqahPage() {
                       return(
                         <div key={p.id} style={{background:isActive?"rgba(201,168,76,.06)":"rgba(255,255,255,.02)",border:`1px solid ${isActive?`${GOLD}33`:"rgba(255,255,255,.05)"}`,borderRadius:8,padding:"7px 9px",display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
                           <span style={{color:"rgba(255,255,255,.2)",fontSize:9,width:12,flexShrink:0}}>#{p.queue_position}</span>
-                          {micRequests.has(p.id) && (
-                            <button onClick={()=>clearMicRequest(p)} title="Wants to talk — tap to acknowledge" style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",flexShrink:0,animation:"timerPulse 1s ease-in-out infinite"}}>
-                              <Mic size={12} color={GREEN}/>
-                            </button>
-                          )}
+                          {renderMicIcon(p, 12)}
                           <Avatar name={p.participant_name} size={24} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
                           <div style={{flex:1,minWidth:0}}><div style={{color:isActive?GOLD:"#fff",fontWeight:isActive?700:500,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div></div>
                           <span style={{color:STATUS_COLOR[p.status],fontSize:9,fontWeight:700,flexShrink:0}}>{STATUS_ICON[p.status]}</span>
@@ -4362,11 +4451,7 @@ export default function MustabaqahPage() {
                         const isActive=p.id===activeP?.id;
                         return(
                           <div key={p.id} style={{background:isActive?`${GOLD}15`:micRequests.has(p.id)?"rgba(34,197,94,.08)":"rgba(255,255,255,.03)",border:`1px solid ${isActive?GOLD:micRequests.has(p.id)?`${GREEN}66`:"rgba(255,255,255,.07)"}`,borderRadius:9,padding:"9px 5px",textAlign:"center",position:"relative"}}>
-                            {micRequests.has(p.id) && (
-                              <button onClick={()=>clearMicRequest(p)} title="Wants to talk — tap to acknowledge" style={{position:"absolute",top:4,left:4,background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",animation:"timerPulse 1s ease-in-out infinite"}}>
-                                <Mic size={11} color={GREEN}/>
-                              </button>
-                            )}
+                            <div style={{position:"absolute",top:4,left:4}}>{renderMicIcon(p, 11)}</div>
                             <Avatar name={p.participant_name} size={28} active={isActive&&p.status==="reciting"} called={p.status==="called"}/>
                             <div style={{color:isActive?GOLD:"#fff",fontWeight:700,fontSize:9,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.participant_name}</div>
                             <div style={{color:STATUS_COLOR[p.status],fontSize:8,fontWeight:700,marginTop:2}}>{STATUS_ICON[p.status]}</div>
@@ -4420,7 +4505,7 @@ export default function MustabaqahPage() {
                     <button onClick={toggleMicRequest} style={{marginTop:10,width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:6,background:micRequests.has(myParticipant.id)?`${GREEN}22`:"rgba(255,255,255,.05)",border:`1.5px solid ${micRequests.has(myParticipant.id)?GREEN:"rgba(255,255,255,.15)"}`,borderRadius:10,padding:"9px",cursor:"pointer",color:micRequests.has(myParticipant.id)?GREEN:"rgba(255,255,255,.55)",fontWeight:700,fontSize:12,fontFamily:"Cairo,sans-serif"}}>
                       <Mic size={13}/> {micRequests.has(myParticipant.id)?"Requested to Talk — Tap to Cancel":"Request to Talk"}
                     </button>
-                    <QueueList list={participants.filter(p=>p.status!=="pending")} myId={myParticipant.id} activeId={activeP?.id??null} micRequests={micRequests}/>
+                    <QueueList list={participants.filter(p=>p.status!=="pending")} myId={myParticipant.id} activeId={activeP?.id??null} micRequests={micRequests} liveMicStatus={liveMicStatus}/>
                   </>
                 )}
               </div>
