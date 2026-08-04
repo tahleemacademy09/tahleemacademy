@@ -19,6 +19,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
 import { supabase, hasPersistedSupabaseSession } from "@/integrations/supabase/client";
+import { logDiag } from "@/lib/diagnostics";
 import type { User, Session } from "@supabase/supabase-js";
 
 export interface UserProfile {
@@ -230,11 +231,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             "[AuthContext] Safety timeout at", ms, "ms — persisted session found on " +
             "this device, extending grace window instead of forcing a logged-out state"
           );
+          logDiag("auth_safety_timeout_extended", { atMs: ms });
           safetyTimeout = scheduleSafetyTimeout(12000, true);
           return;
         }
 
         console.warn("[AuthContext] Safety timeout — forcing loading=false");
+        logDiag("auth_safety_timeout_forced_logout", {
+          atMs: ms,
+          hadPersistedSession: hasPersistedSupabaseSession(),
+        });
         timedOutRef.current = true;
         initialLoadDoneRef.current = true; // never show the blocking spinner again this session
         setLoading(false);
@@ -245,6 +251,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // In Supabase JS v2 this fires immediately (synchronously) with INITIAL_SESSION
     // so we do NOT need getSession() — calling both causes a double-fetch race.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, sess) => {
+      if (!receivedEventRef.current) {
+        logDiag("auth_state_change_first_event", { event: _event, hasSession: !!sess });
+      }
       receivedEventRef.current = true;
       if (!mountedRef.current) return;
 
