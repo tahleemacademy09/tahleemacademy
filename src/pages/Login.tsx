@@ -64,8 +64,18 @@ const Login = () => {
     if (!user || authLoading) return;
     const isAdmin   = roles.includes("admin");
     const isTeacher = roles.includes("teacher");
-    if (isAdmin)        { navigate(fromPath || "/admin",   { replace: true }); return; }
-    if (isTeacher)      { navigate(fromPath || "/teacher", { replace: true }); return; }
+    // FIX (admin/teacher shows wrong interface after switching accounts):
+    // fromPath is whatever protected page the PREVIOUS session's ProtectedRoute
+    // redirect carried along in location.state — e.g. if you were on
+    // /teacher/dashboard, logged out, and logged back in as admin, fromPath is
+    // still "/teacher/dashboard". Blindly honoring it sent the new admin
+    // session straight to the old teacher page, and since admins are exempt
+    // from ProtectedRoute's role checks, nothing bounced them back out — it
+    // just silently rendered the teacher interface. Only reuse fromPath when
+    // it actually belongs to the role that's signing in now (student branch
+    // below already did this correctly).
+    if (isAdmin)        { navigate(fromPath?.startsWith("/admin")   ? fromPath : "/admin",   { replace: true }); return; }
+    if (isTeacher)      { navigate(fromPath?.startsWith("/teacher") ? fromPath : "/teacher", { replace: true }); return; }
 
     // Student: resolve their exact pipeline step before navigating.
     (async () => {
