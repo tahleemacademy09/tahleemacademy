@@ -23,7 +23,7 @@ import { toast } from "@/hooks/use-toast";
 import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff, Hand,
   MessageCircle, Users, MoreHorizontal, Phone, Smile, LogOut,
-  BarChart3, Zap, Settings, X, Check, Volume2,
+  BarChart3, Zap, Settings, X, Check, Volume2, ChevronUp,
   Captions, CaptionsOff, Blend, BarChart2,
 } from "lucide-react";
 import {
@@ -656,23 +656,52 @@ const ClassControls = ({
       <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
       <div className="h-16 flex items-center justify-evenly px-2 md:px-4 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
 
-        {/* Mic */}
-        <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} style={micEnabled ? btnStyle : {}} onClick={toggleMic}>
-          {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-          <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
-        </Button>
+        {/* Mic — chevron opens the mic/speaker device picker without toggling mute */}
+        <div style={{ position: "relative" }}>
+          <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} style={micEnabled ? btnStyle : {}} onClick={toggleMic}>
+            {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+            <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
+          </Button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setSettingsTab("audio"); setShowSettings(true); }}
+            title={t("Microphone options", "خيارات الميكروفون")}
+            style={{
+              position: "absolute", top: -5, right: -5, width: 18, height: 18, padding: 0,
+              borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "1px solid rgba(255,255,255,.28)",
+              color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+            }}
+          >
+            <ChevronUp style={{ width: 11, height: 11 }} />
+          </button>
+        </div>
 
-        {/* Cam — greyed out and locked while admin has forced audio-only mode room-wide */}
-        <Button
-          size="sm"
-          className={`${btnBase} ${camLocked ? "" : camEnabled ? btnOn : btnOff}`}
-          style={camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : (camEnabled ? btnStyle : {})}
-          onClick={toggleCam}
-          title={camLocked ? t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم") : undefined}
-        >
-          {camEnabled && !camLocked ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-          <span className="hidden sm:inline">{camLocked ? t("Locked","مقفل") : camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
-        </Button>
+        {/* Cam — greyed out and locked while admin has forced audio-only mode room-wide.
+            Chevron opens the camera device picker without toggling the camera. */}
+        <div style={{ position: "relative" }}>
+          <Button
+            size="sm"
+            className={`${btnBase} ${camLocked ? "" : camEnabled ? btnOn : btnOff}`}
+            style={camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : (camEnabled ? btnStyle : {})}
+            onClick={toggleCam}
+            title={camLocked ? t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم") : undefined}
+          >
+            {camEnabled && !camLocked ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+            <span className="hidden sm:inline">{camLocked ? t("Locked","مقفل") : camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
+          </Button>
+          {!camLocked && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setSettingsTab("video"); setShowSettings(true); }}
+              title={t("Camera options", "خيارات الكاميرا")}
+              style={{
+                position: "absolute", top: -5, right: -5, width: 18, height: 18, padding: 0,
+                borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "1px solid rgba(255,255,255,.28)",
+                color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+              }}
+            >
+              <ChevronUp style={{ width: 11, height: 11 }} />
+            </button>
+          )}
+        </div>
 
         {/* Chat */}
         <Button size="sm" className={`${btnBase} ${btnNeutral} relative`} style={btnStyle} onClick={onToggleChat}>

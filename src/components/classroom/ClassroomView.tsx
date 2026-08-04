@@ -37,7 +37,7 @@ import {
   PenTool, MessageCircle, MoreVertical, BookOpen,
   Circle, Loader2, X, Smile, Play, Pause,
   Volume2, ChevronDown, ChevronLeft, ChevronRight, Users, Eye,
-  LayoutGrid, AlignJustify, Columns, Rows, Maximize2, Minimize2,
+  LayoutGrid, AlignJustify, Columns, Rows, Maximize2,
   SwitchCamera, Settings, Check, Wifi,
   Monitor, MonitorOff, Pin, Timer, UserCheck, Crosshair,
   Zap, ClipboardList, Bell, Radio, Layers,
@@ -1372,19 +1372,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               </>
             }
           />
-          {/* Dedicated minimize button — Minimize was removed from the ⋮ menu for both
-              roles to declutter it, but the action itself still needs a home. */}
-          {onMinimize&&(
-            <button onClick={onMinimize} title="Minimize" style={{
-              position:"fixed",top:64,right:14,zIndex:120,
-              width:36,height:36,borderRadius:"50%",
-              background:"rgba(32,33,36,.92)",border:"1px solid rgba(255,255,255,.12)",
-              color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",
-              boxShadow:"0 2px 10px rgba(0,0,0,.35)",
-            }}>
-              <Minimize2 style={{width:16,height:16}}/>
-            </button>
-          )}
           {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           {/* FIX BUG 2: LiveQuizOverlay now controlled by quizOpen state — was permanently disabled with hardcoded isOpen={false} */}
