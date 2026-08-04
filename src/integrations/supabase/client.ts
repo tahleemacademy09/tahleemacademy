@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
+import { logDiag } from '@/lib/diagnostics';
 
 const SUPABASE_URL =
   import.meta.env.VITE_SUPABASE_URL ||
@@ -30,25 +31,42 @@ if (!SUPABASE_ANON_KEY) {
 // private mode, which is expected behaviour.
 const memoryStore: Record<string, string> = {};
 
+// Logged at most once per session — setItem fires constantly (every token
+// refresh etc.), so this only needs to flag THAT real localStorage is
+// unavailable, not spam an entry for every call.
+let loggedStorageFallback = false;
+function flagStorageFallback(op: string, err: unknown) {
+  if (loggedStorageFallback) return;
+  loggedStorageFallback = true;
+  logDiag("supabase_storage_fallback_to_memory", {
+    op,
+    errName: err instanceof Error ? err.name : typeof err,
+    errMessage: err instanceof Error ? err.message : String(err),
+  });
+}
+
 const safeStorage = {
   getItem(key: string): string | null {
     try {
       return localStorage.getItem(key);
-    } catch {
+    } catch (err) {
+      flagStorageFallback("getItem", err);
       return memoryStore[key] ?? null;
     }
   },
   setItem(key: string, value: string): void {
     try {
       localStorage.setItem(key, value);
-    } catch {
+    } catch (err) {
+      flagStorageFallback("setItem", err);
       memoryStore[key] = value;
     }
   },
   removeItem(key: string): void {
     try {
       localStorage.removeItem(key);
-    } catch {
+    } catch (err) {
+      flagStorageFallback("removeItem", err);
       delete memoryStore[key];
     }
   },
