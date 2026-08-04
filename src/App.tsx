@@ -18,6 +18,7 @@ import NotFound from "@/pages/NotFound";
 import IdleWarningModal from "@/components/IdleWarningModal";
 import UpdateAvailableBanner from "@/components/UpdateAvailableBanner";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import DiagnosticsPanel from "@/components/dev/DiagnosticsPanel";
 import TasjeelGuard from "@/components/TasjeelGuard";
 import { LiveClassProvider } from "@/contexts/LiveClassContext";
 import RecordingPlayerProvider from "@/contexts/RecordingPlayerContext";
@@ -173,6 +174,7 @@ const App = () => (
               <AppNotifications />
               <IdleWarningModal />
               <UpdateAvailableBanner />
+              <DiagnosticsPanel />
               <Suspense fallback={
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
                   <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #064E3B", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
