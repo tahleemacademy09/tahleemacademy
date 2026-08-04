@@ -14,6 +14,12 @@ import "./index.css";
 import { initNativeApp } from "./lib/nativeApp";
 import { isReloadSafe, onReloadSafe } from "./lib/reloadGuard";
 import { bootstrapTheme } from "./lib/theme";
+import { initDiagnostics, logDiag } from "./lib/diagnostics";
+
+// Record how this document load happened (fresh nav / reload / back-forward)
+// and wire up hidden/resume tracking — as early as possible, before
+// anything else that could throw and prevent it from ever running.
+initDiagnostics();
 
 // Apply the saved dark-mode preference immediately, on every page —
 // not just after a user has visited Settings in the current session.
@@ -89,6 +95,7 @@ if ("serviceWorker" in navigator) {
       // This can only fire as a direct result of tryApplyUpdate() above, which
       // is itself gated on visible+safe — so reloading immediately here is
       // always the expected, already-consented-to outcome, never a surprise.
+      logDiag("sw_update_reload", { path: location.pathname });
       window.location.replace(window.location.href);
     });
   });
