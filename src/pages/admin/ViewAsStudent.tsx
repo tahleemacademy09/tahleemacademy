@@ -115,6 +115,7 @@ export default function ViewAsStudent() {
             // Store the admin's real user id so we can return
             sessionStorage.setItem("admin_impersonate_student", userId || "");
             sessionStorage.setItem("admin_impersonate_name", profile.full_name || "");
+            sessionStorage.setItem("admin_impersonate_email", profile.email || "");
             navigate("/student");
           }}
             style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.4)", background: "rgba(34,197,94,.3)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
