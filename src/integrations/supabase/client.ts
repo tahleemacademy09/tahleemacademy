@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = "https://zqniborlnbpkjdmyssnl.supabase.co";
+const SUPABASE_URL =
+  import.meta.env.VITE_SUPABASE_URL ||
+  "https://wvqeubhupkddtkcdwqcm.supabase.co";
 
 // Supports both env var names. VITE_SUPABASE_ANON_KEY is the standard name;
 // VITE_SUPABASE_PUBLISHABLE_KEY is an alias some setups use.
