@@ -148,6 +148,7 @@ export default function AdminSettings() {
     holiday_message:      "",
     holiday_message_ar:   "",
     resume_date:          "",
+    maintenance_bypass_user_ids: "",
   });
 
   /* ── Notification preferences ────────────────────────────────── */
@@ -214,6 +215,7 @@ export default function AdminSettings() {
         holiday_message:       settings.holiday_message       || "",
         holiday_message_ar:    settings.holiday_message_ar    || "",
         resume_date:           settings.resume_date           || "",
+        maintenance_bypass_user_ids: settings.maintenance_bypass_user_ids || "",
       });
     }
   }, [acLoading, settings]);
@@ -253,6 +255,7 @@ export default function AdminSettings() {
       holiday_message:       academy.holiday_message        || null,
       holiday_message_ar:    academy.holiday_message_ar     || null,
       resume_date:           academy.resume_date            || null,
+      maintenance_bypass_user_ids: academy.maintenance_bypass_user_ids || null,
     }, user.id);
     setAcSaving(false);
     toast({ title: "✅ Academy settings saved!" });
@@ -568,6 +571,18 @@ export default function AdminSettings() {
             <Fld label="Resume Date">
               <input style={inp} type="date" value={academy.resume_date}
                 onChange={e => setAcademy(a => ({ ...a, resume_date: e.target.value }))} />
+            </Fld>
+          </Sec>
+
+          <Sec title="Maintenance Bypass (Testing)">
+            <p style={{ fontSize: 11, color: "#6B7280", margin: "0 0 10px", lineHeight: 1.5 }}>
+              These student user IDs can still log in and use the platform normally even while status is <strong>Maintenance</strong> — useful for testing before you announce it. Comma-separate multiple IDs.
+            </p>
+            <Fld label="Allowed User IDs">
+              <textarea style={{ ...inp, resize: "vertical", minHeight: 50, fontFamily: "monospace", fontSize: 12 }}
+                placeholder="e.g. c08dbeb5-51ac-4cf6-a51d-ab868ef26a65"
+                value={academy.maintenance_bypass_user_ids}
+                onChange={e => setAcademy(a => ({ ...a, maintenance_bypass_user_ids: e.target.value }))} />
             </Fld>
           </Sec>
 
