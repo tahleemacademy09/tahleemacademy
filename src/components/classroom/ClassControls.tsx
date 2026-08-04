@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff, Hand,
-  MessageCircle, Users, MoreHorizontal, Phone, Smile, LogOut,
+  MessageCircle, MoreHorizontal, Phone, Smile, LogOut,
   BarChart3, Zap, Settings, X, Check, Volume2, ChevronUp,
   Captions, CaptionsOff, Blend, BarChart2,
 } from "lucide-react";
@@ -379,6 +379,43 @@ const ClassControls = ({
   const [floatingEmoji, setFloatingEmoji] = useState<{ emoji: string; id: number } | null>(null);
   const [raisedHandName, setRaisedHandName] = useState<string | null>(null);
 
+  // ── Quick device picker (mic/cam chevrons) ─────────────────────────────
+  // Lightweight list of audio-in / audio-out / video-in devices — the
+  // chevron above the mic/cam buttons now just switches devices directly
+  // instead of opening the full Settings modal.
+  const [audioInDevices,  setAudioInDevices]  = useState<MediaDeviceInfo[]>([]);
+  const [audioOutDevices, setAudioOutDevices] = useState<MediaDeviceInfo[]>([]);
+  const [videoInDevices,  setVideoInDevices]  = useState<MediaDeviceInfo[]>([]);
+  const [activeAudioIn,   setActiveAudioIn]   = useState("");
+  const [activeAudioOut,  setActiveAudioOut]  = useState("");
+  const [activeVideoIn,   setActiveVideoIn]   = useState("");
+
+  const refreshDevices = useCallback(async () => {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setAudioInDevices(all.filter(d => d.kind === "audioinput"));
+      setAudioOutDevices(all.filter(d => d.kind === "audiooutput"));
+      setVideoInDevices(all.filter(d => d.kind === "videoinput"));
+      try {
+        const mic = await room.getActiveDevice("audioinput");  if (mic) setActiveAudioIn(mic);
+        const spk = await room.getActiveDevice("audiooutput"); if (spk) setActiveAudioOut(spk);
+        const cam = await room.getActiveDevice("videoinput");  if (cam) setActiveVideoIn(cam);
+      } catch {}
+    } catch {}
+  }, [room]);
+
+  const quickSwitchDevice = useCallback(async (kind: MediaDeviceKind, deviceId: string) => {
+    try {
+      await room.switchActiveDevice(kind, deviceId);
+      if (kind === "audioinput")  setActiveAudioIn(deviceId);
+      if (kind === "audiooutput") setActiveAudioOut(deviceId);
+      if (kind === "videoinput")  setActiveVideoIn(deviceId);
+      toast({ title: t("Device switched ✓", "تم تغيير الجهاز ✓") });
+    } catch (e: any) {
+      toast({ title: t("Failed to switch device", "فشل تغيير الجهاز"), description: e?.message, variant: "destructive" });
+    }
+  }, [room, t]);
+
   // ── Quick video quality switcher (three-dot menu) ─────────────────────
   // Lets a student/teacher switch quality with one tap, right from the
   // three-dot menu, instead of having to dig into Settings. Actually
@@ -662,17 +699,44 @@ const ClassControls = ({
             {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
             <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
           </Button>
-          <button
-            onClick={(e) => { e.stopPropagation(); setSettingsTab("audio"); setShowSettings(true); }}
-            title={t("Microphone options", "خيارات الميكروفون")}
-            style={{
-              position: "absolute", top: -5, right: -5, width: 18, height: 18, padding: 0,
-              borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "1px solid rgba(255,255,255,.28)",
-              color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-            }}
-          >
-            <ChevronUp style={{ width: 11, height: 11 }} />
-          </button>
+          <DropdownMenu onOpenChange={(open) => { if (open) refreshDevices(); }}>
+            <DropdownMenuTrigger asChild>
+              <button
+                onClick={(e) => e.stopPropagation()}
+                title={t("Microphone options", "خيارات الميكروفون")}
+                style={{
+                  position: "absolute", top: -5, right: -5, width: 18, height: 18, padding: 0,
+                  borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "1px solid rgba(255,255,255,.28)",
+                  color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                }}
+              >
+                <ChevronUp style={{ width: 11, height: 11 }} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto"}}>
+              <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Microphone","الميكروفون")}</div>
+              {audioInDevices.length === 0
+                ? <div style={{padding:"6px 10px 10px",fontSize:12,color:"rgba(255,255,255,.35)"}}>{t("No microphones found","لم يُعثر على ميكروفون")}</div>
+                : audioInDevices.map(d => (
+                  <DropdownMenuItem key={d.deviceId} onClick={() => quickSwitchDevice("audioinput", d.deviceId)} style={{display:"flex",alignItems:"center",gap:8,borderRadius:8}}>
+                    {activeAudioIn === d.deviceId ? <Check className="h-3.5 w-3.5 shrink-0 text-green-500" /> : <span style={{width:14}} />}
+                    <span style={{flex:1,fontSize:13}}>{d.label || t("Microphone","ميكروفون")}</span>
+                  </DropdownMenuItem>
+                ))
+              }
+              <DropdownMenuSeparator />
+              <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Speaker","السماعة")}</div>
+              {audioOutDevices.length === 0
+                ? <div style={{padding:"6px 10px 10px",fontSize:12,color:"rgba(255,255,255,.35)"}}>{t("Not supported on this browser","غير مدعوم في هذا المتصفح")}</div>
+                : audioOutDevices.map(d => (
+                  <DropdownMenuItem key={d.deviceId} onClick={() => quickSwitchDevice("audiooutput", d.deviceId)} style={{display:"flex",alignItems:"center",gap:8,borderRadius:8}}>
+                    {activeAudioOut === d.deviceId ? <Check className="h-3.5 w-3.5 shrink-0 text-green-500" /> : <span style={{width:14}} />}
+                    <span style={{flex:1,fontSize:13}}>{d.label || t("Speaker","سماعة")}</span>
+                  </DropdownMenuItem>
+                ))
+              }
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Cam — greyed out and locked while admin has forced audio-only mode room-wide.
@@ -689,17 +753,33 @@ const ClassControls = ({
             <span className="hidden sm:inline">{camLocked ? t("Locked","مقفل") : camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
           </Button>
           {!camLocked && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setSettingsTab("video"); setShowSettings(true); }}
-              title={t("Camera options", "خيارات الكاميرا")}
-              style={{
-                position: "absolute", top: -5, right: -5, width: 18, height: 18, padding: 0,
-                borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "1px solid rgba(255,255,255,.28)",
-                color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-              }}
-            >
-              <ChevronUp style={{ width: 11, height: 11 }} />
-            </button>
+            <DropdownMenu onOpenChange={(open) => { if (open) refreshDevices(); }}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  onClick={(e) => e.stopPropagation()}
+                  title={t("Camera options", "خيارات الكاميرا")}
+                  style={{
+                    position: "absolute", top: -5, right: -5, width: 18, height: 18, padding: 0,
+                    borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "1px solid rgba(255,255,255,.28)",
+                    color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                  }}
+                >
+                  <ChevronUp style={{ width: 11, height: 11 }} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto"}}>
+                <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Camera","الكاميرا")}</div>
+                {videoInDevices.length === 0
+                  ? <div style={{padding:"6px 10px 10px",fontSize:12,color:"rgba(255,255,255,.35)"}}>{t("No cameras found","لم يُعثر على كاميرا")}</div>
+                  : videoInDevices.map(d => (
+                    <DropdownMenuItem key={d.deviceId} onClick={() => quickSwitchDevice("videoinput", d.deviceId)} style={{display:"flex",alignItems:"center",gap:8,borderRadius:8}}>
+                      {activeVideoIn === d.deviceId ? <Check className="h-3.5 w-3.5 shrink-0 text-green-500" /> : <span style={{width:14}} />}
+                      <span style={{flex:1,fontSize:13}}>{d.label || t("Camera","كاميرا")}</span>
+                    </DropdownMenuItem>
+                  ))
+                }
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
 
@@ -711,11 +791,6 @@ const ClassControls = ({
               {chatUnread}
             </span>
           )}
-        </Button>
-
-        {/* Participants */}
-        <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle} onClick={onToggleParticipants}>
-          <Users className="h-4 w-4" />
         </Button>
 
         {/* More menu */}

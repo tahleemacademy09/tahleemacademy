@@ -71,7 +71,7 @@ export default function GlobalClassroomOverlay() {
     leaveClass, setMinimized,
     micEnabled, camEnabled,
     hasConnected,
-    restoreMicFnRef, getLocalCameraTrackRef,
+    restoreMicFnRef, getLocalCameraTrackRef, leaveSessionFnRef,
   } = useLiveClass();
 
   const title = activeSubject?.title ?? "Live Class";
@@ -183,7 +183,15 @@ export default function GlobalClassroomOverlay() {
     setPiPSource(camEnabled ? getLocalCameraTrackRef.current?.() ?? null : null);
   }, [camEnabled, minimized, getLocalCameraTrackRef]);
 
-  const handleLeave = useCallback(() => leaveClass(), [leaveClass]);
+  const handleLeave = useCallback(() => {
+    // Prefer the full cleanup (save recording, close out attendance, leave
+    // sound) that ClassroomView's leaveSession() does — it always calls
+    // leaveClass() itself at the end, so this is a strict superset. The ref
+    // defaults to a no-op until ClassroomView mounts and populates it
+    // (same pattern as toggleMicFnRef/restoreMicFnRef above), which always
+    // happens before a user could actually trigger this.
+    leaveSessionFnRef.current();
+  }, [leaveSessionFnRef]);
 
   // ── WhatsApp-style keep-alive ─────────────────────────────────────────
   // startBackgroundAudio:

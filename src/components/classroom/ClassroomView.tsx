@@ -145,7 +145,7 @@ export * from "./classroomComponents";
 
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");
-  const{setHasConnected}=useLiveClass();
+  const{setHasConnected,leaveSessionFnRef}=useLiveClass();
   const[phase,setPhase]=useState<"lobby"|"live"|"ended">("lobby");
   const[token,setToken]=useState<string|null>(null);const[wsUrl,setWsUrl]=useState<string|null>(null);
   const[error,setError]=useState<string|null>(null);const[loading,setLoading]=useState(false);
@@ -447,21 +447,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[sessionId,isPrivileged,phase]);
   useEffect(()=>{if(phase!=="live")return;const ti=setInterval(()=>setDuration(d=>d+1),1000);return()=>clearInterval(ti);},[phase]);
-  useEffect(()=>{
-    if(phase!=="live"||!("mediaSession"in navigator))return;
-    try{
-      (navigator as any).mediaSession.metadata=new(window as any).MediaMetadata({title:subject.title,artist:"Tahleem Academy — Live Class",album:"In Progress"});
-      (navigator as any).mediaSession.playbackState="playing";
-      // FIX: "stop" ends the call; "pause" is a no-op — the OS fires pause on
-      // screen-lock/app-switch and we must NOT leave the session in response.
-      // "play" is also a no-op; LiveKit manages audio independently of MediaSession.
-      (navigator as any).mediaSession.setActionHandler("stop",  ()=>leaveSession());
-      try{(navigator as any).mediaSession.setActionHandler("pause", null);}catch{}
-      try{(navigator as any).mediaSession.setActionHandler("play",  null);}catch{}
-    }catch{}
-    return()=>{try{(navigator as any).mediaSession.playbackState="none";}catch{}};
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[phase,subject.title]);
+  // NOTE: mediaSession metadata/playbackState/action-handlers are now owned
+  // exclusively by GlobalClassroomOverlay + useBackgroundAudio.ts (driven off
+  // hasConnected). This component used to ALSO write directly to the same
+  // navigator.mediaSession singleton here — two independent writers racing
+  // on the same global object, with different metadata (title/album text)
+  // and conflicting action handlers (this block nulled out play/pause,
+  // silently breaking "tap notification to resume"; the overlay's own
+  // stop-handler skipped the recording-save/attendance-log cleanup that
+  // leaveSession() below does). That's the most likely cause of the
+  // persistent-notification-not-showing / notification-buttons-doing-nothing
+  // reports — whichever effect happened to run last won, unpredictably.
+  // leaveSession() below is now bridged to the overlay via leaveSessionFnRef
+  // so the notification's "stop" button gets the exact same full cleanup as
+  // the in-app Leave button, without a second writer touching mediaSession.
 
   const connect=async(action:string,settings?:any,mediaSettings?:{micOn:boolean;cameraOn:boolean})=>{
     // FIX: capture first-join status in a ref BEFORE setHasConnected(true)/setPhase("live")
@@ -696,6 +695,16 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     onLeave();
   };
 
+  // Bridge leaveSession() up to GlobalClassroomOverlay via context ref, so
+  // the lock-screen notification's "stop" button (and the Android foreground
+  // service, if it ever needs to trigger a leave) run this exact same
+  // recording-save / attendance-log / leave-sound cleanup instead of a bare
+  // leaveClass() that would silently skip all of it.
+  useEffect(()=>{
+    leaveSessionFnRef.current=leaveSession;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[leaveSession]);
+
   const handlePermChange=(type:"write"|"rec",allow:boolean,room?:any)=>{
     if(type==="write"){setCanStudentWrite(allow);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"wb_allow_write",allow})),{reliable:true});}catch{}toast({title:allow?"✅ Students can now write on the board":"🔒 Write access revoked"});}
     else{setCanStudentRec(allow);try{room?.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify({type:"rec_allowed",allow})),{reliable:true});}catch{}toast({title:allow?"✅ Students can now record":"🔒 Record permission revoked"});}
@@ -836,7 +845,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length]);
     if(all.length===0)return null;
     return(
-      <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0,cursor:"pointer"}} onClick={()=>setPartOpen(v=>!v)}>
+      <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0,cursor:"pointer"}} onClick={()=>{setPartOpen(v=>!v);setPartPanelOpen(v=>!v);}}>
         <Users style={{width:12,height:12,opacity:.7}}/>
         <span style={{fontSize:12,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{all.length}</span>
       </div>

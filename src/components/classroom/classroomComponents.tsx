@@ -897,6 +897,10 @@ export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) =
           queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(false)).catch(() => {});
           toast({ title: "🔇 Your mic was muted by the teacher" });
         }
+        if (msg.type === "force_unmute" && (!msg.target || msg.target === myIdentity)) {
+          queueMediaOp(room, () => room.localParticipant.setMicrophoneEnabled(true)).catch(() => {});
+          toast({ title: "🎤 Your mic was unmuted by the teacher" });
+        }
         if (msg.type === "force_cam_off" && (!msg.target || msg.target === myIdentity)) {
           queueMediaOp(room, () => room.localParticipant.setCameraEnabled(false)).catch(() => {});
           toast({ title: "📷 Your camera was turned off by the teacher" });

@@ -121,6 +121,25 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent, isPrivil
     toast({ title: `📷 ${name}'s camera turned off` });
   };
 
+  // ── Guest variants — same data-channel signal, but with no class_participants
+  //    row to update since guests were never registered in the DB. ──────────
+  const muteGuest = (lp: any) => {
+    setMutingId(lp.identity);
+    broadcastToParticipant(lp.identity, "force_mute");
+    toast({ title: `🔇 ${lp.name || "Guest"} muted` });
+    setTimeout(() => setMutingId(null), 800);
+  };
+
+  const unmuteGuest = (lp: any) => {
+    broadcastToParticipant(lp.identity, "force_unmute");
+    toast({ title: `🎤 ${lp.name || "Guest"} unmuted` });
+  };
+
+  const disableGuestCam = (lp: any) => {
+    broadcastToParticipant(lp.identity, "force_cam_off");
+    toast({ title: `📷 ${lp.name || "Guest"}'s camera turned off` });
+  };
+
   const removeParticipant = async (p: any) => {
     await supabase.from("class_participants")
       .update({ left_at: new Date().toISOString() })
@@ -287,8 +306,27 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent, isPrivil
               <p style={{ fontSize: 13, fontWeight: 600, color: "#e8eaf0", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{lp.name || lp.identity}</p>
               <p style={{ fontSize: 10, color: G, margin: 0 }}>guest · live</p>
             </div>
-            {lp.isMicrophoneEnabled ? <Mic style={{ width: 12, height: 12, color: G }} /> : <MicOff style={{ width: 12, height: 12, color: "rgba(239,68,68,.5)" }} />}
-            {lp.isCameraEnabled ? <Video style={{ width: 12, height: 12, color: G }} /> : <VideoOff style={{ width: 12, height: 12, color: "rgba(255,255,255,.2)" }} />}
+            {/* Mic toggle — admins can force-mute/unmute guests too, same as DB participants above */}
+            <button
+              onClick={isPrivileged ? () => (lp.isMicrophoneEnabled ? muteGuest(lp) : unmuteGuest(lp)) : undefined}
+              title={isPrivileged ? (lp.isMicrophoneEnabled ? "Mute mic" : "Unmute") : undefined}
+              disabled={mutingId === lp.identity}
+              style={{ background: "none", border: "none", cursor: isPrivileged ? "pointer" : "default", padding: 3, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", opacity: mutingId === lp.identity ? 0.5 : 1 }}>
+              {lp.isMicrophoneEnabled
+                ? <Mic    style={{ width: 12, height: 12, color: G }} />
+                : <MicOff style={{ width: 12, height: 12, color: "rgba(239,68,68,.5)" }} />
+              }
+            </button>
+            {/* Cam toggle — admins can force off a guest's camera */}
+            <button
+              onClick={isPrivileged && lp.isCameraEnabled ? () => disableGuestCam(lp) : undefined}
+              title={isPrivileged ? (lp.isCameraEnabled ? "Turn off camera" : "Camera off") : undefined}
+              style={{ background: "none", border: "none", cursor: isPrivileged && lp.isCameraEnabled ? "pointer" : "default", padding: 3, borderRadius: 6, display: "flex", alignItems: "center" }}>
+              {lp.isCameraEnabled
+                ? <Video    style={{ width: 12, height: 12, color: G }} />
+                : <VideoOff style={{ width: 12, height: 12, color: "rgba(255,255,255,.2)" }} />
+              }
+            </button>
           </div>
         ))}
 
