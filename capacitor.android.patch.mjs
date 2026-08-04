@@ -23,6 +23,37 @@ function addApplicationNode(node, marker) {
   xml = xml.replace(/<application([^>]*)>/, `<application$1>\n        ${node}`);
 }
 
+// Adds android:configChanges to the MainActivity so an orientation flip,
+// keyboard toggle, or system dark-mode switch reconfigures the existing
+// Activity in place instead of destroying and recreating it (which reloads
+// the WebView). NOTE: this does NOT fix the separate, bigger issue of the
+// OS killing the whole app process to reclaim memory while minimized —
+// that requires the DontKillMyApp battery-whitelist flow (see
+// src/hooks/useBatteryOptimization.ts) — but it removes one class of
+// avoidable reloads that isn't related to backgrounding at all.
+function addActivityConfigChanges() {
+  const REQUIRED = ["orientation", "screenSize", "screenLayout", "keyboardHidden", "keyboard", "uiMode", "smallestScreenSize"];
+  // Match the <activity> tag whose android:name ends in MainActivity (Capacitor's default).
+  const activityRe = /<activity\b([^>]*android:name="[^"]*\.MainActivity"[^>]*)>/;
+  const match = xml.match(activityRe);
+  if (!match) {
+    console.warn("MainActivity <activity> tag not found — skipping configChanges patch.");
+    return;
+  }
+  const attrs = match[1];
+  const existingMatch = attrs.match(/android:configChanges="([^"]*)"/);
+  if (existingMatch) {
+    const existing = existingMatch[1].split("|").map(s => s.trim()).filter(Boolean);
+    const merged = Array.from(new Set([...existing, ...REQUIRED])).join("|");
+    if (merged === existingMatch[1]) return; // already complete
+    const newAttrs = attrs.replace(/android:configChanges="[^"]*"/, `android:configChanges="${merged}"`);
+    xml = xml.replace(activityRe, `<activity${newAttrs}>`);
+  } else {
+    const newAttrs = `${attrs} android:configChanges="${REQUIRED.join("|")}"`;
+    xml = xml.replace(activityRe, `<activity${newAttrs}>`);
+  }
+}
+
 // <queries> is a top-level sibling of <application>, not nested inside it —
 // needed so DontKillMyApp can detect which OEM battery/auto-start app is
 // installed (Samsung, Xiaomi, Huawei, etc.) to open the right settings screen.
@@ -54,6 +85,8 @@ addApplicationNode(
   `<service android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService" android:foregroundServiceType="microphone" />`,
   "AndroidForegroundService",
 );
+
+addActivityConfigChanges();
 
 // OEM auto-start / battery-saver settings packages (Samsung, Xiaomi, Huawei,
 // Oppo, Vivo, etc.) — required by @squareetlabs/capacitor-dont-kill-my-app
