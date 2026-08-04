@@ -379,8 +379,8 @@ export default function HifdhAdminReview(){
       if(!rawLogs){setLoading(false);return;}
 
       const ids=[...new Set(rawLogs.map((l:any)=>l.student_id))];
-      const {data:profiles}=await supabase.from("profiles")
-        .select("user_id,full_name,email").in("user_id" as any,ids);
+      const {data:profiles}=await (supabase as any).from("profiles")
+        .select("user_id,full_name,email").in("user_id",ids);
       const pmap:Record<string,{name:string;email:string}>={};
       (profiles||[]).forEach((p:any)=>{pmap[p.user_id]={name:p.full_name??"Student",email:p.email??""};});
 

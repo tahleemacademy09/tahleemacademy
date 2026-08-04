@@ -111,7 +111,7 @@ export default function TeacherHifdhReview() {
       }
 
       /* Also directly assigned students */
-      const { data: pvt } = await supabase.from("profiles").select("user_id").eq("assigned_teacher_id" as any, teacherId);
+      const { data: pvt } = await (supabase as any).from("profiles").select("user_id").eq("assigned_teacher_id", teacherId);
       const pvtIds = (pvt||[]).map((p:any)=>p.user_id);
       studentIds = [...new Set([...studentIds, ...pvtIds])];
 
@@ -128,7 +128,7 @@ export default function TeacherHifdhReview() {
       if (!rawLogs) { setLoading(false); return; }
 
       /* Profiles map */
-      const { data: profiles } = await supabase.from("profiles").select("user_id,full_name,email").in("user_id" as any, studentIds);
+      const { data: profiles } = await (supabase as any).from("profiles").select("user_id,full_name,email").in("user_id", studentIds);
       const pmap: Record<string,{name:string;email:string}> = {};
       (profiles||[]).forEach((p:any)=>{ pmap[p.user_id]={name:p.full_name??"Student",email:p.email??""}; });
 
