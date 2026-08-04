@@ -6,7 +6,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { Hand, Mic, MicOff, Video, VideoOff, UserMinus, Pin, PinOff } from "lucide-react";
+import { Hand, Mic, MicOff, Video, VideoOff, UserMinus, UserX, ShieldCheck, Pin, PinOff } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 // BUG FIX ("participant count always shows 0 even with more users online"):
 // this used to load useParticipants/useRoomContext via a runtime require()
@@ -42,7 +42,10 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent, isPrivil
   const liveCount = livekitParticipants.length;
 
   const [dbParticipants, setDbParticipants] = useState<any[]>([]);
+  const [bannedParticipants, setBannedParticipants] = useState<any[]>([]);
   const [mutingId,       setMutingId]       = useState<string | null>(null);
+  const [removingId,     setRemovingId]     = useState<string | null>(null);
+  const [showBanned,     setShowBanned]     = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -52,6 +55,15 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent, isPrivil
         .select("*, profiles:student_id(full_name, avatar_url, level)")
         .eq("session_id", sessionId).is("left_at", null).order("joined_at");
       setDbParticipants(data || []);
+
+      // Banned rows always have left_at set (they were force-disconnected),
+      // so they never show up in the query above — fetch them separately
+      // so admins have somewhere to unban from.
+      const { data: banned } = await supabase
+        .from("class_participants")
+        .select("*, profiles:student_id(full_name, avatar_url, level)")
+        .eq("session_id", sessionId).eq("is_banned", true).order("banned_at", { ascending: false });
+      setBannedParticipants(banned || []);
     };
     load();
     const channel = supabase.channel(`participants-${sessionId}`)
@@ -140,11 +152,61 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent, isPrivil
     toast({ title: `📷 ${lp.name || "Guest"}'s camera turned off` });
   };
 
+  // Disconnects them from the live call right now, via the moderate-participant
+  // edge function (needed because only LiveKit's server-side RoomService API
+  // can force-disconnect someone else's connection — the client SDK can't).
+  // They're free to rejoin immediately afterwards.
   const removeParticipant = async (p: any) => {
-    await supabase.from("class_participants")
-      .update({ left_at: new Date().toISOString() })
-      .eq("session_id", sessionId).eq("student_id", p.student_id);
-    onRemoveStudent?.(p.student_id);
+    const name = p.profiles?.full_name || "Student";
+    if (!window.confirm(`Remove ${name} from this class? They can rejoin right away.`)) return;
+    setRemovingId(p.id);
+    try {
+      const identity = findLkIdentity(p);
+      const { data, error } = await supabase.functions.invoke("moderate-participant", {
+        body: { session_id: sessionId, student_id: p.student_id, action: "remove", identity },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message);
+      toast({ title: `👋 ${name} removed from the class` });
+      onRemoveStudent?.(p.student_id);
+    } catch (e: any) {
+      toast({ title: "Failed to remove participant", description: e?.message, variant: "destructive" });
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  // Disconnects them AND blocks them from getting a fresh token for this
+  // exact session until an admin unbans them below.
+  const banParticipant = async (p: any) => {
+    const name = p.profiles?.full_name || "Student";
+    if (!window.confirm(`Remove and block ${name} from rejoining this class until you unblock them?`)) return;
+    setRemovingId(p.id);
+    try {
+      const identity = findLkIdentity(p);
+      const { data, error } = await supabase.functions.invoke("moderate-participant", {
+        body: { session_id: sessionId, student_id: p.student_id, action: "ban", identity },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message);
+      toast({ title: `🚫 ${name} removed and blocked from rejoining` });
+      onRemoveStudent?.(p.student_id);
+    } catch (e: any) {
+      toast({ title: "Failed to block participant", description: e?.message, variant: "destructive" });
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  const unbanParticipant = async (p: any) => {
+    const name = p.profiles?.full_name || "Student";
+    try {
+      const { data, error } = await supabase.functions.invoke("moderate-participant", {
+        body: { session_id: sessionId, student_id: p.student_id, action: "unban" },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message);
+      toast({ title: `✅ ${name} can rejoin the class again` });
+    } catch (e: any) {
+      toast({ title: "Failed to unblock participant", description: e?.message, variant: "destructive" });
+    }
   };
 
   const callOnHand = (p: any) => {
@@ -230,13 +292,24 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent, isPrivil
               : <VideoOff style={{ width: 13, height: 13, color: "rgba(255,255,255,.25)" }} />
             }
           </button>
-          {/* Remove */}
+          {/* Remove — disconnects now, they can rejoin */}
           {isPrivileged && (
-            <button onClick={() => removeParticipant(p)} title="Remove participant"
-              style={{ background: "none", border: "none", cursor: "pointer", padding: 3, borderRadius: 6, display: "flex", alignItems: "center" }}
+            <button onClick={() => removeParticipant(p)} title="Remove from call (can rejoin)"
+              disabled={removingId === p.id}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 3, borderRadius: 6, display: "flex", alignItems: "center", opacity: removingId === p.id ? 0.5 : 1 }}
               onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,.15)")}
               onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
               <UserMinus style={{ width: 12, height: 12, color: "rgba(239,68,68,.6)" }} />
+            </button>
+          )}
+          {/* Ban — disconnects AND blocks rejoining until unbanned */}
+          {isPrivileged && (
+            <button onClick={() => banParticipant(p)} title="Remove and block from rejoining"
+              disabled={removingId === p.id}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 3, borderRadius: 6, display: "flex", alignItems: "center", opacity: removingId === p.id ? 0.5 : 1 }}
+              onMouseEnter={e => (e.currentTarget.style.background = "rgba(239,68,68,.15)")}
+              onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
+              <UserX style={{ width: 12, height: 12, color: "rgba(239,68,68,.75)" }} />
             </button>
           )}
         </div>
@@ -276,6 +349,31 @@ const ClassParticipants = ({ sessionId, onMuteStudent, onRemoveStudent, isPrivil
               <button onClick={async () => await supabase.from("class_participants").update({ hand_raised: false, hand_raised_at: null }).eq("id", p.id)}
                 style={{ padding: "2px 6px", borderRadius: 6, border: "1px solid rgba(255,255,255,.1)", background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.4)", fontSize: 10, cursor: "pointer" }}>
                 ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Blocked participants — collapsed by default so the panel doesn't
+          feel cluttered when nobody's banned. */}
+      {bannedParticipants.length > 0 && isPrivileged && (
+        <div style={{ borderBottom: "1px solid rgba(255,255,255,.07)", flexShrink: 0, background: "rgba(239,68,68,.04)" }}>
+          <button onClick={() => setShowBanned(v => !v)} style={{
+            width: "100%", display: "flex", alignItems: "center", gap: 6, padding: "8px 14px",
+            background: "none", border: "none", cursor: "pointer", color: "rgba(239,68,68,.85)",
+            fontSize: 11, fontWeight: 700,
+          }}>
+            🚫 {bannedParticipants.length} blocked from this class {showBanned ? "▾" : "▸"}
+          </button>
+          {showBanned && bannedParticipants.map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 14px 8px" }}>
+              <span style={{ flex: 1, fontSize: 12, color: "rgba(255,255,255,.7)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                {p.profiles?.full_name || "Student"}
+              </span>
+              <button onClick={() => unbanParticipant(p)} title="Allow back into this class"
+                style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, border: "1px solid rgba(34,197,94,.3)", background: "rgba(34,197,94,.12)", color: "#4ade80", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                <ShieldCheck style={{ width: 11, height: 11 }} /> Unblock
               </button>
             </div>
           ))}

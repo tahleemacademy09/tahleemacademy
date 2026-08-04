@@ -27,7 +27,7 @@ import MaterialsViewer from "./MaterialsViewer";
 import {
   FileText, Video, Music, Image as ImageIcon, File as FileIcon,
   Upload, Plus, X, Trash2, Pencil,
-  Loader2, FolderOpen, Search,
+  Loader2, FolderOpen, Search, Lock, LockOpen,
 } from "lucide-react";
 
 /* ── Design tokens (match SubjectAssignments / TeacherDashboard) ─────── */
@@ -100,6 +100,8 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
 
   const [materials, setMaterials] = useState<any[]>([]);
   const [loading, setLoading]     = useState(true);
+  const [materialsLocked, setMaterialsLocked] = useState(false);
+  const [lockBusy, setLockBusy]   = useState(false);
   const [search, setSearch]       = useState("");
   const [showForm, setShowForm]   = useState(false);
   const [editing, setEditing]     = useState<any | null>(null);
@@ -114,16 +116,29 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
   const load = useCallback(async () => {
     if (!subjectId) { setLoading(false); return; }
     setLoading(true);
-    const { data } = await supabase
-      .from("subject_materials").select("*")
-      .eq("subject_id", subjectId)
-      .order("sort_order", { ascending: true })
-      .order("created_at", { ascending: false });
+    const [{ data }, { data: subj }] = await Promise.all([
+      supabase
+        .from("subject_materials").select("*")
+        .eq("subject_id", subjectId)
+        .order("sort_order", { ascending: true })
+        .order("created_at", { ascending: false }),
+      supabase.from("subjects").select("materials_locked").eq("id", subjectId).single(),
+    ]);
     setMaterials(data || []);
+    setMaterialsLocked(!!subj?.materials_locked);
     setLoading(false);
   }, [subjectId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const toggleLock = async () => {
+    if (!subjectId) return;
+    setLockBusy(true);
+    const next = !materialsLocked;
+    const { error } = await supabase.from("subjects").update({ materials_locked: next }).eq("id", subjectId);
+    if (!error) setMaterialsLocked(next);
+    setLockBusy(false);
+  };
 
   const resetForm = () => {
     setForm({ ...emptyForm });
@@ -242,11 +257,35 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
           />
         </div>
         <button
+          onClick={toggleLock}
+          disabled={lockBusy}
+          title={materialsLocked ? t("Unlock materials for students", "إلغاء قفل المواد للطلاب") : t("Lock materials from students", "قفل المواد عن الطلاب")}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "10px 14px", borderRadius: 11,
+            border: `1px solid ${materialsLocked ? "#DC2626" : BORDER}`,
+            background: materialsLocked ? "#FEF2F2" : "#fff",
+            color: materialsLocked ? "#DC2626" : TMID,
+            fontWeight: 700, fontSize: 13, cursor: lockBusy ? "default" : "pointer", opacity: lockBusy ? .6 : 1, flexShrink: 0,
+          }}>
+          {materialsLocked ? <Lock size={15} /> : <LockOpen size={15} />}
+          {materialsLocked ? t("Locked", "مقفلة") : t("Lock", "قفل")}
+        </button>
+        <button
           onClick={() => { resetForm(); setShowForm(true); }}
           style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 16px", borderRadius: 11, border: "none", background: G, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
           <Plus size={15} /> {t("New Material", "مادة جديدة")}
         </button>
       </div>
+
+      {/* Lock status banner — reminds staff the tab is currently hidden from students */}
+      {materialsLocked && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, background: "#FEF2F2", border: "1px solid rgba(220,38,38,.2)" }}>
+          <Lock size={15} color="#DC2626" />
+          <span style={{ fontSize: 12.5, color: "#DC2626", fontWeight: 600 }}>
+            {t("Students can't see or open any material here until you unlock this.", "لا يمكن للطلاب رؤية أو فتح أي مادة هنا حتى تقوم بإلغاء القفل.")}
+          </span>
+        </div>
+      )}
 
       {/* Empty state */}
       {filtered.length === 0 && (
@@ -392,13 +431,26 @@ function IconBtn({ children, onClick, title }: { children: React.ReactNode; onCl
    (PDF, video, audio, image, YouTube, Office docs, text, links, etc.)
    ═══════════════════════════════════════════════════════════════ */
 function MaterialViewer({ subjectId }: { subjectId?: string }) {
+  const { t } = useLanguage();
   const [materials, setMaterials] = useState<any[]>([]);
   const [loading, setLoading]     = useState(true);
+  const [locked, setLocked]       = useState(false);
 
   useEffect(() => {
     if (!subjectId) { setLoading(false); return; }
     (async () => {
       setLoading(true);
+      const { data: subj } = await supabase.from("subjects").select("materials_locked").eq("id", subjectId).single();
+      if (subj?.materials_locked) {
+        // RLS already blocks the row-level fetch below for a locked subject,
+        // but skip the request entirely and show the reason clearly instead
+        // of a silently-empty list.
+        setLocked(true);
+        setMaterials([]);
+        setLoading(false);
+        return;
+      }
+      setLocked(false);
       const { data } = await supabase
         .from("subject_materials").select("*")
         .eq("subject_id", subjectId)
@@ -416,6 +468,16 @@ function MaterialViewer({ subjectId }: { subjectId?: string }) {
     return (
       <div style={{ display: "flex", justifyContent: "center", padding: "50px 0" }}>
         <Loader2 className="animate-spin" size={26} color={GOLD} />
+      </div>
+    );
+  }
+
+  if (locked) {
+    return (
+      <div style={{ ...card, textAlign: "center", padding: "42px 20px" }}>
+        <Lock size={34} color={TLIT} style={{ opacity: .5, margin: "0 auto 10px" }} />
+        <p style={{ fontWeight: 800, fontSize: 15, color: TXT, margin: "0 0 4px" }}>{t("Materials are locked", "المواد مقفلة")}</p>
+        <p style={{ fontSize: 13, color: TMID, margin: 0 }}>{t("Your teacher will unlock this when it's ready.", "سيقوم معلمك بإلغاء القفل عندما تكون جاهزة.")}</p>
       </div>
     );
   }

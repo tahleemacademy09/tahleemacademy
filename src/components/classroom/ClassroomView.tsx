@@ -610,6 +610,18 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     await new Promise(r=>setTimeout(r,backoffMs));
     try{
       const{data}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}});
+      // Banned from this specific session by an admin/teacher — don't burn
+      // through the retry budget, the answer won't change until they're
+      // unbanned. Drop straight to the lobby with the real reason instead of
+      // a generic "connection lost" after ~90s of pointless retries.
+      if(data?.error&&/removed from this class/i.test(data.error)){
+        isReconnectingRef.current=false;
+        setReconnecting(false);
+        setError(data.error);
+        setPhase("lobby");
+        setHasConnected(false);
+        return;
+      }
       if(data?.token&&data?.url){
         prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now()};
         autoReconnectCountRef.current+=1;  // ref — won't trigger useCallback recreation
