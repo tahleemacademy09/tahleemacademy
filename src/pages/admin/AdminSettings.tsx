@@ -120,6 +120,8 @@ export default function AdminSettings() {
   const navigate                   = useNavigate();
   const avatarRef                  = useRef<HTMLInputElement>(null);
   const { settings, loading: acLoading, updateMultiple } = useAcademySettings();
+  const [notifyStudents, setNotifyStudents] = useState(true);
+  const [prevAcademyStatus, setPrevAcademyStatus] = useState<string | null>(null);
   const { settings: hifdhSettings, loading: hifdhLoading, save: saveHifdh } = useHifdhSettings();
 
   const [searchParams]             = useSearchParams();
@@ -217,6 +219,7 @@ export default function AdminSettings() {
         resume_date:           settings.resume_date           || "",
         maintenance_bypass_user_ids: settings.maintenance_bypass_user_ids || "",
       });
+      setPrevAcademyStatus((prev) => prev ?? (settings.academy_status || "active"));
     }
   }, [acLoading, settings]);
 
@@ -244,6 +247,54 @@ export default function AdminSettings() {
     else       toast({ title: "✅ Profile saved!" });
   };
 
+  /* ── Notify students of an academy status change ────────────────
+     Reuses the exact same `notifications` table pattern as
+     NotificationManagement.tsx — insert one row per recipient, the
+     trg_dispatch_notification DB trigger handles push delivery. */
+  const notifyStatusChange = async (status: string) => {
+    const { data } = await supabase.from("user_roles").select("user_id").eq("role", "student");
+    const userIds = (data ?? []).map((u: any) => u.user_id);
+    if (userIds.length === 0) return;
+
+    const copy = status === "maintenance"
+      ? {
+          title: "🔧 Scheduled Maintenance",
+          title_ar: "صيانة مجدولة",
+          message: academy.holiday_message ||
+            "As-salamu alaykum wa rahmatullah. The academy is currently under scheduled maintenance, in sha Allah. Please check back soon.",
+          message_ar: academy.holiday_message_ar ||
+            "السلام عليكم ورحمة الله. الأكاديمية حالياً تحت الصيانة إن شاء الله. يرجى المراجعة لاحقاً.",
+        }
+      : status === "holiday"
+      ? {
+          title: "🌙 Academy Holiday",
+          title_ar: "الأكاديمية في إجازة",
+          message: academy.holiday_message ||
+            "As-salamu alaykum. The academy is currently on holiday. We'll be back soon, in sha Allah.",
+          message_ar: academy.holiday_message_ar ||
+            "السلام عليكم. الأكاديمية في إجازة حالياً. سنعود قريباً إن شاء الله.",
+        }
+      : {
+          title: "✅ We're Back Online",
+          title_ar: "لقد عدنا الآن",
+          message: "Alhamdulillah, Tahleem Academy is back online and ready for you.",
+          message_ar: "الحمد لله، أكاديمية التحليم عادت للعمل وجاهزة لكم.",
+        };
+
+    const rows = userIds.map((user_id: string) => ({
+      user_id,
+      type: "announcement",
+      priority: status === "active" ? "normal" : "high",
+      title: copy.title,
+      title_ar: copy.title_ar,
+      message: copy.message,
+      message_ar: copy.message_ar,
+      link: null,
+    }));
+
+    await supabase.from("notifications").insert(rows);
+  };
+
   /* ── Save academy settings ───────────────────────────────────── */
   const saveAcademy = async () => {
     if (!user) return;
@@ -257,8 +308,18 @@ export default function AdminSettings() {
       resume_date:           academy.resume_date            || null,
       maintenance_bypass_user_ids: academy.maintenance_bypass_user_ids || null,
     }, user.id);
+
+    const statusChanged = prevAcademyStatus !== null && prevAcademyStatus !== academy.academy_status;
+    if (notifyStudents && statusChanged) {
+      await notifyStatusChange(academy.academy_status);
+    }
+    setPrevAcademyStatus(academy.academy_status);
+
     setAcSaving(false);
-    toast({ title: "✅ Academy settings saved!" });
+    toast({
+      title: "✅ Academy settings saved!",
+      description: notifyStudents && statusChanged ? "Students have been notified." : undefined,
+    });
   };
 
   /* ── Push notification toggle ─────────────────────────────── */
@@ -585,6 +646,23 @@ export default function AdminSettings() {
                 onChange={e => setAcademy(a => ({ ...a, maintenance_bypass_user_ids: e.target.value }))} />
             </Fld>
           </Sec>
+
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10,
+            background: "#F9FAFB", border: "1px solid #E5E7EB", borderRadius: 12,
+            padding: "12px 14px", marginBottom: 12,
+          }}>
+            <input
+              type="checkbox"
+              id="notify-students"
+              checked={notifyStudents}
+              onChange={(e) => setNotifyStudents(e.target.checked)}
+              style={{ width: 16, height: 16, cursor: "pointer" }}
+            />
+            <label htmlFor="notify-students" style={{ fontSize: 12, color: "#374151", cursor: "pointer", flex: 1 }}>
+              Notify all students when the academy status changes (uses your Holiday/Maintenance message above)
+            </label>
+          </div>
 
           <SaveBtn fn={saveAcademy} saving={saving} busy={acSaving} />
 
