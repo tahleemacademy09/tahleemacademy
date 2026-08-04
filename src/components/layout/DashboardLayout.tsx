@@ -16,7 +16,7 @@ import {
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
   BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
-  Activity, BookText, LifeBuoy,
+  Activity, BookText, LifeBuoy, Eye,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -187,6 +187,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const adminNav: AdminNavItem[] = [
     { type:"link", to:"/admin", icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
+    { type:"link", to:"/admin/analytics", icon:Eye, label:t("Site Analytics","إحصائيات الموقع") },
 
     // 1 ── Student Pipeline ─────────────────────────────────────
     { type:"group", key:"pipeline", icon:UserPlus, label:t("Student Pipeline","سير التسجيل"), children:[
