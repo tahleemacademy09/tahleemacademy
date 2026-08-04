@@ -221,15 +221,18 @@ const App = () => (
 
                   <Route path="/recordings/:recordingId" element={<ProtectedRoute><RecordingPlayer /></ProtectedRoute>} />
 
+                  {/* TEST ROUTE — fully standalone, deliberately disconnected from
+                      ProtectedRoute / TasjeelGuard / DashboardLayout so it cannot be
+                      affected by any of their spinners, remounts, or resume logic.
+                      It does its own minimal auth check internally. Not linked in
+                      navigation; visit directly. Safe to remove — touches nothing
+                      else in the app. */}
+                  <Route path="/student/dashboard-v2" element={<StudentDashboardV2 />} />
+
                   {/* ── Student routes (inside DashboardLayout) ─────────── */}
                   {/* TasjeelGuard blocks dashboard access for mid-registration students */}
                   <Route element={<ProtectedRoute><TasjeelGuard><DashboardLayout role="student" /></TasjeelGuard></ProtectedRoute>}>
                     <Route path="/student"                     element={<StudentDashboard />} />
-                    {/* TEST ROUTE — cache-first React Query rebuild of the dashboard.
-                        Not linked in navigation; visit directly to test whether it
-                        fixes the reload-on-resume issue. Safe to remove — doesn't
-                        touch /student or anything else. */}
-                    <Route path="/student/dashboard-v2"        element={<StudentDashboardV2 />} />
                     <Route path="/student/quran"                element={<QuranPage />} />
                     <Route path="/student/courses"             element={<LearningHub />} />
                     <Route path="/student/courses/:courseId"   element={<LearningHub />} />
