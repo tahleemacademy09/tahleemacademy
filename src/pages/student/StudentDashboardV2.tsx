@@ -29,6 +29,7 @@
     cannot affect caching behaviour anywhere else in the app.
 */
 import { useState, useMemo } from "react";
+import { Navigate } from "react-router-dom";
 import {
   QueryClient,
   useQuery,
@@ -157,7 +158,7 @@ async function fetchDashboardData(uid: string, allowGeneralAccess: boolean): Pro
 /* ── Inner content — everything that actually uses useQuery ─────────── */
 const DashboardContent = () => {
   const { t, language } = useLanguage();
-  const { profile } = useAuth();
+  const { user, profile, loading: authLoading } = useAuth();
   const { effectiveUserId } = useImpersonation();
   const { allowGeneralAccess } = usePrivateStudent();
   const qc = useQueryClient();
@@ -196,6 +197,14 @@ const DashboardContent = () => {
     [effectiveUserId, queryKey],
     () => refetch(),
   );
+
+  // Minimal standalone auth check — this route is deliberately NOT wrapped in
+  // ProtectedRoute for this test, so it has to gate itself. No role checks,
+  // no TasjeelGuard, no DashboardLayout — just "are you logged in at all".
+  // Placed after all hooks above so hook order stays unconditional.
+  if (!authLoading && !user) {
+    return <Navigate to="/login" replace />;
+  }
 
   // ── First-ever load (nothing cached yet, not even from a previous
   // session) — this is the ONLY time we show a full blocking spinner.
