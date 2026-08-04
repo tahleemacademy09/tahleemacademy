@@ -152,6 +152,13 @@ interface LiveClassContextType extends LiveClassState {
   // FIX: "restore" sets mic ON only — safe to call on background return.
   // toggleMicFnRef flips state and must never be used for restoration.
   restoreMicFnRef: React.MutableRefObject<() => void>;
+  /** Populated by ClassroomView with its full leaveSession() — saves any
+      active recording, writes attendance_logs/class_participants exit rows,
+      plays the leave sound, THEN calls onLeave() (=leaveClass()). Lets
+      external "leave" triggers (media-notification stop button, foreground
+      service, etc.) run the same complete cleanup as the in-app Leave
+      button, instead of just yanking the room via bare leaveClass(). */
+  leaveSessionFnRef: React.MutableRefObject<() => void>;
   /** Populated by ClassroomView. Returns the live local camera MediaStreamTrack
       (or null if camera is off / not yet published). Used by the background
       Picture-in-Picture keep-alive so it can show the real camera feed when
@@ -184,6 +191,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
   const toggleMicFnRef  = useRef<() => void>(() => {});
   const toggleCamFnRef  = useRef<() => void>(() => {});
   const restoreMicFnRef = useRef<() => void>(() => {});
+  const leaveSessionFnRef = useRef<() => void>(() => {});
   const getLocalCameraTrackRef = useRef<() => MediaStreamTrack | null>(() => null);
 
   useLiveClassKeepAlive(state.inCall);
@@ -299,7 +307,7 @@ export const LiveClassProvider = ({ children }: { children: ReactNode }) => {
     <LiveClassContext.Provider value={{
       ...state, joinClass, leaveClass, setMinimized,
       setMicEnabled, setCamEnabled, setHasConnected,
-      toggleMicFnRef, toggleCamFnRef, restoreMicFnRef, getLocalCameraTrackRef,
+      toggleMicFnRef, toggleCamFnRef, restoreMicFnRef, leaveSessionFnRef, getLocalCameraTrackRef,
       audioBoost, setAudioBoost,
     }}>
       {children}
