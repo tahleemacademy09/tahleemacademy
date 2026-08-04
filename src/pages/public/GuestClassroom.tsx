@@ -43,6 +43,36 @@ import { useIsMobile }   from "@/hooks/use-mobile";
 import { startBackgroundAudio, stopBackgroundAudio, setWakeLockActive } from "@/hooks/useBackgroundAudio";
 import { startForegroundService, stopForegroundService } from "@/hooks/useForegroundService";
 
+function useMediaSession(active: boolean, title: string, onReturn: () => void, onLeave: () => void) {
+  useEffect(() => {
+    if (!active || !("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title,
+      artist: "Tahleem Academy",
+      album: "Live Class",
+      artwork: [
+        { src: "/brand-logo.png", sizes: "192x192", type: "image/png" },
+        { src: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
+      ],
+    });
+    navigator.mediaSession.playbackState = "playing";
+    const setAction = (action: MediaSessionAction, handler: () => void) => {
+      try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* unsupported action */ }
+    };
+    setAction("play", onReturn);
+    setAction("pause", onReturn);
+    setAction("stop", onLeave);
+    setAction("previoustrack", onReturn);
+    setAction("nexttrack", onReturn);
+    return () => {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = "none";
+      (["play", "pause", "stop", "previoustrack", "nexttrack"] as MediaSessionAction[])
+        .forEach(action => { try { navigator.mediaSession.setActionHandler(action, null); } catch { /* unsupported */ } });
+    };
+  }, [active, title, onReturn, onLeave]);
+}
+
 
 /* ════════════════════════════════════════════════════════
    STYLES
@@ -234,6 +264,19 @@ function buildCanvasPip(_a: string, _b: string, _c: () => void): PipHandle | nul
 const SILENCE_WAV =
   "data:audio/wav;base64," +
   "UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=";
+
+let sharedAudioContext: AudioContext | null = null;
+function getAudioContext(): AudioContext | null {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!sharedAudioContext || sharedAudioContext.state === "closed") {
+      sharedAudioContext = new AudioContextClass();
+    }
+    return sharedAudioContext;
+  } catch {
+    return null;
+  }
+}
 
 
 function primeAudioContext() {
