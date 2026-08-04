@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useVisibleRealtime } from "@/hooks/useVisibleRealtime";
 
 export interface AcademySettings {
   academy_status: string;
@@ -63,6 +64,26 @@ export const useAcademySettings = () => {
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
+
+  // Live-push: the moment an admin flips academy_status (e.g. turns on
+  // Maintenance), every open tab/app instance picks it up instantly —
+  // no refresh or re-login needed. Follows the visibility-gated pattern
+  // used elsewhere (socket only open while tab is foregrounded, with a
+  // catch-up fetch on resume) so this doesn't reopen the reload/spinner
+  // issue that always-open sockets caused before.
+  useVisibleRealtime(
+    () =>
+      supabase
+        .channel("academy_settings_live")
+        .on(
+          "postgres_changes" as any,
+          { event: "*", schema: "public", table: "academy_settings" },
+          () => fetchSettings()
+        )
+        .subscribe(),
+    [],
+    () => fetchSettings(),
+  );
 
   const updateSetting = async (key: string, value: string | null, updatedBy?: string) => {
     await supabase
