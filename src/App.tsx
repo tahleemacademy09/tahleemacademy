@@ -74,6 +74,7 @@ const EnrollmentPayment   = lazy(() => import("./pages/student/EnrollmentPayment
 const TasjeelAwaitingLevel = lazy(() => import("./pages/student/TasjeelAwaitingLevel"));
 const RecitationSession    = lazy(() => import("./pages/student/RecitationSession"));
 const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
+const LiveNow              = lazy(() => import("./pages/student/LiveNow"));
 const StudentAssignments   = lazy(() => import("./pages/student/StudentAssignments"));
 const StudentAttendance    = lazy(() => import("./pages/student/StudentAttendance"));
 const StudentSupport       = lazy(() => import("./pages/student/StudentSupport"));
@@ -246,6 +247,7 @@ const App = () => (
                     <Route path="/student/hifdh-daily"         element={<HifdhDailyRevisionPage />} />
                     <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
+                    <Route path="/student/live-now"            element={<LiveNow />} />
                     <Route path="/student/assignments"         element={<StudentAssignments />} />
                     <Route path="/student/attendance"          element={<StudentAttendance />} />
                     <Route path="/student/support"             element={<StudentSupport />} />
