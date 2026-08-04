@@ -7,7 +7,8 @@
 import { useEffect, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, hasPersistedSupabaseSession } from "@/integrations/supabase/client";
+import { logDiag } from "@/lib/diagnostics";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -75,7 +76,18 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
 
   if (authLoading || fallbackLoading) return <Spinner />;
 
-  if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
+  // Side-effecting diagnostic write belongs in an effect, not render — but
+  // this component is about to return a <Navigate>, which unmounts before
+  // any effect from this render would run. Logging inline here is the only
+  // way to actually capture the moment it happens; it's a plain localStorage
+  // append with no state update, so it's safe to run during render.
+  if (!user) {
+    logDiag("protected_route_redirect_to_login", {
+      from: location.pathname,
+      hadPersistedSession: hasPersistedSupabaseSession(),
+    });
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
 
   if (mustChangePassword && location.pathname !== "/change-password") {
     return <Navigate to="/change-password" replace />;
