@@ -27,8 +27,6 @@ export interface PaymentAccessResult {
   refetch: () => void;
 }
 
-const GRACE_DAYS = 7;
-
 export const usePaymentAccess = (): PaymentAccessResult => {
   const { user, hasRole, loading: authLoading } = useAuth();
 
@@ -100,15 +98,7 @@ export const usePaymentAccess = (): PaymentAccessResult => {
           setIsLoading(false);
           return;
         }
-        // Within 7 days after expiry = grace window
-        const graceCutoff = new Date(end.getTime() + GRACE_DAYS * 86400000);
-        if (graceCutoff > now) {
-          setGraceEnd(graceCutoff.toISOString());
-          setStatus("grace");
-          setIsLoading(false);
-          return;
-        }
-        // Past grace window → locked
+        // Expired → locked immediately (no automatic grace window)
         setStatus("locked");
         setIsLoading(false);
         return;
@@ -121,16 +111,7 @@ export const usePaymentAccess = (): PaymentAccessResult => {
         return;
       }
 
-      // New students get 7-day grace from their join date
-      const joined   = new Date(p.created_at);
-      const graceEnd = new Date(joined.getTime() + GRACE_DAYS * 86400000);
-      if (graceEnd > now) {
-        setGraceEnd(graceEnd.toISOString());
-        setStatus("grace");
-        setIsLoading(false);
-        return;
-      }
-
+      // No automatic grace for new students either — locked until paid
       setStatus("locked");
     } catch {
       if (!didTimeout) { setStatus("grace"); }
