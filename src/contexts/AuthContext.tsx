@@ -18,7 +18,7 @@
 // need to update the session object. No spinner, no profile re-fetch.
 
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase, hasPersistedSupabaseSession } from "@/integrations/supabase/client";
 import type { User, Session } from "@supabase/supabase-js";
 
 export interface UserProfile {
@@ -193,25 +193,59 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
-    // ── Safety timeout — loading must resolve within 8 seconds no matter what ──
+    // ── Safety timeout — loading must resolve within a bounded time no matter what ──
     // Prevents users getting permanently stuck on the spinner.
     // timedOutRef prevents the slow INITIAL_SESSION fetch from overwriting state
     // after the timeout has already forced loading=false.
     const timedOutRef = { current: false };
+    // Set the instant ANY auth event arrives, so a queued safety-timeout
+    // callback that fires a tick later never overrides real data that just
+    // came in.
+    const receivedEventRef = { current: false };
 
-    const safetyTimeout = setTimeout(() => {
-      if (mountedRef.current) {
+    // FIX (login flash on resume — looks exactly like a reload): the original
+    // 8s timeout unconditionally forced loading=false, and ProtectedRoute
+    // treats loading=false + user===null as "not signed in" → redirect to
+    // /login. On a device that WAS signed in, if onAuthStateChange's very
+    // first event just hasn't arrived yet after 8s (typically because the
+    // network is still re-establishing right after the app resumes from
+    // background — see the WebSocket reconnect failures that accompany
+    // this in the console), that redirect fires anyway. Then the instant
+    // the real event finally arrives, the person is bounced straight back
+    // to /student. Two navigations back-to-back, dashboard unmounted and
+    // remounted in between — indistinguishable from a reload even though
+    // the page never actually reloaded.
+    // Fix: at 8s, only force the logged-out state if there's no persisted
+    // session token on this device (i.e. this person was never signed in
+    // here, so there's nothing to wait for — send them to /login promptly).
+    // If a token IS present, they were signed in — give the slow check a
+    // longer grace window instead of assuming they're logged out.
+    let safetyTimeout: ReturnType<typeof setTimeout>;
+    const scheduleSafetyTimeout = (ms: number, isFinal: boolean) =>
+      setTimeout(() => {
+        if (!mountedRef.current || receivedEventRef.current) return;
+
+        if (!isFinal && hasPersistedSupabaseSession()) {
+          console.warn(
+            "[AuthContext] Safety timeout at", ms, "ms — persisted session found on " +
+            "this device, extending grace window instead of forcing a logged-out state"
+          );
+          safetyTimeout = scheduleSafetyTimeout(12000, true);
+          return;
+        }
+
         console.warn("[AuthContext] Safety timeout — forcing loading=false");
         timedOutRef.current = true;
         initialLoadDoneRef.current = true; // never show the blocking spinner again this session
         setLoading(false);
-      }
-    }, 8000);
+      }, ms);
+    safetyTimeout = scheduleSafetyTimeout(8000, false);
 
     // ── Single source of truth: onAuthStateChange ─────────────────────────────
     // In Supabase JS v2 this fires immediately (synchronously) with INITIAL_SESSION
     // so we do NOT need getSession() — calling both causes a double-fetch race.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, sess) => {
+      receivedEventRef.current = true;
       if (!mountedRef.current) return;
 
       // After the 8s safety timeout we suppress INITIAL_SESSION only — that one
