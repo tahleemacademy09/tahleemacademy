@@ -157,6 +157,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // destabilised ReconnectMonitor's event listeners and caused the infinite reconnect loop.
   const autoReconnectCountRef=useRef(0);
   const isReconnectingRef=useRef(false);           // guard against concurrent autoReconnect calls
+  const backgroundReconnectRef=useRef(false);      // reset hidden-tab retry history after resume
   const intentionalLeaveRef=useRef(false);         // true on manual leave → skip auto-reconnect
   const participantCountRef=useRef(0);              // tracks peak live participant count for ClassEndScreen
 
