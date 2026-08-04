@@ -7,6 +7,7 @@ export interface AcademySettings {
   current_term: string;
   current_academic_year: string;
   resume_date: string | null;
+  maintenance_bypass_user_ids: string | null;
   payment_grace_days: string;
   holiday_message: string | null;
   holiday_message_ar: string | null;
@@ -27,6 +28,7 @@ const DEFAULT_SETTINGS: AcademySettings = {
   current_term: "first",
   current_academic_year: "2025/2026",
   resume_date: null,
+  maintenance_bypass_user_ids: null,
   payment_grace_days: "7",
   holiday_message: null,
   holiday_message_ar: null,
