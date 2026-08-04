@@ -120,6 +120,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const PAYMENT_GATED_ROUTES = new Set([
     "/student/courses",
     "/student/timetable",
+    "/student/live-now",
     "/student/assignments",
     "/student/revision",
     "/student/hifdh",
@@ -134,6 +135,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const LOCKED_ROUTES = new Set([
     "/student/courses",
     "/student/timetable",
+    "/student/live-now",
     "/student/assignments",
     "/student/revision",
     "/student/hifdh",
@@ -160,6 +162,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"link", to:"/student/quran",        icon:BookText,        label:t("Al-Qur'an","القرآن الكريم") },
     { type:"link", to:"/student/courses",      icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
     { type:"link", to:"/student/timetable",    icon:Calendar,        label:t("Jadwal (Timetable)","الجدول الدراسي") },
+    { type:"link", to:"/student/live-now",     icon:Video,           label:t("Live Now","مباشر الآن") },
     { type:"link", to:"/student/assignments",  icon:ClipboardList,   label:t("Assignments","الواجبات") },
     { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murāja'ah","المراجعة"), children:[
       { to:"/student/revision", icon:BookMarked, label:t("At-Tadārus","التدارس") },
