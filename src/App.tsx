@@ -25,6 +25,7 @@ import RecordingPlayerProvider from "@/contexts/RecordingPlayerContext";
 const GlobalClassroomOverlay = lazy(() => import("./components/classroom/GlobalClassroomOverlay"));
 import AppNotifications from "@/components/AppNotifications";
 import { useAppStateRestore } from "@/hooks/useAppStateRestore";
+import { usePageViewTracking } from "@/hooks/usePageViewTracking";
 import { setNavigateRef } from "@/lib/nativeApp";
 
 // ── Public pages ───────────────────────────────────────────────────────────
@@ -124,6 +125,7 @@ const RegistrationSettings      = lazy(() => import("./pages/admin/RegistrationS
 const RegistrationDiagnostics   = lazy(() => import("./pages/admin/RegistrationDiagnostics"));
 const StudentRegistration       = lazy(() => import("./pages/admin/StudentRegistration"));
 const AdminSettings         = lazy(() => import("./pages/admin/AdminSettings"));
+const SiteAnalytics         = lazy(() => import("./pages/admin/SiteAnalytics"));
 
 // ── Auth callback ──────────────────────────────────────────────────────────
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
@@ -170,6 +172,7 @@ const App = () => (
           <Sonner />
           <BrowserRouter>
       <AppStateRestorer />
+      <PageViewTracker />
             <RecordingPlayerProvider>
             <LiveClassProvider>
             <ErrorBoundary>
@@ -332,6 +335,7 @@ const App = () => (
                     <Route path="/admin/transcripts"                 element={<TranscriptManagement />} />
                     <Route path="/admin/attendance"                  element={<AttendanceManagement />} />
                     <Route path="/admin/support-tickets"             element={<SupportTickets />} />
+                    <Route path="/admin/analytics"                   element={<SiteAnalytics />} />
                     <Route path="/admin/payments"                    element={<PaymentManagement />} />
                     <Route path="/admin/teacher-payments"            element={<TeacherPayments />} />
                     <Route path="/admin/calendar"                    element={<AcademicCalendar />} />
@@ -376,6 +380,13 @@ function AppStateRestorer() {
     return () => setNavigateRef(null);
   }, [navigate]);
 
+  return null;
+}
+
+// Logs a page_views row on every route change — public site + student +
+// teacher + admin alike. See src/hooks/usePageViewTracking.ts.
+function PageViewTracker() {
+  usePageViewTracking();
   return null;
 }
 
