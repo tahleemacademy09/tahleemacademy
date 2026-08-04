@@ -13,7 +13,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { startBackgroundAudio, stopBackgroundAudio, setWakeLockActive } from "@/hooks/useBackgroundAudio";
 import { startForegroundService, stopForegroundService } from "@/hooks/useForegroundService";
-import { useEffect as useBgEffect } from "react";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { supabase } from "@/integrations/supabase/client";
@@ -57,26 +56,25 @@ const RecitationCallRoom = ({ roomName, onLeave }: RecitationCallRoomProps) => {
 
   useEffect(() => { fetchToken(); }, [fetchToken]);
 
-  if (state === "loading") {
-    
-  useBgEffect(() => {
-    if (state === "ready") {
-      startBackgroundAudio("Recitation Session");
-      startForegroundService({
-        title: "🔴 Live Recitation Session",
-        body:  "Tap to return to your session",
-        id:    3001,
-        color: "#064E3B",
-      });
-      setWakeLockActive(true);
-      return () => {
-        stopBackgroundAudio();
-        stopForegroundService();
-      };
-    }
+  useEffect(() => {
+    if (state !== "ready") return;
+    startBackgroundAudio("Recitation Session");
+    startForegroundService({
+      title: "🔴 Live Recitation Session",
+      body: "Tap to return to your session",
+      id: 3001,
+      color: "#064E3B",
+    });
+    setWakeLockActive(true);
+    return () => {
+      stopBackgroundAudio();
+      stopForegroundService();
+      setWakeLockActive(false);
+    };
   }, [state]);
 
-  return (
+  if (state === "loading") {
+    return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, gap: 12, color: "#6b7280" }}>
         <Loader2 size={28} style={{ animation: "spin .8s linear infinite", color: G }} />
         <span style={{ fontSize: 13, fontWeight: 600 }}>Connecting to the session…</span>
@@ -85,25 +83,7 @@ const RecitationCallRoom = ({ roomName, onLeave }: RecitationCallRoomProps) => {
   }
 
   if (state === "error" || !tokenData) {
-    
-  useBgEffect(() => {
-    if (state === "ready") {
-      startBackgroundAudio("Recitation Session");
-      startForegroundService({
-        title: "🔴 Live Recitation Session",
-        body:  "Tap to return to your session",
-        id:    3001,
-        color: "#064E3B",
-      });
-      setWakeLockActive(true);
-      return () => {
-        stopBackgroundAudio();
-        stopForegroundService();
-      };
-    }
-  }, [state]);
-
-  return (
+    return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, gap: 14, padding: 24, textAlign: "center" }}>
         <AlertTriangle size={28} color="#b91c1c" />
         <p style={{ fontSize: 13, color: "#b91c1c", fontWeight: 600, maxWidth: 360 }}>{error}</p>
@@ -119,24 +99,6 @@ const RecitationCallRoom = ({ roomName, onLeave }: RecitationCallRoomProps) => {
       </div>
     );
   }
-
-  
-  useBgEffect(() => {
-    if (state === "ready") {
-      startBackgroundAudio("Recitation Session");
-      startForegroundService({
-        title: "🔴 Live Recitation Session",
-        body:  "Tap to return to your session",
-        id:    3001,
-        color: "#064E3B",
-      });
-      setWakeLockActive(true);
-      return () => {
-        stopBackgroundAudio();
-        stopForegroundService();
-      };
-    }
-  }, [state]);
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: 480, borderRadius: 16, overflow: "hidden", background: "#111" }}>
