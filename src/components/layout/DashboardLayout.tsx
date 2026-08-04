@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useImpersonation } from "@/hooks/useImpersonation";
 import { usePaymentAccess } from "@/hooks/usePaymentAccess";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
@@ -100,6 +101,7 @@ const PaymentLockScreen = () => {
 const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile } = useAuth();
+  const { isImpersonating, impersonatedName, impersonatedEmail } = useImpersonation();
   const location = useLocation();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -497,10 +499,14 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
         </nav>
 
         <div className="border-t border-sidebar-border p-2 space-y-0.5">
-          {profile?.full_name && (
+          {(isImpersonating ? impersonatedName : profile?.full_name) && (
             <div className="px-3 py-2">
-              <p className="text-xs font-medium text-sidebar-foreground/70 truncate">{profile.full_name}</p>
-              <p className="text-[11px] text-sidebar-foreground/40 truncate">{(profile as any).email}</p>
+              <p className="text-xs font-medium text-sidebar-foreground/70 truncate">
+                {isImpersonating ? impersonatedName : profile?.full_name}
+              </p>
+              <p className="text-[11px] text-sidebar-foreground/40 truncate">
+                {isImpersonating ? impersonatedEmail : (profile as any)?.email}
+              </p>
             </div>
           )}
           {role === "student" && (
