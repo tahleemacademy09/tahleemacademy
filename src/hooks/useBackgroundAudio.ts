@@ -228,8 +228,23 @@ export function startBackgroundAudio(title = "Live Class"): void {
     document.body.appendChild(audioEl);
   }
   audioEl.play().catch(() => {
-    // Autoplay blocked (browser requires user gesture).
-    // Fine — the element stays ready; next user interaction unblocks it.
+    // Autoplay blocked (browser requires a user gesture). The element stays
+    // ready; the resume listeners below (pageshow/focus/visibilitychange)
+    // will retry it, but those only fire on tab-switch/lock-unlock — if the
+    // very first play() attempt was blocked and the user never leaves and
+    // returns to the tab, none of them fire either. Chrome only shows the
+    // MediaSession notification for a page while it has an ACTUALLY playing
+    // <audio>/<video> element — metadata/playbackState alone aren't enough —
+    // so a permanently-blocked play() here means the notification silently
+    // never appears at all. Retry once on the next real tap/click anywhere
+    // on the page, which always counts as a qualifying user gesture.
+    const retryOnGesture = () => {
+      audioEl?.play().catch(() => {});
+      window.removeEventListener("pointerdown", retryOnGesture);
+      window.removeEventListener("keydown",     retryOnGesture);
+    };
+    window.addEventListener("pointerdown", retryOnGesture, { once: true });
+    window.addEventListener("keydown",     retryOnGesture, { once: true });
   });
 
   // ── Heartbeat ──────────────────────────────────────────────────────────
