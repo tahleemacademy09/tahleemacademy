@@ -1,5 +1,6 @@
 import AcademyStatusBanner from "@/components/shared/AcademyStatusBanner";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
+import BackgroundRunBanner from "@/components/shared/BackgroundRunBanner";
 import { useImpersonation } from "@/hooks/useImpersonation";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -504,6 +505,7 @@ const StudentDashboard = () => {
         {/* Academy status banner — holiday / maintenance */}
         <AcademyStatusBanner />
         <NotificationPermissionBanner />
+        <BackgroundRunBanner />
 
         <div style={{
           background: `linear-gradient(160deg, ${DARK_GREEN} 0%, ${MID_GREEN} 50%, #1a5c35 100%)`,
