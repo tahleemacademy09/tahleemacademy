@@ -48,6 +48,7 @@ const LiveClasses          = lazy(() => import("./pages/public/LiveClasses"));
 
 // ── Student pages ──────────────────────────────────────────────────────────
 const StudentDashboard    = lazy(() => import("./pages/student/StudentDashboard"));
+const StudentDashboardV2  = lazy(() => import("./pages/student/StudentDashboardV2"));
 const StudentExams        = lazy(() => import("./pages/student/StudentExams"));
 const ExamTaking          = lazy(() => import("./pages/student/ExamTaking"));
 const ProfileSettings     = lazy(() => import("./pages/student/ProfileSettings"));
@@ -224,6 +225,11 @@ const App = () => (
                   {/* TasjeelGuard blocks dashboard access for mid-registration students */}
                   <Route element={<ProtectedRoute><TasjeelGuard><DashboardLayout role="student" /></TasjeelGuard></ProtectedRoute>}>
                     <Route path="/student"                     element={<StudentDashboard />} />
+                    {/* TEST ROUTE — cache-first React Query rebuild of the dashboard.
+                        Not linked in navigation; visit directly to test whether it
+                        fixes the reload-on-resume issue. Safe to remove — doesn't
+                        touch /student or anything else. */}
+                    <Route path="/student/dashboard-v2"        element={<StudentDashboardV2 />} />
                     <Route path="/student/quran"                element={<QuranPage />} />
                     <Route path="/student/courses"             element={<LearningHub />} />
                     <Route path="/student/courses/:courseId"   element={<LearningHub />} />
