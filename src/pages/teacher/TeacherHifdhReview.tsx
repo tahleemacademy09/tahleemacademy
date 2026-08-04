@@ -128,7 +128,7 @@ export default function TeacherHifdhReview() {
       if (!rawLogs) { setLoading(false); return; }
 
       /* Profiles map */
-      const { data: profiles } = await supabase.from("profiles").select("user_id,full_name,email").in("user_id" as any, studentIds);
+      const { data: profiles } = await (supabase as any).from("profiles").select("user_id,full_name,email").in("user_id", studentIds);
       const pmap: Record<string,{name:string;email:string}> = {};
       (profiles||[]).forEach((p:any)=>{ pmap[p.user_id]={name:p.full_name??"Student",email:p.email??""}; });
 
