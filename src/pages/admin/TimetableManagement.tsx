@@ -152,10 +152,10 @@ export default function TimetableManagement() {
   const { data: privateStudents } = useQuery({
     queryKey: ["private-students-list"],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from("profiles")
         .select("user_id, full_name, student_id")
-        .eq("student_type" as any, "private");
+        .eq("student_type", "private");
       return data || [];
     },
   });

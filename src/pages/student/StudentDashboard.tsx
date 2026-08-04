@@ -342,7 +342,7 @@ const StudentDashboard = () => {
 
       // ── Filter timetable slots to only what this student should see ────
       // Get student's level and private subject IDs first
-      const privateIds = new Set((privateSubjectsRes?.data || []).map((r: any) => r.subject_id));
+      const privateIds = new Set<string>((privateSubjectsRes?.data || []).map((r: any) => String(r.subject_id)));
       setPrivateSubjectIds(privateIds);
 
       const studentLevel     = (studentProfileData as any)?.level || (displayProfile as any)?.level || null;
@@ -553,7 +553,7 @@ const StudentDashboard = () => {
                     <span style={{ fontFamily:"'Amiri',serif", fontSize:9, opacity:0.9 }}>{lc.ar}</span>
                   </span>
                 );
-              })}
+              })()}
             </div>
 
             {/* Hijri date — its own centered line */}
