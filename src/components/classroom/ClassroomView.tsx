@@ -157,6 +157,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // destabilised ReconnectMonitor's event listeners and caused the infinite reconnect loop.
   const autoReconnectCountRef=useRef(0);
   const isReconnectingRef=useRef(false);           // guard against concurrent autoReconnect calls
+  const backgroundReconnectRef=useRef(false);      // reset hidden-tab retry history after resume
   const intentionalLeaveRef=useRef(false);         // true on manual leave → skip auto-reconnect
   const participantCountRef=useRef(0);              // tracks peak live participant count for ClassEndScreen
 
@@ -581,6 +582,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     // the time they come back for no good reason. Give the network more
     // chances to recover first.
     const backgrounded   = document.visibilityState !== "visible";
+    // Attempts made while Android had the WebView backgrounded must not spend
+    // the foreground retry budget. Otherwise returning after a long lock could
+    // immediately send the user to the lobby before the first visible retry.
+    if(!backgrounded&&backgroundReconnectRef.current){
+      backgroundReconnectRef.current=false;
+      autoReconnectCountRef.current=0;
+    }
+    if(backgrounded)backgroundReconnectRef.current=true;
     const maxAttempts     = backgrounded ? 40 : 8;
     const backoffCapMs    = backgrounded ? 30_000 : 15_000;
     if(autoReconnectCountRef.current>=maxAttempts){

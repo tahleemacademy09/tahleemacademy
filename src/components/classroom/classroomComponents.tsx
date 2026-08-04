@@ -688,7 +688,7 @@ export const ReconnectMonitor = ({ onReconnecting, onReconnected, onDisconnected
       // Tab coming back to foreground.
       if (room.state === ConnectionState.Disconnected) {
         clearDebounce();
-        onDisconnected(); // reconnect immediately, don't wait for the debounce
+        onDisconnected(); // reconnect immediately; don't wait for the debounce
         return;
       }
       if (room.state === ConnectionState.Connected) {

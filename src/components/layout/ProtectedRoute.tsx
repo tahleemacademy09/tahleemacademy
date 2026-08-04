@@ -68,7 +68,10 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     });
 
     return () => { cancelled = true; };
-  }, [authLoading, roles, user]);
+  // Depend on stable primitives only. Supabase replaces the User object on a
+  // silent token refresh; depending on that object restarted this fallback
+  // query and briefly replaced the current page with the full-screen spinner.
+  }, [authLoading, roles.length, user?.id]);
 
   if (authLoading || fallbackLoading) return <Spinner />;
 

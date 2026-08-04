@@ -40,6 +40,38 @@ import ClassParticipants from "@/components/classroom/ClassParticipants";
 import ClassControls     from "@/components/classroom/ClassControls";
 import LiveQuizOverlay   from "@/components/classroom/LiveQuizOverlay";
 import { useIsMobile }   from "@/hooks/use-mobile";
+import { startBackgroundAudio, stopBackgroundAudio, setWakeLockActive } from "@/hooks/useBackgroundAudio";
+import { startForegroundService, stopForegroundService } from "@/hooks/useForegroundService";
+
+function useMediaSession(active: boolean, title: string, onReturn: () => void, onLeave: () => void) {
+  useEffect(() => {
+    if (!active || !("mediaSession" in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title,
+      artist: "Tahleem Academy",
+      album: "Live Class",
+      artwork: [
+        { src: "/brand-logo.png", sizes: "192x192", type: "image/png" },
+        { src: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
+      ],
+    });
+    navigator.mediaSession.playbackState = "playing";
+    const setAction = (action: MediaSessionAction, handler: () => void) => {
+      try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* unsupported action */ }
+    };
+    setAction("play", onReturn);
+    setAction("pause", onReturn);
+    setAction("stop", onLeave);
+    setAction("previoustrack", onReturn);
+    setAction("nexttrack", onReturn);
+    return () => {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = "none";
+      (["play", "pause", "stop", "previoustrack", "nexttrack"] as MediaSessionAction[])
+        .forEach(action => { try { navigator.mediaSession.setActionHandler(action, null); } catch { /* unsupported */ } });
+    };
+  }, [active, title, onReturn, onLeave]);
+}
 
 
 /* ════════════════════════════════════════════════════════
@@ -233,180 +265,20 @@ const SILENCE_WAV =
   "data:audio/wav;base64," +
   "UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=";
 
-function useSilentAudio(active: boolean) {
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
-  const acRef      = useRef<AudioContext | null>(null);
-  const oscRef     = useRef<OscillatorNode | null>(null);
-  const gainRef    = useRef<GainNode | null>(null);
-  const hbRef      = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (!active) {
-      // ── Teardown ──────────────────────────────────────────────────────
-      if (hbRef.current)    { clearInterval(hbRef.current); hbRef.current = null; }
-      if (audioElRef.current) {
-        audioElRef.current.pause();
-        audioElRef.current.src = "";
-        audioElRef.current = null;
-      }
-      try { oscRef.current?.stop(); } catch {}
-      oscRef.current = null; gainRef.current = null;
-      acRef.current?.close().catch(() => {});
-      acRef.current = null;
-      return;
-    }
-
-    // ── Layer 1: <audio> element ──────────────────────────────────────
-    const startAudioEl = () => {
-      if (audioElRef.current) return;
-      try {
-        const el = new Audio(SILENCE_WAV);
-        el.loop    = true;
-        el.volume  = 0.001;          // near-silent but not muted (muted = no keep-alive)
-        el.play().catch(() => {});   // may be blocked until user gesture — Layer 4 retries
-        audioElRef.current = el;
-      } catch {}
-    };
-
-    // ── Layer 2: AudioContext oscillator at 1 Hz, gain = 0 ───────────
-    const startAC = () => {
-      if (acRef.current && acRef.current.state !== "closed") return;
-      try {
-        const AC  = window.AudioContext || (window as any).webkitAudioContext;
-        const ctx = new AC();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.frequency.value = 1;     // 1 Hz — inaudible
-        gain.gain.value     = 0;     // gain 0 = silent
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        acRef.current  = ctx;
-        oscRef.current = osc;
-        gainRef.current = gain;
-      } catch {}
-    };
-
-    startAudioEl();
-    startAC();
-
-    // ── Layer 3: heartbeat every 20 s ─────────────────────────────────
-    hbRef.current = setInterval(() => {
-      // Ping the AudioContext to keep it alive
-      const ctx = acRef.current;
-      if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
-      // Restart audio element if it paused (e.g. after OS audio interruption)
-      const el = audioElRef.current;
-      if (el && el.paused) el.play().catch(() => {});
-    }, 20_000);
-
-    // ── Layer 4: resume on visibility / page show ─────────────────────
-    const resume = () => {
-      // Re-start audio element regardless of visibility state
-      // (visibilitychange fires "visible" when user returns from lock screen)
-      const el = audioElRef.current;
-      if (!el) { startAudioEl(); }
-      else if (el.paused) { el.play().catch(() => {}); }
-
-      const ctx = acRef.current;
-      if (!ctx || ctx.state === "closed") { startAC(); return; }
-      if (ctx.state === "suspended")      { ctx.resume().catch(() => {}); }
-    };
-
-    document.addEventListener("visibilitychange", resume);
-    document.addEventListener("pageshow",         resume);
-    window.addEventListener("focus",              resume);
-
-    return () => {
-      document.removeEventListener("visibilitychange", resume);
-      document.removeEventListener("pageshow",         resume);
-      window.removeEventListener("focus",              resume);
-      if (hbRef.current) { clearInterval(hbRef.current); hbRef.current = null; }
-      audioElRef.current?.pause();
-      if (audioElRef.current) { audioElRef.current.src = ""; audioElRef.current = null; }
-      try { oscRef.current?.stop(); } catch {}
-      acRef.current?.close().catch(() => {});
-    };
-  }, [active]);
-}
-
-function useWakeLock(active: boolean) {
-  const lockRef = useRef<WakeLockSentinel | null>(null);
-
-  const request = useCallback(async () => {
-    if (!active || !("wakeLock" in navigator)) return;
-    // Release any stale sentinel first
-    try { await lockRef.current?.release(); } catch {}
-    lockRef.current = null;
-    try { lockRef.current = await navigator.wakeLock.request("screen"); } catch {}
-  }, [active]);
-
-  useEffect(() => {
-    if (!active) {
-      lockRef.current?.release().catch(() => {});
-      lockRef.current = null;
-      return;
-    }
-    request();
-    // Re-request whenever the page becomes visible (screen unlock, tab switch back)
-    const fn = () => { if (document.visibilityState === "visible") request(); };
-    document.addEventListener("visibilitychange", fn);
-    document.addEventListener("pageshow",         fn);
-    return () => {
-      document.removeEventListener("visibilitychange", fn);
-      document.removeEventListener("pageshow",         fn);
-      lockRef.current?.release().catch(() => {});
-    };
-  }, [active, request]);
-}
-
-function useMediaSession(active: boolean, title: string, onReturn: () => void, onLeave: () => void) {
-  useEffect(() => {
-    if (!active || !("mediaSession" in navigator)) return;
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title,
-      artist: "Tahleem Academy",
-      album: "🟢 Live Class",
-      // artwork helps iOS/Android show the notification with an icon
-      artwork: [
-        { src: "/brand-logo.png", sizes: "192x192", type: "image/png" },
-        { src: "/icons/icon-512x512.png", sizes: "512x512", type: "image/png" },
-      ],
-    });
-    navigator.mediaSession.playbackState = "playing";
-    const sa = (a: MediaSessionAction, h: () => void) => { try { navigator.mediaSession.setActionHandler(a, h); } catch {} };
-    // Map all media actions to "return to class" — this is what shows on lock screen
-    sa("play",          onReturn);
-    sa("pause",         onReturn);
-    sa("stop",          onLeave);
-    sa("previoustrack", onReturn);
-    sa("nexttrack",     onReturn);
-    // seekto / seekbackward / seekforward — keep alive by doing nothing
-    try { navigator.mediaSession.setActionHandler("seekto",       () => {}); } catch {}
-    try { navigator.mediaSession.setActionHandler("seekbackward", () => {}); } catch {}
-    try { navigator.mediaSession.setActionHandler("seekforward",  () => {}); } catch {}
-    return () => {
-      navigator.mediaSession.metadata = null;
-      navigator.mediaSession.playbackState = "none";
-      (["play","pause","stop","previoustrack","nexttrack","seekto","seekbackward","seekforward"] as MediaSessionAction[])
-        .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch {} });
-    };
-  }, [active, title, onReturn, onLeave]);
-}
-
-/* ════════════════════════════════════════════════════════
-   CHIME — synthesised Google Meet-style join/leave sound
-   Shared AudioContext — primed on first user gesture so
-   it works after mobile browser autoplay policy.
-   ════════════════════════════════════════════════════════ */
-let _sharedAC: AudioContext | null = null;
+let sharedAudioContext: AudioContext | null = null;
 function getAudioContext(): AudioContext | null {
   try {
-    const AC = window.AudioContext || (window as any).webkitAudioContext;
-    if (!_sharedAC || _sharedAC.state === "closed") _sharedAC = new AC();
-    return _sharedAC;
-  } catch { return null; }
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!sharedAudioContext || sharedAudioContext.state === "closed") {
+      sharedAudioContext = new AudioContextClass();
+    }
+    return sharedAudioContext;
+  } catch {
+    return null;
+  }
 }
+
+
 function primeAudioContext() {
   const ctx = getAudioContext();
   if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
@@ -836,8 +708,8 @@ const GuestClassroom = () => {
   const title   = classTitle || "Public Class";
   const initial = title.charAt(0).toUpperCase();
 
-  useSilentAudio(connected && !ended);
-  useWakeLock(connected && !ended);
+  
+  
 
   const handleReturn = useCallback(() => setMinimized(false), []);
   const handleLeave  = useCallback(() => {
@@ -846,6 +718,30 @@ const GuestClassroom = () => {
     setEnded(true);
   }, []);
   handleRetRef.current = handleReturn;
+  // Resilience: Background Audio + Foreground Service
+  useEffect(() => {
+    if (connected && !ended) {
+      startBackgroundAudio(title);
+      startForegroundService({
+        title: `🔴 Public Class — ${title}`,
+        body:  "Tahleem Academy · Tap to return to class",
+        id:    2001,
+        color: "#064E3B",
+      });
+      return () => {
+        stopBackgroundAudio();
+        stopForegroundService();
+      };
+    }
+  }, [connected, ended, title]);
+
+  useEffect(() => {
+    if (connected && !ended) {
+      // For public classes, we usually keep wake lock on while connected
+      setWakeLockActive(true);
+    }
+  }, [connected, ended]);
+
 
   /* ── Host: end class for everyone ── */
   const handleEndClass = useCallback(() => {

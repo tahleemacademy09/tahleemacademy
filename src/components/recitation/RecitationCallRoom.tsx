@@ -11,6 +11,8 @@
 // already grants admins/teachers elevated (roomAdmin + roomRecord) claims.
 // ─────────────────────────────────────────────────────────────────────────
 import { useEffect, useState, useCallback } from "react";
+import { startBackgroundAudio, stopBackgroundAudio, setWakeLockActive } from "@/hooks/useBackgroundAudio";
+import { startForegroundService, stopForegroundService } from "@/hooks/useForegroundService";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { supabase } from "@/integrations/supabase/client";
@@ -53,6 +55,23 @@ const RecitationCallRoom = ({ roomName, onLeave }: RecitationCallRoomProps) => {
   }, [roomName]);
 
   useEffect(() => { fetchToken(); }, [fetchToken]);
+
+  useEffect(() => {
+    if (state !== "ready") return;
+    startBackgroundAudio("Recitation Session");
+    startForegroundService({
+      title: "🔴 Live Recitation Session",
+      body: "Tap to return to your session",
+      id: 3001,
+      color: "#064E3B",
+    });
+    setWakeLockActive(true);
+    return () => {
+      stopBackgroundAudio();
+      stopForegroundService();
+      setWakeLockActive(false);
+    };
+  }, [state]);
 
   if (state === "loading") {
     return (
