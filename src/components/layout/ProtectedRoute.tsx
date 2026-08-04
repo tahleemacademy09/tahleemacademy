@@ -9,6 +9,8 @@ import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase, hasPersistedSupabaseSession } from "@/integrations/supabase/client";
 import { logDiag } from "@/lib/diagnostics";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
+import StudentMaintenanceGate from "@/components/shared/StudentMaintenanceGate";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -31,6 +33,7 @@ const Spinner = () => (
 const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
   const { user, loading: authLoading, hasRole, roles, mustChangePassword } = useAuth();
   const location = useLocation();
+  const { settings: academySettings, loading: academyLoading } = useAcademySettings();
 
   // ── Direct role fallback ─────────────────────────────────────────────────
   // If AuthContext roles is still empty after auth finishes (e.g. RLS bug),
@@ -98,6 +101,23 @@ const ProtectedRoute = ({ children, requiredRole }: ProtectedRouteProps) => {
     hasRole(role) || fallbackRole === role;
 
   const isImpersonating = !!sessionStorage.getItem("admin_impersonate_student");
+
+  // ── Student platform maintenance gate ────────────────────────────────────
+  // A pure student (never an admin/teacher, and not an admin impersonating a
+  // student) hitting any /student/* route while academy_status ===
+  // "maintenance" sees a full-screen block instead of the route's children.
+  // No dashboard, no nav, no dismiss — until an admin flips status back to
+  // Active from Admin Settings → Academy.
+  const isPureStudent = effectiveHasRole("student") && !effectiveHasRole("admin") && !effectiveHasRole("teacher");
+  if (
+    isPureStudent &&
+    !isImpersonating &&
+    !academyLoading &&
+    academySettings.academy_status === "maintenance" &&
+    location.pathname.startsWith("/student")
+  ) {
+    return <StudentMaintenanceGate />;
+  }
 
   // ── Admin must not land on /student/* unless impersonating ──────────────
   if (effectiveHasRole("admin") && location.pathname.startsWith("/student") && !isImpersonating) {
