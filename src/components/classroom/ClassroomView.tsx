@@ -581,6 +581,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     // the time they come back for no good reason. Give the network more
     // chances to recover first.
     const backgrounded   = document.visibilityState !== "visible";
+    // Attempts made while Android had the WebView backgrounded must not spend
+    // the foreground retry budget. Otherwise returning after a long lock could
+    // immediately send the user to the lobby before the first visible retry.
+    if(!backgrounded&&backgroundReconnectRef.current){
+      backgroundReconnectRef.current=false;
+      autoReconnectCountRef.current=0;
+    }
+    if(backgrounded)backgroundReconnectRef.current=true;
     const maxAttempts     = backgrounded ? 40 : 8;
     const backoffCapMs    = backgrounded ? 30_000 : 15_000;
     if(autoReconnectCountRef.current>=maxAttempts){

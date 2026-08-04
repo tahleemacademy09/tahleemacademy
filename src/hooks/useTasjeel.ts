@@ -236,9 +236,11 @@ export function useTasjeel() {
 
   // Keep loading=true until both auth AND the tasjeel fetch are done.
   // This prevents the StudentDashboard gate from firing with currentStep=null.
-  const [currentStep, setCurrentStep] = useState<string | null>(null);
-  const [loading,     setLoading]     = useState(true);
   const cachedCompleted = hasCompletedCache(userId);
+  const [currentStep, setCurrentStep] = useState<string | null>(
+    cachedCompleted ? "completed" : null,
+  );
+  const [loading, setLoading] = useState(!cachedCompleted);
 
   const fetchStep = useCallback(async () => {
     // Don't resolve until auth itself has finished initialising
@@ -299,7 +301,6 @@ export function useTasjeel() {
     let didTimeout = false;
     const timeoutId = setTimeout(() => {
       didTimeout = true;
-      console.warn("[useTasjeel] fetch timed out");
       // Never replace an already validated completed dashboard just because
       // the resume-time revalidation is temporarily offline.
       if (!hasCompletedCache(userId)) setCurrentStep("timeout");
@@ -331,7 +332,7 @@ export function useTasjeel() {
       }
     }
   // KEY FIX: depend on userId (stable string) not user (new object every TOKEN_REFRESHED)
-  }, [userId, authLoading]);
+  }, [userId, authLoading, user?.email_confirmed_at]);
 
   useEffect(() => {
     fetchStep();
