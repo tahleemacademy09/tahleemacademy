@@ -691,7 +691,7 @@ const ClassControls = ({
 
       {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
       <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
-      <div className="h-16 flex items-center justify-evenly px-2 md:px-4 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
+      <div className="h-16 flex items-center justify-between px-4 md:px-8 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
 
         {/* Mic — chevron opens the mic/speaker device picker without toggling mute */}
         <div style={{ position: "relative" }}>
