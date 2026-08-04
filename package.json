@@ -24,7 +24,7 @@
     "@capacitor/splash-screen": "^8.0.1",
     "@capacitor/status-bar": "^8.0.2",
     "@capawesome-team/capacitor-android-foreground-service": "^8.1.0",
-    "@squareetlabs/capacitor-dont-kill-my-app": "^1.1.0",
+    "@squareetlabs/capacitor-dont-kill-my-app": "*",
     "@hookform/resolvers": "^3.10.0",
     "@livekit/components-react": "^2.9.20",
     "@livekit/components-styles": "^1.2.0",
