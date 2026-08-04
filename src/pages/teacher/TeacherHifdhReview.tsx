@@ -111,7 +111,7 @@ export default function TeacherHifdhReview() {
       }
 
       /* Also directly assigned students */
-      const { data: pvt } = await supabase.from("profiles").select("user_id").eq("assigned_teacher_id" as any, teacherId);
+      const { data: pvt } = await (supabase as any).from("profiles").select("user_id").eq("assigned_teacher_id", teacherId);
       const pvtIds = (pvt||[]).map((p:any)=>p.user_id);
       studentIds = [...new Set([...studentIds, ...pvtIds])];
 
