@@ -65,3 +65,20 @@ export const supabase = createClient<Database>(
     }
   }
 );
+
+// ── Detect a persisted-but-not-yet-resolved session ─────────────────────────
+// Supabase-js stores the session under a key shaped "sb-<project-ref>-auth-token".
+// Used by AuthContext's safety timeout: if this returns true, the person WAS
+// signed in on this device (the token is sitting right there in storage) and
+// we're just waiting on a slow network/auth check — not a real logged-out
+// state — so we must not bounce them to /login just because that check is
+// running late.
+export function hasPersistedSupabaseSession(): boolean {
+  try {
+    return Object.keys(localStorage).some(
+      (k) => k.startsWith("sb-") && k.endsWith("-auth-token")
+    );
+  } catch {
+    return false;
+  }
+}
