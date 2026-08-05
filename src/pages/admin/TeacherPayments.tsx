@@ -1,5 +1,6 @@
 /*  src/pages/admin/TeacherPayments.tsx  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -84,6 +85,7 @@ export default function TeacherPayments() {
   const [scanning,        setScanning]         = useState(false);
   const [scanConfidence,  setScanConfidence]   = useState<string | null>(null);
   const [scanError,       setScanError]        = useState<string | null>(null);
+  const receiptInputRef   = useRef<HTMLInputElement>(null);
 
   // ── Data loading ──────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -191,12 +193,33 @@ export default function TeacherPayments() {
     setPayOpen(true);
   };
 
-  const fileToBase64 = (file: File): Promise<string> =>
+  // Downscale + re-encode as JPEG before sending to the AI — real phone
+  // photos can be several MB, and Supabase's edge gateway silently rejects
+  // oversized request bodies before the function code even runs (which is
+  // why a failed scan sometimes shows no server-side log at all).
+  const compressForScan = (file: File, maxDim = 1600, quality = 0.82): Promise<{ base64: string; mimeType: string }> =>
     new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve((r.result as string).split(",")[1]);
-      r.onerror = () => reject(new Error("Could not read file"));
-      r.readAsDataURL(file);
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { URL.revokeObjectURL(url); reject(new Error("Canvas not supported")); return; }
+        ctx.drawImage(img, 0, 0, width, height);
+        URL.revokeObjectURL(url);
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        resolve({ base64: dataUrl.split(",")[1], mimeType: "image/jpeg" });
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read image")); };
+      img.src = url;
     });
 
   const handleReceiptSelect = async (file: File | null) => {
@@ -207,9 +230,9 @@ export default function TeacherPayments() {
     setScanConfidence(null);
     setScanning(true);
     try {
-      const base64 = await fileToBase64(file);
+      const { base64, mimeType } = await compressForScan(file);
       const { data, error } = await supabase.functions.invoke("parse-payment-receipt", {
-        body: { imageData: base64, imageMimeType: file.type || "image/jpeg" },
+        body: { imageData: base64, imageMimeType: mimeType },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
@@ -243,7 +266,12 @@ export default function TeacherPayments() {
         setScanError("Could only partially read this receipt — please check the fields below.");
       }
     } catch (err: any) {
-      setScanError(err?.message || "Couldn't scan the receipt — enter details manually.");
+      const raw = err?.message || "";
+      const friendly = /non-2xx/i.test(raw)
+        ? "Receipt scanning failed on the server — enter details manually, or try a smaller/cropped screenshot."
+        : raw || "Couldn't scan the receipt — enter details manually.";
+      setScanError(friendly);
+      console.error("[TeacherPayments] receipt scan failed:", err);
     } finally {
       setScanning(false);
     }
@@ -572,8 +600,8 @@ export default function TeacherPayments() {
           <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 0 }}>
             <Fld label="Upload Receipt (optional — auto-fills the fields below)">
               {!receiptPreview ? (
-                <label
-                  htmlFor="receipt-upload"
+                <div
+                  onClick={() => receiptInputRef.current?.click()}
                   style={{
                     display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
                     gap: 6, padding: "18px 12px", borderRadius: 12, border: "1.5px dashed #D1D5DB",
@@ -583,11 +611,7 @@ export default function TeacherPayments() {
                   <UploadCloud size={20} color="#6B7280" />
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>Tap to upload transfer receipt</span>
                   <span style={{ fontSize: 10, color: "#9CA3AF" }}>Screenshot from your bank app · JPG or PNG</span>
-                  <input
-                    id="receipt-upload" type="file" accept="image/*" style={{ display: "none" }}
-                    onChange={e => handleReceiptSelect(e.target.files?.[0] || null)}
-                  />
-                </label>
+                </div>
               ) : (
                 <div style={{ borderRadius: 12, border: "1.5px solid #E5E7EB", overflow: "hidden" }}>
                   <div style={{ position: "relative" }}>
