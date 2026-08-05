@@ -9,6 +9,7 @@ import {
   Plus, ChevronDown, ChevronUp, Search,
   RefreshCw, Loader2, AlertTriangle, BadgeCheck,
   Building2, CreditCard, TrendingUp, Eye, EyeOff,
+  UploadCloud, Sparkles, X,
 } from "lucide-react";
 
 const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
@@ -76,6 +77,13 @@ export default function TeacherPayments() {
   const [payOpen,         setPayOpen]          = useState(false);
   const [payForm,         setPayForm]          = useState({ ...EMPTY_PAYMENT });
   const [payLoading,      setPayLoading]       = useState(false);
+
+  // ── Receipt scan state ───────────────────────────────────────────────────
+  const [receiptFile,     setReceiptFile]      = useState<File | null>(null);
+  const [receiptPreview,  setReceiptPreview]   = useState<string | null>(null);
+  const [scanning,        setScanning]         = useState(false);
+  const [scanConfidence,  setScanConfidence]   = useState<string | null>(null);
+  const [scanError,       setScanError]        = useState<string | null>(null);
 
   // ── Data loading ──────────────────────────────────────────────────────────
   const loadAll = useCallback(async () => {
@@ -169,9 +177,76 @@ export default function TeacherPayments() {
   const refresh = () => { setRefreshing(true); loadAll(); };
 
   // ── Record payment ─────────────────────────────────────────────────────────
+  const resetReceipt = () => {
+    setReceiptFile(null);
+    setReceiptPreview(null);
+    setScanning(false);
+    setScanConfidence(null);
+    setScanError(null);
+  };
+
   const openPayDialog = (teacher?: any) => {
     setPayForm({ ...EMPTY_PAYMENT, teacher_id: teacher?.user_id || "" });
+    resetReceipt();
     setPayOpen(true);
+  };
+
+  const fileToBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve((r.result as string).split(",")[1]);
+      r.onerror = () => reject(new Error("Could not read file"));
+      r.readAsDataURL(file);
+    });
+
+  const handleReceiptSelect = async (file: File | null) => {
+    if (!file) return;
+    setReceiptFile(file);
+    setReceiptPreview(URL.createObjectURL(file));
+    setScanError(null);
+    setScanConfidence(null);
+    setScanning(true);
+    try {
+      const base64 = await fileToBase64(file);
+      const { data, error } = await supabase.functions.invoke("parse-payment-receipt", {
+        body: { imageData: base64, imageMimeType: file.type || "image/jpeg" },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      // Auto-fill the form with whatever Claude could read off the receipt.
+      setPayForm(f => ({
+        ...f,
+        amount:       data.amount != null ? String(data.amount) : f.amount,
+        currency:     data.currency || f.currency,
+        payment_date: data.payment_date || f.payment_date,
+        reference:    data.reference || f.reference,
+        payment_method: /opay|kuda|palmpay|paystack|transfer|bank/i.test(data.sender_bank || "") ? "Bank Transfer" : f.payment_method,
+        notes: [
+          data.narration,
+          data.recipient_bank ? `Bank: ${data.recipient_bank}` : null,
+          data.recipient_account_name ? `To: ${data.recipient_account_name}` : null,
+        ].filter(Boolean).join(" · ") || f.notes,
+      }));
+
+      // If the receipt's recipient account number matches a saved teacher
+      // bank account, auto-select that teacher too.
+      if (!payForm.teacher_id && data.recipient_account_number) {
+        const match = Object.entries(bankAccounts).find(
+          ([, b]: [string, any]) => b.account_number === data.recipient_account_number,
+        );
+        if (match) setPayForm(f => ({ ...f, teacher_id: match[0] }));
+      }
+
+      setScanConfidence(data.confidence || null);
+      if (data.confidence === "low") {
+        setScanError("Could only partially read this receipt — please check the fields below.");
+      }
+    } catch (err: any) {
+      setScanError(err?.message || "Couldn't scan the receipt — enter details manually.");
+    } finally {
+      setScanning(false);
+    }
   };
 
   const recordPayment = async () => {
@@ -179,6 +254,22 @@ export default function TeacherPayments() {
       toast({ title: "Fill in teacher and amount", variant: "destructive" }); return;
     }
     setPayLoading(true);
+
+    let receiptPath: string | null = null;
+    if (receiptFile) {
+      const ext = receiptFile.name.split(".").pop() || "jpg";
+      const path = `${payForm.teacher_id}/${Date.now()}.${ext}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("payment-receipts")
+        .upload(path, receiptFile, { contentType: receiptFile.type });
+      if (uploadErr) {
+        setPayLoading(false);
+        toast({ title: "Failed to upload receipt", description: uploadErr.message, variant: "destructive" });
+        return;
+      }
+      receiptPath = path;
+    }
+
     const { error } = await (supabase as any).from("teacher_payments").insert({
       teacher_id:     payForm.teacher_id,
       paid_by:        user?.id,
@@ -189,6 +280,7 @@ export default function TeacherPayments() {
       reference:      payForm.reference  || null,
       period:         payForm.period     || null,
       notes:          payForm.notes      || null,
+      receipt_url:    receiptPath,
       payment_date:   payForm.payment_date,
       status:         payForm.status,
     });
@@ -198,6 +290,7 @@ export default function TeacherPayments() {
     } else {
       toast({ title: "✅ Payment recorded successfully!" });
       setPayOpen(false);
+      resetReceipt();
       loadAll();
     }
   };
@@ -442,6 +535,19 @@ export default function TeacherPayments() {
                                   ))}
                                 </div>
                                 {pay.notes && <div style={{ marginTop: 8, padding: "6px 8px", background: "#F9FAFB", borderRadius: 7, fontSize: 11, color: "#374151" }}>{pay.notes}</div>}
+                                {pay.receipt_url && (
+                                  <button
+                                    onClick={async () => {
+                                      const { data: signed } = await supabase.storage
+                                        .from("payment-receipts")
+                                        .createSignedUrl(pay.receipt_url, 60);
+                                      if (signed?.signedUrl) window.open(signed.signedUrl, "_blank");
+                                    }}
+                                    style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 8, border: "1px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 700, color: G }}
+                                  >
+                                    <UploadCloud size={12} /> View Receipt
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -464,6 +570,59 @@ export default function TeacherPayments() {
             <p style={{ fontSize: 11, color: "rgba(255,255,255,.6)", margin: "3px 0 0" }}>Fill in the payment details below</p>
           </div>
           <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 0 }}>
+            <Fld label="Upload Receipt (optional — auto-fills the fields below)">
+              {!receiptPreview ? (
+                <label
+                  htmlFor="receipt-upload"
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                    gap: 6, padding: "18px 12px", borderRadius: 12, border: "1.5px dashed #D1D5DB",
+                    background: "#FAFAFA", cursor: "pointer", textAlign: "center" as const,
+                  }}
+                >
+                  <UploadCloud size={20} color="#6B7280" />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>Tap to upload transfer receipt</span>
+                  <span style={{ fontSize: 10, color: "#9CA3AF" }}>Screenshot from your bank app · JPG or PNG</span>
+                  <input
+                    id="receipt-upload" type="file" accept="image/*" style={{ display: "none" }}
+                    onChange={e => handleReceiptSelect(e.target.files?.[0] || null)}
+                  />
+                </label>
+              ) : (
+                <div style={{ borderRadius: 12, border: "1.5px solid #E5E7EB", overflow: "hidden" }}>
+                  <div style={{ position: "relative" }}>
+                    <img src={receiptPreview} alt="Receipt" style={{ width: "100%", maxHeight: 180, objectFit: "cover", display: "block" }} />
+                    <button
+                      onClick={() => { resetReceipt(); }}
+                      style={{ position: "absolute", top: 8, right: 8, width: 26, height: 26, borderRadius: "50%", border: "none", background: "rgba(0,0,0,.55)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div style={{ padding: "8px 10px", display: "flex", alignItems: "center", gap: 8 }}>
+                    {scanning ? (
+                      <>
+                        <Loader2 size={13} color="#6B7280" style={{ animation: "spin .8s linear infinite" }} />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280" }}>Reading receipt…</span>
+                      </>
+                    ) : scanError ? (
+                      <>
+                        <AlertTriangle size={13} color="#D97706" />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "#D97706" }}>{scanError}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles size={13} color="#16A34A" />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: "#16A34A" }}>
+                          Fields auto-filled from receipt{scanConfidence ? ` · ${scanConfidence} confidence` : ""} — please double-check
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </Fld>
+
             <Fld label="Teacher *">
               <select style={inp} value={payForm.teacher_id} onChange={e => setPayForm(f => ({ ...f, teacher_id: e.target.value }))}>
                 <option value="">Select teacher…</option>
