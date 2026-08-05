@@ -1,6 +1,5 @@
 /*  src/pages/admin/TeacherPayments.tsx  */
 import { useState, useEffect, useCallback, useRef } from "react";
-import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -611,6 +610,11 @@ export default function TeacherPayments() {
                   <UploadCloud size={20} color="#6B7280" />
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#374151" }}>Tap to upload transfer receipt</span>
                   <span style={{ fontSize: 10, color: "#9CA3AF" }}>Screenshot from your bank app · JPG or PNG</span>
+                  <input
+                    ref={receiptInputRef}
+                    type="file" accept="image/*" style={{ display: "none" }}
+                    onChange={e => { handleReceiptSelect(e.target.files?.[0] || null); e.target.value = ""; }}
+                  />
                 </div>
               ) : (
                 <div style={{ borderRadius: 12, border: "1.5px solid #E5E7EB", overflow: "hidden" }}>
