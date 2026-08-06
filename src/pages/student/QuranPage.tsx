@@ -4,13 +4,13 @@
 // like a real Mushaf. Swipe right = next page (forward, Al-Fātiḥah → An-Nās,
 // ascending page numbers); swipe left = previous page. This is the reverse
 // of an English/LTR book's swipe-left-for-next.
-import type { CSSProperties, TouchEvent as ReactTouchEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import {
   BookOpen, Search, X, Play, Pause, Repeat, Repeat1, Star, ChevronDown,
   SkipForward, Gauge, Languages, ListMusic, Bookmark, ArrowLeft, PlusCircle,
-  ChevronUp,
+  ChevronUp, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -326,26 +326,40 @@ export default function QuranPage() {
     }
   }, [userId, isBookmarked]);
 
-  // ── Swipe handling ───────────────────────────────────────────────────────
+  // ── Swipe / drag handling ────────────────────────────────────────────────
   // Arabic reading order, not English: pages advance Al-Fātiḥah → An-Nās as
   // page numbers climb, and swiping *right* moves forward to the next page
   // (the reverse of an LTR book's swipe-left-for-next). Swiping left goes
   // back a page. The gesture's axis is locked on first movement so a page
   // that's tall enough to need vertical scrolling never mistakes a scroll
   // for a page-turn just because the finger also drifted sideways a little.
-  const onTouchStart = (e: ReactTouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
-    touchStartY.current = e.touches[0].clientY;
+  //
+  // FIX (page couldn't be turned at all on desktop): this used to be wired
+  // to touch events only, so a real Mushaf-style page turn only worked on
+  // a touchscreen — clicking and dragging with a mouse (the only input a
+  // laptop/desktop browser has) did nothing. Pointer Events cover mouse,
+  // touch, and pen with one code path, so drag-to-turn now works everywhere;
+  // explicit prev/next buttons and arrow-key navigation are added below as
+  // well, for people who'd rather click/tap than drag.
+  const activePointerId = useRef<number | null>(null);
+
+  const onPointerDown = (e: ReactPointerEvent) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return; // left-click only
+    activePointerId.current = e.pointerId;
+    touchStartX.current = e.clientX;
+    touchStartY.current = e.clientY;
     touchDeltaX.current = 0;
     swipeAxisRef.current = null;
   };
-  const onTouchMove = (e: ReactTouchEvent) => {
+  const onPointerMove = (e: ReactPointerEvent) => {
+    if (activePointerId.current !== e.pointerId) return;
     if (touchStartX.current == null || touchStartY.current == null) return;
-    const dx = e.touches[0].clientX - touchStartX.current;
-    const dy = e.touches[0].clientY - touchStartY.current;
+    const dx = e.clientX - touchStartX.current;
+    const dy = e.clientY - touchStartY.current;
     if (swipeAxisRef.current == null) {
       if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; // not enough movement to tell yet
       swipeAxisRef.current = Math.abs(dx) > Math.abs(dy) * 1.3 ? "horizontal" : "vertical";
+      if (swipeAxisRef.current === "horizontal") e.currentTarget.setPointerCapture(e.pointerId);
     }
     if (swipeAxisRef.current === "horizontal") {
       if (e.cancelable) e.preventDefault(); // own the gesture; don't also scroll
@@ -355,7 +369,7 @@ export default function QuranPage() {
     // "vertical" gestures are left alone entirely — the page's normal
     // vertical scroll (for pages taller than the fitted scale allows) handles them.
   };
-  const onTouchEnd = () => {
+  const endPointerGesture = () => {
     const dx = touchDeltaX.current;
     if (swipeAxisRef.current === "horizontal") {
       if (dx >= SWIPE_THRESHOLD) goToPage(currentPage + 1, "next");
@@ -366,7 +380,30 @@ export default function QuranPage() {
     touchStartY.current = null;
     touchDeltaX.current = 0;
     swipeAxisRef.current = null;
+    activePointerId.current = null;
   };
+  const onPointerUp = (e: ReactPointerEvent) => {
+    if (activePointerId.current !== e.pointerId) return;
+    endPointerGesture();
+  };
+  const onPointerCancel = (e: ReactPointerEvent) => {
+    if (activePointerId.current !== e.pointerId) return;
+    endPointerGesture();
+  };
+
+  // ── Keyboard navigation — → next page, ← previous page (skipped while a
+  // text input has focus, e.g. the surah/search fields, or a modal is open) ──
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (sidebarOpen || searchOpen) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key === "ArrowRight") goToPage(currentPage + 1, "next");
+      else if (e.key === "ArrowLeft") goToPage(currentPage - 1, "prev");
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [currentPage, sidebarOpen, searchOpen, goToPage]);
 
   useEffect(() => {
     if (autoScroll && engine.currentAyah != null && engine.currentSurah != null) {
@@ -566,19 +603,42 @@ export default function QuranPage() {
         </>
       )}
 
-      {/* ── Page content — swipe left/right to turn pages ── */}
+      {/* ── Page content — swipe/drag left-right, or use the arrow buttons /
+          arrow keys, to turn pages ── */}
       <div
         ref={pageBoxRef}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerCancel}
         style={{
           flex: 1, overflow: "hidden",
           padding: selected != null ? "8px 8px 64px" : "8px 8px 10px",
           position: "relative",
           touchAction: "pan-y", display: "flex", justifyContent: "center", alignItems: "flex-start",
+          cursor: "grab",
         }}
       >
+        {/* Explicit prev/next controls — the swipe/drag gesture above covers
+            touch and mouse-drag, but a plain click is still the most
+            discoverable way to turn a page, especially on desktop. */}
+        <button
+          onClick={() => goToPage(currentPage - 1, "prev")}
+          disabled={currentPage <= 1}
+          aria-label={t("Previous page", "الصفحة السابقة")}
+          style={navArrowStyle("left", currentPage <= 1)}
+        >
+          <ChevronLeft size={20} />
+        </button>
+        <button
+          onClick={() => goToPage(currentPage + 1, "next")}
+          disabled={currentPage >= TOTAL_PAGES}
+          aria-label={t("Next page", "الصفحة التالية")}
+          style={navArrowStyle("right", currentPage >= TOTAL_PAGES)}
+        >
+          <ChevronRight size={20} />
+        </button>
+
         {loading ? (
           <div style={{ textAlign: "center", padding: 40, color: Q_MUTED }}>{t("Loading page…", "جاري تحميل الصفحة…")}</div>
         ) : (
@@ -636,7 +696,10 @@ export default function QuranPage() {
                         </span>
                       </div>
                     </div>
-                    {ayah === 1 && surah !== 9 && (
+                    {/* Surah 9 (At-Tawbah) has no Bismillah; Surah 1's ayah 1 IS
+                        the Bismillah itself, so drawing it again here would
+                        duplicate it. */}
+                    {ayah === 1 && surah !== 9 && surah !== 1 && (
                       <div style={{ fontFamily: Q_ARABIC_FONT, fontWeight: 700, fontSize: BASE_LINE_FONT_SIZE, color: Q_INK, marginTop: 18, textAlign: "center", opacity: 0.92 }}>
                         {BISMILLAH}
                       </div>
@@ -881,6 +944,16 @@ function dropdownItemStyle(active: boolean): CSSProperties {
   return {
     display: "block", width: "100%", textAlign: "left", padding: "9px 12px", border: "none",
     background: active ? Q_PARCH_ALT : "#fff", color: Q_INK, fontSize: 13, cursor: "pointer",
+  };
+}
+function navArrowStyle(side: "left" | "right", disabled: boolean): CSSProperties {
+  return {
+    position: "absolute", [side]: 4, top: "50%", transform: "translateY(-50%)", zIndex: 5,
+    width: 34, height: 34, borderRadius: "50%", border: `1px solid ${Q_BORDER}`,
+    background: "rgba(255,253,246,0.9)", color: disabled ? "#c8bd9a" : Q_GREEN,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    cursor: disabled ? "default" : "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
+    opacity: disabled ? 0.4 : 1,
   };
 }
 
