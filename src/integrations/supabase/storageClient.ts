@@ -8,7 +8,7 @@ The main client already carries the user's auth session.
 import { supabase } from "./client";
 
 export const storageSupabase = supabase;
-export const BUCKET_MATERIALS = "subject-files";
+export const BUCKET_MATERIALS = "subject-materials";
 export const BUCKET_RECORDINGS = "recordings";
 
 export async function getSignedUrl(
@@ -47,7 +47,7 @@ export async function getSignedUrl(
 }
 
 export async function uploadStorageFile(
-  bucket: "subject-files" | "recordings",  path: string,
+  bucket: "subject-materials" | "recordings",  path: string,
   file: File | Blob,
   options?: { upsert?: boolean; contentType?: string }
 ): Promise<{ success: boolean; path?: string; error?: string }> {
@@ -109,8 +109,8 @@ export async function testStorageConnection() {
     const names = (buckets || []).map((b: any) => b.name);
     console.log("Buckets:", names.join(", ") || "(none)");
     
-    if (!names.includes("subject-files")) {
-      console.warn("Create 'subject-files' bucket in Supabase Dashboard → Storage");
+    if (!names.includes("subject-materials")) {
+      console.warn("Create 'subject-materials' bucket in Supabase Dashboard → Storage");
     }
     if (!names.includes("recordings")) {
       console.warn("Create 'recordings' bucket in Supabase Dashboard → Storage");
