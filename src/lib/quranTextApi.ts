@@ -156,12 +156,23 @@ export async function getFullQuranText(): Promise<QuranVerse[]> {
 // ── Mushaf line layout (word-for-word, line-for-line as printed) ───────────
 // The alquran.cloud endpoints above return verses in reading order but flow
 // them freely — there's no guarantee a given word sits on the same *line* it
-// occupies in a physical Madani mushaf. quran.com's v4 API separately exposes
-// each word's line_number for the standard 604-page mushaf layout, which is
-// exactly the data needed to reproduce true page/line breaks. This is used
-// only for the *visual* text layer; verses[] above still drives audio,
-// translations, bookmarks, and search, since both sources describe the same
-// canonical text and line up 1:1 by surah:ayah.
+// occupies in a physical Madani mushaf.
+//
+// FIX (was silently broken): this used to call api.quran.com/api/v4, the
+// free/unauthenticated Quran.com API. Quran Foundation has migrated that
+// service behind an OAuth2 login (apis.quran.foundation, requiring a
+// registered client id/secret) — the old endpoint no longer reliably
+// returns data for a browser-only app with no server-side token exchange.
+// That silent failure was exactly why the reader almost never showed the
+// true mushaf line layout: every page fell back to the free-flowing
+// paragraph rendering after the 650ms grace period in QuranPage.tsx,
+// which looks nothing like a real Mushaf.
+//
+// Replaced with a static, pre-computed 604-page Madani mushaf dataset
+// (github.com/zonetecde/mushaf-layout) served from raw.githubusercontent.com,
+// which sends permissive CORS headers and needs no auth/token at all — a
+// browser can fetch it directly, and each page is cached in localStorage
+// after the first load so repeat visits don't refetch it either.
 export interface QuranPageWord {
   surah: number;
   ayah: number;
@@ -173,7 +184,19 @@ export interface QuranPageLine {
   words: QuranPageWord[];
 }
 
-const PAGE_LINES_CACHE_PREFIX = "quran_page_lines_v1_";
+const PAGE_LINES_CACHE_PREFIX = "quran_page_lines_v2_";
+const MUSHAF_LAYOUT_BASE = "https://raw.githubusercontent.com/zonetecde/mushaf-layout/main/mushaf";
+
+// The dataset embeds the ayah-end marker as a trailing Arabic-Indic numeral
+// right inside the word string (e.g. "هُدًۭى ٢" = last word of ayah 2). Strip
+// it off for display — the reader draws its own decorative ﴿٢﴾ marker from
+// the `ayah` number it already has — and use its presence to flag isAyahEnd.
+function splitAyahEndMarker(raw: string): { text: string; isAyahEnd: boolean } {
+  const trimmed = (raw || "").trim();
+  const digits = trimmed.match(/[\u0660-\u0669]+$/);
+  if (!digits) return { text: trimmed, isAyahEnd: false };
+  return { text: trimmed.slice(0, trimmed.length - digits[0].length).trim(), isAyahEnd: true };
+}
 
 export async function getPageLines(pageNumber: number): Promise<QuranPageLine[] | null> {
   const cacheKey = `${PAGE_LINES_CACHE_PREFIX}${pageNumber}`;
@@ -183,41 +206,32 @@ export async function getPageLines(pageNumber: number): Promise<QuranPageLine[] 
   } catch { /* ignore corrupt cache */ }
 
   try {
-    const url = `https://api.quran.com/api/v4/verses/by_page/${pageNumber}?words=true&word_fields=text_uthmani,line_number,position,char_type_name&fields=text_uthmani`;
-    const res = await fetch(url);
+    const padded = String(pageNumber).padStart(3, "0");
+    const res = await fetch(`${MUSHAF_LAYOUT_BASE}/page-${padded}.json`);
     if (!res.ok) return null;
     const json: any = await res.json();
-    const verses: any[] = json?.verses;
-    if (!Array.isArray(verses) || verses.length === 0) return null;
+    const rawLines: any[] = json?.lines;
+    if (!Array.isArray(rawLines) || rawLines.length === 0) return null;
 
-    // Last real word position per ayah, so we know where to draw the ayah-end marker.
-    const maxPosByVerse = new Map<string, number>();
-    for (const v of verses) {
-      for (const w of (v.words ?? [])) {
-        if (w.char_type_name !== "word") continue;
-        const key = v.verse_key as string;
-        maxPosByVerse.set(key, Math.max(maxPosByVerse.get(key) ?? 0, w.position ?? 0));
+    const lines: QuranPageLine[] = [];
+    for (const line of rawLines) {
+      // Only "text" lines carry ayah words. "surah-header" and "basmala"
+      // lines are intentionally skipped here — QuranPage.tsx already draws
+      // its own decorative surah banner + Bismillah whenever a line's first
+      // word is ayah 1 of a surah it hasn't shown yet, so re-drawing this
+      // dataset's plain-text versions would just duplicate them.
+      if (line?.type !== "text" || !Array.isArray(line.words)) continue;
+      const words: QuranPageWord[] = [];
+      for (const w of line.words) {
+        const [surahStr, ayahStr] = String(w?.location || "").split(":");
+        const surah = Number(surahStr), ayah = Number(ayahStr);
+        if (!surah || !ayah || !w?.word) continue;
+        const { text, isAyahEnd } = splitAyahEndMarker(w.word);
+        if (!text) continue;
+        words.push({ surah, ayah, text, isAyahEnd });
       }
+      if (words.length) lines.push({ lineNumber: line.line, words });
     }
-
-    const lineMap = new Map<number, QuranPageWord[]>();
-    for (const v of verses) {
-      const key = v.verse_key as string;
-      const [surahStr, ayahStr] = key.split(":");
-      const surah = Number(surahStr), ayah = Number(ayahStr);
-      for (const w of (v.words ?? [])) {
-        if (w.char_type_name !== "word") continue;
-        const line = w.line_number;
-        const text = w.text_uthmani || w.text;
-        if (typeof line !== "number" || !text) continue;
-        if (!lineMap.has(line)) lineMap.set(line, []);
-        lineMap.get(line)!.push({ surah, ayah, text, isAyahEnd: (w.position ?? 0) === maxPosByVerse.get(key) });
-      }
-    }
-
-    const lines: QuranPageLine[] = Array.from(lineMap.entries())
-      .sort((a, b) => a[0] - b[0])
-      .map(([lineNumber, words]) => ({ lineNumber, words }));
     if (!lines.length) return null;
 
     try { localStorage.setItem(cacheKey, JSON.stringify(lines)); } catch { /* storage full — ignore */ }
