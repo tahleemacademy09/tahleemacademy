@@ -15,7 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
-import { Eye, Users, Monitor, Smartphone, Tablet, Globe } from "lucide-react";
+import { Eye, Users, Monitor, Smartphone, Tablet, Globe, X, ChevronRight } from "lucide-react";
 
 const G      = "#064E3B";
 const TEAL   = "#0a7c68";
@@ -52,9 +52,15 @@ const StatCard = ({ icon, label, value }: { icon: React.ReactNode; label: string
   </div>
 );
 
+// Identity a "Recent visits" row belongs to — public visitors are grouped by
+// visitor_id (an anonymous cookie/localStorage id), logged-in activity by
+// user_id. Clicking a row opens that identity's full log below.
+type Identity = { kind: "public" | "loggedin"; id: string; label: string };
+
 const SiteAnalytics = () => {
   const [tab, setTab]   = useState<"public" | "loggedin">("public");
   const [range, setRange] = useState(7);
+  const [selectedIdentity, setSelectedIdentity] = useState<Identity | null>(null);
 
   const since = useMemo(() => {
     const d = new Date();
@@ -124,6 +130,37 @@ const SiteAnalytics = () => {
   }, [activeRows]);
 
   const recent = activeRows.slice(0, 40);
+
+  // ── Full log for one identity — a click used to do nothing here, so there
+  // was no way to see everything a given visitor/user did, only whatever
+  // happened to be in the last-40 "Recent" list above (already filtered to
+  // the current date range). This re-queries page_views for just that one
+  // visitor_id / user_id, across all time, so the drawer below shows their
+  // complete history rather than a truncated recent slice.
+  const { data: identityLog = [], isLoading: identityLoading } = useQuery({
+    queryKey: ["admin-page-views-identity", selectedIdentity?.kind, selectedIdentity?.id],
+    enabled: !!selectedIdentity,
+    queryFn: async () => {
+      if (!selectedIdentity) return [];
+      const column = selectedIdentity.kind === "public" ? "visitor_id" : "user_id";
+      const { data, error } = await supabase
+        .from("page_views" as any)
+        .select("*")
+        .eq(column, selectedIdentity.id)
+        .order("created_at", { ascending: false })
+        .limit(1000);
+      if (error) throw error;
+      return (data || []) as unknown as PageViewRow[];
+    },
+  });
+
+  const openIdentity = (r: PageViewRow) => {
+    if (tab === "public") {
+      setSelectedIdentity({ kind: "public", id: r.visitor_id, label: `Visitor ${r.visitor_id.slice(0, 8)}` });
+    } else if (r.user_id) {
+      setSelectedIdentity({ kind: "loggedin", id: r.user_id, label: profileMap[r.user_id] || "Unnamed" });
+    }
+  };
 
   return (
     <div style={{ padding: 16, fontFamily: "'Cairo', sans-serif", maxWidth: 960, margin: "0 auto" }}>
@@ -196,7 +233,8 @@ const SiteAnalytics = () => {
             ))}
           </div>
 
-          {/* Recent visits */}
+          {/* Recent visits — each row now opens that visitor's/user's full
+              log (see the drawer below); rows were previously inert. */}
           <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 12, padding: 14 }}>
             <p style={{ fontSize: 12, fontWeight: 800, color: G, margin: "0 0 10px" }}>
               Recent {tab === "public" ? "visits" : "activity"}
@@ -204,7 +242,15 @@ const SiteAnalytics = () => {
             <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 420, overflowY: "auto" }}>
               {recent.length === 0 && <p style={{ fontSize: 12, color: "#9CA3AF" }}>Nothing yet.</p>}
               {recent.map(r => (
-                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "6px 0", borderBottom: `1px solid ${BORDER}` }}>
+                <button
+                  key={r.id}
+                  onClick={() => openIdentity(r)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "6px 4px",
+                    border: "none", borderBottom: `1px solid ${BORDER}`,
+                    background: "none", width: "100%", textAlign: "left", cursor: "pointer", borderRadius: 6,
+                  }}
+                >
                   <span style={{ color: "#9CA3AF" }}>{deviceIcon(r.device_type)}</span>
                   <span style={{ fontFamily: "monospace", color: "#111", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {r.path}
@@ -213,11 +259,66 @@ const SiteAnalytics = () => {
                     <span style={{ color: G, fontWeight: 700, fontSize: 11 }}>{profileMap[r.user_id] || "…"}</span>
                   )}
                   <span style={{ color: "#9CA3AF", fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(r.created_at)}</span>
-                </div>
+                  <ChevronRight size={13} color="#C4C9D0" />
+                </button>
               ))}
             </div>
           </div>
         </>
+      )}
+
+      {/* ── Full log drawer for one visitor / user — this is the piece that
+          was missing: clicking a row previously did nothing. Re-fetches
+          page_views for just that identity, across all time (not limited
+          to the date-range picker above), newest first. ── */}
+      {selectedIdentity && (
+        <div
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 50, display: "flex", justifyContent: "flex-end" }}
+          onClick={() => setSelectedIdentity(null)}
+        >
+          <div
+            style={{ width: "92%", maxWidth: 420, height: "100%", background: "#fff", display: "flex", flexDirection: "column" }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", background: G, color: "#fff" }}>
+              {selectedIdentity.kind === "public" ? <Globe size={16} /> : <Users size={16} />}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {selectedIdentity.label}
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.75 }}>
+                  {selectedIdentity.kind === "public" ? "Public visitor" : "Logged-in user"} · full history
+                </div>
+              </div>
+              <button onClick={() => setSelectedIdentity(null)} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", gap: 16, fontSize: 12, color: "#6B7280" }}>
+              <span><b style={{ color: G }}>{identityLog.length}</b> page view{identityLog.length === 1 ? "" : "s"}</span>
+              {identityLog.length > 0 && (
+                <span>Since {fmtDT(identityLog[identityLog.length - 1].created_at)}</span>
+              )}
+            </div>
+
+            <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px" }}>
+              {identityLoading && <p style={{ fontSize: 12, color: "#9CA3AF", padding: "10px 0" }}>Loading…</p>}
+              {!identityLoading && identityLog.length === 0 && (
+                <p style={{ fontSize: 12, color: "#9CA3AF", padding: "10px 0" }}>No page views found.</p>
+              )}
+              {identityLog.map(r => (
+                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "8px 0", borderBottom: `1px solid ${BORDER}` }}>
+                  <span style={{ color: "#9CA3AF" }}>{deviceIcon(r.device_type)}</span>
+                  <span style={{ fontFamily: "monospace", color: "#111", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.path}
+                  </span>
+                  <span style={{ color: "#9CA3AF", fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(r.created_at)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
