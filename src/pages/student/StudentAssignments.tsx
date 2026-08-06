@@ -403,7 +403,7 @@ export function AssignmentFormModal({
       if (file) {
         const ext  = file.name.split(".").pop();
         const path = `assignments/${subjectId}/${Date.now()}.${ext}`;
-        const res  = await uploadStorageFile("subject-files" as any, path, file, { upsert: true });
+        const res  = await uploadStorageFile("subject-materials" as any, path, file, { upsert: true });
         if (!res.success) { setError(res.error || "Upload failed"); setSaving(false); return; }
         file_url = res.path!;
       }
@@ -1154,7 +1154,7 @@ function AssignmentModal({
         setUploading(true);
         const ext  = file.name.split(".").pop();
         const path = `${userId}/${a.id}/file_${Date.now()}.${ext}`;
-        const res  = await uploadStorageFile("subject-files" as any, path, file, { upsert: true });
+        const res  = await uploadStorageFile("subject-materials" as any, path, file, { upsert: true });
         if (!res.success) { setError(res.error || "Upload failed"); setSubmitting(false); setUploading(false); return; }
         uploadedFileUrl = res.path!;
         setUploading(false);
@@ -1164,7 +1164,7 @@ function AssignmentModal({
       if (audioBlob) {
         setUploading(true);
         const path = `${userId}/${a.id}/audio_${Date.now()}.webm`;
-        const res  = await uploadStorageFile("subject-files" as any, path, audioBlob, { upsert: true, contentType: "audio/webm" });
+        const res  = await uploadStorageFile("subject-materials" as any, path, audioBlob, { upsert: true, contentType: "audio/webm" });
         if (!res.success) { setError(res.error || "Audio upload failed"); setSubmitting(false); setUploading(false); return; }
         uploadedAudioUrl = res.path!;
         setUploading(false);
