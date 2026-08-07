@@ -194,8 +194,9 @@ const CSS = `
     height: 100% !important;
   }
 
-  /* ── CSS baseline: strip mirror from all tiles.
-     The MutationObserver sets per-tile inline !important which wins. ── */
+  /* ── CSS baseline: default to unmirrored; the MutationObserver above
+     flips the local participant's own tile to scaleX(-1) via inline
+     !important (which wins over this), leaving every remote tile here. ── */
   .lk-participant-tile video {
     transform: none !important;
     -webkit-transform: none !important;
@@ -805,7 +806,15 @@ const GuestClassroom = () => {
             ? carrier.getAttribute("data-lk-local-participant")
             : vid.getAttribute("data-lk-local-participant");
           const isLocal = attr === "true" || attr === "";
-          const wantedTransform = "none"; // no mirroring — local shows true-to-life, same as remote
+          // BUG FIX ("video showing flipped — text is backwards"): mirror
+          // ONLY the local guest's own preview, same convention as every
+          // video-call app (raise your right hand, it appears on the right
+          // side of YOUR OWN screen) — this is a pure local CSS flip and
+          // has zero effect on what's actually published, so remote
+          // viewers still see the guest's video exactly as their camera
+          // published it. This used to force "none" for local too, which
+          // made a guest's own camera preview feel mirror-reversed.
+          const wantedTransform = isLocal ? "scaleX(-1)" : "none";
           const curTransform = vid.style.getPropertyValue("transform");
           const curPriority  = vid.style.getPropertyPriority("transform");
           const curObjFit    = vid.style.getPropertyValue("object-fit");
