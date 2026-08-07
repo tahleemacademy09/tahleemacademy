@@ -34,6 +34,7 @@ import {
   SwitchCamera, Settings, Check, Wifi,
   Monitor, MonitorOff, Pin, Timer, UserCheck, Crosshair,
   Zap, ClipboardList, Bell, Radio, Layers,
+  UserMinus, UserX, ShieldCheck,
 } from "lucide-react";
 import ClassLobby        from "./ClassLobby";
 import ClassChatPanel    from "./ClassChatPanel";
@@ -87,7 +88,7 @@ import PDFViewer, { prewarmPDF } from "./PDFViewer";
 import LiveClassFilePanel from "./LiveClassFilePanel";
 import SubjectAssignments from "./SubjectAssignments";
 import { useIsMobile }   from "@/hooks/use-mobile";
-import { useState, useEffect, useRef, useCallback, useReducer } from "react";
+import { useState, useEffect, useRef, useCallback, useReducer, createContext, useContext } from "react";
 
 export interface ClassroomViewProps { subject: any; onLeave: () => void; onMinimize?: () => void; autoJoin?: boolean; }
 export type LayoutMode = "grid"|"spotlight"|"horizontal"|"vertical"|"focus";
@@ -911,6 +912,73 @@ export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) =
     return () => { room.off(RoomEvent.DataReceived, h); };
   }, [room, isPrivileged]);
   return null;
+};
+
+// ── Waiting-room banner (host side) ──────────────────────────────────────
+// A blocked student trying to rejoin no longer gets a flat rejection —
+// livekit-token now flags their class_participants row (join_request_status
+// ='pending') instead. This banner realtime-subscribes to that same table
+// for THIS session, and shows a prompt for every pending request so the
+// host doesn't have to go digging in the Participants panel to notice
+// someone is trying to get back in.
+export const JoinRequestBanner=({sessionId,isPrivileged}:{sessionId:string|null;isPrivileged:boolean})=>{
+  const[requests,setRequests]=useState<any[]>([]);
+  const[busyId,setBusyId]=useState<string|null>(null);
+
+  useEffect(()=>{
+    if(!sessionId||!isPrivileged)return;
+    let cancelled=false;
+    const load=async()=>{
+      const{data}=await supabase.from("class_participants")
+        .select("id, student_id, join_requested_at, profiles!inner(full_name)")
+        .eq("session_id",sessionId).eq("join_request_status","pending")
+        .order("join_requested_at",{ascending:false});
+      if(!cancelled)setRequests(data||[]);
+    };
+    load();
+    const ch=supabase.channel(`join-requests-${sessionId}`)
+      .on("postgres_changes",{event:"*",schema:"public",table:"class_participants",filter:`session_id=eq.${sessionId}`},load)
+      .subscribe();
+    return()=>{cancelled=true;supabase.removeChannel(ch);};
+  },[sessionId,isPrivileged]);
+
+  if(!isPrivileged||requests.length===0)return null;
+
+  const respond=async(row:any,action:"admit"|"deny")=>{
+    setBusyId(row.id);
+    try{
+      const{data,error}=await supabase.functions.invoke("moderate-participant",{
+        body:{session_id:sessionId,student_id:row.student_id,action},
+      });
+      if(error||data?.error)throw new Error(data?.error||error?.message);
+      setRequests(prev=>prev.filter(r=>r.id!==row.id));
+      toast({title:action==="admit"?`✅ Admitted ${row.profiles?.full_name||"student"}`:`Denied ${row.profiles?.full_name||"student"}'s request`});
+    }catch(e:any){
+      toast({title:"Action failed",description:e?.message,variant:"destructive"});
+    }finally{
+      setBusyId(null);
+    }
+  };
+
+  return(
+    <div style={{position:"fixed",top:12,left:"50%",transform:"translateX(-50%)",zIndex:9600,display:"flex",flexDirection:"column",gap:6,maxWidth:"92vw"}}>
+      {requests.map(row=>(
+        <div key={row.id} style={{
+          display:"flex",alignItems:"center",gap:12,
+          background:"rgba(20,20,22,.92)",backdropFilter:"blur(10px)",
+          border:"1px solid rgba(255,255,255,.12)",borderRadius:12,
+          padding:"10px 14px",boxShadow:"0 8px 24px rgba(0,0,0,.4)",
+        }}>
+          <UserCheck style={{width:16,height:16,color:"#facc15",flexShrink:0}}/>
+          <span style={{color:"#fff",fontSize:13,fontFamily:"system-ui,sans-serif",whiteSpace:"nowrap"}}>
+            <b>{row.profiles?.full_name||"A student"}</b> wants to rejoin the call
+          </span>
+          <Button size="sm" disabled={busyId===row.id} onClick={()=>respond(row,"admit")} style={{height:28,padding:"0 10px"}}>Admit</Button>
+          <Button size="sm" variant="outline" disabled={busyId===row.id} onClick={()=>respond(row,"deny")} style={{height:28,padding:"0 10px"}}>Deny</Button>
+        </div>
+      ))}
+    </div>
+  );
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -4312,14 +4380,27 @@ export const ParticipantSignalIcon=({participant}:{participant:any})=>{
     const iv=setInterval(()=>setQuality(readQuality()),2500);
     return()=>{room.off(RoomEvent.ConnectionQualityChanged,handler);clearInterval(iv);clearInterval(fastIv);clearTimeout(toStable);};
   },[room,participant,readQuality]);
-  // BUG FIX: this used to `return null` for anything except poor/lost — so
-  // the icon was invisible almost all the time (exactly when a connection
-  // was FINE), which made it look broken/"not showing green" as reported.
-  // SignalBars already color-codes green/yellow/red/gray correctly; the
-  // fix is simply to always render it instead of hiding the good case.
-  if(quality==="unknown")return null; // still nothing meaningful to show yet
+  // BUG FIX ("network bar is loading too late"): this used to `return null`
+  // for "unknown", so the icon was fully invisible for that first stretch
+  // after a tile mounts (before the SFU has reported anything) — it felt
+  // like the indicator was slow/broken rather than genuinely having
+  // nothing to show yet. SignalBars already renders "unknown" as four dim
+  // outline bars, so rendering it immediately gives instant visual
+  // feedback (an icon is there right away) that then fills in with real
+  // color the moment the fast-polling effect above picks up a value —
+  // typically within one 300ms tick.
   return <SignalBars quality={quality}/>;
 };
+
+// ── Admin context for video tiles ──────────────────────────────────────
+// ParticipantTile is rendered deep inside several nested layout components
+// (VideoGrid → PagedGrid/DuoPipLayout → tile), so instead of threading
+// isPrivileged/sessionId through every one of those layout components'
+// props, ClassroomView wraps its <VideoGrid/> in this Provider once and
+// every tile underneath just reads it directly. Defaults are safe no-ops
+// (mic/kick controls simply don't render) for any tree that doesn't wrap
+// with a Provider — e.g. if ParticipantTile is ever reused somewhere else.
+export const ClassroomAdminContext = createContext<{isPrivileged:boolean;sessionId:string|null}>({isPrivileged:false,sessionId:null});
 
 export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small";pip?:boolean})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
@@ -4327,6 +4408,82 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   const[isSpeaking,setIsSpeaking]=useState(false);
   const[micEnabled,setMicEnabled]=useState(true);
   const room=useRoomContext();
+
+  // ── Admin tile controls: tap mic to mute/unmute, long-press to remove/block ──
+  // Reads from ClassroomAdminContext instead of props so every call site of
+  // ParticipantTile (grid, spotlight, screenshare rail, PiP bubble) gets this
+  // for free without threading isPrivileged/sessionId through each layout.
+  const{isPrivileged:adminIsPrivileged,sessionId:adminSessionId}=useContext(ClassroomAdminContext);
+  const canModerate=adminIsPrivileged&&!isLocal;
+  const[tileMenuOpen,setTileMenuOpen]=useState(false);
+  const[tileActionBusy,setTileActionBusy]=useState(false);
+  const longPressTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const longPressFired=useRef(false);
+
+  const sendModeration=(type:string)=>{
+    try{
+      room?.localParticipant?.publishData(
+        new TextEncoder().encode(JSON.stringify({type,target:participant.identity})),
+        {reliable:true}
+      );
+    }catch{}
+  };
+
+  // Tap the mic icon on the tile itself — same force_mute/force_unmute data
+  // channel signal the Participants side-panel already sends (AdminMuteListener
+  // on the receiving end reacts to both identically), just reachable directly
+  // from the video tile instead of only from the panel list.
+  const toggleTileMic=(e:any)=>{
+    e.stopPropagation();
+    if(!canModerate)return;
+    sendModeration(micEnabled?"force_mute":"force_unmute");
+    toast({title:micEnabled?`🔇 ${name} muted`:`🎤 ${name} unmuted`});
+  };
+
+  const startLongPress=()=>{
+    if(!canModerate)return;
+    longPressFired.current=false;
+    longPressTimer.current=setTimeout(()=>{
+      longPressFired.current=true;
+      setTileMenuOpen(true);
+    },500);
+  };
+  const cancelLongPress=()=>{
+    if(longPressTimer.current){clearTimeout(longPressTimer.current);longPressTimer.current=null;}
+  };
+
+  const removeFromTile=async()=>{
+    if(!adminSessionId)return;
+    setTileActionBusy(true);
+    try{
+      const{data,error}=await supabase.functions.invoke("moderate-participant",{
+        body:{session_id:adminSessionId,student_id:participant.identity,action:"remove",identity:participant.identity},
+      });
+      if(error||data?.error)throw new Error(data?.error||error?.message);
+      toast({title:`👋 ${name} removed from the class`});
+    }catch(e:any){
+      toast({title:"Failed to remove",description:e?.message,variant:"destructive"});
+    }finally{
+      setTileActionBusy(false);setTileMenuOpen(false);
+    }
+  };
+
+  const blockFromTile=async()=>{
+    if(!adminSessionId)return;
+    if(!window.confirm(`Remove and block ${name} from rejoining this class until you unblock them?`))return;
+    setTileActionBusy(true);
+    try{
+      const{data,error}=await supabase.functions.invoke("moderate-participant",{
+        body:{session_id:adminSessionId,student_id:participant.identity,action:"ban",identity:participant.identity},
+      });
+      if(error||data?.error)throw new Error(data?.error||error?.message);
+      toast({title:`🚫 ${name} removed and blocked from rejoining`});
+    }catch(e:any){
+      toast({title:"Failed to block",description:e?.message,variant:"destructive"});
+    }finally{
+      setTileActionBusy(false);setTileMenuOpen(false);
+    }
+  };
   // BUG FIX ("pic only shows for the user, others don't see it" / "takes a
   // while to show a user's details"): name and avatar_url both come from
   // `participant.metadata`, read fresh on every render below — but nothing
@@ -4422,17 +4579,34 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         border: "3px solid transparent",
         overflow:"hidden",
         background: "#111",
+        position:"relative",
+        cursor: canModerate ? "pointer" : undefined,
       }}
+      // Long-press (touch or mouse) opens the Remove/Block menu for admins on
+      // any REMOTE tile. A plain tap/click that fires before the 500ms hold
+      // completes is left alone (longPressFired stays false) so this never
+      // interferes with anything else the tile does on a normal click.
+      onPointerDown={canModerate?startLongPress:undefined}
+      onPointerUp={canModerate?cancelLongPress:undefined}
+      onPointerLeave={canModerate?cancelLongPress:undefined}
+      onPointerCancel={canModerate?cancelLongPress:undefined}
+      onContextMenu={canModerate?(e:any)=>{e.preventDefault();setTileMenuOpen(true);}:undefined}
     >
-      {/* Live video — NOT mirrored, for local or remote. A mirror flips
-          left/right; a person looking at you face-to-face does not — this
-          shows the true, real-life orientation (text on clothing, which
-          hand is raised, which way someone points, all read correctly).
-          Every viewer, including the camera's own owner in their own
-          preview, sees this exact same unflipped frame — what you see of
-          yourself is exactly what everyone else in the class sees of you. */}
+      {/* BUG FIX ("video showing flipped — text is backwards"): mirror ONLY
+          the LOCAL participant's own preview via CSS (scaleX(-1)) — the
+          standard convention every video-call app uses so your own camera
+          feels like looking in a mirror (raise your right hand, it goes up
+          on the right side of your own screen). This is a purely local
+          rendering flip; it does not touch the actual published video
+          frame in any way, so it has zero effect on what remote viewers
+          receive. Remote tiles get NO transform, so every other viewer
+          always sees a participant's video exactly as their camera
+          published it — real orientation, text readable. Previously this
+          tile applied no transform in either case, which made your own
+          camera preview feel mirror-reversed compared to what every other
+          call app trains people to expect. */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
-        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none"}}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
       />
 
       {/* Camera-off avatar — WhatsApp dark grey background + large silhouette */}
@@ -4486,9 +4660,26 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
           display:"inline-flex",alignItems:"center",gap:5,
           background:"rgba(0,0,0,.55)",backdropFilter:"blur(8px)",
           borderRadius:20,padding:"4px 10px",
-          maxWidth:"calc(100% - 20px)",pointerEvents:"none",
+          maxWidth:"calc(100% - 20px)",pointerEvents:canModerate?"auto":"none",
         }}>
-          {isSpeaking&&micEnabled ? (
+          {/* BUG FIX ("admin click on user mic — turn off/on"): for a
+              privileged viewer looking at someone else's tile, this icon is
+              now a real tappable control (pointerEvents re-enabled + stops
+              propagation so it doesn't also trigger the tile's own
+              long-press) instead of a purely decorative status dot. Tapping
+              it sends the same force_mute/force_unmute data-channel signal
+              the Participants side-panel already used, just reachable
+              directly from the video tile. Non-admins and the local tile
+              keep the old read-only indicator. */}
+          {canModerate ? (
+            <button onClick={toggleTileMic} onPointerDown={(e:any)=>e.stopPropagation()} title={micEnabled?"Mute":"Unmute"}
+              style={{background:"none",border:"none",padding:0,margin:0,pointerEvents:"auto",cursor:"pointer",display:"flex",alignItems:"center",flexShrink:0}}>
+              {micEnabled
+                ? <Mic style={{width:12,height:12,color:"rgba(255,255,255,.9)"}}/>
+                : <MicOff style={{width:12,height:12,color:"#ef4444"}}/>
+              }
+            </button>
+          ) : isSpeaking&&micEnabled ? (
             // Pulsing dot — the full waveform now lives in the center of the tile,
             // so this just confirms it's this participant's mic that's live.
             <span style={{width:7,height:7,borderRadius:"50%",background:"#25D366",animation:"pip-pulse 1s ease-in-out infinite",flexShrink:0}}/>
@@ -4500,6 +4691,43 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
             {name}{isLocal?" (You)":""}
           </span>
           <ParticipantSignalIcon participant={participant}/>
+        </div>
+      )}
+
+      {/* BUG FIX ("hold to show option to remove/block user"): long-press
+          (or right-click on desktop) anywhere on a REMOTE tile while
+          privileged opens this small menu. Backdrop click-away closes it
+          without acting — only the two explicit buttons below take action. */}
+      {canModerate&&tileMenuOpen&&(
+        <div onClick={(e:any)=>{e.stopPropagation();setTileMenuOpen(false);}} style={{
+          position:"absolute",inset:0,zIndex:20,
+          background:"rgba(0,0,0,.55)",backdropFilter:"blur(2px)",
+          display:"flex",alignItems:"center",justifyContent:"center",
+        }}>
+          <div onClick={(e:any)=>e.stopPropagation()} style={{
+            background:"#26272b",borderRadius:12,padding:10,minWidth:190,
+            border:"1px solid rgba(255,255,255,.1)",boxShadow:"0 8px 28px rgba(0,0,0,.5)",
+          }}>
+            <p style={{margin:"2px 8px 8px",fontSize:12,fontWeight:600,color:"rgba(255,255,255,.55)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{name}</p>
+            <button onClick={removeFromTile} disabled={tileActionBusy} style={{
+              width:"100%",display:"flex",alignItems:"center",gap:8,padding:"8px 8px",
+              background:"none",border:"none",borderRadius:8,color:"#fca5a5",fontSize:13,
+              cursor:"pointer",opacity:tileActionBusy?0.5:1,
+            }} onMouseEnter={(e:any)=>(e.currentTarget.style.background="rgba(239,68,68,.12)")} onMouseLeave={(e:any)=>(e.currentTarget.style.background="none")}>
+              <UserMinus style={{width:15,height:15}}/> Remove from call
+            </button>
+            <button onClick={blockFromTile} disabled={tileActionBusy} style={{
+              width:"100%",display:"flex",alignItems:"center",gap:8,padding:"8px 8px",
+              background:"none",border:"none",borderRadius:8,color:"#f87171",fontSize:13,
+              cursor:"pointer",opacity:tileActionBusy?0.5:1,
+            }} onMouseEnter={(e:any)=>(e.currentTarget.style.background="rgba(239,68,68,.12)")} onMouseLeave={(e:any)=>(e.currentTarget.style.background="none")}>
+              <UserX style={{width:15,height:15}}/> Remove &amp; block from rejoining
+            </button>
+            <button onClick={()=>setTileMenuOpen(false)} style={{
+              width:"100%",padding:"7px 8px",marginTop:2,background:"none",border:"none",
+              borderRadius:8,color:"rgba(255,255,255,.4)",fontSize:12,cursor:"pointer",textAlign:"center" as const,
+            }}>Cancel</button>
+          </div>
         </div>
       )}
 

@@ -139,6 +139,8 @@ import {
   RoomToContextBridge,
   syncManualAttendanceFromSession,
   queuePublish,
+  ClassroomAdminContext,
+  JoinRequestBanner,
 } from "./classroomComponents";
 
 export * from "./classroomComponents";
@@ -146,7 +148,10 @@ export * from "./classroomComponents";
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");
   const{setHasConnected,leaveSessionFnRef}=useLiveClass();
-  const[phase,setPhase]=useState<"lobby"|"live"|"ended">("lobby");
+  const[phase,setPhase]=useState<"lobby"|"live"|"ended"|"waiting">("lobby");
+  const[waitingMessage,setWaitingMessage]=useState<string|null>(null);
+  const[waitingDenied,setWaitingDenied]=useState(false);
+  const waitingSessionIdRef=useRef<string|null>(null);
   const[token,setToken]=useState<string|null>(null);const[wsUrl,setWsUrl]=useState<string|null>(null);
   const[error,setError]=useState<string|null>(null);const[loading,setLoading]=useState(false);
   const[reconnecting,setReconnecting]=useState(false);
@@ -479,7 +484,25 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       let tk=isFresh?prefetch.current!.token:null;
       let url=isFresh?prefetch.current!.url:null;
       prefetch.current=null; // always clear after reading so Try Again fetches a new token
-      if(!tk||!url){const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});if(e)throw e;if(data?.error)throw new Error(data.error);tk=data.token;url=data.url;}
+      if(!tk||!url){
+        const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});
+        if(e)throw e;
+        // WAITING-ROOM FLOW: a host removed-and-blocked this student earlier.
+        // Instead of a hard error, livekit-token now returns {pending:true}
+        // and records the request server-side so the host's Participants
+        // panel can show an Admit/Deny prompt. Show a "waiting for host"
+        // screen here and poll class_participants until it changes.
+        if(data?.pending){
+          setLoading(false);
+          setWaitingDenied(false);
+          setWaitingMessage(data.message||"Waiting for the host to respond...");
+          waitingSessionIdRef.current=data.session_id||null;
+          setPhase("waiting");
+          return;
+        }
+        if(data?.error)throw new Error(data.error);
+        tk=data.token;url=data.url;
+      }
       setToken(tk!);setWsUrl(url!);
 
       // FIX ("takes a while before showing my full details"): flip to the live
@@ -786,6 +809,39 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     return()=>{supabase.removeChannel(ch);};
   },[sessionId,isPrivileged,attendanceOpen]);
 
+  // ══ Waiting-room: student side — listen for the host's Admit/Deny ══
+  // While phase==="waiting" we don't hold a LiveKit connection at all (we
+  // were refused a token), so a data-channel message from the host isn't
+  // possible here — Postgres realtime on our own class_participants row is
+  // the only channel available. is_banned flips false → host admitted us,
+  // auto-retry the join immediately. join_request_status flips to 'denied'
+  // → tell the student plainly instead of leaving them waiting forever.
+  useEffect(()=>{
+    if(phase!=="waiting"||!user||!waitingSessionIdRef.current)return;
+    const sid=waitingSessionIdRef.current;
+    const check=async()=>{
+      const{data}=await supabase.from("class_participants")
+        .select("is_banned, join_request_status")
+        .eq("session_id",sid).eq("student_id",user.id).maybeSingle();
+      if(!data)return;
+      if(!data.is_banned){
+        toast({title:"✅ You've been admitted — joining..."});
+        setPhase("lobby");
+        connect("join");
+      }else if(data.join_request_status==="denied"){
+        setWaitingDenied(true);
+        setWaitingMessage("The host declined your request to rejoin.");
+      }
+    };
+    const ch=supabase.channel(`join-request-${sid}-${user.id}`)
+      .on("postgres_changes",{event:"UPDATE",schema:"public",table:"class_participants",filter:`session_id=eq.${sid}`},check)
+      .subscribe();
+    // Realtime can occasionally miss an event on a flaky connection — a slow
+    // poll as a backstop costs nothing while just sitting on a waiting screen.
+    const iv=setInterval(check,5000);
+    return()=>{supabase.removeChannel(ch);clearInterval(iv);};
+  },[phase,user]);
+
   // ══ Feature 10: Countdown Timer ══
   useEffect(()=>{
     if(!timerRunning||timerSeconds<=0)return;
@@ -870,6 +926,21 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       <AttendanceQuickReview sessionId={sessionId} subject={subject} onDone={()=>setShowAttendanceReview(false)} />
     )}
   </>;
+  if(phase==="waiting")return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16,height:"100dvh",background:"#202124",padding:24,textAlign:"center"}}>
+      {!waitingDenied&&<Loader2 style={{width:36,height:36,color:"#8696a0",animation:"spin 1.2s linear infinite"}}/>}
+      <p style={{color:"#fff",fontSize:16,fontWeight:600,maxWidth:420}}>
+        {waitingDenied?"Request declined":"Waiting for the host"}
+      </p>
+      <p style={{color:"rgba(255,255,255,.6)",fontSize:13,maxWidth:360}}>{waitingMessage}</p>
+      <div style={{display:"flex",gap:10,marginTop:8}}>
+        {waitingDenied&&(
+          <Button onClick={()=>connect("join")}>Ask again</Button>
+        )}
+        <Button variant="outline" onClick={onLeave}>Leave</Button>
+      </div>
+    </div>
+  );
   if(phase==="lobby"&&!loading&&!error&&!autoJoin)return<ClassLobby subject={subject} session={sessionInfo} onStartClass={(s:any,media?:any)=>connect("start_session",s,media)} onJoinClass={(media?:any)=>connect("join",undefined,media)} onBack={onLeave} isLive={isSessionLive}/>;
   if(loading)return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100dvh",background:"#202124"}}>
@@ -1039,6 +1110,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <MicKeepAliveFromContext />
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
           <AdminMuteListener isPrivileged={isPrivileged}/>
+          <JoinRequestBanner sessionId={sessionId} isPrivileged={isPrivileged}/>
           <GroupReciteAutoMic active={groupRecite} isPrivileged={isPrivileged}/>
           {/* onDisconnected wired to autoReconnect — handles Android tab suspension */}
           <ReconnectMonitor
@@ -1128,7 +1200,9 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           {/* Content — material panels render here so footer always stays visible */}
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
             <div style={{flex:1,position:"relative",minWidth:0}}>
-              <VideoGrid layout={layout} isMobile={isMobile} spotlightId={spotlightId}/>
+              <ClassroomAdminContext.Provider value={{isPrivileged,sessionId}}>
+                <VideoGrid layout={layout} isMobile={isMobile} spotlightId={spotlightId}/>
+              </ClassroomAdminContext.Provider>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — keep mounted when it has minimized PiP materials */}
