@@ -882,6 +882,122 @@ export const WbSyncBridge = ({ wbOpen, isTeacher }: { wbOpen: boolean; isTeacher
    - admin_mute_all  → mute everyone
    - force_mute      → mute a specific participant (by identity)
    - force_cam_off   → disable camera for a specific participant          */
+// ── Camera un-mirror processor ───────────────────────────────────────────
+// BUG FIX ("shows well for me, flipped for others"): CSS transforms (used
+// for the local self-preview mirror above) only ever change how a video
+// element is RENDERED on the screen it's applied on — they cannot change
+// what's actually captured and sent over the network. If the raw camera
+// frames a browser hands back from getUserMedia are themselves already
+// horizontally flipped (a real, if uncommon, quirk of some webcam driver
+// stacks — most often DirectShow-based front cameras on Windows/Chrome,
+// though it can happen on other platforms too), that flipped frame is
+// exactly what gets published and is exactly what every remote viewer
+// sees, no matter what CSS the local browser applies to its own preview.
+// The only real fix is to correct the actual pixels before they're
+// encoded: draw every incoming frame onto a canvas mirrored back the
+// other way, then publish the CANVAS's stream instead of the raw camera
+// stream. This is what LiveKit's Track Processor API exists for — it lets
+// us intercept and replace a track's frames post-capture, pre-encode,
+// without touching any of the setCameraEnabled()/switchCamera() call
+// sites elsewhere in the app (see CameraUnmirrorEngine below, which
+// attaches this automatically the moment ANY camera track gets published,
+// covering every one of those call sites from one place).
+class MirrorCorrectProcessor {
+  name = "un-mirror-camera";
+  processedTrack?: MediaStreamTrack;
+  private canvas?: HTMLCanvasElement;
+  private ctx?: CanvasRenderingContext2D | null;
+  private sourceEl?: HTMLVideoElement;
+  private rafId: number | null = null;
+
+  private async setup(track: MediaStreamTrack){
+    this.sourceEl = document.createElement("video");
+    this.sourceEl.muted = true;
+    this.sourceEl.playsInline = true;
+    this.sourceEl.srcObject = new MediaStream([track]);
+    try{ await this.sourceEl.play(); }catch{}
+
+    const settings = track.getSettings?.() || {};
+    const w = (settings as any).width || 1280;
+    const h = (settings as any).height || 720;
+    this.canvas = document.createElement("canvas");
+    this.canvas.width = w; this.canvas.height = h;
+    this.ctx = this.canvas.getContext("2d");
+
+    const draw = () => {
+      if(this.ctx && this.sourceEl && this.sourceEl.readyState >= 2){
+        this.ctx.save();
+        this.ctx.scale(-1, 1);
+        this.ctx.drawImage(this.sourceEl, -w, 0, w, h);
+        this.ctx.restore();
+      }
+      this.rafId = requestAnimationFrame(draw);
+    };
+    draw();
+
+    const stream = (this.canvas as any).captureStream(30);
+    this.processedTrack = stream.getVideoTracks()[0];
+  }
+
+  async init(opts: {track: MediaStreamTrack; element?: HTMLMediaElement}){
+    await this.setup(opts.track);
+  }
+  async restart(opts: {track: MediaStreamTrack; element?: HTMLMediaElement}){
+    await this.destroy();
+    await this.setup(opts.track);
+  }
+  async destroy(){
+    if(this.rafId!=null){cancelAnimationFrame(this.rafId);this.rafId=null;}
+    try{this.sourceEl?.pause();}catch{}
+    try{this.processedTrack?.stop();}catch{}
+    this.sourceEl=undefined;this.canvas=undefined;this.ctx=undefined;this.processedTrack=undefined;
+  }
+}
+
+// Headless — attaches MirrorCorrectProcessor to the local camera track the
+// moment it's published, and re-attaches on every republish (switch
+// camera, mute/unmute cycle, reconnect). Covers every setCameraEnabled()
+// call site in the app from this single place, so nothing else needs to
+// change. A ref guards against double-processing the same MediaStreamTrack
+// instance (setProcessor is otherwise idempotent-unsafe to call twice on
+// the same track back-to-back).
+export const CameraUnmirrorEngine = () => {
+  const room = useRoomContext();
+  const processedTrackId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!room) return;
+
+    const attach = async (track: any) => {
+      if (!track || track.source !== Track.Source.Camera) return;
+      const mst: MediaStreamTrack | undefined = track.mediaStreamTrack;
+      if (!mst || processedTrackId.current === mst.id) return;
+      processedTrackId.current = mst.id;
+      try {
+        await track.setProcessor(new MirrorCorrectProcessor());
+      } catch (e) {
+        console.warn("[CameraUnmirrorEngine] failed to attach processor:", e);
+      }
+    };
+
+    const onPublished = (publication: any) => {
+      if (publication?.source === Track.Source.Camera && publication.track) {
+        attach(publication.track);
+      }
+    };
+
+    // Cover a camera that was already on before this component mounted
+    // (e.g. lobby → live transition).
+    const existing = room.localParticipant?.getTrackPublication?.(Track.Source.Camera);
+    if (existing?.track) attach(existing.track);
+
+    room.on(RoomEvent.LocalTrackPublished, onPublished);
+    return () => { room.off(RoomEvent.LocalTrackPublished, onPublished); };
+  }, [room]);
+
+  return null;
+};
+
 export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) => {
   const room = useRoomContext();
   useEffect(() => {

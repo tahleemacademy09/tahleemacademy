@@ -141,6 +141,7 @@ import {
   queuePublish,
   ClassroomAdminContext,
   JoinRequestBanner,
+  CameraUnmirrorEngine,
 } from "./classroomComponents";
 
 export * from "./classroomComponents";
@@ -920,6 +921,40 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     );
   };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+
+  // ── Device-aware video quality ──────────────────────────────────────────
+  // "clear on PC, but shouldn't eat mobile data": with simulcast, the
+  // SENDER encodes and uploads every listed layer simultaneously — the
+  // SFU then hands each individual VIEWER whichever single layer suits
+  // their own downlink, so a viewer's download cost was already adaptive.
+  // What wasn't adaptive is the PUBLISHER'S upload cost: a mobile student
+  // publishing their camera was uploading the exact same 3-layer stack
+  // (180p+360p+720p, up to ~2.15 Mbps combined) as someone on a PC/WiFi,
+  // regardless of the mobile connection or data plan underneath them.
+  // Capture *resolution* (videoCaptureDefaults below) doesn't itself cost
+  // network data — it's purely local, feeding the encoder — the actual
+  // data cost is the encoded bitrate of each simulcast layer, which is
+  // what differs between these two profiles.
+  const videoQualityProfile = isMobile ? {
+    // Mobile: two layers instead of three, capped well below PC's — this
+    // roughly halves worst-case upload versus the PC profile, while the
+    // top layer (480p@30fps/500kbps) is still clearly sharp for a phone
+    // screen or a name-pill-sized tile on someone else's grid.
+    videoEncoding:{maxBitrate:500_000,maxFramerate:24},
+    simulcastLayers:[
+      {width:180,height:180,resolution:{width:180,height:180,frameRate:15},encoding:{maxBitrate:90_000,maxFramerate:15}},
+      {width:480,height:480,resolution:{width:480,height:480,frameRate:24},encoding:{maxBitrate:350_000,maxFramerate:24}},
+    ],
+  } : {
+    // PC/laptop: unchanged from before — full 3-layer stack, sharp 720p top.
+    videoEncoding:{maxBitrate:1_500_000,maxFramerate:30},
+    simulcastLayers:[
+      {width:320,height:180,resolution:{width:320,height:180,frameRate:15},encoding:{maxBitrate:150_000,maxFramerate:15}},
+      {width:640,height:360,resolution:{width:640,height:360,frameRate:24},encoding:{maxBitrate:500_000,maxFramerate:24}},
+      {width:1280,height:720,resolution:{width:1280,height:720,frameRate:30},encoding:{maxBitrate:1_500_000,maxFramerate:30}},
+    ],
+  };
+
   if(phase==="ended")return<>
     <ClassEndScreen subject={subject} session={sessionInfo} duration={duration} participantCount={participantCountRef.current} onGoToDashboard={onLeave} onGoToRevision={()=>{window.location.href=`/student/revision/${subject.id}`;}} />
     {isPrivileged&&showAttendanceReview&&sessionId&&(
@@ -1036,9 +1071,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               dtx:false,  // was true — see note above
               red:true,   // redundant audio encoding — recovers from packet loss
               stopMicTrackOnMute:false,
-              // Base (top) encoding layer — this is what a strong-network
-              // viewer receives. Bumped for a visibly crisper default picture.
-              videoEncoding:{maxBitrate:1_500_000,maxFramerate:30},
+              // Base (top) encoding layer — device-specific, see
+              // videoQualityProfile above (PC: sharp/high-bitrate,
+              // mobile: capped to protect mobile data plans).
+              videoEncoding:videoQualityProfile.videoEncoding,
               backupCodec:true,
               // SIMULCAST — this is the correct, LiveKit-native way to adapt
               // video quality to each viewer's network, replacing the old
@@ -1053,19 +1089,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // cycles were themselves a source of stalls, since each one
               // renegotiates the peer connection.
               simulcast:true,
-              videoSimulcastLayers:[
-                {width:320,height:180,resolution:{width:320,height:180,frameRate:15},encoding:{maxBitrate:150_000,maxFramerate:15}},
-                {width:640,height:360,resolution:{width:640,height:360,frameRate:24},encoding:{maxBitrate:500_000,maxFramerate:24}},
-                {width:1280,height:720,resolution:{width:1280,height:720,frameRate:30},encoding:{maxBitrate:1_500_000,maxFramerate:30}},
-              ],
+              videoSimulcastLayers:videoQualityProfile.simulcastLayers,
             },
             videoCaptureDefaults:{
-              // Bumped to a genuine 720p default — the prior 960×540 was
-              // itself fairly soft, and every network-quality dip used to cut
-              // it further to 320×240. That auto-cut is gone (see above), so
-              // the camera now simply stays at a sharp, stable resolution for
-              // the whole class.
-              resolution:{width:1280,height:720,frameRate:30},
+              // PC captures at a genuine 720p; mobile captures a bit lower
+              // (960×540) since its top published layer is 480p anyway —
+              // capturing far above what's ever actually encoded just burns
+              // CPU/battery on the phone for no visible or data benefit.
+              resolution:isMobile?{width:960,height:540,frameRate:24}:{width:1280,height:720,frameRate:30},
               facingMode:"user",
               // Explicit ideal aspect ratio — without this, a phone's front
               // camera (which is very often natively 3:4 / 4:3, not 16:9)
@@ -1171,6 +1202,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                   in the header — removed from here per request. Adaptive video/bitrate
                   engine is kept alive headlessly since it doesn't just feed this badge. */}
               <NetworkAdaptiveEngine/>
+              <CameraUnmirrorEngine/>
               {/* Participant count */}
               <ParticipantCountBadge/>
               {/* Student "Record" control — moved here (beside the participant
