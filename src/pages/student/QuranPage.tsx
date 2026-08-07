@@ -10,13 +10,13 @@ import { Link } from "react-router-dom";
 import {
   BookOpen, Search, X, Play, Pause, Repeat, Repeat1, Star, ChevronDown,
   SkipForward, Gauge, Languages, ListMusic, Bookmark, ArrowLeft, PlusCircle,
-  ChevronUp, ChevronLeft, ChevronRight,
+  ChevronUp,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { SURAHS, RECITERS, DEFAULT_RECITER } from "@/components/hifdh/surahData";
-import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage, getPageLines, QuranPageLine } from "@/lib/quranTextApi";
+import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage, getPageLines, prefetchPageLines, QuranPageLine } from "@/lib/quranTextApi";
 import { listRecitationsForSurah, CustomRecitation } from "@/lib/quranRecitations";
 import { buildAyahSegments, CUSTOM_RECITER_PREFIX } from "@/lib/quranPlaybackSource";
 import { useQuranAudioEngine, AyahSegment } from "@/hooks/useQuranAudioEngine";
@@ -47,6 +47,12 @@ const LAST_PAGE_KEY = "quran_last_page";
 const RECITER_KEY = "quran_reciter";
 const TRANSLATION_KEY = "quran_show_translation";
 const SWIPE_THRESHOLD = 60;
+// FIX (desktop wasted most of the screen): the page was hard-capped at
+// 800px wide regardless of viewport, so on a laptop/desktop the mushaf sat
+// in a narrow column with empty space on both sides. This lets it grow to
+// fill a normal desktop window; the "fit to screen" scale effect below still
+// keeps every page's *height* on one screen either way.
+const PAGE_MAX_WIDTH = 1180;
 
 type SidebarTab = "surah" | "juz" | "bookmarks";
 
@@ -64,7 +70,6 @@ export default function QuranPage() {
   const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [recitationsBySurah, setRecitationsBySurah] = useState<Record<number, CustomRecitation[]>>({});
-  const [slideDir, setSlideDir] = useState<"next" | "prev" | null>(null);
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
 
   const [reciterId, setReciterId] = useState<string>(() => localStorage.getItem(RECITER_KEY) || DEFAULT_RECITER);
@@ -126,10 +131,9 @@ export default function QuranPage() {
   const primarySurah = SURAHS.find(s => s.num === primarySurahNumber) ?? SURAHS[0];
 
   // ── Load a page's verses + any custom recitations for surahs on it ──────
-  const goToPage = useCallback((target: number, direction: "next" | "prev" | null = null) => {
+  const goToPage = useCallback((target: number) => {
     const clamped = Math.min(Math.max(target, 1), TOTAL_PAGES);
     const token = ++loadTokenRef.current;
-    setSlideDir(direction);
     setLoading(true);
     setSelected(null);
     engine.stop();
@@ -143,10 +147,12 @@ export default function QuranPage() {
       localStorage.setItem(LAST_PAGE_KEY, String(clamped));
       setLoading(false);
       // Best-effort: true mushaf line layout for this page. If it fails
-      // (offline, CORS, etc.) we fall back to the free-flowing layout built
-      // from `verses` above — but only after a short grace period with no
-      // data, so a normal (fast) page turn always waits for the real lines
-      // instead of flashing the fallback at the wrong scale first.
+      // (offline, etc.) we fall back to the free-flowing layout built from
+      // `verses` above — but only after a short grace period with no data,
+      // so a normal page turn always waits for the real lines and never
+      // flashes the free-flowing layout at the wrong "fit to screen" scale
+      // first (that mismatch — old scale applied to new, differently-shaped
+      // content — was the "shrinks then snaps to normal size" jump).
       pageLinesFallbackTimerRef.current = window.setTimeout(() => {
         if (loadTokenRef.current === token) setPageLines(prev => prev ?? []);
       }, 650);
@@ -173,6 +179,12 @@ export default function QuranPage() {
       }
       prefetchPage(clamped - 1);
       prefetchPage(clamped + 1);
+      // Prefetch neighbouring pages' true mushaf line layout too, not just
+      // their verse text — this is what makes the *next* page turn feel
+      // instant and already-fitted instead of showing the free-flowing
+      // fallback for a moment while its lines load.
+      prefetchPageLines(clamped - 1);
+      prefetchPageLines(clamped + 1);
     }).catch(() => { if (loadTokenRef.current === token) setLoading(false); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recitationsBySurah]);
@@ -258,7 +270,14 @@ export default function QuranPage() {
         const ayahEndCount = line.words.reduce((n, w) => n + (w.isAyahEnd ? 1 : 0), 0);
         const chromeOverhead = line.words.length * 2 + ayahEndCount * 6;
         const naturalWidth = textWidth + chromeOverhead;
-        const target = width * 0.98;
+        // FIX (still clipping at the edges on mobile): 0.98 of the column
+        // width left almost no safety margin — any small mismatch between
+        // canvas glyph metrics and how the real Arabic font actually shapes
+        // on a phone screen was enough to clip the last word's tail. A more
+        // generous target plus `overflow: visible` on the line box below
+        // (instead of `hidden`) means a rare measurement miss just lets a
+        // line sit very slightly wider rather than silently cutting text off.
+        const target = width * 0.92;
         next[line.lineNumber] = naturalWidth > target && naturalWidth > 0
           ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * target) / naturalWidth))
           : BASE_LINE_FONT_SIZE;
@@ -372,8 +391,8 @@ export default function QuranPage() {
   const endPointerGesture = () => {
     const dx = touchDeltaX.current;
     if (swipeAxisRef.current === "horizontal") {
-      if (dx >= SWIPE_THRESHOLD) goToPage(currentPage + 1, "next");
-      else if (dx <= -SWIPE_THRESHOLD) goToPage(currentPage - 1, "prev");
+      if (dx >= SWIPE_THRESHOLD) goToPage(currentPage + 1);
+      else if (dx <= -SWIPE_THRESHOLD) goToPage(currentPage - 1);
     }
     setDragX(0);
     touchStartX.current = null;
@@ -398,8 +417,8 @@ export default function QuranPage() {
       if (sidebarOpen || searchOpen) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.key === "ArrowRight") goToPage(currentPage + 1, "next");
-      else if (e.key === "ArrowLeft") goToPage(currentPage - 1, "prev");
+      if (e.key === "ArrowRight") goToPage(currentPage + 1);
+      else if (e.key === "ArrowLeft") goToPage(currentPage - 1);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -603,8 +622,11 @@ export default function QuranPage() {
         </>
       )}
 
-      {/* ── Page content — swipe/drag left-right, or use the arrow buttons /
-          arrow keys, to turn pages ── */}
+      {/* ── Page content — swipe/drag left-right, or arrow keys, to turn
+          pages. FIX: removed the visible prev/next arrow buttons — they sat
+          on top of / got clipped by the mushaf text at the screen edges.
+          Drag and ArrowLeft/ArrowRight still work; nothing is lost, it's
+          just no longer drawn on the page itself. ── */}
       <div
         ref={pageBoxRef}
         onPointerDown={onPointerDown}
@@ -619,26 +641,6 @@ export default function QuranPage() {
           cursor: "grab",
         }}
       >
-        {/* Explicit prev/next controls — the swipe/drag gesture above covers
-            touch and mouse-drag, but a plain click is still the most
-            discoverable way to turn a page, especially on desktop. */}
-        <button
-          onClick={() => goToPage(currentPage - 1, "prev")}
-          disabled={currentPage <= 1}
-          aria-label={t("Previous page", "الصفحة السابقة")}
-          style={navArrowStyle("left", currentPage <= 1)}
-        >
-          <ChevronLeft size={20} />
-        </button>
-        <button
-          onClick={() => goToPage(currentPage + 1, "next")}
-          disabled={currentPage >= TOTAL_PAGES}
-          aria-label={t("Next page", "الصفحة التالية")}
-          style={navArrowStyle("right", currentPage >= TOTAL_PAGES)}
-        >
-          <ChevronRight size={20} />
-        </button>
-
         {loading ? (
           <div style={{ textAlign: "center", padding: 40, color: Q_MUTED }}>{t("Loading page…", "جاري تحميل الصفحة…")}</div>
         ) : (
@@ -646,12 +648,9 @@ export default function QuranPage() {
             key={currentPage}
             ref={scaleWrapperRef}
             style={{
-              width: "100%", maxWidth: 800,
+              width: "100%", maxWidth: PAGE_MAX_WIDTH,
               transform: `translateX(${dragTranslate}px) scale(${pageScale})`,
               transformOrigin: "top center",
-              opacity: linesReady ? 1 : 0,
-              animation: slideDir === "next" ? "quranPageInFromLeft .28s ease" : slideDir === "prev" ? "quranPageInFromRight .28s ease" : undefined,
-              transition: dragX === 0 ? "transform .2s ease, opacity .15s ease" : "opacity .15s ease",
             }}
           >
           <div className="quran-page-frame">
@@ -731,7 +730,14 @@ export default function QuranPage() {
                           <div
                             style={{
                               direction: "rtl", textAlign: "justify", textAlignLast: "justify" as any,
-                              lineHeight: 2.1, fontSize: lineFontSize, whiteSpace: "nowrap", overflow: "hidden",
+                              // FIX (words sheared off at the edges): "overflow: hidden"
+                              // here was a hard guillotine — any small gap between the
+                              // canvas measurement above and how the browser actually
+                              // shapes Arabic glyphs sliced the last word's tail clean
+                              // off, with no visual warning it had happened. "visible"
+                              // means the rare miss just lets a line sit a hair wider
+                              // instead of silently destroying text.
+                              lineHeight: 2.1, fontSize: lineFontSize, whiteSpace: "nowrap", overflow: "visible",
                             }}
                           >
                             {line.words.map((w, i) => {
@@ -908,15 +914,16 @@ export default function QuranPage() {
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap');
-        @keyframes quranPageInFromRight { from { opacity:0; transform:translateX(40px); } to { opacity:1; transform:translateX(0); } }
-        @keyframes quranPageInFromLeft { from { opacity:0; transform:translateX(-40px); } to { opacity:1; transform:translateX(0); } }
 
-        /* ── Mushaf page — borderless, with a thin margin so text sits
-           close to the edges. ── */
+        /* ── Mushaf page — a real margin around the text, not just a sliver,
+           so nothing sits right on the physical screen edge. FIX: the old
+           4px side padding left almost no breathing room, so on a phone the
+           justified line text ran right up against (and, combined with the
+           clipping bugs above, past) the edge of the screen. ── */
         .quran-page-frame {
           position: relative;
-          margin: 0 1px 2px;
-          padding: 6px 4px 6px;
+          margin: 0 auto 2px;
+          padding: 10px 18px 10px;
         }
       `}</style>
     </div>
@@ -944,16 +951,6 @@ function dropdownItemStyle(active: boolean): CSSProperties {
   return {
     display: "block", width: "100%", textAlign: "left", padding: "9px 12px", border: "none",
     background: active ? Q_PARCH_ALT : "#fff", color: Q_INK, fontSize: 13, cursor: "pointer",
-  };
-}
-function navArrowStyle(side: "left" | "right", disabled: boolean): CSSProperties {
-  return {
-    position: "absolute", [side]: 4, top: "50%", transform: "translateY(-50%)", zIndex: 5,
-    width: 34, height: 34, borderRadius: "50%", border: `1px solid ${Q_BORDER}`,
-    background: "rgba(255,253,246,0.9)", color: disabled ? "#c8bd9a" : Q_GREEN,
-    display: "flex", alignItems: "center", justifyContent: "center",
-    cursor: disabled ? "default" : "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.12)",
-    opacity: disabled ? 0.4 : 1,
   };
 }
 
