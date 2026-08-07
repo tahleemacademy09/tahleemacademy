@@ -198,6 +198,14 @@ function splitAyahEndMarker(raw: string): { text: string; isAyahEnd: boolean } {
   return { text: trimmed.slice(0, trimmed.length - digits[0].length).trim(), isAyahEnd: true };
 }
 
+// Silently warms the cache for a page's line-layout so the next/previous
+// page turn already has its true mushaf lines ready instead of needing to
+// fetch them (and briefly showing the free-flowing fallback) after the turn.
+export function prefetchPageLines(pageNumber: number) {
+  if (pageNumber < 1 || pageNumber > 604) return;
+  getPageLines(pageNumber).catch(() => null);
+}
+
 export async function getPageLines(pageNumber: number): Promise<QuranPageLine[] | null> {
   const cacheKey = `${PAGE_LINES_CACHE_PREFIX}${pageNumber}`;
   try {
