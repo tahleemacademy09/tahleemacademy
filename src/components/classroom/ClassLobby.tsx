@@ -191,13 +191,17 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
           boxShadow: "0 12px 48px rgba(0,0,0,.6)",
         }}>
           <div style={{ position: "relative", paddingTop: "56.25%" }}>
-            {/* Mirrored, matching the live classroom tile's local-preview
-                fix — this is always your OWN camera here in the lobby, so
-                it should feel like a mirror (raise your right hand, it
-                shows on the right side of your own screen), exactly like
-                the self-view you'll see once you join. Purely a local CSS
-                flip — has no effect on what gets published once you're
-                actually in the room. */}
+            {/* Kept mirrored here even though the in-call tile no longer is.
+                This lobby preview is a raw getUserMedia() feed — it never
+                passes through CameraUnmirrorEngine's un-mirror processor,
+                since that only attaches once you've actually joined the
+                LiveKit room. On the (uncommon but real) devices whose
+                camera driver hands back an already-mirrored raw frame, this
+                CSS flip is what makes the lobby preview readable/correct —
+                same as what you'll see once you're in the actual class,
+                where the processor does the equivalent correction instead.
+                Purely a local rendering flip either way — never touches
+                what actually gets published. */}
             <video ref={videoRef} autoPlay playsInline muted style={{
               position: "absolute", inset: 0, width: "100%", height: "100%",
               objectFit: "cover", display: cameraOn ? "block" : "none", transform: "scaleX(-1)",

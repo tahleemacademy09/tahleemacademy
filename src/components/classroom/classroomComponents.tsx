@@ -4708,21 +4708,19 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
       onPointerCancel={canModerate?cancelLongPress:undefined}
       onContextMenu={canModerate?(e:any)=>{e.preventDefault();setTileMenuOpen(true);}:undefined}
     >
-      {/* BUG FIX ("video showing flipped — text is backwards"): mirror ONLY
-          the LOCAL participant's own preview via CSS (scaleX(-1)) — the
-          standard convention every video-call app uses so your own camera
-          feels like looking in a mirror (raise your right hand, it goes up
-          on the right side of your own screen). This is a purely local
-          rendering flip; it does not touch the actual published video
-          frame in any way, so it has zero effect on what remote viewers
-          receive. Remote tiles get NO transform, so every other viewer
-          always sees a participant's video exactly as their camera
-          published it — real orientation, text readable. Previously this
-          tile applied no transform in either case, which made your own
-          camera preview feel mirror-reversed compared to what every other
-          call app trains people to expect. */}
+      {/* BUG FIX ("flipped for me now, showing well for others"): once
+          CameraUnmirrorEngine's canvas processor is attached, the LOCAL
+          preview element re-attaches to that SAME corrected/true-orientation
+          stream too (LiveKit's Track Processor API re-attaches every
+          currently-attached <video> element to the processed track
+          automatically) — it is no longer showing the raw, possibly
+          pre-mirrored camera feed by the time this renders. The CSS mirror
+          this tile used to apply on top of that was therefore flipping an
+          already-corrected picture right back to backwards, for the local
+          viewer only. No transform anywhere now — local and remote both
+          render the exact same corrected, true-orientation stream. */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
-        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none"}}
       />
 
       {/* Camera-off avatar — WhatsApp dark grey background + large silhouette */}
