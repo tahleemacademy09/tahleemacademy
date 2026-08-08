@@ -5,6 +5,7 @@ import { useImpersonation } from "@/hooks/useImpersonation";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import IslamicDailyFeed from "@/components/dashboard/IslamicDailyFeed";
+import { DeadlineCountdown } from "@/components/dashboard/DeadlineCountdown";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -150,7 +151,7 @@ const AssignmentPreview = ({ userId, t, language, navigate }: { userId: string; 
               {late  && <span style={{ fontSize:10, fontWeight:800, color:"#c0392b" }}>{t("Late","متأخر")}</span>}
               {done  && <span style={{ fontSize:10, fontWeight:800, color:"#276749" }}>{sub.grade ?? "✓"}</span>}
               {sent  && <span style={{ fontSize:10, fontWeight:800, color:"#1d4ed8" }}>{t("Sent","أُرسل")}</span>}
-              {!sub && !late && a.deadline && <span style={{ fontSize:10, color:TEXT_LIGHT }}>{new Date(a.deadline).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
+              {!sub && !late && a.deadline && <DeadlineCountdown deadline={a.deadline} t={t} compact />}
             </div>
           );
         })}

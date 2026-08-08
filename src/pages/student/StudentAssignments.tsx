@@ -23,6 +23,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { uploadStorageFile, getSignedUrl } from "@/integrations/supabase/storageClient";
+import { DeadlineCountdown } from "@/components/dashboard/DeadlineCountdown";
 import {
   ClipboardList, Clock, CheckCircle, AlertTriangle, Upload, Mic,
   FileText, BookOpen, ChevronRight, X, Send, Star,
@@ -403,7 +404,7 @@ export function AssignmentFormModal({
       if (file) {
         const ext  = file.name.split(".").pop();
         const path = `assignments/${subjectId}/${Date.now()}.${ext}`;
-        const res  = await uploadStorageFile("subject-materials" as any, path, file, { upsert: true });
+        const res  = await uploadStorageFile("subject-files" as any, path, file, { upsert: true });
         if (!res.success) { setError(res.error || "Upload failed"); setSaving(false); return; }
         file_url = res.path!;
       }
@@ -995,6 +996,9 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
                               {fmtDate(a.deadline)}
                             </span>
                           )}
+                          {a.deadline && !isOverdue(a.deadline) && !sub && (
+                            <DeadlineCountdown deadline={a.deadline} t={t} />
+                          )}
                           {sub?.grade != null && (
                             <span style={{ fontSize: 11, fontWeight: 800, color: "#276749", display: "flex", alignItems: "center", gap: 4 }}>
                               <Star style={{ width: 11, height: 11, fill: GOLD, color: GOLD }} />
@@ -1154,7 +1158,7 @@ function AssignmentModal({
         setUploading(true);
         const ext  = file.name.split(".").pop();
         const path = `${userId}/${a.id}/file_${Date.now()}.${ext}`;
-        const res  = await uploadStorageFile("subject-materials" as any, path, file, { upsert: true });
+        const res  = await uploadStorageFile("subject-files" as any, path, file, { upsert: true });
         if (!res.success) { setError(res.error || "Upload failed"); setSubmitting(false); setUploading(false); return; }
         uploadedFileUrl = res.path!;
         setUploading(false);
@@ -1164,7 +1168,7 @@ function AssignmentModal({
       if (audioBlob) {
         setUploading(true);
         const path = `${userId}/${a.id}/audio_${Date.now()}.webm`;
-        const res  = await uploadStorageFile("subject-materials" as any, path, audioBlob, { upsert: true, contentType: "audio/webm" });
+        const res  = await uploadStorageFile("subject-files" as any, path, audioBlob, { upsert: true, contentType: "audio/webm" });
         if (!res.success) { setError(res.error || "Audio upload failed"); setSubmitting(false); setUploading(false); return; }
         uploadedAudioUrl = res.path!;
         setUploading(false);
