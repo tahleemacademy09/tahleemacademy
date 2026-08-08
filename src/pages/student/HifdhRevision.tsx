@@ -714,13 +714,19 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
   }, [setPagePlayIdx]);
 
   // ═══ Transcription ════════════════════════════════════
-  // transcribeAudio: uses Groq Whisper-large-v3 with Quranic context prompt.
+  // transcribeAudio: routes to the "groq-transcribe" Supabase edge function,
+  // which proxies to Groq Whisper-large-v3 using a server-side GROQ_API_KEY.
+  // We deliberately do NOT call api.groq.com directly from the browser
+  // anymore — that required shipping the Groq key in the client bundle
+  // (VITE_GROQ_API_KEY), which is both a security leak and a maintenance
+  // trap (the key only takes effect on the next Vercel rebuild). The edge
+  // function already implements the same model/response_format/no_speech
+  // filtering this page used to do inline — see supabase/functions/groq-transcribe.
+  //
   // The refText (the expected verse) is passed as the prompt so Whisper knows
   // the vocabulary/diacritics domain — but we use PRECEDING context, not the
   // exact verse, to avoid Whisper copying it verbatim (hallucination).
   const transcribeAudio = async (blob: Blob, refText?: string): Promise<string> => {
-    const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
-
     // Build a Quranic context prompt:
     // We use Surah Al-Fatiha as a fixed diacritics anchor, then append a few words
     // of the reference verse to prime Whisper's vocabulary without causing copy-paste.
@@ -736,31 +742,42 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
       : blob.type.includes("ogg") ? "ogg"
       : "webm";
 
-    if (groqKey) {
+    const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL;
+    const SUPABASE_KEY =
+      (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+      (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+    if (SUPABASE_URL && SUPABASE_KEY) {
       try {
         const fd = new FormData();
         fd.append("file", new File([blob], `recitation.${ext}`, { type: blob.type || "audio/webm" }));
-        fd.append("model", "whisper-large-v3");
-        fd.append("language", "ar");
-        fd.append("response_format", "verbose_json"); // gives segment-level no_speech_prob
-        fd.append("temperature", "0");               // deterministic
-        fd.append("prompt", stylePrompt);            // Quranic vocab/diacritics context
-        const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+        fd.append("prompt", stylePrompt);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 20000);
+        const r = await fetch(`${SUPABASE_URL}/functions/v1/groq-transcribe`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${groqKey}` },
+          headers: {
+            Authorization: `Bearer ${SUPABASE_KEY}`,
+            apikey: SUPABASE_KEY,
+          },
           body: fd,
-        });
+          signal: controller.signal,
+        }).finally(() => clearTimeout(timeout));
+        const json = await r.json().catch(() => ({}));
         if (r.ok) {
-          const json = await r.json();
-          const noSpeech = json.segments?.[0]?.no_speech_prob ?? 0;
           const txt = (json.text ?? "").trim();
-          if (noSpeech < 0.65 && txt.length > 0) return txt;
-          if (noSpeech >= 0.65) return ""; // silence / no speech
+          if (txt.length > 0) return txt;
+        } else {
+          console.error(`[HifdhRevision] groq-transcribe failed: HTTP ${r.status}`, json?.error ?? "");
         }
-      } catch { /* fall through to edge function */ }
+      } catch (e) {
+        console.error("[HifdhRevision] groq-transcribe fetch failed:", e);
+        /* fall through to Deepgram edge function */
+      }
     }
 
-    // Fallback: Supabase edge function (Deepgram)
+    // Fallback: Supabase edge function (Deepgram) — only reached if
+    // groq-transcribe itself is unreachable/misconfigured/erroring.
     try {
       const b64 = await new Promise<string>(resolve => {
         const reader = new FileReader();
@@ -988,10 +1005,18 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
       const allAudioChunks: Blob[] = [];
       let inFlight = 0;
 
+      // Live word-reveal transcription — routed through the "groq-transcribe"
+      // edge function (server-side GROQ_API_KEY) instead of calling
+      // api.groq.com directly, same as the post-recording transcribeAudio()
+      // above. "turbo" model requested for lower latency on these small
+      // frequent chunks; the edge function accepts a model override.
       const sendToGroq = async () => {
         if (inFlight >= 2 || allAudioChunks.length === 0) return;
-        const groqKey = (import.meta as any).env?.VITE_GROQ_API_KEY;
-        if (!groqKey) return;
+        const SUPABASE_URL = (import.meta as any).env?.VITE_SUPABASE_URL;
+        const SUPABASE_KEY =
+          (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+          (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY;
+        if (!SUPABASE_URL || !SUPABASE_KEY) return;
         inFlight++;
         const ext = (mime ?? "").includes("mp4") ? "mp4"
           : (mime ?? "").includes("ogg") ? "ogg" : "webm";
@@ -1001,14 +1026,14 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
           const fd = new FormData();
           fd.append("file", new File([snap], `q.${ext}`, { type: mime || "audio/webm" }));
           fd.append("model", "whisper-large-v3-turbo");
-          fd.append("language", "ar");
-          fd.append("response_format", "json");
-          fd.append("temperature", "0");
           // Style prompt only — NEVER use the verse text or Whisper hallucinates it
           fd.append("prompt", "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ");
-          const r = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+          const r = await fetch(`${SUPABASE_URL}/functions/v1/groq-transcribe`, {
             method: "POST",
-            headers: { Authorization: `Bearer ${groqKey}` },
+            headers: {
+              Authorization: `Bearer ${SUPABASE_KEY}`,
+              apikey: SUPABASE_KEY,
+            },
             body: fd,
           });
           if (r.ok) {
