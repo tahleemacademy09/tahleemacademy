@@ -54,6 +54,38 @@ const SWIPE_THRESHOLD = 60;
 // keeps every page's *height* on one screen either way.
 const PAGE_MAX_WIDTH = 1180;
 
+// FIX ("I want it to look like a real printed mushaf" — the reference
+// image): swapped the reader's script from "Amiri Quran" to "Uthmanic Hafs",
+// the actual King Fahd Complex (Madinah) mushaf typeface — the exact script
+// in the reference photo, and what quran.com and most mushaf apps use for
+// standard (non-pixel-perfect-glyph) rendering. It's distributed for free,
+// unauthenticated, CORS-open use as a single Unicode font file (no OAuth,
+// no per-page font loading — @font-face below is the only thing needed),
+// so the existing per-word rendering/line-fitting logic didn't need to
+// change at all, just the font it draws with.
+const Q_MUSHAF_FONT = "'UthmanicHafs', 'Amiri Quran', 'Amiri', 'Scheherazade New', serif";
+
+// Divine-name highlighting (Allah only — see chat): matches the word's
+// *skeleton* (diacritics and pause marks stripped, alef variants folded to
+// one form) against the small, closed set of ways "الله" actually appears
+// in the Qur'an — bare, with a one-letter prefix (بالله/تالله/والله/فالله),
+// or in its assimilated no-alif form (لله/ولله/فلله). Comparing the whole
+// skeleton, not just searching for the "لله" substring anywhere in a word,
+// matters: plenty of unrelated words (e.g. "كُلُّهُ", "all of it") contain
+// that same letter sequence internally, and a plain substring search would
+// wrongly light them up. "Rabb" is deliberately excluded — see chat.
+const AR_DIACRITICS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u08D3-\u08FF]/g;
+const AR_ALEF_VARIANTS = /[أإآٱ]/g;
+const arabicSkeleton = (raw: string) => raw.replace(AR_DIACRITICS, "").replace(AR_ALEF_VARIANTS, "ا").trim();
+const ALLAH_SKELETONS = new Set(["الله", "اللهم"]);
+const ALLAH_PREFIXED_FULL = /^[بتوفك]الله(م)?$/;  // بالله / تالله / والله / فالله / كالله (+ اللهم)
+const ALLAH_ASSIMILATED = /^[وف]?لله$/;            // لله / ولله / فلله
+const isAllahWord = (text: string) => {
+  const skeleton = arabicSkeleton(text);
+  return ALLAH_SKELETONS.has(skeleton) || ALLAH_PREFIXED_FULL.test(skeleton) || ALLAH_ASSIMILATED.test(skeleton);
+};
+const Q_ALLAH_RED = "#B3261E";
+
 type SidebarTab = "surah" | "juz" | "bookmarks";
 
 export default function QuranPage() {
@@ -67,7 +99,7 @@ export default function QuranPage() {
   const [pageLines, setPageLines] = useState<QuranPageLine[] | null>(null);
   const [lineFontSizes, setLineFontSizes] = useState<Record<number, number>>({});
   const linesContainerRef = useRef<HTMLDivElement | null>(null);
-  const measureCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const measureProbeRef = useRef<HTMLDivElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [recitationsBySurah, setRecitationsBySurah] = useState<Record<number, CustomRecitation[]>>({});
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
@@ -111,6 +143,7 @@ export default function QuranPage() {
   // area, instead of scrolling or shrinking only some lines.
   const [pageScale, setPageScale] = useState(1);
   const [linesReady, setLinesReady] = useState(false);
+  const [pageReady, setPageReady] = useState(false); // true once the page is measured + correctly scaled — gates visibility so nothing ever visibly resizes
   // Guards the swipe flash: while a page is turning, `pageLines` is briefly
   // null (not yet fetched). Left unguarded, that null was read as "confirmed
   // no line data" and the page popped in immediately at the *previous*
@@ -140,6 +173,7 @@ export default function QuranPage() {
     if (pageLinesFallbackTimerRef.current != null) { clearTimeout(pageLinesFallbackTimerRef.current); pageLinesFallbackTimerRef.current = null; }
     setPageLines(null);
     setLinesReady(false);
+    setPageReady(false);
     getPageText(clamped, true).then(async (v) => {
       if (loadTokenRef.current !== token) return;
       setVerses(v);
@@ -209,6 +243,9 @@ export default function QuranPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Tear down the hidden line-measurement probe when this page unmounts.
+  useEffect(() => () => { measureProbeRef.current?.remove(); }, []);
+
   // ── Bookmarks (per user) ────────────────────────────────────────────────
   useEffect(() => {
     if (!userId) return;
@@ -229,12 +266,22 @@ export default function QuranPage() {
   }, [userId, primarySurahNumber, selected, loading]);
 
   // ── Fit each mushaf line to one row ─────────────────────────────────────
-  // Measures the natural width of every printed line's text (Arabic word
-  // text + ayah-end markers) with an offscreen canvas at BASE_LINE_FONT_SIZE,
-  // then — only for lines that would overflow the column — shrinks that
-  // line's own font-size just enough to fit, instead of letting the browser
-  // wrap it onto a second visual row. Re-runs whenever the page's lines
-  // change or the reader column is resized (e.g. rotate, sidebar toggle).
+  // Measures the natural width of every printed line by rendering it into a
+  // hidden, off-screen probe element using the *exact same markup* as the
+  // real line (same word padding, same ayah-marker size/margin) — then
+  // shrinks that line's own font-size just enough to fit, instead of
+  // letting the browser wrap it onto a second visual row.
+  //
+  // FIX (words still clipped at the edge): this used to estimate width with
+  // an offscreen <canvas> and measureText(), then guess at how many extra
+  // pixels the word padding / ayah-marker margin added on top of that. Canvas
+  // glyph metrics don't reproduce real Arabic text shaping (ligatures,
+  // kashida, diacritic stacking) the way an actual rendered DOM element does,
+  // so the estimate was consistently a little off — enough, on real devices,
+  // for the true rendered line to come out wider than predicted and get
+  // clipped. Measuring an actual hidden DOM node with the real markup
+  // removes the guesswork entirely: whatever width the browser reports here
+  // is exactly what it will paint for the real line.
   useLayoutEffect(() => {
     if (pageLines === null) return; // still pending — wait for real data or the grace-period fallback, don't flash
     if (!pageLines.length) { setLineFontSizes({}); setLinesReady(true); return; }
@@ -245,39 +292,44 @@ export default function QuranPage() {
     const measure = () => {
       const width = containerEl.clientWidth;
       if (!width) return;
-      const canvas = measureCanvasRef.current ?? (measureCanvasRef.current = document.createElement("canvas"));
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
+
+      let probe = measureProbeRef.current;
+      if (!probe) {
+        probe = document.createElement("div");
+        probe.style.position = "fixed";
+        probe.style.top = "-9999px";
+        probe.style.left = "-9999px";
+        probe.style.visibility = "hidden";
+        probe.style.whiteSpace = "nowrap";
+        probe.style.direction = "rtl";
+        probe.style.fontFamily = Q_MUSHAF_FONT;
+        probe.style.fontWeight = "700";
+        document.body.appendChild(probe);
+        measureProbeRef.current = probe;
+      }
+      probe.style.fontSize = `${BASE_LINE_FONT_SIZE}px`;
 
       const next: Record<number, number> = {};
       for (const line of pageLines) {
-        const text = line.words
-          .map(w => w.text + (w.isAyahEnd ? ` ﴿${toArabicNum(w.ayah)}﴾` : ""))
-          .join(" ");
-        ctx.font = `700 ${BASE_LINE_FONT_SIZE}px ${Q_ARABIC_FONT}`;
-        const textWidth = ctx.measureText(text).width;
-        // FIX (words clipped at the page edge): canvas measureText only knows
-        // glyph metrics — it has no idea every word is wrapped in a tappable
-        // <span style={{ padding: "2px 1px" }}>, or that an ayah-end marker
-        // carries its own "margin: 0 3px". On a line with a dozen words those
-        // add up to real, visible pixels this measurement was silently
-        // ignoring, so a line the math called "an exact fit" actually
-        // rendered wider than the column — and since the line box clips
-        // overflow, the last word (or its tail) was sheared off at the edge
-        // instead of shrinking to fit. Add that chrome back in here, plus a
-        // small safety margin for the sub-pixel differences between canvas
-        // glyph metrics and the browser's real Arabic text shaping.
-        const ayahEndCount = line.words.reduce((n, w) => n + (w.isAyahEnd ? 1 : 0), 0);
-        const chromeOverhead = line.words.length * 2 + ayahEndCount * 6;
-        const naturalWidth = textWidth + chromeOverhead;
-        // FIX (still clipping at the edges on mobile): 0.98 of the column
-        // width left almost no safety margin — any small mismatch between
-        // canvas glyph metrics and how the real Arabic font actually shapes
-        // on a phone screen was enough to clip the last word's tail. A more
-        // generous target plus `overflow: visible` on the line box below
-        // (instead of `hidden`) means a rare measurement miss just lets a
-        // line sit very slightly wider rather than silently cutting text off.
-        const target = width * 0.92;
+        probe.innerHTML = "";
+        line.words.forEach((w, i) => {
+          const span = document.createElement("span");
+          span.style.padding = "2px 1px";
+          span.textContent = w.text;
+          probe!.appendChild(span);
+          if (w.isAyahEnd) {
+            const marker = document.createElement("span");
+            marker.style.fontSize = "0.67em";
+            marker.style.margin = "0 3px";
+            marker.textContent = `﴿${toArabicNum(w.ayah)}﴾`;
+            probe!.appendChild(marker);
+          }
+          if (i < line.words.length - 1) probe!.appendChild(document.createTextNode(" "));
+        });
+        const naturalWidth = probe.scrollWidth;
+        // A little safety margin for the sub-pixel rounding differences
+        // between this hidden probe and the real, scaled page.
+        const target = width * 0.94;
         next[line.lineNumber] = naturalWidth > target && naturalWidth > 0
           ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * target) / naturalWidth))
           : BASE_LINE_FONT_SIZE;
@@ -285,14 +337,15 @@ export default function QuranPage() {
       if (!cancelled) { setLineFontSizes(next); setLinesReady(true); }
     };
 
-    // Canvas text measurement silently falls back to a system font's metrics
-    // until the actual Amiri webfont has finished downloading — measuring
-    // too early gives the wrong shrink ratio for every line on the page.
-    // Wait for the real font (and re-measure once it's ready) before trusting
-    // the numbers; if it's already loaded this resolves on the next tick.
+    // Measuring before the real Amiri webfont has finished downloading gives
+    // the wrong shrink ratio for every line on the page (the probe would be
+    // measured in a fallback system font instead). Wait for it, then measure.
     Promise.all([
       document.fonts?.ready,
-      document.fonts?.load(`700 ${BASE_LINE_FONT_SIZE}px ${Q_ARABIC_FONT}`),
+      // document.fonts.load() wants a single font-family, not our whole
+      // fallback stack — load the real webfont by name explicitly so this
+      // reliably waits for it (not just whichever fallback resolves first).
+      document.fonts?.load(`700 ${BASE_LINE_FONT_SIZE}px 'UthmanicHafs'`),
     ]).then(measure).catch(measure);
 
     const ro = new ResizeObserver(measure);
@@ -306,29 +359,39 @@ export default function QuranPage() {
   // entire page (banner, Bismillah, every line) by one uniform factor so
   // it always lands exactly inside the visible area, the way a printed
   // Mushaf page is a fixed size that never needs a scrollbar.
+  //
+  // FIX (page visibly "shows big, then shrinks to normal" on every turn):
+  // this used to (a) always render the page as soon as `linesReady` was
+  // true, at whatever `pageScale` was left over from the *previous* page,
+  // and (b) defer the corrected measurement one extra frame via
+  // requestAnimationFrame — so the browser painted the wrong size at least
+  // once before snapping to the right one on the very next frame, which is
+  // exactly what read as an animated shrink. Now the page stays hidden
+  // (`pageReady` below) until this effect has measured and applied the
+  // *correct* scale for the page currently on screen, and it measures
+  // synchronously in this layout effect — before the browser paints at all
+  // — instead of waiting an extra animation frame. The result is a plain
+  // static page at its final size the instant it appears, never a resize.
   useLayoutEffect(() => {
     const container = pageBoxRef.current;
     const wrapper = scaleWrapperRef.current;
     if (!container || !wrapper || !linesReady) return;
-    let raf = 0;
     const recompute = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => {
-        const availableH = container.clientHeight;
-        // Measure at natural size — a CSS transform: scale() never affects
-        // scrollHeight/clientHeight, so this stays accurate even while a
-        // previous scale is already applied.
-        const naturalH = wrapper.scrollHeight;
-        if (!availableH || !naturalH) return;
-        const next = naturalH > availableH ? Math.max(0.32, availableH / naturalH) : 1;
-        setPageScale(prev => (Math.abs(prev - next) > 0.005 ? next : prev));
-      });
+      const availableH = container.clientHeight;
+      // Measure at natural size — a CSS transform: scale() never affects
+      // scrollHeight/clientHeight, so this stays accurate even while a
+      // previous scale is already applied.
+      const naturalH = wrapper.scrollHeight;
+      if (!availableH || !naturalH) return;
+      const next = naturalH > availableH ? Math.max(0.32, availableH / naturalH) : 1;
+      setPageScale(prev => (Math.abs(prev - next) > 0.005 ? next : prev));
+      setPageReady(true);
     };
     recompute();
     const ro = new ResizeObserver(recompute);
     ro.observe(container);
     ro.observe(wrapper);
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+    return () => { ro.disconnect(); };
   }, [pageLines, lineFontSizes, linesReady, showTranslation, currentPage, selected != null]);
 
   const isBookmarked = useCallback((surah: number, ayah: number) =>
@@ -651,6 +714,12 @@ export default function QuranPage() {
               width: "100%", maxWidth: PAGE_MAX_WIDTH,
               transform: `translateX(${dragTranslate}px) scale(${pageScale})`,
               transformOrigin: "top center",
+              // Stays hidden — not unmounted, so it can still be measured —
+              // until it's already sized correctly for this exact page, so
+              // it only ever appears at its final, static size. No fade, no
+              // animated resize; just there, already right, the moment it
+              // shows up.
+              visibility: pageReady ? "visible" : "hidden",
             }}
           >
           <div className="quran-page-frame">
@@ -664,6 +733,7 @@ export default function QuranPage() {
                     cursor: "pointer", borderRadius: 6, padding: "2px 1px",
                     background: (engine.currentSurah === surah && engine.currentAyah === ayah) ? Q_GOLD
                       : (selected?.surah === surah && selected?.ayah === ayah) ? Q_PARCH_ALT : "transparent",
+                    color: isAllahWord(text) ? Q_ALLAH_RED : undefined,
                     transition: "background .2s",
                   }}
                 >
@@ -718,7 +788,7 @@ export default function QuranPage() {
                 const surahBannerShown = new Set<number>();
                 const seenAyah = new Set<string>();
                 return (
-                  <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontWeight: 700, color: Q_INK }}>
+                  <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ fontFamily: Q_MUSHAF_FONT, fontWeight: 700, color: Q_INK }}>
                     {pageLines.map(line => {
                       const firstWord = line.words[0];
                       const showDivider = !!firstWord && firstWord.ayah === 1 && !surahBannerShown.has(firstWord.surah);
@@ -757,7 +827,7 @@ export default function QuranPage() {
 
               const surahBannerShownFallback = new Set<number>();
               return (
-                <div dir="rtl" lang="ar" style={{ fontFamily: Q_ARABIC_FONT, fontWeight: 700, fontSize: BASE_LINE_FONT_SIZE, lineHeight: 2.1, color: Q_INK, textAlign: "justify" }}>
+                <div dir="rtl" lang="ar" style={{ fontFamily: Q_MUSHAF_FONT, fontWeight: 700, fontSize: BASE_LINE_FONT_SIZE, lineHeight: 2.1, color: Q_INK, textAlign: "justify" }}>
                   {verses.map((v, i) => {
                     const showDivider = v.ayah === 1 && !surahBannerShownFallback.has(v.surah);
                     if (showDivider) surahBannerShownFallback.add(v.surah);
@@ -914,6 +984,15 @@ export default function QuranPage() {
 
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap');
+
+        /* The actual King Fahd Complex (Madinah) mushaf script — freely
+           distributed, single-file, no auth required. See Q_MUSHAF_FONT. */
+        @font-face {
+          font-family: 'UthmanicHafs';
+          src: url('https://verses.quran.foundation/fonts/quran/hafs/uthmanic_hafs/UthmanicHafs1Ver18.woff2') format('woff2'),
+               url('https://verses.quran.foundation/fonts/quran/hafs/uthmanic_hafs/UthmanicHafs1Ver18.ttf') format('truetype');
+          font-display: swap;
+        }
 
         /* ── Mushaf page — a real margin around the text, not just a sliver,
            so nothing sits right on the physical screen edge. FIX: the old
