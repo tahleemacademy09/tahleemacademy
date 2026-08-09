@@ -215,11 +215,21 @@ export async function getPageLines(pageNumber: number): Promise<QuranPageLine[] 
 
   try {
     const padded = String(pageNumber).padStart(3, "0");
-    const res = await fetch(`${MUSHAF_LAYOUT_BASE}/page-${padded}.json`);
-    if (!res.ok) return null;
+    const url = `${MUSHAF_LAYOUT_BASE}/page-${padded}.json`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      // Surfaced so a failed line-layout fetch is visible in the console
+      // instead of silently degrading to the free-flowing fallback layout
+      // (which can't reproduce real Mushaf line breaks / full justification).
+      console.warn(`[quran] page-lines fetch failed for page ${pageNumber}: HTTP ${res.status} ${res.statusText} — ${url}`);
+      return null;
+    }
     const json: any = await res.json();
     const rawLines: any[] = json?.lines;
-    if (!Array.isArray(rawLines) || rawLines.length === 0) return null;
+    if (!Array.isArray(rawLines) || rawLines.length === 0) {
+      console.warn(`[quran] page-lines empty/malformed for page ${pageNumber} — ${url}`);
+      return null;
+    }
 
     const lines: QuranPageLine[] = [];
     for (const line of rawLines) {
@@ -244,8 +254,12 @@ export async function getPageLines(pageNumber: number): Promise<QuranPageLine[] 
 
     try { localStorage.setItem(cacheKey, JSON.stringify(lines)); } catch { /* storage full — ignore */ }
     return lines;
-  } catch {
-    return null; // caller falls back to the free-flowing verses[] layout
+  } catch (err) {
+    // Network error, CORS block, or JSON parse failure — logged so it's
+    // diagnosable instead of just silently falling back to the
+    // free-flowing verses[] layout with browser-determined line breaks.
+    console.warn(`[quran] page-lines fetch threw for page ${pageNumber}:`, err);
+    return null;
   }
 }
 
