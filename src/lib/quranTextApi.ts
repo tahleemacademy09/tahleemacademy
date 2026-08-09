@@ -15,6 +15,23 @@ const CACHE_PREFIX = "quran_text_v1_";
 const FULL_CACHE_KEY = "quran_text_full_v1";
 const PAGE_CACHE_PREFIX = "quran_page_v1_";
 
+// The standard Uthmani text embeds two *structural navigation* marks inline
+// with the words, alongside the actual recitation text:
+//   ۞ (U+06DE, Rub' el-Hizb) — marks a quarter-Hizb boundary in the margin.
+//   ۩ (U+06E9, Place-of-Sajdah) — flags a verse of prostration.
+// A printed Mushaf renders these as small ornamental (usually gold) marks
+// off to the side of the text, styled distinctly from the ink of the words
+// themselves. Rendered plainly in the reader's normal ink color they just
+// look like a stray blob sitting in the middle of a line, easy to mistake
+// for a misplaced ayah-end marker. Since the reader doesn't yet give them
+// their own decorative treatment, strip them out of the word text so only
+// genuine recitation text (and real waqf/pause signs, which *do* belong
+// inline and are left untouched) reaches the screen.
+const STRUCTURAL_MARKS_REGEX = /[\u06DE\u06E9]/g;
+function stripStructuralMarks(text: string): string {
+  return text.replace(STRUCTURAL_MARKS_REGEX, "").replace(/\s+/g, " ").trim();
+}
+
 interface RawAyah { number: number; text: string; numberInSurah: number; }
 interface RawSurahResponse { data: { ayahs: RawAyah[] } }
 
@@ -68,7 +85,7 @@ export async function getSurahText(surahNumber: number, includeTranslation = tru
   const verses: QuranVerse[] = arabicRes.data.ayahs.map((a, i) => ({
     surah: surahNumber,
     ayah: a.numberInSurah,
-    text: a.text,
+    text: stripStructuralMarks(a.text),
     translation: translationRes ? translationRes.data.ayahs[i]?.text : undefined,
   }));
 
@@ -96,7 +113,7 @@ export async function getPageText(pageNumber: number, includeTranslation = true)
 
   const verses: QuranVerse[] = arabicRes.data.ayahs.map((a, i) => {
     const { surah, ayah } = surahAyahForGlobal(a.number);
-    return { surah, ayah, text: a.text, translation: translationRes ? translationRes.data.ayahs[i]?.text : undefined };
+    return { surah, ayah, text: stripStructuralMarks(a.text), translation: translationRes ? translationRes.data.ayahs[i]?.text : undefined };
   });
 
   try { localStorage.setItem(cacheKey, JSON.stringify(verses)); } catch { /* storage full — ignore */ }
@@ -146,7 +163,7 @@ export async function getFullQuranText(): Promise<QuranVerse[]> {
   const verses: QuranVerse[] = [];
   for (const s of res.data.surahs) {
     for (const a of s.ayahs) {
-      verses.push({ surah: s.number, ayah: a.numberInSurah, text: a.text });
+      verses.push({ surah: s.number, ayah: a.numberInSurah, text: stripStructuralMarks(a.text) });
     }
   }
   try { localStorage.setItem(FULL_CACHE_KEY, JSON.stringify(verses)); } catch { /* ignore */ }
@@ -192,7 +209,7 @@ const MUSHAF_LAYOUT_BASE = "https://raw.githubusercontent.com/zonetecde/mushaf-l
 // it off for display — the reader draws its own decorative ﴿٢﴾ marker from
 // the `ayah` number it already has — and use its presence to flag isAyahEnd.
 function splitAyahEndMarker(raw: string): { text: string; isAyahEnd: boolean } {
-  const trimmed = (raw || "").trim();
+  const trimmed = stripStructuralMarks((raw || "").trim());
   const digits = trimmed.match(/[\u0660-\u0669]+$/);
   if (!digits) return { text: trimmed, isAyahEnd: false };
   return { text: trimmed.slice(0, trimmed.length - digits[0].length).trim(), isAyahEnd: true };
