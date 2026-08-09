@@ -827,7 +827,7 @@ export default function QuranPage() {
 
               const surahBannerShownFallback = new Set<number>();
               return (
-                <div dir="rtl" lang="ar" style={{ fontFamily: Q_MUSHAF_FONT, fontWeight: 700, fontSize: BASE_LINE_FONT_SIZE, lineHeight: 2.1, color: Q_INK, textAlign: "justify" }}>
+                <div dir="rtl" lang="ar" style={{ fontFamily: Q_MUSHAF_FONT, fontWeight: 700, fontSize: BASE_LINE_FONT_SIZE, lineHeight: 2.1, color: Q_INK, textAlign: "justify", textAlignLast: "justify" as any }}>
                   {verses.map((v, i) => {
                     const showDivider = v.ayah === 1 && !surahBannerShownFallback.has(v.surah);
                     if (showDivider) surahBannerShownFallback.add(v.surah);
