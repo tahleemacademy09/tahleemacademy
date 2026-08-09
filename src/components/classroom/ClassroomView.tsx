@@ -533,7 +533,16 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           const{data:liveRows}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).in("status",["live","active"]).order("actual_start_time",{ascending:false,nullsFirst:false}).limit(1);
           let sessions=liveRows;
           if(!sessions?.length){
-            const{data:scheduledRows}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","scheduled").order("scheduled_at",{ascending:false,nullsFirst:false}).limit(1);
+            // FIX: was ordering scheduled rows by scheduled_at DESCENDING, which
+            // picked the FURTHEST-FUTURE occurrence of a recurring class instead
+            // of today's — same class of bug as the live-row fix above, just
+            // inverted. Whoever joined first (before anyone flipped status to
+            // "live") got attached to that future row, which then got marked
+            // live and absorbed all the real class_participants/attendance
+            // writes, while today's session card stayed stuck at 0 forever.
+            // Nearest-to-now (soonest upcoming, or most-recently-overdue)
+            // is what "today's session" actually means here.
+            const{data:scheduledRows}=await supabase.from("live_sessions").select("*").eq("subject_id",subject.id).eq("status","scheduled").order("scheduled_at",{ascending:true,nullsFirst:false}).limit(1);
             sessions=scheduledRows;
           }
           if(sessions?.length){
