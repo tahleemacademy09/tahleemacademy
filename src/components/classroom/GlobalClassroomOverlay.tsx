@@ -79,8 +79,22 @@ export default function GlobalClassroomOverlay() {
 
   // Auto-leave when user navigates away from student/admin area —
   // prevents the "Return to Class" banner haunting the home/login pages.
+  //
+  // FIX ("reopening the app after a class was restored starts fresh instead
+  // of resuming"): LiveClassContext restores inCall=true from localStorage
+  // synchronously on mount so a killed/reopened app can rejoin the class it
+  // was in. But on a cold start the URL briefly sits at "/" before
+  // useAppStateRestore navigates back to the saved deep route — and this
+  // effect also runs on that very first mount, sees inCall=true with a "/"
+  // pathname that isn't in ALLOWED_ROUTE_PREFIXES, and calls leaveClass()
+  // before the navigation ever happens. The restore then has nothing left
+  // to resume. Skip the very first run of this check — only enforce it once
+  // we've observed at least one pathname (i.e. real in-app navigation), by
+  // which point the cold-start restore navigation has already landed.
+  const skippedFirstRouteCheck = useRef(false);
   useEffect(() => {
     if (!inCall) return;
+    if (!skippedFirstRouteCheck.current) { skippedFirstRouteCheck.current = true; return; }
     const allowed = ALLOWED_ROUTE_PREFIXES.some(p => location.pathname.startsWith(p));
     if (allowed) return;
     // FIX ("back button terminates the overlay instead of minimizing it"): a
@@ -326,6 +340,11 @@ export default function GlobalClassroomOverlay() {
     let stateHandle: any  = null;
 
     CapApp.addListener("backButton", () => {
+      // FIX: back should never be able to close the app while a class is in
+      // progress — only the explicit "End" control should do that. Minimize
+      // on the first press same as before; once already minimized, further
+      // back presses are swallowed (no exitApp) so mashing back by accident
+      // can't kick anyone out of a live class.
       if (!minimized) {
         setMinimized(true);
         // Attempt PiP here too for consistency. Note: this event arrives via

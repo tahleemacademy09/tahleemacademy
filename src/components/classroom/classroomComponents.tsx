@@ -145,6 +145,13 @@ export const CSS = `
   @keyframes timer-pulse  { 0%,100%{background:rgba(251,191,36,.15)}50%{background:rgba(251,191,36,.3)} }
   @keyframes spotlight-ring { 0%,100%{box-shadow:0 0 0 3px #1a73e8,0 0 0 6px rgba(26,115,232,.25)}50%{box-shadow:0 0 0 3px #1a73e8,0 0 0 12px rgba(26,115,232,.12)} }
 
+  /* FIX: swiping down to refresh (browser/WebView pull-to-refresh) was
+     reloading the page mid-class, killing the LiveKit connection. Scoped
+     to while this stylesheet is mounted (i.e. only while in the classroom) —
+     removed automatically on unmount since html/body aren't touched outside it. */
+  html, body { overscroll-behavior-y: none; }
+  [data-classroom-root] { overscroll-behavior: none; }
+
   * { box-sizing: border-box; }
 
   [data-lk-theme]{ height:100%!important;display:flex!important;flex-direction:column!important; }
