@@ -13,7 +13,6 @@ type Msg = { role: "user" | "assistant"; content: string };
 const MuallimOverlay = () => {
   const location = useLocation ? useLocation() : { pathname: '' };
   const isExamPage = ['/exam-taking', '/student/exam/', '/entrance-exam', '/classroom', '/live-class'].some(p => (location.pathname || '').includes(p));
-  if (isExamPage) return null;
   const { user } = useAuth();
   const { t, dir } = useLanguage();
   const [open, setOpen] = useState(false);
@@ -125,7 +124,7 @@ const MuallimOverlay = () => {
     { icon: BookOpen, label: t("Hifdh score", "درجة الحفظ"), action: "grades", text: "Show my Hifdh exam score if available." },
   ];
 
-  if (!user || dismissed) return null;
+  if (isExamPage || !user || dismissed) return null;
 
   const btnPosition = "right-5 bottom-20";
   const panelPosition = "right-4 bottom-4";
