@@ -794,6 +794,20 @@ export default function QuranPage() {
                       const showDivider = !!firstWord && firstWord.ayah === 1 && !surahBannerShown.has(firstWord.surah);
                       if (showDivider) surahBannerShown.add(firstWord.surah);
                       const lineFontSize = lineFontSizes[line.lineNumber] ?? BASE_LINE_FONT_SIZE;
+                      // FIX (huge blank gaps / a lone mark stranded on its
+                      // own row): a handful of "lines" in the dataset are
+                      // just a stray waqf/pause glyph or a two-word tail end
+                      // of a passage, not a genuine full printed line. Real
+                      // Mushaf typesetting only stretches a line edge-to-edge
+                      // when it's actually a full line — a short leftover
+                      // line sits at its natural width instead. Flexing
+                      // justify-content:space-between across only one or two
+                      // words does the opposite: it flings them apart with a
+                      // giant gap in between. So only lines with enough words
+                      // to look like a real full line get the edge-to-edge
+                      // treatment; short ones render at natural width,
+                      // flush to the margin they start from (right, in RTL).
+                      const isFullLine = line.words.length >= 4;
                       return (
                         <div key={line.lineNumber}>
                           {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === pageLines[0].lineNumber)}
@@ -813,8 +827,11 @@ export default function QuranPage() {
                               // space-between doesn't depend on line-wrap
                               // behavior at all — it distributes the leftover
                               // width evenly between each word, every time,
-                              // so the line reliably reaches both edges.
-                              display: "flex", flexWrap: "nowrap", justifyContent: "space-between", alignItems: "baseline",
+                              // so a genuine full line reliably reaches both
+                              // edges. Short lines skip this (see isFullLine).
+                              display: isFullLine ? "flex" : "block",
+                              flexWrap: "nowrap", justifyContent: "space-between", alignItems: "baseline",
+                              textAlign: isFullLine ? undefined : "right",
                               // FIX (words sheared off at the edges): "overflow: hidden"
                               // here was a hard guillotine — any small gap between the
                               // canvas measurement above and how the browser actually
