@@ -11,7 +11,7 @@ import { Bot, X, Send, GraduationCap, Calendar, BarChart3, BookOpen, Loader2 } f
 type Msg = { role: "user" | "assistant"; content: string };
 
 const MuallimOverlay = () => {
-  const location = useLocation ? useLocation() : { pathname: '' };
+  const location = useLocation();
   const isExamPage = ['/exam-taking', '/student/exam/', '/entrance-exam', '/classroom', '/live-class'].some(p => (location.pathname || '').includes(p));
   const { user } = useAuth();
   const { t, dir } = useLanguage();
