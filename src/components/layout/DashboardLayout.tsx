@@ -147,7 +147,13 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     "/student/musabaqah",
   ]);
 
-  const isMajlis = location.pathname === "/student/majlis";  if (isMajlis) return <div style={{ position:"fixed", inset:0, zIndex:40 }}><Outlet /></div>;
+  // NOTE: the Majlis full-screen branch used to early-return right here, above
+  // the notification hooks further down. That changed this component's hook
+  // count between renders and crashed the app with the minified React error
+  // #310 ("rendered more hooks than during the previous render"). The branch
+  // now renders from below the final hook — see the isMajlis return above the
+  // main layout return.
+  const isMajlis = location.pathname === "/student/majlis";
 
   const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
   const groupActive = (paths: string[]) => paths.some(p => location.pathname.startsWith(p));
@@ -540,6 +546,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       </div>
     );
   };
+
+  // Majlis renders full-screen without the dashboard chrome. Kept below every
+  // hook so hook order/count stays identical on every render (React #310).
+  if (isMajlis) {
+    return <div style={{ position: "fixed", inset: 0, zIndex: 40 }}><Outlet /></div>;
+  }
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ height: "100dvh" }}>

@@ -713,36 +713,48 @@ export type Database = {
       }
       class_participants: {
         Row: {
+          banned_at: string | null
           camera_on: boolean | null
           duration_minutes: number | null
           hand_raised: boolean | null
           hand_raised_at: string | null
           id: string
+          is_banned: boolean
           is_muted: boolean | null
+          join_request_status: string | null
+          join_requested_at: string | null
           joined_at: string | null
           left_at: string | null
           session_id: string | null
           student_id: string
         }
         Insert: {
+          banned_at?: string | null
           camera_on?: boolean | null
           duration_minutes?: number | null
           hand_raised?: boolean | null
           hand_raised_at?: string | null
           id?: string
+          is_banned?: boolean
           is_muted?: boolean | null
+          join_request_status?: string | null
+          join_requested_at?: string | null
           joined_at?: string | null
           left_at?: string | null
           session_id?: string | null
           student_id: string
         }
         Update: {
+          banned_at?: string | null
           camera_on?: boolean | null
           duration_minutes?: number | null
           hand_raised?: boolean | null
           hand_raised_at?: string | null
           id?: string
+          is_banned?: boolean
           is_muted?: boolean | null
+          join_request_status?: string | null
+          join_requested_at?: string | null
           joined_at?: string | null
           left_at?: string | null
           session_id?: string | null
@@ -6361,6 +6373,7 @@ export type Database = {
           level: string | null
           levels: string[] | null
           livekit_room_name: string | null
+          materials_locked: boolean
           next_session_at: string | null
           session_day: string | null
           session_duration: number | null
@@ -6388,6 +6401,7 @@ export type Database = {
           level?: string | null
           levels?: string[] | null
           livekit_room_name?: string | null
+          materials_locked?: boolean
           next_session_at?: string | null
           session_day?: string | null
           session_duration?: number | null
@@ -6415,6 +6429,7 @@ export type Database = {
           level?: string | null
           levels?: string[] | null
           livekit_room_name?: string | null
+          materials_locked?: boolean
           next_session_at?: string | null
           session_day?: string | null
           session_duration?: number | null

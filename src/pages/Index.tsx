@@ -90,19 +90,6 @@ const Index = () => {
     })();
   }, [user, roles, authLoading, navigate]);
 
-  // While AuthContext is still resolving the persisted session, or once we know
-  // there IS one (redirect effect above is about to fire), show a blank loader
-  // instead of the marketing homepage — prevents a flash of "/" before the
-  // dashboard redirect lands.
-  if (authLoading || user) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#0f2419" }}>
-        <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #C9973A", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      </div>
-    );
-  }
-
   const doy         = dayOfYear();
   const dailyVerse  = VERSES[doy % VERSES.length];
   const dailyHadith = HADITHS[doy % HADITHS.length];
@@ -418,6 +405,26 @@ const Index = () => {
       try { document.head.removeChild(style); } catch {}
     };
   }, []);
+
+  // While AuthContext is still resolving the persisted session, or once we know
+  // there IS one (redirect effect above is about to fire), show a blank loader
+  // instead of the marketing homepage — prevents a flash of "/" before the
+  // dashboard redirect lands.
+  //
+  // CRITICAL: this early return MUST stay below every hook in this component.
+  // It used to sit above the three useEffects below, so the moment auth
+  // resolved (authLoading true → false with no user) React rendered MORE hooks
+  // than the previous render and crashed the whole page with the minified
+  // React error #310 — exactly the intermittent "Something went wrong" screen
+  // people hit while signing in.
+  if (authLoading || user) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#0f2419" }}>
+        <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #C9973A", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      </div>
+    );
+  }
 
   return (
     <div className="ta-root">
