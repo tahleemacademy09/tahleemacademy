@@ -7,14 +7,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { BarChart3, Plus, Check, X, Radio } from "lucide-react";
-
-let useRoomContextHook: (() => any) | null = null;
-try {
-  const lk = require("@livekit/components-react");
-  useRoomContextHook = lk.useRoomContext;
-} catch {
-  useRoomContextHook = () => null;
-}
+// Static import: the old require()/try-catch shim never worked under Vite
+// (require is undefined in ESM, so it always fell back to null) and made the
+// hook call conditional, which risks React's "changed hook order" crash.
+import { useMaybeRoomContext } from "@livekit/components-react";
 
 interface ClassPollsProps { sessionId: string; }
 
@@ -28,7 +24,7 @@ const ClassPolls = ({ sessionId }: ClassPollsProps) => {
   const { user, hasRole } = useAuth();
   const { t } = useLanguage();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
-  const room = useRoomContextHook ? useRoomContextHook() : null;
+  const room = useMaybeRoomContext();
 
   const [polls, setPolls]       = useState<any[]>([]);
   const [answers, setAnswers]   = useState<Record<string, any[]>>({});
