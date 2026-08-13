@@ -4060,7 +4060,7 @@ export const MaterialViewer=({material,isTeacher,onClose}:any)=>{
 };
 
 /* ══ RECORDING CONTROLLER — server-side (LiveKit Egress) ══
-   The recording now happens on LiveKit's servers, not in this browser tab.
+   The recording happens on LiveKit's servers, not in this browser tab.
    That means:
    • It survives the teacher's tab closing, the device sleeping, the app
      crashing, or the network dropping — the class keeps recording until
@@ -4068,21 +4068,28 @@ export const MaterialViewer=({material,isTeacher,onClose}:any)=>{
      function), independent of anything happening here.
    • There's no in-memory blob, no upload-at-the-end step, and nothing to
      lose if this component unmounts mid-class.
-   • Pause/resume isn't offered — LiveKit Egress records continuously once
-     started; if a real pause is ever needed, stop and start again (it'll
-     save as a second clip under the same subject).
+   • LiveKit Egress itself has no pause/resume call — only start and stop —
+     so "Pause" here stops the current egress job and "Resume" starts a new
+     one for the same session. Each pause/resume cycle saves as its own
+     clip under the subject (labelled "Part 1", "Part 2", … in Recordings),
+     rather than one single continuous file.
    ════════════════════════════════════════════════════════════════════════ */
 export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRecordingRef}:any)=>{
   const{t}=useLanguage();
   const[recording,setRecording]=useState(false);
+  const[paused,setPaused]=useState(false);
   const[busy,setBusy]=useState(false);
   const[displayTime,setDisplayTime]=useState(0);
   const timerRef=useRef<any>(null);
 
   useEffect(()=>{
+    // Only an *actively recording* segment (not a pause, where no egress
+    // job is currently running) should trigger the "recording in progress"
+    // leave-page warning / auto-stop — see ClassroomView's beforeunload.
     if(isRecordingRef)isRecordingRef.current=recording;
     return()=>{ if(isRecordingRef)isRecordingRef.current=false; };
   },[recording,isRecordingRef]);
+
 
   // If this component mounts on a session that's already being recorded
   // (e.g. the teacher reloaded the page mid-class), reflect that in the UI
@@ -4106,6 +4113,8 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
   },[sessionId]);
 
   useEffect(()=>{
+    // Only ticks while actively recording — holds steady during a pause
+    // and resumes counting up (not restarting from 0) once resumed.
     if(recording){
       timerRef.current=setInterval(()=>setDisplayTime(d=>d+1),1000);
     }else{
@@ -4128,11 +4137,53 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
     try{
       const{data,error}=await supabase.functions.invoke("start-recording",{body:{session_id:sessionId,subject_id:subjectId}});
       if(error||data?.error)throw new Error(data?.error||error?.message||"Failed to start recording");
-      setRecording(true);setDisplayTime(0);
+      setRecording(true);setPaused(false);setDisplayTime(0);
       toast({title:t("Recording started ⏺","بدأ التسجيل ⏺")});
     }catch(err:any){
       console.error("[RecController] startRec error:",err);
       toast({title:"Recording failed to start",description:err?.message||"Unknown error",variant:"destructive"});
+    }finally{
+      setBusy(false);
+    }
+  },[busy,sessionId,subjectId,t]);
+
+  // Pause: stops the current LiveKit egress job (saving what's recorded so
+  // far as its own clip) but keeps the on-screen timer and UI in a
+  // "paused" state instead of resetting, ready to resume.
+  const pauseRec=useCallback(async()=>{
+    if(busy||!sessionId)return;
+    setBusy(true);
+    onSavingChange?.(true);
+    try{
+      const{error}=await supabase.functions.invoke("stop-recording",{body:{session_id:sessionId}});
+      if(error)throw error;
+      setRecording(false);setPaused(true);
+      toast({title:t("Recording paused ⏸","تم إيقاف التسجيل مؤقتًا ⏸")});
+    }catch(err:any){
+      console.error("[RecController] pauseRec error:",err);
+      toast({title:"Couldn't pause recording",description:err?.message||"Unknown error",variant:"destructive"});
+    }finally{
+      setBusy(false);
+      onSavingChange?.(false);
+    }
+  },[busy,sessionId,onSavingChange,t]);
+
+  // Resume: starts a brand-new egress job for the same session — LiveKit
+  // has no "resume" call, so this is really "start another clip", picked
+  // up automatically by RecordingsPage/SubjectRecordings as the next part
+  // of the same session. The on-screen timer keeps counting from where it
+  // left off instead of restarting at 0.
+  const resumeRec=useCallback(async()=>{
+    if(busy||!sessionId||!subjectId)return;
+    setBusy(true);
+    try{
+      const{data,error}=await supabase.functions.invoke("start-recording",{body:{session_id:sessionId,subject_id:subjectId}});
+      if(error||data?.error)throw new Error(data?.error||error?.message||"Failed to resume recording");
+      setRecording(true);setPaused(false);
+      toast({title:t("Recording resumed ⏺","استؤنف التسجيل ⏺")});
+    }catch(err:any){
+      console.error("[RecController] resumeRec error:",err);
+      toast({title:"Couldn't resume recording",description:err?.message||"Unknown error",variant:"destructive"});
     }finally{
       setBusy(false);
     }
@@ -4143,9 +4194,14 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
     setBusy(true);
     onSavingChange?.(true);
     try{
-      const{error}=await supabase.functions.invoke("stop-recording",{body:{session_id:sessionId}});
-      if(error)throw error;
-      setRecording(false);
+      // A pause has already told LiveKit to stop the current segment (its
+      // status is "processing", not "recording"), so there's nothing left
+      // for this call to do server-side — just reset the local UI.
+      if(!paused){
+        const{error}=await supabase.functions.invoke("stop-recording",{body:{session_id:sessionId}});
+        if(error)throw error;
+      }
+      setRecording(false);setPaused(false);setDisplayTime(0);
       toast({
         title:t("Recording saved ✅","تم حفظ التسجيل ✅"),
         description:"Finishing up on the server — it'll appear in Recordings shortly.",
@@ -4157,7 +4213,7 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
       setBusy(false);
       onSavingChange?.(false);
     }
-  },[sessionId,onSavingChange,t]);
+  },[sessionId,paused,onSavingChange,t]);
 
   // Expose stable stopRec ref so the parent can call it from endSession()
   // when the teacher ends class — this is now the main way a recording gets
@@ -4175,11 +4231,26 @@ export const RecController=({sessionId,subjectId,onSavingChange,stopRecRef,isRec
         <span style={{fontSize:12,color:RED,fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
           ⏺ {fmt(displayTime)}
         </span>
+        <button onClick={pauseRec} disabled={busy} title="Pause Recording" style={{display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(245,158,11,.2)",border:"none",borderRadius:8,padding:"4px 8px",color:"#f59e0b",cursor:busy?"default":"pointer",opacity:busy?.6:1}}>
+          <Pause style={{width:13,height:13}}/>
+        </button>
         <button onClick={stopRec} disabled={busy} style={{background:"rgba(239,68,68,.25)",border:"none",borderRadius:8,padding:"4px 10px",color:RED,fontSize:12,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?.6:1}}>
           {busy?"…":"Stop"}
         </button>
       </>}
-      {!recording&&(
+      {paused&&<>
+        <span style={{fontSize:12,color:"#f59e0b",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
+          ⏸ {fmt(displayTime)}
+        </span>
+        <button onClick={resumeRec} disabled={busy} title="Resume Recording" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:"rgba(239,68,68,.14)",border:"1px solid rgba(239,68,68,.35)",borderRadius:20,padding:"5px 10px",color:"#fca5a5",fontSize:11,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?.6:1}}>
+          <Play style={{width:11,height:11,fill:"#fca5a5"}}/>
+          <span>{busy?"…":"Resume"}</span>
+        </button>
+        <button onClick={stopRec} disabled={busy} style={{background:"rgba(239,68,68,.25)",border:"none",borderRadius:8,padding:"4px 10px",color:RED,fontSize:12,fontWeight:700,cursor:busy?"default":"pointer",opacity:busy?.6:1}}>
+          {busy?"…":"Stop"}
+        </button>
+      </>}
+      {!recording&&!paused&&(
         <button onClick={startRec} disabled={busy} title="Start Recording" style={{display:"flex",alignItems:"center",justifyContent:"center",gap:4,background:"rgba(239,68,68,.14)",border:"1px solid rgba(239,68,68,.35)",borderRadius:20,padding:"5px 10px",color:"#fca5a5",fontSize:11,fontWeight:700,cursor:busy?"default":"pointer",flexShrink:0,opacity:busy?.6:1}}>
           <Circle style={{width:8,height:8,fill:RED,color:RED,flexShrink:0}}/>
           <span>{busy?"Starting…":"REC"}</span>
