@@ -243,13 +243,17 @@ const Index = () => {
       .ta-guide-cta { width:100%; margin-top:10px; padding:13px; border-radius:7px; border:none; background:linear-gradient(135deg,#c9973a,#f0c060); color:#0a1f12; font-size:14px; font-weight:900; cursor:pointer; font-family:'Mulish',sans-serif; transition:.2s; }
       .ta-guide-cta:hover { opacity:.9; }
 
-      /* ── FEATURE STRIP ── */
-      .ta-strip { background:#081810; border-top:1px solid rgba(240,192,96,.15); border-bottom:1px solid rgba(240,192,96,.15); padding:0 20px; display:flex; justify-content:center; overflow-x:auto; }
+      /* ── FEATURE STRIP (auto-scrolling marquee) ── */
+      .ta-strip { background:#081810; border-top:1px solid rgba(240,192,96,.15); border-bottom:1px solid rgba(240,192,96,.15); padding:0; display:flex; overflow:hidden; }
+      .ta-strip-track { display:flex; align-items:stretch; width:max-content; animation: ta-strip-scroll 28s linear infinite; }
+      .ta-strip:hover .ta-strip-track { animation-play-state:paused; }
       .ta-strip-inner { display:flex; align-items:stretch; }
       .ta-strip-item { display:flex; align-items:center; gap:9px; color:rgba(255,255,255,.75); font-size:13px; font-weight:700; padding:18px 26px; border-right:1px solid rgba(240,192,96,.1); white-space:nowrap; transition:.2s; }
       .ta-strip-item:last-child { border-right:none; }
       .ta-strip-item:hover { color:#f0c060; }
       .ta-strip-icon { font-size:16px; }
+      @keyframes ta-strip-scroll { from { transform:translateX(0); } to { transform:translateX(-50%); } }
+      @media (prefers-reduced-motion: reduce) { .ta-strip-track { animation:none; } }
 
       /* ── DAILY REFLECTIONS ── */
       .ta-daily { padding:100px 24px; background:#071410; position:relative; overflow:hidden; }
@@ -520,11 +524,15 @@ const Index = () => {
 
       {/* ══ FEATURE STRIP ══ */}
       <div className="ta-strip">
-        <div className="ta-strip-inner">
-          {[["🕌","Qualified Islamic Scholars"],["📖","Structured Quranic Curriculum"],["🌐","Bilingual Arabic & English"],["🎓","Certificates Awarded"],["🎙️","Live & Recorded Classes"]].map(([icon, label]) => (
-            <div className="ta-strip-item" key={label as string}>
-              <span className="ta-strip-icon">{icon}</span>
-              {label}
+        <div className="ta-strip-track">
+          {[0,1].map(dup => (
+            <div className="ta-strip-inner" key={dup} aria-hidden={dup === 1}>
+              {[["🕌","Qualified Islamic Scholars"],["📖","Structured Quranic Curriculum"],["🌐","Bilingual Arabic & English"],["🎓","Certificates Awarded"],["🎙️","Live & Recorded Classes"]].map(([icon, label]) => (
+                <div className="ta-strip-item" key={label as string}>
+                  <span className="ta-strip-icon">{icon}</span>
+                  {label}
+                </div>
+              ))}
             </div>
           ))}
         </div>
