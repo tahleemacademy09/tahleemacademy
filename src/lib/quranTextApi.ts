@@ -205,14 +205,20 @@ const PAGE_LINES_CACHE_PREFIX = "quran_page_lines_v2_";
 const MUSHAF_LAYOUT_BASE = "https://raw.githubusercontent.com/zonetecde/mushaf-layout/main/mushaf";
 
 // The dataset embeds the ayah-end marker as a trailing Arabic-Indic numeral
-// right inside the word string (e.g. "هُدًۭى ٢" = last word of ayah 2). Strip
-// it off for display — the reader draws its own decorative ﴿٢﴾ marker from
-// the `ayah` number it already has — and use its presence to flag isAyahEnd.
+// right inside the word string (e.g. "هُدًۭى ٢" = last word of ayah 2), and
+// some sources additionally prefix that numeral with U+06DD (the Unicode
+// "end of ayah" ornament, ۝) — most Quranic fonts, including the one used
+// here, draw that codepoint as a plain filled circle since it has no ayah
+// number baked into the glyph itself. Left in, it shows up as a stray black
+// dot between verses, duplicating the reader's own decorative ﴿٢﴾ marker
+// drawn from the `ayah` number it already has — so both the ۝ and the
+// digit run after it are stripped for display, and either one's presence
+// flags isAyahEnd.
 function splitAyahEndMarker(raw: string): { text: string; isAyahEnd: boolean } {
   const trimmed = stripStructuralMarks((raw || "").trim());
-  const digits = trimmed.match(/[\u0660-\u0669]+$/);
-  if (!digits) return { text: trimmed, isAyahEnd: false };
-  return { text: trimmed.slice(0, trimmed.length - digits[0].length).trim(), isAyahEnd: true };
+  const marker = trimmed.match(/[\u06DD\u0660-\u0669]+$/);
+  if (!marker) return { text: trimmed, isAyahEnd: false };
+  return { text: trimmed.slice(0, trimmed.length - marker[0].length).trim(), isAyahEnd: true };
 }
 
 // Silently warms the cache for a page's line-layout so the next/previous
