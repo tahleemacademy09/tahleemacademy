@@ -799,7 +799,22 @@ export default function QuranPage() {
                           {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === pageLines[0].lineNumber)}
                           <div
                             style={{
-                              direction: "rtl", textAlign: "justify", textAlignLast: "justify" as any,
+                              direction: "rtl",
+                              // FIX (line hugging the right margin instead of
+                              // stretching edge-to-edge like a printed page):
+                              // text-align-last:justify only justifies a
+                              // single unbroken run of text in browsers that
+                              // treat it as a genuine line break; in practice
+                              // (and especially in the Android WebView this
+                              // app runs in) a `white-space:nowrap` line with
+                              // no wrap point often just renders at its
+                              // natural width and left-aligns short of the
+                              // margin. Flexbox with justify-content:
+                              // space-between doesn't depend on line-wrap
+                              // behavior at all — it distributes the leftover
+                              // width evenly between each word, every time,
+                              // so the line reliably reaches both edges.
+                              display: "flex", flexWrap: "nowrap", justifyContent: "space-between", alignItems: "baseline",
                               // FIX (words sheared off at the edges): "overflow: hidden"
                               // here was a hard guillotine — any small gap between the
                               // canvas measurement above and how the browser actually
@@ -807,7 +822,7 @@ export default function QuranPage() {
                               // off, with no visual warning it had happened. "visible"
                               // means the rare miss just lets a line sit a hair wider
                               // instead of silently destroying text.
-                              lineHeight: 2.1, fontSize: lineFontSize, whiteSpace: "nowrap", overflow: "visible",
+                              lineHeight: 2.1, fontSize: lineFontSize, overflow: "visible",
                             }}
                           >
                             {line.words.map((w, i) => {
