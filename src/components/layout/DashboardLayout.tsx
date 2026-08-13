@@ -547,6 +547,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     );
   };
 
+  // Majlis renders full-screen without the dashboard chrome. Kept below every
+  // hook so hook order/count stays identical on every render (React #310).
+  if (isMajlis) {
+    return <div style={{ position: "fixed", inset: 0, zIndex: 40 }}><Outlet /></div>;
+  }
+
   return (
     <div className="flex h-screen overflow-hidden" style={{ height: "100dvh" }}>
       <aside className="hidden w-60 flex-col bg-sidebar md:flex flex-shrink-0 border-r border-sidebar-border">
