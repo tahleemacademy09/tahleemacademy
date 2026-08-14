@@ -303,7 +303,7 @@ const TeacherLayout = () => {
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: TL_G }}>
       {/* Header */}
       <div style={{ padding: "16px 14px 12px", borderBottom: "1px solid rgba(255,255,255,.1)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-        <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 36, height: 36, borderRadius: 10, objectFit: "contain", flexShrink: 0, background: TL_GOLD }} />
+        <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 36, height: 36, borderRadius: 10, objectFit: "contain", flexShrink: 0, background: "transparent" }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 16, fontWeight: 900, color: "#fff", fontFamily: "serif" }}>{t("Tahleem", "تعليم")}</div>
           <div style={{ fontSize: 9, color: TL_GOLD, fontWeight: 800, letterSpacing: "0.09em" }}>{t("TEACHER PORTAL", "بوابة المعلم")}</div>
@@ -435,7 +435,7 @@ const TeacherLayout = () => {
               <Menu size={20} color={TL_G} />
             </button>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
-              <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 28, height: 28, borderRadius: 8, objectFit: "contain", background: TL_GOLD }} />
+              <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 28, height: 28, borderRadius: 8, objectFit: "contain", background: "transparent" }} />
               <span style={{ fontWeight: 900, fontSize: 15, color: TL_G, fontFamily: "serif" }}>
                 {t("Tahleem", "تعليم")}{" "}
                 <span style={{ color: TL_GOLD, fontSize: 11, fontFamily: "system-ui" }}>{t("Teacher", "المعلم")}</span>
