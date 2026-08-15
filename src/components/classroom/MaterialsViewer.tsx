@@ -26,7 +26,7 @@ import {
 } from "lucide-react";
 
 interface Props { materials: any[]; sessions?: any[]; recordings?: any[]; }
-type FileKind = "pdf"|"image"|"video"|"audio"|"youtube"|"link"|"office"|"text"|"other";
+type FileKind = "pdf"|"image"|"video"|"audio"|"youtube"|"link"|"office"|"html"|"text"|"other";
 
 interface OpenEntry { mat: any; kind: FileKind; prefetchedUrl?: string; }
 
@@ -56,6 +56,7 @@ function detectKind(mat: any): FileKind {
   if (type.includes("pdf") || ext === "pdf") return "pdf";
   if (type.includes("image") || ["jpg","jpeg","png","gif","webp","svg","bmp","avif"].includes(ext)) return "image";
   if (["doc","docx","ppt","pptx","xls","xlsx","odt","ods","odp"].includes(ext)) return "office";
+  if (type.includes("html") || ["html","htm"].includes(ext)) return "html";
   if (type === "link") return "link";
   if (type === "text" || mat.content) return "text";
   return "other";
@@ -70,6 +71,7 @@ const K: Record<FileKind, { icon: React.ElementType; bg: string; border: string;
   youtube:{ icon: Play,     bg:"#FFF7ED", border:"#FED7AA", color:"#EA580C", label:"YouTube" },
   link:   { icon: LinkIcon, bg:"#F0FDFA", border:"#99F6E4", color:"#0D9488", label:"Link" },
   office: { icon: FileText, bg:"#EFF6FF", border:"#BFDBFE", color:"#1D4ED8", label:"Document" },
+  html:   { icon: FileText, bg:"#F0FDF4", border:"#BBF7D0", color:"#16A34A", label:"Lesson" },
   text:   { icon: FileText, bg:"#FFFBEB", border:"#FDE68A", color:"#B45309", label:"Text" },
   other:  { icon: File,     bg:"#F9FAFB", border:"#E5E7EB", color:"#6B7280", label:"File" },
 };
@@ -418,6 +420,7 @@ function FileViewer({
             )}
             {kind==="youtube" && <div style={{ position:"relative",paddingBottom:"56.25%",height:0 }}><iframe src={ytEmbed(url)} style={{ position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none" }} allowFullScreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" title={mat.title}/></div>}
             {kind==="office" && <iframe src={officeEmbed(url)} style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400 }} title={mat.title}/>}
+            {kind==="html" && <iframe src={url} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400,background:"#fff" }} title={mat.title}/>}
             {kind==="text" && <div style={{ padding:16,maxWidth:720,margin:"0 auto",width:"100%" }}><div style={{ background:"#fff",borderRadius:14,padding:16,border:"1px solid #e5e7eb",fontSize:14,lineHeight:1.8,color:"#374151",whiteSpace:"pre-wrap" }}>{mat.content||"No content."}</div></div>}
             {kind==="link" && <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,gap:12,flex:1 }}><div style={{ width:48,height:48,borderRadius:14,background:"#F0FDFA",display:"flex",alignItems:"center",justifyContent:"center" }}><LinkIcon size={20} style={{ color:"#0D9488" }}/></div><p style={{ fontSize:13,color:"#6b7280",wordBreak:"break-all",maxWidth:320,textAlign:"center" }}>{url}</p><a href={url} target="_blank" rel="noopener noreferrer"><Button style={{ borderRadius:12,gap:6 }}><ExternalLink size={13}/> Open</Button></a></div>}
             {kind==="other" && <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,gap:12,flex:1 }}><div style={{ width:48,height:48,borderRadius:14,background:"#F3F4F6",display:"flex",alignItems:"center",justifyContent:"center" }}><File size={20} style={{ color:"#6B7280" }}/></div><p style={{ fontSize:13,color:"#6b7280",margin:0 }}>Preview not available</p><a href={url} download target="_blank" rel="noopener noreferrer"><Button style={{ borderRadius:12,gap:6 }}><Download size={13}/> Download</Button></a></div>}
