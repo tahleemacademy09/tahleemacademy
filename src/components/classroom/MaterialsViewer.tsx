@@ -307,6 +307,12 @@ function FileViewer({
   const [error, setError]     = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  // HTML materials: storage frequently serves .html with a text/plain (or
+  // octet-stream) content-type, which makes the browser show the raw source
+  // instead of rendering it. Fetch the file ourselves and hand it to the
+  // iframe via srcDoc so it is always parsed as HTML.
+  const [htmlDoc, setHtmlDoc] = useState<string | null>(null);
+  const [htmlFailed, setHtmlFailed] = useState(false);
 
   useEffect(() => {
     // Already have a good URL — nothing to do
@@ -316,6 +322,25 @@ function FileViewer({
       .then(u => { setUrl(u); setLoading(false); })
       .catch(() => { setError("Could not load file."); setLoading(false); });
   }, [mat.file_url, prefetchedUrl]);
+
+  const kindForFetch = fileKind(mat);
+  useEffect(() => {
+    if (kindForFetch !== "html" || !url) { setHtmlDoc(null); setHtmlFailed(false); return; }
+    let cancelled = false;
+    setHtmlDoc(null); setHtmlFailed(false);
+    fetch(url)
+      .then(r => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
+      .then(text => {
+        if (cancelled) return;
+        const looksLikeDoc = /<html|<!doctype|<body/i.test(text);
+        const base = `<base target="_blank">`;
+        setHtmlDoc(looksLikeDoc
+          ? text.replace(/<head(\s[^>]*)?>/i, m => `${m}${base}`)
+          : `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">${base}<style>body{margin:0;padding:16px;font-family:system-ui,-apple-system,sans-serif;line-height:1.7;color:#111}img,video,table{max-width:100%}</style></head><body>${text}</body></html>`);
+      })
+      .catch(() => { if (!cancelled) setHtmlFailed(true); });
+    return () => { cancelled = true; };
+  }, [kindForFetch, url]);
 
   const handleMediaLoaded = (el: HTMLVideoElement | HTMLAudioElement) => {
     const t = readPos(materialId).time ?? 0;
