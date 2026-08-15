@@ -3427,7 +3427,25 @@ export const detectMaterialType=(file:File):string=>{
   if(mime.startsWith("video/")||["mp4","webm","mov","avi","m4v","mkv"].includes(ext))return"Video";
   if(mime.startsWith("audio/")||["mp3","wav","ogg","m4a","aac","flac","opus"].includes(ext))return"Audio";
   if(mime.startsWith("image/")||["jpg","jpeg","png","gif","webp","svg","heic"].includes(ext))return"Image";
+  if(["html","htm"].includes(ext))return"Document";
   return"Document";
+};
+
+// Some mobile file pickers / share-sheets (WhatsApp, cloud drives, etc.) report
+// a wrong or generic browser MIME type (often "text/plain" or "" for .html files),
+// which makes Supabase Storage serve the file with that Content-Type — so an
+// interactive HTML lesson gets shown as raw source text instead of being rendered.
+// Force the correct type by extension for the file kinds we know we want rendered,
+// regardless of what the browser/picker guessed.
+export const resolveUploadContentType=(file:File):string=>{
+  const ext=file.name.split(".").pop()?.toLowerCase()||"";
+  const byExt:Record<string,string>={
+    html:"text/html",htm:"text/html",
+    css:"text/css",js:"text/javascript",json:"application/json",
+    svg:"image/svg+xml",csv:"text/csv",
+  };
+  if(byExt[ext])return byExt[ext];
+  return file.type||"application/octet-stream";
 };
 
 export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStudentRec,isPrivileged,stuRec,onToggleStuRecord,onOpenMatsChange,panelRef}:any)=>{
@@ -3548,7 +3566,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
       if(editReplaceFile){
         const ext=editReplaceFile.name.split(".").pop()||"bin";
         const path=`materials/${subjectId}/${Date.now()}-edit.${ext}`;
-        const{error:upErr}=await supabase.storage.from(MAT_UPLOAD_BUCKET).upload(path,editReplaceFile,{cacheControl:"3600",upsert:false,contentType:editReplaceFile.type||"application/octet-stream"});
+        const{error:upErr}=await supabase.storage.from(MAT_UPLOAD_BUCKET).upload(path,editReplaceFile,{cacheControl:"3600",upsert:false,contentType:resolveUploadContentType(editReplaceFile)});
         if(upErr)throw new Error(upErr.message);
         const{data:pub}=supabase.storage.from(MAT_UPLOAD_BUCKET).getPublicUrl(path);
         updates.file_url=pub.publicUrl;updates.file_type=editReplaceFile.type||null;
@@ -3597,7 +3615,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         materialType=detectMaterialType(cFile);
         const ext=cFile.name.split(".").pop()||"bin";
         const path=`materials/${subjectId}/${Date.now()}-${Math.random().toString(36).slice(2,8)}.${ext}`;
-        const{error:upErr}=await supabase.storage.from(MAT_UPLOAD_BUCKET).upload(path,cFile,{cacheControl:"3600",upsert:false,contentType:cFile.type||"application/octet-stream"});
+        const{error:upErr}=await supabase.storage.from(MAT_UPLOAD_BUCKET).upload(path,cFile,{cacheControl:"3600",upsert:false,contentType:resolveUploadContentType(cFile)});
         if(upErr)throw new Error(upErr.message);
         const{data:pub}=supabase.storage.from(MAT_UPLOAD_BUCKET).getPublicUrl(path);
         fileUrl=pub.publicUrl;fileType=cFile.type||null;fileSize=cFile.size;

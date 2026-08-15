@@ -64,6 +64,20 @@ const fmtSize = (bytes?: number | null) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
+function resolveUploadContentType(file: File): string {
+  const ext = file.name.split(".").pop()?.toLowerCase() || "";
+  const byExt: Record<string, string> = {
+    html: "text/html", htm: "text/html",
+    css: "text/css", js: "text/javascript", json: "application/json",
+    svg: "image/svg+xml", csv: "text/csv",
+  };
+  // Mobile file pickers / share-sheets often report a wrong or generic MIME
+  // type for files like .html, causing them to be served (and shown) as raw
+  // text instead of rendered. Trust the extension for known text formats.
+  if (byExt[ext]) return byExt[ext];
+  return file.type || "application/octet-stream";
+}
+
 function detectType(file: File): MaterialType {
   const mime = file.type.toLowerCase();
   const ext  = file.name.split(".").pop()?.toLowerCase() || "";
@@ -180,7 +194,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
         const path = `materials/${subjectId}/${Date.now()}_${safeName}`;
         const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, selectedFile, {
           cacheControl: "3600", upsert: false,
-          contentType: selectedFile.type || "application/octet-stream",
+          contentType: resolveUploadContentType(selectedFile),
         });
         if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
         file_url = path;
