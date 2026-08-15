@@ -323,7 +323,7 @@ function FileViewer({
       .catch(() => { setError("Could not load file."); setLoading(false); });
   }, [mat.file_url, prefetchedUrl]);
 
-  const kindForFetch = fileKind(mat);
+  const kindForFetch = detectKind(mat);
   useEffect(() => {
     if (kindForFetch !== "html" || !url) { setHtmlDoc(null); setHtmlFailed(false); return; }
     let cancelled = false;
@@ -445,7 +445,13 @@ function FileViewer({
             )}
             {kind==="youtube" && <div style={{ position:"relative",paddingBottom:"56.25%",height:0 }}><iframe src={ytEmbed(url)} style={{ position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none" }} allowFullScreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" title={mat.title}/></div>}
             {kind==="office" && <iframe src={officeEmbed(url)} style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400 }} title={mat.title}/>}
-            {kind==="html" && <iframe src={url} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400,background:"#fff" }} title={mat.title}/>}
+            {kind==="html" && (
+              htmlDoc
+                ? <iframe srcDoc={htmlDoc} sandbox="allow-scripts allow-popups allow-forms allow-modals" style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400,background:"#fff" }} title={mat.title}/>
+                : htmlFailed
+                  ? <iframe src={url} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400,background:"#fff" }} title={mat.title}/>
+                  : <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,minHeight:400,color:"#6b7280",fontSize:13 }}>Loading lesson…</div>
+            )}
             {kind==="text" && <div style={{ padding:16,maxWidth:720,margin:"0 auto",width:"100%" }}><div style={{ background:"#fff",borderRadius:14,padding:16,border:"1px solid #e5e7eb",fontSize:14,lineHeight:1.8,color:"#374151",whiteSpace:"pre-wrap" }}>{mat.content||"No content."}</div></div>}
             {kind==="link" && <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,gap:12,flex:1 }}><div style={{ width:48,height:48,borderRadius:14,background:"#F0FDFA",display:"flex",alignItems:"center",justifyContent:"center" }}><LinkIcon size={20} style={{ color:"#0D9488" }}/></div><p style={{ fontSize:13,color:"#6b7280",wordBreak:"break-all",maxWidth:320,textAlign:"center" }}>{url}</p><a href={url} target="_blank" rel="noopener noreferrer"><Button style={{ borderRadius:12,gap:6 }}><ExternalLink size={13}/> Open</Button></a></div>}
             {kind==="other" && <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,gap:12,flex:1 }}><div style={{ width:48,height:48,borderRadius:14,background:"#F3F4F6",display:"flex",alignItems:"center",justifyContent:"center" }}><File size={20} style={{ color:"#6B7280" }}/></div><p style={{ fontSize:13,color:"#6b7280",margin:0 }}>Preview not available</p><a href={url} download target="_blank" rel="noopener noreferrer"><Button style={{ borderRadius:12,gap:6 }}><Download size={13}/> Download</Button></a></div>}
