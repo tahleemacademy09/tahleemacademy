@@ -44,10 +44,22 @@ const AttendanceQuickReview = ({ sessionId, subject, onDone }: Props) => {
       const subjectId = subject.id;
       const teacherId = subject.teacher_id || user?.id;
 
-      // Ground truth: who actually joined this live session
-      const { data: participants } = await supabase
-        .from("class_participants").select("student_id").eq("session_id", sessionId);
-      const joinedIds = new Set((participants || []).map((p: any) => p.student_id));
+      // Ground truth: who actually joined this live session.
+      // class_participants is the primary source, but it can come back empty
+      // (RLS on the teacher's read path, or a student whose bookkeeping write
+      // failed while the call itself worked), which used to render the sheet as
+      // "no student attended". attendance_logs is written on the same join, so
+      // we merge both and only trust "nobody joined" when both are empty.
+      const [{ data: participants, error: pErr }, { data: attLogs, error: aErr }] = await Promise.all([
+        supabase.from("class_participants").select("student_id").eq("session_id", sessionId),
+        supabase.from("attendance_logs").select("user_id").eq("session_id", sessionId),
+      ]);
+      if (pErr) console.warn("[AttendanceQuickReview] class_participants:", pErr.message);
+      if (aErr) console.warn("[AttendanceQuickReview] attendance_logs:", aErr.message);
+      const joinedIds = new Set<string>([
+        ...(participants || []).map((p: any) => p.student_id),
+        ...(attLogs || []).map((a: any) => a.user_id),
+      ].filter(Boolean));
 
       // Full roster for this subject (enrolled + level-matched + private students)
       const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId);
@@ -63,17 +75,32 @@ const AttendanceQuickReview = ({ sessionId, subject, onDone }: Props) => {
       const subjectLevels: string[] = subject.levels?.length ? subject.levels : (subject.level ? [subject.level] : []);
       let levelIds: string[] = [];
       if (subjectLevels.length > 0) {
-        const { data: lvl } = await supabase.from("profiles").select("user_id").eq("role", "student").in("level", subjectLevels);
+        // No role filter here — some profiles rows have a null/legacy role and
+        // were silently dropped, emptying the roster for whole levels.
+        const { data: lvl } = await supabase.from("profiles").select("user_id").in("level", subjectLevels);
         levelIds = (lvl || []).map((p: any) => p.user_id);
       }
-      const rosterIds = [...new Set([...enrolledIds, ...privateIds, ...levelIds, ...joinedIds])];
+      const rosterIds = [...new Set([...enrolledIds, ...privateIds, ...levelIds, ...joinedIds])]
+        .filter(id => id && id !== teacherId);   // never list the teacher as a student
       if (rosterIds.length === 0) { if (!cancelled) { setRows([]); setLoading(false); } return; }
 
-      const { data: profiles } = await supabase
+      const { data: profiles, error: profErr } = await supabase
         .from("profiles").select("user_id, full_name, avatar_url").in("user_id", rosterIds);
+      if (profErr) console.warn("[AttendanceQuickReview] profiles:", profErr.message);
 
-      const built: Row[] = (profiles || [])
-        .map((p: any) => ({ student_id: p.user_id, full_name: p.full_name || "Student", avatar_url: p.avatar_url, present: joinedIds.has(p.user_id) }))
+      const nameById = new Map<string, any>((profiles || []).map((p: any) => [p.user_id, p]));
+      // Build from rosterIds (not the profiles result) so a student whose
+      // profile row isn't readable still shows up and can be marked present.
+      const built: Row[] = rosterIds
+        .map((id) => {
+          const p = nameById.get(id);
+          return {
+            student_id: id,
+            full_name: p?.full_name || (joinedIds.has(id) ? `Student ${id.slice(0, 6)}` : "Student"),
+            avatar_url: p?.avatar_url ?? null,
+            present: joinedIds.has(id),
+          };
+        })
         .sort((a, b) => Number(b.present) - Number(a.present) || a.full_name.localeCompare(b.full_name));
 
       if (!cancelled) { setRows(built); setLoading(false); }
