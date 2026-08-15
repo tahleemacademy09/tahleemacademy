@@ -695,6 +695,20 @@ export default function MaterialsManagement() {
   };
 
   // ── Upload single file to Supabase storage ────────────────────────────
+  const resolveUploadContentType = (file: File): string => {
+    const ext = file.name.split(".").pop()?.toLowerCase() || "";
+    const byExt: Record<string, string> = {
+      html: "text/html", htm: "text/html",
+      css: "text/css", js: "text/javascript", json: "application/json",
+      svg: "image/svg+xml", csv: "text/csv",
+    };
+    // Some pickers/share-sheets misreport MIME type for text formats like
+    // .html, which then get served (and rendered) as raw text — trust the
+    // file extension for these known cases instead.
+    if (byExt[ext]) return byExt[ext];
+    return file.type || "application/octet-stream";
+  };
+
   const uploadFileToStorage = async (file: File): Promise<string> => {
     const fileExt  = file.name.split(".").pop() || "bin";
     const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
@@ -705,7 +719,7 @@ export default function MaterialsManagement() {
       .upload(filePath, file, {
         cacheControl: "3600",
         upsert: false,
-        contentType: file.type || "application/octet-stream",
+        contentType: resolveUploadContentType(file),
       });
 
     if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
