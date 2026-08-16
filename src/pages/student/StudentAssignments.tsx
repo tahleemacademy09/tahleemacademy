@@ -672,9 +672,9 @@ function StudentSubmissionRow({
               <p style={{ fontSize: 13, color: TXT, margin: 0, whiteSpace: "pre-wrap", background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 10, padding: "10px 12px" }}>{sub.text_response}</p>
             </div>
           )}
-          {sub.file_url && (
-            <AttachmentRow url={sub.file_url} label={t("Attached file", "الملف المرفق")} />
-          )}
+          {((sub.file_urls && sub.file_urls.length > 0) ? sub.file_urls : (sub.file_url ? [sub.file_url] : [])).map((url: string, i: number, arr: string[]) => (
+            <AttachmentRow key={url} url={url} label={arr.length > 1 ? t(`Attached file ${i + 1}`, `الملف المرفق ${i + 1}`) : t("Attached file", "الملف المرفق")} />
+          ))}
           {audioUrl && (
             <audio controls src={audioUrl} style={{ width: "100%", height: 36 }} />
           )}
@@ -1049,7 +1049,10 @@ function AssignmentModal({
 }) {
   const [activeTab, setActiveTab]   = useState<"details" | "submit" | "feedback">(readOnly && existingSub ? "feedback" : "details");
   const [textInput, setTextInput]   = useState(existingSub?.text_response || "");
-  const [file, setFile]             = useState<File | null>(null);
+  const [files, setFiles]           = useState<File[]>([]);
+  const existingFileUrls: string[] = (existingSub?.file_urls && existingSub.file_urls.length > 0)
+    ? existingSub.file_urls
+    : (existingSub?.file_url ? [existingSub.file_url] : []);
   const [uploading, setUploading]   = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError]           = useState<string | null>(null);
@@ -1132,10 +1135,14 @@ function AssignmentModal({
   const fmtSecs = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   /* ── File upload ───────────────────────────────────── */
+  const [keptExistingUrls, setKeptExistingUrls] = useState<string[]>(existingFileUrls);
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) { setFile(f); setError(null); }
+    const picked = Array.from(e.target.files || []);
+    if (picked.length) { setFiles(prev => [...prev, ...picked]); setError(null); }
+    e.target.value = "";
   };
+  const removeNewFile = (idx: number) => setFiles(prev => prev.filter((_, i) => i !== idx));
+  const removeExistingFileUrl = (url: string) => setKeptExistingUrls(prev => prev.filter(u => u !== url));
 
   /* ── Submit ────────────────────────────────────────── */
   const handleSubmit = async () => {
@@ -1143,24 +1150,26 @@ function AssignmentModal({
       setError(t("The deadline for this assignment has passed. Submissions are no longer accepted.", "لقد انتهى الموعد النهائي لهذا الواجب. لم يعد التسليم مقبولاً."));
       return;
     }
-    if (!textInput.trim() && !file && !audioBlob) {
+    if (!textInput.trim() && files.length === 0 && keptExistingUrls.length === 0 && !audioBlob) {
       setError(t("Please provide a text answer, file, or voice recording.", "يرجى تقديم إجابة نصية أو ملف أو تسجيل صوتي."));
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
-      let uploadedFileUrl: string | null = existingSub?.file_url || null;
+      let uploadedFileUrls: string[] = [...keptExistingUrls];
       let uploadedAudioUrl: string | null = existingSub?.audio_url || null;
 
-      // Upload file
-      if (file) {
+      // Upload files (multiple)
+      if (files.length > 0) {
         setUploading(true);
-        const ext  = file.name.split(".").pop();
-        const path = `${userId}/${a.id}/file_${Date.now()}.${ext}`;
-        const res  = await uploadStorageFile("subject-materials" as any, path, file, { upsert: true });
-        if (!res.success) { setError(res.error || "Upload failed"); setSubmitting(false); setUploading(false); return; }
-        uploadedFileUrl = res.path!;
+        for (const f of files) {
+          const ext  = f.name.split(".").pop();
+          const path = `${userId}/${a.id}/file_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const res  = await uploadStorageFile("subject-materials" as any, path, f, { upsert: true });
+          if (!res.success) { setError(res.error || "Upload failed"); setSubmitting(false); setUploading(false); return; }
+          uploadedFileUrls.push(res.path!);
+        }
         setUploading(false);
       }
 
@@ -1178,7 +1187,8 @@ function AssignmentModal({
         assignment_id:  a.id,
         user_id:        userId,
         text_response:  textInput || null,
-        file_url:       uploadedFileUrl,
+        file_url:       uploadedFileUrls[0] || null,
+        file_urls:      uploadedFileUrls.length > 0 ? uploadedFileUrls : null,
         audio_url:      uploadedAudioUrl,
         status:         "submitted",
         is_late:        isOverdue(a.deadline),
@@ -1372,26 +1382,34 @@ function AssignmentModal({
               {a.allow_file !== false && (
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 700, color: TLIT, display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                    <Paperclip style={{ width: 13, height: 13 }} />{t("Attach File", "إرفاق ملف")}
+                    <Paperclip style={{ width: 13, height: 13 }} />{t("Attach Files", "إرفاق ملفات")}
                   </label>
-                  <input type="file" ref={fileRef} onChange={handleFileChange} style={{ display: "none" }} accept="*/*" />
-                  {existingSub?.file_url && !file && (
-                    <div style={{ marginBottom: 8 }}>
-                      <AttachmentRow url={existingSub.file_url} label={t("Your submitted file", "الملف الذي أرسلته")} />
+                  <input type="file" multiple ref={fileRef} onChange={handleFileChange} style={{ display: "none" }} accept="*/*" />
+                  {keptExistingUrls.map((url, i) => (
+                    <div key={url} style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ flex: 1 }}>
+                        <AttachmentRow url={url} label={t(`Your submitted file ${i + 1}`, `الملف الذي أرسلته ${i + 1}`)} />
+                      </div>
+                      {!isGraded && (
+                        <button onClick={() => removeExistingFileUrl(url)} type="button"
+                          style={{ background: "none", border: "none", cursor: "pointer", color: "#888", padding: 4 }}>
+                          <X style={{ width: 13, height: 13 }} />
+                        </button>
+                      )}
                     </div>
-                  )}
-                  {file && (
-                    <div style={{ background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 10, padding: "10px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                  ))}
+                  {files.map((f, i) => (
+                    <div key={`${f.name}-${i}`} style={{ background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 10, padding: "10px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
                       <Paperclip style={{ width: 14, height: 14, color: "#1d4ed8" }} />
-                      <span style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 700, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
-                      <button onClick={() => setFile(null)} style={{ background: "none", border: "none", cursor: "pointer", color: "#888", padding: 0 }}><X style={{ width: 13, height: 13 }} /></button>
+                      <span style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 700, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                      <button onClick={() => removeNewFile(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "#888", padding: 0 }}><X style={{ width: 13, height: 13 }} /></button>
                     </div>
-                  )}
+                  ))}
                   {!isGraded && (
                     <button onClick={() => fileRef.current?.click()}
                       style={{ width: "100%", padding: "11px", borderRadius: 12, border: `2px dashed ${BORDER}`, background: "#f8fafb", cursor: "pointer", fontSize: 13, fontWeight: 700, color: TMID, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                       <Upload style={{ width: 15, height: 15 }} />
-                      {t("Choose file", "اختر ملفاً")}
+                      {t("Choose file(s)", "اختر ملفاً/ملفات")}
                     </button>
                   )}
                 </div>
