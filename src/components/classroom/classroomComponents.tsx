@@ -2288,7 +2288,7 @@ export const MAT_TYPE_ICON: Record<string, string> = {
 /* ══ URL → BEST EMBEDDABLE URL ══ */
 export function toMaterialEmbedUrl(url: string): {
   embedUrl: string;
-  kind: "youtube" | "gdrive" | "pdf" | "video" | "audio" | "image" | "doc" | "iframe";
+  kind: "youtube" | "gdrive" | "pdf" | "video" | "audio" | "image" | "doc" | "html" | "iframe";
 } {
   if (!url) return { embedUrl: "", kind: "iframe" };
 
@@ -2323,6 +2323,8 @@ export function toMaterialEmbedUrl(url: string): {
       embedUrl: `https://docs.google.com/gviewer?url=${encodeURIComponent(url)}&embedded=true`,
       kind: "doc",
     };
+  if (["html","htm"].includes(ext))
+    return { embedUrl: url, kind: "html" };
 
   return { embedUrl: url, kind: "iframe" };
 }
@@ -2341,7 +2343,7 @@ export function loadResume(id:string):{time?:number;page?:number}|null{
    Renders INSIDE the content area (position:absolute) so the footer and top bar
    always remain visible. Has an opt-in fullscreen button that expands to the full
    viewport when needed. Saves / restores video time and PDF page automatically.   */
-export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize,fromPanel=false}:any)=>{
+export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize,fromPanel=false,syncActive=false,onSyncActivity,following=false,remoteActivity=null}:any)=>{
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
 
@@ -2459,6 +2461,81 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     }
   };
 
+  // ── HTML materials: fetch + inject via srcDoc rather than trusting the
+  //    storage server's Content-Type header (some CDN layers serve the
+  //    wrong one, which shows raw source instead of the rendered page). ──
+  const[htmlDoc,setHtmlDoc]=useState<string|null>(null);
+  const[htmlErr,setHtmlErr]=useState(false);
+  useEffect(()=>{
+    if(kind!=="html"||!embedUrl)return;
+    let cancelled=false;
+    setHtmlDoc(null);setHtmlErr(false);
+    fetch(embedUrl).then(r=>{if(!r.ok)throw new Error(String(r.status));return r.text();})
+      .then(t=>{if(!cancelled)setHtmlDoc(t);})
+      .catch(()=>{if(!cancelled)setHtmlErr(true);});
+    return()=>{cancelled=true;};
+  },[kind,embedUrl]);
+
+  // ── Teacher: capture cursor position + scroll fraction from inside the
+  //    lesson's own document (srcDoc + allow-same-origin makes this
+  //    reachable) and hand it up to the parent to broadcast, throttled. ──
+  const lastSentRef=useRef(0);
+  useEffect(()=>{
+    if(kind!=="html"||!isTeacher||!syncActive||!onSyncActivity||htmlDoc==null)return;
+    const frame=iframeRef.current;
+    if(!frame)return;
+    let cleanup=()=>{};
+    const attach=()=>{
+      const doc=frame.contentDocument;
+      const win=frame.contentWindow;
+      if(!doc||!win)return;
+      const onMove=(e:MouseEvent)=>{
+        const now=Date.now();
+        if(now-lastSentRef.current<90)return;
+        lastSentRef.current=now;
+        const w=doc.documentElement.scrollWidth||win.innerWidth;
+        const h=doc.documentElement.scrollHeight||win.innerHeight;
+        const xPct=Math.min(1,Math.max(0,(e.pageX)/w));
+        const yPct=Math.min(1,Math.max(0,(e.pageY)/h));
+        const maxScroll=Math.max(1,doc.documentElement.scrollHeight-win.innerHeight);
+        const scrollPct=Math.min(1,Math.max(0,win.scrollY/maxScroll));
+        onSyncActivity(xPct,yPct,scrollPct);
+      };
+      const onScroll=()=>{
+        const now=Date.now();
+        if(now-lastSentRef.current<90)return;
+        lastSentRef.current=now;
+        const maxScroll=Math.max(1,doc.documentElement.scrollHeight-win.innerHeight);
+        const scrollPct=Math.min(1,Math.max(0,win.scrollY/maxScroll));
+        onSyncActivity(0.5,0.5,scrollPct);
+      };
+      doc.addEventListener("mousemove",onMove);
+      doc.addEventListener("touchmove",onMove as any,{passive:true});
+      win.addEventListener("scroll",onScroll);
+      cleanup=()=>{
+        doc.removeEventListener("mousemove",onMove);
+        doc.removeEventListener("touchmove",onMove as any);
+        win.removeEventListener("scroll",onScroll);
+      };
+    };
+    // srcDoc iframes fire onLoad — but guard in case it already loaded
+    if(frame.contentDocument?.readyState==="complete") attach();
+    frame.addEventListener("load",attach);
+    return()=>{ frame.removeEventListener("load",attach); cleanup(); };
+  },[kind,isTeacher,syncActive,onSyncActivity,htmlDoc]);
+
+  // ── Student: apply the teacher's live scroll position (auto-follow). The
+  //    pointer dot itself is drawn as an overlay in the render below. ──
+  useEffect(()=>{
+    if(kind!=="html"||!following||!remoteActivity)return;
+    const frame=iframeRef.current;
+    const win=frame?.contentWindow;
+    const doc=frame?.contentDocument;
+    if(!win||!doc)return;
+    const maxScroll=Math.max(1,doc.documentElement.scrollHeight-win.innerHeight);
+    win.scrollTo({top:remoteActivity.scrollPct*maxScroll,behavior:"smooth"});
+  },[kind,following,remoteActivity]);
+
 
   // Use absolute positioning scoped to the video content area so footer is always visible
   const overlayStyle: React.CSSProperties = {
@@ -2506,6 +2583,31 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     if(kind==="pdf")return(
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",minHeight:0}}>
         <PDFViewer url={embedUrl} bg="#0f1117" materialId={matId} />
+      </div>
+    );
+    if(kind==="html")return(
+      <div style={{flex:1,position:"relative",minHeight:0,background:"#fff"}}>
+        {htmlErr?(
+          <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#0f1a14",padding:32,textAlign:"center"}}>
+            <div style={{fontSize:44,marginBottom:14}}>⚠️</div>
+            <p style={{color:"#fff",fontWeight:700,fontSize:15,marginBottom:6}}>Couldn't load this lesson</p>
+            <a href={embedUrl} target="_blank" rel="noopener noreferrer" style={{background:TEAL,color:"#fff",borderRadius:10,padding:"9px 20px",textDecoration:"none",fontWeight:700,fontSize:13}}>Open in new tab ↗</a>
+          </div>
+        ):htmlDoc==null?(
+          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#0f1a14"}}>
+            <div style={{width:32,height:32,border:"3px solid rgba(255,255,255,.2)",borderTopColor:TEAL,borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/>
+          </div>
+        ):(<>
+          <iframe ref={iframeRef} srcDoc={htmlDoc} title={material.title}
+            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            style={{width:"100%",height:"100%",border:"none",display:"block",background:"#fff"}}/>
+          {following&&remoteActivity&&(
+            <div style={{position:"absolute",left:`${remoteActivity.xPct*100}%`,top:`${remoteActivity.yPct*100}%`,transform:"translate(-4px,-2px)",pointerEvents:"none",zIndex:5,transition:"left .1s linear, top .1s linear"}}>
+              <div style={{fontSize:22,filter:"drop-shadow(0 2px 3px rgba(0,0,0,.4))"}}>👆</div>
+              <div style={{background:"#34d399",color:"#0f1a14",fontSize:9,fontWeight:700,borderRadius:6,padding:"2px 6px",marginTop:-2,whiteSpace:"nowrap"}}>Teacher</div>
+            </div>
+          )}
+        </>)}
       </div>
     );
     // iframes (YouTube, Google Drive, Google Docs viewer, etc.)
@@ -3459,6 +3561,16 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[openMats,setOpenMats]=useState<any[]>([]);
   const[activeMatId,setActiveMatId]=useState<string|null>(null);
   const[quranOpen,setQuranOpen]=useState(false);
+  // ── Live "follow the teacher" sync (teacher toggles on; students see a
+  //    join prompt when a material opens, then auto-scroll + a hand pointer
+  //    that tracks the teacher's live reading position). ──────────────────
+  const[syncEnabled,setSyncEnabled]=useState(false);              // teacher-only toggle
+  const[syncBannerMat,setSyncBannerMat]=useState<any|null>(null); // "teacher is viewing X" prompt (student, not yet following)
+  const[followingSyncId,setFollowingSyncId]=useState<string|null>(null); // material id the student is actively following
+  const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number}|null>(null);
+  const syncChannelRef=useRef<any>(null);
+  const followingSyncIdRef=useRef<string|null>(null);
+  useEffect(()=>{followingSyncIdRef.current=followingSyncId;},[followingSyncId]);
   // listVisible: whether the sliding list panel is shown
   // (panel stays mounted even when list is hidden, so PiP survives)
   const[listVisible,setListVisible]=useState(true);
@@ -3548,6 +3660,90 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
       ).subscribe();
     return()=>{supabase.removeChannel(ch);};
   },[subjectId]);
+
+  // ── Follow-the-teacher sync channel ────────────────────────────────────
+  // Presence carries the teacher's current {syncEnabled, material} so a
+  // student who joins mid-session immediately sees the right state.
+  // Broadcast carries live "open"/"close"/"pointer" events for low latency.
+  useEffect(()=>{
+    if(!sessionId)return;
+    const ch=supabase.channel(`material-sync-${sessionId}`,{config:{presence:{key:user?.id||"anon"}}});
+    syncChannelRef.current=ch;
+
+    const applyTeacherPresence=()=>{
+      const state=ch.presenceState() as Record<string,any[]>;
+      let teacherEntry:any=null;
+      Object.values(state).forEach(arr=>{
+        arr.forEach((p:any)=>{ if(p.role==="teacher") teacherEntry=p; });
+      });
+      if(!isPrivileged){
+        if(teacherEntry?.syncEnabled&&teacherEntry?.material){
+          // Only surface a fresh join prompt if we're not already following
+          // this exact material (avoids re-flashing the banner on our own re-renders).
+          setSyncBannerMat((prev:any)=> followingSyncIdRef.current===teacherEntry.material.id?prev:teacherEntry.material);
+        } else {
+          setSyncBannerMat(null);
+          setFollowingSyncId(null);
+        }
+      }
+    };
+
+    ch
+      .on("presence",{event:"sync"},applyTeacherPresence)
+      .on("broadcast",{event:"material-open"},({payload}:any)=>{
+        if(isPrivileged||!payload?.material)return;
+        if(followingSyncIdRef.current){
+          // Already opted in to following — seamlessly move with the teacher,
+          // no repeat prompt (matches "Follow Presenter"-style UX).
+          setFollowingSyncId(payload.material.id);
+          openMaterial(payload.material);
+          setSyncBannerMat(null);
+        } else {
+          setSyncBannerMat(payload.material);
+        }
+      })
+      .on("broadcast",{event:"material-close"},()=>{
+        if(isPrivileged)return;
+        setSyncBannerMat(null);
+        setFollowingSyncId(null);
+      })
+      .on("broadcast",{event:"material-activity"},({payload}:any)=>{
+        if(isPrivileged)return;
+        if(payload?.materialId!==followingSyncIdRef.current)return;
+        setSyncActivity(payload);
+      })
+      .subscribe(async (status:string)=>{
+        if(status==="SUBSCRIBED"&&isPrivileged){
+          await ch.track({role:"teacher",syncEnabled,material:activeMatId?openMats.find(m=>m.id===activeMatId):null});
+        }
+      });
+
+    return()=>{ supabase.removeChannel(ch); syncChannelRef.current=null; };
+  },[sessionId,isPrivileged,user?.id]);
+
+  // Keep teacher presence up to date whenever the toggle or open material changes
+  useEffect(()=>{
+    if(!isPrivileged||!syncChannelRef.current)return;
+    const activeMat=activeMatId?openMats.find(m=>m.id===activeMatId):null;
+    syncChannelRef.current.track({role:"teacher",syncEnabled,material:syncEnabled?activeMat:null});
+  },[syncEnabled,activeMatId,openMats,isPrivileged]);
+
+  // Broadcast a live pointer/scroll update from the teacher's viewer
+  const broadcastSyncActivity=useCallback((materialId:string,xPct:number,yPct:number,scrollPct:number)=>{
+    if(!isPrivileged||!syncEnabled||!syncChannelRef.current)return;
+    syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload:{materialId,xPct,yPct,scrollPct}});
+  },[isPrivileged,syncEnabled]);
+
+  const joinSync=()=>{
+    if(!syncBannerMat)return;
+    setFollowingSyncId(syncBannerMat.id);
+    openMaterial(syncBannerMat);
+    setSyncBannerMat(null);
+  };
+  const stopFollowingSync=()=>{
+    setFollowingSyncId(null);
+    setSyncActivity(null);
+  };
 
   // ── Open edit drawer ────────────────────────────────────────────────────
   const openEdit=(m:any)=>{
@@ -3664,10 +3860,21 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     setQuranOpen(false);
     setListVisible(true);
     setForceList(false);
+    if(isPrivileged&&syncEnabled&&syncChannelRef.current){
+      syncChannelRef.current.send({type:"broadcast",event:"material-open",payload:{material:m}});
+    }
   };
-  const minimizeActive=()=>{setActiveMatId(null);setListVisible(false);};
+  const minimizeActive=()=>{
+    if(isPrivileged&&syncEnabled&&syncChannelRef.current){
+      syncChannelRef.current.send({type:"broadcast",event:"material-close",payload:{}});
+    }
+    setActiveMatId(null);setListVisible(false);
+  };
   const restoreMaterial=(id:string)=>{setActiveMatId(id);setPipListOpen(false);setListVisible(true);setForceList(false);};
   const closeMaterial=(id:string)=>{
+    if(isPrivileged&&syncEnabled&&id===activeMatId&&syncChannelRef.current){
+      syncChannelRef.current.send({type:"broadcast",event:"material-close",payload:{}});
+    }
     setOpenMats(prev=>prev.filter(e=>e.id!==id));
     setActiveMatId(prev=>prev===id?null:prev);
   };
@@ -3771,6 +3978,11 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
               onMinimize={minimizeActive}
               onClose={()=>closeMaterial(m.id)}
               fromPanel={true}
+              isTeacher={isPrivileged}
+              syncActive={isPrivileged&&syncEnabled&&m.id===activeMatId}
+              onSyncActivity={(xPct:number,yPct:number,scrollPct:number)=>broadcastSyncActivity(m.id,xPct,yPct,scrollPct)}
+              following={followingSyncId===m.id}
+              remoteActivity={followingSyncId===m.id?syncActivity:null}
             />
           </div>
         ))}
@@ -3807,6 +4019,46 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
             <X style={{width:14,height:14}}/>
           </button>
         </div>
+
+        {/* Teacher: toggle "follow me" sync for the whole class */}
+        {isPrivileged&&(
+          <button onClick={()=>setSyncEnabled(v=>!v)} style={{
+            margin:"10px 10px 0",padding:"11px 14px",borderRadius:10,
+            border:`1px solid ${syncEnabled?"rgba(52,211,153,.4)":"rgba(255,255,255,.1)"}`,
+            background:syncEnabled?"rgba(52,211,153,.1)":"rgba(255,255,255,.04)",
+            cursor:"pointer",display:"flex",alignItems:"center",gap:10,flexShrink:0,textAlign:"left" as const,
+          }}>
+            <span style={{fontSize:16,flexShrink:0}}>🔗</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600,color:syncEnabled?"#34d399":"rgba(255,255,255,.75)",fontFamily:"'Google Sans',sans-serif"}}>Sync students' view</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>{syncEnabled?"On — students see what you open":"Off — students browse freely"}</div>
+            </div>
+            <div style={{width:36,height:20,borderRadius:10,background:syncEnabled?"#34d399":"rgba(255,255,255,.15)",position:"relative",flexShrink:0,transition:"background .15s"}}>
+              <div style={{position:"absolute",top:2,left:syncEnabled?18:2,width:16,height:16,borderRadius:8,background:"#fff",transition:"left .15s"}}/>
+            </div>
+          </button>
+        )}
+
+        {/* Student: teacher is viewing a material — join prompt */}
+        {!isPrivileged&&syncBannerMat&&(
+          <div style={{margin:"10px 10px 0",padding:"10px 12px",borderRadius:10,border:"1px solid rgba(52,211,153,.35)",background:"rgba(52,211,153,.1)",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+            <span style={{fontSize:16,flexShrink:0}}>👩‍🏫</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:600,color:"#e8eaf0"}}>Teacher is viewing</div>
+              <div style={{fontSize:11,color:"rgba(255,255,255,.6)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{syncBannerMat.title}</div>
+            </div>
+            <button onClick={joinSync} style={{background:"#34d399",color:"#0f1a14",border:"none",borderRadius:8,padding:"7px 14px",fontWeight:700,fontSize:12,cursor:"pointer",flexShrink:0}}>Join</button>
+            <button onClick={()=>setSyncBannerMat(null)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",padding:2,flexShrink:0}}><X style={{width:13,height:13}}/></button>
+          </div>
+        )}
+        {/* Student: currently following — quick way to stop */}
+        {!isPrivileged&&followingSyncId&&(
+          <div style={{margin:"10px 10px 0",padding:"8px 12px",borderRadius:10,border:"1px solid rgba(52,211,153,.25)",background:"rgba(52,211,153,.06)",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+            <span style={{fontSize:13,flexShrink:0}}>🔗</span>
+            <span style={{flex:1,fontSize:11,color:"rgba(255,255,255,.6)"}}>Following the teacher</span>
+            <button onClick={stopFollowingSync} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer",flexShrink:0}}>Stop</button>
+          </div>
+        )}
 
         {/* Student record toggle (if allowed) */}
         {!isPrivileged&&canStudentRec&&(
