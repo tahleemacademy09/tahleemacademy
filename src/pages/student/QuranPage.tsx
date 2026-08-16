@@ -831,6 +831,36 @@ export default function QuranPage() {
                       // measurement lands, fall back to the word-count guess
                       // so nothing crashes on the very first paint.
                       const isFullLine = lineIsFull[line.lineNumber] ?? (line.words.length >= 4);
+                      // A line with exactly one "word" in this dataset is
+                      // never genuine recitation text sitting on its own
+                      // printed line — real Mushaf lines run 3-12+ words.
+                      // It's a waqf/pause sign (ص، ع، etc.) or a Rukūʿ-end
+                      // marker that the layout data happens to encode as its
+                      // own line. Giving it the *same* lineHeight:2.1 row as
+                      // a full text line is what produces the tall blank gap
+                      // around it — on a printed page that mark sits compact,
+                      // it doesn't claim a whole line's worth of height. So
+                      // it's rendered small and centered here instead of
+                      // going through the normal full-line treatment below.
+                      const isMarkOnly = line.words.length === 1;
+                      if (isMarkOnly) {
+                        const mark = line.words[0];
+                        return (
+                          <div key={line.lineNumber}>
+                            {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === pageLines[0].lineNumber)}
+                            <div
+                              dir="rtl"
+                              style={{
+                                textAlign: "center", lineHeight: 1,
+                                fontSize: (lineFontSizes[line.lineNumber] ?? BASE_LINE_FONT_SIZE) * 0.62,
+                                color: Q_GOLD_DARK, margin: "2px 0",
+                              }}
+                            >
+                              {mark.text}
+                            </div>
+                          </div>
+                        );
+                      }
                       return (
                         <div key={line.lineNumber}>
                           {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === pageLines[0].lineNumber)}
