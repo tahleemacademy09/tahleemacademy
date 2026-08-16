@@ -305,14 +305,26 @@ function FileViewer({
   const [url, setUrl]         = useState(prefetchedUrl || "");
   const [loading, setLoading] = useState(!prefetchedUrl);
   const [error, setError]     = useState("");
+  const [htmlDoc, setHtmlDoc]     = useState<string | null>(null);
+  const [htmlError, setHtmlError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  // HTML materials: storage frequently serves .html with a text/plain (or
-  // octet-stream) content-type, which makes the browser show the raw source
-  // instead of rendering it. Fetch the file ourselves and hand it to the
-  // iframe via srcDoc so it is always parsed as HTML.
-  const [htmlDoc, setHtmlDoc] = useState<string | null>(null);
-  const [htmlFailed, setHtmlFailed] = useState(false);
+
+  // Fetch and inject HTML materials directly rather than trusting the
+  // server's Content-Type header — some storage/CDN layers serve the wrong
+  // one, which makes an interactive lesson show as raw source instead of
+  // rendering. srcDoc always renders as HTML regardless of that header.
+  useEffect(() => {
+    if (kind !== "html" || !url) return;
+    let cancelled = false;
+    setHtmlDoc(null);
+    setHtmlError(false);
+    fetch(url)
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
+      .then(text => { if (!cancelled) setHtmlDoc(text); })
+      .catch(() => { if (!cancelled) setHtmlError(true); });
+    return () => { cancelled = true; };
+  }, [kind, url]);
 
   useEffect(() => {
     // Already have a good URL — nothing to do
@@ -322,25 +334,6 @@ function FileViewer({
       .then(u => { setUrl(u); setLoading(false); })
       .catch(() => { setError("Could not load file."); setLoading(false); });
   }, [mat.file_url, prefetchedUrl]);
-
-  const kindForFetch = detectKind(mat);
-  useEffect(() => {
-    if (kindForFetch !== "html" || !url) { setHtmlDoc(null); setHtmlFailed(false); return; }
-    let cancelled = false;
-    setHtmlDoc(null); setHtmlFailed(false);
-    fetch(url)
-      .then(r => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
-      .then(text => {
-        if (cancelled) return;
-        const looksLikeDoc = /<html|<!doctype|<body/i.test(text);
-        const base = `<base target="_blank">`;
-        setHtmlDoc(looksLikeDoc
-          ? text.replace(/<head(\s[^>]*)?>/i, m => `${m}${base}`)
-          : `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">${base}<style>body{margin:0;padding:16px;font-family:system-ui,-apple-system,sans-serif;line-height:1.7;color:#111}img,video,table{max-width:100%}</style></head><body>${text}</body></html>`);
-      })
-      .catch(() => { if (!cancelled) setHtmlFailed(true); });
-    return () => { cancelled = true; };
-  }, [kindForFetch, url]);
 
   const handleMediaLoaded = (el: HTMLVideoElement | HTMLAudioElement) => {
     const t = readPos(materialId).time ?? 0;
@@ -446,11 +439,11 @@ function FileViewer({
             {kind==="youtube" && <div style={{ position:"relative",paddingBottom:"56.25%",height:0 }}><iframe src={ytEmbed(url)} style={{ position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none" }} allowFullScreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" title={mat.title}/></div>}
             {kind==="office" && <iframe src={officeEmbed(url)} style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400 }} title={mat.title}/>}
             {kind==="html" && (
-              htmlDoc
-                ? <iframe srcDoc={htmlDoc} sandbox="allow-scripts allow-popups allow-forms allow-modals" style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400,background:"#fff" }} title={mat.title}/>
-                : htmlFailed
-                  ? <iframe src={url} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400,background:"#fff" }} title={mat.title}/>
-                  : <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,minHeight:400,color:"#6b7280",fontSize:13 }}>Loading lesson…</div>
+              htmlError
+                ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,gap:12,flex:1 }}><p style={{ fontSize:13,color:"#6b7280" }}>Couldn't load this lesson.</p><a href={url} target="_blank" rel="noopener noreferrer"><Button style={{ borderRadius:12,gap:6 }}><ExternalLink size={13}/> Open in new tab</Button></a></div>
+                : htmlDoc == null
+                  ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,minHeight:300 }}><Loader2 size={24} className="animate-spin" style={{ color:"#9CA3AF" }}/></div>
+                  : <iframe srcDoc={htmlDoc} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400,background:"#fff" }} title={mat.title}/>
             )}
             {kind==="text" && <div style={{ padding:16,maxWidth:720,margin:"0 auto",width:"100%" }}><div style={{ background:"#fff",borderRadius:14,padding:16,border:"1px solid #e5e7eb",fontSize:14,lineHeight:1.8,color:"#374151",whiteSpace:"pre-wrap" }}>{mat.content||"No content."}</div></div>}
             {kind==="link" && <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,gap:12,flex:1 }}><div style={{ width:48,height:48,borderRadius:14,background:"#F0FDFA",display:"flex",alignItems:"center",justifyContent:"center" }}><LinkIcon size={20} style={{ color:"#0D9488" }}/></div><p style={{ fontSize:13,color:"#6b7280",wordBreak:"break-all",maxWidth:320,textAlign:"center" }}>{url}</p><a href={url} target="_blank" rel="noopener noreferrer"><Button style={{ borderRadius:12,gap:6 }}><ExternalLink size={13}/> Open</Button></a></div>}

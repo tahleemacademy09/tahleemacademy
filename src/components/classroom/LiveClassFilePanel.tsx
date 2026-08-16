@@ -55,7 +55,7 @@ interface ViewerEntry {
 }
 
 type Tab  = "upload" | "link";
-type Kind = "PDF" | "Image" | "Video" | "Audio" | "Doc" | "Link" | "File";
+type Kind = "PDF" | "Image" | "Video" | "Audio" | "Doc" | "Html" | "Link" | "File";
 
 /* ── helpers ── */
 function getKind(name: string, mime?: string | null): Kind {
@@ -67,6 +67,7 @@ function getKind(name: string, mime?: string | null): Kind {
   if (m.includes("video") || ["mp4","webm","mov","mkv","avi"].includes(ext))               return "Video";
   if (m.includes("audio") || ["mp3","wav","m4a","aac","ogg"].includes(ext))                return "Audio";
   if (["doc","docx","xls","xlsx","ppt","pptx","txt","csv"].includes(ext))                  return "Doc";
+  if (["html","htm"].includes(ext) || m.includes("html"))                                  return "Html";
   if (/^https?:\/\//i.test(name)) return "Link";
   return "File";
 }
@@ -77,6 +78,7 @@ const ICONS: Record<Kind, { i: string; c: string; bg: string }> = {
   Video: { i: "🎬", c: "#6D28D9", bg: "#F5F3FF" },
   Audio: { i: "🎵", c: "#0E7490", bg: "#ECFEFF" },
   Doc:   { i: "📝", c: "#B45309", bg: "#FFFBEB" },
+  Html:  { i: "📝", c: "#16A34A", bg: "#F0FDF4" },
   Link:  { i: "🔗", c: TEAL,      bg: TEALL     },
   File:  { i: "📁", c: "#374151", bg: "#F9FAFB" },
 };
@@ -91,6 +93,21 @@ function fmtBytes(n?: number | null) {
 function fmtDate(iso?: string | null) {
   if (!iso) return "";
   return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+/* Some mobile file pickers / share-sheets (WhatsApp, cloud drives, etc.) report
+   a wrong or generic MIME type for text-based files like .html — this makes
+   Supabase Storage serve them with that wrong Content-Type, so an interactive
+   HTML lesson gets shown as raw source text instead of rendered. Trust the
+   file extension for known text formats instead of the picker's guess. */
+function resolveUploadContentType(file: File): string {
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  const byExt: Record<string, string> = {
+    html: "text/html", htm: "text/html",
+    css: "text/css", js: "text/javascript", json: "application/json",
+    svg: "image/svg+xml", csv: "text/csv",
+  };
+  return byExt[ext] || file.type || "application/octet-stream";
 }
 
 /* ── URL transformer ── */
@@ -147,9 +164,28 @@ function FileViewer({ entry, baseZ, onClose, onMinimize, onFocus }: FileViewerPr
   const [iframeBlocked,   setIframeBlocked]   = useState(false);
   const [loaderVisible,   setLoaderVisible]   = useState(true);
   const [showDriveHelper, setShowDriveHelper] = useState(false);
+  const [htmlDoc,         setHtmlDoc]          = useState<string | null>(null);
+  const [htmlError,       setHtmlError]        = useState(false);
 
   const url  = resolvedUrl || file.file_url;
   const kind = getKind(file.file_name, file.file_type);
+
+  // For .html lessons/materials, some storage/CDN layers serve the wrong
+  // Content-Type header (showing raw source instead of rendering the page).
+  // Sidestep that entirely: fetch the raw text ourselves and inject it into
+  // the iframe via srcDoc, which always renders as HTML regardless of
+  // whatever header the network request came back with.
+  useEffect(() => {
+    if (kind !== "Html" || !url || resolving) return;
+    let cancelled = false;
+    setHtmlDoc(null);
+    setHtmlError(false);
+    fetch(url)
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
+      .then(text => { if (!cancelled) setHtmlDoc(text); })
+      .catch(() => { if (!cancelled) setHtmlError(true); });
+    return () => { cancelled = true; };
+  }, [kind, url, resolving]);
 
   let embedKind: ReturnType<typeof toEmbedUrl>["embedKind"] = "iframe";
   let embedUrl  = url;
@@ -272,6 +308,30 @@ function FileViewer({ entry, baseZ, onClose, onMinimize, onFocus }: FileViewerPr
         <PDFViewer url={embedUrl} bg="#0f1a14" />
       </div>
     );
+    if (kind === "Html") {
+      if (htmlError) return (
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+          <p style={{ color: "#fff", fontWeight: 700, fontSize: 16, marginBottom: 8 }}>Couldn't load this lesson</p>
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            style={{ background: GOLD, color: "#fff", borderRadius: 10, padding: "10px 24px", textDecoration: "none", fontWeight: 700, fontSize: 14 }}>
+            Open in new tab ↗
+          </a>
+        </div>
+      );
+      if (htmlDoc == null) return (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", background: "#0f1a14" }}>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", border: "3px solid #ffffff20", borderTopColor: GOLD, animation: "lcfp-spin .7s linear infinite" }} />
+        </div>
+      );
+      return (
+        <div style={{ flex: 1, minHeight: 0, background: "#fff" }}>
+          <iframe srcDoc={htmlDoc} title={file.file_name}
+            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            style={{ width: "100%", height: "100%", border: "none", display: "block", background: "#fff" }} />
+        </div>
+      );
+    }
     if (iframeBlocked) return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0f1a14", padding: 32, textAlign: "center" }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
@@ -623,7 +683,7 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
         xhr.open("POST", `${MAIN_URL}/storage/v1/object/${BUCKET}/${slug}`);
         xhr.setRequestHeader("Authorization", `Bearer ${token}`);
         xhr.setRequestHeader("x-upsert", "true");
-        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        xhr.setRequestHeader("Content-Type", resolveUploadContentType(file));
         xhr.upload.onprogress = ev => {
           if (ev.lengthComputable) setPct(Math.round(ev.loaded / ev.total * 85));
         };
@@ -645,7 +705,7 @@ export default function LiveClassFilePanel({ subjectId }: { subjectId: string })
     } catch (e: any) {
       try {
         const slug2 = `liveclass/${subjectId}/${Date.now()}.${file.name.split(".").pop() || "bin"}`;
-        const { error: stErr } = await storageSupabase.storage.from(BUCKET).upload(slug2, file, { upsert: true, contentType: file.type });
+        const { error: stErr } = await storageSupabase.storage.from(BUCKET).upload(slug2, file, { upsert: true, contentType: resolveUploadContentType(file) });
         if (stErr) throw stErr;
         const { data: pub2 } = supabase.storage.from(BUCKET).getPublicUrl(slug2);
         const url2 = pub2?.publicUrl ?? `${MAIN_URL}/storage/v1/object/public/${BUCKET}/${slug2}`;
