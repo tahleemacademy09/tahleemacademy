@@ -64,20 +64,6 @@ const fmtSize = (bytes?: number | null) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-function resolveUploadContentType(file: File): string {
-  const ext = file.name.split(".").pop()?.toLowerCase() || "";
-  const byExt: Record<string, string> = {
-    html: "text/html", htm: "text/html",
-    css: "text/css", js: "text/javascript", json: "application/json",
-    svg: "image/svg+xml", csv: "text/csv",
-  };
-  // Mobile file pickers / share-sheets often report a wrong or generic MIME
-  // type for files like .html, causing them to be served (and shown) as raw
-  // text instead of rendered. Trust the extension for known text formats.
-  if (byExt[ext]) return byExt[ext];
-  return file.type || "application/octet-stream";
-}
-
 function detectType(file: File): MaterialType {
   const mime = file.type.toLowerCase();
   const ext  = file.name.split(".").pop()?.toLowerCase() || "";
@@ -124,7 +110,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
   const [uploading, setUploading] = useState(false);
   const [feedback, setFeedback]   = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
   const [form, setForm]           = useState({ ...emptyForm });
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -156,7 +142,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
 
   const resetForm = () => {
     setForm({ ...emptyForm });
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setEditing(null);
     setShowForm(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -169,36 +155,86 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
       material_type: (m.material_type as MaterialType) || "Document",
       is_downloadable: m.is_downloadable ?? true,
     });
-    setSelectedFile(null);
+    setSelectedFiles([]);
     setShowForm(true);
   };
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setSelectedFile(file);
-    setForm(f => ({ ...f, material_type: detectType(file), title: f.title || file.name.replace(/\.[^.]+$/, "") }));
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    setSelectedFiles(files);
+    if (files.length === 1) {
+      setForm(f => ({ ...f, material_type: detectType(files[0]), title: f.title || files[0].name.replace(/\.[^.]+$/, "") }));
+    }
+  };
+
+  const removeSelectedFile = (idx: number) => {
+    setSelectedFiles(files => files.filter((_, i) => i !== idx));
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!subjectId || !user || !form.title.trim()) return;
+    if (!subjectId || !user) return;
+    const batch = selectedFiles.length > 1;
+    if (!batch && !form.title.trim()) return;
+
     setUploading(true);
     setFeedback({ type: "", message: "" });
     try {
+      if (batch) {
+        let ok = 0;
+        for (let i = 0; i < selectedFiles.length; i++) {
+          const file = selectedFiles[i];
+          setFeedback({ type: "", message: t(`Uploading ${i + 1} of ${selectedFiles.length}…`, `جارٍ رفع ${i + 1} من ${selectedFiles.length}…`) });
+          const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const path = `materials/${subjectId}/${Date.now()}_${safeName}`;
+          const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, file, {
+            cacheControl: "3600", upsert: false,
+            contentType: file.type || "application/octet-stream",
+          });
+          if (upErr) { setFeedback({ type: "error", message: `${file.name}: ${upErr.message}` }); continue; }
+
+          const payload = {
+            subject_id: subjectId,
+            title: file.name.replace(/\.[^.]+$/, ""),
+            title_ar: null,
+            description: form.description.trim() || null,
+            material_type: detectType(file),
+            file_url: path,
+            file_size: file.size,
+            is_downloadable: form.is_downloadable,
+            uploaded_by: user.id,
+            sort_order: materials.length + ok,
+          };
+          const { error } = await supabase.from("subject_materials").insert([payload]);
+          if (!error) ok++;
+        }
+        setFeedback({
+          type: ok === selectedFiles.length ? "success" : "error",
+          message: ok === selectedFiles.length
+            ? t(`${ok} files uploaded!`, `تم رفع ${ok} ملفات!`)
+            : t(`${ok} of ${selectedFiles.length} uploaded — some failed.`, `تم رفع ${ok} من ${selectedFiles.length} — فشل البعض.`),
+        });
+        await load();
+        if (ok > 0) resetForm();
+        return;
+      }
+
       let file_url = editing?.file_url || null;
       let file_size = editing?.file_size || null;
+      const file = selectedFiles[0];
 
-      if (selectedFile) {
-        const safeName = selectedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      if (file) {
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
         const path = `materials/${subjectId}/${Date.now()}_${safeName}`;
-        const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, selectedFile, {
+        const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, file, {
           cacheControl: "3600", upsert: false,
-          contentType: resolveUploadContentType(selectedFile),
+          contentType: file.type || "application/octet-stream",
         });
         if (upErr) throw new Error(`Upload failed: ${upErr.message}`);
         file_url = path;
-        file_size = selectedFile.size;
+        file_size = file.size;
       }
 
       if (!file_url && !editing) throw new Error(t("Please choose a file to upload", "الرجاء اختيار ملف"));
@@ -363,21 +399,36 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
             </div>
 
             <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <label style={fieldLabel}>{t("Title", "العنوان")}
-                <input required value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={fieldInput} />
-              </label>
-              <label style={fieldLabel}>{t("Title (Arabic)", "العنوان بالعربية")}
-                <input value={form.title_ar} onChange={e => setForm(f => ({ ...f, title_ar: e.target.value }))} style={fieldInput} dir="rtl" />
-              </label>
+              {selectedFiles.length <= 1 && (
+                <>
+                  <label style={fieldLabel}>{t("Title", "العنوان")}
+                    <input required value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} style={fieldInput} />
+                  </label>
+                  <label style={fieldLabel}>{t("Title (Arabic)", "العنوان بالعربية")}
+                    <input value={form.title_ar} onChange={e => setForm(f => ({ ...f, title_ar: e.target.value }))} style={fieldInput} dir="rtl" />
+                  </label>
+                </>
+              )}
               <label style={fieldLabel}>{t("Description", "الوصف")}
                 <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} rows={2} style={{ ...fieldInput, resize: "vertical" as const }} />
               </label>
 
-              <label style={fieldLabel}>{t("Type", "النوع")}
-                <select value={form.material_type} onChange={e => setForm(f => ({ ...f, material_type: e.target.value as MaterialType }))} style={fieldInput}>
-                  {MATERIAL_TYPES.map(mt => <option key={mt} value={mt}>{mt}</option>)}
-                </select>
-              </label>
+              {selectedFiles.length <= 1 && (
+                <label style={fieldLabel}>{t("Type", "النوع")}
+                  <select value={form.material_type} onChange={e => setForm(f => ({ ...f, material_type: e.target.value as MaterialType }))} style={fieldInput}>
+                    {MATERIAL_TYPES.map(mt => <option key={mt} value={mt}>{mt}</option>)}
+                  </select>
+                </label>
+              )}
+
+              {selectedFiles.length > 1 && (
+                <div style={{ fontSize: 12, color: TMID, background: "#F3F4F6", borderRadius: 10, padding: "8px 12px", lineHeight: 1.6 }}>
+                  {t(
+                    "Each file will be uploaded as its own material, titled from its filename. Type is detected automatically per file.",
+                    "سيُرفع كل ملف كمادة مستقلة بعنوان مأخوذ من اسم الملف. يُكتشف النوع تلقائياً لكل ملف."
+                  )}
+                </div>
+              )}
 
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: TXT }}>
                 <input type="checkbox" checked={form.is_downloadable} onChange={e => setForm(f => ({ ...f, is_downloadable: e.target.checked }))} />
@@ -385,11 +436,28 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
               </label>
 
               <div>
-                <input ref={fileInputRef} type="file" onChange={onFileChange} style={{ display: "none" }} id="material-file-input" />
+                <input ref={fileInputRef} type="file" multiple onChange={onFileChange} style={{ display: "none" }} id="material-file-input" />
                 <label htmlFor="material-file-input" style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px", borderRadius: 12, border: `1.5px dashed ${BORDER}`, cursor: "pointer", fontSize: 13, color: TMID }}>
                   <Upload size={16} color={GOLD} />
-                  {selectedFile ? selectedFile.name : editing?.file_url ? t("Replace file (optional)", "استبدال الملف (اختياري)") : t("Choose a file", "اختر ملفاً")}
+                  {selectedFiles.length === 0
+                    ? (editing?.file_url ? t("Replace file (optional)", "استبدال الملف (اختياري)") : t("Choose one or more files", "اختر ملفاً واحداً أو أكثر"))
+                    : selectedFiles.length === 1
+                      ? selectedFiles[0].name
+                      : t(`${selectedFiles.length} files selected`, `${selectedFiles.length} ملفات مختارة`)}
                 </label>
+                {selectedFiles.length > 1 && (
+                  <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6, maxHeight: 160, overflowY: "auto" }}>
+                    {selectedFiles.map((f, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: TMID, background: "#F9FAFB", border: `1px solid ${BORDER}`, borderRadius: 8, padding: "6px 10px" }}>
+                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+                        <button type="button" onClick={() => removeSelectedFile(i)}
+                          style={{ border: "none", background: "none", cursor: "pointer", color: "#DC2626", fontSize: 15, lineHeight: 1, padding: 2 }}>
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {feedback.message && (
@@ -401,7 +469,13 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
               <button type="submit" disabled={uploading}
                 style={{ padding: "12px", borderRadius: 12, border: "none", background: G, color: "#fff", fontWeight: 800, fontSize: 14, cursor: uploading ? "default" : "pointer", opacity: uploading ? .7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 {uploading ? <Loader2 className="animate-spin" size={16} /> : null}
-                {uploading ? t("Saving...", "جارٍ الحفظ...") : editing ? t("Save Changes", "حفظ التغييرات") : t("Upload Material", "رفع المادة")}
+                {uploading
+                  ? t("Saving...", "جارٍ الحفظ...")
+                  : editing
+                    ? t("Save Changes", "حفظ التغييرات")
+                    : selectedFiles.length > 1
+                      ? t(`Upload ${selectedFiles.length} Materials`, `رفع ${selectedFiles.length} مواد`)
+                      : t("Upload Material", "رفع المادة")}
               </button>
             </form>
           </div>
