@@ -10,6 +10,24 @@ import { supabase } from "./client";
 export const storageSupabase = supabase;
 export const BUCKET_MATERIALS = "subject-materials";
 export const BUCKET_RECORDINGS = "recordings";
+// Legacy bucket some older student-submission uploads mistakenly wrote to.
+// Kept only as a read fallback so previously-submitted files still resolve.
+const LEGACY_SUBMISSION_BUCKET = "subject-files";
+
+async function resolveInBucket(bucket: string, fileUrl: string, expiresInSeconds: number): Promise<string | null> {
+  const { data: pub } = supabase.storage.from(bucket).getPublicUrl(fileUrl);
+  if (pub?.publicUrl) {
+    try {
+      const r = await fetch(pub.publicUrl, { method: "HEAD" });
+      if (r.ok || r.status === 304) return pub.publicUrl;
+    } catch {}
+  }
+  try {
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(fileUrl, expiresInSeconds);
+    if (!error && data?.signedUrl) return data.signedUrl;
+  } catch {}
+  return null;
+}
 
 export async function getSignedUrl(
   fileUrl: string,
@@ -23,27 +41,17 @@ export async function getSignedUrl(
       ? BUCKET_RECORDINGS
       : BUCKET_MATERIALS;
 
-  const { data: pub } = supabase.storage.from(bucket).getPublicUrl(fileUrl);
-  if (pub?.publicUrl) {
-    try {
-      const r = await fetch(pub.publicUrl, { method: "HEAD" });
-      if (r.ok || r.status === 304) return pub.publicUrl;
-    } catch {}
+  const primary = await resolveInBucket(bucket, fileUrl, expiresInSeconds);
+  if (primary) return primary;
+
+  // Fallback: older student-submission files may still live in the legacy bucket.
+  if (bucket === BUCKET_MATERIALS) {
+    const legacy = await resolveInBucket(LEGACY_SUBMISSION_BUCKET, fileUrl, expiresInSeconds);
+    if (legacy) return legacy;
   }
 
-  try {
-    const { data, error } = await supabase.storage
-      .from(bucket)
-      .createSignedUrl(fileUrl, expiresInSeconds);
-    if (error) {
-      console.error("[StorageClient] createSignedUrl failed:", error.message, { bucket, path: fileUrl });
-      return pub?.publicUrl ?? null;
-    }
-    return data?.signedUrl ?? null;
-  } catch (err) {
-    console.error("[StorageClient] getSignedUrl threw:", err);
-    return pub?.publicUrl ?? null;
-  }
+  console.error("[StorageClient] Could not resolve signed URL in any bucket:", { bucket, path: fileUrl });
+  return null;
 }
 
 export async function uploadStorageFile(
