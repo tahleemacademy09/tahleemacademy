@@ -98,12 +98,6 @@ export default function QuranPage() {
   const [verses, setVerses] = useState<QuranVerse[]>([]);
   const [pageLines, setPageLines] = useState<QuranPageLine[] | null>(null);
   const [lineFontSizes, setLineFontSizes] = useState<Record<number, number>>({});
-  // Which printed lines should stretch edge-to-edge like a real mushaf page,
-  // decided from the actual measured width of each line (see the measuring
-  // effect below) rather than a guess based on word count — a short leftover
-  // line (end of a passage) and a genuine full line can both have only 3-4
-  // words, so word count alone can't tell them apart reliably.
-  const [lineIsFull, setLineIsFull] = useState<Record<number, boolean>>({});
   const linesContainerRef = useRef<HTMLDivElement | null>(null);
   const measureProbeRef = useRef<HTMLDivElement | null>(null);
   const [loading, setLoading] = useState(true);
@@ -290,7 +284,7 @@ export default function QuranPage() {
   // is exactly what it will paint for the real line.
   useLayoutEffect(() => {
     if (pageLines === null) return; // still pending — wait for real data or the grace-period fallback, don't flash
-    if (!pageLines.length) { setLineFontSizes({}); setLineIsFull({}); setLinesReady(true); return; }
+    if (!pageLines.length) { setLineFontSizes({}); setLinesReady(true); return; }
     const containerEl = linesContainerRef.current;
     if (!containerEl) return;
     let cancelled = false;
@@ -316,7 +310,6 @@ export default function QuranPage() {
       probe.style.fontSize = `${BASE_LINE_FONT_SIZE}px`;
 
       const next: Record<number, number> = {};
-      const nextIsFull: Record<number, boolean> = {};
       for (const line of pageLines) {
         probe.innerHTML = "";
         line.words.forEach((w, i) => {
@@ -340,16 +333,8 @@ export default function QuranPage() {
         next[line.lineNumber] = naturalWidth > target && naturalWidth > 0
           ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * target) / naturalWidth))
           : BASE_LINE_FONT_SIZE;
-        // A genuine full printed line already sits close to the target width
-        // on its own — that's the whole point of justification, the line
-        // was typeset to just fill the row. A true leftover/short line (the
-        // last line of a passage, or a stray waqf mark) falls well short of
-        // it. >=2 words guards only against a single stranded glyph, which
-        // has no "line" of its own to stretch; the width check does the
-        // real work of telling short-but-real lines apart from leftovers.
-        nextIsFull[line.lineNumber] = line.words.length >= 2 && naturalWidth >= target * 0.75;
       }
-      if (!cancelled) { setLineFontSizes(next); setLineIsFull(nextIsFull); setLinesReady(true); }
+      if (!cancelled) { setLineFontSizes(next); setLinesReady(true); }
     };
 
     // Measuring before the real Amiri webfont has finished downloading gives
@@ -407,7 +392,7 @@ export default function QuranPage() {
     ro.observe(container);
     ro.observe(wrapper);
     return () => { ro.disconnect(); };
-  }, [pageLines, lineFontSizes, lineIsFull, linesReady, showTranslation, currentPage, selected != null]);
+  }, [pageLines, lineFontSizes, linesReady, showTranslation, currentPage, selected != null]);
 
   const isBookmarked = useCallback((surah: number, ayah: number) =>
     bookmarks.some(b => b.surah_number === surah && b.ayah_number === ayah), [bookmarks]);
@@ -811,56 +796,28 @@ export default function QuranPage() {
                       const lineFontSize = lineFontSizes[line.lineNumber] ?? BASE_LINE_FONT_SIZE;
                       // FIX (huge blank gaps / a lone mark stranded on its
                       // own row): a handful of "lines" in the dataset are
-                      // just a stray waqf/pause glyph or a short leftover
-                      // tail end of a passage, not a genuine full printed
-                      // line. Real Mushaf typesetting only stretches a line
-                      // edge-to-edge when it's actually a full line — a
-                      // short leftover line sits at its natural width
-                      // instead. Flexing justify-content:space-between
-                      // across a line that was never meant to reach the
-                      // margin does the opposite: it flings its words apart
-                      // with a giant gap in between.
-                      //
-                      // Word count alone can't tell a genuine full line from
-                      // a short leftover — plenty of real full lines only
-                      // have 2-3 (long) words. `lineIsFull` instead comes
-                      // from the actual measured width of the line (see the
-                      // measuring effect above): a real full line was
-                      // typeset to already sit close to the target width, a
-                      // leftover line falls well short of it. Before that
-                      // measurement lands, fall back to the word-count guess
-                      // so nothing crashes on the very first paint.
-                      const isFullLine = lineIsFull[line.lineNumber] ?? (line.words.length >= 4);
-                      // A line with exactly one "word" in this dataset is
-                      // never genuine recitation text sitting on its own
-                      // printed line — real Mushaf lines run 3-12+ words.
-                      // It's a waqf/pause sign (ص، ع، etc.) or a Rukūʿ-end
-                      // marker that the layout data happens to encode as its
-                      // own line. Giving it the *same* lineHeight:2.1 row as
-                      // a full text line is what produces the tall blank gap
-                      // around it — on a printed page that mark sits compact,
-                      // it doesn't claim a whole line's worth of height. So
-                      // it's rendered small and centered here instead of
-                      // going through the normal full-line treatment below.
-                      const isMarkOnly = line.words.length === 1;
-                      if (isMarkOnly) {
-                        const mark = line.words[0];
-                        return (
-                          <div key={line.lineNumber}>
-                            {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === pageLines[0].lineNumber)}
-                            <div
-                              dir="rtl"
-                              style={{
-                                textAlign: "center", lineHeight: 1,
-                                fontSize: (lineFontSizes[line.lineNumber] ?? BASE_LINE_FONT_SIZE) * 0.62,
-                                color: Q_GOLD_DARK, margin: "2px 0",
-                              }}
-                            >
-                              {mark.text}
-                            </div>
-                          </div>
-                        );
-                      }
+                      // just a stray waqf/pause glyph or a two-word tail end
+                      // of a passage, not a genuine full printed line. Real
+                      // Mushaf typesetting only stretches a line edge-to-edge
+                      // when it's actually a full line — a short leftover
+                      // line sits at its natural width instead. Flexing
+                      // justify-content:space-between across only one or two
+                      // words does the opposite: it flings them apart with a
+                      // giant gap in between. So only lines with enough words
+                      // to look like a real full line get the edge-to-edge
+                      // treatment; short ones render at natural width,
+                      // flush to the margin they start from (right, in RTL).
+                      const isFullLine = line.words.length >= 4;
+                      // FIX (blank-looking gap between paragraphs): a lone
+                      // stray mark or 2-3 word tail-end line still has almost
+                      // nothing visible in it, but was claiming the same
+                      // lineHeight:2.1 as a genuine full 15-char printed
+                      // line — on screen that reads as a big empty gap
+                      // before the next paragraph starts. Give a line this
+                      // short a tighter line-height instead, proportional to
+                      // how little it actually contains.
+                      const wordCount = line.words.length;
+                      const rowLineHeight = isFullLine ? 2.1 : wordCount <= 2 ? 1.25 : 1.6;
                       return (
                         <div key={line.lineNumber}>
                           {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === pageLines[0].lineNumber)}
@@ -892,7 +849,7 @@ export default function QuranPage() {
                               // off, with no visual warning it had happened. "visible"
                               // means the rare miss just lets a line sit a hair wider
                               // instead of silently destroying text.
-                              lineHeight: 2.1, fontSize: lineFontSize, overflow: "visible",
+                              lineHeight: rowLineHeight, fontSize: lineFontSize, overflow: "visible",
                             }}
                           >
                             {line.words.map((w, i) => {
