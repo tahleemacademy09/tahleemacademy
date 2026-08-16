@@ -404,7 +404,7 @@ export function AssignmentFormModal({
       if (file) {
         const ext  = file.name.split(".").pop();
         const path = `assignments/${subjectId}/${Date.now()}.${ext}`;
-        const res  = await uploadStorageFile("subject-files" as any, path, file, { upsert: true });
+        const res  = await uploadStorageFile("subject-materials" as any, path, file, { upsert: true });
         if (!res.success) { setError(res.error || "Upload failed"); setSaving(false); return; }
         file_url = res.path!;
       }
@@ -1158,7 +1158,7 @@ function AssignmentModal({
         setUploading(true);
         const ext  = file.name.split(".").pop();
         const path = `${userId}/${a.id}/file_${Date.now()}.${ext}`;
-        const res  = await uploadStorageFile("subject-files" as any, path, file, { upsert: true });
+        const res  = await uploadStorageFile("subject-materials" as any, path, file, { upsert: true });
         if (!res.success) { setError(res.error || "Upload failed"); setSubmitting(false); setUploading(false); return; }
         uploadedFileUrl = res.path!;
         setUploading(false);
@@ -1168,7 +1168,7 @@ function AssignmentModal({
       if (audioBlob) {
         setUploading(true);
         const path = `${userId}/${a.id}/audio_${Date.now()}.webm`;
-        const res  = await uploadStorageFile("subject-files" as any, path, audioBlob, { upsert: true, contentType: "audio/webm" });
+        const res  = await uploadStorageFile("subject-materials" as any, path, audioBlob, { upsert: true, contentType: "audio/webm" });
         if (!res.success) { setError(res.error || "Audio upload failed"); setSubmitting(false); setUploading(false); return; }
         uploadedAudioUrl = res.path!;
         setUploading(false);
@@ -1572,6 +1572,7 @@ const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 function AttachmentRow({ url, label }: { url: string; label: string }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(true);
+  const [imgFailed, setImgFailed] = useState(false);
   useEffect(() => { getSignedUrl(url, 3600).then(u => setSignedUrl(u)); }, [url]);
   if (!signedUrl) return null;
   const ext = getExt(url);
@@ -1585,7 +1586,7 @@ function AttachmentRow({ url, label }: { url: string; label: string }) {
         style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "none", border: "none", cursor: previewable ? "pointer" : "default", textAlign: "left" }}>
         <Download style={{ width: 15, height: 15, color: "#1d4ed8", flexShrink: 0 }} />
         <span style={{ fontSize: 13, fontWeight: 700, color: "#1d4ed8", flex: 1 }}>{label}</span>
-        {!previewable && (
+        {(!previewable || imgFailed) && (
           <a href={signedUrl} download onClick={e => e.stopPropagation()}
             style={{ fontSize: 11, fontWeight: 700, color: "#1d4ed8", textDecoration: "underline" }}>
             Download
@@ -1594,7 +1595,11 @@ function AttachmentRow({ url, label }: { url: string; label: string }) {
       </button>
       {previewable && expanded && (
         isImage
-          ? <img src={signedUrl} alt={label} style={{ width: "100%", display: "block", maxHeight: 420, objectFit: "contain", background: "#000" }} />
+          ? (imgFailed
+              ? <div style={{ padding: "14px", fontSize: 12, color: "#b91c1c", background: "#fef2f2", borderTop: "1px solid #fecaca" }}>
+                  Couldn't load this image — the file link may be broken. Use Download above instead.
+                </div>
+              : <img src={signedUrl} alt={label} onError={() => setImgFailed(true)} style={{ width: "100%", display: "block", maxHeight: 420, objectFit: "contain", background: "#000" }} />)
           : <iframe src={signedUrl} title={label} style={{ width: "100%", height: 420, border: "none", display: "block" }} />
       )}
     </div>
