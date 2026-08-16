@@ -2339,6 +2339,49 @@ export function loadResume(id:string):{time?:number;page?:number}|null{
   catch{return null;}
 }
 
+/* ══ SCROLL-SYNC HELPERS (for the "follow the teacher" HTML material sync) ══
+   Custom interactive lessons don't all scroll the same way — some scroll the
+   window itself, others scroll an inner card/container (e.g. a fixed-height
+   "#stage" div with its own overflow-y:auto while html/body stay overflow:
+   hidden). Detect whichever element is actually the one moving instead of
+   assuming it's always the window, so sync works for either layout style. */
+function findScrollTarget(doc:Document,win:Window):Window|HTMLElement{
+  if(doc.documentElement.scrollHeight>win.innerHeight+4) return win;
+  let best:HTMLElement|null=null;
+  let bestRange=0;
+  const all=doc.querySelectorAll<HTMLElement>("*");
+  for(let i=0;i<all.length;i++){
+    const el=all[i];
+    const range=el.scrollHeight-el.clientHeight;
+    if(range<=4)continue;
+    const style=win.getComputedStyle(el);
+    if(style.overflowY!=="auto"&&style.overflowY!=="scroll")continue;
+    if(range>bestRange){bestRange=range;best=el;}
+  }
+  return best||win;
+}
+function readScrollPct(target:Window|HTMLElement,win:Window):number{
+  if(target===win){
+    const doc=win.document;
+    const maxScroll=Math.max(1,doc.documentElement.scrollHeight-win.innerHeight);
+    return Math.min(1,Math.max(0,win.scrollY/maxScroll));
+  }
+  const el=target as HTMLElement;
+  const maxScroll=Math.max(1,el.scrollHeight-el.clientHeight);
+  return Math.min(1,Math.max(0,el.scrollTop/maxScroll));
+}
+function writeScrollPct(target:Window|HTMLElement,win:Window,pct:number){
+  if(target===win){
+    const doc=win.document;
+    const maxScroll=Math.max(1,doc.documentElement.scrollHeight-win.innerHeight);
+    win.scrollTo({top:pct*maxScroll,behavior:"smooth"});
+    return;
+  }
+  const el=target as HTMLElement;
+  const maxScroll=Math.max(1,el.scrollHeight-el.clientHeight);
+  el.scrollTo({top:pct*maxScroll,behavior:"smooth"});
+}
+
 /* ══ IN-CLASS MATERIAL VIEWER ══
    Renders INSIDE the content area (position:absolute) so the footer and top bar
    always remain visible. Has an opt-in fullscreen button that expands to the full
@@ -2478,7 +2521,12 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
 
   // ── Teacher: capture cursor position + scroll fraction from inside the
   //    lesson's own document (srcDoc + allow-same-origin makes this
-  //    reachable) and hand it up to the parent to broadcast, throttled. ──
+  //    reachable) and hand it up to the parent to broadcast, throttled.
+  //    Custom lessons often scroll an inner container (e.g. a "#stage" card)
+  //    rather than the window itself, so we detect whichever element is
+  //    actually scrollable instead of assuming window-level scroll — and we
+  //    also listen for clicks/taps, since slide-style lessons often advance
+  //    via a tap rather than a scroll gesture. ──
   const lastSentRef=useRef(0);
   useEffect(()=>{
     if(kind!=="html"||!isTeacher||!syncActive||!onSyncActivity||htmlDoc==null)return;
@@ -2489,32 +2537,36 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
       const doc=frame.contentDocument;
       const win=frame.contentWindow;
       if(!doc||!win)return;
-      const onMove=(e:MouseEvent)=>{
+
+      const send=(xPct:number,yPct:number,force=false)=>{
         const now=Date.now();
-        if(now-lastSentRef.current<90)return;
+        if(!force&&now-lastSentRef.current<90)return;
         lastSentRef.current=now;
-        const w=doc.documentElement.scrollWidth||win.innerWidth;
-        const h=doc.documentElement.scrollHeight||win.innerHeight;
-        const xPct=Math.min(1,Math.max(0,(e.pageX)/w));
-        const yPct=Math.min(1,Math.max(0,(e.pageY)/h));
-        const maxScroll=Math.max(1,doc.documentElement.scrollHeight-win.innerHeight);
-        const scrollPct=Math.min(1,Math.max(0,win.scrollY/maxScroll));
+        const target=findScrollTarget(doc,win);
+        const scrollPct=readScrollPct(target,win);
         onSyncActivity(xPct,yPct,scrollPct);
       };
-      const onScroll=()=>{
-        const now=Date.now();
-        if(now-lastSentRef.current<90)return;
-        lastSentRef.current=now;
-        const maxScroll=Math.max(1,doc.documentElement.scrollHeight-win.innerHeight);
-        const scrollPct=Math.min(1,Math.max(0,win.scrollY/maxScroll));
-        onSyncActivity(0.5,0.5,scrollPct);
+      const onMove=(e:MouseEvent)=>{
+        const w=doc.documentElement.scrollWidth||win.innerWidth;
+        const h=doc.documentElement.scrollHeight||win.innerHeight;
+        send(Math.min(1,Math.max(0,e.pageX/w)),Math.min(1,Math.max(0,e.pageY/h)));
       };
+      const onScroll=()=>send(0.5,0.5);
+      // Content that advances on tap (slide decks, "reveal next" lessons)
+      // often doesn't fire a scroll event at all — resync right after the
+      // click, once the DOM/scroll position has settled.
+      const onClick=()=>{ setTimeout(()=>send(0.5,0.5,true),60); };
+
       doc.addEventListener("mousemove",onMove);
       doc.addEventListener("touchmove",onMove as any,{passive:true});
+      doc.addEventListener("click",onClick,true);
+      doc.addEventListener("scroll",onScroll,true); // capture:true catches scroll on inner containers too
       win.addEventListener("scroll",onScroll);
       cleanup=()=>{
         doc.removeEventListener("mousemove",onMove);
         doc.removeEventListener("touchmove",onMove as any);
+        doc.removeEventListener("click",onClick,true);
+        doc.removeEventListener("scroll",onScroll,true);
         win.removeEventListener("scroll",onScroll);
       };
     };
@@ -2532,8 +2584,8 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     const win=frame?.contentWindow;
     const doc=frame?.contentDocument;
     if(!win||!doc)return;
-    const maxScroll=Math.max(1,doc.documentElement.scrollHeight-win.innerHeight);
-    win.scrollTo({top:remoteActivity.scrollPct*maxScroll,behavior:"smooth"});
+    const target=findScrollTarget(doc,win);
+    writeScrollPct(target,win,remoteActivity.scrollPct);
   },[kind,following,remoteActivity]);
 
 
