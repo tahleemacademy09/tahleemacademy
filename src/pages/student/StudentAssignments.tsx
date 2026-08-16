@@ -30,7 +30,7 @@ import {
   Play, Pause, RotateCcw, Paperclip, MessageSquare, Calendar,
   Search, ArrowLeft, StopCircle, Download,
   TrendingUp, Award, Loader2, Plus, Pencil, Trash2, Users, Lock,
-  GraduationCap, Save,
+  GraduationCap, Save, Eye,
 } from "lucide-react";
 
 /* ── Design tokens ─────────────────────────────────────── */
@@ -1399,11 +1399,7 @@ function AssignmentModal({
                     </div>
                   ))}
                   {files.map((f, i) => (
-                    <div key={`${f.name}-${i}`} style={{ background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 10, padding: "10px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                      <Paperclip style={{ width: 14, height: 14, color: "#1d4ed8" }} />
-                      <span style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 700, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-                      <button onClick={() => removeNewFile(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "#888", padding: 0 }}><X style={{ width: 13, height: 13 }} /></button>
-                    </div>
+                    <NewFilePreviewRow key={`${f.name}-${i}`} file={f} onRemove={() => removeNewFile(i)} />
                   ))}
                   {!isGraded && (
                     <button onClick={() => fileRef.current?.click()}
@@ -1586,6 +1582,56 @@ function getExt(url: string) {
   return (url.split("?")[0].split(".").pop() || "").toLowerCase();
 }
 const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+
+/* Preview row for a locally-picked file (not yet uploaded) — lets the
+   student preview images/PDFs inline, or open other types in a new tab,
+   before hitting submit. */
+function NewFilePreviewRow({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const [objUrl, setObjUrl] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    const u = URL.createObjectURL(file);
+    setObjUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [file]);
+
+  const ext = getExt(file.name);
+  const isImage = IMAGE_EXTS.includes(ext);
+  const isPdf = ext === "pdf";
+  const previewable = isImage || isPdf;
+
+  const handlePreview = () => {
+    if (!objUrl) return;
+    if (isImage) { setExpanded(v => !v); return; }
+    if (isPdf) { window.open(objUrl, "_blank", "noopener,noreferrer"); return; }
+    // Non-previewable type — just open/download it so the student can
+    // still check the file before submitting.
+    const a = document.createElement("a");
+    a.href = objUrl;
+    a.download = file.name;
+    a.click();
+  };
+
+  return (
+    <div style={{ background: "#eff6ff", border: "1px solid #93c5fd", borderRadius: 10, marginBottom: 8, overflow: "hidden" }}>
+      <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+        <Paperclip style={{ width: 14, height: 14, color: "#1d4ed8", flexShrink: 0 }} />
+        <span style={{ fontSize: 12, color: "#1d4ed8", fontWeight: 700, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+        <button onClick={handlePreview} disabled={!objUrl} type="button" title="Preview"
+          style={{ background: "none", border: "none", cursor: objUrl ? "pointer" : "default", color: "#1d4ed8", padding: 2, display: "flex", alignItems: "center" }}>
+          <Eye style={{ width: 15, height: 15 }} />
+        </button>
+        <button onClick={onRemove} type="button"
+          style={{ background: "none", border: "none", cursor: "pointer", color: "#888", padding: 0, display: "flex", alignItems: "center" }}>
+          <X style={{ width: 13, height: 13 }} />
+        </button>
+      </div>
+      {previewable && isImage && expanded && objUrl && (
+        <img src={objUrl} alt={file.name} style={{ width: "100%", display: "block", maxHeight: 420, objectFit: "contain", background: "#000" }} />
+      )}
+    </div>
+  );
+}
 
 function AttachmentRow({ url, label }: { url: string; label: string }) {
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
