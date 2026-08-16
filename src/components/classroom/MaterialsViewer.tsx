@@ -22,11 +22,11 @@ import {
   FileText, Video, Music, Link as LinkIcon, Image, Download,
   File, ExternalLink, Play, Eye, X, Loader2, Pause, Volume2, VolumeX,
   Headphones, ChevronDown, ChevronUp, Radio,
-  Minimize2, Maximize2, Layers,
+  Minimize2, Maximize2, Layers, LayoutTemplate,
 } from "lucide-react";
 
 interface Props { materials: any[]; sessions?: any[]; recordings?: any[]; }
-type FileKind = "pdf"|"image"|"video"|"audio"|"youtube"|"link"|"office"|"html"|"text"|"other";
+type FileKind = "pdf"|"image"|"video"|"audio"|"youtube"|"link"|"office"|"text"|"html"|"other";
 
 interface OpenEntry { mat: any; kind: FileKind; prefetchedUrl?: string; }
 
@@ -71,7 +71,7 @@ const K: Record<FileKind, { icon: React.ElementType; bg: string; border: string;
   youtube:{ icon: Play,     bg:"#FFF7ED", border:"#FED7AA", color:"#EA580C", label:"YouTube" },
   link:   { icon: LinkIcon, bg:"#F0FDFA", border:"#99F6E4", color:"#0D9488", label:"Link" },
   office: { icon: FileText, bg:"#EFF6FF", border:"#BFDBFE", color:"#1D4ED8", label:"Document" },
-  html:   { icon: FileText, bg:"#F0FDF4", border:"#BBF7D0", color:"#16A34A", label:"Lesson" },
+  html:   { icon: LayoutTemplate, bg:"#FBF6E6", border:"#E4D9B0", color:"#A9791E", label:"Interactive" },
   text:   { icon: FileText, bg:"#FFFBEB", border:"#FDE68A", color:"#B45309", label:"Text" },
   other:  { icon: File,     bg:"#F9FAFB", border:"#E5E7EB", color:"#6B7280", label:"File" },
 };
@@ -305,26 +305,8 @@ function FileViewer({
   const [url, setUrl]         = useState(prefetchedUrl || "");
   const [loading, setLoading] = useState(!prefetchedUrl);
   const [error, setError]     = useState("");
-  const [htmlDoc, setHtmlDoc]     = useState<string | null>(null);
-  const [htmlError, setHtmlError] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-
-  // Fetch and inject HTML materials directly rather than trusting the
-  // server's Content-Type header — some storage/CDN layers serve the wrong
-  // one, which makes an interactive lesson show as raw source instead of
-  // rendering. srcDoc always renders as HTML regardless of that header.
-  useEffect(() => {
-    if (kind !== "html" || !url) return;
-    let cancelled = false;
-    setHtmlDoc(null);
-    setHtmlError(false);
-    fetch(url)
-      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.text(); })
-      .then(text => { if (!cancelled) setHtmlDoc(text); })
-      .catch(() => { if (!cancelled) setHtmlError(true); });
-    return () => { cancelled = true; };
-  }, [kind, url]);
 
   useEffect(() => {
     // Already have a good URL — nothing to do
@@ -439,11 +421,12 @@ function FileViewer({
             {kind==="youtube" && <div style={{ position:"relative",paddingBottom:"56.25%",height:0 }}><iframe src={ytEmbed(url)} style={{ position:"absolute",top:0,left:0,width:"100%",height:"100%",border:"none" }} allowFullScreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" title={mat.title}/></div>}
             {kind==="office" && <iframe src={officeEmbed(url)} style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400 }} title={mat.title}/>}
             {kind==="html" && (
-              htmlError
-                ? <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,gap:12,flex:1 }}><p style={{ fontSize:13,color:"#6b7280" }}>Couldn't load this lesson.</p><a href={url} target="_blank" rel="noopener noreferrer"><Button style={{ borderRadius:12,gap:6 }}><ExternalLink size={13}/> Open in new tab</Button></a></div>
-                : htmlDoc == null
-                  ? <div style={{ display:"flex",alignItems:"center",justifyContent:"center",flex:1,minHeight:300 }}><Loader2 size={24} className="animate-spin" style={{ color:"#9CA3AF" }}/></div>
-                  : <iframe srcDoc={htmlDoc} sandbox="allow-scripts allow-same-origin allow-popups allow-forms" style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400,background:"#fff" }} title={mat.title}/>
+              <iframe
+                src={url}
+                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                style={{ width:"100%",flex:1,border:"none",display:"block",minHeight:400,background:"#fff" }}
+                title={mat.title}
+              />
             )}
             {kind==="text" && <div style={{ padding:16,maxWidth:720,margin:"0 auto",width:"100%" }}><div style={{ background:"#fff",borderRadius:14,padding:16,border:"1px solid #e5e7eb",fontSize:14,lineHeight:1.8,color:"#374151",whiteSpace:"pre-wrap" }}>{mat.content||"No content."}</div></div>}
             {kind==="link" && <div style={{ display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32,gap:12,flex:1 }}><div style={{ width:48,height:48,borderRadius:14,background:"#F0FDFA",display:"flex",alignItems:"center",justifyContent:"center" }}><LinkIcon size={20} style={{ color:"#0D9488" }}/></div><p style={{ fontSize:13,color:"#6b7280",wordBreak:"break-all",maxWidth:320,textAlign:"center" }}>{url}</p><a href={url} target="_blank" rel="noopener noreferrer"><Button style={{ borderRadius:12,gap:6 }}><ExternalLink size={13}/> Open</Button></a></div>}
