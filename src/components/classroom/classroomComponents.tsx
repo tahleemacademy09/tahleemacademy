@@ -2408,10 +2408,10 @@ function findNavButton(doc:Document,forward:boolean):HTMLElement|null{
   }
   return null;
 }
-function driveToStep(doc:Document,targetStep:number,attempts=0){
-  if(attempts>40)return; // safety cap against an infinite loop if detection is off
+function driveToStep(doc:Document,targetStep:number,onDone?:()=>void,attempts=0){
+  if(attempts>40){onDone?.();return;} // safety cap against an infinite loop if detection is off
   const cur=detectDotStep(doc);
-  if(!cur||cur.step===targetStep)return;
+  if(!cur||cur.step===targetStep){onDone?.();return;}
   const forward=targetStep>cur.step;
   const btn=findNavButton(doc,forward);
   if(btn){ btn.click(); }
@@ -2419,7 +2419,42 @@ function driveToStep(doc:Document,targetStep:number,attempts=0){
     const ev=new KeyboardEvent("keydown",{key:forward?" ":"ArrowLeft",code:forward?"Space":"ArrowLeft",bubbles:true,cancelable:true});
     doc.dispatchEvent(ev);
   }
-  setTimeout(()=>driveToStep(doc,targetStep,attempts+1),180);
+  setTimeout(()=>driveToStep(doc,targetStep,onDone,attempts+1),180);
+}
+
+/* ── Within-slide reveal sync ──
+   Some lessons (this one included) don't just move slide-to-slide: content
+   inside a slide fades in piece by piece as you click/tap (title, then a
+   definition box, then supporting bullets — one at a time), per the
+   lesson's own convention of a `.item` becoming `.item.shown`. The dot/slide
+   index alone doesn't capture that — two students could be on the exact
+   same slide but see completely different amounts of it revealed. Track how
+   many `.shown` items are currently visible, and catch a student up by
+   clicking the content area the same way a real reader would (per the
+   lesson's own "click anywhere ... to reveal the next word" instruction). */
+function detectRevealCount(doc:Document):number{
+  let items=doc.querySelectorAll(".item.shown");
+  if(!items||items.length===0)items=doc.querySelectorAll(".shown");
+  return items?items.length:0;
+}
+function clickStage(doc:Document){
+  const stage=doc.querySelector<HTMLElement>("#stage")||doc.querySelector<HTMLElement>(".stage")||doc.body;
+  stage?.dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true}));
+}
+function driveToReveal(doc:Document,targetCount:number,expectedStep:number,attempts=0){
+  if(attempts>60)return; // safety cap
+  const cur=detectRevealCount(doc);
+  if(cur>=targetCount)return;
+  clickStage(doc);
+  setTimeout(()=>{
+    // If that click ended up advancing to a different slide instead of
+    // revealing an item (the lesson often overloads the same "click
+    // anywhere" gesture for both), stop — a fresh sync broadcast covering
+    // the new slide/reveal state will arrive right behind it anyway.
+    const step=detectDotStep(doc);
+    if(step&&step.step!==expectedStep)return;
+    driveToReveal(doc,targetCount,expectedStep,attempts+1);
+  },150);
 }
 
 /* ══ IN-CLASS MATERIAL VIEWER ══
@@ -2585,7 +2620,8 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         const target=findScrollTarget(doc,win);
         const scrollPct=readScrollPct(target,win);
         const dotStep=detectDotStep(doc);
-        onSyncActivity(xPct,yPct,scrollPct,dotStep?.step??null,dotStep?.total??null);
+        const revealCount=detectRevealCount(doc);
+        onSyncActivity(xPct,yPct,scrollPct,dotStep?.step??null,dotStep?.total??null,revealCount);
       };
       const onMove=(e:MouseEvent)=>{
         const w=doc.documentElement.scrollWidth||win.innerWidth;
@@ -2622,17 +2658,27 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
 
   // ── Student: apply the teacher's live position (auto-follow). If the
   //    lesson is dot/slide based, drive the student's own copy to the same
-  //    dot by clicking its real nav buttons; scroll-follow handles the rest
-  //    (position within a slide, or lessons that are one long scroll). The
-  //    pointer dot itself is drawn as an overlay in the render below. ──
+  //    dot by clicking its real nav buttons, then — once on the right slide —
+  //    catch up on any within-slide reveal clicks too, so a student isn't
+  //    just on the right slide but sees the same amount of it revealed.
+  //    Scroll-follow handles the rest (lessons that are one long scroll).
+  //    The pointer dot itself is drawn as an overlay in the render below. ──
   useEffect(()=>{
     if(kind!=="html"||!following||!remoteActivity)return;
     const frame=iframeRef.current;
     const win=frame?.contentWindow;
     const doc=frame?.contentDocument;
     if(!win||!doc)return;
+    const catchUpReveal=()=>{
+      if(remoteActivity.revealCount!=null){
+        const step=detectDotStep(doc);
+        driveToReveal(doc,remoteActivity.revealCount,step?.step??-1);
+      }
+    };
     if(remoteActivity.step!=null){
-      driveToStep(doc,remoteActivity.step);
+      driveToStep(doc,remoteActivity.step,catchUpReveal);
+    } else {
+      catchUpReveal();
     }
     const target=findScrollTarget(doc,win);
     writeScrollPct(target,win,remoteActivity.scrollPct);
@@ -3669,7 +3715,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[syncEnabled,setSyncEnabled]=useState(false);              // teacher-only toggle
   const[syncBannerMat,setSyncBannerMat]=useState<any|null>(null); // "teacher is viewing X" prompt (student, not yet following)
   const[followingSyncId,setFollowingSyncId]=useState<string|null>(null); // material id the student is actively following
-  const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number;step:number|null;total:number|null}|null>(null);
+  const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number;step:number|null;total:number|null;revealCount:number|null}|null>(null);
   const syncChannelRef=useRef<any>(null);
   const followingSyncIdRef=useRef<string|null>(null);
   useEffect(()=>{followingSyncIdRef.current=followingSyncId;},[followingSyncId]);
@@ -3858,10 +3904,10 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     syncChannelRef.current.track({role:"teacher",syncEnabled,material:syncEnabled?activeMat:null});
   },[syncEnabled,activeMatId,openMats,isPrivileged]);
 
-  // Broadcast a live pointer/scroll/step update from the teacher's viewer
-  const broadcastSyncActivity=useCallback((materialId:string,xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null)=>{
+  // Broadcast a live pointer/scroll/step/reveal update from the teacher's viewer
+  const broadcastSyncActivity=useCallback((materialId:string,xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null,revealCount:number|null)=>{
     if(!isPrivileged||!syncEnabled||!syncChannelRef.current)return;
-    syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload:{materialId,xPct,yPct,scrollPct,step,total}});
+    syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload:{materialId,xPct,yPct,scrollPct,step,total,revealCount}});
   },[isPrivileged,syncEnabled]);
 
   const joinSync=()=>{
@@ -4110,7 +4156,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
               fromPanel={true}
               isTeacher={isPrivileged}
               syncActive={isPrivileged&&syncEnabled&&m.id===activeMatId}
-              onSyncActivity={(xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null)=>broadcastSyncActivity(m.id,xPct,yPct,scrollPct,step,total)}
+              onSyncActivity={(xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null,revealCount:number|null)=>broadcastSyncActivity(m.id,xPct,yPct,scrollPct,step,total,revealCount)}
               following={followingSyncId===m.id}
               remoteActivity={followingSyncId===m.id?syncActivity:null}
             />
