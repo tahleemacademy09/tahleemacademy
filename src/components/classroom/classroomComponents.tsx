@@ -2382,6 +2382,46 @@ function writeScrollPct(target:Window|HTMLElement,win:Window,pct:number){
   el.scrollTo({top:pct*maxScroll,behavior:"smooth"});
 }
 
+/* ══ SLIDE-STEP SYNC HELPERS ══
+   Many self-contained lessons (like the i'rab-style ones) aren't a single
+   scrolling document at all — they're a deck of full-screen "slides" swapped
+   via JS, with a dot-progress bar ("#dots .dot.active"). For those, scroll
+   position never changes between slides, so following scroll alone does
+   nothing. Detect the active dot as the real "position", and drive the
+   student's copy of the SAME lesson to the same dot by clicking its own
+   real ﻿"Next"/"Previous" buttons (or falling back to a Space/ArrowLeft key
+   event, matching the on-screen "use space/arrows to navigate" hint) —
+   more reliable than guessing at the lesson's internal JS. */
+function detectDotStep(doc:Document):{step:number;total:number}|null{
+  const dots=doc.querySelectorAll<HTMLElement>(".dot");
+  if(!dots||dots.length===0)return null;
+  let active=-1,done=0;
+  dots.forEach((d,i)=>{ if(d.classList.contains("active"))active=i; if(d.classList.contains("done"))done++; });
+  return {step:active>=0?active:done,total:dots.length};
+}
+function findNavButton(doc:Document,forward:boolean):HTMLElement|null{
+  const labels=forward?["التالي","Next","next"]:["السابق","Previous","Back","back"];
+  const candidates=doc.querySelectorAll<HTMLElement>("button, [role=button], a");
+  for(let i=0;i<candidates.length;i++){
+    const txt=(candidates[i].textContent||"").trim();
+    if(labels.includes(txt))return candidates[i];
+  }
+  return null;
+}
+function driveToStep(doc:Document,targetStep:number,attempts=0){
+  if(attempts>40)return; // safety cap against an infinite loop if detection is off
+  const cur=detectDotStep(doc);
+  if(!cur||cur.step===targetStep)return;
+  const forward=targetStep>cur.step;
+  const btn=findNavButton(doc,forward);
+  if(btn){ btn.click(); }
+  else{
+    const ev=new KeyboardEvent("keydown",{key:forward?" ":"ArrowLeft",code:forward?"Space":"ArrowLeft",bubbles:true,cancelable:true});
+    doc.dispatchEvent(ev);
+  }
+  setTimeout(()=>driveToStep(doc,targetStep,attempts+1),180);
+}
+
 /* ══ IN-CLASS MATERIAL VIEWER ══
    Renders INSIDE the content area (position:absolute) so the footer and top bar
    always remain visible. Has an opt-in fullscreen button that expands to the full
@@ -2544,7 +2584,8 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         lastSentRef.current=now;
         const target=findScrollTarget(doc,win);
         const scrollPct=readScrollPct(target,win);
-        onSyncActivity(xPct,yPct,scrollPct);
+        const dotStep=detectDotStep(doc);
+        onSyncActivity(xPct,yPct,scrollPct,dotStep?.step??null,dotStep?.total??null);
       };
       const onMove=(e:MouseEvent)=>{
         const w=doc.documentElement.scrollWidth||win.innerWidth;
@@ -2552,20 +2593,23 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         send(Math.min(1,Math.max(0,e.pageX/w)),Math.min(1,Math.max(0,e.pageY/h)));
       };
       const onScroll=()=>send(0.5,0.5);
-      // Content that advances on tap (slide decks, "reveal next" lessons)
-      // often doesn't fire a scroll event at all — resync right after the
-      // click, once the DOM/scroll position has settled.
-      const onClick=()=>{ setTimeout(()=>send(0.5,0.5,true),60); };
+      // Primary signal: a MutationObserver catches ANY way the lesson's
+      // content actually changed — click, keyboard (space/arrows, per the
+      // lesson's own on-screen hint), swipe, whatever — instead of guessing
+      // at which specific input events to listen for.
+      const observer=new MutationObserver(()=>{
+        setTimeout(()=>send(0.5,0.5,true),40);
+      });
+      observer.observe(doc.body,{childList:true,subtree:true,attributes:true,attributeFilter:["class","style"]});
 
       doc.addEventListener("mousemove",onMove);
       doc.addEventListener("touchmove",onMove as any,{passive:true});
-      doc.addEventListener("click",onClick,true);
       doc.addEventListener("scroll",onScroll,true); // capture:true catches scroll on inner containers too
       win.addEventListener("scroll",onScroll);
       cleanup=()=>{
+        observer.disconnect();
         doc.removeEventListener("mousemove",onMove);
         doc.removeEventListener("touchmove",onMove as any);
-        doc.removeEventListener("click",onClick,true);
         doc.removeEventListener("scroll",onScroll,true);
         win.removeEventListener("scroll",onScroll);
       };
@@ -2576,7 +2620,10 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     return()=>{ frame.removeEventListener("load",attach); cleanup(); };
   },[kind,isTeacher,syncActive,onSyncActivity,htmlDoc]);
 
-  // ── Student: apply the teacher's live scroll position (auto-follow). The
+  // ── Student: apply the teacher's live position (auto-follow). If the
+  //    lesson is dot/slide based, drive the student's own copy to the same
+  //    dot by clicking its real nav buttons; scroll-follow handles the rest
+  //    (position within a slide, or lessons that are one long scroll). The
   //    pointer dot itself is drawn as an overlay in the render below. ──
   useEffect(()=>{
     if(kind!=="html"||!following||!remoteActivity)return;
@@ -2584,6 +2631,9 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
     const win=frame?.contentWindow;
     const doc=frame?.contentDocument;
     if(!win||!doc)return;
+    if(remoteActivity.step!=null){
+      driveToStep(doc,remoteActivity.step);
+    }
     const target=findScrollTarget(doc,win);
     writeScrollPct(target,win,remoteActivity.scrollPct);
   },[kind,following,remoteActivity]);
@@ -3619,10 +3669,19 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[syncEnabled,setSyncEnabled]=useState(false);              // teacher-only toggle
   const[syncBannerMat,setSyncBannerMat]=useState<any|null>(null); // "teacher is viewing X" prompt (student, not yet following)
   const[followingSyncId,setFollowingSyncId]=useState<string|null>(null); // material id the student is actively following
-  const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number}|null>(null);
+  const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number;step:number|null;total:number|null}|null>(null);
   const syncChannelRef=useRef<any>(null);
   const followingSyncIdRef=useRef<string|null>(null);
   useEffect(()=>{followingSyncIdRef.current=followingSyncId;},[followingSyncId]);
+  // Kept current so a late/rejoining student's "what's the state right now?"
+  // request always gets an accurate answer, not whatever it was when this
+  // channel effect first subscribed.
+  const syncEnabledRef=useRef(false);
+  const activeSyncMatRef=useRef<any>(null);
+  useEffect(()=>{
+    syncEnabledRef.current=syncEnabled;
+    activeSyncMatRef.current=activeMatId?openMats.find(m=>m.id===activeMatId):null;
+  },[syncEnabled,activeMatId,openMats]);
   // listVisible: whether the sliding list panel is shown
   // (panel stays mounted even when list is hidden, so PiP survives)
   const[listVisible,setListVisible]=useState(true);
@@ -3764,9 +3823,28 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         if(payload?.materialId!==followingSyncIdRef.current)return;
         setSyncActivity(payload);
       })
+      // ── Active state handoff for (re)joining students ──
+      // Presence *should* hand a newly-subscribed client the current
+      // teacher state automatically, but a student who briefly disconnects
+      // and rejoins hit a real gap here — so rather than depend only on
+      // presence timing, a (re)joining student explicitly asks "what's the
+      // current state?" and the teacher answers directly over broadcast,
+      // which is unambiguous and doesn't depend on presence internals.
+      .on("broadcast",{event:"request-sync-state"},()=>{
+        if(!isPrivileged)return;
+        const mat=syncEnabledRef.current?activeSyncMatRef.current:null;
+        if(mat){
+          syncChannelRef.current?.send({type:"broadcast",event:"material-open",payload:{material:mat}});
+        } else {
+          syncChannelRef.current?.send({type:"broadcast",event:"material-close",payload:{}});
+        }
+      })
       .subscribe(async (status:string)=>{
-        if(status==="SUBSCRIBED"&&isPrivileged){
+        if(status!=="SUBSCRIBED")return;
+        if(isPrivileged){
           await ch.track({role:"teacher",syncEnabled,material:activeMatId?openMats.find(m=>m.id===activeMatId):null});
+        } else {
+          ch.send({type:"broadcast",event:"request-sync-state",payload:{}});
         }
       });
 
@@ -3780,10 +3858,10 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     syncChannelRef.current.track({role:"teacher",syncEnabled,material:syncEnabled?activeMat:null});
   },[syncEnabled,activeMatId,openMats,isPrivileged]);
 
-  // Broadcast a live pointer/scroll update from the teacher's viewer
-  const broadcastSyncActivity=useCallback((materialId:string,xPct:number,yPct:number,scrollPct:number)=>{
+  // Broadcast a live pointer/scroll/step update from the teacher's viewer
+  const broadcastSyncActivity=useCallback((materialId:string,xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null)=>{
     if(!isPrivileged||!syncEnabled||!syncChannelRef.current)return;
-    syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload:{materialId,xPct,yPct,scrollPct}});
+    syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload:{materialId,xPct,yPct,scrollPct,step,total}});
   },[isPrivileged,syncEnabled]);
 
   const joinSync=()=>{
@@ -4032,7 +4110,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
               fromPanel={true}
               isTeacher={isPrivileged}
               syncActive={isPrivileged&&syncEnabled&&m.id===activeMatId}
-              onSyncActivity={(xPct:number,yPct:number,scrollPct:number)=>broadcastSyncActivity(m.id,xPct,yPct,scrollPct)}
+              onSyncActivity={(xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null)=>broadcastSyncActivity(m.id,xPct,yPct,scrollPct,step,total)}
               following={followingSyncId===m.id}
               remoteActivity={followingSyncId===m.id?syncActivity:null}
             />
