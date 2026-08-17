@@ -2748,12 +2748,9 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         ):(<>
           <iframe ref={iframeRef} srcDoc={htmlDoc} title={material.title}
             sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-            style={{width:"100%",height:"100%",border:"none",display:"block",background:"#fff"}}/>
-          {following&&remoteActivity&&(
-            <div style={{position:"absolute",left:`${remoteActivity.xPct*100}%`,top:`${remoteActivity.yPct*100}%`,transform:"translate(-4px,-2px)",pointerEvents:"none",zIndex:5,transition:"left .1s linear, top .1s linear"}}>
-              <div style={{fontSize:22,filter:"drop-shadow(0 2px 3px rgba(0,0,0,.4))"}}>👆</div>
-              <div style={{background:"#34d399",color:"#0f1a14",fontSize:9,fontWeight:700,borderRadius:6,padding:"2px 6px",marginTop:-2,whiteSpace:"nowrap"}}>Teacher</div>
-            </div>
+            style={{width:"100%",height:"100%",border:"none",display:"block",background:"#fff",pointerEvents:following?"none":"auto"}}/>
+          {following&&(
+            <div style={{position:"absolute",inset:0,zIndex:5}}/>
           )}
         </>)}
       </div>
