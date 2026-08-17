@@ -81,6 +81,7 @@ import {
   ProfileSyncBridge,
   HeartbeatBridge,
   WbSyncBridge,
+  MaterialSyncAutoOpenBridge,
   AdminMuteListener,
   BASE_GAIN,
   VolumeBooster,
@@ -1248,6 +1249,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — keep mounted when it has minimized PiP materials */}
               {(matPanelOpen||matPanelHasPip)&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop} onOpenMatsChange={(has:boolean)=>setMatPanelHasPip(has)} panelRef={matPanelRef}/>}
+              {/* Students who haven't opened Materials yet still need to hear
+                  that the teacher turned sync on — this has no UI of its own,
+                  it just opens the real panel above the instant that happens. */}
+              {!isPrivileged&&!matPanelOpen&&!matPanelHasPip&&phase==="live"&&<MaterialSyncAutoOpenBridge sessionId={sessionId} onNeedsOpen={()=>setMatPanelOpen(true)}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&(
                 <div style={{position:"absolute",inset:0,zIndex:55,display:matMinimized?"none":"block"}}>

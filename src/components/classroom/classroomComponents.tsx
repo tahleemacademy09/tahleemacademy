@@ -884,6 +884,40 @@ export const WbSyncBridge = ({ wbOpen, isTeacher }: { wbOpen: boolean; isTeacher
   return null;
 };
 
+/* ══ MATERIAL SYNC AUTO-OPEN BRIDGE ══
+   BUG FIX ("only one student sees it"): the entire follow-the-teacher sync
+   channel subscription (material-open/close/activity listeners) lives
+   inside SubjectMaterialsPanel — but that panel is only mounted in a
+   student's app once THEY click "Subject Materials". Students who never
+   clicked it were never subscribed to anything, so the teacher's broadcasts
+   had no one to reach on their end — only whichever student(s) already had
+   the panel open (e.g. the last one who happened to click it) ever saw it.
+   This bridge is mounted for every student the instant they're live,
+   independent of matPanelOpen, and does nothing but listen for the teacher
+   turning sync on. The moment it sees that, it asks the parent to open the
+   real panel — which then mounts fresh and immediately fetches the current
+   state via the existing "request-sync-state" handshake, landing the
+   student exactly where the teacher currently is. ══ */
+export const MaterialSyncAutoOpenBridge = ({ sessionId, onNeedsOpen }: { sessionId: string | null; onNeedsOpen: () => void }) => {
+  useEffect(() => {
+    if (!sessionId) return;
+    const ch = supabase.channel(`material-sync-${sessionId}`);
+    const checkPresence = () => {
+      const state = ch.presenceState() as Record<string, any[]>;
+      let active = false;
+      Object.values(state).forEach(arr => {
+        arr.forEach((p: any) => { if (p.role === "teacher" && p.syncEnabled && p.material) active = true; });
+      });
+      if (active) onNeedsOpen();
+    };
+    ch.on("presence", { event: "sync" }, checkPresence)
+      .on("broadcast", { event: "material-open" }, () => onNeedsOpen())
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [sessionId, onNeedsOpen]);
+  return null;
+};
+
 /* ══ ADMIN MUTE LISTENER ══
    Students only. Handles:
    - admin_mute_all  → mute everyone
