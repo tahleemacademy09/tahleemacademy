@@ -3706,11 +3706,10 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[openMats,setOpenMats]=useState<any[]>([]);
   const[activeMatId,setActiveMatId]=useState<string|null>(null);
   const[quranOpen,setQuranOpen]=useState(false);
-  // ── Live "follow the teacher" sync (teacher toggles on; students see a
-  //    join prompt when a material opens, then auto-scroll + a hand pointer
-  //    that tracks the teacher's live reading position). ──────────────────
+  // ── Live "follow the teacher" sync (teacher toggles on; students'
+  //    material view is then fully driven by the teacher — opens, closes,
+  //    and resumes automatically, no manual "join" step). ──────────────────
   const[syncEnabled,setSyncEnabled]=useState(false);              // teacher-only toggle
-  const[syncBannerMat,setSyncBannerMat]=useState<any|null>(null); // "teacher is viewing X" prompt (student, not yet following)
   const[followingSyncId,setFollowingSyncId]=useState<string|null>(null); // material id the student is actively following
   const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number;step:number|null;total:number|null;revealCount:number|null}|null>(null);
   const syncChannelRef=useRef<any>(null);
@@ -3721,6 +3720,12 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   // channel effect first subscribed.
   const syncEnabledRef=useRef(false);
   const activeSyncMatRef=useRef<any>(null);
+  // Latest known pointer/scroll/step/reveal snapshot per material, kept even
+  // after that material closes — so re-opening (a teacher "restart", or a
+  // late-joining student's very first open) resumes exactly where the
+  // teacher's reading was, instead of flashing back to the first slide while
+  // waiting for the next live tick.
+  const lastActivityByMatRef=useRef<Record<string,any>>({});
   useEffect(()=>{
     syncEnabledRef.current=syncEnabled;
     activeSyncMatRef.current=activeMatId?openMats.find(m=>m.id===activeMatId):null;
@@ -3830,36 +3835,39 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
       Object.values(state).forEach(arr=>{
         arr.forEach((p:any)=>{ if(p.role==="teacher") teacherEntry=p; });
       });
-      if(!isPrivileged){
-        if(teacherEntry?.syncEnabled&&teacherEntry?.material){
-          // Only surface a fresh join prompt if we're not already following
-          // this exact material (avoids re-flashing the banner on our own re-renders).
-          setSyncBannerMat((prev:any)=> followingSyncIdRef.current===teacherEntry.material.id?prev:teacherEntry.material);
-        } else {
-          setSyncBannerMat(null);
-          setFollowingSyncId(null);
-        }
+      if(isPrivileged)return;
+      if(teacherEntry?.syncEnabled&&teacherEntry?.material){
+        setFollowingSyncId(teacherEntry.material.id);
+        openMaterial(teacherEntry.material);
+        if(teacherEntry.activity)setSyncActivity(teacherEntry.activity);
+      } else if(followingSyncIdRef.current){
+        setOpenMats((prev:any[])=>prev.filter(e=>e.id!==followingSyncIdRef.current));
+        setActiveMatId((prev:string|null)=>prev===followingSyncIdRef.current?null:prev);
+        setFollowingSyncId(null);
+        setSyncActivity(null);
       }
     };
 
     ch
       .on("presence",{event:"sync"},applyTeacherPresence)
       .on("broadcast",{event:"material-open"},({payload}:any)=>{
+        // Sync is fully automatic now — no manual "join" step. Any
+        // material-open the teacher broadcasts (with sync on) opens
+        // immediately for every student, and if a last-known position came
+        // along with it, we jump straight there instead of starting over.
         if(isPrivileged||!payload?.material)return;
-        if(followingSyncIdRef.current){
-          // Already opted in to following — seamlessly move with the teacher,
-          // no repeat prompt (matches "Follow Presenter"-style UX).
-          setFollowingSyncId(payload.material.id);
-          openMaterial(payload.material);
-          setSyncBannerMat(null);
-        } else {
-          setSyncBannerMat(payload.material);
-        }
+        setFollowingSyncId(payload.material.id);
+        openMaterial(payload.material);
+        if(payload.activity)setSyncActivity(payload.activity);
       })
       .on("broadcast",{event:"material-close"},()=>{
         if(isPrivileged)return;
-        setSyncBannerMat(null);
+        if(followingSyncIdRef.current){
+          setOpenMats((prev:any[])=>prev.filter(e=>e.id!==followingSyncIdRef.current));
+          setActiveMatId((prev:string|null)=>prev===followingSyncIdRef.current?null:prev);
+        }
         setFollowingSyncId(null);
+        setSyncActivity(null);
       })
       .on("broadcast",{event:"material-activity"},({payload}:any)=>{
         if(isPrivileged)return;
@@ -3873,11 +3881,13 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
       // presence timing, a (re)joining student explicitly asks "what's the
       // current state?" and the teacher answers directly over broadcast,
       // which is unambiguous and doesn't depend on presence internals.
+      // The reply also carries the last known reading position so a late
+      // joiner lands exactly where the teacher currently is, immediately.
       .on("broadcast",{event:"request-sync-state"},()=>{
         if(!isPrivileged)return;
         const mat=syncEnabledRef.current?activeSyncMatRef.current:null;
         if(mat){
-          syncChannelRef.current?.send({type:"broadcast",event:"material-open",payload:{material:mat}});
+          syncChannelRef.current?.send({type:"broadcast",event:"material-open",payload:{material:mat,activity:lastActivityByMatRef.current[mat.id]||null}});
         } else {
           syncChannelRef.current?.send({type:"broadcast",event:"material-close",payload:{}});
         }
@@ -3885,7 +3895,8 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
       .subscribe(async (status:string)=>{
         if(status!=="SUBSCRIBED")return;
         if(isPrivileged){
-          await ch.track({role:"teacher",syncEnabled,material:activeMatId?openMats.find(m=>m.id===activeMatId):null});
+          const mat=activeMatId?openMats.find(m=>m.id===activeMatId):null;
+          await ch.track({role:"teacher",syncEnabled,material:mat,activity:mat?lastActivityByMatRef.current[mat.id]||null:null});
         } else {
           ch.send({type:"broadcast",event:"request-sync-state",payload:{}});
         }
@@ -3898,21 +3909,17 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   useEffect(()=>{
     if(!isPrivileged||!syncChannelRef.current)return;
     const activeMat=activeMatId?openMats.find(m=>m.id===activeMatId):null;
-    syncChannelRef.current.track({role:"teacher",syncEnabled,material:syncEnabled?activeMat:null});
+    syncChannelRef.current.track({role:"teacher",syncEnabled,material:syncEnabled?activeMat:null,activity:activeMat?lastActivityByMatRef.current[activeMat.id]||null:null});
   },[syncEnabled,activeMatId,openMats,isPrivileged]);
 
   // Broadcast a live pointer/scroll/step/reveal update from the teacher's viewer
   const broadcastSyncActivity=useCallback((materialId:string,xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null,revealCount:number|null)=>{
     if(!isPrivileged||!syncEnabled||!syncChannelRef.current)return;
-    syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload:{materialId,xPct,yPct,scrollPct,step,total,revealCount}});
+    const payload={materialId,xPct,yPct,scrollPct,step,total,revealCount};
+    lastActivityByMatRef.current[materialId]=payload;
+    syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload});
   },[isPrivileged,syncEnabled]);
 
-  const joinSync=()=>{
-    if(!syncBannerMat)return;
-    setFollowingSyncId(syncBannerMat.id);
-    openMaterial(syncBannerMat);
-    setSyncBannerMat(null);
-  };
   const stopFollowingSync=()=>{
     setFollowingSyncId(null);
     setSyncActivity(null);
@@ -4034,7 +4041,10 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     setListVisible(true);
     setForceList(false);
     if(isPrivileged&&syncEnabled&&syncChannelRef.current){
-      syncChannelRef.current.send({type:"broadcast",event:"material-open",payload:{material:m}});
+      // Carry along the last known position for this material (if we have
+      // one — e.g. re-opening after a close) so students resume exactly
+      // where things left off instead of restarting from the first slide.
+      syncChannelRef.current.send({type:"broadcast",event:"material-open",payload:{material:m,activity:lastActivityByMatRef.current[m.id]||null}});
     }
   };
   const minimizeActive=()=>{
@@ -4212,19 +4222,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
           </button>
         )}
 
-        {/* Student: teacher is viewing a material — join prompt */}
-        {!isPrivileged&&syncBannerMat&&(
-          <div style={{margin:"10px 10px 0",padding:"10px 12px",borderRadius:10,border:"1px solid rgba(52,211,153,.35)",background:"rgba(52,211,153,.1)",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-            <span style={{fontSize:16,flexShrink:0}}>👩‍🏫</span>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:12,fontWeight:600,color:"#e8eaf0"}}>Teacher is viewing</div>
-              <div style={{fontSize:11,color:"rgba(255,255,255,.6)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{syncBannerMat.title}</div>
-            </div>
-            <button onClick={joinSync} style={{background:"#34d399",color:"#0f1a14",border:"none",borderRadius:8,padding:"7px 14px",fontWeight:700,fontSize:12,cursor:"pointer",flexShrink:0}}>Join</button>
-            <button onClick={()=>setSyncBannerMat(null)} style={{background:"none",border:"none",color:"rgba(255,255,255,.4)",cursor:"pointer",padding:2,flexShrink:0}}><X style={{width:13,height:13}}/></button>
-          </div>
-        )}
-        {/* Student: currently following — quick way to stop */}
+        {/* Student: currently following — automatic; a quick way to opt out */}
         {!isPrivileged&&followingSyncId&&(
           <div style={{margin:"10px 10px 0",padding:"8px 12px",borderRadius:10,border:"1px solid rgba(52,211,153,.25)",background:"rgba(52,211,153,.06)",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
             <span style={{fontSize:13,flexShrink:0}}>🔗</span>
