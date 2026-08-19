@@ -694,30 +694,29 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                 <div key={course.id} className="sc"
                   style={{ background:"#fff", borderRadius:18, border:"1px solid #e5e7eb", overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,.05)", cursor:"pointer" }}
                   onClick={() => setSelCourse(course)}>
-                  <div style={{ display:"flex", gap:0 }}>
-                    <div style={{ width:100, flexShrink:0, background:`linear-gradient(135deg,${G},${GM})` }}>
-                      {course.image_url
-                        ? <SafeImg src={course.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}
-                            fallback={<div style={{ height:"100%", minHeight:90, display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:24, height:24, color:"rgba(255,255,255,.3)" }} /></div>} />
-                        : <div style={{ height:"100%", minHeight:90, display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:24, height:24, color:"rgba(255,255,255,.3)" }} /></div>
-                      }
-                    </div>
-                    <div style={{ flex:1, padding:"14px 16px" }}>
-                      {course.level && course.level !== "all" && (
-                        <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:6 }}>{lvLabel(course.level)}</span>
-                      )}
-                      <h3 style={{ fontSize:14, fontWeight:800, color:G, margin:"0 0 2px" }}>{courseName}</h3>
-                      {course.title_ar && language !== "ar" && (
-                        <p style={{ fontSize:12, color:GOLD, margin:"0 0 4px", fontFamily:"serif" }} dir="rtl">{course.title_ar}</p>
-                      )}
-                      {course.description && (
-                        <p style={{ fontSize:12, color:"#9ca3af", margin:"0 0 10px", lineHeight:1.5, display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as any, overflow:"hidden" }}>
-                          {course.description}
-                        </p>
-                      )}
-                      <div style={{ display:"flex", alignItems:"center", gap:6, color:GM, fontSize:12, fontWeight:700 }}>
-                        <Layers style={{ width:12, height:12 }} />{t("View Subjects","عرض المواد")} <ChevronRight style={{ width:14, height:14 }} />
-                      </div>
+                  <div style={{ width:"100%", height:150, position:"relative", background:`linear-gradient(135deg,${G},${GM})` }}>
+                    {course.image_url
+                      ? <SafeImg src={course.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}
+                          fallback={<div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:32, height:32, color:"rgba(255,255,255,.3)" }} /></div>} />
+                      : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:32, height:32, color:"rgba(255,255,255,.3)" }} /></div>
+                    }
+                    {isCourseLive(course.id) && <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 7px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pulse 1.5s infinite" }}>● LIVE</span>}
+                  </div>
+                  <div style={{ padding:"14px 16px" }}>
+                    {course.level && course.level !== "all" && (
+                      <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:6 }}>{lvLabel(course.level)}</span>
+                    )}
+                    <h3 style={{ fontSize:14, fontWeight:800, color:G, margin:"0 0 2px" }}>{courseName}</h3>
+                    {course.title_ar && language !== "ar" && (
+                      <p style={{ fontSize:12, color:GOLD, margin:"0 0 4px", fontFamily:"serif" }} dir="rtl">{course.title_ar}</p>
+                    )}
+                    {course.description && (
+                      <p style={{ fontSize:12, color:"#9ca3af", margin:"0 0 10px", lineHeight:1.5, display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" as any, overflow:"hidden" }}>
+                        {course.description}
+                      </p>
+                    )}
+                    <div style={{ display:"flex", alignItems:"center", gap:6, color:GM, fontSize:12, fontWeight:700 }}>
+                      <Layers style={{ width:12, height:12 }} />{t("View Subjects","عرض المواد")} <ChevronRight style={{ width:14, height:14 }} />
                     </div>
                   </div>
                 </div>
