@@ -10,7 +10,7 @@
         • Fallback: old `level` TEXT === student's level or 'all'/null
     - Admins/teachers bypass all filters and see everything.
 */
-import { useState, useEffect } from "react";
+import { useState, useEffect, type CSSProperties, type ReactNode } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -34,6 +34,15 @@ import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
 const GOLD = "#c9a84c";
+
+// ── Image that quietly falls back to a placeholder if the URL 404s/errors ──
+// (e.g. a stale reference to a since-removed storage file) instead of
+// showing the browser's broken-image icon.
+const SafeImg = ({ src, alt, style, fallback }: { src: string; alt: string; style?: CSSProperties; fallback: ReactNode }) => {
+  const [broken, setBroken] = useState(false);
+  if (broken) return <>{fallback}</>;
+  return <img src={src} alt={alt} style={style} onError={() => setBroken(true)} />;
+};
 
 const levelColor = (l: string) =>
   ({ beginner:     { bg:"#f0fff4", color:"#276749", border:"#9ae6b4" },
@@ -523,7 +532,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     return (
       <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');@keyframes spin{to{transform:rotate(360deg)}};@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
-        <div style={{ background: selCourse.image_url ? `linear-gradient(rgba(0,0,0,.5),rgba(0,0,0,.65)),url(${selCourse.image_url}) center/cover` : `linear-gradient(135deg,${G},${GM})`, padding:"14px 16px 20px" }}>
+        <div style={{ background: selCourse.image_url ? `linear-gradient(rgba(0,0,0,.5),rgba(0,0,0,.65)),url("${selCourse.image_url}") center/cover, linear-gradient(135deg,${G},${GM})` : `linear-gradient(135deg,${G},${GM})`, padding:"14px 16px 20px" }}>
           <button onClick={() => setSelCourse(null)} style={{ display:"flex", alignItems:"center", gap:6, color:"rgba(255,255,255,.8)", background:"rgba(255,255,255,.12)", border:"none", borderRadius:20, padding:"6px 14px", cursor:"pointer", fontSize:12, marginBottom:14, fontFamily:"'Cairo',sans-serif" }}>
             <ArrowLeft style={{ width:13, height:13 }} />{t("Back","رجوع")}
           </button>
@@ -654,7 +663,8 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                     style={{ background:"#fff", borderRadius:18, border:"1px solid #e5e7eb", overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 8px rgba(0,0,0,.05)" }}>
                     <div style={{ height:120, overflow:"hidden", position:"relative", background:`linear-gradient(135deg,${G},${GM})` }}>
                       {course.image_url
-                        ? <img src={course.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                        ? <SafeImg src={course.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}
+                            fallback={<div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:32, height:32, color:"rgba(255,255,255,.3)" }} /></div>} />
                         : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:32, height:32, color:"rgba(255,255,255,.3)" }} /></div>
                       }
                       {isCourseLive(course.id) && <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 7px", borderRadius:20, background:"#ef4444", color:"#fff", animation:"pulse 1.5s infinite" }}>● LIVE</span>}
@@ -687,7 +697,8 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                   <div style={{ display:"flex", gap:0 }}>
                     <div style={{ width:100, flexShrink:0, background:`linear-gradient(135deg,${G},${GM})` }}>
                       {course.image_url
-                        ? <img src={course.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+                        ? <SafeImg src={course.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}
+                            fallback={<div style={{ height:"100%", minHeight:90, display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:24, height:24, color:"rgba(255,255,255,.3)" }} /></div>} />
                         : <div style={{ height:"100%", minHeight:90, display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:24, height:24, color:"rgba(255,255,255,.3)" }} /></div>
                       }
                     </div>
@@ -750,7 +761,8 @@ function SubjectCard({ subject, onClick, live, language }: {
       style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", overflow:"hidden", cursor:"pointer", boxShadow:"0 2px 8px rgba(0,0,0,.05)" }}>
       <div style={{ height:110, overflow:"hidden", background:`linear-gradient(135deg,#0f2d1f,#1a4731)`, position:"relative" }}>
         {subject.image_url
-          ? <img src={subject.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }} />
+          ? <SafeImg src={subject.image_url} alt="" style={{ width:"100%", height:"100%", objectFit:"cover" }}
+              fallback={<div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:28, height:28, color:"rgba(255,255,255,.25)" }} /></div>} />
           : <div style={{ height:"100%", display:"flex", alignItems:"center", justifyContent:"center" }}><BookOpen style={{ width:28, height:28, color:"rgba(255,255,255,.25)" }} /></div>
         }
         {live && <span style={{ position:"absolute", top:8, left:8, fontSize:9, fontWeight:800, padding:"3px 7px", borderRadius:20, background:"#ef4444", color:"#fff" }}>● LIVE</span>}
