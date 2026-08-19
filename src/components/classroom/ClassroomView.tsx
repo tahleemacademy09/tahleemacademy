@@ -573,7 +573,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
               if(att)setAttendanceId(att.id);
             }
-            await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});
+            await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,duration_minutes:0},{onConflict:"session_id,student_id"});
             // FIX BUG 8: Subscribe to session-end immediately here — before the useEffect cycle —
             // so there is no window where the teacher can end the class and students miss the event.
             if(!isPrivileged&&!sessionEndChannelRef.current){
