@@ -932,7 +932,7 @@ const LiveClassManagement = () => {
                           <p style={{fontSize:12,color:"#6b7280"}}>{sess.topic}</p>
                           <p style={{fontSize:11,color:"#9ca3af",marginTop:3}}>Started {fmtTime(sess.actual_start_time||sess.scheduled_at)}</p>
                         </div>
-                        <button className="lc-btn" style={{background:"rgba(239,68,68,.1)",color:"#ef4444",fontSize:11,padding:"6px 12px",flexShrink:0}} onClick={()=>updateStatus(sess.id,"completed")}>
+                        <button className="lc-btn" style={{background:"rgba(239,68,68,.1)",color:"#ef4444",fontSize:11,padding:"6px 12px",flexShrink:0}} onClick={()=>updateStatus(sess.id,"ended")}>
                           ⏹ End
                         </button>
                       </div>
@@ -1188,7 +1188,7 @@ const SessionCard = ({s,onGoLive,onEdit,onDelete,onAttendance,onUpdateStatus,sub
                     {label:"Edit",       icon:<Edit style={{width:13,height:13}}/>,         onClick:()=>onEdit(s),                         color:"#111"},
                     {label:"Attendance", icon:<Users style={{width:13,height:13}}/>,        onClick:()=>onAttendance(s),                   color:"#111"},
                     s.status==="scheduled"&&{label:"Cancel",   icon:<XCircle style={{width:13,height:13}}/>,  onClick:()=>onUpdateStatus(s.id,"cancelled"),color:GOLD},
-                    s.status==="live"    &&{label:"End Class", icon:<XCircle style={{width:13,height:13}}/>,  onClick:()=>onUpdateStatus(s.id,"completed"),color:GOLD},
+                    s.status==="live"    &&{label:"End Class", icon:<XCircle style={{width:13,height:13}}/>,  onClick:()=>onUpdateStatus(s.id,"ended"),color:GOLD},
                     {label:"Delete",     icon:<AlertCircle style={{width:13,height:13}}/>,  onClick:()=>onDelete(s.id),                    color:"#ef4444",sep:true},
                   ].filter(Boolean).map((item:any,i:number)=>(
                     <button key={i} onClick={()=>{item.onClick();setMenu(null);}} style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"12px 16px",background:"none",border:"none",cursor:"pointer",fontSize:13,color:item.color,textAlign:"left" as any,fontFamily:"'DM Sans',sans-serif",borderTop:item.sep?"1px solid #f3f4f6":"none"}}>
