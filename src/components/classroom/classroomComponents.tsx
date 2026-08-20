@@ -899,6 +899,18 @@ export const WbSyncBridge = ({ wbOpen, isTeacher }: { wbOpen: boolean; isTeacher
    state via the existing "request-sync-state" handshake, landing the
    student exactly where the teacher currently is. ══ */
 export const MaterialSyncAutoOpenBridge = ({ sessionId, onNeedsOpen }: { sessionId: string | null; onNeedsOpen: () => void }) => {
+  // BUG FIX ("stopped syncing for everyone after the previous fix"): the
+  // caller passes an inline `()=>setMatPanelOpen(true)` — a brand-new
+  // function every render — and ClassroomView re-renders constantly during
+  // a live class (participants, connection quality, raised hands, etc.).
+  // With onNeedsOpen in the dependency array, this effect was tearing down
+  // and recreating its channel on nearly every render, so it never stayed
+  // subscribed long enough to catch a presence sync. Stashing the latest
+  // callback in a ref (same pattern as syncEnabledRef/followingSyncIdRef
+  // elsewhere in this file) keeps the channel subscription stable and only
+  // dependent on sessionId, while still always calling the current callback.
+  const onNeedsOpenRef = useRef(onNeedsOpen);
+  useEffect(() => { onNeedsOpenRef.current = onNeedsOpen; }, [onNeedsOpen]);
   useEffect(() => {
     if (!sessionId) return;
     const ch = supabase.channel(`material-sync-${sessionId}`);
@@ -908,13 +920,13 @@ export const MaterialSyncAutoOpenBridge = ({ sessionId, onNeedsOpen }: { session
       Object.values(state).forEach(arr => {
         arr.forEach((p: any) => { if (p.role === "teacher" && p.syncEnabled && p.material) active = true; });
       });
-      if (active) onNeedsOpen();
+      if (active) onNeedsOpenRef.current();
     };
     ch.on("presence", { event: "sync" }, checkPresence)
-      .on("broadcast", { event: "material-open" }, () => onNeedsOpen())
+      .on("broadcast", { event: "material-open" }, () => onNeedsOpenRef.current())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [sessionId, onNeedsOpen]);
+  }, [sessionId]);
   return null;
 };
 
