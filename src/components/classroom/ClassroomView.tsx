@@ -81,7 +81,7 @@ import {
   ProfileSyncBridge,
   HeartbeatBridge,
   WbSyncBridge,
-  MaterialSyncAutoOpenBridge,
+  TeacherMaterialFollower,
   AdminMuteListener,
   BASE_GAIN,
   VolumeBooster,
@@ -573,7 +573,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               const{data:att}=await supabase.from("attendance_logs").insert({session_id:freshSessionId,user_id:user.id,device_info:navigator.userAgent}).select("id").single();
               if(att)setAttendanceId(att.id);
             }
-            await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,duration_minutes:0},{onConflict:"session_id,student_id"});
+            await supabase.from("class_participants").upsert({session_id:freshSessionId,student_id:user.id,joined_at:new Date().toISOString(),is_muted:!isPrivileged,camera_on:true,left_at:null,left_minutes:null},{onConflict:"session_id,student_id"});
             // FIX BUG 8: Subscribe to session-end immediately here — before the useEffect cycle —
             // so there is no window where the teacher can end the class and students miss the event.
             if(!isPrivileged&&!sessionEndChannelRef.current){
@@ -1249,10 +1249,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <RaisedHandsOverlay hands={raisedHands}/>
               {/* Materials panel — keep mounted when it has minimized PiP materials */}
               {(matPanelOpen||matPanelHasPip)&&<SubjectMaterialsPanel subjectId={subject.id} subject={subject} sessionId={sessionId} onClose={()=>setMatPanelOpen(false)} canStudentRec={canStudentRec} isPrivileged={isPrivileged} stuRec={stuRec} onToggleStuRecord={toggleStuRecordTop} onOpenMatsChange={(has:boolean)=>setMatPanelHasPip(has)} panelRef={matPanelRef}/>}
-              {/* Students who haven't opened Materials yet still need to hear
-                  that the teacher turned sync on — this has no UI of its own,
-                  it just opens the real panel above the instant that happens. */}
-              {!isPrivileged&&!matPanelOpen&&!matPanelHasPip&&phase==="live"&&<MaterialSyncAutoOpenBridge sessionId={sessionId} onNeedsOpen={()=>setMatPanelOpen(true)}/>}
+              {/* Every student sees whatever the teacher opens, immediately —
+                  no "Subject Materials" click needed. Always mounted for the
+                  whole live session, entirely independent of the panel above. */}
+              {!isPrivileged&&phase==="live"&&<TeacherMaterialFollower sessionId={sessionId}/>}
               {/* Teacher-shared material viewer — absolute inside content */}
               {matOpen&&(
                 <div style={{position:"absolute",inset:0,zIndex:55,display:matMinimized?"none":"block"}}>

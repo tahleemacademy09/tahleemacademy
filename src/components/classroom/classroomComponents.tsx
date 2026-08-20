@@ -884,50 +884,82 @@ export const WbSyncBridge = ({ wbOpen, isTeacher }: { wbOpen: boolean; isTeacher
   return null;
 };
 
-/* ══ MATERIAL SYNC AUTO-OPEN BRIDGE ══
-   BUG FIX ("only one student sees it"): the entire follow-the-teacher sync
-   channel subscription (material-open/close/activity listeners) lives
-   inside SubjectMaterialsPanel — but that panel is only mounted in a
-   student's app once THEY click "Subject Materials". Students who never
-   clicked it were never subscribed to anything, so the teacher's broadcasts
-   had no one to reach on their end — only whichever student(s) already had
-   the panel open (e.g. the last one who happened to click it) ever saw it.
-   This bridge is mounted for every student the instant they're live,
-   independent of matPanelOpen, and does nothing but listen for the teacher
-   turning sync on. The moment it sees that, it asks the parent to open the
-   real panel — which then mounts fresh and immediately fetches the current
-   state via the existing "request-sync-state" handshake, landing the
-   student exactly where the teacher currently is. ══ */
-export const MaterialSyncAutoOpenBridge = ({ sessionId, onNeedsOpen }: { sessionId: string | null; onNeedsOpen: () => void }) => {
-  // BUG FIX ("stopped syncing for everyone after the previous fix"): the
-  // caller passes an inline `()=>setMatPanelOpen(true)` — a brand-new
-  // function every render — and ClassroomView re-renders constantly during
-  // a live class (participants, connection quality, raised hands, etc.).
-  // With onNeedsOpen in the dependency array, this effect was tearing down
-  // and recreating its channel on nearly every render, so it never stayed
-  // subscribed long enough to catch a presence sync. Stashing the latest
-  // callback in a ref (same pattern as syncEnabledRef/followingSyncIdRef
-  // elsewhere in this file) keeps the channel subscription stable and only
-  // dependent on sessionId, while still always calling the current callback.
-  const onNeedsOpenRef = useRef(onNeedsOpen);
-  useEffect(() => { onNeedsOpenRef.current = onNeedsOpen; }, [onNeedsOpen]);
+/* ══ TEACHER MATERIAL FOLLOWER ══
+   Renders the teacher's shared material directly for every student, the
+   instant the teacher opens one — no manual "Subject Materials" click
+   required, and no dependency on any other panel being mounted.
+
+   History, for future-me: the previous approach tried to trigger-open the
+   full SubjectMaterialsPanel from a separate bridge component. That had two
+   rounds of bugs (only the panel-having student saw it, then an inline
+   callback prop caused constant resubscribe-thrashing) because it was
+   fundamentally routing student visibility through a component that was
+   never meant to be "always on". This version owns the whole thing itself:
+   one channel subscription, entirely self-contained state, and it renders
+   InClassMaterialViewer directly — the same component the panel uses, but
+   InClassMaterialViewer has no dependency on being inside the panel, so
+   this works standalone. Mounted once per student for the whole live
+   session (see ClassroomView), independent of matPanelOpen. ══ */
+export const TeacherMaterialFollower = ({ sessionId }: { sessionId: string | null }) => {
+  const [material, setMaterial] = useState<any>(null);
+  const [activity, setActivity] = useState<any>(null);
+  const materialRef = useRef<any>(null);
+  useEffect(() => { materialRef.current = material; }, [material]);
+
   useEffect(() => {
     if (!sessionId) return;
     const ch = supabase.channel(`material-sync-${sessionId}`);
-    const checkPresence = () => {
+
+    const applyPresence = () => {
       const state = ch.presenceState() as Record<string, any[]>;
-      let active = false;
+      let teacherEntry: any = null;
       Object.values(state).forEach(arr => {
-        arr.forEach((p: any) => { if (p.role === "teacher" && p.syncEnabled && p.material) active = true; });
+        arr.forEach((p: any) => { if (p.role === "teacher") teacherEntry = p; });
       });
-      if (active) onNeedsOpenRef.current();
+      if (teacherEntry?.syncEnabled && teacherEntry?.material) {
+        setMaterial(teacherEntry.material);
+        if (teacherEntry.activity) setActivity(teacherEntry.activity);
+      } else if (materialRef.current) {
+        setMaterial(null);
+        setActivity(null);
+      }
     };
-    ch.on("presence", { event: "sync" }, checkPresence)
-      .on("broadcast", { event: "material-open" }, () => onNeedsOpenRef.current())
-      .subscribe();
+
+    ch.on("presence", { event: "sync" }, applyPresence)
+      .on("broadcast", { event: "material-open" }, ({ payload }: any) => {
+        if (!payload?.material) return;
+        setMaterial(payload.material);
+        setActivity(payload.activity || null);
+      })
+      .on("broadcast", { event: "material-close" }, () => {
+        setMaterial(null);
+        setActivity(null);
+      })
+      .on("broadcast", { event: "material-activity" }, ({ payload }: any) => {
+        if (payload?.materialId !== materialRef.current?.id) return;
+        setActivity(payload);
+      })
+      .subscribe((status: string) => {
+        // Covers late joiners and reconnects: ask the teacher directly for
+        // whatever's current right now, rather than waiting on presence
+        // timing alone.
+        if (status === "SUBSCRIBED") ch.send({ type: "broadcast", event: "request-sync-state", payload: {} });
+      });
+
     return () => { supabase.removeChannel(ch); };
   }, [sessionId]);
-  return null;
+
+  if (!material) return null;
+  return (
+    <InClassMaterialViewer
+      material={material}
+      isTeacher={false}
+      fromPanel={true}
+      following={true}
+      remoteActivity={activity}
+      onClose={() => setMaterial(null)}
+    />
+  );
 };
 
 /* ══ ADMIN MUTE LISTENER ══
@@ -3752,10 +3784,11 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[openMats,setOpenMats]=useState<any[]>([]);
   const[activeMatId,setActiveMatId]=useState<string|null>(null);
   const[quranOpen,setQuranOpen]=useState(false);
-  // ── Live "follow the teacher" sync (teacher toggles on; students'
-  //    material view is then fully driven by the teacher — opens, closes,
-  //    and resumes automatically, no manual "join" step). ──────────────────
-  const[syncEnabled,setSyncEnabled]=useState(false);              // teacher-only toggle
+  // ── Live "follow the teacher" sync — always on, no admin toggle.
+  //    Students' material view is fully driven by the teacher: opens,
+  //    closes, and resumes automatically, with nothing for the teacher
+  //    to remember to switch on. ──────────────────────────────────────────
+  const[syncEnabled]=useState(true);
   const[followingSyncId,setFollowingSyncId]=useState<string|null>(null); // material id the student is actively following
   const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number;step:number|null;total:number|null;revealCount:number|null}|null>(null);
   const syncChannelRef=useRef<any>(null);
@@ -3866,12 +3899,17 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     return()=>{supabase.removeChannel(ch);};
   },[subjectId]);
 
-  // ── Follow-the-teacher sync channel ────────────────────────────────────
+  // ── Follow-the-teacher sync channel — TEACHER SIDE ONLY ────────────────
   // Presence carries the teacher's current {syncEnabled, material} so a
   // student who joins mid-session immediately sees the right state.
   // Broadcast carries live "open"/"close"/"pointer" events for low latency.
+  // Students no longer subscribe here at all — TeacherMaterialFollower
+  // (mounted always, independent of this panel) owns that job by itself now.
+  // Keeping this teacher-only also means a student who opens this same
+  // panel to browse materials manually never opens a second, duplicate
+  // subscription to the same channel topic alongside the follower.
   useEffect(()=>{
-    if(!sessionId)return;
+    if(!sessionId||!isPrivileged)return;
     const ch=supabase.channel(`material-sync-${sessionId}`,{config:{presence:{key:user?.id||"anon"}}});
     syncChannelRef.current=ch;
 
@@ -3965,11 +4003,6 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     lastActivityByMatRef.current[materialId]=payload;
     syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload});
   },[isPrivileged,syncEnabled]);
-
-  const stopFollowingSync=()=>{
-    setFollowingSyncId(null);
-    setSyncActivity(null);
-  };
 
   // ── Open edit drawer ────────────────────────────────────────────────────
   const openEdit=(m:any)=>{
@@ -4249,31 +4282,19 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
           </button>
         </div>
 
-        {/* Teacher: toggle "follow me" sync for the whole class */}
+        {/* Teacher: sync is always on — students see whatever's opened here
+            immediately, with nothing to remember to switch on. */}
         {isPrivileged&&(
-          <button onClick={()=>setSyncEnabled(v=>!v)} style={{
-            margin:"10px 10px 0",padding:"11px 14px",borderRadius:10,
-            border:`1px solid ${syncEnabled?"rgba(52,211,153,.4)":"rgba(255,255,255,.1)"}`,
-            background:syncEnabled?"rgba(52,211,153,.1)":"rgba(255,255,255,.04)",
-            cursor:"pointer",display:"flex",alignItems:"center",gap:10,flexShrink:0,textAlign:"left" as const,
+          <div style={{
+            margin:"10px 10px 0",padding:"10px 14px",borderRadius:10,
+            border:"1px solid rgba(52,211,153,.25)",background:"rgba(52,211,153,.08)",
+            display:"flex",alignItems:"center",gap:10,flexShrink:0,
           }}>
             <span style={{fontSize:16,flexShrink:0}}>🔗</span>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:syncEnabled?"#34d399":"rgba(255,255,255,.75)",fontFamily:"'Google Sans',sans-serif"}}>Sync students' view</div>
-              <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>{syncEnabled?"On — students see what you open":"Off — students browse freely"}</div>
+              <div style={{fontSize:13,fontWeight:600,color:"#34d399",fontFamily:"'Google Sans',sans-serif"}}>Sync is always on</div>
+              <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Students see whatever you open here, right away</div>
             </div>
-            <div style={{width:36,height:20,borderRadius:10,background:syncEnabled?"#34d399":"rgba(255,255,255,.15)",position:"relative",flexShrink:0,transition:"background .15s"}}>
-              <div style={{position:"absolute",top:2,left:syncEnabled?18:2,width:16,height:16,borderRadius:8,background:"#fff",transition:"left .15s"}}/>
-            </div>
-          </button>
-        )}
-
-        {/* Student: currently following — automatic; a quick way to opt out */}
-        {!isPrivileged&&followingSyncId&&(
-          <div style={{margin:"10px 10px 0",padding:"8px 12px",borderRadius:10,border:"1px solid rgba(52,211,153,.25)",background:"rgba(52,211,153,.06)",display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-            <span style={{fontSize:13,flexShrink:0}}>🔗</span>
-            <span style={{flex:1,fontSize:11,color:"rgba(255,255,255,.6)"}}>Following the teacher</span>
-            <button onClick={stopFollowingSync} style={{background:"rgba(255,255,255,.08)",border:"none",color:"rgba(255,255,255,.6)",borderRadius:6,padding:"4px 10px",fontSize:11,cursor:"pointer",flexShrink:0}}>Stop</button>
           </div>
         )}
 
