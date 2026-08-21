@@ -22,6 +22,16 @@ import {
 
 const G = "#064E3B";
 
+const toLocalDatetimeInput = (iso: string): string => {
+  const date = new Date(iso);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d}T${h}:${min}`;
+};
+
 
 export default function ExamManager() {
   const { t, language } = useLanguage();
@@ -81,6 +91,7 @@ export default function ExamManager() {
     setSelectedStudents(new Set());
     setStudentSearch("");
     setStudentsLoading(true);
+    setRegDeadline(exam.registration_deadline ? toLocalDatetimeInput(exam.registration_deadline) : "");
 
     // FIX: Two-step query — the FK join user_roles→profiles is not always configured
     // Step 1: get all student user_ids
@@ -115,6 +126,30 @@ export default function ExamManager() {
     await supabase.from("exams").update({ is_published: !current }).eq("id", id);
     setExams(es => es.map(e => e.id === id ? { ...e, is_published: !current } : e));
     toast({ title: !current ? "✅ Exam published" : "✅ Exam unpublished" });
+  };
+
+  // Self-registration: students can only self-register when this is on.
+  // Admin-push assignment (openAssign/doAssign below) always works regardless.
+  const toggleRegistration = async (id: string, current: boolean) => {
+    await supabase.from("exams" as any).update({ registration_open: !current } as any).eq("id", id);
+    setExams(es => es.map(e => e.id === id ? { ...e, registration_open: !current } : e));
+    toast({ title: !current ? "✅ Self-registration opened" : "🔒 Self-registration closed" });
+  };
+
+  const [regDeadline, setRegDeadline] = useState("");
+  const [savingRegDeadline, setSavingRegDeadline] = useState(false);
+  const saveRegDeadline = async () => {
+    if (!assignExam) return;
+    setSavingRegDeadline(true);
+    try {
+      const value = regDeadline ? new Date(regDeadline).toISOString() : null;
+      await supabase.from("exams" as any).update({ registration_deadline: value } as any).eq("id", assignExam.id);
+      setExams(es => es.map(e => e.id === assignExam.id ? { ...e, registration_deadline: value } : e));
+      setAssignExam((prev: any) => prev ? { ...prev, registration_deadline: value } : prev);
+      toast({ title: "✅ Registration deadline saved" });
+    } finally {
+      setSavingRegDeadline(false);
+    }
   };
 
   const duplicateExam = async (exam: any) => {
@@ -322,6 +357,9 @@ export default function ExamManager() {
                         <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: exam.is_published ? "#DCFCE7" : "#F3F4F6", color: exam.is_published ? "#166534" : "#6B7280" }}>
                           {exam.is_published ? "✓ Published" : "Draft"}
                         </span>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: exam.registration_open ? "#EFF6FF" : "#F3F4F6", color: exam.registration_open ? "#1D4ED8" : "#6B7280" }}>
+                          {exam.registration_open ? "📝 Self-reg open" : "📝 Self-reg closed"}
+                        </span>
                         {exam.type && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#EFF6FF", color: "#1D4ED8", fontWeight: 600 }}>{exam.type}</span>}
                         {exam.term && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#F5F3FF", color: "#6D28D9", fontWeight: 600 }}>{exam.term}</span>}
                         {exam.level && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 600, textTransform: "capitalize" }}>📚 {exam.level}</span>}
@@ -332,7 +370,7 @@ export default function ExamManager() {
                           { icon: "❓", v: qc, l: `q${qc !== 1 ? "s" : ""}`, c: qc === 0 ? "#DC2626" : "#374151" },
                           { icon: "⏱️", v: exam.time_limit_minutes || "—", l: "min" },
                           { icon: "🎯", v: `${exam.passing_score || 60}%`, l: "pass" },
-                          { icon: "👥", v: stat.assigned, l: "assigned" },
+                          { icon: "👥", v: stat.assigned, l: "registered" },
                           { icon: "📊", v: stat.attempts, l: "attempts" },
                         ].map((s, i) => (
                           <span key={i} style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 3 }}>
@@ -354,6 +392,10 @@ export default function ExamManager() {
                       <button onClick={() => togglePublish(exam.id, exam.is_published)} title={exam.is_published ? "Unpublish" : "Publish"}
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: exam.is_published ? "#FFF7ED" : "#F0FDF4", cursor: "pointer" }}>
                         {exam.is_published ? <EyeOff size={13} color="#C2410C" /> : <Eye size={13} color="#16A34A" />}
+                      </button>
+                      <button onClick={() => toggleRegistration(exam.id, exam.registration_open)} title={exam.registration_open ? "Close self-registration" : "Open self-registration"}
+                        style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: exam.registration_open ? "#EFF6FF" : "#F3F4F6", cursor: "pointer" }}>
+                        <UserCheck size={13} color={exam.registration_open ? "#1D4ED8" : "#6B7280"} />
                       </button>
                       <button onClick={() => duplicateExam(exam)} title="Duplicate"
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
@@ -389,7 +431,25 @@ export default function ExamManager() {
           </div>
 
           <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
+            {/* Self-registration deadline */}
+            <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, background: "#F9FAFB", border: "1px solid #E5E7EB" }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: "#6B7280", marginBottom: 6 }}>
+                Self-registration deadline (optional — students can register themselves until this time)
+              </p>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input type="datetime-local" value={regDeadline} onChange={e => setRegDeadline(e.target.value)}
+                  style={{ ...inp, flex: 1 }} />
+                <button onClick={saveRegDeadline} disabled={savingRegDeadline}
+                  style={{ padding: "8px 14px", borderRadius: 9, border: "none", background: G, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", opacity: savingRegDeadline ? .6 : 1 }}>
+                  Save
+                </button>
+              </div>
+            </div>
+
             {/* Mode selector */}
+            <p style={{ fontSize: 11, color: "#9CA3AF", marginBottom: 8 }}>
+              Or push this exam to students directly (works even if self-registration is closed):
+            </p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
               {[
                 { id: "level" as const, icon: "🎓", label: "By Level", sub: "Assign to all students at a level" },
