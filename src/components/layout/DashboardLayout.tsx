@@ -175,9 +175,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
     ]},
     { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
-      { to:"/student/exams",       icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") },
-      { to:"/student/transcripts", icon:GraduationCap, label:t("As-Sijill","السجل الأكاديمي") },
-      { to:"/student/attendance",  icon:CheckSquare,   label:t("Al-Ḥuḍūr (Attendance)","الحضور والغياب") },
+      { to:"/student/exams",          icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") },
+      { to:"/student/exams/register", icon:UserPlus,      label:t("Register for Exams","التسجيل للاختبارات") },
+      { to:"/student/transcripts",    icon:GraduationCap, label:t("As-Sijill","السجل الأكاديمي") },
+      { to:"/student/attendance",     icon:CheckSquare,   label:t("Al-Ḥuḍūr (Attendance)","الحضور والغياب") },
     ]},
     { type:"link", to:"/student/majlis",     icon:MessageCircle, label:t("Al-Majlis","المجلس") },
     // ── Musabaqah (updated route) ──────────────────────────────
