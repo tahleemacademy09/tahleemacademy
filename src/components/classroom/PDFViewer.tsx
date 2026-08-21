@@ -162,11 +162,20 @@ interface Props {
   url: string;
   bg?: string;
   materialId?: string;
+  /** Teacher side: when true, this viewer's scroll position is broadcast via onSyncScroll. */
+  syncActive?: boolean;
+  /** Teacher side: fired (throttled) with a 0–1 scroll fraction whenever the teacher scrolls. */
+  onSyncScroll?: (pct: number) => void;
+  /** Student side: when true, this viewer's scroll follows remoteScrollPct instead of the student's own reading position. */
+  following?: boolean;
+  /** Student side: the teacher's live scroll fraction (0–1) to follow. */
+  remoteScrollPct?: number | null;
 }
 
-export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
+export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive = false, onSyncScroll, following = false, remoteScrollPct = null }: Props) {
   const scrollRef    = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const lastSyncSent = useRef(0);
   const [phase, setPhase] = useState<"instant"|"loading"|"rendering"|"done"|"error">("loading");
   const [pct,   setPct]   = useState(0);
   const [errMsg,setErrMsg]= useState("");
@@ -456,6 +465,17 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
       setNavVisible(true);
       if (navHideTimer.current) clearTimeout(navHideTimer.current);
       navHideTimer.current = setTimeout(() => setNavVisible(false), 1200);
+      // Teacher: broadcast the live scroll fraction (throttled) so students
+      // following this material can mirror it in real time — the same "follow
+      // the teacher" behaviour that already exists for HTML lesson materials.
+      if (syncActive && onSyncScroll) {
+        const now = Date.now();
+        if (now - lastSyncSent.current >= 120) {
+          lastSyncSent.current = now;
+          const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
+          onSyncScroll(Math.min(1, Math.max(0, el.scrollTop / maxScroll)));
+        }
+      }
     };
     fn(); // set the initial page right away, don't wait for the first scroll event
     el.addEventListener("scroll", fn, { passive: true });
@@ -463,7 +483,19 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId }: Props) {
       el.removeEventListener("scroll", fn);
       if (navHideTimer.current) clearTimeout(navHideTimer.current);
     };
-  }, [materialId, phase, updateCurrentPageFromScroll]);
+  }, [materialId, phase, updateCurrentPageFromScroll, syncActive, onSyncScroll]);
+
+  // Student: apply the teacher's live scroll position when following.
+  // Runs whenever a new fraction arrives (or once pages finish rendering,
+  // so a late-follow immediately lands on the teacher's current spot instead
+  // of page 1).
+  useEffect(() => {
+    if (!following || remoteScrollPct == null) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
+    el.scrollTo({ top: remoteScrollPct * maxScroll, behavior: "smooth" });
+  }, [following, remoteScrollPct, phase]);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: bg, position: "relative" }}>
