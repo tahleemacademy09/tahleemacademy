@@ -893,9 +893,15 @@ const ExamTaking = () => {
                   {/* Audio/Dictation */}
                   {(q.question_type === "audio" || q.question_type === "dictation") && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                      <textarea dir="auto" rows={4} placeholder={t("Write what you heard…", "اكتب ما سمعته…")} value={answers[q.id]?.text || ""} onChange={e => setAnswer(q.id, e.target.value)}
-                        style={{ padding: "15px 16px", borderRadius: 14, border: `2px solid ${BORDER}`, fontSize: 17, outline: "none", color: G, background: "#f8fafb", resize: "none", fontFamily: "'Amiri',serif" }} />
-                      <p style={{ fontSize: 12, color: "#9ca3af" }}>{t("Or record your answer:", "أو سجّل إجابتك:")}</p>
+                      {q.audio_response_type === "audio" ? (
+                        <p style={{ fontSize: 12, color: "#9ca3af" }}>{t("Recite the text above clearly, then record your answer:", "اقرأ النص أعلاه بوضوح، ثم سجّل إجابتك:")}</p>
+                      ) : (
+                        <>
+                          <textarea dir="auto" rows={4} placeholder={t("Write what you heard…", "اكتب ما سمعته…")} value={answers[q.id]?.text || ""} onChange={e => setAnswer(q.id, e.target.value)}
+                            style={{ padding: "15px 16px", borderRadius: 14, border: `2px solid ${BORDER}`, fontSize: 17, outline: "none", color: G, background: "#f8fafb", resize: "none", fontFamily: "'Amiri',serif" }} />
+                          <p style={{ fontSize: 12, color: "#9ca3af" }}>{t("Or record your answer:", "أو سجّل إجابتك:")}</p>
+                        </>
+                      )}
                       <AudioRecorder onRecordingComplete={async (blob, url) => {
                         if (!blob.size) { toast({ title: "Recording empty.", variant: "destructive" }); return; }
                         // Determine extension from the actual blob MIME type
