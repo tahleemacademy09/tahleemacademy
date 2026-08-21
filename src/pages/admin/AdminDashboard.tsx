@@ -307,6 +307,7 @@ export default function AdminDashboard() {
               {to:"/admin/tasjeel",               icon:ClipboardList, label:t("Pipeline Tracker","متابعة التسجيل"),         sub:t("Full registration state machine","متابعة مسار التسجيل الكامل")},
               {to:"/admin/student-registration",  icon:UserCheck,     label:t("Student Registration","تسجيل الطلاب"),        sub:t("Manage student registrations","إدارة تسجيل الطلاب")},
               {to:"/admin/registration-settings", icon:Settings,      label:t("Registration Settings","إعدادات التسجيل"),   sub:t("Toggle fees, flow & rules","ضبط الرسوم والقواعد")},
+              {to:"/admin/course-registration",   icon:Layers,        label:t("Course Registration","تسجيل الدورات"),        sub:t("Open/close the course registration portal","فتح/إغلاق بوابة تسجيل الدورات")},
             ]}/>
 
             <Section title={t("Students","الطلاب")} ck="students" items={[

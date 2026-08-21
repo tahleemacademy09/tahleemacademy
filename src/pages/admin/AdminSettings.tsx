@@ -671,6 +671,7 @@ export default function AdminSettings() {
             <p style={{ fontWeight: 700, fontSize: 12, color: "#6B7280", textTransform: "uppercase", letterSpacing: .5, margin: "0 0 10px" }}>Specialised Settings</p>
             <QuickLink icon={CreditCard}  label="Payment Settings"      to="/admin/payment-settings"      color="#D97706" onNavigate={navigate} />
             <QuickLink icon={UserCog}     label="Registration Settings"  to="/admin/registration-settings"  color="#7C3AED" onNavigate={navigate} />
+            <QuickLink icon={School}      label="Course Registration"    to="/admin/course-registration"    color="#0D9488" onNavigate={navigate} />
             <QuickLink icon={Calendar}    label="Academic Calendar"       to="/admin/calendar"               color="#0891B2" onNavigate={navigate} />
           </div>
         </>}
