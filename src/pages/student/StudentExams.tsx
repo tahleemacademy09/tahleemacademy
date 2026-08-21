@@ -383,6 +383,17 @@ const StudentExams = () => {
       <style>{"@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&family=Playfair+Display:wght@700&display=swap');"}</style>
       <div style={{ maxWidth:680, margin:"0 auto", padding:"20px 16px 48px" }}>
 
+        {/* Self-registration entry point — private students only get teacher-assigned exams */}
+        {!isPrivateStudent && (
+          <button onClick={() => navigate("/student/exams/register")} style={{
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            padding: "12px", borderRadius: 14, border: `1.5px dashed ${BORDER}`, background: "#fff",
+            color: G, fontSize: 13, fontWeight: 700, cursor: "pointer", marginBottom: 16,
+          }}>
+            <PlayCircle style={{ width: 15, height: 15 }} /> {t("Register for more tests & exams","سجّل لمزيد من الاختبارات والامتحانات")}
+          </button>
+        )}
+
         {/* Private student notice */}
         {isPrivateStudent && (
           <div style={{ background: "#FDF4FF", border: "1.5px solid #D8B4FE", borderRadius: 16, padding: "14px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
