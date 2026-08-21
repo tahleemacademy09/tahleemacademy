@@ -51,6 +51,7 @@ const LiveClasses          = lazy(() => import("./pages/public/LiveClasses"));
 const StudentDashboard    = lazy(() => import("./pages/student/StudentDashboard"));
 const StudentDashboardV2  = lazy(() => import("./pages/student/StudentDashboardV2"));
 const StudentExams        = lazy(() => import("./pages/student/StudentExams"));
+const ExamRegistration    = lazy(() => import("./pages/student/ExamRegistration"));
 const ExamTaking          = lazy(() => import("./pages/student/ExamTaking"));
 const ProfileSettings     = lazy(() => import("./pages/student/ProfileSettings"));
 const ExamResults         = lazy(() => import("./pages/student/ExamResults"));
@@ -242,6 +243,7 @@ const App = () => (
                     <Route path="/student/courses/:courseId"   element={<LearningHub />} />
                     <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
                     <Route path="/student/exams"               element={<StudentExams />} />
+                    <Route path="/student/exams/register"      element={<ExamRegistration />} />
                     <Route path="/student/transcripts"         element={<Transcripts />} />
                     <Route path="/student/majlis"              element={<Majlis />} />
                     <Route path="/student/live-classes"        element={<LearningHub defaultTab="live" />} />
