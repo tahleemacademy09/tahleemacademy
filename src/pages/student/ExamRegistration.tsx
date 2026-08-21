@@ -55,12 +55,13 @@ const ExamRegistration = () => {
       const myLevel = profile?.level || "";
       setStudentLevel(myLevel);
 
+      // Course access here is gated by course *registration* (enrollments row exists),
+      // not payment — payment/subscription access is handled separately via
+      // profiles.payment_status / subscription_end_date.
       const { data: enrollments } = await supabase
-        .from("enrollments").select("course_id, registration_paid").eq("user_id", user!.id);
-      const paidCourseIds = new Set(
-        (enrollments || []).filter((e: any) => e.registration_paid !== false).map((e: any) => e.course_id)
-      );
-      setEnrolledCourseIds(paidCourseIds);
+        .from("enrollments").select("course_id").eq("user_id", user!.id);
+      const registeredCourseIds = new Set((enrollments || []).map((e: any) => e.course_id));
+      setEnrolledCourseIds(registeredCourseIds);
 
       const { data: existing } = await supabase
         .from("exam_assignments").select("exam_id").eq("user_id", user!.id);
@@ -98,7 +99,7 @@ const ExamRegistration = () => {
     }
     if (exam.course_id && !enrolledCourseIds.has(exam.course_id)) {
       const title = courseTitles[exam.course_id] || t("this course","هذه الدورة");
-      return { eligible: false, reason: `${t("Enroll in","سجّل في")} “${title}” ${t("first","أولاً")}` };
+      return { eligible: false, reason: `${t("Register for","سجّل في")} “${title}” ${t("first","أولاً")}` };
     }
     return { eligible: true };
   };

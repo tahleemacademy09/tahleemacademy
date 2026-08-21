@@ -1,13 +1,13 @@
 /*  src/pages/student/StudentCourses.tsx  */
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BookOpen, Play, ArrowRight, ChevronRight } from "lucide-react";
+import { BookOpen, Play, ArrowRight, ChevronRight, ClipboardCheck } from "lucide-react";
 
 const G    = "#064E3B";
 const GOLD = "#C9A84C";
@@ -315,6 +315,7 @@ const StudentCourses = () => {
   const { user, profile } = useAuth();
   const studentLevel = profile?.level || "beginner";
   const { isPrivateStudent } = usePrivateStudent();
+  const navigate = useNavigate();
 
   // Private student subject/course assignment sets
   const { data: privateSubjectIds } = useQuery({
@@ -473,6 +474,18 @@ const StudentCourses = () => {
             : `Your level: ${levelLabel(studentLevel)}`}
         </p>
       </div>
+
+      {/* Course registration entry point — private students are assigned courses directly */}
+      {!isPrivateStudent && (
+        <button onClick={() => navigate("/student/register-courses")} style={{
+          width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          padding: "12px", borderRadius: 14, border: "1.5px dashed #D1D5DB", background: "#fff",
+          color: G, fontSize: 13, fontWeight: 700, cursor: "pointer",
+        }}>
+          <ClipboardCheck style={{ width: 15, height: 15 }} />
+          {language === "ar" ? "التسجيل في دورات جديدة" : "Register for more courses"}
+        </button>
+      )}
 
       {/* Subject sections */}
       {(subjects || []).map((subject: any) => {
