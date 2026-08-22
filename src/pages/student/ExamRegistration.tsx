@@ -37,8 +37,8 @@ const ExamRegistration = () => {
   const [loading, setLoading]         = useState(true);
   const [exams, setExams]             = useState<any[]>([]);
   const [registeredIds, setRegisteredIds] = useState<Set<string>>(new Set());
-  const [courseTitles, setCourseTitles]   = useState<Record<string, string>>({});
-  const [enrolledCourseIds, setEnrolledCourseIds] = useState<Set<string>>(new Set());
+  const [subjectTitles, setSubjectTitles]   = useState<Record<string, string>>({});
+  const [registeredSubjectIds, setRegisteredSubjectIds] = useState<Set<string>>(new Set());
   const [studentLevel, setStudentLevel]   = useState<string>("");
   const [registering, setRegistering]     = useState<string | null>(null);
 
@@ -55,13 +55,13 @@ const ExamRegistration = () => {
       const myLevel = profile?.level || "";
       setStudentLevel(myLevel);
 
-      // Course access here is gated by course *registration* (enrollments row exists),
-      // not payment — payment/subscription access is handled separately via
-      // profiles.payment_status / subscription_end_date.
-      const { data: enrollments } = await supabase
-        .from("enrollments").select("course_id").eq("user_id", user!.id);
-      const registeredCourseIds = new Set((enrollments || []).map((e: any) => e.course_id));
-      setEnrolledCourseIds(registeredCourseIds);
+      // Subject access here is gated by subject *registration* (subject_registrations
+      // row exists), not payment — payment/subscription access is handled separately
+      // via profiles.payment_status / subscription_end_date.
+      const { data: registrations } = await supabase
+        .from("subject_registrations").select("subject_id").eq("user_id", user!.id);
+      const mySubjectIds = new Set((registrations || []).map((r: any) => r.subject_id));
+      setRegisteredSubjectIds(mySubjectIds);
 
       const { data: existing } = await supabase
         .from("exam_assignments").select("exam_id").eq("user_id", user!.id);
@@ -81,12 +81,12 @@ const ExamRegistration = () => {
       });
       setExams(list);
 
-      const courseIds = Array.from(new Set(list.map((e: any) => e.course_id).filter(Boolean)));
-      if (courseIds.length) {
-        const { data: courses } = await supabase.from("courses").select("id, title, title_ar").in("id", courseIds);
+      const subjectIds = Array.from(new Set(list.map((e: any) => e.subject_id).filter(Boolean)));
+      if (subjectIds.length) {
+        const { data: subjects } = await supabase.from("subjects").select("id, title, title_ar").in("id", subjectIds);
         const map: Record<string, string> = {};
-        (courses || []).forEach((c: any) => { map[c.id] = language === "ar" ? (c.title_ar || c.title) : c.title; });
-        setCourseTitles(map);
+        (subjects || []).forEach((s: any) => { map[s.id] = language === "ar" ? (s.title_ar || s.title) : s.title; });
+        setSubjectTitles(map);
       }
     } finally {
       setLoading(false);
@@ -97,8 +97,8 @@ const ExamRegistration = () => {
     if (exam.level && exam.level !== "" && studentLevel && exam.level !== studentLevel) {
       return { eligible: false, reason: t("Not offered at your level","غير متاح لمستواك") };
     }
-    if (exam.course_id && !enrolledCourseIds.has(exam.course_id)) {
-      const title = courseTitles[exam.course_id] || t("this course","هذه الدورة");
+    if (exam.subject_id && !registeredSubjectIds.has(exam.subject_id)) {
+      const title = subjectTitles[exam.subject_id] || t("this subject","هذه المادة");
       return { eligible: false, reason: `${t("Register for","سجّل في")} “${title}” ${t("first","أولاً")}` };
     }
     return { eligible: true };
@@ -191,10 +191,10 @@ const ExamRegistration = () => {
                       {isTest ? t("TEST","تمرين") : t("EXAM","امتحان")}
                     </span>
                     <h3 style={{ fontSize: 15, fontWeight: 800, color: G, margin: "6px 0 0" }}>{title}</h3>
-                    {exam.course_id && courseTitles[exam.course_id] && (
+                    {exam.subject_id && subjectTitles[exam.subject_id] && (
                       <p style={{ fontSize: 11.5, color: TL, margin: "3px 0 0" }}>
                         <BookOpen style={{ width: 11, height: 11, display: "inline", verticalAlign: -1, marginRight: 4 }} />
-                        {courseTitles[exam.course_id]}
+                        {subjectTitles[exam.subject_id]}
                       </p>
                     )}
                   </div>

@@ -304,22 +304,22 @@ const StudentExams = () => {
         .from("exam_assignments").select("exam_id, exams(*)")
         .eq("user_id", user!.id);
 
-      // Course registration gate: a student only sees an exam tied to a course
-      // if they're registered (enrolled) for that course — regardless of
-      // whether the exam was assigned to them individually, bulk-assigned by
-      // level, or self-registered via ExamRegistration.tsx. Exams with no
-      // course_id (general/level-wide exams) are unaffected by this check.
-      const { data: myEnrollments } = await supabase
-        .from("enrollments").select("course_id").eq("user_id", user!.id);
-      const enrolledCourseIds = new Set((myEnrollments || []).map((e: any) => e.course_id));
+      // Subject registration gate: a student only sees an exam tied to a subject
+      // if they're registered for that subject — regardless of whether the exam
+      // was assigned to them individually, bulk-assigned by level, or
+      // self-registered via ExamRegistration.tsx. Exams with no subject_id
+      // (general/level-wide exams) are unaffected by this check.
+      const { data: myRegistrations } = await supabase
+        .from("subject_registrations").select("subject_id").eq("user_id", user!.id);
+      const registeredSubjectIds = new Set((myRegistrations || []).map((r: any) => r.subject_id));
 
       // Filter: show exam if exam has no level set (all levels) OR matches student's level,
-      // AND (no course tied to it OR student is registered for that course)
+      // AND (no subject tied to it OR student is registered for that subject)
       const list = (asn || [])
         .map((a: any) => a.exams)
         .filter((e: any) => {
           if (!e?.is_published) return false;
-          if (e.course_id && !enrolledCourseIds.has(e.course_id)) return false; // not registered for this course
+          if (e.subject_id && !registeredSubjectIds.has(e.subject_id)) return false; // not registered for this subject
           if (!e.level || e.level === "") return true;      // exam is for all levels
           if (!myLevel) return true;                         // student has no level, show all
           return e.level === myLevel;                        // match

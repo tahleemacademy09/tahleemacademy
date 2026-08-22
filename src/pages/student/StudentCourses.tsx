@@ -477,13 +477,13 @@ const StudentCourses = () => {
 
       {/* Course registration entry point — private students are assigned courses directly */}
       {!isPrivateStudent && (
-        <button onClick={() => navigate("/student/register-courses")} style={{
+        <button onClick={() => navigate("/student/register-subjects")} style={{
           width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
           padding: "12px", borderRadius: 14, border: "1.5px dashed #D1D5DB", background: "#fff",
           color: G, fontSize: 13, fontWeight: 700, cursor: "pointer",
         }}>
           <ClipboardCheck style={{ width: 15, height: 15 }} />
-          {language === "ar" ? "التسجيل في دورات جديدة" : "Register for more courses"}
+          {language === "ar" ? "التسجيل في مواد جديدة" : "Register for more subjects"}
         </button>
       )}
 
