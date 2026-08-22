@@ -2894,7 +2894,7 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
         {isTeacher&&onToggleSync&&(
           <button
             onClick={onToggleSync}
-            title={!canSync?"Ask an admin to unlock this material before syncing it":syncOn?"Synced live — students are following this. Tap to stop.":"Tap to sync this live to every student"}
+            title={!canSync?"Unlock this material (🔒 icon in the list) before syncing it":syncOn?"Synced live — students are following this. Tap to stop.":"Tap to sync this live to every student"}
             style={{
               display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:8,border:"none",
               cursor:canSync?"pointer":"not-allowed",flexShrink:0,fontSize:11,fontWeight:700,
@@ -4098,7 +4098,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const toggleForceSync=useCallback((m:any)=>{
     if(!isPrivileged||!syncChannelRef.current)return;
     if(!m.sync_allowed){
-      toast({title:"Not authorized for sync",description:"Ask an admin to unlock this material (🔒 icon in the list) before syncing it live.",variant:"destructive"});
+      toast({title:"Not authorized for sync",description:"Unlock this material (🔒 icon in the list) before syncing it live.",variant:"destructive"});
       return;
     }
     if(syncedMatId===m.id){
@@ -4154,7 +4154,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   //    stuck one never recovering since nothing ever timed it out.
   const[syncTogglingIds,setSyncTogglingIds]=useState<Set<string>>(new Set());
   const toggleSyncAllowed=async(m:any)=>{
-    if(!isAdmin||syncTogglingIds.has(m.id))return;
+    if(!isPrivileged||syncTogglingIds.has(m.id))return;
     setSyncTogglingIds(prev=>new Set(prev).add(m.id));
     const next=!m.sync_allowed;
     const controller=new AbortController();
@@ -4225,7 +4225,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
         subject_id:subjectId,title:finalTitle||"Shared in class",material_type:materialType,
         content:composerMode==="text"?cBody.trim():null,file_url:fileUrl,file_type:fileType,file_size:fileSize,
         uploaded_by:user.id,session_id:sessionId||null,visibility:isPrivileged?cVisibility:"all",
-        sync_allowed:isAdmin?cSyncAllowed:false,
+        sync_allowed:isPrivileged?cSyncAllowed:false,
       });
       if(matErr)throw matErr;
 
@@ -4487,8 +4487,8 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                     }}>{lb}</button>
                   ))}
                 </div>
-                {/* Admin-only: authorize this material for live sync to students */}
-                {isAdmin&&(
+                {/* Admin/teacher: authorize this material for live sync to students */}
+                {isPrivileged&&(
                   <button onClick={()=>setCSyncAllowed(v=>!v)} style={{
                     width:"100%",display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:8,marginBottom:10,cursor:"pointer",
                     border:`1px solid ${cSyncAllowed?"rgba(52,211,153,.4)":"rgba(255,255,255,.12)"}`,
@@ -4660,11 +4660,6 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                         {m.material_type||"file"}
                         {resume?.time&&<span style={{marginLeft:5,color:TEAL}}>▶ {Math.floor((resume.time||0)/60)}m</span>}
                         {resume?.page&&!resume?.time&&<span style={{marginLeft:5,color:TEAL}}>p.{resume.page}</span>}
-                        {/* Teacher-visible reminder: this material won't reach students
-                            live until an admin authorizes it (admin sees the toggle instead). */}
-                        {isPrivileged&&!isAdmin&&!m.sync_allowed&&(
-                          <span style={{marginLeft:5,color:"rgba(255,255,255,.3)"}}>🔒 hidden from students</span>
-                        )}
                       </p>
                     </div>
                     <ChevronRight style={{width:13,height:13,color:"rgba(255,255,255,.25)",flexShrink:0}}/>
@@ -4672,12 +4667,12 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                   {/* Edit / delete buttons — teacher/admin only */}
                   {isPrivileged&&(
                     <div style={{display:"flex",gap:3,flexShrink:0}}>
-                      {/* Lock / unlock — admin only. A locked (🔒) material is
+                      {/* Lock / unlock — admin or teacher. A locked (🔒) material is
                           completely hidden from students' own materials list
                           and can never be force-synced. Unlocking (🔗) makes
                           it visible to students and eligible for the teacher's
                           per-material sync toggle in the viewer header. */}
-                      {isAdmin&&(
+                      {isPrivileged&&(
                         <button
                           onClick={()=>toggleSyncAllowed(m)}
                           disabled={syncTogglingIds.has(m.id)}
