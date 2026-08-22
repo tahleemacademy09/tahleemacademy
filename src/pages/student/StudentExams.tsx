@@ -62,6 +62,29 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
     const latest  = pastAttempts.find(a => a.exam_id === exam.id && a.status !== "in_progress");
     const title   = language === "ar" ? exam.title_ar || exam.title : exam.title;
 
+    /* Live countdown for locked/upcoming exams — ticks every second while
+       the card is on screen so "Opens in..." counts down in real time
+       instead of showing a static date. */
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+      if (status !== "not_started" || !exam.start_date) return;
+      const iv = setInterval(() => setNow(Date.now()), 1000);
+      return () => clearInterval(iv);
+    }, [status, exam.start_date]);
+
+    const formatCountdown = (ms: number): string => {
+      if (ms <= 0) return t("Starting…","يبدأ الآن…");
+      const totalSec = Math.floor(ms / 1000);
+      const days = Math.floor(totalSec / 86400);
+      const hrs  = Math.floor((totalSec % 86400) / 3600);
+      const mins = Math.floor((totalSec % 3600) / 60);
+      const secs = totalSec % 60;
+      const pad  = (n: number) => String(n).padStart(2, "0");
+      if (days > 0) return `${days}${t("d","ي")} ${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+      return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+    };
+    const msUntilStart = exam.start_date ? new Date(exam.start_date).getTime() - now : 0;
+
     const SM: Record<string,{icon:string;color:string;bg:string;label:string}> = {
       available:   { icon:"▶",  color:"#22c55e", bg:"#f0fff4", label:t("Available","متاح") },
       in_progress: { icon:"⚡", color:"#f59e0b", bg:"#fffbeb", label:t("In Progress","جارٍ") },
@@ -194,8 +217,20 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
             </button>
           )}
           {status === "not_started" && (
-            <div style={{ padding:"11px 14px", borderRadius:12, background:"#f9fafb", border:"1px solid #e5e7eb", textAlign:"center", fontSize:12, color:TL, fontWeight:600 }}>
-              🔒 {t("Opens","يفتح")} {exam.start_date ? new Date(exam.start_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : ""}
+            <div style={{ padding:"11px 14px", borderRadius:12, background:"#f9fafb", border:"1px solid #e5e7eb", textAlign:"center" }}>
+              <div style={{ fontSize:12, color:TL, fontWeight:600, marginBottom: exam.start_date ? 4 : 0 }}>
+                🔒 {t("Opens in","يفتح خلال")}
+              </div>
+              {exam.start_date && (
+                <>
+                  <div style={{ fontSize:18, fontWeight:900, color:G, fontVariantNumeric:"tabular-nums", letterSpacing:.5 }}>
+                    {formatCountdown(msUntilStart)}
+                  </div>
+                  <div style={{ fontSize:10, color:TL, marginTop:2 }}>
+                    {new Date(exam.start_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                  </div>
+                </>
+              )}
             </div>
           )}
           {status === "expired" && (
