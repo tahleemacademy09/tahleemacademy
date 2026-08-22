@@ -3,11 +3,17 @@
 // Separate from useRegistrationSettings (new-student sign-up / Tasjeel).
 // This one gates whether existing students can register for individual
 // subjects (the actual classes teachers run) on the exam/course platform.
+//
+// Includes an optional deadline: once it passes, the portal is treated as
+// CLOSED even if the manual "open" toggle is still true — the admin doesn't
+// need to remember to flip it off. To extend registration, the admin pushes
+// the deadline forward (or clears it for "no deadline").
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
 export interface SubjectRegistrationConfig {
   subject_registration_open: boolean;
+  subject_registration_deadline: string; // ISO datetime string, or "" for no deadline
   subject_registration_message: string;
   subject_registration_message_ar: string;
   subject_registration_closed_message: string;
@@ -16,6 +22,7 @@ export interface SubjectRegistrationConfig {
 
 const DEFAULTS: SubjectRegistrationConfig = {
   subject_registration_open: false,
+  subject_registration_deadline: "",
   subject_registration_message: "Subject registration is open. Pick the classes you'd like to take this term.",
   subject_registration_message_ar: "التسجيل في المواد مفتوح. اختر المواد التي ترغب في دراستها هذا الفصل.",
   subject_registration_closed_message: "Subject registration is currently closed. Please check back once the admin opens it.",
@@ -37,6 +44,7 @@ export function useSubjectRegistrationSettings() {
         .select("key, value")
         .in("key", [
           "subject_registration_open",
+          "subject_registration_deadline",
           "subject_registration_message",
           "subject_registration_message_ar",
           "subject_registration_closed_message",
@@ -51,6 +59,7 @@ export function useSubjectRegistrationSettings() {
 
         setConfig({
           subject_registration_open:              map.subject_registration_open === "true",
+          subject_registration_deadline:          map.subject_registration_deadline || "",
           subject_registration_message:           map.subject_registration_message || DEFAULTS.subject_registration_message,
           subject_registration_message_ar:        map.subject_registration_message_ar || DEFAULTS.subject_registration_message_ar,
           subject_registration_closed_message:    map.subject_registration_closed_message || DEFAULTS.subject_registration_closed_message,
@@ -69,6 +78,7 @@ export function useSubjectRegistrationSettings() {
   const saveAll = async (c: SubjectRegistrationConfig, updatedBy?: string) => {
     const entries: [string, string][] = [
       ["subject_registration_open",              String(c.subject_registration_open)],
+      ["subject_registration_deadline",          c.subject_registration_deadline || ""],
       ["subject_registration_message",           c.subject_registration_message],
       ["subject_registration_message_ar",        c.subject_registration_message_ar],
       ["subject_registration_closed_message",    c.subject_registration_closed_message],
@@ -83,5 +93,12 @@ export function useSubjectRegistrationSettings() {
     setConfig(c);
   };
 
-  return { config, loading, fetch, saveAll };
+  // Deadline passed? Portal is effectively closed even if the manual toggle
+  // is still "open" — this is what student-facing pages should check.
+  const deadlinePassed = !!config.subject_registration_deadline &&
+    new Date(config.subject_registration_deadline).getTime() < Date.now();
+
+  const isEffectivelyOpen = config.subject_registration_open && !deadlinePassed;
+
+  return { config, loading, fetch, saveAll, deadlinePassed, isEffectivelyOpen };
 }
