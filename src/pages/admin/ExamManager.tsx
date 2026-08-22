@@ -213,15 +213,16 @@ export default function ExamManager() {
       await supabase.from("exam_attempts")
         .delete().eq("exam_id", assignExam.id).in("user_id", userIds).eq("status", "in_progress");
 
-      // Insert assignments — duplicate entries allowed (for retakes)
-      for (const uid of userIds) {
-        await supabase.from("exam_assignments")
-          .insert({ exam_id: assignExam.id, user_id: uid, assigned_by: user?.id })
-          .select().maybeSingle()
-          .then(({ error }) => {
-            if (error && error.code !== "23505") console.warn("Assign insert:", error.message);
-          });
-      }
+      // Upsert assignments — one row per (exam, user). Re-clicking "Assign" on a
+      // student who's already assigned just refreshes assigned_by/assigned_at
+      // instead of creating a duplicate row (which used to show as repeated
+      // exam cards on the student's exam list).
+      const { error: assignErr } = await supabase.from("exam_assignments")
+        .upsert(
+          userIds.map(uid => ({ exam_id: assignExam.id, user_id: uid, assigned_by: user?.id })),
+          { onConflict: "exam_id,user_id" }
+        );
+      if (assignErr) console.warn("Assign upsert:", assignErr.message);
 
       // Notify all students — try bulk first, fall back to individual if RLS blocks bulk
       // NOTE: the notifications table has no "reference_id" column — inserting one
