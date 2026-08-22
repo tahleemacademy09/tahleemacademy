@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
+import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -271,6 +272,7 @@ const StudentExams = () => {
   const { toast }       = useToast();
   const navigate        = useNavigate();
   const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
+  const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
 
   const [assignedExams, setAssignedExams] = useState<any[]>([]);
   const [pastAttempts,  setPastAttempts]  = useState<any[]>([]);
@@ -395,7 +397,7 @@ const StudentExams = () => {
       <div style={{ maxWidth:680, margin:"0 auto", padding:"20px 16px 48px" }}>
 
         {/* Self-registration entry point — private students only get teacher-assigned exams */}
-        {!isPrivateStudent && (
+        {!isPrivateStudent && subjectRegistrationOpen && (
           <button onClick={() => navigate("/student/exams/register")} style={{
             width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
             padding: "12px", borderRadius: 14, border: `1.5px dashed ${BORDER}`, background: "#fff",

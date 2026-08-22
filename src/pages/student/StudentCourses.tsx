@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
+import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BookOpen, Play, ArrowRight, ChevronRight, ClipboardCheck } from "lucide-react";
 
@@ -315,6 +316,7 @@ const StudentCourses = () => {
   const { user, profile } = useAuth();
   const studentLevel = profile?.level || "beginner";
   const { isPrivateStudent } = usePrivateStudent();
+  const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
   const navigate = useNavigate();
 
   // Private student subject/course assignment sets
@@ -476,7 +478,7 @@ const StudentCourses = () => {
       </div>
 
       {/* Course registration entry point — private students are assigned courses directly */}
-      {!isPrivateStudent && (
+      {!isPrivateStudent && subjectRegistrationOpen && (
         <button onClick={() => navigate("/student/register-subjects")} style={{
           width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
           padding: "12px", borderRadius: 14, border: "1.5px dashed #D1D5DB", background: "#fff",
