@@ -328,14 +328,17 @@ const StudentExams = () => {
 
       // Filter: show exam if exam has no level set (all levels) OR matches student's level,
       // AND (subject isn't private, OR student is registered for that private subject)
+      const seenExamIds = new Set<string>();
       const list = (asn || [])
         .map((a: any) => a.exams)
         .filter((e: any) => {
+          if (!e?.id || seenExamIds.has(e.id)) return false; // de-dupe repeated assignment rows
           if (!e?.is_published) return false;
           if (e.subject_id && privateSubjectIds.has(e.subject_id) && !registeredSubjectIds.has(e.subject_id)) return false; // private subject, not registered
-          if (!e.level || e.level === "") return true;      // exam is for all levels
-          if (!myLevel) return true;                         // student has no level, show all
-          return e.level === myLevel;                        // match
+          if (!e.level || e.level === "") { seenExamIds.add(e.id); return true; }      // exam is for all levels
+          if (!myLevel) { seenExamIds.add(e.id); return true; }                         // student has no level, show all
+          if (e.level === myLevel) { seenExamIds.add(e.id); return true; }              // match
+          return false;
         });
       setAssignedExams(list);
 
