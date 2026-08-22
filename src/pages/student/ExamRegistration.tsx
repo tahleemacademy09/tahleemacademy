@@ -1,14 +1,18 @@
 /* src/pages/student/ExamRegistration.tsx
-   Students browse tests/exams that are open for self-registration and
-   register themselves. Registering inserts a row into exam_assignments
-   (RLS re-validates level match, course enrollment, deadlines — see
-   migration 20260821120000_exam_self_registration.sql). Once registered,
-   the exam shows up in /student/exams exactly like an admin-assigned one,
-   because both pages read from the same exam_assignments table.
+   Reached from "My Exams" → "Register for more tests & exams". Students
+   register for SUBJECTS here (not individual exams) — registering for a
+   subject is what unlocks every test/exam a teacher ties to that subject
+   (see the Subject field in the admin Exam Editor). This mirrors
+   SubjectRegistration.tsx (/student/register-subjects); kept as a separate
+   file because it's reached from a different entry point ("My Exams") and
+   navigates back there instead of to "My Courses".
 
-   Private students (usePrivateStudent) never see this page — they only
-   ever get exams their teacher assigns directly, same rule already used
-   on StudentExams.tsx.
+   Gated by the same admin toggle (subject_registration_open in
+   academy_settings) as SubjectRegistration.tsx.
+
+   Private students (usePrivateStudent) never see this page — their
+   subjects are assigned directly by their teacher/admin, same rule already
+   used on StudentExams.tsx.
 */
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -18,9 +22,7 @@ import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import {
-  Clock, CheckCircle, Lock, BookOpen, ChevronLeft, ClipboardCheck,
-} from "lucide-react";
+import { Lock, CheckCircle, BookOpen, ChevronLeft, Layers } from "lucide-react";
 
 const G      = "#0f2d1f";
 const GM     = "#1a4731";
@@ -34,13 +36,11 @@ const ExamRegistration = () => {
   const { toast }        = useToast();
   const navigate         = useNavigate();
   const { isPrivateStudent } = usePrivateStudent();
-  const { config: portal, loading: portalLoading } = useSubjectRegistrationSettings();
+  const { config: portal, loading: portalLoading, isEffectivelyOpen } = useSubjectRegistrationSettings();
 
-  const [loading, setLoading]         = useState(true);
-  const [exams, setExams]             = useState<any[]>([]);
+  const [loading, setLoading]             = useState(true);
+  const [subjects, setSubjects]           = useState<any[]>([]);
   const [registeredIds, setRegisteredIds] = useState<Set<string>>(new Set());
-  const [subjectTitles, setSubjectTitles]   = useState<Record<string, string>>({});
-  const [registeredSubjectIds, setRegisteredSubjectIds] = useState<Set<string>>(new Set());
   const [studentLevel, setStudentLevel]   = useState<string>("");
   const [registering, setRegistering]     = useState<string | null>(null);
 
@@ -57,65 +57,39 @@ const ExamRegistration = () => {
       const myLevel = profile?.level || "";
       setStudentLevel(myLevel);
 
-      // Subject access here is gated by subject *registration* (subject_registrations
-      // row exists), not payment — payment/subscription access is handled separately
-      // via profiles.payment_status / subscription_end_date.
-      const { data: registrations } = await supabase
-        .from("subject_registrations").select("subject_id").eq("user_id", user!.id);
-      const mySubjectIds = new Set((registrations || []).map((r: any) => r.subject_id));
-      setRegisteredSubjectIds(mySubjectIds);
+      // Subjects matching the student's own level (or open to "all")
+      const { data: allSubjects } = await supabase
+        .from("subjects")
+        .select("id, title, title_ar, description, description_ar, level, visibility")
+        .eq("is_active", true)
+        .order("title");
+
+      const list = (allSubjects || []).filter((s: any) => {
+        if ((s.visibility || "all") === "private") return false;
+        const lv: string = s.level || "all";
+        if (!lv || lv === "all") return true;
+        return lv.split(",").map((l: string) => l.trim()).includes(myLevel);
+      });
+      setSubjects(list);
 
       const { data: existing } = await supabase
-        .from("exam_assignments").select("exam_id").eq("user_id", user!.id);
-      setRegisteredIds(new Set((existing || []).map((r: any) => r.exam_id)));
-
-      const nowIso = new Date().toISOString();
-      const { data: openExams } = await supabase
-        .from("exams" as any).select("*")
-        .eq("is_published", true)
-        .eq("registration_open", true)
-        .or(`end_date.is.null,end_date.gt.${nowIso}`)
-        .order("start_date", { ascending: true });
-
-      const list = (openExams || []).filter((e: any) => {
-        if (e.registration_deadline && new Date(e.registration_deadline).getTime() < Date.now()) return false;
-        return true;
-      });
-      setExams(list);
-
-      const subjectIds = Array.from(new Set(list.map((e: any) => e.subject_id).filter(Boolean)));
-      if (subjectIds.length) {
-        const { data: subjects } = await supabase.from("subjects").select("id, title, title_ar").in("id", subjectIds);
-        const map: Record<string, string> = {};
-        (subjects || []).forEach((s: any) => { map[s.id] = language === "ar" ? (s.title_ar || s.title) : s.title; });
-        setSubjectTitles(map);
-      }
+        .from("subject_registrations").select("subject_id").eq("user_id", user!.id);
+      setRegisteredIds(new Set((existing || []).map((r: any) => r.subject_id)));
     } finally {
       setLoading(false);
     }
   };
 
-  const eligibility = (exam: any): { eligible: boolean; reason?: string } => {
-    if (exam.level && exam.level !== "" && studentLevel && exam.level !== studentLevel) {
-      return { eligible: false, reason: t("Not offered at your level","غير متاح لمستواك") };
-    }
-    if (exam.subject_id && !registeredSubjectIds.has(exam.subject_id)) {
-      const title = subjectTitles[exam.subject_id] || t("this subject","هذه المادة");
-      return { eligible: false, reason: `${t("Register for","سجّل في")} “${title}” ${t("first","أولاً")}` };
-    }
-    return { eligible: true };
-  };
-
-  const register = async (exam: any) => {
-    setRegistering(exam.id);
+  const register = async (subject: any) => {
+    setRegistering(subject.id);
     try {
-      const { error } = await supabase.from("exam_assignments").insert({ exam_id: exam.id, user_id: user!.id } as any);
+      const { error } = await supabase.from("subject_registrations").insert({ subject_id: subject.id, user_id: user!.id } as any);
       if (error) {
-        toast({ title: t("Registration failed","فشل التسجيل"), description: error.message, variant: "destructive" });
+        toast({ title: t("Registration failed", "فشل التسجيل"), description: error.message, variant: "destructive" });
         return;
       }
-      setRegisteredIds(prev => new Set(prev).add(exam.id));
-      toast({ title: `✅ ${t("Registered!","تم التسجيل!")}`, description: t("You can now find this in your exams list.","يمكنك الآن العثور عليه في قائمة اختباراتك.") });
+      setRegisteredIds(prev => new Set(prev).add(subject.id));
+      toast({ title: `✅ ${t("Registered!", "تم التسجيل!")}`, description: t("You'll now see tests and exams for this subject.", "ستظهر لك الآن اختبارات وامتحانات هذه المادة.") });
     } finally {
       setRegistering(null);
     }
@@ -126,7 +100,7 @@ const ExamRegistration = () => {
       <div style={{ background: CREAM, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ textAlign: "center", maxWidth: 340 }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
-          <p style={{ fontWeight: 800, color: G, marginBottom: 6 }}>{t("Private Student","طالب خاص")}</p>
+          <p style={{ fontWeight: 800, color: G, marginBottom: 6 }}>{t("Private Student", "طالب خاص")}</p>
           <p style={{ fontSize: 13, color: TL }}>
             {t("Your teacher assigns exams and tests to you directly — self-registration isn't available for private students.",
                "معلمك يقوم بتعيين الامتحانات والاختبارات لك مباشرة — التسجيل الذاتي غير متاح للطلاب الخاصين.")}
@@ -136,7 +110,7 @@ const ExamRegistration = () => {
     );
   }
 
-  if (!portalLoading && !portal.subject_registration_open) {
+  if (!portalLoading && !isEffectivelyOpen) {
     return (
       <div style={{ background: CREAM, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ textAlign: "center", maxWidth: 360 }}>
@@ -166,12 +140,17 @@ const ExamRegistration = () => {
           padding: "22px 20px", marginBottom: 20, boxShadow: "0 8px 32px rgba(15,45,31,.25)",
         }}>
           <h1 style={{ fontSize: 22, fontWeight: 800, color: "#fff", margin: "0 0 6px" }}>
-            {t("Register for Tests & Exams","التسجيل للاختبارات والامتحانات")}
+            {t("Register for Subjects","التسجيل في المواد")}
           </h1>
           <p style={{ fontSize: 12.5, color: "rgba(255,255,255,.65)", margin: 0 }}>
-            {t("Only students who register here will be able to write the test or exam.",
-               "فقط الطلاب المسجلون هنا سيتمكنون من كتابة الاختبار أو الامتحان.")}
+            {t("Register for a subject to unlock its tests and exams. Only subjects for your level are shown.",
+               "سجّل في مادة لفتح اختباراتها وامتحاناتها. تظهر فقط المواد الخاصة بمستواك.")}
           </p>
+          {portal.subject_registration_deadline && (
+            <p style={{ fontSize: 11.5, color: "#fde68a", margin: "8px 0 0", fontWeight: 700 }}>
+              ⏰ {t("Registration closes","التسجيل يُغلق")} {new Date(portal.subject_registration_deadline).toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </p>
+          )}
         </div>
 
         {loading ? (
@@ -179,65 +158,45 @@ const ExamRegistration = () => {
             <div style={{ width: 40, height: 40, border: `4px solid ${G}`, borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite", margin: "0 auto" }} />
             <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
           </div>
-        ) : exams.length === 0 ? (
+        ) : subjects.length === 0 ? (
           <div style={{ textAlign: "center", padding: "48px 20px", background: "#fff", borderRadius: 18, border: `1px dashed ${BORDER}` }}>
-            <ClipboardCheck style={{ width: 36, height: 36, color: TL, opacity: .5, margin: "0 auto 10px" }} />
-            <p style={{ fontSize: 14, color: TL, margin: 0 }}>{t("No tests or exams are open for registration right now.","لا توجد اختبارات أو امتحانات مفتوحة للتسجيل حالياً.")}</p>
+            <Layers style={{ width: 36, height: 36, color: TL, opacity: .5, margin: "0 auto 10px" }} />
+            <p style={{ fontSize: 14, color: TL, margin: 0 }}>{t("No subjects are available for your level right now.", "لا توجد مواد متاحة لمستواك حالياً.")}</p>
           </div>
         ) : (
-          exams.map(exam => {
-            const isTest = (exam.type || "exam") === "test";
-            const title  = language === "ar" ? exam.title_ar || exam.title : exam.title;
-            const already = registeredIds.has(exam.id);
-            const elig = eligibility(exam);
-            const deadline = exam.registration_deadline || exam.start_date;
+          subjects.map(subject => {
+            const title  = language === "ar" ? subject.title_ar || subject.title : subject.title;
+            const already = registeredIds.has(subject.id);
 
             return (
-              <div key={exam.id} style={{
+              <div key={subject.id} style={{
                 background: "#fff", borderRadius: 16, border: `1.5px solid ${BORDER}`,
                 boxShadow: "0 2px 12px rgba(15,45,31,.07)", padding: "14px 16px", marginBottom: 12,
               }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
-                  <div>
-                    <span style={{
-                      fontSize: 10, fontWeight: 800, letterSpacing: .8, padding: "3px 9px", borderRadius: 10,
-                      background: isTest ? "#fffbeb" : "#f0fff4", color: isTest ? "#92400e" : "#065f46",
-                      border: `1px solid ${isTest ? "#fde68a" : "#86efac"}`,
-                    }}>
-                      {isTest ? t("TEST","تمرين") : t("EXAM","امتحان")}
-                    </span>
-                    <h3 style={{ fontSize: 15, fontWeight: 800, color: G, margin: "6px 0 0" }}>{title}</h3>
-                    {exam.subject_id && subjectTitles[exam.subject_id] && (
-                      <p style={{ fontSize: 11.5, color: TL, margin: "3px 0 0" }}>
-                        <BookOpen style={{ width: 11, height: 11, display: "inline", verticalAlign: -1, marginRight: 4 }} />
-                        {subjectTitles[exam.subject_id]}
-                      </p>
-                    )}
-                  </div>
+                <div style={{ marginBottom: 8 }}>
+                  <p style={{ fontSize: 11, color: TL, margin: "0 0 3px", fontWeight: 700 }}>
+                    <BookOpen style={{ width: 11, height: 11, display: "inline", verticalAlign: -1, marginRight: 4 }} />
+                    {t("Subject", "مادة")}
+                  </p>
+                  <h3 style={{ fontSize: 15, fontWeight: 800, color: G, margin: 0 }}>{title}</h3>
+                  {subject.description && (
+                    <p style={{ fontSize: 12, color: TL, margin: "4px 0 0", lineHeight: 1.5 }}>
+                      {language === "ar" ? (subject.description_ar || subject.description) : subject.description}
+                    </p>
+                  )}
                 </div>
-
-                {deadline && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: TL, marginBottom: 10 }}>
-                    <Clock style={{ width: 12, height: 12 }} />
-                    {t("Register by","سجل قبل")} {new Date(deadline).toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </div>
-                )}
 
                 {already ? (
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "11px", borderRadius: 12, background: "#f0fff4", border: "1px solid #86efac", color: "#065f46", fontSize: 13, fontWeight: 700 }}>
-                    <CheckCircle style={{ width: 15, height: 15 }} /> {t("Registered","تم التسجيل")}
-                  </div>
-                ) : !elig.eligible ? (
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, padding: "11px", borderRadius: 12, background: "#f9fafb", border: "1px solid #e5e7eb", color: TL, fontSize: 12.5, fontWeight: 600 }}>
-                    <Lock style={{ width: 13, height: 13 }} /> {elig.reason}
+                    <CheckCircle style={{ width: 15, height: 15 }} /> {t("Registered", "تم التسجيل")}
                   </div>
                 ) : (
-                  <button onClick={() => register(exam)} disabled={registering === exam.id} style={{
+                  <button onClick={() => register(subject)} disabled={registering === subject.id} style={{
                     width: "100%", padding: "12px", borderRadius: 13, border: "none", color: "#fff", fontSize: 14, fontWeight: 800,
-                    cursor: registering === exam.id ? "default" : "pointer", opacity: registering === exam.id ? .7 : 1,
+                    cursor: registering === subject.id ? "default" : "pointer", opacity: registering === subject.id ? .7 : 1,
                     background: `linear-gradient(135deg,${G},${GM})`,
                   }}>
-                    {registering === exam.id ? t("Registering…","جارٍ التسجيل…") : t("Register","سجّل الآن")}
+                    {registering === subject.id ? t("Registering…", "جارٍ التسجيل…") : t("Register", "سجّل الآن")}
                   </button>
                 )}
               </div>
