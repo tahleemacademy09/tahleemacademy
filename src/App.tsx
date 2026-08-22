@@ -52,7 +52,7 @@ const StudentDashboard    = lazy(() => import("./pages/student/StudentDashboard"
 const StudentDashboardV2  = lazy(() => import("./pages/student/StudentDashboardV2"));
 const StudentExams        = lazy(() => import("./pages/student/StudentExams"));
 const ExamRegistration    = lazy(() => import("./pages/student/ExamRegistration"));
-const CourseRegistration  = lazy(() => import("./pages/student/CourseRegistration"));
+const SubjectRegistration = lazy(() => import("./pages/student/SubjectRegistration"));
 const ExamTaking          = lazy(() => import("./pages/student/ExamTaking"));
 const ProfileSettings     = lazy(() => import("./pages/student/ProfileSettings"));
 const ExamResults         = lazy(() => import("./pages/student/ExamResults"));
@@ -124,7 +124,7 @@ const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMappi
 const LevelManagement       = lazy(() => import("./pages/admin/LevelManagement"));
 const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
 const RegistrationSettings      = lazy(() => import("./pages/admin/RegistrationSettings"));
-const CourseRegistrationSettings = lazy(() => import("./pages/admin/CourseRegistrationSettings"));
+const SubjectRegistrationSettings = lazy(() => import("./pages/admin/SubjectRegistrationSettings"));
 const RegistrationDiagnostics   = lazy(() => import("./pages/admin/RegistrationDiagnostics"));
 const StudentRegistration       = lazy(() => import("./pages/admin/StudentRegistration"));
 const AdminSettings         = lazy(() => import("./pages/admin/AdminSettings"));
@@ -246,7 +246,7 @@ const App = () => (
                     <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
                     <Route path="/student/exams"               element={<StudentExams />} />
                     <Route path="/student/exams/register"      element={<ExamRegistration />} />
-                    <Route path="/student/register-courses"    element={<CourseRegistration />} />
+                    <Route path="/student/register-subjects"   element={<SubjectRegistration />} />
                     <Route path="/student/transcripts"         element={<Transcripts />} />
                     <Route path="/student/majlis"              element={<Majlis />} />
                     <Route path="/student/live-classes"        element={<LearningHub defaultTab="live" />} />
@@ -347,7 +347,7 @@ const App = () => (
                     <Route path="/admin/payment-settings"            element={<PaymentSettings />} />
                     <Route path="/admin/public-classes"              element={<PublicClassManagement />} />
                     <Route path="/admin/registration-settings"       element={<RegistrationSettings />} />
-                    <Route path="/admin/course-registration"         element={<CourseRegistrationSettings />} />
+                    <Route path="/admin/subject-registration"        element={<SubjectRegistrationSettings />} />
                     <Route path="/admin/registration-diagnostics"   element={<RegistrationDiagnostics />} />
                     <Route path="/admin/student-registration"        element={<StudentRegistration />} />
                     <Route path="/admin/settings"                    element={<AdminSettings />} />
