@@ -37,7 +37,7 @@ const SubjectRegistration = () => {
   const { toast }        = useToast();
   const navigate         = useNavigate();
   const { isPrivateStudent } = usePrivateStudent();
-  const { config: portal, loading: portalLoading } = useSubjectRegistrationSettings();
+  const { config: portal, loading: portalLoading, isEffectivelyOpen } = useSubjectRegistrationSettings();
 
   const [loading, setLoading]             = useState(true);
   const [subjects, setSubjects]           = useState<any[]>([]);
@@ -111,7 +111,7 @@ const SubjectRegistration = () => {
     );
   }
 
-  if (!portalLoading && !portal.subject_registration_open) {
+  if (!portalLoading && !isEffectivelyOpen) {
     return (
       <div style={{ background: CREAM, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ textAlign: "center", maxWidth: 360 }}>
@@ -146,6 +146,11 @@ const SubjectRegistration = () => {
           <p style={{ fontSize: 12.5, color: "rgba(255,255,255,.65)", margin: 0 }}>
             {language === "ar" ? portal.subject_registration_message_ar : portal.subject_registration_message}
           </p>
+          {portal.subject_registration_deadline && (
+            <p style={{ fontSize: 11.5, color: "#fde68a", margin: "8px 0 0", fontWeight: 700 }}>
+              ⏰ {t("Registration closes","التسجيل يُغلق")} {new Date(portal.subject_registration_deadline).toLocaleDateString(language === "ar" ? "ar-SA" : "en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+            </p>
+          )}
         </div>
 
         {loading ? (
