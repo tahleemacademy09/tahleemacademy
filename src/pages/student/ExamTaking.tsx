@@ -214,8 +214,8 @@ const MultiSelectQuestion = ({ question, answer, onAnswer }: { question: any; an
             </div>
             {opt.image_url && <img src={opt.image_url} alt="" style={{ height: 56, borderRadius: 8, objectFit: "contain" }} />}
             <div style={{ flex: 1 }}>
-              {opt.text && <div dir="auto" style={{ fontSize: 16, fontWeight: isSel ? 700 : 500, color: isSel ? G : "#374151", fontFamily: "'Amiri',serif", lineHeight: 1.9 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text) }} />}
-              {opt.text_ar && opt.text_ar !== opt.text && <div dir="rtl" style={{ fontSize: 17, fontFamily: "'Amiri Quran',serif", color: G, lineHeight: 2.1, marginTop: 2 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text_ar) }} />}
+              {opt.text_ar && opt.text_ar !== opt.text && <div dir="rtl" style={{ fontSize: 17, fontFamily: "'Amiri Quran',serif", color: G, lineHeight: 2.1, marginBottom: 2 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text_ar) }} />}
+              {opt.text && <div dir="ltr" style={{ fontSize: 16, fontWeight: isSel ? 700 : 500, color: isSel ? G : "#374151", fontFamily: "'Amiri',serif", lineHeight: 1.9 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text) }} />}
             </div>
           </div>
         );
@@ -836,8 +836,8 @@ const ExamTaking = () => {
                             </div>
                             {opt.image_url && <img src={opt.image_url} alt="" style={{ height: 64, borderRadius: 8, objectFit: "contain" }} />}
                             <div style={{ flex: 1 }}>
-                              {opt.text && <div dir="auto" style={{ fontSize: 16, fontWeight: sel ? 700 : 500, color: sel ? G : "#374151", fontFamily: "'Amiri',serif", lineHeight: 1.9 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text) }} />}
-                              {opt.text_ar && opt.text_ar !== opt.text && <div dir="rtl" style={{ fontSize: 18, fontFamily: "'Amiri Quran',serif", color: G, lineHeight: 2.1, marginTop: 3 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text_ar) }} />}
+                              {opt.text_ar && opt.text_ar !== opt.text && <div dir="rtl" style={{ fontSize: 18, fontFamily: "'Amiri Quran',serif", color: G, lineHeight: 2.1, marginBottom: 3 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text_ar) }} />}
+                              {opt.text && <div dir="ltr" style={{ fontSize: 16, fontWeight: sel ? 700 : 500, color: sel ? G : "#374151", fontFamily: "'Amiri',serif", lineHeight: 1.9 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(opt.text) }} />}
                             </div>
                             <div style={{ width: 24, height: 24, borderRadius: "50%", background: sel ? "#22c55e" : "transparent", border: `2px solid ${sel ? "#22c55e" : BORDER}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all .15s" }}>
                               {sel && <span style={{ color: "#fff", fontSize: 14, fontWeight: 900 }}>✓</span>}
