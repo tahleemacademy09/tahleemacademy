@@ -83,6 +83,7 @@ interface ExamForm {
   timezone: string; term: string; max_review_views: number;
   type: "exam" | "test";
   level: string;
+  subject_id: string;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -253,8 +254,14 @@ const ExamEditor = () => {
     screenshot_interval_seconds: 0, idle_timeout_seconds: 300,
     blur_detection: false, face_detection: false,
     timezone: "UTC", term: "first", max_review_views: 1,
-    type: "exam", level: "",
+    type: "exam", level: "", subject_id: "",
   });
+
+  const [subjects, setSubjects] = useState<{ id: string; title: string; title_ar: string | null }[]>([]);
+  useEffect(() => {
+    supabase.from("subjects").select("id, title, title_ar").eq("is_active", true).order("title")
+      .then(({ data }) => setSubjects(data || []));
+  }, []);
 
   const [questions,      setQuestions]      = useState<QuestionForm[]>([emptyQuestion()]);
   const [formatSettings, setFormatSettings] = useState<ExamFormatSettings>({ ...DEFAULT_FORMAT });
@@ -559,6 +566,7 @@ const ExamEditor = () => {
         blur_detection: examForm.blur_detection, face_detection: examForm.face_detection,
         timezone: examForm.timezone, term: examForm.term, max_review_views: examForm.max_review_views,
         type: examForm.type, level: examForm.level || null,
+        subject_id: examForm.subject_id || null,
         ...formatSettings, created_by: user?.id,
       };
 
@@ -639,6 +647,7 @@ const ExamEditor = () => {
           timezone: (exam as any).timezone || "UTC",
           term: exam.term || "first", max_review_views: exam.max_review_views || 1,
           type: (exam.type as "exam" | "test") || "exam", level: exam.level || "",
+          subject_id: (exam as any).subject_id || "",
         });
       }
       const { data: qs } = await supabase
@@ -740,6 +749,20 @@ const ExamEditor = () => {
                       </button>
                     ))}
                   </div>
+                </div>
+                {/* Subject */}
+                <div className="space-y-2">
+                  <Label className="text-sm font-bold text-slate-700">{t("Subject","المادة")}</Label>
+                  <Select value={examForm.subject_id||"none"} onValueChange={v => setExamForm({ ...examForm, subject_id: v==="none" ? "" : v })}>
+                    <SelectTrigger className="h-11 rounded-lg"><SelectValue placeholder={t("Select subject","اختر المادة")} /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{t("No subject (visible to all)","بدون مادة (يظهر للجميع)")}</SelectItem>
+                      {subjects.map(s => (
+                        <SelectItem key={s.id} value={s.id}>{t(s.title, s.title_ar || s.title)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[11px] text-slate-400">{t("Only students registered for this subject will see this exam/test.","لن يرى هذا الامتحان/التمرين إلا الطلاب المسجلون في هذه المادة.")}</p>
                 </div>
                 {/* Level & Term */}
                 <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
