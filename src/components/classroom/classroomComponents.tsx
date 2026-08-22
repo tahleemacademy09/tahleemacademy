@@ -4063,20 +4063,30 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   //    Materials default to sync_allowed=false; only an admin can flip this,
   //    which is what actually lets a teacher's open/scroll/activity on that
   //    material reach students at all (see broadcast gating above).
-  const[syncTogglingId,setSyncTogglingId]=useState<string|null>(null);
+  //    Tracked as a SET (not a single id) so one slow/stuck request only
+  //    disables its own row's button — it used to be a single string, which
+  //    meant a request that stalled on a weak connection (live classes eat
+  //    a lot of bandwidth on WebRTC, which can starve a plain REST call)
+  //    silently blocked every OTHER material's lock button too, with the
+  //    stuck one never recovering since nothing ever timed it out.
+  const[syncTogglingIds,setSyncTogglingIds]=useState<Set<string>>(new Set());
   const toggleSyncAllowed=async(m:any)=>{
-    if(!isAdmin||syncTogglingId)return;
-    setSyncTogglingId(m.id);
+    if(!isAdmin||syncTogglingIds.has(m.id))return;
+    setSyncTogglingIds(prev=>new Set(prev).add(m.id));
     const next=!m.sync_allowed;
+    const controller=new AbortController();
+    const timeoutId=setTimeout(()=>controller.abort(),10000);
     try{
-      const{error}=await supabase.from("subject_materials" as any).update({sync_allowed:next}).eq("id",m.id);
+      const{error}=await supabase.from("subject_materials" as any).update({sync_allowed:next}).eq("id",m.id).abortSignal(controller.signal);
       if(error)throw error;
       setMats(prev=>prev.map(e=>e.id===m.id?{...e,sync_allowed:next}:e));
       toast({title:next?"🔗 Sync authorized":"🔒 Sync revoked",description:next?"This material can now be live-synced to students.":"This material will no longer sync to students."});
     }catch(e:any){
-      toast({title:"Failed to update sync permission",description:e?.message,variant:"destructive"});
+      const timedOut=e?.name==="AbortError";
+      toast({title:"Failed to update sync permission",description:timedOut?"Request timed out — check your connection and try again.":(e?.message||"Please try again."),variant:"destructive"});
     }finally{
-      setSyncTogglingId(null);
+      clearTimeout(timeoutId);
+      setSyncTogglingIds(prev=>{const next=new Set(prev);next.delete(m.id);return next;});
     }
   };
 
@@ -4587,12 +4597,12 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                       {isAdmin&&(
                         <button
                           onClick={()=>toggleSyncAllowed(m)}
-                          disabled={syncTogglingId===m.id}
+                          disabled={syncTogglingIds.has(m.id)}
                           title={m.sync_allowed?"Sync authorized — tap to revoke":"Sync not authorized — tap to allow live sync"}
-                          style={{width:28,height:28,borderRadius:7,border:"none",cursor:syncTogglingId===m.id?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",
+                          style={{width:28,height:28,borderRadius:7,border:"none",cursor:syncTogglingIds.has(m.id)?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",
                             background:m.sync_allowed?"rgba(52,211,153,.18)":"rgba(255,255,255,.07)",
                             color:m.sync_allowed?"#34d399":"rgba(255,255,255,.4)",fontSize:13,transition:"all .12s"}}
-                        >{syncTogglingId===m.id?"⌛":m.sync_allowed?"🔗":"🔒"}</button>
+                        >{syncTogglingIds.has(m.id)?"⌛":m.sync_allowed?"🔗":"🔒"}</button>
                       )}
                       <button
                         onClick={()=>isEditing?setEditingId(null):openEdit(m)}
