@@ -6162,6 +6162,7 @@ export type Database = {
           session_id: string | null
           sort_order: number | null
           subject_id: string
+          sync_allowed: boolean
           title: string
           title_ar: string | null
           topic: string | null
@@ -6182,6 +6183,7 @@ export type Database = {
           session_id?: string | null
           sort_order?: number | null
           subject_id: string
+          sync_allowed?: boolean
           title: string
           title_ar?: string | null
           topic?: string | null
@@ -6202,6 +6204,7 @@ export type Database = {
           session_id?: string | null
           sort_order?: number | null
           subject_id?: string
+          sync_allowed?: boolean
           title?: string
           title_ar?: string | null
           topic?: string | null
