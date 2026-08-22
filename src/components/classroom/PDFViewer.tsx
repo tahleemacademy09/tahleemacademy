@@ -162,20 +162,25 @@ interface Props {
   url: string;
   bg?: string;
   materialId?: string;
-  /** Teacher side: when true, this viewer's scroll position is broadcast via onSyncScroll. */
+  // ── Live "follow the teacher" scroll sync (classroom only) ───────────────
+  // syncActive:   true on the teacher's side while this document is the one
+  //               being actively broadcast — captures scroll position.
+  // onSyncScroll: fired (throttled) with the scroll fraction (0-1) and the
+  //               current/total page, for the parent to broadcast onward.
+  // following:    true on a student's side while they're following the
+  //               teacher's live position — disables independent scrolling
+  //               so the two views can't drift apart.
+  // remoteScrollPct: the teacher's latest scroll fraction (0-1) to drive to
+  //               while following.
   syncActive?: boolean;
-  /** Teacher side: fired (throttled) with a 0–1 scroll fraction whenever the teacher scrolls. */
-  onSyncScroll?: (pct: number) => void;
-  /** Student side: when true, this viewer's scroll follows remoteScrollPct instead of the student's own reading position. */
+  onSyncScroll?: (scrollPct: number, page: number, total: number) => void;
   following?: boolean;
-  /** Student side: the teacher's live scroll fraction (0–1) to follow. */
   remoteScrollPct?: number | null;
 }
 
 export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive = false, onSyncScroll, following = false, remoteScrollPct = null }: Props) {
   const scrollRef    = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const lastSyncSent = useRef(0);
   const [phase, setPhase] = useState<"instant"|"loading"|"rendering"|"done"|"error">("loading");
   const [pct,   setPct]   = useState(0);
   const [errMsg,setErrMsg]= useState("");
@@ -315,6 +320,21 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive 
   // Show the navigator while actively scrolling, fade out once scrolling settles
   const [navVisible, setNavVisible] = useState(false);
   const navHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Sync-broadcast bookkeeping (teacher side) — refs so the scroll
+  //    listener always sees the latest callback/flag without needing to be
+  //    re-attached every render. ──────────────────────────────────────────
+  const onSyncScrollRef = useRef(onSyncScroll);
+  useEffect(() => { onSyncScrollRef.current = onSyncScroll; }, [onSyncScroll]);
+  const syncActiveRef = useRef(syncActive);
+  useEffect(() => { syncActiveRef.current = syncActive; }, [syncActive]);
+  const totalPagesRef = useRef(0);
+  useEffect(() => { totalPagesRef.current = totalPages; }, [totalPages]);
+  const lastSyncSentRef = useRef(0);
+  // Guards against the "apply remote scroll" effect re-triggering a fresh
+  // outgoing broadcast on the follower's own side (it never has syncActive
+  // set, but this also protects against any future dual-role case).
+  const applyingRemoteRef = useRef(false);
 
   // Keep the navigator visible while the user is actively touching/pressing
   // it (e.g. holding the ▲/▼ buttons or typing a page number), so it doesn't
@@ -465,15 +485,18 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive 
       setNavVisible(true);
       if (navHideTimer.current) clearTimeout(navHideTimer.current);
       navHideTimer.current = setTimeout(() => setNavVisible(false), 1200);
-      // Teacher: broadcast the live scroll fraction (throttled) so students
-      // following this material can mirror it in real time — the same "follow
-      // the teacher" behaviour that already exists for HTML lesson materials.
-      if (syncActive && onSyncScroll) {
+
+      // Teacher side: report scroll position for the classroom sync channel,
+      // throttled the same as the HTML-lesson sync path. Skip while we're
+      // the ones programmatically applying a REMOTE position (follower
+      // side) so we never echo it back.
+      if (syncActiveRef.current && onSyncScrollRef.current && !applyingRemoteRef.current) {
         const now = Date.now();
-        if (now - lastSyncSent.current >= 120) {
-          lastSyncSent.current = now;
-          const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
-          onSyncScroll(Math.min(1, Math.max(0, el.scrollTop / maxScroll)));
+        if (now - lastSyncSentRef.current >= 90) {
+          lastSyncSentRef.current = now;
+          const max = el.scrollHeight - el.clientHeight;
+          const pct = max > 0 ? Math.min(1, Math.max(0, el.scrollTop / max)) : 0;
+          onSyncScrollRef.current(pct, currentPageRef.current, totalPagesRef.current);
         }
       }
     };
@@ -483,19 +506,25 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive 
       el.removeEventListener("scroll", fn);
       if (navHideTimer.current) clearTimeout(navHideTimer.current);
     };
-  }, [materialId, phase, updateCurrentPageFromScroll, syncActive, onSyncScroll]);
+  }, [materialId, phase, updateCurrentPageFromScroll]);
 
-  // Student: apply the teacher's live scroll position when following.
-  // Runs whenever a new fraction arrives (or once pages finish rendering,
-  // so a late-follow immediately lands on the teacher's current spot instead
-  // of page 1).
+  // ── Follower side: drive the scroll container to the teacher's latest
+  //    reported position. Runs again as pages stream in (phase changes
+  //    scrollHeight), so a late joiner still lands in the right place once
+  //    enough of the document has rendered. ─────────────────────────────
   useEffect(() => {
     if (!following || remoteScrollPct == null) return;
     const el = scrollRef.current;
     if (!el) return;
-    const maxScroll = Math.max(1, el.scrollHeight - el.clientHeight);
-    el.scrollTo({ top: remoteScrollPct * maxScroll, behavior: "smooth" });
-  }, [following, remoteScrollPct, phase]);
+    const max = el.scrollHeight - el.clientHeight;
+    if (max <= 0) return;
+    applyingRemoteRef.current = true;
+    el.scrollTop = remoteScrollPct * max;
+    updateCurrentPageFromScroll();
+    // Release on next tick — the scroll event this triggers fires async.
+    const t = setTimeout(() => { applyingRemoteRef.current = false; }, 50);
+    return () => clearTimeout(t);
+  }, [following, remoteScrollPct, phase, updateCurrentPageFromScroll]);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: bg, position: "relative" }}>
@@ -642,13 +671,14 @@ export default function PDFViewer({ url, bg = "#1c1c1e", materialId, syncActive 
         ref={scrollRef}
         style={{
           flex:1,
-          overflowY: pageMode ? "hidden" : "auto",
+          overflowY: (pageMode || following) ? "hidden" : "auto",
           overflowX: zoom > 1 ? "auto" : "hidden",
           padding:"8px",
           display: phase === "error" ? "none" : "block",
           // Let browser decide scroll direction naturally.
           // We only intercept 2-finger moves in JS for pinch-zoom.
           touchAction: "manipulation",
+          pointerEvents: following ? "none" : "auto",
         }}
       >
         {/* Centering wrapper so transformOrigin:"top center" scales symmetrically */}
