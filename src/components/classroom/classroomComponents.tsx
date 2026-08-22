@@ -2541,7 +2541,7 @@ function driveToReveal(doc:Document,targetCount:number,expectedStep:number,attem
    Renders INSIDE the content area (position:absolute) so the footer and top bar
    always remain visible. Has an opt-in fullscreen button that expands to the full
    viewport when needed. Saves / restores video time and PDF page automatically.   */
-export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize,fromPanel=false,syncActive=false,onSyncActivity,following=false,remoteActivity=null}:any)=>{
+export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize,fromPanel=false,syncActive=false,onSyncActivity,canSync=false,syncOn=false,onToggleSync,following=false,remoteActivity=null}:any)=>{
   const rawUrl=material.file_url||material.url||"";
   const matId=material.id||rawUrl;
 
@@ -2880,6 +2880,32 @@ export const InClassMaterialViewer=({material,onClose,isTeacher=false,onMinimize
           </span>
         )}
         {!isTeacher&&!fromPanel&&<span style={{fontSize:10,color:"rgba(255,255,255,.4)",flexShrink:0}}>Shared by teacher</span>}
+        {/* Following badge — student's copy is fully teacher-driven right now */}
+        {!isTeacher&&following&&(
+          <span style={{fontSize:10,fontWeight:700,color:"#34d399",background:"rgba(52,211,153,.14)",border:"1px solid rgba(52,211,153,.3)",borderRadius:8,padding:"3px 8px",flexShrink:0,display:"flex",alignItems:"center",gap:4}}>
+            🔗 Following teacher
+          </span>
+        )}
+        {/* Per-material live-sync toggle — teacher/admin only. Pressing this
+            ON force-opens the material for every student and mirrors this
+            exact position to them, overriding whatever they had open, until
+            it's pressed OFF or the material is closed. Disabled (with a
+            hint) when an admin hasn't authorized this material for sync. */}
+        {isTeacher&&onToggleSync&&(
+          <button
+            onClick={onToggleSync}
+            title={!canSync?"Ask an admin to unlock this material before syncing it":syncOn?"Synced live — students are following this. Tap to stop.":"Tap to sync this live to every student"}
+            style={{
+              display:"flex",alignItems:"center",gap:5,padding:"5px 10px",borderRadius:8,border:"none",
+              cursor:canSync?"pointer":"not-allowed",flexShrink:0,fontSize:11,fontWeight:700,
+              background:syncOn?"rgba(52,211,153,.22)":canSync?"rgba(255,255,255,.1)":"rgba(255,255,255,.05)",
+              color:syncOn?"#34d399":canSync?"#e8eaf0":"rgba(255,255,255,.3)",
+            }}
+          >
+            <span style={{fontSize:12}}>{syncOn?"🔗":"🔒"}</span>
+            {syncOn?"Synced":"Sync"}
+          </button>
+        )}
         {rawUrl&&<a href={url} target="_blank" rel="noopener noreferrer"
           style={{fontSize:11,color:"#d1d5db",background:"rgba(255,255,255,.1)",borderRadius:8,padding:"4px 10px",textDecoration:"none",fontWeight:600,flexShrink:0}}>↗</a>}
         <button onClick={onClose} title="Close material"
@@ -3791,6 +3817,10 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const{user}=useAuth();
   const[mats,setMats]=useState<any[]>([]);
   const[busy,setBusy]=useState(true);
+  // Locked (sync_allowed=false) materials are invisible to students — only
+  // admin/teacher (isPrivileged) ever see the full list, so they can review
+  // and unlock what's ready to share.
+  const visibleMats=isPrivileged?mats:mats.filter(m=>m.sync_allowed);
   // ── Multiple materials can be open at once; each can be minimized
   //    independently. openMats = every material currently open (incl.
   //    minimized ones so their position/state is preserved).
@@ -3798,11 +3828,14 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   const[openMats,setOpenMats]=useState<any[]>([]);
   const[activeMatId,setActiveMatId]=useState<string|null>(null);
   const[quranOpen,setQuranOpen]=useState(false);
-  // ── Live "follow the teacher" sync — always on, no admin toggle.
-  //    Students' material view is fully driven by the teacher: opens,
-  //    closes, and resumes automatically, with nothing for the teacher
-  //    to remember to switch on. ──────────────────────────────────────────
-  const[syncEnabled]=useState(true);
+  // ── Live "follow the teacher" sync — explicit, per-material.
+  //    Sync is OFF by default for every material the teacher opens. The
+  //    teacher must press the sync toggle in that material's own viewer
+  //    header to push it live to students. It then stays synced — even if
+  //    the teacher minimizes it — until the teacher explicitly un-syncs it
+  //    or closes it outright. syncedMatId is the single material (if any)
+  //    currently being force-synced to the whole class. ───────────────────
+  const[syncedMatId,setSyncedMatId]=useState<string|null>(null);
   const[followingSyncId,setFollowingSyncId]=useState<string|null>(null); // material id the student is actively following
   const[syncActivity,setSyncActivity]=useState<{materialId:string;xPct:number;yPct:number;scrollPct:number;step:number|null;total:number|null;revealCount:number|null}|null>(null);
   const syncChannelRef=useRef<any>(null);
@@ -3811,7 +3844,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   // Kept current so a late/rejoining student's "what's the state right now?"
   // request always gets an accurate answer, not whatever it was when this
   // channel effect first subscribed.
-  const syncEnabledRef=useRef(false);
+  const syncedMatIdRef=useRef<string|null>(null);
   const activeSyncMatRef=useRef<any>(null);
   // Latest known pointer/scroll/step/reveal snapshot per material, kept even
   // after that material closes — so re-opening (a teacher "restart", or a
@@ -3820,9 +3853,9 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
   // waiting for the next live tick.
   const lastActivityByMatRef=useRef<Record<string,any>>({});
   useEffect(()=>{
-    syncEnabledRef.current=syncEnabled;
-    activeSyncMatRef.current=activeMatId?openMats.find(m=>m.id===activeMatId):null;
-  },[syncEnabled,activeMatId,openMats]);
+    syncedMatIdRef.current=syncedMatId;
+    activeSyncMatRef.current=syncedMatId?openMats.find(m=>m.id===syncedMatId):null;
+  },[syncedMatId,openMats]);
   // listVisible: whether the sliding list panel is shown
   // (panel stays mounted even when list is hidden, so PiP survives)
   const[listVisible,setListVisible]=useState(true);
@@ -3907,7 +3940,28 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                 }
                 return prev;
               });
+              // A synced material that just got deleted can't keep
+              // overriding students' screens — release it.
+              setSyncedMatId(prev=>{
+                if(prev===deletedId&&isPrivileged&&syncChannelRef.current){
+                  syncChannelRef.current.send({type:"broadcast",event:"material-close",payload:{}});
+                  return null;
+                }
+                return prev;
+              });
             }
+          }
+          // An admin revoking sync-authorization on the material currently
+          // being force-synced must immediately pull it back from students —
+          // a locked material has no business still overriding their screens.
+          if(payload.eventType==="UPDATE"&&payload.new&&payload.new.sync_allowed===false){
+            setSyncedMatId(prev=>{
+              if(prev===payload.new.id&&isPrivileged&&syncChannelRef.current){
+                syncChannelRef.current.send({type:"broadcast",event:"material-close",payload:{}});
+                return null;
+              }
+              return prev;
+            });
           }
         }
       ).subscribe();
@@ -3984,7 +4038,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
       // joiner lands exactly where the teacher currently is, immediately.
       .on("broadcast",{event:"request-sync-state"},()=>{
         if(!isPrivileged)return;
-        const mat=(syncEnabledRef.current&&activeSyncMatRef.current?.sync_allowed)?activeSyncMatRef.current:null;
+        const mat=(syncedMatIdRef.current&&activeSyncMatRef.current?.sync_allowed)?activeSyncMatRef.current:null;
         if(mat){
           syncChannelRef.current?.send({type:"broadcast",event:"material-open",payload:{material:mat,activity:lastActivityByMatRef.current[mat.id]||null}});
         } else {
@@ -3994,9 +4048,9 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
       .subscribe(async (status:string)=>{
         if(status!=="SUBSCRIBED")return;
         if(isPrivileged){
-          const mat=activeMatId?openMats.find(m=>m.id===activeMatId):null;
+          const mat=syncedMatIdRef.current?openMats.find(m=>m.id===syncedMatIdRef.current):null;
           const syncedMat=mat?.sync_allowed?mat:null;
-          await ch.track({role:"teacher",syncEnabled,material:syncedMat,activity:syncedMat?lastActivityByMatRef.current[syncedMat.id]||null:null});
+          await ch.track({role:"teacher",syncEnabled:!!syncedMat,material:syncedMat,activity:syncedMat?lastActivityByMatRef.current[syncedMat.id]||null:null});
         } else {
           ch.send({type:"broadcast",event:"request-sync-state",payload:{}});
         }
@@ -4005,27 +4059,56 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     return()=>{ supabase.removeChannel(ch); syncChannelRef.current=null; };
   },[sessionId,isPrivileged,user?.id]);
 
-  // Keep teacher presence up to date whenever the toggle or open material changes.
-  // Only admin-authorized (sync_allowed) materials are ever advertised here —
-  // everything else stays local to the teacher's own view.
+  // Keep teacher presence up to date whenever the synced material changes.
+  // Only the one material the teacher explicitly toggled sync ON for (and
+  // only while it's still admin-authorized) is ever advertised here —
+  // everything else stays local to the teacher's own view. Deliberately NOT
+  // keyed on activeMatId/minimized state — a synced material must keep
+  // broadcasting even while the teacher has it minimized (see minimizeActive).
   useEffect(()=>{
     if(!isPrivileged||!syncChannelRef.current)return;
-    const activeMat=activeMatId?openMats.find(m=>m.id===activeMatId):null;
-    const syncedMat=(syncEnabled&&activeMat?.sync_allowed)?activeMat:null;
-    syncChannelRef.current.track({role:"teacher",syncEnabled,material:syncedMat,activity:syncedMat?lastActivityByMatRef.current[syncedMat.id]||null:null});
-  },[syncEnabled,activeMatId,openMats,isPrivileged]);
+    const mat=syncedMatId?openMats.find(m=>m.id===syncedMatId):null;
+    const syncedMat=mat?.sync_allowed?mat:null;
+    if(syncedMat){
+      syncChannelRef.current.track({role:"teacher",syncEnabled:true,material:syncedMat,activity:lastActivityByMatRef.current[syncedMat.id]||null});
+    } else {
+      syncChannelRef.current.track({role:"teacher",syncEnabled:false,material:null,activity:null});
+    }
+  },[syncedMatId,openMats,isPrivileged]);
 
   // Broadcast a live pointer/scroll/step/reveal update from the teacher's viewer.
-  // Gated on sync_allowed so an admin can restrict which materials are ever
-  // mirrored to students, even while "sync" is globally on.
+  // Only ever sent for the ONE material currently toggled to sync — and only
+  // while it stays admin-authorized (sync_allowed), even if the toggle is on.
   const broadcastSyncActivity=useCallback((materialId:string,xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null,revealCount:number|null)=>{
-    if(!isPrivileged||!syncEnabled||!syncChannelRef.current)return;
+    if(!isPrivileged||!syncChannelRef.current||syncedMatId!==materialId)return;
     const mat=openMats.find(m=>m.id===materialId);
     if(!mat?.sync_allowed)return;
     const payload={materialId,xPct,yPct,scrollPct,step,total,revealCount};
     lastActivityByMatRef.current[materialId]=payload;
     syncChannelRef.current.send({type:"broadcast",event:"material-activity",payload});
-  },[isPrivileged,syncEnabled,openMats]);
+  },[isPrivileged,syncedMatId,openMats]);
+
+  // ── Explicit per-material sync toggle — lives in that material's own
+  //    viewer header now (see InClassMaterialViewer). Pressing it ON force-
+  //    opens the material for every student and starts mirroring the
+  //    teacher's exact position; students can't interact with their own
+  //    copy while following (see `following` in InClassMaterialViewer).
+  //    Pressing it OFF (or closing the material) releases students back to
+  //    their own view. Only one material can be force-synced at a time. ──
+  const toggleForceSync=useCallback((m:any)=>{
+    if(!isPrivileged||!syncChannelRef.current)return;
+    if(!m.sync_allowed){
+      toast({title:"Not authorized for sync",description:"Ask an admin to unlock this material (🔒 icon in the list) before syncing it live.",variant:"destructive"});
+      return;
+    }
+    if(syncedMatId===m.id){
+      syncChannelRef.current.send({type:"broadcast",event:"material-close",payload:{}});
+      setSyncedMatId(null);
+    } else {
+      syncChannelRef.current.send({type:"broadcast",event:"material-open",payload:{material:m,activity:lastActivityByMatRef.current[m.id]||null}});
+      setSyncedMatId(m.id);
+    }
+  },[isPrivileged,syncedMatId]);
 
   // ── Open edit drawer ────────────────────────────────────────────────────
   const openEdit=(m:any)=>{
@@ -4174,27 +4257,24 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     setQuranOpen(false);
     setListVisible(true);
     setForceList(false);
-    // Only admin-authorized materials are broadcast to students — everything
-    // else opens locally for the teacher (e.g. staff prep) without syncing.
-    if(isPrivileged&&syncEnabled&&m.sync_allowed&&syncChannelRef.current){
-      // Carry along the last known position for this material (if we have
-      // one — e.g. re-opening after a close) so students resume exactly
-      // where things left off instead of restarting from the first slide.
-      syncChannelRef.current.send({type:"broadcast",event:"material-open",payload:{material:m,activity:lastActivityByMatRef.current[m.id]||null}});
-    }
+    // Opening a material is now local-only — it never auto-pushes to
+    // students. The teacher must explicitly press the sync toggle in the
+    // material's viewer header (toggleForceSync) to put it live.
   };
+  // Minimizing is purely a local UI change for the teacher — it must NOT
+  // un-sync the material. If this material is the one currently synced,
+  // students keep seeing it exactly as it was left, following the last
+  // broadcast position, until the teacher explicitly un-syncs or closes it.
   const minimizeActive=()=>{
-    const activeMat=activeMatId?openMats.find(e=>e.id===activeMatId):null;
-    if(isPrivileged&&syncEnabled&&activeMat?.sync_allowed&&syncChannelRef.current){
-      syncChannelRef.current.send({type:"broadcast",event:"material-close",payload:{}});
-    }
     setActiveMatId(null);setListVisible(false);
   };
   const restoreMaterial=(id:string)=>{setActiveMatId(id);setPipListOpen(false);setListVisible(true);setForceList(false);};
+  // Closing a material always releases it from sync too — a closed material
+  // can't keep overriding what students see.
   const closeMaterial=(id:string)=>{
-    const mat=openMats.find(e=>e.id===id);
-    if(isPrivileged&&syncEnabled&&mat?.sync_allowed&&id===activeMatId&&syncChannelRef.current){
+    if(isPrivileged&&syncedMatId===id&&syncChannelRef.current){
       syncChannelRef.current.send({type:"broadcast",event:"material-close",payload:{}});
+      setSyncedMatId(null);
     }
     setOpenMats(prev=>prev.filter(e=>e.id!==id));
     setActiveMatId(prev=>prev===id?null:prev);
@@ -4300,8 +4380,11 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
               onClose={()=>closeMaterial(m.id)}
               fromPanel={true}
               isTeacher={isPrivileged}
-              syncActive={isPrivileged&&syncEnabled&&m.id===activeMatId&&!!m.sync_allowed}
+              syncActive={isPrivileged&&syncedMatId===m.id&&m.id===activeMatId}
               onSyncActivity={(xPct:number,yPct:number,scrollPct:number,step:number|null,total:number|null,revealCount:number|null)=>broadcastSyncActivity(m.id,xPct,yPct,scrollPct,step,total,revealCount)}
+              canSync={isPrivileged&&!!m.sync_allowed}
+              syncOn={isPrivileged&&syncedMatId===m.id}
+              onToggleSync={()=>toggleForceSync(m)}
               following={followingSyncId===m.id}
               remoteActivity={followingSyncId===m.id?syncActivity:null}
             />
@@ -4341,21 +4424,8 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
           </button>
         </div>
 
-        {/* Teacher: sync is always on — students see whatever's opened here
-            immediately, with nothing to remember to switch on. */}
-        {isPrivileged&&(
-          <div style={{
-            margin:"10px 10px 0",padding:"10px 14px",borderRadius:10,
-            border:"1px solid rgba(52,211,153,.25)",background:"rgba(52,211,153,.08)",
-            display:"flex",alignItems:"center",gap:10,flexShrink:0,
-          }}>
-            <span style={{fontSize:16,flexShrink:0}}>🔗</span>
-            <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#34d399",fontFamily:"'Google Sans',sans-serif"}}>Sync is always on</div>
-              <div style={{fontSize:10,color:"rgba(255,255,255,.4)"}}>Students see whatever you open here, right away</div>
-            </div>
-          </div>
-        )}
+        {/* Sync is now opt-in per material — open any unlocked material and
+            press the "Sync" toggle in its own header to push it live. */}
 
         {/* Student record toggle (if allowed) */}
         {!isPrivileged&&canStudentRec&&(
@@ -4480,15 +4550,18 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
           <ChevronRight style={{width:13,height:13,color:"#93c5fd",flexShrink:0}}/>
         </button>
 
-        {/* List */}
+        {/* List — a locked (🔒 not sync_allowed) material is hidden from
+            students entirely here; only admin/teacher ever see it, so they
+            can review and unlock it. Unlocking (🔗) is what makes a
+            material appear in a student's own list at all. */}
         <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
-          {mats.filter(m=>m.visibility!=="staff").length>0&&<div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>UPLOADED MATERIALS</div>}
+          {visibleMats.filter(m=>m.visibility!=="staff").length>0&&<div style={{fontSize:10,color:"rgba(255,255,255,.3)",fontWeight:600,letterSpacing:.6,padding:"8px 2px 6px",fontFamily:"'Google Sans',sans-serif"}}>UPLOADED MATERIALS</div>}
           {busy&&<div style={{display:"flex",justifyContent:"center",padding:32}}><div style={{width:22,height:22,border:`2px solid ${TEAL}`,borderTopColor:"transparent",borderRadius:"50%",animation:"cv-spin .7s linear infinite"}}/></div>}
-          {!busy&&mats.length===0&&<div style={{textAlign:"center" as const,padding:"24px 16px",color:"rgba(255,255,255,.3)"}}>
+          {!busy&&visibleMats.length===0&&<div style={{textAlign:"center" as const,padding:"24px 16px",color:"rgba(255,255,255,.3)"}}>
             <div style={{fontSize:30,marginBottom:6}}>📭</div>
-            <p style={{fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>No materials yet</p>
+            <p style={{fontSize:12,margin:0,fontFamily:"'Google Sans',sans-serif"}}>{isPrivileged?"No materials yet":"No materials available yet"}</p>
           </div>}
-          {[...mats].sort((a,b)=>(a.visibility==="staff"?1:0)-(b.visibility==="staff"?1:0)).map((m,idx,arr)=>{
+          {[...visibleMats].sort((a,b)=>(a.visibility==="staff"?1:0)-(b.visibility==="staff"?1:0)).map((m,idx,arr)=>{
             const icon=MAT_TYPE_ICON[m.material_type||"document"]||"📄";
             const resume=loadResume(m.id||"");
             const isDeleting=deletingId===m.id;
@@ -4582,7 +4655,7 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                         {/* Teacher-visible reminder: this material won't reach students
                             live until an admin authorizes it (admin sees the toggle instead). */}
                         {isPrivileged&&!isAdmin&&!m.sync_allowed&&(
-                          <span style={{marginLeft:5,color:"rgba(255,255,255,.3)"}}>🔒 not sync-authorized</span>
+                          <span style={{marginLeft:5,color:"rgba(255,255,255,.3)"}}>🔒 hidden from students</span>
                         )}
                       </p>
                     </div>
@@ -4591,14 +4664,16 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
                   {/* Edit / delete buttons — teacher/admin only */}
                   {isPrivileged&&(
                     <div style={{display:"flex",gap:3,flexShrink:0}}>
-                      {/* Sync authorization toggle — admin only. Controls whether this
-                          material can ever be live-synced to students, regardless of
-                          the teacher's global sync-on state. */}
+                      {/* Lock / unlock — admin only. A locked (🔒) material is
+                          completely hidden from students' own materials list
+                          and can never be force-synced. Unlocking (🔗) makes
+                          it visible to students and eligible for the teacher's
+                          per-material sync toggle in the viewer header. */}
                       {isAdmin&&(
                         <button
                           onClick={()=>toggleSyncAllowed(m)}
                           disabled={syncTogglingIds.has(m.id)}
-                          title={m.sync_allowed?"Sync authorized — tap to revoke":"Sync not authorized — tap to allow live sync"}
+                          title={m.sync_allowed?"Visible to students — tap to lock/hide it":"Hidden from students — tap to unlock so they can see it"}
                           style={{width:28,height:28,borderRadius:7,border:"none",cursor:syncTogglingIds.has(m.id)?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center",
                             background:m.sync_allowed?"rgba(52,211,153,.18)":"rgba(255,255,255,.07)",
                             color:m.sync_allowed?"#34d399":"rgba(255,255,255,.4)",fontSize:13,transition:"all .12s"}}
