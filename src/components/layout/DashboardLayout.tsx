@@ -10,6 +10,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useImpersonation } from "@/hooks/useImpersonation";
 import { usePaymentAccess } from "@/hooks/usePaymentAccess";
+import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
@@ -101,6 +102,7 @@ const PaymentLockScreen = () => {
 const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile } = useAuth();
+  const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
   const { isImpersonating, impersonatedName, impersonatedEmail } = useImpersonation();
   const location = useLocation();
   const navigate = useNavigate();
@@ -176,7 +178,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     ]},
     { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
       { to:"/student/exams",          icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") },
-      { to:"/student/exams/register", icon:UserPlus,      label:t("Register for Exams","التسجيل للاختبارات") },
+      ...(subjectRegistrationOpen ? [{ to:"/student/exams/register", icon:UserPlus,      label:t("Register for Exams","التسجيل للاختبارات") }] : []),
       { to:"/student/transcripts",    icon:GraduationCap, label:t("As-Sijill","السجل الأكاديمي") },
       { to:"/student/attendance",     icon:CheckSquare,   label:t("Al-Ḥuḍūr (Attendance)","الحضور والغياب") },
     ]},
