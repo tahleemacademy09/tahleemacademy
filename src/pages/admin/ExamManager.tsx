@@ -224,11 +224,14 @@ export default function ExamManager() {
       }
 
       // Notify all students — try bulk first, fall back to individual if RLS blocks bulk
+      // NOTE: the notifications table has no "reference_id" column — inserting one
+      // silently fails every row (bulk AND the one-by-one fallback), which is why
+      // no notifications were ever showing up. Use "link" instead, which exists.
       const notifRows = userIds.map(uid => ({
         user_id: uid,
         title: `📝 Exam assigned: ${assignExam.title}`,
         message: `You have been assigned "${assignExam.title}". ${assignExam.start_date ? `Opens: ${new Date(assignExam.start_date).toLocaleDateString()}` : "You can take it now."}`,
-        type: "exam_assigned", reference_id: assignExam.id, is_read: false,
+        type: "exam_assigned", link: "/student/exams", is_read: false,
       }));
       const { error: bulkNotifErr } = await supabase.from("notifications" as any).insert(notifRows);
       if (bulkNotifErr) {
