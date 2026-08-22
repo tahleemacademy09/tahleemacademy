@@ -15,7 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Upload, FileText, Video, AudioLines, Image as ImageIcon,
   Loader2, Trash2, Edit, Plus, X, Eye, Download, ExternalLink, File,
-  CheckCircle2, AlertCircle,
+  CheckCircle2, AlertCircle, RefreshCw,
 } from "lucide-react";
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -538,6 +538,7 @@ export default function MaterialsManagement() {
     level: "all" as Level,
     sort_order: 0,
     is_downloadable: true,
+    sync_allowed: false,
     session_id: null as string | null,
   });
 
@@ -688,7 +689,7 @@ export default function MaterialsManagement() {
     setFormData({
       title: "", title_ar: "", description: "",
       material_type: "PDF", content: "", file_url: "", file_size: 0,
-      level: "all", sort_order: 0, is_downloadable: true, session_id: null,
+      level: "all", sort_order: 0, is_downloadable: true, sync_allowed: false, session_id: null,
     });
     setEditingId(null);
     setShowForm(false);
@@ -752,6 +753,7 @@ export default function MaterialsManagement() {
         level:           formData.level,
         sort_order:      formData.sort_order,
         is_downloadable: formData.is_downloadable,
+        sync_allowed:    formData.sync_allowed,
         uploaded_by:     user.id,
         session_id:      formData.session_id,
       };
@@ -807,6 +809,7 @@ export default function MaterialsManagement() {
           level:           formData.level,
           sort_order:      formData.sort_order,
           is_downloadable: formData.is_downloadable,
+          sync_allowed:    formData.sync_allowed,
           uploaded_by:     user.id,
           session_id:      formData.session_id,
         }]);
@@ -861,6 +864,7 @@ export default function MaterialsManagement() {
       level:           normalizedLevel,
       sort_order:      material.sort_order      ?? 0,
       is_downloadable: material.is_downloadable ?? true,
+      sync_allowed:    material.sync_allowed    ?? false,
       session_id:      material.session_id      || null,
     });
     setEditingId(material.id);
@@ -876,6 +880,19 @@ export default function MaterialsManagement() {
       setFeedback({ type: "success", message: "Material deleted." });
     } catch (err: any) {
       setFeedback({ type: "error", message: err.message });
+    }
+  };
+
+  // ── Quick-toggle live sync authorization directly from the list, without
+  //    opening the full edit form ──────────────────────────────────────────
+  const handleToggleSync = async (m: any) => {
+    const next = !m.sync_allowed;
+    setMaterials((prev) => prev.map((x) => (x.id === m.id ? { ...x, sync_allowed: next } : x)));
+    const { error } = await supabase.from("subject_materials").update({ sync_allowed: next }).eq("id", m.id);
+    if (error) {
+      // Revert on failure
+      setMaterials((prev) => prev.map((x) => (x.id === m.id ? { ...x, sync_allowed: !next } : x)));
+      setFeedback({ type: "error", message: error.message });
     }
   };
 
@@ -1004,6 +1021,14 @@ export default function MaterialsManagement() {
                       onCheckedChange={(checked) => setFormData((p) => ({ ...p, is_downloadable: checked }))}
                     />
                     <Label htmlFor="batch-downloadable" className="text-sm">Allow download</Label>
+                  </div>
+                  <div className="flex items-end pb-1 gap-2">
+                    <Switch
+                      id="batch-sync-allowed"
+                      checked={formData.sync_allowed}
+                      onCheckedChange={(checked) => setFormData((p) => ({ ...p, sync_allowed: checked }))}
+                    />
+                    <Label htmlFor="batch-sync-allowed" className="text-sm">Allow live sync</Label>
                   </div>
                 </div>
 
@@ -1164,6 +1189,23 @@ export default function MaterialsManagement() {
                   <Label htmlFor="downloadable">Allow students to download</Label>
                 </div>
 
+                {/* ── Live sync authorization ── */}
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="sync-allowed"
+                    checked={formData.sync_allowed}
+                    onCheckedChange={(checked) =>
+                      setFormData({ ...formData, sync_allowed: checked })
+                    }
+                  />
+                  <div>
+                    <Label htmlFor="sync-allowed">Allow live classroom sync</Label>
+                    <p className="text-xs text-muted-foreground">
+                      When on, teachers can share this material in a live class with scroll/page position synced to students.
+                    </p>
+                  </div>
+                </div>
+
                 {/* ── Actions ── */}
                 <div className="flex gap-3 pt-2 justify-end">
                   <Button type="button" variant="outline" onClick={resetForm}>
@@ -1251,6 +1293,14 @@ export default function MaterialsManagement() {
                       {m.file_size > 0 && (
                         <span>• {formatFileSize(m.file_size)}</span>
                       )}
+                      <span
+                        className="px-2 py-0.5 rounded-full font-semibold"
+                        style={m.sync_allowed
+                          ? { background: "#ECFDF5", color: "#059669", border: "1px solid #A7F3D0" }
+                          : { background: "#F3F4F6", color: "#6B7280", border: "1px solid #E5E7EB" }}
+                      >
+                        {m.sync_allowed ? "Live sync ON" : "Live sync OFF"}
+                      </span>
                     </div>
                   </div>
 
@@ -1276,6 +1326,15 @@ export default function MaterialsManagement() {
                         </a>
                       </Button>
                     )}
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      title={m.sync_allowed ? "Revoke live sync authorization" : "Authorize for live sync"}
+                      onClick={() => handleToggleSync(m)}
+                      style={m.sync_allowed ? { borderColor: "#A7F3D0", color: "#059669" } : undefined}
+                    >
+                      <RefreshCw className="h-4 w-4" />
+                    </Button>
                     <Button size="icon" variant="outline" onClick={() => handleEdit(m)}>
                       <Edit className="h-4 w-4" />
                     </Button>
