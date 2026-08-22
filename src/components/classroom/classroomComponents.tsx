@@ -4160,8 +4160,16 @@ export const SubjectMaterialsPanel=({subjectId,subject,sessionId,onClose,canStud
     const controller=new AbortController();
     const timeoutId=setTimeout(()=>controller.abort(),10000);
     try{
-      const{error}=await supabase.from("subject_materials" as any).update({sync_allowed:next}).eq("id",m.id).abortSignal(controller.signal);
+      const{data,error}=await supabase.from("subject_materials" as any).update({sync_allowed:next}).eq("id",m.id).abortSignal(controller.signal).select("id,sync_allowed");
       if(error)throw error;
+      // RLS blocks an UPDATE by filtering rows, not by erroring — a stale/expired
+      // session (common after a long live-class call sits backgrounded) or a
+      // permissions mismatch means 0 rows match and Postgrest still returns
+      // success with an empty array. Without this check that silent no-op looked
+      // identical to a real save, which is why the lock appeared "stuck".
+      if(!data||data.length===0){
+        throw new Error("No rows were updated — your session may have expired. Try refreshing the page and signing in again.");
+      }
       setMats(prev=>prev.map(e=>e.id===m.id?{...e,sync_allowed:next}:e));
       toast({title:next?"🔗 Sync authorized":"🔒 Sync revoked",description:next?"This material can now be live-synced to students.":"This material will no longer sync to students."});
     }catch(e:any){
