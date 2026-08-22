@@ -15,6 +15,7 @@ import { useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
+import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -33,6 +34,7 @@ const ExamRegistration = () => {
   const { toast }        = useToast();
   const navigate         = useNavigate();
   const { isPrivateStudent } = usePrivateStudent();
+  const { config: portal, loading: portalLoading } = useSubjectRegistrationSettings();
 
   const [loading, setLoading]         = useState(true);
   const [exams, setExams]             = useState<any[]>([]);
@@ -128,6 +130,20 @@ const ExamRegistration = () => {
           <p style={{ fontSize: 13, color: TL }}>
             {t("Your teacher assigns exams and tests to you directly — self-registration isn't available for private students.",
                "معلمك يقوم بتعيين الامتحانات والاختبارات لك مباشرة — التسجيل الذاتي غير متاح للطلاب الخاصين.")}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!portalLoading && !portal.subject_registration_open) {
+    return (
+      <div style={{ background: CREAM, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ textAlign: "center", maxWidth: 360 }}>
+          <Lock style={{ width: 40, height: 40, color: TL, opacity: .6, margin: "0 auto 14px" }} />
+          <p style={{ fontWeight: 800, color: G, marginBottom: 6, fontSize: 16 }}>{t("Registration Closed", "التسجيل مغلق")}</p>
+          <p style={{ fontSize: 13, color: TL, lineHeight: 1.7 }}>
+            {language === "ar" ? portal.subject_registration_closed_message_ar : portal.subject_registration_closed_message}
           </p>
         </div>
       </div>
