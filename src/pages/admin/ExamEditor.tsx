@@ -793,12 +793,12 @@ const ExamEditor = () => {
                 {/* Titles */}
                 <div className="space-y-4">
                   <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
-                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (English)","العنوان (إنجليزي)")}</Label><Input value={examForm.title} onChange={e=>setExamForm({...examForm,title:e.target.value})} className="rounded-lg bg-slate-50/50 h-10" placeholder="Enter exam title" /></div>
                     <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (Arabic)","العنوان (عربي)")}</Label><Input value={examForm.title_ar} onChange={e=>setExamForm({...examForm,title_ar:e.target.value})} dir="rtl" className="rounded-lg bg-slate-50/50 h-10" placeholder="أدخل عنوان الامتحان" /></div>
+                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (English)","العنوان (إنجليزي)")}</Label><Input value={examForm.title} onChange={e=>setExamForm({...examForm,title:e.target.value})} dir="ltr" className="rounded-lg bg-slate-50/50 h-10" placeholder="Enter exam title" /></div>
                   </div>
                   <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
-                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Description","الوصف")}</Label><Textarea value={examForm.description} onChange={e=>setExamForm({...examForm,description:e.target.value})} className="rounded-lg bg-slate-50/50 min-h-[80px]" placeholder="Brief description..." /></div>
                     <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Description (Arabic)","الوصف (عربي)")}</Label><Textarea value={examForm.description_ar} onChange={e=>setExamForm({...examForm,description_ar:e.target.value})} dir="rtl" className="rounded-lg bg-slate-50/50 min-h-[80px]" placeholder="وصف مختصر..." /></div>
+                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Description","الوصف")}</Label><Textarea value={examForm.description} onChange={e=>setExamForm({...examForm,description:e.target.value})} dir="ltr" className="rounded-lg bg-slate-50/50 min-h-[80px]" placeholder="Brief description..." /></div>
                   </div>
                 </div>
                 {/* Logistics */}
@@ -1029,23 +1029,7 @@ const ExamEditor = () => {
 
                   <CardContent className={cn("space-y-4 bg-white", isMobile ? "p-3" : "p-5 sm:p-6")}>
 
-                    {/* ── FIX 2: English question text ── */}
-                    <div className="space-y-2">
-                      <Label className="text-xs sm:text-sm font-black text-slate-800">
-                        {t("Question (English)","السؤال (إنجليزي)")}
-                      </Label>
-                      <div className="rounded-lg sm:rounded-xl border border-slate-200 shadow-sm overflow-hidden focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500 transition-all">
-                        <RichTextEditor
-                          placeholder={t("Type question in English...","اكتب السؤال بالإنجليزية...")}
-                          value={q.question_text}
-                          onChange={val => updateQuestion(idx, { question_text: val })}
-                          dir="ltr"
-                          className="min-h-[70px] sm:min-h-[90px]"
-                        />
-                      </div>
-                    </div>
-
-                    {/* ── FIX 2: Arabic question text — NEW FIELD ── */}
+                    {/* ── FIX 2: Arabic question text ── */}
                     <div className="space-y-2">
                       <Label className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-2">
                         {t("Question (Arabic)","السؤال (عربي)")}
@@ -1059,6 +1043,22 @@ const ExamEditor = () => {
                           value={q.question_text_ar}
                           onChange={val => updateQuestion(idx, { question_text_ar: val })}
                           dir="rtl"
+                          className="min-h-[70px] sm:min-h-[90px]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* ── FIX 2: English question text — NEW FIELD ── */}
+                    <div className="space-y-2">
+                      <Label className="text-xs sm:text-sm font-black text-slate-800">
+                        {t("Question (English)","السؤال (إنجليزي)")}
+                      </Label>
+                      <div className="rounded-lg sm:rounded-xl border border-slate-200 shadow-sm overflow-hidden focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500 transition-all">
+                        <RichTextEditor
+                          placeholder={t("Type question in English...","اكتب السؤال بالإنجليزية...")}
+                          value={q.question_text}
+                          onChange={val => updateQuestion(idx, { question_text: val })}
+                          dir="ltr"
                           className="min-h-[70px] sm:min-h-[90px]"
                         />
                       </div>
@@ -1133,9 +1133,9 @@ const ExamEditor = () => {
                                 <input type="radio" name={`correct-${idx}`} checked={opt.is_correct} onChange={()=>{ const newOpts=q.options.map((o:any,j:number)=>({...o,is_correct:j===oi})); updateQuestion(idx,{options:newOpts,correct_answer:newOpts[oi].id}); }} className="h-4 w-4 accent-emerald-600" />
                               </div>
                               <div className="flex-1 space-y-1.5">
-                                <Input className={cn("h-8 text-sm font-medium rounded-lg border-slate-200", opt.is_correct?"bg-white border-emerald-200":"")} placeholder={`${String.fromCharCode(65+oi)}. English`} value={opt.text} dir="ltr" onChange={e=>{ const n=[...q.options]; n[oi]={...n[oi],text:e.target.value}; updateQuestion(idx,{options:n}); }} />
                                 {/* Arabic option field */}
                                 <Input className="h-8 text-sm font-medium rounded-lg border-amber-200 bg-amber-50/30" placeholder={`${String.fromCharCode(65+oi)}. عربي`} value={opt.text_ar||""} dir="rtl" style={{ fontFamily:"'Amiri',serif" }} onChange={e=>{ const n=[...q.options]; n[oi]={...n[oi],text_ar:e.target.value}; updateQuestion(idx,{options:n}); }} />
+                                <Input className={cn("h-8 text-sm font-medium rounded-lg border-slate-200", opt.is_correct?"bg-white border-emerald-200":"")} placeholder={`${String.fromCharCode(65+oi)}. English`} value={opt.text} dir="ltr" onChange={e=>{ const n=[...q.options]; n[oi]={...n[oi],text:e.target.value}; updateQuestion(idx,{options:n}); }} />
                               </div>
                             </div>
                           ))}
