@@ -85,6 +85,11 @@ export const useProctoring = (
   const eyesNotVisibleActive  = useRef(false);
   const cameraCoveredActive   = useRef(false);
   const multipleFacesActive   = useRef(false);
+  // Sustained-duration tracking — "looking away" / "eyes not visible" only
+  // count once they've held for 3s straight (avoids flagging a quick glance),
+  // then log ONCE for that episode (paired with the *Active flags above).
+  const lookingAwayStart      = useRef<number | null>(null);
+  const eyesNotVisibleStart   = useRef<number | null>(null);
 
   // Hidden video element attached to DOM — prevents Android killing stream
   const videoElRef = useRef<HTMLVideoElement | null>(null);
@@ -108,7 +113,7 @@ export const useProctoring = (
     videoElRef.current = el;
     // Init FaceDetector once
     if ("FaceDetector" in window) {
-      try { fdInstance.current = new (window as any).FaceDetector({ maxDetectedFaces: 4, fastMode: true }); } catch (_) {}
+      try { fdInstance.current = new (window as any).FaceDetector({ maxDetectedFaces: 4, fastMode: false }); } catch (_) {}
     }
     return () => {
       try { document.body.removeChild(el); } catch (_) {}
@@ -270,12 +275,17 @@ export const useProctoring = (
           // Face too far to the side = looking away
           const xRatio = faceCenterX / frameW;
           const yRatio = faceCenterY / frameH;
-          if (xRatio < 0.25 || xRatio > 0.75 || yRatio < 0.15 || yRatio > 0.85) {
-            if (!lookingAwayActive.current) {
+          // Tightened from 0.25/0.75 & 0.15/0.85 — catches a real head turn
+          // sooner, while the 3s sustain requirement below (not an instant
+          // trigger) keeps a quick glance from counting.
+          if (xRatio < 0.32 || xRatio > 0.68 || yRatio < 0.20 || yRatio > 0.80) {
+            if (!lookingAwayStart.current) lookingAwayStart.current = Date.now();
+            if (Date.now() - lookingAwayStart.current >= 3000 && !lookingAwayActive.current) {
               lookingAwayActive.current = true;
-              logViolation("looking_away", 1, `Face position off-center: ${xRatio.toFixed(2)}, ${yRatio.toFixed(2)}`);
+              logViolation("looking_away", 1, `Sustained off-center 3s+: ${xRatio.toFixed(2)}, ${yRatio.toFixed(2)}`);
             }
           } else {
+            lookingAwayStart.current = null;
             lookingAwayActive.current = false; // back on-center — next drift is a new episode
           }
 
@@ -294,13 +304,17 @@ export const useProctoring = (
               if (lum < 60) darkPixels++;
             }
             const darkRatio = darkPixels / (eyeData.data.length / 4);
-            // If eye region is mostly dark, eyes might be closed or looking down
-            if (darkRatio > 0.60) { // 60% dark eye region = eyes closed/looking down
-              if (!eyesNotVisibleActive.current) {
+            // If eye region is mostly dark, eyes might be closed or looking down.
+            // Lowered from 0.60 → 0.55 (more sensitive) and now requires 3s
+            // sustained before logging, same reasoning as looking_away above.
+            if (darkRatio > 0.55) {
+              if (!eyesNotVisibleStart.current) eyesNotVisibleStart.current = Date.now();
+              if (Date.now() - eyesNotVisibleStart.current >= 3000 && !eyesNotVisibleActive.current) {
                 eyesNotVisibleActive.current = true;
-                logViolation("eyes_not_visible", 1, `Eye region ${(darkRatio * 100).toFixed(0)}% dark — eyes closed or looking down`);
+                logViolation("eyes_not_visible", 1, `Eye region ${(darkRatio * 100).toFixed(0)}% dark for 3s+ — eyes closed or looking down`);
               }
             } else {
+              eyesNotVisibleStart.current = null;
               eyesNotVisibleActive.current = false; // eyes visible again — next occurrence is a new episode
             }
           }
@@ -344,10 +358,14 @@ export const useProctoring = (
         if ((skinLeft > 600 || skinRight > 600) && Math.abs(skinLeft - skinRight) > 300) {
           facePresent = true; // face is there but off-center
           faceCount = 1;
-          if (!lookingAwayActive.current) {
+          if (!lookingAwayStart.current) lookingAwayStart.current = Date.now();
+          if (Date.now() - lookingAwayStart.current >= 3000 && !lookingAwayActive.current) {
             lookingAwayActive.current = true;
-            logViolation("looking_away", 1, `Face off-center L:${skinLeft} R:${skinRight}`);
+            logViolation("looking_away", 1, `Sustained off-center 3s+ L:${skinLeft} R:${skinRight}`);
           }
+        } else {
+          lookingAwayStart.current = null;
+          lookingAwayActive.current = false;
         }
       }
     }
@@ -357,6 +375,14 @@ export const useProctoring = (
     if (!facePresent) {
       if (!faceAbsStart.current) faceAbsStart.current = Date.now();
       const absTime = Date.now() - faceAbsStart.current;
+      // Face is gone entirely — any in-progress "looking away"/"eyes not
+      // visible" timers are meaningless without a face to measure; reset
+      // them so a later reappearance starts a clean 3s window, not a
+      // stale one carried over from before the face disappeared.
+      lookingAwayStart.current = null;
+      eyesNotVisibleStart.current = null;
+      lookingAwayActive.current = false;
+      eyesNotVisibleActive.current = false;
 
       if (absTime >= 1500 && absTime < 4000 && !faceWarnFired.current) {
         // 1.5s absent → immediate warning (logged once for this absence episode)
