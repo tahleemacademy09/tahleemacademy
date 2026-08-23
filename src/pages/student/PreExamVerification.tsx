@@ -189,6 +189,14 @@ const PreExamVerification = () => {
   const cameraFailed = checks.find(c => c.id === "camera")?.status === "failed";
   // Block proceed if camera is required and failed
   const cameraBlocksStart = cameraFailed && (exam?.webcam_required ?? false);
+  // Block proceed if camera is required but the student never actually
+  // confirmed a real snapshot — "permission granted" alone (the old bar)
+  // doesn't prove the camera ever produced a usable frame. Without this,
+  // a student could sail through checks on a camera that silently never
+  // decodes anything and submit a fully "clean" exam with zero evidence.
+  const faceVerificationRequired = (exam?.webcam_required ?? false) && !cameraFailed;
+  const faceVerificationBlocksStart = faceVerificationRequired && !faceCaptured;
+  const blocksStart = cameraBlocksStart || faceVerificationBlocksStart;
   const passedCount = checks.filter(c => c.status === "passed").length;
   const progressPct = (passedCount / checks.length) * 100;
 
@@ -509,28 +517,39 @@ const PreExamVerification = () => {
                     </div>
                   </div>
                 )}
+                {/* Camera works but student hasn't confirmed a real snapshot yet */}
+                {!cameraBlocksStart && faceVerificationBlocksStart && (
+                  <div style={{ background:"#fffbeb",borderRadius:14,padding:"14px 16px",marginBottom:10,border:"2px solid #fde68a",display:"flex",gap:10,alignItems:"flex-start" }}>
+                    <AlertTriangle style={{width:18,height:18,color:"#92400e",flexShrink:0,marginTop:1}}/>
+                    <div style={{ fontSize:13,fontWeight:700,color:"#92400e" }}>
+                      {t("This exam requires a working camera — scroll up and tap Capture to confirm your camera before continuing.","يتطلب هذا الامتحان كاميرا — مرر لأعلى واضغط التقاط لتأكيد الكاميرا قبل المتابعة.")}
+                    </div>
+                  </div>
+                )}
                 <button
                   onClick={() => setStep("checklist")}
-                  disabled={cameraBlocksStart}
+                  disabled={blocksStart}
                   style={{
                     width:"100%",padding:"16px",borderRadius:16,border:"none",color:"#fff",fontSize:15,fontWeight:800,
-                    cursor: cameraBlocksStart ? "not-allowed" : "pointer",
+                    cursor: blocksStart ? "not-allowed" : "pointer",
                     display:"flex",alignItems:"center",justifyContent:"center",gap:8,
-                    background: cameraBlocksStart
+                    background: blocksStart
                       ? "#9ca3af"
                       : hasCriticalFailure
                         ? "linear-gradient(135deg,#dc2626,#b91c1c)"
                         : `linear-gradient(135deg,${G},${GM})`,
-                    boxShadow: cameraBlocksStart ? "none" : "0 4px 16px rgba(15,45,31,.3)",
-                    opacity: cameraBlocksStart ? 0.7 : 1,
+                    boxShadow: blocksStart ? "none" : "0 4px 16px rgba(15,45,31,.3)",
+                    opacity: blocksStart ? 0.7 : 1,
                   }}
                 >
                   {cameraBlocksStart
                     ? t("Enable camera to continue","تمكين الكاميرا للمتابعة")
-                    : hasCriticalFailure
-                      ? t("Some checks failed — proceed anyway?","فشل بعض الفحوصات — متابعة؟")
-                      : t("Continue to Checklist","المتابعة إلى القائمة")}
-                  {!cameraBlocksStart && <ChevronRight style={{width:18,height:18}}/>}
+                    : faceVerificationBlocksStart
+                      ? t("Capture verification photo to continue","التقط صورة التحقق للمتابعة")
+                      : hasCriticalFailure
+                        ? t("Some checks failed — proceed anyway?","فشل بعض الفحوصات — متابعة؟")
+                        : t("Continue to Checklist","المتابعة إلى القائمة")}
+                  {!blocksStart && <ChevronRight style={{width:18,height:18}}/>}
                 </button>
               </>
             )}
