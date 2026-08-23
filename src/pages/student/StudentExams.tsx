@@ -164,8 +164,8 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
             </div>
           )}
 
-          {/* Score */}
-          {status === "exhausted" && (latest?.status === "graded" || latest?.status === "released") && (
+          {/* Score — hidden until officially released */}
+          {status === "exhausted" && latest?.status === "released" && (
             <div style={{
               display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:12, marginBottom:12,
               background: latest.passed ? "#f0fff4" : "#fff5f5",
@@ -182,9 +182,14 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
               </div>
             </div>
           )}
-          {status === "exhausted" && latest?.status === "submitted" && latest?.status !== "released" && (
+          {status === "exhausted" && latest?.status === "submitted" && (
             <div style={{ padding:"9px 12px", borderRadius:10, background:"#fffbeb", border:"1px solid #fde68a", marginBottom:12, fontSize:12, color:"#92400e", fontWeight:600 }}>
               ⏳ {t("Awaiting grading","بانتظار التصحيح")}
+            </div>
+          )}
+          {status === "exhausted" && latest?.status === "graded" && (
+            <div style={{ padding:"9px 12px", borderRadius:10, background:"#fffbeb", border:"1px solid #fde68a", marginBottom:12, fontSize:12, color:"#92400e", fontWeight:600 }}>
+              🔒 {t("Graded — awaiting release","تم التصحيح — بانتظار الإصدار")}
             </div>
           )}
 
@@ -253,7 +258,8 @@ const HistoryRow = ({ attempt, language, t, navigate }: HistoryRowProps) => {
 
     const title  = language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title;
     const isTest = (attempt.exams?.type || "exam") === "test";
-    const graded = attempt.status === "graded" || attempt.status === "released";
+    // Score is only revealed to the student once results are officially released.
+    const graded = attempt.status === "released";
     const inProg = attempt.status === "in_progress";
     return (
       <div onClick={() => !inProg && navigate(`/student/results/${attempt.id}`)} style={{
@@ -293,6 +299,7 @@ const HistoryRow = ({ attempt, language, t, navigate }: HistoryRowProps) => {
             </>
           )}
           {attempt.status === "submitted" && <div style={{ fontSize:11, fontWeight:600, color:"#f59e0b" }}>⏳ {t("Pending","قيد التصحيح")}</div>}
+          {attempt.status === "graded" && <div style={{ fontSize:11, fontWeight:600, color:"#f59e0b" }}>🔒 {t("Awaiting release","بانتظار الإصدار")}</div>}
           {inProg && <div style={{ fontSize:11, fontWeight:600, color:"#6366f1" }}>▶ {t("In Progress","جارٍ")}</div>}
           {graded && <ChevronRight style={{width:14,height:14,color:TL,marginTop:2}}/>}
         </div>
@@ -425,7 +432,8 @@ const StudentExams = () => {
   const counts    = { available: available.length, completed: completed.length, history: pastAttempts.length };
 
   const totalDone      = assignedExams.filter(e => getStatus(e) === "exhausted").length;
-  const gradedAttempts = pastAttempts.filter(a => a.status === "graded" || a.status === "released");
+  // Only released attempts count toward the student's visible average/pass stats.
+  const gradedAttempts = pastAttempts.filter(a => a.status === "released");
   const avgPct         = gradedAttempts.length ? Math.round(gradedAttempts.reduce((s,a) => s + (a.percentage||0), 0) / gradedAttempts.length) : 0;
   const passedCount    = gradedAttempts.filter(a => a.passed).length;
 

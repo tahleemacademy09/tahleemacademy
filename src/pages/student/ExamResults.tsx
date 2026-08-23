@@ -136,9 +136,10 @@ const ExamResults = () => {
   const earnedPts = answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0);
   const pct = attempt.percentage != null ? Math.round(attempt.percentage) : (totalPts > 0 ? Math.round((earnedPts / totalPts) * 100) : 0);
   const passed = attempt.passed;
-  // isGraded = teacher has scored it (graded or released) → show scores, stats
+  // isGraded = teacher has scored it (graded or released) → internal/status-label use only.
+  // Scores, stats, and correctness must stay hidden from the student until isReleased.
   const isGraded = attempt.status === "graded" || attempt.status === "released";
-  // isReleased = teacher officially released to student → show correct answers & explanations
+  // isReleased = teacher officially released to student → show scores, correct answers & explanations
   const isReleased = attempt.status === "released";
   const allowReview = exam.allow_review !== false;
   const grade = getGrade(pct);
@@ -220,8 +221,8 @@ const ExamResults = () => {
         {activeTab === "overview" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16, animation: "fadeUp .3s ease" }}>
 
-            {/* Score card */}
-            {isGraded ? (
+            {/* Score card — hidden until officially released */}
+            {isReleased ? (
               <div style={{ background: passed ? `linear-gradient(135deg,${G},${GM})` : "linear-gradient(135deg,#7f1d1d,#991b1b)", borderRadius: 24, padding: "32px 24px", textAlign: "center", position: "relative", overflow: "hidden" }}>
                 <div style={{ position: "absolute", inset: 0, opacity: .05, backgroundImage: "url(\"data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M30 0l8.66 5v10L30 20l-8.66-5V5z'/%3E%3C/g%3E%3C/svg%3E\")" }} />
                 <div style={{ position: "relative", zIndex: 1 }}>
@@ -263,8 +264,8 @@ const ExamResults = () => {
                 <div style={{ width: 72, height: 72, borderRadius: "50%", background: "#fffbeb", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
                   <Clock style={{ width: 36, height: 36, color: GOLD }} />
                 </div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: G, marginBottom: 8 }}>{t("Awaiting Grading", "بانتظار التصحيح")}</div>
-                <div style={{ fontSize: 14, color: "#7a9e88", lineHeight: 1.7 }}>{t("Your exam has been submitted. Your teacher will grade it soon and you'll be notified.", "تم تقديم امتحانك. سيقوم معلمك بتصحيحه قريباً وستتلقى إشعاراً.")}</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: G, marginBottom: 8 }}>{isGraded ? t("Results Not Released Yet", "لم يتم إصدار النتيجة بعد") : t("Awaiting Grading", "بانتظار التصحيح")}</div>
+                <div style={{ fontSize: 14, color: "#7a9e88", lineHeight: 1.7 }}>{isGraded ? t("Your exam has been graded. Your teacher will release your results soon and you'll be notified.", "تم تصحيح امتحانك. سيصدر معلمك النتيجة قريباً وستتلقى إشعاراً.") : t("Your exam has been submitted. Your teacher will grade it soon and you'll be notified.", "تم تقديم امتحانك. سيقوم معلمك بتصحيحه قريباً وستتلقى إشعاراً.")}</div>
               </div>
             )}
 
@@ -279,8 +280,8 @@ const ExamResults = () => {
               </div>
             )}
 
-            {/* Stats grid */}
-            {isGraded && (
+            {/* Stats grid — hidden until officially released */}
+            {isReleased && (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
                 {[
                   { icon: <CheckCircle style={{ width: 20, height: 20 }} />, label: t("Correct", "صح"), value: answers.filter(a => a.is_correct).length, color: "#22c55e", bg: "#f0fff4" },
@@ -296,8 +297,8 @@ const ExamResults = () => {
               </div>
             )}
 
-            {/* Feedback */}
-            {attempt.feedback && (
+            {/* Feedback — hidden until officially released */}
+            {isReleased && attempt.feedback && (
               <div style={{ background: "#fff", borderRadius: 16, padding: "20px", border: `1px solid ${GOLD}44` }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: GOLD, marginBottom: 8, letterSpacing: 1, display: "flex", alignItems: "center", gap: 6 }}>
                   <BookOpen style={{ width: 14, height: 14 }} /> TEACHER FEEDBACK
@@ -355,8 +356,9 @@ const ExamResults = () => {
               <>
                 {displayedQuestions.map((q, i) => {
                   const ans = answers.find(a => a.question_id === q.id);
-                  const isCorrect = ans?.is_correct;
-                  const isWrong = ans?.is_correct === false;
+                  // Correctness is only revealed to the student once results are officially released.
+                  const isCorrect = isReleased && ans?.is_correct;
+                  const isWrong = isReleased && ans?.is_correct === false;
                   return (
                     <div key={q.id} style={{ background: "#fff", borderRadius: 18, overflow: "hidden", border: `1.5px solid ${isCorrect ? "#86efac" : isWrong ? "#fca5a5" : "#e5e7eb"}` }}>
                       {/* Q header */}
@@ -374,7 +376,7 @@ const ExamResults = () => {
                               {ans.answer_data.confidence}
                             </span>
                           )}
-                          {isGraded && ans && (
+                          {isReleased && ans && (
                             <span style={{ marginLeft: "auto", fontSize: 13, fontWeight: 800, color: isCorrect ? "#22c55e" : isWrong ? "#ef4444" : "#9ca3af" }}>
                               {ans.points_awarded || 0}/{q.points || 1} pts
                             </span>
@@ -450,10 +452,10 @@ const ExamResults = () => {
         {/* ── ANALYTICS TAB ── */}
         {activeTab === "analytics" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16, animation: "fadeUp .3s ease" }}>
-            {!isGraded ? (
+            {!isReleased ? (
               <div style={{ background: "#fff", borderRadius: 16, padding: 24, textAlign: "center" }}>
                 <BarChart2 style={{ width: 40, height: 40, color: "#9ca3af", margin: "0 auto 12px" }} />
-                <p style={{ color: "#7a9e88" }}>{t("Analytics will be available once your exam is graded.", "ستكون التحليلات متاحة بعد تصحيح الامتحان.")}</p>
+                <p style={{ color: "#7a9e88" }}>{t("Analytics will be available once your results are released.", "ستكون التحليلات متاحة بعد إصدار النتيجة.")}</p>
               </div>
             ) : (
               <>
