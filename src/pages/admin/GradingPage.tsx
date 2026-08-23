@@ -342,8 +342,17 @@ const GradingPage = () => {
             };
             const isSubjective = ["essay", "short_answer", "audio"].includes(q.question_type);
             const bi           = splitBilingual(q.question_text || "");
-            const ansText      = (ans as any).answer_text || (ans as any).selected_option || "";
-            const notAnswered  = !ansText && !(ans as any).answer_data?.audioUrl && !(ans as any).audio_url;
+            const opts         = Array.isArray(q.options) ? q.options : (typeof q.options === "string" ? JSON.parse(q.options || "[]") : []);
+            const rawAns       = (ans as any).answer_text || (ans as any).selected_option || "";
+            // MCQ/true-false answers are stored as an option id (e.g. "a") — resolve to its display text.
+            const selectedOpt  = opts.find((o: any) => o.id === rawAns);
+            const ansText      = selectedOpt ? (language === "ar" ? selectedOpt.text_ar || selectedOpt.text : selectedOpt.text) : rawAns;
+            const correctOpt   = opts.find((o: any) => o.is_correct);
+            const correctText  = correctOpt ? (language === "ar" ? correctOpt.text_ar || correctOpt.text : correctOpt.text) : q.correct_answer;
+            // Imported (legacy SpeedExam) attempts often have a score but no per-question
+            // answer rows at all — that's missing historical data, not a real "skip".
+            const noAnswerDataAvailable = !(ans as any).id;
+            const notAnswered  = !rawAns && !(ans as any).answer_data?.audioUrl && !(ans as any).audio_url;
 
             return (
               <div key={q.id} style={{ background: "#fff", borderRadius: 16, border: `1.5px solid ${notAnswered ? "#FDE68A" : "#E5E7EB"}`, padding: 16 }}>
@@ -361,7 +370,9 @@ const GradingPage = () => {
                   <p style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", margin: "0 0 4px" }}>Student Answer:</p>
                   {notAnswered && (
                     <div style={{ padding: "6px 10px", background: "#FFF7ED", borderRadius: 8, border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", fontWeight: 700, marginBottom: 6 }}>
-                      ⚠️ Not answered — grade as 0 or skip
+                      {noAnswerDataAvailable
+                        ? "⚠️ No answer data available (imported attempt — original selections weren't migrated)"
+                        : "⚠️ Not answered — grade as 0 or skip"}
                     </div>
                   )}
                   {(() => {
@@ -382,7 +393,7 @@ const GradingPage = () => {
                   <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
                     {(ans as any).is_correct
                       ? <span style={{ fontSize: 12, color: "#16A34A", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={14} /> Correct</span>
-                      : <span style={{ fontSize: 12, color: "#DC2626", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><XCircle size={14} /> Incorrect · Correct: {q.correct_answer}</span>
+                      : <span style={{ fontSize: 12, color: "#DC2626", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><XCircle size={14} /> Incorrect · Correct: {correctText}</span>
                     }
                   </div>
                 )}
