@@ -282,7 +282,7 @@ export default function ExamManager() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#F3F4F6" }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes livePulse{0%,100%{opacity:1}50%{opacity:.35}}`}</style>
 
       {/* Header */}
       <div style={{ background: "#fff", borderBottom: "1px solid #E5E7EB", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
@@ -390,6 +390,10 @@ export default function ExamManager() {
                       <button onClick={() => openAssign(exam)} title="Assign to students"
                         style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 13px", borderRadius: 9, border: "none", background: G, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                         <Send size={12} /> Assign
+                      </button>
+                      <button onClick={() => navigate(`/admin/exams/${exam.id}/live`)} title="Live monitor — track students taking this exam right now"
+                        style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 13px", borderRadius: 9, border: "none", background: "#dc2626", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#fff", display: "inline-block", animation: "livePulse 1.4s ease-in-out infinite" }} /> Live
                       </button>
                       <button onClick={() => navigate(`/admin/exams/${exam.id}/edit`)} title="Edit exam"
                         style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 11px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#374151" }}>
