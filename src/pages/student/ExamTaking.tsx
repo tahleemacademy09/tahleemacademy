@@ -279,6 +279,8 @@ const ExamTaking = () => {
   const questionsRef = useRef(questions);
   const examRef = useRef(exam);
   const submitRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const extraTimeRef = useRef(0); // extra_time_minutes an admin has granted, live-tracked
+  const startedAtRef = useRef<number>(0);
 
   useEffect(() => { answersRef.current = answers; }, [answers]);
   useEffect(() => { questionsRef.current = questions; }, [questions]);
@@ -374,7 +376,9 @@ const ExamTaking = () => {
           setLoading(false); return;
         }
         setExam(ad.exams);
-        setTimeLeft(Math.max(0, (ad.exams.time_limit_minutes || 60) * 60 - Math.floor((Date.now() - new Date(ad.started_at).getTime()) / 1000)));
+        startedAtRef.current = new Date(ad.started_at).getTime();
+        extraTimeRef.current = ad.extra_time_minutes || 0;
+        setTimeLeft(Math.max(0, ((ad.exams.time_limit_minutes || 60) + extraTimeRef.current) * 60 - Math.floor((Date.now() - startedAtRef.current) / 1000)));
         setTabSw(ad.tab_switches || 0);
         logActivity(user.id, "exam_started", "exam_attempt", attemptId, { exam_id: ad.exam_id });
 
@@ -427,6 +431,41 @@ const ExamTaking = () => {
     const iv = setInterval(() => setTimeLeft(tt => { const n = Math.max(0, tt - 1); if (n === 0 && !submittedRef.current) setTimeout(() => submitRef.current(), 0); return n; }), 1000);
     return () => clearInterval(iv);
   }, [timeLeft, loading, submitted, exam]);
+
+  // Live extra-time grants — an admin can add minutes mid-exam from the Live
+  // Monitor. Listen for it in real time so the countdown updates immediately
+  // instead of the student having to refresh.
+  useEffect(() => {
+    if (submitted || !attemptId) return;
+    const channel = supabase
+      .channel(`exam-attempt-extra-time-${attemptId}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "exam_attempts", filter: `id=eq.${attemptId}` }, (payload: any) => {
+        const newExtra = payload.new?.extra_time_minutes ?? extraTimeRef.current;
+        if (newExtra !== extraTimeRef.current) {
+          const deltaMin = newExtra - extraTimeRef.current;
+          extraTimeRef.current = newExtra;
+          if (deltaMin > 0) {
+            setTimeLeft(t => t + deltaMin * 60);
+            toast({ title: `⏱️ ${t("Extra time added","تمت إضافة وقت إضافي")}`, description: `+${deltaMin} ${t("minutes","دقيقة")}` });
+          }
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [attemptId, submitted]);
+
+  // Heartbeat — lets the admin Live Monitor tell "online now" from "idle/
+  // disconnected". Also reports which question the student is currently on.
+  useEffect(() => {
+    if (submitted || !attemptId) return;
+    const beat = () => supabase.from("exam_attempts").update({
+      last_activity_at: new Date().toISOString(),
+      current_question_index: currentIdx,
+    }).eq("id", attemptId);
+    beat();
+    const iv = setInterval(beat, 15000);
+    return () => clearInterval(iv);
+  }, [attemptId, submitted, currentIdx]);
 
   // Tab switch
   useEffect(() => {
