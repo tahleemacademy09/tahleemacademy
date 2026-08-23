@@ -468,6 +468,17 @@ export const useProctoring = (
           videoElRef.current?.play().catch(() => {});
         };
       }
+      // If we're currently live-publishing to LiveKit (admin has the grid
+      // open) and this init call is a *replacement* (reinit after the old
+      // track ended/stayed muted too long — see camera-health interval
+      // below), swap the new MediaStreamTrack into the existing published
+      // track instead of leaving the admin's viewer stuck forever on the
+      // now-dead old one. replaceTrack() keeps the same publication alive —
+      // no unpublish/republish/renegotiation, so the admin's viewer doesn't
+      // even need to resubscribe.
+      if (vTrack && lkTrackRef.current) {
+        lkTrackRef.current.replaceTrack(vTrack).catch(() => {});
+      }
       // Attach to display element with retry — Android needs extra time
       const attachDisplay = (retries = 0) => {
         const displayEl = document.getElementById("proctor-display-video") as HTMLVideoElement;
