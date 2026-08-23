@@ -303,6 +303,7 @@ const ExamTaking = () => {
   const procEnabled = exam?.proctoring_enabled === true;
   const proc = useProctoring({
     attemptId: attemptId || "", userId: user?.id || "",
+    examId: exam?.id,
     proctoring_enabled: exam?.proctoring_enabled,
     fullscreen_required: exam?.fullscreen_required,
     tab_switch_limit: exam?.tab_switch_limit,
