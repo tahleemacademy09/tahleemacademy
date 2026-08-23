@@ -76,6 +76,15 @@ export const useProctoring = (
   const faceAbsStart    = useRef<number | null>(null);
   const lastViolTime    = useRef<Record<string, number>>({});
   const fdInstance      = useRef<any>(null);
+  // Continuous-condition violations should log ONCE per episode (when they
+  // start), then go silent until the condition is corrected and happens
+  // again — not repeatedly for as long as the condition persists.
+  const faceWarnFired   = useRef(false);
+  const faceStrikeFired = useRef(false);
+  const lookingAwayActive     = useRef(false);
+  const eyesNotVisibleActive  = useRef(false);
+  const cameraCoveredActive   = useRef(false);
+  const multipleFacesActive   = useRef(false);
 
   // Hidden video element attached to DOM — prevents Android killing stream
   const videoElRef = useRef<HTMLVideoElement | null>(null);
@@ -227,10 +236,14 @@ export const useProctoring = (
     const avgBrightness = totalBrightness / (data.length / 4);
     if (avgBrightness < 15) {
       setState(prev => ({ ...prev, faceDetected: false }));
-      logViolation("camera_covered", 3, `Frame too dark: avg brightness ${avgBrightness.toFixed(1)}`);
+      if (!cameraCoveredActive.current) {
+        cameraCoveredActive.current = true;
+        logViolation("camera_covered", 3, `Frame too dark: avg brightness ${avgBrightness.toFixed(1)}`);
+      }
       faceAbsStart.current = null;
       return;
     }
+    cameraCoveredActive.current = false; // recovered — next cover is a new episode
 
     // ── 2. Face detection ────────────────────────────────────────────
     let facePresent = false, faceCount = 0;
@@ -258,7 +271,12 @@ export const useProctoring = (
           const xRatio = faceCenterX / frameW;
           const yRatio = faceCenterY / frameH;
           if (xRatio < 0.25 || xRatio > 0.75 || yRatio < 0.15 || yRatio > 0.85) {
-            logViolation("looking_away", 1, `Face position off-center: ${xRatio.toFixed(2)}, ${yRatio.toFixed(2)}`);
+            if (!lookingAwayActive.current) {
+              lookingAwayActive.current = true;
+              logViolation("looking_away", 1, `Face position off-center: ${xRatio.toFixed(2)}, ${yRatio.toFixed(2)}`);
+            }
+          } else {
+            lookingAwayActive.current = false; // back on-center — next drift is a new episode
           }
 
           // Eye region brightness analysis
@@ -278,7 +296,12 @@ export const useProctoring = (
             const darkRatio = darkPixels / (eyeData.data.length / 4);
             // If eye region is mostly dark, eyes might be closed or looking down
             if (darkRatio > 0.60) { // 60% dark eye region = eyes closed/looking down
-              logViolation("eyes_not_visible", 1, `Eye region ${(darkRatio * 100).toFixed(0)}% dark — eyes closed or looking down`);
+              if (!eyesNotVisibleActive.current) {
+                eyesNotVisibleActive.current = true;
+                logViolation("eyes_not_visible", 1, `Eye region ${(darkRatio * 100).toFixed(0)}% dark — eyes closed or looking down`);
+              }
+            } else {
+              eyesNotVisibleActive.current = false; // eyes visible again — next occurrence is a new episode
             }
           }
         }
@@ -321,7 +344,10 @@ export const useProctoring = (
         if ((skinLeft > 600 || skinRight > 600) && Math.abs(skinLeft - skinRight) > 300) {
           facePresent = true; // face is there but off-center
           faceCount = 1;
-          logViolation("looking_away", 1, `Face off-center L:${skinLeft} R:${skinRight}`);
+          if (!lookingAwayActive.current) {
+            lookingAwayActive.current = true;
+            logViolation("looking_away", 1, `Face off-center L:${skinLeft} R:${skinRight}`);
+          }
         }
       }
     }
@@ -332,20 +358,29 @@ export const useProctoring = (
       if (!faceAbsStart.current) faceAbsStart.current = Date.now();
       const absTime = Date.now() - faceAbsStart.current;
 
-      if (absTime >= 1500 && absTime < 4000) {
-        // 1.5s absent → immediate warning
+      if (absTime >= 1500 && absTime < 4000 && !faceWarnFired.current) {
+        // 1.5s absent → immediate warning (logged once for this absence episode)
+        faceWarnFired.current = true;
         logViolation("face_not_detected", 1, `Face absent ${Math.round(absTime/1000)}s`);
-      } else if (absTime >= 4000) {
-        // 4s absent → strike + snapshot
+      } else if (absTime >= 4000 && !faceStrikeFired.current) {
+        // 4s absent → strike + snapshot (logged once — no longer repeats every 4s
+        // while the student stays out of frame; correcting it resets both flags)
+        faceStrikeFired.current = true;
         logViolation("face_not_detected", 2, `Face absent ${Math.round(absTime/1000)}s — possible cheating`);
         captureSnapshot("face_absent_extended");
-        faceAbsStart.current = Date.now(); // reset so it fires again every 4s
       }
     } else {
       faceAbsStart.current = null; // reset timer
+      faceWarnFired.current = false;
+      faceStrikeFired.current = false; // face is back — next absence is a new episode
       if (faceCount > 1) {
-        logViolation("multiple_faces", 3, `${faceCount} faces detected in frame`);
-        captureSnapshot("multiple_faces");
+        if (!multipleFacesActive.current) {
+          multipleFacesActive.current = true;
+          logViolation("multiple_faces", 3, `${faceCount} faces detected in frame`);
+          captureSnapshot("multiple_faces");
+        }
+      } else {
+        multipleFacesActive.current = false; // back to one face — next occurrence is a new episode
       }
     }
   }, [logViolation, captureSnapshot]);
