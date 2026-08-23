@@ -9,7 +9,7 @@
    - Realtime via Supabase channels on exam_attempts / violations, with a
      30s poll as a fallback if the socket drops.
 */
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -22,10 +22,8 @@ import {
   AlertTriangle, Wifi, WifiOff, Users, Circle, Video, VideoOff,
 } from "lucide-react";
 
-const GRID_PAGE_SIZE = 9;
-
 /* ── Live video tile — subscribes to one participant's video track ──── */
-const LiveTile = ({ participant, name, Track, onExpand, expanded }: { participant: any; name: string; Track: any; onExpand?: () => void; expanded?: boolean }) => {
+const LiveTile = ({ participant, name, Track, onExpand, expanded, style }: { participant: any; name: string; Track: any; onExpand?: () => void; expanded?: boolean; style?: CSSProperties }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [hasVideo, setHasVideo] = useState(false);
 
@@ -60,6 +58,7 @@ const LiveTile = ({ participant, name, Track, onExpand, expanded }: { participan
         position: "relative", borderRadius: 10, overflow: "hidden", background: "#0b1a12",
         aspectRatio: expanded ? undefined : "4/3", width: expanded ? "100%" : undefined, height: expanded ? "100%" : undefined,
         cursor: onExpand ? "pointer" : "default",
+        ...style,
       }}
     >
       {/* object-fit: contain (not cover) — a phone's front camera is often
@@ -70,37 +69,31 @@ const LiveTile = ({ participant, name, Track, onExpand, expanded }: { participan
       <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "contain", display: hasVideo ? "block" : "none" }} />
       {!hasVideo && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "rgba(255,255,255,.4)" }}>
-          <VideoOff size={18} />
+          <VideoOff size={expanded ? 18 : 13} />
         </div>
       )}
-      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(0,0,0,.75))", color: "#fff", fontSize: expanded ? 14 : 10, fontWeight: 700, padding: expanded ? "20px 14px 10px" : "12px 8px 5px" }}>
-        {name}
-      </div>
+      {!expanded && style?.width && Number(style.width) < 100 ? null : (
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(0,0,0,.75))", color: "#fff", fontSize: expanded ? 14 : 10, fontWeight: 700, padding: expanded ? "20px 14px 10px" : "12px 8px 5px" }}>
+          {name}
+        </div>
+      )}
     </div>
   );
 };
 
-/* ── Full live video grid — connects to LiveKit as a viewer, and
-     announces itself via Presence so students' cameras start publishing
-     only while this is actually open. ─────────────────────────────── */
-const LiveGrid = ({ examId, rows, onClose, t }: { examId: string; rows: Row[]; onClose: () => void; t: (en: string, ar: string) => string }) => {
+/* ── LiveKit viewer hook — connects once when the monitor page is open,
+     announces itself via Presence so students' cameras start publishing,
+     and exposes the live participant list + Track class so any row can
+     render its own inline thumbnail (no separate full-page grid). ──── */
+const useLiveKitViewer = (examId: string | undefined) => {
   const [participants, setParticipants] = useState<any[]>([]);
   const [Track, setTrack] = useState<any>(null);
-  const [page, setPage] = useState(0);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const roomRef = useRef<any>(null);
   const channelRef = useRef<any>(null);
 
-  const onlineRows = rows.filter(r => r.status === "online");
-  // LiveKit participant.identity == user.id (the JWT "sub" claim set by
-  // livekit-token), NOT the presence-channel key — those are separate.
-  const nameFor = (identity: string) => {
-    const row = onlineRows.find(r => r.profile.user_id === identity);
-    return row ? row.profile.full_name : identity;
-  };
-
   useEffect(() => {
+    if (!examId) return;
     let cancelled = false;
     (async () => {
       try {
@@ -145,74 +138,27 @@ const LiveGrid = ({ examId, rows, onClose, t }: { examId: string; rows: Row[]; o
     };
   }, [examId]);
 
-  const pageCount = Math.max(1, Math.ceil(participants.length / GRID_PAGE_SIZE));
-  const pageItems = participants.slice(page * GRID_PAGE_SIZE, (page + 1) * GRID_PAGE_SIZE);
-  const expandedParticipant = expandedId ? participants.find(p => p.identity === expandedId) : null;
-
-  // If the expanded student's camera disconnects, fall back to the grid instead
-  // of showing a dead tile.
-  useEffect(() => {
-    if (expandedId && !participants.some(p => p.identity === expandedId)) setExpandedId(null);
-  }, [participants, expandedId]);
-
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "#0a0f0c", zIndex: 100, display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,.08)" }}>
-        <button onClick={onClose} style={{ background: "rgba(255,255,255,.08)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
-          <X size={16} color="#fff" />
-        </button>
-        <Video size={14} color={GOLD} />
-        <span style={{ color: "#fff", fontWeight: 800, fontSize: 13 }}>{t("Live Grid", "البث المباشر")}</span>
-        <span style={{ color: "rgba(255,255,255,.5)", fontSize: 11 }}>
-          {status === "connecting" ? t("Connecting…", "جارٍ الاتصال…") : `${participants.length} ${t("live", "مباشر")}`}
-        </span>
-      </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-        {status === "error" ? (
-          <div style={{ color: "rgba(255,255,255,.6)", textAlign: "center", padding: 40 }}>
-            {t("Couldn't connect to the live grid.", "تعذّر الاتصال بالبث المباشر.")}
-          </div>
-        ) : pageItems.length === 0 ? (
-          <div style={{ color: "rgba(255,255,255,.4)", textAlign: "center", padding: 40 }}>
-            {t("No students are currently live. As online students' cameras connect, they'll appear here.", "لا يوجد طلاب مباشرون حاليًا.")}
-          </div>
-        ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10 }}>
-            {pageItems.map(p => (
-              <LiveTile key={p.identity} participant={p} name={nameFor(p.identity)} Track={Track} onExpand={() => setExpandedId(p.identity)} />
-            ))}
-          </div>
-        )}
-      </div>
-      {pageCount > 1 && (
-        <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: 12, borderTop: "1px solid rgba(255,255,255,.08)" }}>
-          {Array.from({ length: pageCount }).map((_, i) => (
-            <button key={i} onClick={() => setPage(i)} style={{
-              width: 26, height: 26, borderRadius: 8, border: "none", cursor: "pointer",
-              background: i === page ? GOLD : "rgba(255,255,255,.1)", color: i === page ? G : "#fff", fontSize: 11, fontWeight: 800,
-            }}>{i + 1}</button>
-          ))}
-        </div>
-      )}
-      {expandedParticipant && (
-        <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 110, display: "flex", flexDirection: "column" }}>
-          <button
-            onClick={() => setExpandedId(null)}
-            style={{
-              position: "absolute", top: 14, left: 14, zIndex: 1, background: "rgba(255,255,255,.12)",
-              border: "none", borderRadius: 10, padding: 8, cursor: "pointer",
-            }}
-          >
-            <X size={18} color="#fff" />
-          </button>
-          <div style={{ flex: 1 }}>
-            <LiveTile participant={expandedParticipant} name={nameFor(expandedParticipant.identity)} Track={Track} expanded />
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return { participants, Track, status };
 };
+
+/* ── Full-screen single-student viewer — opened by tapping a student's
+     inline live thumbnail. ───────────────────────────────────────── */
+const LiveFullscreen = ({ participant, name, Track, onClose }: { participant: any; name: string; Track: any; onClose: () => void }) => (
+  <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 110, display: "flex", flexDirection: "column" }}>
+    <button
+      onClick={onClose}
+      style={{
+        position: "absolute", top: 14, left: 14, zIndex: 1, background: "rgba(255,255,255,.12)",
+        border: "none", borderRadius: 10, padding: 8, cursor: "pointer",
+      }}
+    >
+      <X size={18} color="#fff" />
+    </button>
+    <div style={{ flex: 1 }}>
+      <LiveTile participant={participant} name={name} Track={Track} expanded />
+    </div>
+  </div>
+);
 
 const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
 const CREAM = "#faf6ee", BORDER = "rgba(15,45,31,0.1)", TL = "#7a9e88";
@@ -299,9 +245,20 @@ export default function ExamLiveMonitor() {
   const [busyId, setBusyId]         = useState<string | null>(null);
   const [preview, setPreview]       = useState<any>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [showGrid, setShowGrid]     = useState(false);
+  const [expandedId, setExpandedId]   = useState<string | null>(null);
 
   const [, forceTick] = useState(0); // re-render every second for live timers
+
+  // Live camera feeds — connects once for the whole page; each row picks its
+  // own thumbnail out of `participants` by matching LiveKit identity (user_id).
+  const { participants: liveParticipants, Track: LKTrack } = useLiveKitViewer(examId);
+  const liveParticipantFor = (userId: string) => liveParticipants.find((p: any) => p.identity === userId) || null;
+  const expandedParticipant = expandedId ? liveParticipants.find((p: any) => p.identity === expandedId) : null;
+  // If the expanded student's camera disconnects, fall back automatically
+  // instead of showing a dead tile.
+  useEffect(() => {
+    if (expandedId && !liveParticipants.some((p: any) => p.identity === expandedId)) setExpandedId(null);
+  }, [liveParticipants, expandedId]);
 
   const rowsRef = useRef<Row[]>([]);
   useEffect(() => { rowsRef.current = rows; }, [rows]);
@@ -528,10 +485,6 @@ export default function ExamLiveMonitor() {
               {exam ? (language === "ar" ? exam.title_ar || exam.title : exam.title) : "…"}
             </h1>
           </div>
-          <button onClick={() => setShowGrid(true)} style={{ background: "rgba(220,38,38,.25)", border: "1px solid rgba(220,38,38,.5)", borderRadius: 10, padding: "8px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-            <Video size={14} color="#fff" />
-            <span style={{ fontSize: 11, fontWeight: 800, color: "#fff" }}>{t("Live Grid", "البث")}</span>
-          </button>
           <button onClick={load} style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
             <RefreshCw size={14} color="#fff" />
           </button>
@@ -581,6 +534,7 @@ export default function ExamLiveMonitor() {
           const elapsed = a?.started_at ? Math.floor((Date.now() - new Date(a.started_at).getTime()) / 1000) : 0;
           const remaining = a && a.status === "in_progress" ? Math.max(0, timeLimit - elapsed) : null;
           const answered = row.answeredCount, total = questionCount || 1;
+          const liveParticipant = liveParticipantFor(row.profile.user_id);
 
           return (
             <div key={a?.id || row.profile.user_id} onClick={() => openDetail(row)}
@@ -638,6 +592,20 @@ export default function ExamLiveMonitor() {
                       )}
                     </div>
                   </div>
+
+                  {/* Live camera thumbnail — only rendered for students whose
+                      camera is currently publishing. Tap to go full-screen. */}
+                  {liveParticipant && (
+                    <div onClick={e => e.stopPropagation()} style={{ flexShrink: 0 }}>
+                      <LiveTile
+                        participant={liveParticipant}
+                        name={name}
+                        Track={LKTrack}
+                        onExpand={() => setExpandedId(row.profile.user_id)}
+                        style={{ width: 52, height: 68, borderRadius: 10 }}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Quick actions — only when in progress */}
@@ -826,8 +794,16 @@ export default function ExamLiveMonitor() {
         </DialogContent>
       </Dialog>
 
-      {showGrid && examId && (
-        <LiveGrid examId={examId} rows={rows} onClose={() => setShowGrid(false)} t={t} />
+      {expandedParticipant && (
+        <LiveFullscreen
+          participant={expandedParticipant}
+          name={(() => {
+            const r = rows.find(rr => rr.profile.user_id === expandedParticipant.identity);
+            return r ? (language === "ar" ? r.profile.full_name_ar || r.profile.full_name : r.profile.full_name) : expandedParticipant.identity;
+          })()}
+          Track={LKTrack}
+          onClose={() => setExpandedId(null)}
+        />
       )}
 
       {/* Snapshot lightbox */}
