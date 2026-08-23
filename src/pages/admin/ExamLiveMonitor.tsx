@@ -95,7 +95,11 @@ const useLiveKitViewer = (examId: string | undefined) => {
   useEffect(() => {
     if (!examId) return;
     let cancelled = false;
-    (async () => {
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = async () => {
+      if (cancelled) return;
+      setStatus("connecting");
       try {
         const lk = await import("livekit-client");
         if (cancelled) return;
@@ -104,6 +108,10 @@ const useLiveKitViewer = (examId: string | undefined) => {
 
         // Announce presence FIRST — students are listening for this and
         // only start publishing once they see an admin actually watching.
+        // A fresh channel + random key is created on every (re)connect —
+        // e.g. a browser refresh — which is fine as long as the room
+        // connect below also succeeds; previously if it didn't, this whole
+        // effect just gave up with no retry, leaving every tile black.
         const channel = supabase.channel(`exam-proctor-presence-${examId}`, {
           config: { presence: { key: `admin-${Math.random().toString(36).slice(2, 9)}` } },
         });
@@ -113,26 +121,53 @@ const useLiveKitViewer = (examId: string | undefined) => {
         channelRef.current = channel;
 
         const { data } = await supabase.functions.invoke("livekit-token", { body: { room_name: `exam-proctor-${examId}` } });
-        if (cancelled || !data?.token || !data?.url) { setStatus("error"); return; }
+        if (cancelled) return;
+        if (!data?.token || !data?.url) {
+          setStatus("error");
+          retryTimer = setTimeout(connect, 4000);
+          return;
+        }
 
         const room = new Room({ adaptiveStream: true, dynacast: true });
         room.on(RoomEvent.ParticipantConnected, () => setParticipants([...room.remoteParticipants.values()]));
         room.on(RoomEvent.ParticipantDisconnected, () => setParticipants([...room.remoteParticipants.values()]));
         room.on(RoomEvent.TrackSubscribed, () => setParticipants([...room.remoteParticipants.values()]));
         room.on(RoomEvent.TrackUnsubscribed, () => setParticipants([...room.remoteParticipants.values()]));
+        // Server-side kicks / network blips used to leave the grid stuck on
+        // its last frame (black) with no way to recover short of a manual
+        // page refresh. Reconnect automatically instead.
+        room.on(RoomEvent.Disconnected, () => {
+          roomRef.current = null;
+          setParticipants([]);
+          if (!cancelled) {
+            setStatus("connecting");
+            retryTimer = setTimeout(connect, 3000);
+          }
+        });
 
         await room.connect(data.url, data.token);
         if (cancelled) { room.disconnect(); return; }
         roomRef.current = room;
         setParticipants([...room.remoteParticipants.values()]);
         setStatus("connected");
-      } catch (_) {
-        if (!cancelled) setStatus("error");
+      } catch (err) {
+        // Previously silent-failed to "error" with no retry — any transient
+        // issue (slow token round trip, brief network drop) meant the
+        // monitor stayed black until a manual refresh, which then had the
+        // same chance of failing again.
+        console.warn("[live-monitor] connect failed, retrying", err);
+        if (!cancelled) {
+          setStatus("error");
+          retryTimer = setTimeout(connect, 4000);
+        }
       }
-    })();
+    };
+
+    connect();
 
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       try { roomRef.current?.disconnect(); } catch (_) {}
       try { channelRef.current?.untrack(); channelRef.current?.unsubscribe(); } catch (_) {}
     };
