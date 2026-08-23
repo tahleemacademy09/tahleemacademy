@@ -864,6 +864,24 @@ const ExamEditor = () => {
                         <Switch checked={(examForm as any)[a.key]||false} onCheckedChange={v=>setExamForm({...examForm,[a.key]:v})} />
                       </div>
                     ))}
+
+                    {examForm.auto_submit_on_violation && (
+                      <div className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-100">
+                        <div><Label className="text-sm font-semibold">{t("Max warnings before auto-submit","أقصى عدد تحذيرات قبل الإرسال التلقائي")}</Label><p className="text-[10px] text-slate-400 mt-0.5">{t("Exam auto-submits once this many violations are hit","يُرسل الامتحان تلقائيًا عند بلوغ هذا العدد من الانتهاكات")}</p></div>
+                        <Input type="number" min={1} max={20}
+                          value={examForm.max_warnings}
+                          onChange={e=>setExamForm({...examForm,max_warnings: Math.max(1, Math.min(20, Number(e.target.value)||1))})}
+                          className="w-16 h-9 rounded-lg text-center" />
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-100">
+                      <div><Label className="text-sm font-semibold">{t("Tab switch limit","حد التبديل بين النوافذ")}</Label><p className="text-[10px] text-slate-400 mt-0.5">{t("How many times a student can leave the exam tab before it counts against them","عدد مرات مغادرة نافذة الامتحان المسموح بها")}</p></div>
+                      <Input type="number" min={0} max={20}
+                        value={examForm.tab_switch_limit}
+                        onChange={e=>setExamForm({...examForm,tab_switch_limit: Math.max(0, Math.min(20, Number(e.target.value)||0))})}
+                        className="w-16 h-9 rounded-lg text-center" />
+                    </div>
                   </div>
                 )}
               </CardContent>
