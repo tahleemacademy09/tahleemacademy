@@ -146,6 +146,21 @@ export const useProctoring = (
       canvas.width = Math.round(W * scale); canvas.height = Math.round(H * scale);
       const ctx = canvas.getContext("2d"); if (!ctx) return;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      // Guard against uploading a pitch-black frame from an OS-suspended
+      // camera (readyState still "live" but no real frames decoding — see
+      // the mute/unmute handling in initCamera). Cheap downsample check.
+      const probe = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let sum = 0;
+      for (let i = 0; i < probe.length; i += 40) sum += probe[i];
+      const avg = sum / (probe.length / 40);
+      if (avg < 5) {
+        // Don't upload a useless black frame. Flag not-ready — the camera
+        // health-check interval (below) polls every 3s and will force a
+        // full reinit once it also sees the track muted/stuck.
+        cameraReadyRef.current = false;
+        setState(prev => ({ ...prev, cameraReady: false }));
+        return;
+      }
       const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, "image/jpeg", 0.7));
       if (!blob || blob.size < 500 || blob.size > 800_000) return;
       const ts = Date.now();
@@ -434,6 +449,25 @@ export const useProctoring = (
       cameraReadyRef.current = true;
       reconnecting.current = false;
       setState(prev => ({ ...prev, cameraReady: true, faceDetected: true }));
+      // Mobile OS-level suspension guard — Android/Chrome (and iOS Safari)
+      // suspend the camera's frame delivery when the screen locks or the
+      // app backgrounds, WITHOUT ending the track (readyState stays "live").
+      // The camera-health interval below never catches this because it only
+      // checks readyState. `mute`/`unmute` are the events actually fired for
+      // this case — without them every canvas draw after a suspension is
+      // solid black (avg brightness ~0) even though nothing is "wrong".
+      const vTrack = stream.getVideoTracks()[0];
+      if (vTrack) {
+        vTrack.onmute = () => {
+          cameraReadyRef.current = false;
+          setState(prev => ({ ...prev, cameraReady: false }));
+        };
+        vTrack.onunmute = () => {
+          cameraReadyRef.current = true;
+          setState(prev => ({ ...prev, cameraReady: true }));
+          videoElRef.current?.play().catch(() => {});
+        };
+      }
       // Attach to display element with retry — Android needs extra time
       const attachDisplay = (retries = 0) => {
         const displayEl = document.getElementById("proctor-display-video") as HTMLVideoElement;
@@ -553,15 +587,37 @@ export const useProctoring = (
   // ── Camera health monitor ──────────────────────────────────
   useEffect(() => {
     if (!enabled) return;
+    let mutedSince: number | null = null;
     const iv = setInterval(() => {
       if (!enabledRef.current) return;
-      if (!streamRef.current || streamRef.current.getVideoTracks()[0]?.readyState === "ended") {
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (!streamRef.current || track?.readyState === "ended") {
         cameraReadyRef.current = false;
         setState(prev => ({ ...prev, cameraReady: false }));
         reconnecting.current = false;
+        mutedSince = null;
         initCamera();
+        return;
       }
-    }, 5000);
+      // Track is "live" but OS-suspended (screen lock / app backgrounded) —
+      // a soft resume usually isn't enough to bring Android's camera back,
+      // so escalate to a full reinit if it's been muted/not-ready 8s+.
+      // Also covers browsers that freeze frames without firing `mute`
+      // (caught instead by captureSnapshot's black-frame probe, which sets
+      // cameraReadyRef false).
+      if (track?.muted || !cameraReadyRef.current) {
+        if (!mutedSince) mutedSince = Date.now();
+        videoElRef.current?.play().catch(() => {});
+        if (Date.now() - mutedSince > 8000) {
+          mutedSince = null;
+          cameraReadyRef.current = false;
+          setState(prev => ({ ...prev, cameraReady: false }));
+          initCamera();
+        }
+      } else {
+        mutedSince = null;
+      }
+    }, 3000);
     return () => clearInterval(iv);
   }, [enabled, initCamera]);
 
@@ -597,8 +653,18 @@ export const useProctoring = (
           import("livekit-client"),
         ]);
         if (cancelled || !adminWatchingRef.current || !data?.token || !data?.url) { lkConnectingRef.current = false; return; }
-        const { Room, LocalVideoTrack, Track } = lk;
+        const { Room, LocalVideoTrack, Track, RoomEvent } = lk;
         const room = new Room({ adaptiveStream: false, dynacast: false });
+        // A refreshed admin page (or any server-side kick/network blip) fires
+        // this even after a previously-successful publish. Previously nothing
+        // listened for it, so the feed just went black forever until the
+        // student manually reloaded — this reconnects automatically instead.
+        room.on(RoomEvent.Disconnected, () => {
+          lkRoomRef.current = null;
+          lkTrackRef.current = null;
+          lkConnectingRef.current = false;
+          if (!cancelled && adminWatchingRef.current) retryTimer = setTimeout(publishLive, 2000);
+        });
         await room.connect(data.url, data.token);
         if (cancelled || !adminWatchingRef.current) { room.disconnect(); lkConnectingRef.current = false; return; }
         const videoTrack = streamRef.current.getVideoTracks()[0];
@@ -612,8 +678,14 @@ export const useProctoring = (
         });
         lkRoomRef.current = room;
         lkTrackRef.current = localTrack;
-      } catch (_) {
-        // Silent — live grid is a bonus view; snapshots keep working regardless.
+      } catch (err) {
+        // Used to be a silent no-op — any transient failure (token race,
+        // room not fully torn down yet, brief network hiccup) meant the
+        // live feed died permanently, since publishLive() only re-runs on
+        // the next presence "sync" event and that had already fired. Now
+        // it logs and retries instead of giving up.
+        logger.warn("[proctor] live publish failed, retrying", err);
+        if (!cancelled && adminWatchingRef.current) retryTimer = setTimeout(publishLive, 3000);
       } finally {
         lkConnectingRef.current = false;
       }
