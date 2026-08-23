@@ -177,7 +177,7 @@ const ProctoringOverlay = ({
       setPointsLost(p => p + pts);
     }
 
-    if (!cfg.autoFix) setTimeout(() => setBanners(prev => prev.filter(b => b.id !== id)), 7000);
+    if (!cfg.autoFix) setTimeout(() => setBanners(prev => prev.filter(b => b.id !== id)), 5000);
     if (["face_not_detected","eyes_not_visible","looking_away","camera_covered"].includes(type)) setBorderAlert(true);
 
     if (attemptId) {
@@ -256,67 +256,41 @@ const ProctoringOverlay = ({
         </div>
       )}
 
-      {/* Banners stack */}
-      <div style={{position:"fixed",top:60,left:"50%",transform:"translateX(-50%)",
-        zIndex:500,width:"calc(100% - 20px)",maxWidth:500,
-        display:"flex",flexDirection:"column",gap:8,pointerEvents:"none"}}>
+      {/* Violation toast — small, out of the way, doesn't cover exam content */}
+      <div style={{position:"fixed",top:14,right:10,zIndex:500,maxWidth:230,
+        display:"flex",flexDirection:"column",gap:6,pointerEvents:"none"}}>
         {banners.map(banner => {
           const cfg = WARN[banner.type]; if (!cfg) return null;
           const theme = SEV_THEME[cfg.sev];
           const isDark = cfg.sev === "alert" || cfg.sev === "critical";
           return (
             <div key={banner.id} style={{
-              background: isDark ? "linear-gradient(135deg,#1a0000,#2a0000)" : theme.bg,
-              border:"2px solid "+theme.border,borderRadius:16,
-              padding:"14px 16px 12px",
-              boxShadow:"0 8px 32px rgba(0,0,0,.55), 0 0 0 1px "+theme.border+"44",
-              animation:"procBannerIn .2s ease",pointerEvents:"auto",
+              background: isDark ? "#1a0000" : theme.bg,
+              border:"1.5px solid "+theme.border,borderRadius:12,
+              padding:"7px 9px",
+              boxShadow:"0 4px 14px rgba(0,0,0,.35)",
+              animation:"procBannerIn .18s ease",pointerEvents:"auto",
+              overflow:"hidden",
             }}>
-              <div style={{display:"flex",alignItems:"flex-start",gap:11,marginBottom:8}}>
-                <div style={{width:40,height:40,borderRadius:10,background:theme.border+"22",
-                  display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>
-                  {cfg.icon}
-                </div>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:9,fontWeight:900,color:theme.text,opacity:.65,letterSpacing:1,textTransform:"uppercase"}}>
-                    {{warn:"⚠ Warning",caution:"⚠ Caution",alert:"🚨 Alert",critical:"🚨 Critical"}[cfg.sev]}
-                  </div>
-                  <div style={{fontSize:15,fontWeight:900,color:theme.text,lineHeight:1.3}}>
-                    {isAr ? cfg.title_ar : cfg.title_en}
-                  </div>
+              <div style={{display:"flex",alignItems:"center",gap:7}}>
+                <span style={{fontSize:14,flexShrink:0}}>{cfg.icon}</span>
+                <div style={{fontSize:11.5,fontWeight:800,color:theme.text,lineHeight:1.25,flex:1,minWidth:0}}>
+                  {isAr ? cfg.title_ar : cfg.title_en}
                 </div>
                 {banner.pts > 0 && (
-                  <div style={{background:theme.border+"33",border:"1px solid "+theme.border,
-                    borderRadius:8,padding:"3px 9px",fontSize:11,fontWeight:900,color:theme.text,flexShrink:0}}>
-                    −{banner.pts} pts
-                  </div>
+                  <span style={{fontSize:9,fontWeight:900,color:theme.text,opacity:.85,flexShrink:0}}>
+                    −{banner.pts}
+                  </span>
                 )}
                 <button onClick={()=>setBanners(p=>p.filter(b=>b.id!==banner.id))}
-                  style={{background:"none",border:"none",color:theme.text,cursor:"pointer",opacity:.6,padding:2,flexShrink:0,pointerEvents:"auto",
-                     display:"flex",alignItems:"center",justifyContent:"center",width:24,height:24,borderRadius:6}}>
-
-                  <X style={{width:14,height:14}}/>
+                  style={{background:"none",border:"none",color:theme.text,cursor:"pointer",opacity:.5,padding:0,flexShrink:0,pointerEvents:"auto",
+                     display:"flex",alignItems:"center",justifyContent:"center",width:16,height:16}}>
+                  <X style={{width:11,height:11}}/>
                 </button>
               </div>
-              <div style={{fontSize:13,color:theme.text,opacity:.8,lineHeight:1.6,paddingLeft:51,marginBottom:6}}>
-                {isAr ? cfg.msg_ar : cfg.msg_en}
+              <div style={{height:2,background:theme.border+"22",borderRadius:1,marginTop:6,overflow:"hidden"}}>
+                <div style={{height:"100%",background:theme.border,borderRadius:1,animation:"procShrink 5s linear forwards"}}/>
               </div>
-              {cfg.fix_en && (
-                <div style={{fontSize:12,fontWeight:700,color:theme.text,paddingLeft:51,lineHeight:1.5,
-                  borderTop:"1px solid "+theme.border+"33",paddingTop:7}}>
-                  👉 {isAr ? cfg.fix_ar : cfg.fix_en}
-                </div>
-              )}
-              {cfg.autoFix && (
-                <div style={{fontSize:10,color:theme.text,opacity:.45,paddingLeft:51,marginTop:5}}>
-                  {isAr ? "⟳ سيختفي هذا التنبيه تلقائياً عند حل المشكلة" : "⟳ Dismisses automatically when resolved."}
-                </div>
-              )}
-              {(
-                <div style={{height:2,background:theme.border+"22",borderRadius:1,marginTop:10,overflow:"hidden"}}>
-                  <div style={{height:"100%",background:theme.border,borderRadius:1,animation:"procShrink 7s linear forwards"}}/>
-                </div>
-              )}
             </div>
           );
         })}
