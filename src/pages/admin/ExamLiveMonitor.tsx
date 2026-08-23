@@ -631,9 +631,12 @@ export default function ExamLiveMonitor() {
         })}
       </div>
 
-      {/* Detail drawer */}
+      {/* Detail drawer — full-screen mobile sheet, not a floating centered modal */}
       <Dialog open={!!detail} onOpenChange={o => !o && setDetail(null)}>
-        <DialogContent style={{ maxWidth: 480, maxHeight: "85vh", overflowY: "auto", fontFamily: "'Cairo',sans-serif", padding: 0 }}>
+        <DialogContent
+          className="left-0 top-0 translate-x-0 translate-y-0 rounded-none border-0 sm:rounded-none max-w-none w-screen h-[100dvh] max-h-[100dvh] data-[state=open]:slide-in-from-bottom data-[state=closed]:slide-out-to-bottom data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-100"
+          style={{ overflowY: "auto", fontFamily: "'Cairo',sans-serif", padding: 0 }}
+        >
           {detail && (() => {
             const a = detail.attempt;
             const name = language === "ar" ? detail.profile.full_name_ar || detail.profile.full_name : detail.profile.full_name;
