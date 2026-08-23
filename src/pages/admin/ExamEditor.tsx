@@ -129,6 +129,18 @@ const toLocalDatetimeString = (date: Date): string => {
   return `${y}-${m}-${d}T${h}:${min}`;
 };
 
+// Converts a <input type="datetime-local"> value ("YYYY-MM-DDTHH:mm", implicitly
+// local time) into a proper UTC ISO string for storage. Without this, the raw
+// local string gets stored as if it were UTC, then re-displayed shifted by the
+// browser's UTC offset on every load — the "+1 hour" drift.
+const localDatetimeToISO = (localStr: string): string | null => {
+  if (!localStr) return null;
+  const [datePart, timePart] = localStr.split("T");
+  const [y, m, d] = datePart.split("-").map(Number);
+  const [h, min] = timePart.split(":").map(Number);
+  return new Date(y, m - 1, d, h, min).toISOString();
+};
+
 const useIsMobile = () => {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -554,7 +566,7 @@ const ExamEditor = () => {
         show_results_immediately: examForm.show_results_immediately, allow_review: examForm.allow_review,
         display_mode: examForm.display_mode,
         guidelines: examForm.guidelines || null, guidelines_ar: examForm.guidelines_ar || null,
-        start_date: examForm.start_date || null, end_date: examForm.end_date || null,
+        start_date: localDatetimeToISO(examForm.start_date), end_date: localDatetimeToISO(examForm.end_date),
         proctoring_enabled: examForm.proctoring_enabled,
         fullscreen_required: examForm.fullscreen_required,
         webcam_required: examForm.webcam_required,
@@ -909,10 +921,10 @@ const ExamEditor = () => {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {[
-                    { label: t("Now","الآن"),      value: new Date().toISOString().slice(0,16) },
-                    { label: t("+1 Hour","+ساعة"),  value: new Date(Date.now()+3600000).toISOString().slice(0,16) },
-                    { label: t("Tomorrow","غدًا"),  value: new Date(Date.now()+86400000).toISOString().slice(0,16) },
-                    { label: t("+1 Week","+أسبوع"), value: new Date(Date.now()+604800000).toISOString().slice(0,16) },
+                    { label: t("Now","الآن"),      value: toLocalDatetimeString(new Date()) },
+                    { label: t("+1 Hour","+ساعة"),  value: toLocalDatetimeString(new Date(Date.now()+3600000)) },
+                    { label: t("Tomorrow","غدًا"),  value: toLocalDatetimeString(new Date(Date.now()+86400000)) },
+                    { label: t("+1 Week","+أسبوع"), value: toLocalDatetimeString(new Date(Date.now()+604800000)) },
                   ].map(q => <Button key={q.label} variant="outline" size="sm" onClick={()=>setExamForm({...examForm,start_date:q.value})} className="text-xs h-8 rounded-lg">{q.label}</Button>)}
                 </div>
                 <div className="pt-2">
