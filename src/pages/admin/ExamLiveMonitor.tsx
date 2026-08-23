@@ -55,7 +55,12 @@ const LiveTile = ({ participant, name, Track }: { participant: any; name: string
 
   return (
     <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", background: "#0b1a12", aspectRatio: "4/3" }}>
-      <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", display: hasVideo ? "block" : "none" }} />
+      {/* object-fit: contain (not cover) — a phone's front camera is often
+          portrait/taller than this tile's 4:3 box; "cover" was cropping the
+          top/bottom off (forehead only, chin cut off). "contain" always
+          shows the whole frame, with small letterbox bars if needed, so we
+          never lose part of the student's face. */}
+      <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "contain", display: hasVideo ? "block" : "none" }} />
       {!hasVideo && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "rgba(255,255,255,.4)" }}>
           <VideoOff size={18} />
