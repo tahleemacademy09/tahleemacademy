@@ -777,6 +777,20 @@ export default function ExamLiveMonitor() {
                         </div>
                       </div>
 
+                      {/* No proctoring evidence at all — don't let a "0 violations,
+                          100% integrity" reading pass as clean when there's
+                          literally no camera evidence to back it up. This can
+                          happen if the camera failed silently, or the device
+                          never produced a usable frame the whole session. */}
+                      {exam?.proctoring_enabled && (a.status === "submitted" || a.status === "graded") && detailMedia.length === 0 && (
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", background: "#fff5f5", border: "1.5px solid #fca5a5", borderRadius: 12, padding: "10px 12px", marginBottom: 14 }}>
+                          <AlertTriangle size={14} color="#dc2626" style={{ flexShrink: 0, marginTop: 1 }} />
+                          <div style={{ fontSize: 11.5, color: "#991b1b", fontWeight: 700, lineHeight: 1.5 }}>
+                            {t("No camera images were captured for this attempt", "لم يتم التقاط أي صور كاميرا لهذه المحاولة")} — {t("integrity score above is not verified by any visual evidence.", "درجة النزاهة أعلاه غير مؤكدة بأي دليل مرئي.")}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Proctoring session flags */}
                       {detailSession && (
                         <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
