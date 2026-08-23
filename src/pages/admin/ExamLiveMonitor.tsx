@@ -19,8 +19,162 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, RefreshCw, Clock, Plus, Send, ShieldAlert,
   Camera, Mic, Maximize, X, StickyNote, RotateCcw, CheckCircle2,
-  AlertTriangle, Wifi, WifiOff, Users, Circle,
+  AlertTriangle, Wifi, WifiOff, Users, Circle, Video, VideoOff,
 } from "lucide-react";
+
+const GRID_PAGE_SIZE = 9;
+
+/* ── Live video tile — subscribes to one participant's video track ──── */
+const LiveTile = ({ participant, name, Track }: { participant: any; name: string; Track: any }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [hasVideo, setHasVideo] = useState(false);
+
+  useEffect(() => {
+    const attach = () => {
+      const pub = participant.getTrackPublication?.(Track.Source.Camera) || [...participant.videoTrackPublications.values()]?.[0];
+      const track = pub?.track;
+      if (track && videoRef.current) {
+        track.attach(videoRef.current);
+        setHasVideo(true);
+      } else {
+        setHasVideo(false);
+      }
+    };
+    attach();
+    participant.on("trackSubscribed", attach);
+    participant.on("trackUnsubscribed", attach);
+    return () => {
+      participant.off("trackSubscribed", attach);
+      participant.off("trackUnsubscribed", attach);
+      try {
+        const pub = participant.getTrackPublication?.(Track.Source.Camera);
+        pub?.track?.detach();
+      } catch (_) {}
+    };
+  }, [participant, Track]);
+
+  return (
+    <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", background: "#0b1a12", aspectRatio: "4/3" }}>
+      <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", display: hasVideo ? "block" : "none" }} />
+      {!hasVideo && (
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "rgba(255,255,255,.4)" }}>
+          <VideoOff size={18} />
+        </div>
+      )}
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(0,0,0,.75))", color: "#fff", fontSize: 10, fontWeight: 700, padding: "12px 8px 5px" }}>
+        {name}
+      </div>
+    </div>
+  );
+};
+
+/* ── Full live video grid — connects to LiveKit as a viewer, and
+     announces itself via Presence so students' cameras start publishing
+     only while this is actually open. ─────────────────────────────── */
+const LiveGrid = ({ examId, rows, onClose, t }: { examId: string; rows: Row[]; onClose: () => void; t: (en: string, ar: string) => string }) => {
+  const [participants, setParticipants] = useState<any[]>([]);
+  const [Track, setTrack] = useState<any>(null);
+  const [page, setPage] = useState(0);
+  const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
+  const roomRef = useRef<any>(null);
+  const channelRef = useRef<any>(null);
+
+  const onlineRows = rows.filter(r => r.status === "online");
+  // LiveKit participant.identity == user.id (the JWT "sub" claim set by
+  // livekit-token), NOT the presence-channel key — those are separate.
+  const nameFor = (identity: string) => {
+    const row = onlineRows.find(r => r.profile.user_id === identity);
+    return row ? row.profile.full_name : identity;
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const lk = await import("livekit-client");
+        if (cancelled) return;
+        const { Room, RoomEvent, Track: T } = lk;
+        setTrack(() => T);
+
+        // Announce presence FIRST — students are listening for this and
+        // only start publishing once they see an admin actually watching.
+        const channel = supabase.channel(`exam-proctor-presence-${examId}`, {
+          config: { presence: { key: `admin-${Math.random().toString(36).slice(2, 9)}` } },
+        });
+        await channel.subscribe(async (s: string) => {
+          if (s === "SUBSCRIBED") await channel.track({ role: "admin_watching" });
+        });
+        channelRef.current = channel;
+
+        const { data } = await supabase.functions.invoke("livekit-token", { body: { room_name: `exam-proctor-${examId}` } });
+        if (cancelled || !data?.token || !data?.url) { setStatus("error"); return; }
+
+        const room = new Room({ adaptiveStream: true, dynacast: true });
+        room.on(RoomEvent.ParticipantConnected, () => setParticipants([...room.remoteParticipants.values()]));
+        room.on(RoomEvent.ParticipantDisconnected, () => setParticipants([...room.remoteParticipants.values()]));
+        room.on(RoomEvent.TrackSubscribed, () => setParticipants([...room.remoteParticipants.values()]));
+        room.on(RoomEvent.TrackUnsubscribed, () => setParticipants([...room.remoteParticipants.values()]));
+
+        await room.connect(data.url, data.token);
+        if (cancelled) { room.disconnect(); return; }
+        roomRef.current = room;
+        setParticipants([...room.remoteParticipants.values()]);
+        setStatus("connected");
+      } catch (_) {
+        if (!cancelled) setStatus("error");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      try { roomRef.current?.disconnect(); } catch (_) {}
+      try { channelRef.current?.untrack(); channelRef.current?.unsubscribe(); } catch (_) {}
+    };
+  }, [examId]);
+
+  const pageCount = Math.max(1, Math.ceil(participants.length / GRID_PAGE_SIZE));
+  const pageItems = participants.slice(page * GRID_PAGE_SIZE, (page + 1) * GRID_PAGE_SIZE);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#0a0f0c", zIndex: 100, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,.08)" }}>
+        <button onClick={onClose} style={{ background: "rgba(255,255,255,.08)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
+          <X size={16} color="#fff" />
+        </button>
+        <Video size={14} color={GOLD} />
+        <span style={{ color: "#fff", fontWeight: 800, fontSize: 13 }}>{t("Live Grid", "البث المباشر")}</span>
+        <span style={{ color: "rgba(255,255,255,.5)", fontSize: 11 }}>
+          {status === "connecting" ? t("Connecting…", "جارٍ الاتصال…") : `${participants.length} ${t("live", "مباشر")}`}
+        </span>
+      </div>
+      <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+        {status === "error" ? (
+          <div style={{ color: "rgba(255,255,255,.6)", textAlign: "center", padding: 40 }}>
+            {t("Couldn't connect to the live grid.", "تعذّر الاتصال بالبث المباشر.")}
+          </div>
+        ) : pageItems.length === 0 ? (
+          <div style={{ color: "rgba(255,255,255,.4)", textAlign: "center", padding: 40 }}>
+            {t("No students are currently live. As online students' cameras connect, they'll appear here.", "لا يوجد طلاب مباشرون حاليًا.")}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10 }}>
+            {pageItems.map(p => <LiveTile key={p.identity} participant={p} name={nameFor(p.identity)} Track={Track} />)}
+          </div>
+        )}
+      </div>
+      {pageCount > 1 && (
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, padding: 12, borderTop: "1px solid rgba(255,255,255,.08)" }}>
+          {Array.from({ length: pageCount }).map((_, i) => (
+            <button key={i} onClick={() => setPage(i)} style={{
+              width: 26, height: 26, borderRadius: 8, border: "none", cursor: "pointer",
+              background: i === page ? GOLD : "rgba(255,255,255,.1)", color: i === page ? G : "#fff", fontSize: 11, fontWeight: 800,
+            }}>{i + 1}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
 const CREAM = "#faf6ee", BORDER = "rgba(15,45,31,0.1)", TL = "#7a9e88";
@@ -107,6 +261,7 @@ export default function ExamLiveMonitor() {
   const [busyId, setBusyId]         = useState<string | null>(null);
   const [preview, setPreview]       = useState<any>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [showGrid, setShowGrid]     = useState(false);
 
   const [, forceTick] = useState(0); // re-render every second for live timers
 
@@ -335,6 +490,10 @@ export default function ExamLiveMonitor() {
               {exam ? (language === "ar" ? exam.title_ar || exam.title : exam.title) : "…"}
             </h1>
           </div>
+          <button onClick={() => setShowGrid(true)} style={{ background: "rgba(220,38,38,.25)", border: "1px solid rgba(220,38,38,.5)", borderRadius: 10, padding: "8px 10px", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+            <Video size={14} color="#fff" />
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#fff" }}>{t("Live Grid", "البث")}</span>
+          </button>
           <button onClick={load} style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
             <RefreshCw size={14} color="#fff" />
           </button>
@@ -628,6 +787,10 @@ export default function ExamLiveMonitor() {
           })()}
         </DialogContent>
       </Dialog>
+
+      {showGrid && examId && (
+        <LiveGrid examId={examId} rows={rows} onClose={() => setShowGrid(false)} t={t} />
+      )}
 
       {/* Snapshot lightbox */}
       {preview && (
