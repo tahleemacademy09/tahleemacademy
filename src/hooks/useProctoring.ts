@@ -502,10 +502,14 @@ export const useProctoring = (
     } catch (e: any) {
       const isPermission = e.name === "NotAllowedError" || e.name === "PermissionDeniedError";
       if (isPermission) {
-        // Permission denied — don't retry, just log and report gracefully
+        // Permission denied — don't retry (repeatedly re-prompting is
+        // pointless once denied), but this must still show up on the
+        // admin's radar. Previously this only console.warn'd — a student
+        // could deny the camera entirely and submit a fully "clean" exam.
         reconnecting.current = false;
         console.warn("Camera permission denied:", e.message);
         setState(prev => ({ ...prev, cameraReady: false }));
+        if (config.webcam_required) logViolation("webcam_disabled", 3, "Camera permission denied");
         return false;
       }
       if (retry < 3) {
@@ -535,8 +539,14 @@ export const useProctoring = (
     if (!enabled || !config.attemptId) return;
     (async () => {
       try {
+        // webcam_enabled starts false — we don't know yet whether the camera
+        // will actually work. It gets flipped to the real result right after
+        // initCamera() resolves below. Previously this was hardcoded `true`
+        // unconditionally, so the admin dashboard's "Webcam: on/off" badge
+        // was meaningless — it said "on" even for students whose camera
+        // permission was denied outright and never captured a single frame.
         const { data } = await supabase.from("proctoring_sessions").insert({
-          attempt_id: config.attemptId, webcam_enabled: true,
+          attempt_id: config.attemptId, webcam_enabled: false,
           microphone_enabled: config.record_audio || false,
           fullscreen_active: false, max_warnings: config.max_warnings || 3,
           session_type: config.sessionType || "exam",
@@ -547,6 +557,9 @@ export const useProctoring = (
       } catch (_) {}
 
       const camOk = await initCamera();
+      if (sessionId.current) {
+        supabase.from("proctoring_sessions").update({ webcam_enabled: camOk }).eq("id", sessionId.current).then(() => {});
+      }
       if (camOk) {
         setTimeout(() => captureSnapshot("initial_capture"), 1000);
         scheduleSnapshot();
