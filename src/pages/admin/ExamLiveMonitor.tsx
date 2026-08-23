@@ -195,6 +195,45 @@ const LiveFullscreen = ({ participant, name, Track, onClose }: { participant: an
   </div>
 );
 
+/* ── Live grid — every currently-publishing student at once, tap a tile
+     to open it fullscreen (via the parent's expandedId state). ────────── */
+const LiveGridModal = ({
+  participants, nameFor, Track, status, onExpand, onClose,
+}: {
+  participants: any[]; nameFor: (id: string) => string; Track: any;
+  status: "connecting" | "connected" | "error"; onExpand: (id: string) => void; onClose: () => void;
+}) => (
+  <div style={{ position: "fixed", inset: 0, background: "#0b1a12", zIndex: 100, display: "flex", flexDirection: "column" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,.08)" }}>
+      <button onClick={onClose} style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
+        <X size={16} color="#fff" />
+      </button>
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#ef4444", animation: "livePulse 1.4s ease-in-out infinite" }} />
+      <span style={{ fontSize: 13, fontWeight: 900, color: "#fff" }}>Live — {participants.length} {participants.length === 1 ? "student" : "students"}</span>
+      {status !== "connected" && (
+        <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,.5)" }}>
+          {status === "connecting" ? "Connecting…" : "Reconnecting…"}
+        </span>
+      )}
+    </div>
+    <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+      {participants.length === 0 ? (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "rgba(255,255,255,.4)", fontSize: 13, fontWeight: 700, textAlign: "center", padding: 24 }}>
+          {status === "connected"
+            ? "No one is currently publishing video — students only stream while they have an in-progress attempt with this monitor open."
+            : "Connecting to live grid…"}
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+          {participants.map((p: any) => (
+            <LiveTile key={p.identity} participant={p} name={nameFor(p.identity)} Track={Track} onExpand={() => onExpand(p.identity)} />
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+);
+
 const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
 const CREAM = "#faf6ee", BORDER = "rgba(15,45,31,0.1)", TL = "#7a9e88";
 
@@ -281,14 +320,19 @@ export default function ExamLiveMonitor() {
   const [preview, setPreview]       = useState<any>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [expandedId, setExpandedId]   = useState<string | null>(null);
+  const [showLiveGrid, setShowLiveGrid] = useState(false);
 
   const [, forceTick] = useState(0); // re-render every second for live timers
 
   // Live camera feeds — connects once for the whole page; each row picks its
   // own thumbnail out of `participants` by matching LiveKit identity (user_id).
-  const { participants: liveParticipants, Track: LKTrack } = useLiveKitViewer(examId);
+  const { participants: liveParticipants, Track: LKTrack, status: liveStatus } = useLiveKitViewer(examId);
   const liveParticipantFor = (userId: string) => liveParticipants.find((p: any) => p.identity === userId) || null;
   const expandedParticipant = expandedId ? liveParticipants.find((p: any) => p.identity === expandedId) : null;
+  const nameForIdentity = (userId: string) => {
+    const r = rowsRef.current.find(rr => rr.profile.user_id === userId);
+    return r ? (language === "ar" ? r.profile.full_name_ar || r.profile.full_name : r.profile.full_name) : userId;
+  };
   // If the expanded student's camera disconnects, fall back automatically
   // instead of showing a dead tile.
   useEffect(() => {
@@ -520,6 +564,15 @@ export default function ExamLiveMonitor() {
               {exam ? (language === "ar" ? exam.title_ar || exam.title : exam.title) : "…"}
             </h1>
           </div>
+          <button onClick={() => setShowLiveGrid(true)} style={{ display: "flex", alignItems: "center", gap: 5, background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: "8px 10px", cursor: "pointer" }}>
+            <Video size={14} color="#fff" />
+            <span style={{ fontSize: 11, fontWeight: 800, color: "#fff" }}>Live</span>
+            {liveParticipants.length > 0 && (
+              <span style={{ background: "#ef4444", color: "#fff", fontSize: 9, fontWeight: 900, borderRadius: 8, padding: "1px 5px", minWidth: 14, textAlign: "center" }}>
+                {liveParticipants.length}
+              </span>
+            )}
+          </button>
           <button onClick={load} style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
             <RefreshCw size={14} color="#fff" />
           </button>
@@ -831,6 +884,17 @@ export default function ExamLiveMonitor() {
           })()}
         </DialogContent>
       </Dialog>
+
+      {showLiveGrid && (
+        <LiveGridModal
+          participants={liveParticipants}
+          nameFor={nameForIdentity}
+          Track={LKTrack}
+          status={liveStatus}
+          onExpand={(id) => setExpandedId(id)}
+          onClose={() => setShowLiveGrid(false)}
+        />
+      )}
 
       {expandedParticipant && (
         <LiveFullscreen
