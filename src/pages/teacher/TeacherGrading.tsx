@@ -116,11 +116,15 @@ const TeacherGrading = () => {
         }).eq("id", ans.id);
       }
       const pct = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
+      // Exam is always scored out of 30, regardless of how many raw points the
+      // questions add up to — scale the earned total proportionally.
+      const scaledTotal = 30;
+      const scaledEarned = totalPossible > 0 ? Number(((totalEarned / totalPossible) * 30).toFixed(2)) : 0;
       const passing = selectedAttempt.exams?.passing_score || 50;
       await supabase.from("exam_attempts").update({
         status: "graded",
-        score: totalEarned,
-        total_points: totalPossible,
+        score: scaledEarned,
+        total_points: scaledTotal,
         percentage: pct,
         passed: pct >= passing,
         feedback: examFeedback || null,
