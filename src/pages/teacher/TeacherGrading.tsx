@@ -40,8 +40,8 @@ const TeacherGrading = () => {
 
   const tabCounts = {
     pending:  allAttempts.filter(a => a.status === "submitted").length,
-    graded:   allAttempts.filter(a => a.status === "graded" && !a.released).length,
-    released: allAttempts.filter(a => a.status === "graded" && a.released).length,
+    graded:   allAttempts.filter(a => a.status === "graded").length,
+    released: allAttempts.filter(a => a.status === "released").length,
   };
 
   // ── Load teacher's exam IDs ────────────────────────────────────
@@ -74,7 +74,7 @@ const TeacherGrading = () => {
         exams(id, title, title_ar, type, passing_score, allow_review, term,
               courses(title, subject_id, subjects(title)))`)
       .in("exam_id", examIds)
-      .in("status", ["submitted", "graded"])
+      .in("status", ["submitted", "graded", "released"])
       .order("submitted_at", { ascending: false });
     setAllAttempts(data || []);
   };
@@ -138,16 +138,24 @@ const TeacherGrading = () => {
     setSubmitting(false);
   };
 
-  const releaseResult = async (attemptId: string) => {
-    await supabase.from("exam_attempts").update({ released: true } as any).eq("id", attemptId);
+  const releaseResult = async (attemptId: string, studentId: string, examTitle: string) => {
+    const { error } = await supabase.from("exam_attempts")
+      .update({ status: "released", results_released_at: new Date().toISOString() })
+      .eq("id", attemptId);
+    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
+    await (supabase as any).from("notifications").insert({
+      user_id: studentId, title: "Exam results available",
+      message: `Your results for "${examTitle}" are now available.`,
+      type: "result_released", reference_id: attemptId,
+    });
     toast({ title: t("Result released to student", "تم إرسال النتيجة للطالب") });
     loadAttempts();
   };
 
   const filtered = allAttempts.filter(a => {
     if (gradingTab === "pending"  && a.status !== "submitted") return false;
-    if (gradingTab === "graded"   && (a.status !== "graded" || a.released)) return false;
-    if (gradingTab === "released" && (a.status !== "graded" || !a.released)) return false;
+    if (gradingTab === "graded"   && a.status !== "graded") return false;
+    if (gradingTab === "released" && a.status !== "released") return false;
     if (typeFilter !== "all" && (a.exams?.type || "exam") !== typeFilter) return false;
     if (search && !(a.profiles?.full_name || "").toLowerCase().includes(search.toLowerCase())) return false;
     return true;
@@ -510,7 +518,7 @@ const TeacherGrading = () => {
                   {gradingTab === "pending" ? <><Send size={12} /> {t("Grade", "صحّح")}</> : <><Eye size={12} /> {t("View", "عرض")}</>}
                 </button>
                 {gradingTab === "graded" && (
-                  <button onClick={() => releaseResult(attempt.id)} style={{
+                  <button onClick={() => releaseResult(attempt.id, attempt.user_id, (attempt.exams?.title || "exam"))} style={{
                     padding: "8px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB",
                     background: "#fff", color: G, fontSize: 12, fontWeight: 700, cursor: "pointer",
                     display: "flex", alignItems: "center", gap: 6,
