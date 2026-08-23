@@ -21,6 +21,11 @@ interface ProctoringConfig {
   sessionType?: "exam" | "hifdh";
   /** Human-readable label, e.g. "Hifdh Test: Al-Baqarah" */
   contextLabel?: string;
+  /** Exam ID — when set, enables the live-video grid: this student's camera is
+   *  published to LiveKit ONLY while an admin actually has the live monitor
+   *  grid open (via presence), never continuously. Omit to keep snapshot-only
+   *  behaviour (e.g. Hifdh sessions, which don't have an admin live grid). */
+  examId?: string;
 }
 
 interface ProctoringState {
@@ -74,6 +79,13 @@ export const useProctoring = (
 
   // Hidden video element attached to DOM — prevents Android killing stream
   const videoElRef = useRef<HTMLVideoElement | null>(null);
+
+  // ── Live grid publishing (LiveKit) — gated by admin presence ───────
+  const lkRoomRef        = useRef<any>(null);
+  const lkTrackRef       = useRef<any>(null);
+  const lkConnectingRef  = useRef(false);
+  const presenceChanRef  = useRef<any>(null);
+  const adminWatchingRef = useRef(false);
 
   useEffect(() => { enabledRef.current = enabled; }, [enabled]);
 
@@ -491,6 +503,82 @@ export const useProctoring = (
     }, 5000);
     return () => clearInterval(iv);
   }, [enabled, initCamera]);
+
+  // ── Live grid publishing — connect to LiveKit ONLY while an admin has ──
+  // the live monitor grid open (tracked via Supabase Presence), so idle
+  // exams never pay for a live video connection. Video only, no audio,
+  // low bitrate/framerate since this is just for cheating detection.
+  useEffect(() => {
+    if (!enabled || !config.examId || !config.attemptId || !config.userId) return;
+
+    let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const teardownLive = () => {
+      if (retryTimer) clearTimeout(retryTimer);
+      try { lkTrackRef.current?.stop(); } catch (_) {}
+      try { lkRoomRef.current?.disconnect(); } catch (_) {}
+      lkRoomRef.current = null;
+      lkTrackRef.current = null;
+      lkConnectingRef.current = false;
+    };
+
+    const publishLive = async () => {
+      if (cancelled || lkRoomRef.current || lkConnectingRef.current) return;
+      if (!cameraReadyRef.current || !streamRef.current) {
+        retryTimer = setTimeout(publishLive, 1000);
+        return;
+      }
+      lkConnectingRef.current = true;
+      try {
+        const [{ data }, lk] = await Promise.all([
+          supabase.functions.invoke("livekit-token", { body: { room_name: `exam-proctor-${config.examId}` } }),
+          import("livekit-client"),
+        ]);
+        if (cancelled || !adminWatchingRef.current || !data?.token || !data?.url) { lkConnectingRef.current = false; return; }
+        const { Room, LocalVideoTrack, Track } = lk;
+        const room = new Room({ adaptiveStream: false, dynacast: false });
+        await room.connect(data.url, data.token);
+        if (cancelled || !adminWatchingRef.current) { room.disconnect(); lkConnectingRef.current = false; return; }
+        const videoTrack = streamRef.current.getVideoTracks()[0];
+        if (!videoTrack) { room.disconnect(); lkConnectingRef.current = false; return; }
+        const localTrack = new LocalVideoTrack(videoTrack);
+        await room.localParticipant.publishTrack(localTrack, {
+          name: "proctor-cam",
+          source: Track.Source.Camera,
+          simulcast: false,
+          videoEncoding: { maxBitrate: 150_000, maxFramerate: 8 },
+        });
+        lkRoomRef.current = room;
+        lkTrackRef.current = localTrack;
+      } catch (_) {
+        // Silent — live grid is a bonus view; snapshots keep working regardless.
+      } finally {
+        lkConnectingRef.current = false;
+      }
+    };
+
+    const channel = supabase.channel(`exam-proctor-presence-${config.examId}`, {
+      config: { presence: { key: `student-${config.userId}` } },
+    });
+    channel.on("presence", { event: "sync" }, () => {
+      const state = channel.presenceState() as Record<string, any[]>;
+      const adminWatching = Object.values(state).some(list =>
+        list.some((p: any) => p.role === "admin_watching")
+      );
+      adminWatchingRef.current = adminWatching;
+      if (adminWatching) publishLive(); else teardownLive();
+    });
+    channel.subscribe();
+    presenceChanRef.current = channel;
+
+    return () => {
+      cancelled = true;
+      teardownLive();
+      try { channel.unsubscribe(); } catch (_) {}
+      presenceChanRef.current = null;
+    };
+  }, [enabled, config.examId, config.attemptId, config.userId]);
 
   // ── Auto-submit on page close/hide ───────────────────────────
   // Uses sendBeacon for guaranteed delivery even on page unload
