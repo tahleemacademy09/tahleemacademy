@@ -262,11 +262,16 @@ const GradingPage = () => {
       .update({ status: "released", results_released_at: new Date().toISOString() })
       .eq("id", attemptId);
     if (error) { toast({ title: "Release failed", description: error.message, variant: "destructive" }); return; }
-    await (supabase as any).from("notifications").insert({
+    const { error: notifErr } = await (supabase as any).from("notifications").insert({
       user_id: studentId, title: "Exam results available",
       message: `Your results for "${examTitle}" are now available.`,
-      type: "result_released", reference_id: attemptId,
+      type: "result_released", link: `/student/results/${attemptId}`,
     });
+    if (notifErr) {
+      toast({ title: "Released, but notification failed", description: notifErr.message, variant: "destructive" });
+      fetchAttempts();
+      return;
+    }
     toast({ title: "✅ Result released to student" });
     fetchAttempts();
   };
@@ -292,13 +297,18 @@ const GradingPage = () => {
       await supabase.from("exam_attempts")
         .update({ status: "released", results_released_at: new Date().toISOString() })
         .in("id", ids);
-      await (supabase as any).from("notifications").insert(
+      const { error: notifErr } = await (supabase as any).from("notifications").insert(
         batchAttempts.map(a => ({
           user_id: a.user_id, title: "Exam results available",
           message: `Your results for "${exam?.title || "exam"}" are now available.`,
-          type: "result_released", reference_id: a.id,
+          type: "result_released", link: `/student/results/${a.id}`,
         }))
       );
+      if (notifErr) {
+        toast({ title: "Released, but notifications failed", description: notifErr.message, variant: "destructive" });
+        setBatchReleaseOpen(false); fetchAttempts();
+        return;
+      }
       toast({ title: `✅ Released ${ids.length} results!` });
       setBatchReleaseOpen(false); fetchAttempts();
     } finally { setBatchReleasing(false); }
