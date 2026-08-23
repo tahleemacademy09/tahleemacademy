@@ -152,10 +152,14 @@ const GradingPage = () => {
 
       const pct     = totalPoints > 0 ? Math.round((earned / totalPoints) * 100) : 0;
       const passing = selectedAttempt.exams?.passing_score || 60;
+      // Exam is always scored out of 30, regardless of how many raw points the
+      // questions add up to — scale the earned total proportionally.
+      const scaledTotal = 30;
+      const scaledEarned = totalPoints > 0 ? Number(((earned / totalPoints) * 30).toFixed(2)) : 0;
 
       // Primary: direct update (works when RLS is patched via SQL step 9)
       const { error: attemptErr } = await supabase.from("exam_attempts").update({
-        status: "graded", score: earned, total_points: totalPoints,
+        status: "graded", score: scaledEarned, total_points: scaledTotal,
         percentage: pct, passed: pct >= passing,
       }).eq("id", selectedAttempt.id);
 
@@ -163,14 +167,14 @@ const GradingPage = () => {
         // Fallback: use admin_grade_attempt RPC (SECURITY DEFINER — bypasses RLS)
         const { error: rpcErr } = await supabase.rpc("admin_grade_attempt" as any, {
           _attempt_id: selectedAttempt.id,
-          _score:      earned,
-          _total:      totalPoints,
+          _score:      scaledEarned,
+          _total:      scaledTotal,
           _passing:    passing,
         });
         if (rpcErr) throw new Error(`Grading failed: ${rpcErr.message}`);
       }
 
-      toast({ title: `✅ Graded! ${earned}/${totalPoints} (${pct}%)` });
+      toast({ title: `✅ Graded! ${scaledEarned}/${scaledTotal} (${pct}%)` });
       setSelectedAttempt(null);
       fetchAttempts();
     } catch (e: any) {
