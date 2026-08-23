@@ -25,7 +25,7 @@ import {
 const GRID_PAGE_SIZE = 9;
 
 /* ── Live video tile — subscribes to one participant's video track ──── */
-const LiveTile = ({ participant, name, Track }: { participant: any; name: string; Track: any }) => {
+const LiveTile = ({ participant, name, Track, onExpand, expanded }: { participant: any; name: string; Track: any; onExpand?: () => void; expanded?: boolean }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [hasVideo, setHasVideo] = useState(false);
 
@@ -54,7 +54,14 @@ const LiveTile = ({ participant, name, Track }: { participant: any; name: string
   }, [participant, Track]);
 
   return (
-    <div style={{ position: "relative", borderRadius: 10, overflow: "hidden", background: "#0b1a12", aspectRatio: "4/3" }}>
+    <div
+      onClick={onExpand}
+      style={{
+        position: "relative", borderRadius: 10, overflow: "hidden", background: "#0b1a12",
+        aspectRatio: expanded ? undefined : "4/3", width: expanded ? "100%" : undefined, height: expanded ? "100%" : undefined,
+        cursor: onExpand ? "pointer" : "default",
+      }}
+    >
       {/* object-fit: contain (not cover) — a phone's front camera is often
           portrait/taller than this tile's 4:3 box; "cover" was cropping the
           top/bottom off (forehead only, chin cut off). "contain" always
@@ -66,7 +73,7 @@ const LiveTile = ({ participant, name, Track }: { participant: any; name: string
           <VideoOff size={18} />
         </div>
       )}
-      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(0,0,0,.75))", color: "#fff", fontSize: 10, fontWeight: 700, padding: "12px 8px 5px" }}>
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(0,0,0,.75))", color: "#fff", fontSize: expanded ? 14 : 10, fontWeight: 700, padding: expanded ? "20px 14px 10px" : "12px 8px 5px" }}>
         {name}
       </div>
     </div>
@@ -80,6 +87,7 @@ const LiveGrid = ({ examId, rows, onClose, t }: { examId: string; rows: Row[]; o
   const [participants, setParticipants] = useState<any[]>([]);
   const [Track, setTrack] = useState<any>(null);
   const [page, setPage] = useState(0);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [status, setStatus] = useState<"connecting" | "connected" | "error">("connecting");
   const roomRef = useRef<any>(null);
   const channelRef = useRef<any>(null);
@@ -139,6 +147,13 @@ const LiveGrid = ({ examId, rows, onClose, t }: { examId: string; rows: Row[]; o
 
   const pageCount = Math.max(1, Math.ceil(participants.length / GRID_PAGE_SIZE));
   const pageItems = participants.slice(page * GRID_PAGE_SIZE, (page + 1) * GRID_PAGE_SIZE);
+  const expandedParticipant = expandedId ? participants.find(p => p.identity === expandedId) : null;
+
+  // If the expanded student's camera disconnects, fall back to the grid instead
+  // of showing a dead tile.
+  useEffect(() => {
+    if (expandedId && !participants.some(p => p.identity === expandedId)) setExpandedId(null);
+  }, [participants, expandedId]);
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "#0a0f0c", zIndex: 100, display: "flex", flexDirection: "column" }}>
@@ -163,7 +178,9 @@ const LiveGrid = ({ examId, rows, onClose, t }: { examId: string; rows: Row[]; o
           </div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10 }}>
-            {pageItems.map(p => <LiveTile key={p.identity} participant={p} name={nameFor(p.identity)} Track={Track} />)}
+            {pageItems.map(p => (
+              <LiveTile key={p.identity} participant={p} name={nameFor(p.identity)} Track={Track} onExpand={() => setExpandedId(p.identity)} />
+            ))}
           </div>
         )}
       </div>
@@ -175,6 +192,22 @@ const LiveGrid = ({ examId, rows, onClose, t }: { examId: string; rows: Row[]; o
               background: i === page ? GOLD : "rgba(255,255,255,.1)", color: i === page ? G : "#fff", fontSize: 11, fontWeight: 800,
             }}>{i + 1}</button>
           ))}
+        </div>
+      )}
+      {expandedParticipant && (
+        <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 110, display: "flex", flexDirection: "column" }}>
+          <button
+            onClick={() => setExpandedId(null)}
+            style={{
+              position: "absolute", top: 14, left: 14, zIndex: 1, background: "rgba(255,255,255,.12)",
+              border: "none", borderRadius: 10, padding: 8, cursor: "pointer",
+            }}
+          >
+            <X size={18} color="#fff" />
+          </button>
+          <div style={{ flex: 1 }}>
+            <LiveTile participant={expandedParticipant} name={nameFor(expandedParticipant.identity)} Track={Track} expanded />
+          </div>
         </div>
       )}
     </div>
