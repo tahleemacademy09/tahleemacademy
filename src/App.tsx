@@ -96,6 +96,7 @@ const CourseManagement      = lazy(() => import("./pages/admin/CourseManagement"
 const SyllabusManager       = lazy(() => import("./pages/admin/SyllabusManager"));
 const TimetableManagement   = lazy(() => import("./pages/admin/TimetableManagement"));
 const ExamManager           = lazy(() => import("./pages/admin/ExamManager"));
+const ExamLiveMonitor       = lazy(() => import("./pages/admin/ExamLiveMonitor"));
 const ExamEditor            = lazy(() => import("./pages/admin/ExamEditor"));
 const GradingPage           = lazy(() => import("./pages/admin/GradingPage"));
 const QuestionBank          = lazy(() => import("./pages/admin/QuestionBank"));
@@ -316,6 +317,7 @@ const App = () => (
                     <Route path="/admin/timetable"                   element={<TimetableManagement />} />
                     <Route path="/admin/live-classes"                element={<LiveClassManagement />} />
                     <Route path="/admin/exams"                       element={<ExamManager />} />
+                    <Route path="/admin/exams/:examId/live"          element={<ExamLiveMonitor />} />
                     <Route path="/admin/exams/create"                element={<ExamEditor />} />
                     <Route path="/admin/exams/:examId/edit"          element={<ExamEditor />} />
                     <Route path="/admin/grading"                     element={<GradingPage />} />
