@@ -155,7 +155,7 @@ const TeacherGrading = () => {
     await (supabase as any).from("notifications").insert({
       user_id: studentId, title: "Exam results available",
       message: `Your results for "${examTitle}" are now available.`,
-      type: "result_released", reference_id: attemptId,
+      type: "result_released", link: `/student/results/${attemptId}`,
     });
     toast({ title: t("Result released to student", "تم إرسال النتيجة للطالب") });
     loadAttempts();
@@ -181,7 +181,7 @@ const TeacherGrading = () => {
         .in("id", ids);
       if (error) throw error;
 
-      await (supabase as any).from("notifications").insert(
+      const { error: notifErr } = await (supabase as any).from("notifications").insert(
         batchAttempts.map(a => ({
           user_id: a.user_id,
           title: t("Exam results available", "نتائج الامتحان متاحة الآن"),
@@ -190,9 +190,10 @@ const TeacherGrading = () => {
             `نتيجتك في "${examTitle}" أصبحت متاحة الآن. يمكنك الاطلاع عليها.`
           ),
           type: "result_released",
-          reference_id: a.id,
+          link: `/student/results/${a.id}`,
         }))
       );
+      if (notifErr) throw notifErr;
 
       toast({ title: `✅ ${t("Released", "تم الإرسال")} ${ids.length} ${t("results & notified students!", "نتيجة وتم إشعار الطلاب!")}` });
       setBatchReleaseOpen(false);
