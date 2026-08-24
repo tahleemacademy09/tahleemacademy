@@ -17,7 +17,7 @@ import {
   Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
   BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
-  Activity, BookText, LifeBuoy, Eye,
+  Activity, BookText, LifeBuoy, Eye, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
@@ -168,6 +168,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const studentNav: NavItem[] = [
     { type:"link", to:"/student",              icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
     { type:"link", to:"/student/quran",        icon:BookText,        label:t("Al-Qur'an","القرآن الكريم") },
+    { type:"link", to:"/student/adhkaar",      icon:Sparkles,        label:t("Adhkaar","الأذكار") },
     { type:"link", to:"/student/courses",      icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
     { type:"link", to:"/student/timetable",    icon:Calendar,        label:t("Jadwal (Timetable)","الجدول الدراسي") },
     { type:"link", to:"/student/live-now",     icon:Video,           label:t("Live Now","مباشر الآن") },
