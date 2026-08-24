@@ -81,6 +81,7 @@ const LiveNow              = lazy(() => import("./pages/student/LiveNow"));
 const StudentAssignments   = lazy(() => import("./pages/student/StudentAssignments"));
 const StudentAttendance    = lazy(() => import("./pages/student/StudentAttendance"));
 const StudentSupport       = lazy(() => import("./pages/student/StudentSupport"));
+const AdhkaarPage          = lazy(() => import("./pages/student/AdhkaarPage"));
 const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
 
 // ── Musabaqah ──────────────────────────────────────────────────────────────
@@ -242,6 +243,7 @@ const App = () => (
                   <Route element={<ProtectedRoute><TasjeelGuard><DashboardLayout role="student" /></TasjeelGuard></ProtectedRoute>}>
                     <Route path="/student"                     element={<StudentDashboard />} />
                     <Route path="/student/quran"                element={<QuranPage />} />
+                    <Route path="/student/adhkaar"              element={<AdhkaarPage />} />
                     <Route path="/student/courses"             element={<LearningHub />} />
                     <Route path="/student/courses/:courseId"   element={<LearningHub />} />
                     <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
