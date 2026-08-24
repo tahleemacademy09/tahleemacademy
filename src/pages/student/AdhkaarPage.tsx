@@ -1,21 +1,25 @@
 /*
   src/pages/student/AdhkaarPage.tsx — Tahleem Academy
   ──────────────────────────────────────────────────────────
-  Adhkaar as-Sabāḥ wal-Masā' — Morning & Evening Remembrance.
-  Swipeable dhikr cards with a tap-to-count reader, "Listen" (Arabic
-  speech synthesis), and a per-day local progress ring. No backend
-  table required — progress resets with the new Islamic/civil day and
-  is stored client-side only, per device.
+  Adhkaar as-Sabāḥ wal-Masā' (Morning & Evening Remembrance) plus a
+  third "Dua" tab covering general supplications for daily life,
+  organised by category (Daily Life, Worship, Travel, Difficulty,
+  Knowledge, Protection). Swipeable dhikr cards with a tap-to-count
+  reader, "Listen" (Arabic speech synthesis) plus a link to a full
+  reciter audio source, and a per-day local progress ring. No backend
+  table required — progress resets with the new civil day and is
+  stored client-side only, per device.
 */
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ChevronLeft, ChevronRight, ArrowLeft, Sun, Moon, Volume2, VolumeX,
-  Check, RotateCcw, Sparkles, BookOpen,
+  Check, RotateCcw, Sparkles, BookOpen, HandHeart, ExternalLink,
 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MORNING_ADHKAAR, EVENING_ADHKAAR, type Dhikr } from "@/data/adhkaarData";
+import { DUA_CATEGORIES, DUAS_BY_CATEGORY } from "@/data/duaData";
 
 const G          = "#0f2d1f";   // deep emerald
 const G_MID      = "#153a27";
@@ -24,19 +28,27 @@ const GOLD       = "#c9a84c";
 const GOLD_LIGHT = "#e4c36a";
 const CREAM      = "#faf6ee";
 
-type Mode = "morning" | "evening";
+type Mode = "morning" | "evening" | "dua";
+
+// Reputable free audio source (Arabic recitation + translation) for the
+// full Hisnul Muslim collection — used as an external "full audio" link
+// since we don't bundle/host per-dua reciter files in the app itself.
+const EXTERNAL_AUDIO_URL = "https://falah.io/en/hisnul-muslim/";
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
-const storageKey = (mode: Mode) => `tahleem_adhkaar_${mode}_${todayKey()}`;
+const storageKey = (mode: Mode, categoryId?: string) =>
+  mode === "dua"
+    ? `tahleem_dua_${categoryId ?? "daily"}_${todayKey()}`
+    : `tahleem_adhkaar_${mode}_${todayKey()}`;
 
-function loadProgress(mode: Mode): Record<string, number> {
+function loadProgress(mode: Mode, categoryId?: string): Record<string, number> {
   try {
-    const raw = localStorage.getItem(storageKey(mode));
+    const raw = localStorage.getItem(storageKey(mode, categoryId));
     return raw ? JSON.parse(raw) : {};
   } catch { return {}; }
 }
-function saveProgress(mode: Mode, data: Record<string, number>) {
-  try { localStorage.setItem(storageKey(mode), JSON.stringify(data)); } catch {}
+function saveProgress(mode: Mode, data: Record<string, number>, categoryId?: string) {
+  try { localStorage.setItem(storageKey(mode, categoryId), JSON.stringify(data)); } catch {}
 }
 
 export default function AdhkaarPage() {
@@ -50,7 +62,12 @@ export default function AdhkaarPage() {
   }, []);
 
   const [mode, setMode] = useState<Mode>(initialMode);
-  const list = mode === "morning" ? MORNING_ADHKAAR : EVENING_ADHKAAR;
+  const [category, setCategory] = useState<string>(DUA_CATEGORIES[0].id);
+
+  const list: Dhikr[] =
+    mode === "morning" ? MORNING_ADHKAAR :
+    mode === "evening" ? EVENING_ADHKAAR :
+    DUAS_BY_CATEGORY[category] ?? [];
 
   const [index, setIndex] = useState(0);
   const [progress, setProgress] = useState<Record<string, number>>(() => loadProgress(initialMode));
@@ -59,34 +76,36 @@ export default function AdhkaarPage() {
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   useEffect(() => {
-    setProgress(loadProgress(mode));
+    setProgress(loadProgress(mode, mode === "dua" ? category : undefined));
     setIndex(0);
     window.speechSynthesis?.cancel();
     setSpeaking(false);
-  }, [mode]);
+  }, [mode, category]);
 
-  const current: Dhikr = list[index];
-  const remaining = Math.max(0, current.repeat - (progress[current.id] ?? 0));
+  const current: Dhikr | undefined = list[index];
+  const remaining = current ? Math.max(0, current.repeat - (progress[current.id] ?? 0)) : 0;
   const isDone = remaining === 0;
   const completedCount = list.filter(d => (progress[d.id] ?? 0) >= d.repeat).length;
-  const allDone = completedCount === list.length;
+  const allDone = list.length > 0 && completedCount === list.length;
 
   const bump = useCallback(() => {
+    if (!current) return;
     setProgress(prev => {
       const next = { ...prev, [current.id]: Math.min(current.repeat, (prev[current.id] ?? 0) + 1) };
-      saveProgress(mode, next);
+      saveProgress(mode, next, mode === "dua" ? category : undefined);
       return next;
     });
     if (navigator.vibrate) navigator.vibrate(8);
-  }, [current, mode]);
+  }, [current, mode, category]);
 
   const resetCurrent = useCallback(() => {
+    if (!current) return;
     setProgress(prev => {
       const next = { ...prev, [current.id]: 0 };
-      saveProgress(mode, next);
+      saveProgress(mode, next, mode === "dua" ? category : undefined);
       return next;
     });
-  }, [current, mode]);
+  }, [current, mode, category]);
 
   const go = (delta: number) => {
     window.speechSynthesis?.cancel();
@@ -96,7 +115,7 @@ export default function AdhkaarPage() {
   };
 
   const toggleListen = () => {
-    if (!("speechSynthesis" in window)) return;
+    if (!current || !("speechSynthesis" in window)) return;
     if (speaking) {
       window.speechSynthesis.cancel();
       setSpeaking(false);
@@ -116,6 +135,13 @@ export default function AdhkaarPage() {
   };
 
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
+
+  const headerTitle = mode === "dua"
+    ? t("Dua", "الدعاء")
+    : t("Adhkaar", "الأذكار");
+  const headerSubtitle = mode === "dua"
+    ? t("Supplications for Daily Life", "أدعية للحياة اليومية")
+    : t("Morning & Evening Remembrance", "أذكار الصباح والمساء");
 
   return (
     <div
@@ -142,10 +168,10 @@ export default function AdhkaarPage() {
           </button>
           <div className="text-center">
             <div className="text-[15px] font-semibold" style={{ color: CREAM, fontFamily: "'Playfair Display', serif" }}>
-              {t("Adhkaar", "الأذكار")}
+              {headerTitle}
             </div>
             <div className="text-[11px]" style={{ color: `${GOLD_LIGHT}cc` }}>
-              {t("Morning & Evening Remembrance", "أذكار الصباح والمساء")}
+              {headerSubtitle}
             </div>
           </div>
           <div className="h-10 w-10 flex items-center justify-center">
@@ -153,9 +179,9 @@ export default function AdhkaarPage() {
           </div>
         </div>
 
-        {/* Morning / Evening toggle */}
-        <div className="flex p-1 rounded-2xl mb-5" style={{ background: "rgba(255,255,255,0.07)" }}>
-          {(["morning", "evening"] as Mode[]).map(m => (
+        {/* Morning / Evening / Dua toggle */}
+        <div className="flex p-1 rounded-2xl mb-3" style={{ background: "rgba(255,255,255,0.07)" }}>
+          {(["morning", "evening", "dua"] as Mode[]).map(m => (
             <button
               key={m}
               onClick={() => setMode(m)}
@@ -165,12 +191,40 @@ export default function AdhkaarPage() {
                 color: mode === m ? G : `${CREAM}bb`,
               }}
             >
-              {m === "morning" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-              {m === "morning" ? t("Morning", "الصباح") : t("Evening", "المساء")}
+              {m === "morning" ? <Sun className="h-3.5 w-3.5" /> : m === "evening" ? <Moon className="h-3.5 w-3.5" /> : <HandHeart className="h-3.5 w-3.5" />}
+              {m === "morning" ? t("Morning", "الصباح") : m === "evening" ? t("Evening", "المساء") : t("Dua", "الدعاء")}
             </button>
           ))}
         </div>
 
+        {/* Dua category selector — only shown on the Dua tab */}
+        {mode === "dua" && (
+          <div className="flex gap-2 overflow-x-auto pb-1 mb-3 -mx-1 px-1" style={{ scrollbarWidth: "none" }}>
+            {DUA_CATEGORIES.map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => setCategory(cat.id)}
+                className="shrink-0 px-3.5 py-2 rounded-full text-[12px] font-medium transition-all whitespace-nowrap"
+                style={{
+                  background: category === cat.id ? GOLD : "rgba(255,255,255,0.07)",
+                  color: category === cat.id ? G : `${CREAM}bb`,
+                  border: category === cat.id ? "none" : `1px solid rgba(255,255,255,0.1)`,
+                }}
+              >
+                {t(cat.label, cat.labelAr)}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {list.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center text-center px-8">
+            <p className="text-sm" style={{ color: `${CREAM}99` }}>
+              {t("No du'as in this category yet.", "لا توجد أدعية في هذا القسم بعد.")}
+            </p>
+          </div>
+        ) : (
+        <>
         {/* Progress pager */}
         <div className="flex items-center justify-between mb-4">
           <button
@@ -186,7 +240,7 @@ export default function AdhkaarPage() {
             <span className="px-3 py-1 rounded-full text-[12px] font-medium" style={{ background: "rgba(255,255,255,0.08)", color: `${CREAM}dd` }}>
               {index + 1} {t("of", "من")} {list.length}
             </span>
-            <div className="flex gap-1">
+            <div className="flex gap-1 flex-wrap justify-center max-w-[220px]">
               {list.map((d, i) => (
                 <span
                   key={d.id}
@@ -225,13 +279,15 @@ export default function AdhkaarPage() {
                   <Check className="h-8 w-8" style={{ color: GOLD }} />
                 </div>
                 <h3 className="text-lg font-semibold mb-2" style={{ color: CREAM, fontFamily: "'Playfair Display', serif" }}>
-                  {mode === "morning" ? t("Morning adhkaar complete", "تمت أذكار الصباح") : t("Evening adhkaar complete", "تمت أذكار المساء")}
+                  {mode === "morning" ? t("Morning adhkaar complete", "تمت أذكار الصباح")
+                    : mode === "evening" ? t("Evening adhkaar complete", "تمت أذكار المساء")
+                    : t("Du'as complete", "تمت الأدعية")}
                 </h3>
                 <p className="text-sm" style={{ color: `${CREAM}99` }}>
                   {t("May Allah accept it from you and preserve you today.", "تقبّل الله منك وحفظك اليوم.")}
                 </p>
               </motion.div>
-            ) : (
+            ) : current ? (
               <motion.div
                 key={current.id}
                 custom={direction}
@@ -246,19 +302,32 @@ export default function AdhkaarPage() {
                   boxShadow: `0 20px 60px -20px ${G}, inset 0 1px 0 rgba(255,255,255,0.06)`,
                 }}
               >
-                {/* Repeat / reference chip row */}
-                <div className="flex items-center justify-between mb-5">
+                {/* Repeat / audio chip row */}
+                <div className="flex items-center justify-between mb-5 gap-2">
                   <span
-                    className="px-3 py-1 rounded-full text-[11px] font-semibold"
+                    className="px-3 py-1 rounded-full text-[11px] font-semibold shrink-0"
                     style={{ background: `${GOLD}22`, color: GOLD_LIGHT }}
                   >
                     {current.repeat > 1 ? `${t("Read", "اقرأ")} ${current.repeat}×` : t("Read once", "مرة واحدة")}
                   </span>
-                  <button onClick={toggleListen} className="flex items-center gap-1.5 text-[11px] font-medium transition active:scale-95"
-                          style={{ color: `${CREAM}cc` }}>
-                    {speaking ? <VolumeX className="h-3.5 w-3.5" style={{ color: GOLD }} /> : <Volume2 className="h-3.5 w-3.5" />}
-                    {speaking ? t("Stop", "إيقاف") : t("Listen", "استماع")}
-                  </button>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <button onClick={toggleListen} className="flex items-center gap-1.5 text-[11px] font-medium transition active:scale-95"
+                            style={{ color: `${CREAM}cc` }}>
+                      {speaking ? <VolumeX className="h-3.5 w-3.5" style={{ color: GOLD }} /> : <Volume2 className="h-3.5 w-3.5" />}
+                      {speaking ? t("Stop", "إيقاف") : t("Listen", "استماع")}
+                    </button>
+                    <a
+                      href={EXTERNAL_AUDIO_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-[11px] font-medium transition active:scale-95"
+                      style={{ color: `${GOLD_LIGHT}cc` }}
+                      title={t("Open reciter audio in browser", "افتح تسجيل القارئ في المتصفح")}
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      {t("Reciter audio", "صوت القارئ")}
+                    </a>
+                  </div>
                 </div>
 
                 {/* Arabic text */}
@@ -289,12 +358,12 @@ export default function AdhkaarPage() {
 
                 <p className="text-center text-[11px]" style={{ color: `${CREAM}70` }}>{current.reference}</p>
               </motion.div>
-            )}
+            ) : null}
           </AnimatePresence>
         </div>
 
         {/* Tap-counter / mark-read control */}
-        {!allDone && (
+        {!allDone && current && (
           <div className="mt-5 flex items-center gap-3">
             {current.repeat > 1 && (progress[current.id] ?? 0) > 0 && !isDone && (
               <button
@@ -330,7 +399,7 @@ export default function AdhkaarPage() {
           </div>
         )}
 
-        {allDone && (
+        {allDone && mode !== "dua" && (
           <button
             onClick={() => setMode(mode === "morning" ? "evening" : "morning")}
             className="mt-5 h-12 rounded-2xl flex items-center justify-center gap-2 text-[13px] font-medium transition active:scale-[0.98]"
@@ -345,6 +414,8 @@ export default function AdhkaarPage() {
         <div className="mt-4 text-center text-[11px]" style={{ color: `${CREAM}66` }}>
           {completedCount}/{list.length} {t("completed today", "أُنجزت اليوم")}
         </div>
+        </>
+        )}
       </div>
     </div>
   );
