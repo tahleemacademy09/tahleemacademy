@@ -303,7 +303,16 @@ export default function QuranPage() {
         probe.style.whiteSpace = "nowrap";
         probe.style.direction = "rtl";
         probe.style.fontFamily = Q_MUSHAF_FONT;
-        probe.style.fontWeight = "700";
+        // FIX ("scattered"/garbled mushaf text — see chat): UthmanicHafs1Ver18
+        // ships as a single Regular-weight face. Asking for weight 700 (here
+        // and everywhere else this font is used below) has no matching bold
+        // face to load, so the browser synthesizes ("faux") bold by
+        // algorithmically thickening the outline — which badly distorts
+        // joined Arabic letterforms, breaks ligatures, and displaces
+        // diacritics/waqf marks. That's exactly the broken, scattered look
+        // reported. The script is inherently bold-looking already; render
+        // it at its normal weight instead of faking one.
+        probe.style.fontWeight = "400";
         document.body.appendChild(probe);
         measureProbeRef.current = probe;
       }
@@ -345,7 +354,7 @@ export default function QuranPage() {
       // document.fonts.load() wants a single font-family, not our whole
       // fallback stack — load the real webfont by name explicitly so this
       // reliably waits for it (not just whichever fallback resolves first).
-      document.fonts?.load(`700 ${BASE_LINE_FONT_SIZE}px 'UthmanicHafs'`),
+      document.fonts?.load(`400 ${BASE_LINE_FONT_SIZE}px 'UthmanicHafs'`),
     ]).then(measure).catch(measure);
 
     const ro = new ResizeObserver(measure);
@@ -788,7 +797,7 @@ export default function QuranPage() {
                 const surahBannerShown = new Set<number>();
                 const seenAyah = new Set<string>();
                 return (
-                  <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ fontFamily: Q_MUSHAF_FONT, fontWeight: 700, color: Q_INK }}>
+                  <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ fontFamily: Q_MUSHAF_FONT, fontWeight: 400, color: Q_INK }}>
                     {pageLines.map(line => {
                       const firstWord = line.words[0];
                       const showDivider = !!firstWord && firstWord.ayah === 1 && !surahBannerShown.has(firstWord.surah);
@@ -869,7 +878,7 @@ export default function QuranPage() {
 
               const surahBannerShownFallback = new Set<number>();
               return (
-                <div dir="rtl" lang="ar" style={{ fontFamily: Q_MUSHAF_FONT, fontWeight: 700, fontSize: BASE_LINE_FONT_SIZE, lineHeight: 2.1, color: Q_INK, textAlign: "justify", textAlignLast: "justify" as any }}>
+                <div dir="rtl" lang="ar" style={{ fontFamily: Q_MUSHAF_FONT, fontWeight: 400, fontSize: BASE_LINE_FONT_SIZE, lineHeight: 2.1, color: Q_INK, textAlign: "justify", textAlignLast: "justify" as any }}>
                   {verses.map((v, i) => {
                     const showDivider = v.ayah === 1 && !surahBannerShownFallback.has(v.surah);
                     if (showDivider) surahBannerShownFallback.add(v.surah);
