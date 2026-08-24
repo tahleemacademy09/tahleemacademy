@@ -10,6 +10,8 @@
 
 export interface Dhikr {
   id: string;
+  title: string;         // short English name for menus / headers
+  titleAr: string;       // short Arabic name for menus / headers
   arabic: string;
   transliteration: string;
   translation: string;
@@ -21,6 +23,8 @@ export interface Dhikr {
 export const MORNING_ADHKAAR: Dhikr[] = [
   {
     id: "m1",
+    title: "Ayat al-Kursi",
+    titleAr: "آية الكرسي",
     arabic: "أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ. اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ، لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ، لَهُ مَا فِي السَّمَاوَاتِ وَمَا فِي الْأَرْضِ، مَنْ ذَا الَّذِي يَشْفَعُ عِنْدَهُ إِلَّا بِإِذْنِهِ، يَعْلَمُ مَا بَيْنَ أَيْدِيهِمْ وَمَا خَلْفَهُمْ، وَلَا يُحِيطُونَ بِشَيْءٍ مِنْ عِلْمِهِ إِلَّا بِمَا شَاءَ، وَسِعَ كُرْسِيُّهُ السَّمَاوَاتِ وَالْأَرْضَ، وَلَا يَئُودُهُ حِفْظُهُمَا، وَهُوَ الْعَلِيُّ الْعَظِيمُ.",
     transliteration: "A'oodhu billahi minash-shaytanir-rajeem. Allahu la ilaha illa huwal-Hayyul-Qayyum, la ta'khudhuhu sinatun wa la nawm, lahu ma fis-samawati wa ma fil-ard, man dhal-ladhi yashfa'u 'indahu illa bi-idhnih, ya'lamu ma bayna aydeehim wa ma khalfahum, wa la yuheetoona bi shay'im-min 'ilmihi illa bima sha', wasi'a kursiyyuhus-samawati wal-ard, wa la ya'ooduhu hifdhuhuma, wa huwal-'Aliyyul-'Adheem.",
     translation: "Ayat al-Kursi (Al-Baqarah 2:255) — I seek refuge in Allah from Satan the accursed. Allah — there is no deity except Him, the Ever-Living, the Sustainer of existence. Neither drowsiness overtakes Him nor sleep. To Him belongs whatever is in the heavens and whatever is on the earth. Who is it that can intercede with Him except by His permission? He knows what is before them and what will be after them, and they encompass nothing of His knowledge except what He wills. His Kursi extends over the heavens and the earth, and their preservation tires Him not. And He is the Most High, the Most Great.",
@@ -30,6 +34,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m2",
+    title: "The Three Quls",
+    titleAr: "المعوذات الثلاث",
     arabic: "قُلْ هُوَ اللَّهُ أَحَدٌ، اللَّهُ الصَّمَدُ، لَمْ يَلِدْ وَلَمْ يُولَدْ، وَلَمْ يَكُنْ لَهُ كُفُوًا أَحَدٌ. قُلْ أَعُوذُ بِرَبِّ الْفَلَقِ، مِنْ شَرِّ مَا خَلَقَ، وَمِنْ شَرِّ غَاسِقٍ إِذَا وَقَبَ، وَمِنْ شَرِّ النَّفَّاثَاتِ فِي الْعُقَدِ، وَمِنْ شَرِّ حَاسِدٍ إِذَا حَسَدَ. قُلْ أَعُوذُ بِرَبِّ النَّاسِ، مَلِكِ النَّاسِ، إِلَٰهِ النَّاسِ، مِنْ شَرِّ الْوَسْوَاسِ الْخَنَّاسِ، الَّذِي يُوَسْوِسُ فِي صُدُورِ النَّاسِ، مِنَ الْجِنَّةِ وَالنَّاسِ.",
     transliteration: "Qul huwal-Lahu ahad, Allahus-samad, lam yalid wa lam yoolad, wa lam yakul-lahu kufuwan ahad. Qul a'oodhu bi-rabbil-falaq, min sharri ma khalaq, wa min sharri ghasiqin idha waqab, wa min sharrin-naffathati fil-'uqad, wa min sharri hasidin idha hasad. Qul a'oodhu bi-rabbin-nas, malikin-nas, ilahin-nas, min sharril-waswasil-khannas, alladhi yuwaswisu fi sudoorin-nas, minal-jinnati wan-nas.",
     translation: "The three Quls (Surahs Al-Ikhlas, Al-Falaq, An-Nas) — Say: He is Allah, the One. Allah, the Eternal Refuge. He neither begets nor is born, nor is there to Him any equivalent. Say: I seek refuge in the Lord of daybreak, from the evil of that which He created, and from the evil of darkness when it settles, and from the evil of the blowers in knots, and from the evil of an envier when he envies. Say: I seek refuge in the Lord of mankind, the Sovereign of mankind, the God of mankind, from the evil of the retreating whisperer, who whispers into the breasts of mankind, from among the jinn and mankind.",
@@ -39,6 +45,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m3",
+    title: "We Have Reached the Morning",
+    titleAr: "أصبحنا وأصبح الملك لله",
     arabic: "أَصْبَحْنَا وَأَصْبَحَ الْمُلْكُ لِلَّهِ، وَالْحَمْدُ لِلَّهِ، لَا إِلَٰهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَىٰ كُلِّ شَيْءٍ قَدِيرٌ",
     transliteration: "Asbahna wa asbahal-mulku lillah, walhamdu lillah, la ilaha illallahu wahdahu la sharika lah, lahul-mulku wa lahul-hamd, wa huwa 'ala kulli shay'in qadeer.",
     translation: "We have entered the morning and with it all dominion belongs to Allah, and praise is to Allah. None has the right to be worshipped but Allah alone, without partner. To Him belongs dominion and praise, and He is over all things omnipotent.",
@@ -47,6 +55,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m4",
+    title: "By You We Live",
+    titleAr: "بك أصبحنا",
     arabic: "اللَّهُمَّ بِكَ أَصْبَحْنَا، وَبِكَ أَمْسَيْنَا، وَبِكَ نَحْيَا، وَبِكَ نَمُوتُ، وَإِلَيْكَ النُّشُورُ",
     transliteration: "Allahumma bika asbahna, wa bika amsayna, wa bika nahya, wa bika namootu, wa ilaykan-nushoor.",
     translation: "O Allah, by Your leave we have reached the morning, by Your leave we reach the evening; by Your leave we live and die, and to You is our resurrection.",
@@ -55,6 +65,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m5",
+    title: "Sayyid al-Istighfar",
+    titleAr: "سيد الاستغفار",
     arabic: "اللَّهُمَّ أَنْتَ رَبِّي لَا إِلَٰهَ إِلَّا أَنْتَ، خَلَقْتَنِي وَأَنَا عَبْدُكَ، وَأَنَا عَلَىٰ عَهْدِكَ وَوَعْدِكَ مَا اسْتَطَعْتُ، أَعُوذُ بِكَ مِنْ شَرِّ مَا صَنَعْتُ، أَبُوءُ لَكَ بِنِعْمَتِكَ عَلَيَّ، وَأَبُوءُ بِذَنْبِي فَاغْفِرْ لِي، فَإِنَّهُ لَا يَغْفِرُ الذُّنُوبَ إِلَّا أَنْتَ",
     transliteration: "Allahumma anta Rabbi la ilaha illa ant, khalaqtani wa ana 'abduk, wa ana 'ala 'ahdika wa wa'dika mastata't, a'oodhu bika min sharri ma sana't, aboo'u laka bini'matika 'alayy, wa aboo'u bidhanbi faghfir li, fa'innahu la yaghfirudh-dhunooba illa ant.",
     translation: "Sayyid al-Istighfar — O Allah, You are my Lord, none has the right to be worshipped but You. You created me and I am Your servant, and I abide by Your covenant and promise as best I can. I seek refuge in You from the evil of what I have done. I acknowledge Your favor upon me, and I acknowledge my sin, so forgive me, for none forgives sins except You.",
@@ -64,6 +76,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m6",
+    title: "Pleased with Allah as Lord",
+    titleAr: "رضيت بالله ربًا",
     arabic: "رَضِيتُ بِاللَّهِ رَبًّا، وَبِالْإِسْلَامِ دِينًا، وَبِمُحَمَّدٍ ﷺ نَبِيًّا",
     transliteration: "Radhitu billahi rabba, wa bil-Islami deena, wa bi-Muhammadin (sallallahu 'alayhi wa sallam) nabiyya.",
     translation: "I am pleased with Allah as my Lord, Islam as my religion, and Muhammad ﷺ as my Prophet.",
@@ -73,6 +87,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m7",
+    title: "Ya Hayyu Ya Qayyum",
+    titleAr: "يا حي يا قيوم",
     arabic: "يَا حَيُّ يَا قَيُّومُ بِرَحْمَتِكَ أَسْتَغِيثُ، أَصْلِحْ لِي شَأْنِي كُلَّهُ، وَلَا تَكِلْنِي إِلَىٰ نَفْسِي طَرْفَةَ عَيْنٍ",
     transliteration: "Ya Hayyu ya Qayyum, bi-rahmatika astagheeth, aslih li sha'ni kullah, wa la takilni ila nafsi tarfata 'ayn.",
     translation: "O Ever-Living, O Self-Sustaining, by Your mercy I seek help. Set right all my affairs and do not leave me to myself even for the blink of an eye.",
@@ -81,6 +97,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m8",
+    title: "Asking for Pardon and Well-being",
+    titleAr: "العفو والعافية",
     arabic: "اللَّهُمَّ إِنِّي أَسْأَلُكَ الْعَفْوَ وَالْعَافِيَةَ فِي الدُّنْيَا وَالْآخِرَةِ",
     transliteration: "Allahumma inni as'alukal-'afwa wal-'afiyata fid-dunya wal-akhirah.",
     translation: "O Allah, I ask You for pardon and well-being in this world and the Hereafter.",
@@ -89,6 +107,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m9",
+    title: "Protection by Allah's Name",
+    titleAr: "لا يضر مع اسمه شيء",
     arabic: "بِسْمِ اللَّهِ الَّذِي لَا يَضُرُّ مَعَ اسْمِهِ شَيْءٌ فِي الْأَرْضِ وَلَا فِي السَّمَاءِ وَهُوَ السَّمِيعُ الْعَلِيمُ",
     transliteration: "Bismillahil-ladhi la yadhurru ma'as-mihi shay'un fil-ardhi wa la fis-sama'i wa huwas-Sami'ul-'Aleem.",
     translation: "In the Name of Allah with Whose Name nothing on earth or in the heavens can cause harm, and He is the All-Hearing, the All-Knowing.",
@@ -98,6 +118,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m10",
+    title: "Hasbiyallah",
+    titleAr: "حسبي الله",
     arabic: "حَسْبِيَ اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ، عَلَيْهِ تَوَكَّلْتُ وَهُوَ رَبُّ الْعَرْشِ الْعَظِيمِ",
     transliteration: "Hasbiyallahu la ilaha illa huwa, 'alayhi tawakkaltu wa huwa Rabbul-'Arshil-'Azeem.",
     translation: "Allah is sufficient for me; none has the right to be worshipped but Him. On Him I rely, and He is Lord of the mighty Throne.",
@@ -107,6 +129,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m11",
+    title: "Glory and Praise to Allah",
+    titleAr: "سبحان الله وبحمده",
     arabic: "سُبْحَانَ اللَّهِ وَبِحَمْدِهِ",
     transliteration: "Subhanallahi wa bihamdihi.",
     translation: "Glory is to Allah, and praise is to Him.",
@@ -116,6 +140,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m12",
+    title: "La ilaha illallah (Tahlil)",
+    titleAr: "لا إله إلا الله وحده",
     arabic: "لَا إِلَٰهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَىٰ كُلِّ شَيْءٍ قَدِيرٌ",
     transliteration: "La ilaha illallahu wahdahu la sharika lah, lahul-mulku wa lahul-hamdu wa huwa 'ala kulli shay'in qadeer.",
     translation: "None has the right to be worshipped but Allah alone, without partner. To Him belongs dominion and praise, and He is over all things omnipotent.",
@@ -125,6 +151,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m13",
+    title: "Astaghfirullah",
+    titleAr: "أستغفر الله",
     arabic: "أَسْتَغْفِرُ اللَّهَ وَأَتُوبُ إِلَيْهِ",
     transliteration: "Astaghfirullaha wa atoobu ilayh.",
     translation: "I seek Allah's forgiveness and turn to Him in repentance.",
@@ -133,6 +161,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "m14",
+    title: "Salawat upon the Prophet ﷺ",
+    titleAr: "الصلاة على النبي ﷺ",
     arabic: "اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَىٰ نَبِيِّنَا مُحَمَّدٍ",
     transliteration: "Allahumma salli wa sallim 'ala nabiyyina Muhammad.",
     translation: "O Allah, send blessings and peace upon our Prophet Muhammad ﷺ.",
@@ -145,6 +175,8 @@ export const MORNING_ADHKAAR: Dhikr[] = [
 export const EVENING_ADHKAAR: Dhikr[] = [
   {
     id: "e1",
+    title: "Ayat al-Kursi",
+    titleAr: "آية الكرسي",
     arabic: "أَعُوذُ بِاللَّهِ مِنَ الشَّيْطَانِ الرَّجِيمِ. اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ الْحَيُّ الْقَيُّومُ، لَا تَأْخُذُهُ سِنَةٌ وَلَا نَوْمٌ، لَهُ مَا فِي السَّمَاوَاتِ وَمَا فِي الْأَرْضِ، مَنْ ذَا الَّذِي يَشْفَعُ عِنْدَهُ إِلَّا بِإِذْنِهِ، يَعْلَمُ مَا بَيْنَ أَيْدِيهِمْ وَمَا خَلْفَهُمْ، وَلَا يُحِيطُونَ بِشَيْءٍ مِنْ عِلْمِهِ إِلَّا بِمَا شَاءَ، وَسِعَ كُرْسِيُّهُ السَّمَاوَاتِ وَالْأَرْضَ، وَلَا يَئُودُهُ حِفْظُهُمَا، وَهُوَ الْعَلِيُّ الْعَظِيمُ.",
     transliteration: "A'oodhu billahi minash-shaytanir-rajeem. Allahu la ilaha illa huwal-Hayyul-Qayyum, la ta'khudhuhu sinatun wa la nawm, lahu ma fis-samawati wa ma fil-ard, man dhal-ladhi yashfa'u 'indahu illa bi-idhnih, ya'lamu ma bayna aydeehim wa ma khalfahum, wa la yuheetoona bi shay'im-min 'ilmihi illa bima sha', wasi'a kursiyyuhus-samawati wal-ard, wa la ya'ooduhu hifdhuhuma, wa huwal-'Aliyyul-'Adheem.",
     translation: "Ayat al-Kursi (Al-Baqarah 2:255) — I seek refuge in Allah from Satan the accursed. Allah — there is no deity except Him, the Ever-Living, the Sustainer of existence. Neither drowsiness overtakes Him nor sleep. To Him belongs whatever is in the heavens and whatever is on the earth. Who is it that can intercede with Him except by His permission? He knows what is before them and what will be after them, and they encompass nothing of His knowledge except what He wills. His Kursi extends over the heavens and the earth, and their preservation tires Him not. And He is the Most High, the Most Great.",
@@ -154,6 +186,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e2",
+    title: "The Three Quls",
+    titleAr: "المعوذات الثلاث",
     arabic: "قُلْ هُوَ اللَّهُ أَحَدٌ، اللَّهُ الصَّمَدُ، لَمْ يَلِدْ وَلَمْ يُولَدْ، وَلَمْ يَكُنْ لَهُ كُفُوًا أَحَدٌ. قُلْ أَعُوذُ بِرَبِّ الْفَلَقِ، مِنْ شَرِّ مَا خَلَقَ، وَمِنْ شَرِّ غَاسِقٍ إِذَا وَقَبَ، وَمِنْ شَرِّ النَّفَّاثَاتِ فِي الْعُقَدِ، وَمِنْ شَرِّ حَاسِدٍ إِذَا حَسَدَ. قُلْ أَعُوذُ بِرَبِّ النَّاسِ، مَلِكِ النَّاسِ، إِلَٰهِ النَّاسِ، مِنْ شَرِّ الْوَسْوَاسِ الْخَنَّاسِ، الَّذِي يُوَسْوِسُ فِي صُدُورِ النَّاسِ، مِنَ الْجِنَّةِ وَالنَّاسِ.",
     transliteration: "Qul huwal-Lahu ahad, Allahus-samad, lam yalid wa lam yoolad, wa lam yakul-lahu kufuwan ahad. Qul a'oodhu bi-rabbil-falaq, min sharri ma khalaq, wa min sharri ghasiqin idha waqab, wa min sharrin-naffathati fil-'uqad, wa min sharri hasidin idha hasad. Qul a'oodhu bi-rabbin-nas, malikin-nas, ilahin-nas, min sharril-waswasil-khannas, alladhi yuwaswisu fi sudoorin-nas, minal-jinnati wan-nas.",
     translation: "The three Quls (Surahs Al-Ikhlas, Al-Falaq, An-Nas) — Say: He is Allah, the One. Allah, the Eternal Refuge. He neither begets nor is born, nor is there to Him any equivalent. Say: I seek refuge in the Lord of daybreak, from the evil of that which He created, and from the evil of darkness when it settles, and from the evil of the blowers in knots, and from the evil of an envier when he envies. Say: I seek refuge in the Lord of mankind, the Sovereign of mankind, the God of mankind, from the evil of the retreating whisperer, who whispers into the breasts of mankind, from among the jinn and mankind.",
@@ -163,6 +197,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e3",
+    title: "We Have Reached the Evening",
+    titleAr: "أمسينا وأمسى الملك لله",
     arabic: "أَمْسَيْنَا وَأَمْسَى الْمُلْكُ لِلَّهِ، وَالْحَمْدُ لِلَّهِ، لَا إِلَٰهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَىٰ كُلِّ شَيْءٍ قَدِيرٌ",
     transliteration: "Amsayna wa amsal-mulku lillah, walhamdu lillah, la ilaha illallahu wahdahu la sharika lah, lahul-mulku wa lahul-hamd, wa huwa 'ala kulli shay'in qadeer.",
     translation: "We have entered the evening and with it all dominion belongs to Allah, and praise is to Allah. None has the right to be worshipped but Allah alone, without partner. To Him belongs dominion and praise, and He is over all things omnipotent.",
@@ -171,6 +207,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e4",
+    title: "By You We Live",
+    titleAr: "بك أمسينا",
     arabic: "اللَّهُمَّ بِكَ أَمْسَيْنَا، وَبِكَ أَصْبَحْنَا، وَبِكَ نَحْيَا، وَبِكَ نَمُوتُ، وَإِلَيْكَ الْمَصِيرُ",
     transliteration: "Allahumma bika amsayna, wa bika asbahna, wa bika nahya, wa bika namootu, wa ilaykal-maseer.",
     translation: "O Allah, by Your leave we have reached the evening, by Your leave we reach the morning; by Your leave we live and die, and to You is our return.",
@@ -179,6 +217,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e5",
+    title: "Sayyid al-Istighfar",
+    titleAr: "سيد الاستغفار",
     arabic: "اللَّهُمَّ أَنْتَ رَبِّي لَا إِلَٰهَ إِلَّا أَنْتَ، خَلَقْتَنِي وَأَنَا عَبْدُكَ، وَأَنَا عَلَىٰ عَهْدِكَ وَوَعْدِكَ مَا اسْتَطَعْتُ، أَعُوذُ بِكَ مِنْ شَرِّ مَا صَنَعْتُ، أَبُوءُ لَكَ بِنِعْمَتِكَ عَلَيَّ، وَأَبُوءُ بِذَنْبِي فَاغْفِرْ لِي، فَإِنَّهُ لَا يَغْفِرُ الذُّنُوبَ إِلَّا أَنْتَ",
     transliteration: "Allahumma anta Rabbi la ilaha illa ant, khalaqtani wa ana 'abduk, wa ana 'ala 'ahdika wa wa'dika mastata't, a'oodhu bika min sharri ma sana't, aboo'u laka bini'matika 'alayy, wa aboo'u bidhanbi faghfir li, fa'innahu la yaghfirudh-dhunooba illa ant.",
     translation: "Sayyid al-Istighfar — O Allah, You are my Lord, none has the right to be worshipped but You. You created me and I am Your servant, and I abide by Your covenant and promise as best I can. I seek refuge in You from the evil of what I have done. I acknowledge Your favor upon me, and I acknowledge my sin, so forgive me, for none forgives sins except You.",
@@ -188,6 +228,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e6",
+    title: "Refuge from Disbelief and Poverty",
+    titleAr: "أعوذ من الكفر والفقر",
     arabic: "اللَّهُمَّ إِنِّي أَعُوذُ بِكَ مِنَ الْكُفْرِ وَالْفَقْرِ، وَأَعُوذُ بِكَ مِنْ عَذَابِ الْقَبْرِ",
     transliteration: "Allahumma inni a'oodhu bika minal-kufri wal-faqr, wa a'oodhu bika min 'adhabil-qabr.",
     translation: "O Allah, I seek refuge in You from disbelief and poverty, and I seek refuge in You from the punishment of the grave.",
@@ -196,6 +238,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e7",
+    title: "Asking for Well-being",
+    titleAr: "اللهم عافني",
     arabic: "اللَّهُمَّ عَافِنِي فِي بَدَنِي، اللَّهُمَّ عَافِنِي فِي سَمْعِي، اللَّهُمَّ عَافِنِي فِي بَصَرِي",
     transliteration: "Allahumma 'afini fi badani, Allahumma 'afini fi sam'i, Allahumma 'afini fi basari.",
     translation: "O Allah, grant well-being to my body. O Allah, grant well-being to my hearing. O Allah, grant well-being to my sight.",
@@ -204,6 +248,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e8",
+    title: "Protection by Allah's Name",
+    titleAr: "لا يضر مع اسمه شيء",
     arabic: "بِسْمِ اللَّهِ الَّذِي لَا يَضُرُّ مَعَ اسْمِهِ شَيْءٌ فِي الْأَرْضِ وَلَا فِي السَّمَاءِ وَهُوَ السَّمِيعُ الْعَلِيمُ",
     transliteration: "Bismillahil-ladhi la yadhurru ma'as-mihi shay'un fil-ardhi wa la fis-sama'i wa huwas-Sami'ul-'Aleem.",
     translation: "In the Name of Allah with Whose Name nothing on earth or in the heavens can cause harm, and He is the All-Hearing, the All-Knowing.",
@@ -213,6 +259,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e9",
+    title: "Hasbiyallah",
+    titleAr: "حسبي الله",
     arabic: "حَسْبِيَ اللَّهُ لَا إِلَٰهَ إِلَّا هُوَ، عَلَيْهِ تَوَكَّلْتُ وَهُوَ رَبُّ الْعَرْشِ الْعَظِيمِ",
     transliteration: "Hasbiyallahu la ilaha illa huwa, 'alayhi tawakkaltu wa huwa Rabbul-'Arshil-'Azeem.",
     translation: "Allah is sufficient for me; none has the right to be worshipped but Him. On Him I rely, and He is Lord of the mighty Throne.",
@@ -222,6 +270,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e10",
+    title: "Glory and Praise to Allah",
+    titleAr: "سبحان الله وبحمده",
     arabic: "سُبْحَانَ اللَّهِ وَبِحَمْدِهِ",
     transliteration: "Subhanallahi wa bihamdihi.",
     translation: "Glory is to Allah, and praise is to Him.",
@@ -231,6 +281,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e11",
+    title: "La ilaha illallah (Tahlil)",
+    titleAr: "لا إله إلا الله وحده",
     arabic: "لَا إِلَٰهَ إِلَّا اللَّهُ وَحْدَهُ لَا شَرِيكَ لَهُ، لَهُ الْمُلْكُ وَلَهُ الْحَمْدُ وَهُوَ عَلَىٰ كُلِّ شَيْءٍ قَدِيرٌ",
     transliteration: "La ilaha illallahu wahdahu la sharika lah, lahul-mulku wa lahul-hamdu wa huwa 'ala kulli shay'in qadeer.",
     translation: "None has the right to be worshipped but Allah alone, without partner. To Him belongs dominion and praise, and He is over all things omnipotent.",
@@ -239,6 +291,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e12",
+    title: "Asking for Pardon and Well-being",
+    titleAr: "العفو والعافية",
     arabic: "اللَّهُمَّ إِنِّي أَسْأَلُكَ الْعَفْوَ وَالْعَافِيَةَ فِي الدُّنْيَا وَالْآخِرَةِ",
     transliteration: "Allahumma inni as'alukal-'afwa wal-'afiyata fid-dunya wal-akhirah.",
     translation: "O Allah, I ask You for pardon and well-being in this world and the Hereafter.",
@@ -247,6 +301,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e13",
+    title: "Astaghfirullah",
+    titleAr: "أستغفر الله",
     arabic: "أَسْتَغْفِرُ اللَّهَ وَأَتُوبُ إِلَيْهِ",
     transliteration: "Astaghfirullaha wa atoobu ilayh.",
     translation: "I seek Allah's forgiveness and turn to Him in repentance.",
@@ -255,6 +311,8 @@ export const EVENING_ADHKAAR: Dhikr[] = [
   },
   {
     id: "e14",
+    title: "Salawat upon the Prophet ﷺ",
+    titleAr: "الصلاة على النبي ﷺ",
     arabic: "اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَىٰ نَبِيِّنَا مُحَمَّدٍ",
     transliteration: "Allahumma salli wa sallim 'ala nabiyyina Muhammad.",
     translation: "O Allah, send blessings and peace upon our Prophet Muhammad ﷺ.",
