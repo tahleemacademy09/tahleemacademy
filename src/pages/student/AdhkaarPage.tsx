@@ -1,21 +1,23 @@
 /*
   src/pages/student/AdhkaarPage.tsx — Tahleem Academy
   ──────────────────────────────────────────────────────────
-  Adhkaar as-Sabāḥ wal-Masā' (Morning & Evening Remembrance) plus a
-  third "Dua" tab covering general supplications for daily life,
-  organised by category (Daily Life, Worship, Travel, Difficulty,
-  Knowledge, Protection). Swipeable dhikr cards with a tap-to-count
-  reader, "Listen" (Arabic speech synthesis) plus a link to a full
-  reciter audio source, and a per-day local progress ring. No backend
-  table required — progress resets with the new civil day and is
-  stored client-side only, per device.
+  Adhkaar as-Sabāḥ wal-Masā' (Morning & Evening Remembrance) plus
+  general du'a categories (Daily Life, Worship, Travel, Difficulty,
+  Knowledge, Protection) — unified into a single family/dua picker
+  dropdown instead of separate Morning/Evening/Dua tabs. Every entry
+  now carries its own short title so it's identifiable at a glance.
+  Swipeable dhikr cards with a tap-to-count reader, "Listen" (Arabic
+  speech synthesis) plus a link to a full reciter audio source, and
+  a per-day local progress ring. No backend table required — progress
+  resets with the new civil day and is stored client-side only, per
+  device.
 */
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, ChevronRight, ArrowLeft, Sun, Moon, Volume2, VolumeX,
-  Check, RotateCcw, Sparkles, BookOpen, HandHeart, ExternalLink,
+  ChevronLeft, ChevronRight, ChevronDown, ArrowLeft, Sun, Moon, Volume2, VolumeX,
+  Check, RotateCcw, Sparkles, BookOpen, HandHeart, ExternalLink, X,
 } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { MORNING_ADHKAAR, EVENING_ADHKAAR, type Dhikr } from "@/data/adhkaarData";
@@ -28,7 +30,27 @@ const GOLD       = "#c9a84c";
 const GOLD_LIGHT = "#e4c36a";
 const CREAM      = "#faf6ee";
 
-type Mode = "morning" | "evening" | "dua";
+interface Family {
+  id: string;
+  label: string;
+  labelAr: string;
+  icon: typeof Sun;
+  list: Dhikr[];
+}
+
+// Every family — Morning & Evening adhkaar plus every du'a category —
+// unified into one list so they can all live behind a single dropdown.
+const FAMILIES: Family[] = [
+  { id: "morning", label: "Morning Adhkaar", labelAr: "أذكار الصباح", icon: Sun, list: MORNING_ADHKAAR },
+  { id: "evening", label: "Evening Adhkaar", labelAr: "أذكار المساء", icon: Moon, list: EVENING_ADHKAAR },
+  ...DUA_CATEGORIES.map(cat => ({
+    id: cat.id,
+    label: cat.label,
+    labelAr: cat.labelAr,
+    icon: HandHeart,
+    list: DUAS_BY_CATEGORY[cat.id] ?? [],
+  })),
+];
 
 // Reputable free audio source (Arabic recitation + translation) for the
 // full Hisnul Muslim collection — used as an external "full audio" link
@@ -36,51 +58,47 @@ type Mode = "morning" | "evening" | "dua";
 const EXTERNAL_AUDIO_URL = "https://falah.io/en/hisnul-muslim/";
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
-const storageKey = (mode: Mode, categoryId?: string) =>
-  mode === "dua"
-    ? `tahleem_dua_${categoryId ?? "daily"}_${todayKey()}`
-    : `tahleem_adhkaar_${mode}_${todayKey()}`;
+const storageKey = (familyId: string) => `tahleem_adhkaar_${familyId}_${todayKey()}`;
 
-function loadProgress(mode: Mode, categoryId?: string): Record<string, number> {
+function loadProgress(familyId: string): Record<string, number> {
   try {
-    const raw = localStorage.getItem(storageKey(mode, categoryId));
+    const raw = localStorage.getItem(storageKey(familyId));
     return raw ? JSON.parse(raw) : {};
   } catch { return {}; }
 }
-function saveProgress(mode: Mode, data: Record<string, number>, categoryId?: string) {
-  try { localStorage.setItem(storageKey(mode, categoryId), JSON.stringify(data)); } catch {}
+function saveProgress(familyId: string, data: Record<string, number>) {
+  try { localStorage.setItem(storageKey(familyId), JSON.stringify(data)); } catch {}
 }
 
 export default function AdhkaarPage() {
   const navigate = useNavigate();
   const { t, dir } = useLanguage();
 
-  // Default to evening after Asr-ish hours (15:00–23:59), morning otherwise.
-  const initialMode: Mode = useMemo(() => {
+  // Default to Evening Adhkaar after Asr-ish hours (15:00–23:59), Morning otherwise.
+  const initialFamilyId = useMemo(() => {
     const h = new Date().getHours();
     return h >= 15 || h < 4 ? "evening" : "morning";
   }, []);
 
-  const [mode, setMode] = useState<Mode>(initialMode);
-  const [category, setCategory] = useState<string>(DUA_CATEGORIES[0].id);
-
-  const list: Dhikr[] =
-    mode === "morning" ? MORNING_ADHKAAR :
-    mode === "evening" ? EVENING_ADHKAAR :
-    DUAS_BY_CATEGORY[category] ?? [];
+  const [familyId, setFamilyId] = useState<string>(initialFamilyId);
+  const family = useMemo(() => FAMILIES.find(f => f.id === familyId) ?? FAMILIES[0], [familyId]);
+  const list: Dhikr[] = family.list;
 
   const [index, setIndex] = useState(0);
-  const [progress, setProgress] = useState<Record<string, number>>(() => loadProgress(initialMode));
+  const [progress, setProgress] = useState<Record<string, number>>(() => loadProgress(initialFamilyId));
   const [direction, setDirection] = useState(0);
   const [speaking, setSpeaking] = useState(false);
   const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
 
+  // Picker (dropdown) state — which family is expanded while choosing.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [expandedFamilyId, setExpandedFamilyId] = useState<string>(initialFamilyId);
+
   useEffect(() => {
-    setProgress(loadProgress(mode, mode === "dua" ? category : undefined));
-    setIndex(0);
+    setProgress(loadProgress(familyId));
     window.speechSynthesis?.cancel();
     setSpeaking(false);
-  }, [mode, category]);
+  }, [familyId]);
 
   const current: Dhikr | undefined = list[index];
   const remaining = current ? Math.max(0, current.repeat - (progress[current.id] ?? 0)) : 0;
@@ -92,20 +110,20 @@ export default function AdhkaarPage() {
     if (!current) return;
     setProgress(prev => {
       const next = { ...prev, [current.id]: Math.min(current.repeat, (prev[current.id] ?? 0) + 1) };
-      saveProgress(mode, next, mode === "dua" ? category : undefined);
+      saveProgress(familyId, next);
       return next;
     });
     if (navigator.vibrate) navigator.vibrate(8);
-  }, [current, mode, category]);
+  }, [current, familyId]);
 
   const resetCurrent = useCallback(() => {
     if (!current) return;
     setProgress(prev => {
       const next = { ...prev, [current.id]: 0 };
-      saveProgress(mode, next, mode === "dua" ? category : undefined);
+      saveProgress(familyId, next);
       return next;
     });
-  }, [current, mode, category]);
+  }, [current, familyId]);
 
   const go = (delta: number) => {
     window.speechSynthesis?.cancel();
@@ -136,12 +154,26 @@ export default function AdhkaarPage() {
 
   useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
-  const headerTitle = mode === "dua"
-    ? t("Dua", "الدعاء")
-    : t("Adhkaar", "الأذكار");
-  const headerSubtitle = mode === "dua"
-    ? t("Supplications for Daily Life", "أدعية للحياة اليومية")
-    : t("Morning & Evening Remembrance", "أذكار الصباح والمساء");
+  const openPicker = () => {
+    setExpandedFamilyId(familyId);
+    setPickerOpen(true);
+  };
+
+  const chooseDua = (fId: string, i: number) => {
+    window.speechSynthesis?.cancel();
+    setSpeaking(false);
+    setDirection(0);
+    if (fId !== familyId) setFamilyId(fId);
+    setIndex(i);
+    setPickerOpen(false);
+  };
+
+  const headerTitle = t(family.label, family.labelAr);
+  const headerSubtitle = current
+    ? t(current.title, current.titleAr)
+    : (["morning", "evening"].includes(family.id)
+        ? t("Morning & Evening Remembrance", "أذكار الصباح والمساء")
+        : t("Supplications", "أدعية"));
 
   return (
     <div
@@ -179,43 +211,27 @@ export default function AdhkaarPage() {
           </div>
         </div>
 
-        {/* Morning / Evening / Dua toggle */}
-        <div className="flex p-1 rounded-2xl mb-3" style={{ background: "rgba(255,255,255,0.07)" }}>
-          {(["morning", "evening", "dua"] as Mode[]).map(m => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[13px] font-semibold transition-all"
-              style={{
-                background: mode === m ? GOLD : "transparent",
-                color: mode === m ? G : `${CREAM}bb`,
-              }}
-            >
-              {m === "morning" ? <Sun className="h-3.5 w-3.5" /> : m === "evening" ? <Moon className="h-3.5 w-3.5" /> : <HandHeart className="h-3.5 w-3.5" />}
-              {m === "morning" ? t("Morning", "الصباح") : m === "evening" ? t("Evening", "المساء") : t("Dua", "الدعاء")}
-            </button>
-          ))}
-        </div>
-
-        {/* Dua category selector — only shown on the Dua tab */}
-        {mode === "dua" && (
-          <div className="flex gap-2 overflow-x-auto pb-1 mb-3 -mx-1 px-1" style={{ scrollbarWidth: "none" }}>
-            {DUA_CATEGORIES.map(cat => (
-              <button
-                key={cat.id}
-                onClick={() => setCategory(cat.id)}
-                className="shrink-0 px-3.5 py-2 rounded-full text-[12px] font-medium transition-all whitespace-nowrap"
-                style={{
-                  background: category === cat.id ? GOLD : "rgba(255,255,255,0.07)",
-                  color: category === cat.id ? G : `${CREAM}bb`,
-                  border: category === cat.id ? "none" : `1px solid rgba(255,255,255,0.1)`,
-                }}
-              >
-                {t(cat.label, cat.labelAr)}
-              </button>
-            ))}
-          </div>
-        )}
+        {/* Family / Dua dropdown — replaces the old Morning/Evening/Dua tabs */}
+        <button
+          onClick={openPicker}
+          className="w-full flex items-center justify-between gap-2 px-4 py-3 rounded-2xl mb-4 transition active:scale-[0.99]"
+          style={{ background: "rgba(255,255,255,0.07)", border: `1px solid ${GOLD}30` }}
+        >
+          <span className="flex items-center gap-2 min-w-0">
+            <family.icon className="h-4 w-4 shrink-0" style={{ color: GOLD }} />
+            <span className="flex flex-col items-start min-w-0 text-left">
+              <span className="text-[13px] font-semibold truncate max-w-[220px]" style={{ color: CREAM }}>
+                {t(family.label, family.labelAr)}
+              </span>
+              {current && (
+                <span className="text-[11px] truncate max-w-[220px]" style={{ color: `${GOLD_LIGHT}bb` }}>
+                  {t(current.title, current.titleAr)}
+                </span>
+              )}
+            </span>
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0" style={{ color: `${CREAM}99` }} />
+        </button>
 
         {list.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-center px-8">
@@ -279,13 +295,20 @@ export default function AdhkaarPage() {
                   <Check className="h-8 w-8" style={{ color: GOLD }} />
                 </div>
                 <h3 className="text-lg font-semibold mb-2" style={{ color: CREAM, fontFamily: "'Playfair Display', serif" }}>
-                  {mode === "morning" ? t("Morning adhkaar complete", "تمت أذكار الصباح")
-                    : mode === "evening" ? t("Evening adhkaar complete", "تمت أذكار المساء")
+                  {familyId === "morning" ? t("Morning adhkaar complete", "تمت أذكار الصباح")
+                    : familyId === "evening" ? t("Evening adhkaar complete", "تمت أذكار المساء")
                     : t("Du'as complete", "تمت الأدعية")}
                 </h3>
-                <p className="text-sm" style={{ color: `${CREAM}99` }}>
+                <p className="text-sm mb-5" style={{ color: `${CREAM}99` }}>
                   {t("May Allah accept it from you and preserve you today.", "تقبّل الله منك وحفظك اليوم.")}
                 </p>
+                <button
+                  onClick={openPicker}
+                  className="px-4 py-2 rounded-xl text-[12.5px] font-medium transition active:scale-95"
+                  style={{ background: "rgba(255,255,255,0.08)", color: CREAM }}
+                >
+                  {t("Choose another", "اختر آخر")}
+                </button>
               </motion.div>
             ) : current ? (
               <motion.div
@@ -302,6 +325,14 @@ export default function AdhkaarPage() {
                   boxShadow: `0 20px 60px -20px ${G}, inset 0 1px 0 rgba(255,255,255,0.06)`,
                 }}
               >
+                {/* Title */}
+                <h3
+                  className="text-center text-[15px] font-semibold mb-4"
+                  style={{ color: GOLD_LIGHT, fontFamily: "'Playfair Display', serif" }}
+                >
+                  {t(current.title, current.titleAr)}
+                </h3>
+
                 {/* Repeat / audio chip row */}
                 <div className="flex items-center justify-between mb-5 gap-2">
                   <span
@@ -399,17 +430,6 @@ export default function AdhkaarPage() {
           </div>
         )}
 
-        {allDone && mode !== "dua" && (
-          <button
-            onClick={() => setMode(mode === "morning" ? "evening" : "morning")}
-            className="mt-5 h-12 rounded-2xl flex items-center justify-center gap-2 text-[13px] font-medium transition active:scale-[0.98]"
-            style={{ background: "rgba(255,255,255,0.08)", color: CREAM }}
-          >
-            {mode === "morning" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-            {mode === "morning" ? t("View Evening Adhkaar", "أذكار المساء") : t("View Morning Adhkaar", "أذكار الصباح")}
-          </button>
-        )}
-
         {/* Session summary footer */}
         <div className="mt-4 text-center text-[11px]" style={{ color: `${CREAM}66` }}>
           {completedCount}/{list.length} {t("completed today", "أُنجزت اليوم")}
@@ -417,6 +437,107 @@ export default function AdhkaarPage() {
         </>
         )}
       </div>
+
+      {/* Family / Dua picker sheet */}
+      <AnimatePresence>
+        {pickerOpen && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-end justify-center"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <div
+              className="absolute inset-0"
+              style={{ background: "rgba(0,0,0,0.55)" }}
+              onClick={() => setPickerOpen(false)}
+            />
+            <motion.div
+              dir={dir}
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              transition={{ type: "spring", damping: 28, stiffness: 300 }}
+              className="relative w-full max-w-lg rounded-t-3xl overflow-hidden flex flex-col"
+              style={{ background: G_MID, maxHeight: "82vh" }}
+            >
+              <div className="flex items-center justify-between px-5 pt-5 pb-3 shrink-0" style={{ borderBottom: `1px solid ${GOLD}22` }}>
+                <h3 className="text-[15px] font-semibold" style={{ color: CREAM, fontFamily: "'Playfair Display', serif" }}>
+                  {t("Choose a dua", "اختر دعاءً")}
+                </h3>
+                <button
+                  onClick={() => setPickerOpen(false)}
+                  className="h-8 w-8 rounded-full flex items-center justify-center transition active:scale-90"
+                  style={{ background: "rgba(255,255,255,0.08)" }}
+                >
+                  <X className="h-4 w-4" style={{ color: CREAM }} />
+                </button>
+              </div>
+
+              <div className="overflow-y-auto px-3 py-3">
+                {FAMILIES.map(f => {
+                  const isExpanded = expandedFamilyId === f.id;
+                  const famDone = f.list.length > 0 && f.list.every(d => (loadProgress(f.id)[d.id] ?? 0) >= d.repeat);
+                  return (
+                    <div key={f.id} className="mb-1.5 rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.04)" }}>
+                      <button
+                        onClick={() => setExpandedFamilyId(isExpanded ? "" : f.id)}
+                        className="w-full flex items-center justify-between gap-2 px-4 py-3 transition active:scale-[0.99]"
+                      >
+                        <span className="flex items-center gap-2.5 min-w-0">
+                          <f.icon className="h-4 w-4 shrink-0" style={{ color: f.id === familyId ? GOLD : `${GOLD}99` }} />
+                          <span className="text-[13.5px] font-medium truncate" style={{ color: f.id === familyId ? GOLD_LIGHT : CREAM }}>
+                            {t(f.label, f.labelAr)}
+                          </span>
+                          {famDone && <Check className="h-3.5 w-3.5 shrink-0" style={{ color: GOLD }} />}
+                        </span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          <span className="text-[11px]" style={{ color: `${CREAM}66` }}>{f.list.length}</span>
+                          <ChevronDown
+                            className="h-3.5 w-3.5 transition-transform"
+                            style={{ color: `${CREAM}99`, transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}
+                          />
+                        </span>
+                      </button>
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: "auto", opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            transition={{ duration: 0.18 }}
+                            className="overflow-hidden"
+                          >
+                            <div className="px-2 pb-2 flex flex-col gap-0.5">
+                              {f.list.map((d, i) => {
+                                const done = (loadProgress(f.id)[d.id] ?? 0) >= d.repeat;
+                                const isCurrent = f.id === familyId && i === index;
+                                return (
+                                  <button
+                                    key={d.id}
+                                    onClick={() => chooseDua(f.id, i)}
+                                    className="flex items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl text-left transition active:scale-[0.99]"
+                                    style={{ background: isCurrent ? `${GOLD}1f` : "transparent" }}
+                                  >
+                                    <span className="text-[12.5px] truncate" style={{ color: isCurrent ? GOLD_LIGHT : `${CREAM}dd` }}>
+                                      {t(d.title, d.titleAr)}
+                                    </span>
+                                    {done && <Check className="h-3.5 w-3.5 shrink-0" style={{ color: GOLD }} />}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
