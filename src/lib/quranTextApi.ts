@@ -201,8 +201,23 @@ export interface QuranPageLine {
   words: QuranPageWord[];
 }
 
-const PAGE_LINES_CACHE_PREFIX = "quran_page_lines_v2_";
+// v3: standalone waqf marks no longer occupy their own flex/word slot (see
+// WAQF_MARK_REGEX below) — bumped so everyone's already-cached v2 layouts
+// (baked with the old, separately-spaced marks) don't hide the fix.
+const PAGE_LINES_CACHE_PREFIX = "quran_page_lines_v3_";
 const MUSHAF_LAYOUT_BASE = "https://raw.githubusercontent.com/zonetecde/mushaf-layout/main/mushaf";
+
+// The source dataset tokenizes on whitespace, and in the raw Uthmani text a
+// waqf/pause sign (ۖ ۗ ۘ ۙ ۚ ۛ ۜ — U+06D6–U+06DC) sits as its own
+// space-separated token between two words. Rendered as its own item in a
+// `justify-content:space-between` line, that tiny glyph claims a full
+// word's share of gap — flinging it away from the word it actually marks
+// and leaving the stray-looking gaps around ج/ۖ/etc. seen on screen. In a
+// printed Mushaf the mark isn't a word of its own at all: it's drawn
+// immediately after (hovering just above/beside) the word it follows. So
+// any standalone waqf-mark token gets folded into the previous word's text
+// instead of becoming its own entry — same glyph, no independent flex slot.
+const WAQF_MARK_REGEX = /^[\u06D6-\u06DC]+$/;
 
 // The dataset embeds the ayah-end marker as a trailing Arabic-Indic numeral
 // right inside the word string (e.g. "هُدًۭى ٢" = last word of ayah 2), and
@@ -269,6 +284,16 @@ export async function getPageLines(pageNumber: number): Promise<QuranPageLine[] 
         if (!surah || !ayah || !w?.word) continue;
         const { text, isAyahEnd } = splitAyahEndMarker(w.word);
         if (!text) continue;
+        // Standalone waqf mark: attach to the word already placed rather
+        // than starting a new flex item (see WAQF_MARK_REGEX above). Falls
+        // through to the normal push in the rare case a mark opens a line
+        // with nothing before it to attach to.
+        if (WAQF_MARK_REGEX.test(text) && words.length) {
+          const prev = words[words.length - 1];
+          prev.text += text;
+          prev.isAyahEnd = prev.isAyahEnd || isAyahEnd;
+          continue;
+        }
         words.push({ surah, ayah, text, isAyahEnd });
       }
       if (words.length) lines.push({ lineNumber: line.line, words });
