@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import {
-  Search, Users, BarChart, FileText, Calendar,
+  Search, Users, BarChart, Calendar,
   StickyNote, CheckCircle, XCircle, UserPlus, UserMinus,
   ChevronLeft, Loader2, GraduationCap,
 } from "lucide-react";
@@ -61,6 +61,10 @@ const TeacherStudents = () => {
   const [noteText, setNoteText] = useState("");
   const [requestDialog, setRequestDialog] = useState<{ student: any; type: "enrol" | "remove" } | null>(null);
   const [requestMsg, setRequestMsg] = useState("");
+  // Exam IDs that belong to THIS teacher's own subjects (via courses), so
+  // "Results" only ever shows results for subjects the teacher actually
+  // teaches — never a student's full cross-subject record.
+  const [teacherExamIds, setTeacherExamIds] = useState<string[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -157,6 +161,7 @@ const TeacherStudents = () => {
 
       // Get latest exam scores
       const examIds = (await supabase.from("exams").select("id").in("course_id", courseIds)).data?.map(e => e.id) || [];
+      setTeacherExamIds(examIds);
       let attemptsMap: Record<string, any> = {};
       if (examIds.length > 0) {
         const { data: attempts } = await supabase.from("exam_attempts").select("user_id, percentage, passed, submitted_at")
@@ -224,8 +229,12 @@ const TeacherStudents = () => {
   const viewStudentResults = async (student: any) => {
     setDetailStudent(student);
     setDetailTab("exams");
+    // Scoped to exams belonging to this teacher's own subjects only — a
+    // teacher should never see a student's results for subjects they don't
+    // teach.
+    if (teacherExamIds.length === 0) { setStudentAttempts([]); return; }
     const { data } = await supabase.from("exam_attempts").select("*, exams(title, title_ar, type)")
-      .eq("user_id", student.user_id).order("created_at", { ascending: false });
+      .eq("user_id", student.user_id).in("exam_id", teacherExamIds).order("created_at", { ascending: false });
     setStudentAttempts(data || []);
   };
 
@@ -562,12 +571,6 @@ const TeacherStudents = () => {
                     fontSize: 11.5, fontWeight: 700, color: G, cursor: "pointer",
                   }}>
                     <BarChart size={12} /> {t("Results", "النتائج")}
-                  </button>
-                  <button onClick={() => navigate("/teacher/transcript")} style={{
-                    display: "flex", alignItems: "center", gap: 5, padding: "7px 10px", borderRadius: 10,
-                    border: "1.5px solid #E5E7EB", background: "#fff", fontSize: 11.5, fontWeight: 700, color: G, cursor: "pointer",
-                  }}>
-                    <FileText size={12} /> {t("Transcript", "كشف")}
                   </button>
                   {s.student_type === "private" && (
                     <button onClick={() => navigate("/teacher/private-sessions")} style={{
