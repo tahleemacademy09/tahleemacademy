@@ -733,7 +733,7 @@ export default function QuranPage() {
           >
           <div className="quran-page-frame">
             {(() => {
-              const wordSpan = (surah: number, ayah: number, text: string, isAyahEnd: boolean, key: string, isFirstOfAyah: boolean) => (
+              const wordSpan = (surah: number, ayah: number, text: string, isAyahEnd: boolean, key: string, isFirstOfAyah: boolean, waqfMark?: string) => (
                 <span
                   key={key}
                   ref={isFirstOfAyah ? (el => { verseRefs.current[`${surah}-${ayah}`] = el; }) : undefined}
@@ -747,6 +747,19 @@ export default function QuranPage() {
                   }}
                 >
                   {text}
+                  {/* Waqf marks (ۖۗۘۙۚۛۜ) are meant to hover above the
+                      letter they follow, but the app's font doesn't apply
+                      that mark-positioning itself — printed inline it just
+                      reads as another baseline character. Lifted here with
+                      CSS instead so it actually sits "on top", not "down". */}
+                  {waqfMark && (
+                    <span style={{
+                      position: "relative", top: "-0.65em", fontSize: "0.55em",
+                      margin: "0 1px", color: "inherit", verticalAlign: "baseline",
+                    }}>
+                      {waqfMark}
+                    </span>
+                  )}
                   {isAyahEnd && <span style={{ fontSize: "0.67em", color: Q_GOLD_DARK, margin: "0 3px" }}>﴿{toArabicNum(ayah)}﴾</span>}
                   {" "}
                 </span>
@@ -866,7 +879,7 @@ export default function QuranPage() {
                               const ayahKey = `${w.surah}-${w.ayah}`;
                               const isFirstOfAyah = !seenAyah.has(ayahKey);
                               seenAyah.add(ayahKey);
-                              return wordSpan(w.surah, w.ayah, w.text, w.isAyahEnd, key, isFirstOfAyah);
+                              return wordSpan(w.surah, w.ayah, w.text, w.isAyahEnd, key, isFirstOfAyah, w.waqfMark);
                             })}
                           </div>
                         </div>
