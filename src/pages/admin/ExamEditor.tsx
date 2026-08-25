@@ -7,7 +7,7 @@
 // 5. CSV template updated to Tahleem Academy format
 import { useEffect, useState, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -248,8 +248,15 @@ const ExamEditor = () => {
   const { data: academicLevels = [] } = useAcademicLevels();
   const { toast }   = useToast();
   const navigate    = useNavigate();
+  const location    = useLocation();
   const isMobile    = useIsMobile();
   const bulkFileInputRef = useRef<HTMLInputElement>(null);
+
+  // This editor is shared between the admin and teacher areas. Everything
+  // that used to hardcode "/admin/exams" now goes through basePath so the
+  // same component works correctly under /teacher/exams too.
+  const isTeacherContext = location.pathname.startsWith("/teacher");
+  const basePath = isTeacherContext ? "/teacher" : "/admin";
 
   const [examForm, setExamForm] = useState<ExamForm>({
     title: "", title_ar: "", description: "", description_ar: "",
@@ -271,9 +278,12 @@ const ExamEditor = () => {
 
   const [subjects, setSubjects] = useState<{ id: string; title: string; title_ar: string | null }[]>([]);
   useEffect(() => {
-    supabase.from("subjects").select("id, title, title_ar").eq("is_active", true).order("title")
-      .then(({ data }) => setSubjects(data || []));
-  }, []);
+    // Teachers only ever see (and can only attach exams to) their own
+    // subjects. Admins keep seeing every active subject.
+    let query = supabase.from("subjects").select("id, title, title_ar").eq("is_active", true).order("title");
+    if (isTeacherContext && user) query = query.eq("teacher_id", user.id);
+    query.then(({ data }) => setSubjects(data || []));
+  }, [isTeacherContext, user]);
 
   const [questions,      setQuestions]      = useState<QuestionForm[]>([emptyQuestion()]);
   const [formatSettings, setFormatSettings] = useState<ExamFormatSettings>({ ...DEFAULT_FORMAT });
@@ -619,7 +629,7 @@ const ExamEditor = () => {
       }
 
       toast({ title: isEdit ? "✅ Exam updated" : "✅ Exam created" });
-      navigate("/admin/exams");
+      navigate(`${basePath}/exams`);
     } catch (e: any) {
       toast({ title: "❌ Save failed", description: e.message, variant: "destructive" });
     }
@@ -695,7 +705,7 @@ const ExamEditor = () => {
         <div className={cn("mx-auto px-3 sm:px-6 pt-3 sm:pt-5 pb-2", isMobile ? "max-w-full" : "max-w-6xl")}>
           <div className={cn("flex items-start sm:items-center justify-between gap-3 sm:gap-4 mb-3", isMobile ? "flex-col" : "flex-row")}>
             <div className="flex items-center gap-3 w-full sm:w-auto">
-              <button onClick={() => navigate("/admin/exams")} className="bg-white/10 hover:bg-white/20 transition-colors border-0 rounded-xl px-3 sm:px-4 py-2 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shrink-0">
+              <button onClick={() => navigate(`${basePath}/exams`)} className="bg-white/10 hover:bg-white/20 transition-colors border-0 rounded-xl px-3 sm:px-4 py-2 text-white text-xs sm:text-sm font-bold flex items-center gap-2 shrink-0">
                 ← <span className="hidden sm:inline">{t("Back","رجوع")}</span>
               </button>
               <div className="min-w-0 flex-1">
