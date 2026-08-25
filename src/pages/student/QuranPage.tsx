@@ -16,7 +16,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { SURAHS, RECITERS, DEFAULT_RECITER } from "@/components/hifdh/surahData";
-import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage, getPageLines, prefetchPageLines, QuranPageLine } from "@/lib/quranTextApi";
+import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage, getPageGlyphLines, prefetchPageGlyphLines, QcfLine } from "@/lib/quranTextApi";
+import { loadQcfPageFont, qcfPageFontFamily, isQcfPageFontLoaded, UTHMANIC_HAFS_FONT_FAMILY, ensureUthmanicHafsFontLoaded } from "@/lib/qcfFontLoader";
 import { listRecitationsForSurah, CustomRecitation } from "@/lib/quranRecitations";
 import { buildAyahSegments, CUSTOM_RECITER_PREFIX } from "@/lib/quranPlaybackSource";
 import { useQuranAudioEngine, AyahSegment } from "@/hooks/useQuranAudioEngine";
@@ -96,8 +97,20 @@ export default function QuranPage() {
 
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [verses, setVerses] = useState<QuranVerse[]>([]);
-  const [pageLines, setPageLines] = useState<QuranPageLine[] | null>(null);
-  const [lineFontSizes, setLineFontSizes] = useState<Record<number, number>>({});
+  const [qcfLines, setQcfLines] = useState<QcfLine[] | null>(null);
+  // One font-size for the whole page rather than per-line: QCF glyph fonts
+  // are typeset so every full printed line fills the same column width at
+  // a given size — the font itself does the justification, so there's no
+  // per-line variance left to compensate for the way there was with plain
+  // Unicode text and hand-rolled flex justification.
+  const [pageFontSize, setPageFontSize] = useState(BASE_LINE_FONT_SIZE);
+  // Bumped once the current page's glyph font finishes downloading, purely
+  // to trigger a re-render — isQcfPageFontLoaded() itself lives outside
+  // React state (a module-level Set in qcfFontLoader.ts), so without this
+  // the component would have no reason to re-check it and words would stay
+  // stuck showing the plain-Unicode fallback text even after the real
+  // glyph font is ready and sitting in memory.
+  const [fontVersion, setFontVersion] = useState(0);
   const linesContainerRef = useRef<HTMLDivElement | null>(null);
   const measureProbeRef = useRef<HTMLDivElement | null>(null);
   const [loading, setLoading] = useState(true);
@@ -144,7 +157,7 @@ export default function QuranPage() {
   const [pageScale, setPageScale] = useState(1);
   const [linesReady, setLinesReady] = useState(false);
   const [pageReady, setPageReady] = useState(false); // true once the page is measured + correctly scaled — gates visibility so nothing ever visibly resizes
-  // Guards the swipe flash: while a page is turning, `pageLines` is briefly
+  // Guards the swipe flash: while a page is turning, `qcfLines` is briefly
   // null (not yet fetched). Left unguarded, that null was read as "confirmed
   // no line data" and the page popped in immediately at the *previous*
   // page's fit-to-screen scale, then jumped again once the real lines and
@@ -155,6 +168,11 @@ export default function QuranPage() {
   const pageLinesFallbackTimerRef = useRef<number | null>(null);
 
   const engine = useQuranAudioEngine();
+
+  // Verse-end markers (charType "end") always render with this single
+  // Unicode font rather than a page's QCF glyph font — load it once, up
+  // front, regardless of which page is open.
+  useEffect(() => { ensureUthmanicHafsFontLoaded().catch(() => {}); }, []);
 
   const distinctSurahsOnPage = useMemo(
     () => Array.from(new Set(verses.map(v => v.surah))).sort((a, b) => a - b),
@@ -171,7 +189,7 @@ export default function QuranPage() {
     setSelected(null);
     engine.stop();
     if (pageLinesFallbackTimerRef.current != null) { clearTimeout(pageLinesFallbackTimerRef.current); pageLinesFallbackTimerRef.current = null; }
-    setPageLines(null);
+    setQcfLines(null);
     setLinesReady(false);
     setPageReady(false);
     getPageText(clamped, true).then(async (v) => {
@@ -188,16 +206,24 @@ export default function QuranPage() {
       // first (that mismatch — old scale applied to new, differently-shaped
       // content — was the "shrinks then snaps to normal size" jump).
       pageLinesFallbackTimerRef.current = window.setTimeout(() => {
-        if (loadTokenRef.current === token) setPageLines(prev => prev ?? []);
+        if (loadTokenRef.current === token) setQcfLines(prev => prev ?? []);
       }, 650);
-      getPageLines(clamped).then(lines => {
+      // The page's actual glyph font is fetched alongside its word data —
+      // both need to be ready before the real Mushaf text can render, so
+      // this doesn't gate setQcfLines separately; the render below just
+      // shows the Unicode fallback text (text_qpc_hafs) for any word whose
+      // page font hasn't finished loading yet, then re-renders once it has.
+      loadQcfPageFont(clamped).then(() => {
+        if (loadTokenRef.current === token) setFontVersion(v => v + 1);
+      }).catch(() => {}); // best-effort — Unicode fallback (text_qpc_hafs) covers a failed/slow font load
+      getPageGlyphLines(clamped).then(lines => {
         if (loadTokenRef.current !== token) return;
         if (pageLinesFallbackTimerRef.current != null) { clearTimeout(pageLinesFallbackTimerRef.current); pageLinesFallbackTimerRef.current = null; }
-        setPageLines(lines);
+        setQcfLines(lines);
       }).catch(() => {
         if (loadTokenRef.current !== token) return;
         if (pageLinesFallbackTimerRef.current != null) { clearTimeout(pageLinesFallbackTimerRef.current); pageLinesFallbackTimerRef.current = null; }
-        setPageLines([]);
+        setQcfLines([]);
       });
       // fetch custom recitations for any surah on this page we haven't seen yet
       const distinct = Array.from(new Set(v.map(vv => vv.surah)));
@@ -213,12 +239,14 @@ export default function QuranPage() {
       }
       prefetchPage(clamped - 1);
       prefetchPage(clamped + 1);
-      // Prefetch neighbouring pages' true mushaf line layout too, not just
-      // their verse text — this is what makes the *next* page turn feel
-      // instant and already-fitted instead of showing the free-flowing
-      // fallback for a moment while its lines load.
-      prefetchPageLines(clamped - 1);
-      prefetchPageLines(clamped + 1);
+      // Prefetch neighbouring pages' true mushaf line layout AND their
+      // glyph fonts too, not just their verse text — this is what makes
+      // the *next* page turn feel instant and already-fitted instead of
+      // showing Unicode fallback text for a moment while its font loads.
+      prefetchPageGlyphLines(clamped - 1);
+      prefetchPageGlyphLines(clamped + 1);
+      loadQcfPageFont(clamped - 1).catch(() => {});
+      loadQcfPageFont(clamped + 1).catch(() => {});
     }).catch(() => { if (loadTokenRef.current === token) setLoading(false); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recitationsBySurah]);
@@ -265,29 +293,23 @@ export default function QuranPage() {
     return () => clearTimeout(timeout);
   }, [userId, primarySurahNumber, selected, loading]);
 
-  // ── Fit each mushaf line to one row ─────────────────────────────────────
-  // Measures the natural width of every printed line by rendering it into a
-  // hidden, off-screen probe element using the *exact same markup* as the
-  // real line (same word padding, same ayah-marker size/margin) — then
-  // shrinks that line's own font-size just enough to fit, instead of
-  // letting the browser wrap it onto a second visual row.
-  //
-  // FIX (words still clipped at the edge): this used to estimate width with
-  // an offscreen <canvas> and measureText(), then guess at how many extra
-  // pixels the word padding / ayah-marker margin added on top of that. Canvas
-  // glyph metrics don't reproduce real Arabic text shaping (ligatures,
-  // kashida, diacritic stacking) the way an actual rendered DOM element does,
-  // so the estimate was consistently a little off — enough, on real devices,
-  // for the true rendered line to come out wider than predicted and get
-  // clipped. Measuring an actual hidden DOM node with the real markup
-  // removes the guesswork entirely: whatever width the browser reports here
-  // is exactly what it will paint for the real line.
+  // ── Fit the mushaf page's text to the screen width ──────────────────────
+  // QCF glyph fonts are typeset so every FULL printed line fills the exact
+  // same column width at a given font-size — that's the whole point of
+  // justified Uthmani typesetting, baked directly into each word's glyph
+  // advance width by King Fahd Complex. That means this only needs to find
+  // ONE font-size for the whole page, not a separate one per line: measure
+  // the widest full line (a handful of words — not a short tail-end
+  // fragment that was never meant to stretch edge-to-edge) in the page's
+  // real glyph font, and every other full line will reach the same margins
+  // on its own once that size is applied.
   useLayoutEffect(() => {
-    if (pageLines === null) return; // still pending — wait for real data or the grace-period fallback, don't flash
-    if (!pageLines.length) { setLineFontSizes({}); setLinesReady(true); return; }
+    if (qcfLines === null) return; // still pending — wait for real data or the grace-period fallback, don't flash
+    if (!qcfLines.length) { setPageFontSize(BASE_LINE_FONT_SIZE); setLinesReady(true); return; }
     const containerEl = linesContainerRef.current;
     if (!containerEl) return;
     let cancelled = false;
+    const pageForMeasure = currentPage;
 
     const measure = () => {
       const width = containerEl.clientWidth;
@@ -302,65 +324,43 @@ export default function QuranPage() {
         probe.style.visibility = "hidden";
         probe.style.whiteSpace = "nowrap";
         probe.style.direction = "rtl";
-        probe.style.fontFamily = Q_MUSHAF_FONT;
-        // FIX ("scattered"/garbled mushaf text — see chat): UthmanicHafs1Ver18
-        // ships as a single Regular-weight face. Asking for weight 700 (here
-        // and everywhere else this font is used below) has no matching bold
-        // face to load, so the browser synthesizes ("faux") bold by
-        // algorithmically thickening the outline — which badly distorts
-        // joined Arabic letterforms, breaks ligatures, and displaces
-        // diacritics/waqf marks. That's exactly the broken, scattered look
-        // reported. The script is inherently bold-looking already; render
-        // it at its normal weight instead of faking one.
         probe.style.fontWeight = "400";
         document.body.appendChild(probe);
         measureProbeRef.current = probe;
       }
+      probe.style.fontFamily = isQcfPageFontLoaded(pageForMeasure) ? qcfPageFontFamily(pageForMeasure) : Q_MUSHAF_FONT;
       probe.style.fontSize = `${BASE_LINE_FONT_SIZE}px`;
 
-      const next: Record<number, number> = {};
-      for (const line of pageLines) {
-        probe.innerHTML = "";
-        line.words.forEach((w, i) => {
-          const span = document.createElement("span");
-          span.style.padding = "2px 1px";
-          span.textContent = w.text;
-          probe!.appendChild(span);
-          if (w.isAyahEnd) {
-            const marker = document.createElement("span");
-            marker.style.fontSize = "0.67em";
-            marker.style.margin = "0 3px";
-            marker.textContent = `﴿${toArabicNum(w.ayah)}﴾`;
-            probe!.appendChild(marker);
-          }
-          if (i < line.words.length - 1) probe!.appendChild(document.createTextNode(" "));
-        });
-        const naturalWidth = probe.scrollWidth;
-        // A little safety margin for the sub-pixel rounding differences
-        // between this hidden probe and the real, scaled page.
-        const target = width * 0.94;
-        next[line.lineNumber] = naturalWidth > target && naturalWidth > 0
-          ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * target) / naturalWidth))
-          : BASE_LINE_FONT_SIZE;
+      let maxNatural = 0;
+      for (const line of qcfLines) {
+        if (line.words.length < 4) continue; // short tail-end lines were never meant to stretch edge-to-edge — see isFullLine below
+        probe.innerHTML = line.words
+          .map(w => (w.charType === "end" ? w.textQpcHafs : (isQcfPageFontLoaded(pageForMeasure) ? w.codeV2 : w.textQpcHafs)) || "")
+          .join(" ");
+        maxNatural = Math.max(maxNatural, probe.scrollWidth);
       }
-      if (!cancelled) { setLineFontSizes(next); setLinesReady(true); }
+      if (!maxNatural) { if (!cancelled) { setPageFontSize(BASE_LINE_FONT_SIZE); setLinesReady(true); } return; }
+
+      // A little safety margin for the sub-pixel rounding differences
+      // between this hidden probe and the real, scaled page.
+      const target = width * 0.98;
+      const next = maxNatural > target
+        ? Math.max(MIN_LINE_FONT_SIZE, Math.floor((BASE_LINE_FONT_SIZE * target) / maxNatural))
+        : BASE_LINE_FONT_SIZE;
+      if (!cancelled) { setPageFontSize(next); setLinesReady(true); }
     };
 
-    // Measuring before the real Amiri webfont has finished downloading gives
-    // the wrong shrink ratio for every line on the page (the probe would be
-    // measured in a fallback system font instead). Wait for it, then measure.
-    Promise.all([
-      document.fonts?.ready,
-      // document.fonts.load() wants a single font-family, not our whole
-      // fallback stack — load the real webfont by name explicitly so this
-      // reliably waits for it (not just whichever fallback resolves first).
-      document.fonts?.load(`400 ${BASE_LINE_FONT_SIZE}px 'UthmanicHafs'`),
-    ]).then(measure).catch(measure);
+    // Measuring before this page's real glyph font has finished downloading
+    // gives the wrong shrink ratio (the probe would measure the fallback
+    // Unicode font's different letterforms/widths instead) — wait for it,
+    // then measure. If the font fails to load at all, measure() still runs
+    // with the Unicode fallback so the page isn't stuck waiting forever.
+    loadQcfPageFont(pageForMeasure).then(measure).catch(measure);
 
     const ro = new ResizeObserver(measure);
     ro.observe(containerEl);
     return () => { cancelled = true; ro.disconnect(); };
-  }, [pageLines]);
+  }, [qcfLines, currentPage, fontVersion]);
 
   // ── Fit the whole page to the screen — no scrolling, ever ──────────────
   // Once the per-line font sizes above have settled the page's *natural*
@@ -401,7 +401,7 @@ export default function QuranPage() {
     ro.observe(container);
     ro.observe(wrapper);
     return () => { ro.disconnect(); };
-  }, [pageLines, lineFontSizes, linesReady, showTranslation, currentPage, selected != null]);
+  }, [qcfLines, pageFontSize, linesReady, showTranslation, currentPage, selected != null]);
 
   const isBookmarked = useCallback((surah: number, ayah: number) =>
     bookmarks.some(b => b.surah_number === surah && b.ayah_number === ayah), [bookmarks]);
@@ -806,79 +806,45 @@ export default function QuranPage() {
                 );
               };
 
-              // ── Preferred: true mushaf layout — one <div> per printed line,
-              // justified edge-to-edge so word position matches the physical
-              // page. Falls back to the free-flowing paragraph below if the
-              // line-layout fetch didn't succeed for this page. ──
-              if (pageLines && pageLines.length) {
+              // ── Preferred: true mushaf layout via QCF V2 glyph fonts — one
+              // <div> per printed line, rendered with that exact page's
+              // official King Fahd Complex glyph font. The font itself
+              // already composes each word (waqf marks, spacing, ayah-end
+              // ornaments — everything) exactly as printed; there's no
+              // layout math to get right or wrong here, unlike the previous
+              // Unicode-text-plus-hand-rolled-justification approach. Falls
+              // back to the free-flowing paragraph below if the glyph-line
+              // fetch didn't succeed for this page. ──
+              if (qcfLines && qcfLines.length) {
                 // Only the printed opening page of a surah carries its name
                 // banner — a surah that merely continues onto this page (its
                 // first ayah here is not ayah 1) must never show it again.
                 const surahBannerShown = new Set<number>();
                 const seenAyah = new Set<string>();
+                const pageFontFamily = qcfPageFontFamily(currentPage);
+                const glyphFontReady = isQcfPageFontLoaded(currentPage);
                 return (
-                  <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ fontFamily: Q_MUSHAF_FONT, fontWeight: 400, color: Q_INK }}>
-                    {pageLines.map(line => {
+                  <div ref={linesContainerRef} dir="rtl" lang="ar" style={{ color: Q_INK }}>
+                    {qcfLines.map(line => {
                       const firstWord = line.words[0];
                       const showDivider = !!firstWord && firstWord.ayah === 1 && !surahBannerShown.has(firstWord.surah);
                       if (showDivider) surahBannerShown.add(firstWord.surah);
-                      const lineFontSize = lineFontSizes[line.lineNumber] ?? BASE_LINE_FONT_SIZE;
-                      // FIX (huge blank gaps / a lone mark stranded on its
-                      // own row): a handful of "lines" in the dataset are
-                      // just a stray waqf/pause glyph or a two-word tail end
-                      // of a passage, not a genuine full printed line. Real
-                      // Mushaf typesetting only stretches a line edge-to-edge
-                      // when it's actually a full line — a short leftover
-                      // line sits at its natural width instead. Flexing
-                      // justify-content:space-between across only one or two
-                      // words does the opposite: it flings them apart with a
-                      // giant gap in between. So only lines with enough words
-                      // to look like a real full line get the edge-to-edge
-                      // treatment; short ones render at natural width,
-                      // flush to the margin they start from (right, in RTL).
+                      // A handful of "lines" are a short tail-end of a
+                      // passage rather than a genuine full printed line —
+                      // real Mushaf typesetting only stretches a line
+                      // edge-to-edge when it's actually full; a short
+                      // leftover line sits at its natural width instead.
                       const isFullLine = line.words.length >= 4;
-                      // FIX (blank-looking gap between paragraphs): a lone
-                      // stray mark or 2-3 word tail-end line still has almost
-                      // nothing visible in it, but was claiming the same
-                      // lineHeight:2.1 as a genuine full 15-char printed
-                      // line — on screen that reads as a big empty gap
-                      // before the next paragraph starts. Give a line this
-                      // short a tighter line-height instead, proportional to
-                      // how little it actually contains.
-                      const wordCount = line.words.length;
-                      const rowLineHeight = isFullLine ? 2.1 : wordCount <= 2 ? 1.25 : 1.6;
+                      const rowLineHeight = isFullLine ? 2.1 : line.words.length <= 2 ? 1.25 : 1.6;
                       return (
                         <div key={line.lineNumber}>
-                          {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === pageLines[0].lineNumber)}
+                          {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === qcfLines[0].lineNumber)}
                           <div
                             style={{
                               direction: "rtl",
-                              // FIX (line hugging the right margin instead of
-                              // stretching edge-to-edge like a printed page):
-                              // text-align-last:justify only justifies a
-                              // single unbroken run of text in browsers that
-                              // treat it as a genuine line break; in practice
-                              // (and especially in the Android WebView this
-                              // app runs in) a `white-space:nowrap` line with
-                              // no wrap point often just renders at its
-                              // natural width and left-aligns short of the
-                              // margin. Flexbox with justify-content:
-                              // space-between doesn't depend on line-wrap
-                              // behavior at all — it distributes the leftover
-                              // width evenly between each word, every time,
-                              // so a genuine full line reliably reaches both
-                              // edges. Short lines skip this (see isFullLine).
-                              display: isFullLine ? "flex" : "block",
-                              flexWrap: "nowrap", justifyContent: "space-between", alignItems: "baseline",
-                              textAlign: isFullLine ? undefined : "right",
-                              // FIX (words sheared off at the edges): "overflow: hidden"
-                              // here was a hard guillotine — any small gap between the
-                              // canvas measurement above and how the browser actually
-                              // shapes Arabic glyphs sliced the last word's tail clean
-                              // off, with no visual warning it had happened. "visible"
-                              // means the rare miss just lets a line sit a hair wider
-                              // instead of silently destroying text.
-                              lineHeight: rowLineHeight, fontSize: lineFontSize, overflow: "visible",
+                              textAlign: isFullLine ? "justify" : "right",
+                              textAlignLast: isFullLine ? ("justify" as any) : undefined,
+                              lineHeight: rowLineHeight, fontSize: pageFontSize, overflow: "visible",
                             }}
                           >
                             {line.words.map((w, i) => {
@@ -886,7 +852,37 @@ export default function QuranPage() {
                               const ayahKey = `${w.surah}-${w.ayah}`;
                               const isFirstOfAyah = !seenAyah.has(ayahKey);
                               seenAyah.add(ayahKey);
-                              return wordSpan(w.surah, w.ayah, w.text, w.isAyahEnd, key, isFirstOfAyah, w.waqfMark);
+                              // Quran Foundation's own guidance: verse-end
+                              // markers (the ﴿n﴾ ayah-number ornament) always
+                              // render with the plain Unicode font, never the
+                              // QCF glyph — that ornament's glyph reads
+                              // better drawn that way. Every other word uses
+                              // this page's real glyph code once its font
+                              // has finished loading; until then it shows the
+                              // API's own Unicode fallback text so nothing is
+                              // ever blank while the font downloads.
+                              const isEndMarker = w.charType === "end";
+                              const useGlyph = !isEndMarker && glyphFontReady && !!w.codeV2;
+                              return (
+                                <span
+                                  key={key}
+                                  ref={isFirstOfAyah ? (el => { verseRefs.current[ayahKey] = el; }) : undefined}
+                                  onClick={() => handleVerseTap(w.surah, w.ayah)}
+                                  style={{
+                                    cursor: "pointer", borderRadius: 6, padding: "2px 1px",
+                                    fontFamily: isEndMarker ? UTHMANIC_HAFS_FONT_FAMILY : (useGlyph ? pageFontFamily : Q_MUSHAF_FONT),
+                                    background: (engine.currentSurah === w.surah && engine.currentAyah === w.ayah) ? Q_GOLD
+                                      : (selected?.surah === w.surah && selected?.ayah === w.ayah) ? Q_PARCH_ALT : "transparent",
+                                    color: isEndMarker ? Q_GOLD_DARK : (!useGlyph && isAllahWord(w.textQpcHafs) ? Q_ALLAH_RED : undefined),
+                                    transition: "background .2s",
+                                  }}
+                                >
+                                  {/* code_v2 is a raw glyph-code string, not user content — Quran Foundation's
+                                      own reference implementation renders it via innerHTML for this reason. */}
+                                  <span dangerouslySetInnerHTML={{ __html: useGlyph ? w.codeV2 : (w.textQpcHafs || w.codeV2 || "") }} />
+                                  {" "}
+                                </span>
+                              );
                             })}
                           </div>
                         </div>
