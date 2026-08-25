@@ -121,11 +121,19 @@ const TeacherStudents = () => {
         subLevels.forEach(lv => { if (!levelToSubjects[lv]) levelToSubjects[lv] = []; levelToSubjects[lv].push(s); });
       });
       const allLevels = Object.keys(levelToSubjects);
+      // Level-matched students must have actually finished registration
+      // (onboarding_completed) — a student who's mid-pipeline can already
+      // have `level` set (e.g. picked pre-emptively before the entrance
+      // exam / admin review is done) but shouldn't show up in any
+      // teacher's roster yet. They still belong in the admin's
+      // registration pipeline (/admin/tasjeel) until that's finished.
       let levelUserIds: string[] = [];
       if (allLevels.length > 0) {
         const { data: lvlStudents } = await supabase
           .from("profiles").select("user_id")
-          .eq("role", "student").neq("student_type", "private").in("level", allLevels);
+          .eq("role", "student").neq("student_type", "private")
+          .eq("onboarding_completed", true)
+          .in("level", allLevels);
         levelUserIds = (lvlStudents || []).map((p: any) => p.user_id);
       }
 
@@ -153,7 +161,8 @@ const TeacherStudents = () => {
       const allUserIds = [...new Set([...enrolledUserIds, ...levelUserIds, ...privateIds])];
       if (allUserIds.length === 0) { return; }
 
-      const { data: profiles } = await supabase.from("profiles").select("*").in("user_id", allUserIds).eq("role", "student");
+      const { data: profiles } = await supabase.from("profiles").select("*")
+        .in("user_id", allUserIds).eq("role", "student").eq("onboarding_completed", true);
 
       // Get attendance stats
       const { data: attendance } = await supabase.from("manual_attendance").select("student_id, status")
