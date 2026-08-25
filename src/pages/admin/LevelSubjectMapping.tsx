@@ -28,11 +28,17 @@ const LevelSubjectMapping = () => {
     return [l.slug, { label: l.name_en, labelAr: l.name_ar, color: cfg.color, bg: cfg.bg }];
   }));
   
+  // Each mapping cell now carries whether the subject is compulsory (true)
+  // or optional (false) for that level, instead of a plain boolean checked.
+  type CellMap = Record<string, Record<Level, boolean>>; // subjectId -> level -> is_compulsory
+  const [mappings, setMappings] = useState<CellMap>({});
+  const [initialMappings, setInitialMappings] = useState<CellMap>({});
   const [subjects, setSubjects] = useState<any[]>([]);
-  const [mappings, setMappings] = useState<Record<string, string[]>>({});
-  const [initialMappings, setInitialMappings] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const isChecked   = (subjectId: string, level: Level) => level in (mappings[subjectId] || {});
+  const isCompulsory = (subjectId: string, level: Level) => (mappings[subjectId] || {})[level] ?? true;
 
   // Load subjects & current mappings
   useEffect(() => {
@@ -41,19 +47,20 @@ const LevelSubjectMapping = () => {
       try {
         const [subRes, mapRes] = await Promise.all([
           supabase.from("subjects").select("id, title, title_ar, is_active").eq("is_active", true).order("title"),
-          supabase.from("level_courses").select("level, subject_id")
+          supabase.from("level_courses").select("level, subject_id, is_compulsory")
         ]);
 
         if (subRes.data) setSubjects(subRes.data);
-        
-        const map: Record<string, string[]> = {};
-        mapRes.data?.forEach((m: any) => {
-          if (!map[m.subject_id]) map[m.subject_id] = [];
-          map[m.subject_id].push(m.level);
+
+        const map: CellMap = {};
+        (mapRes.data as any[])?.forEach((m: any) => {
+          if (!map[m.subject_id]) map[m.subject_id] = {};
+          map[m.subject_id][m.level as Level] = m.is_compulsory ?? true;
         });
 
         setMappings(map);
-        setInitialMappings(JSON.parse(JSON.stringify(map)));      } catch (err) {
+        setInitialMappings(JSON.parse(JSON.stringify(map)));
+      } catch (err) {
         toast({ title: t("Failed to load data", "فشل تحميل البيانات"), variant: "destructive" });
       } finally {
         setLoading(false);
@@ -62,13 +69,24 @@ const LevelSubjectMapping = () => {
     loadData();
   }, []);
 
+  // Toggling the checkbox adds/removes the mapping (defaults to compulsory)
   const toggleLevel = (subjectId: string, level: Level) => {
     setMappings(prev => {
-      const current = prev[subjectId] || [];
-      const next = current.includes(level)
-        ? current.filter(l => l !== level)
-        : [...current, level];
-      return { ...prev, [subjectId]: next };
+      const current = { ...(prev[subjectId] || {}) };
+      if (level in current) delete current[level];
+      else current[level] = true; // new mappings default to compulsory
+      return { ...prev, [subjectId]: current };
+    });
+  };
+
+  // Toggling the compulsory/optional pill flips it, without touching whether
+  // the subject is mapped at all.
+  const toggleCompulsory = (subjectId: string, level: Level) => {
+    setMappings(prev => {
+      if (!(level in (prev[subjectId] || {}))) return prev;
+      const current = { ...(prev[subjectId] || {}) };
+      current[level] = !current[level];
+      return { ...prev, [subjectId]: current };
     });
   };
 
@@ -80,23 +98,33 @@ const LevelSubjectMapping = () => {
     if (!hasChanges()) return;
     setSaving(true);
     try {
-      const toInsert: { level: Level; subject_id: string }[] = [];
+      const toInsert: { level: Level; subject_id: string; is_compulsory: boolean }[] = [];
+      const toUpdate: { level: Level; subject_id: string; is_compulsory: boolean }[] = [];
       const toDelete: { level: Level; subject_id: string }[] = [];
 
       subjects.forEach(sub => {
-        const newLevels = mappings[sub.id] || [];
-        const oldLevels = initialMappings[sub.id] || [];
+        const newLevels = mappings[sub.id] || {};
+        const oldLevels = initialMappings[sub.id] || {};
 
-        newLevels.forEach(level => {
-          if (!oldLevels.includes(level)) toInsert.push({ level, subject_id: sub.id });
+        Object.keys(newLevels).forEach(level => {
+          if (!(level in oldLevels)) {
+            toInsert.push({ level: level as Level, subject_id: sub.id, is_compulsory: newLevels[level as Level] });
+          } else if (oldLevels[level as Level] !== newLevels[level as Level]) {
+            toUpdate.push({ level: level as Level, subject_id: sub.id, is_compulsory: newLevels[level as Level] });
+          }
         });
-        oldLevels.forEach(level => {
-          if (!newLevels.includes(level)) toDelete.push({ level, subject_id: sub.id });
+        Object.keys(oldLevels).forEach(level => {
+          if (!(level in newLevels)) toDelete.push({ level: level as Level, subject_id: sub.id });
         });
       });
 
       if (toInsert.length) {
-        const { error } = await supabase.from("level_courses").insert(toInsert);
+        const { error } = await supabase.from("level_courses").insert(toInsert as any);
+        if (error) throw error;
+      }
+      for (const u of toUpdate) {
+        const { error } = await supabase.from("level_courses" as any)
+          .update({ is_compulsory: u.is_compulsory }).eq("level", u.level).eq("subject_id", u.subject_id);
         if (error) throw error;
       }
       if (toDelete.length) {
@@ -136,8 +164,8 @@ const LevelSubjectMapping = () => {
             </h1>
           </div>
           <p className="text-sm opacity-80">
-            {t("Assign subjects to beginner, intermediate, or advanced levels. Students will only see subjects mapped to their assigned level.", 
-               "قم بتعيين المواد للمستويات المبتدئ أو المتوسط أو المتقدم. سيرى الطلاب فقط المواد المعينة لمستواهم.")}
+            {t("Assign subjects to levels. Students are auto-enrolled in every mapped subject when their level is set. Tap the pill under a checked box to mark a subject Compulsory (can't be disenrolled) or Optional (students may disenroll themselves).",
+               "قم بتعيين المواد للمستويات. يتم تسجيل الطلاب تلقائياً في كل مادة مرتبطة عند تحديد مستواهم. اضغط على الشارة أسفل المربع المحدد لتحديد المادة كإلزامية (لا يمكن إلغاء تسجيلها) أو اختيارية (يمكن للطلاب إلغاء تسجيلهم بأنفسهم).")}
           </p>
         </div>
 
@@ -176,14 +204,38 @@ const LevelSubjectMapping = () => {
                           )}
                         </td>
                         {LEVELS.map(level => {
-                          const checked = (mappings[sub.id] || []).includes(level);
+                          const checked = isChecked(sub.id, level);
+                          const compulsory = isCompulsory(sub.id, level);
                           return (
                             <td key={level} className="p-4 text-center">
-                              <Checkbox
-                                checked={checked}
-                                onCheckedChange={() => toggleLevel(sub.id, level)}
-                                style={{ borderColor: LEVEL_CONFIG[level].color, color: LEVEL_CONFIG[level].color }}
-                              />
+                              <div className="flex flex-col items-center gap-1">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={() => toggleLevel(sub.id, level)}
+                                  style={{ borderColor: LEVEL_CONFIG[level].color, color: LEVEL_CONFIG[level].color }}
+                                />
+                                {checked && (
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleCompulsory(sub.id, level)}
+                                    title={t(
+                                      "Click to toggle whether students can disenroll from this subject",
+                                      "اضغط لتبديل إمكانية إلغاء تسجيل الطلاب من هذه المادة"
+                                    )}
+                                    style={{
+                                      fontSize: 9, fontWeight: 700, padding: "1px 7px", borderRadius: 20,
+                                      border: "1px solid transparent", cursor: "pointer",
+                                      background: compulsory ? "#FEF2F2" : "#F0FDF4",
+                                      color: compulsory ? "#B91C1C" : "#15803D",
+                                      borderColor: compulsory ? "#FCA5A5" : "#86EFAC",
+                                    }}
+                                  >
+                                    {compulsory
+                                      ? t("Compulsory", "إلزامي")
+                                      : t("Optional", "اختياري")}
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           );
                         })}
