@@ -222,7 +222,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/subject-registration", icon:Settings, label:t("Subject Registration","تسجيل المواد") },
       { to:"/admin/timetable",        icon:Clock,       label:t("Timetable","الجدول الدراسي") },
       { to:"/admin/material-manager", icon:FolderOpen,  label:t("Materials","المواد التعليمية") },
-      { to:"/admin/level-subject",    icon:BookMarked,  label:t("Level–Subject Map","ربط المستويات") },
+      { to:"/admin/level-subject-mapping", icon:BookMarked,  label:t("Level–Subject Map","ربط المستويات") },
       { to:"/admin/calendar",         icon:Calendar,    label:t("Academic Calendar","التقويم الأكاديمي") },
     ]},
 
