@@ -599,19 +599,24 @@ const EntranceExamTaking = () => {
   const saveAnswer = useCallback(async (qId: string, ans: string, data?: any) => {
     setAnswers(prev => ({ ...prev, [qId]: ans }));
     if (data !== undefined) setAnswerData(prev => ({ ...prev, [qId]: data }));
-    const payload: any = { answer_text: ans };
+    const payload: any = { attempt_id: attemptId!, question_id: qId, answer_text: ans, updated_at: new Date().toISOString() };
     if (data !== undefined) payload.answer_data = data;
-    const { data: ex } = await supabase.from("exam_answers").select("id").eq("attempt_id", attemptId!).eq("question_id", qId).maybeSingle();
-    if (ex) { await supabase.from("exam_answers").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", ex.id); }
-    else { await supabase.from("exam_answers").insert({ attempt_id: attemptId!, question_id: qId, ...payload }); }
+    // Single upsert instead of select-then-insert/update — removes the race window
+    // and the extra round trip.
+    const { error } = await supabase.from("exam_answers").upsert(payload, { onConflict: "attempt_id,question_id" });
+    if (error) console.error("saveAnswer upsert failed:", error);
   }, [attemptId]);
 
   // ── Toggle flag ──────────────────────────────────────────────────────────
   const toggleFlag = useCallback(async (qId: string) => {
     const nowFlagged = !flagged.has(qId);
     setFlagged(prev => { const n = new Set(prev); nowFlagged ? n.add(qId) : n.delete(qId); return n; });
-    const { data: ex } = await supabase.from("exam_answers").select("id").eq("attempt_id", attemptId!).eq("question_id", qId).maybeSingle();
-    if (ex) await supabase.from("exam_answers").update({ is_flagged: nowFlagged }).eq("id", ex.id);
+    // Upsert so flagging a question before answering it doesn't get silently
+    // dropped (previously this only fired an UPDATE, which is a no-op if no
+    // answer row exists yet).
+    const { error } = await supabase.from("exam_answers")
+      .upsert({ attempt_id: attemptId!, question_id: qId, is_flagged: nowFlagged }, { onConflict: "attempt_id,question_id" });
+    if (error) console.error("toggleFlag upsert failed:", error);
   }, [flagged, attemptId]);
 
   // ── Submit ───────────────────────────────────────────────────────────────
@@ -621,14 +626,17 @@ const EntranceExamTaking = () => {
     setSubmitting(true); clearInterval(timerRef.current);
     try {
       const cur = answersRef.current;
-      for (const [qId, ans] of Object.entries(cur)) {
-        if (!ans) continue;
-        const extra = answerDataRef.current[qId];
-        const payload: any = { answer_text: ans };
-        if (extra !== undefined) payload.answer_data = extra;
-        const { data: ex } = await supabase.from("exam_answers").select("id").eq("attempt_id", attemptId!).eq("question_id", qId).maybeSingle();
-        if (ex) await supabase.from("exam_answers").update(payload).eq("id", ex.id);
-        else await supabase.from("exam_answers").insert({ attempt_id: attemptId!, question_id: qId, ...payload });
+      const rows = Object.entries(cur)
+        .filter(([, ans]) => !!ans)
+        .map(([qId, ans]) => {
+          const extra = answerDataRef.current[qId];
+          const row: any = { attempt_id: attemptId!, question_id: qId, answer_text: ans };
+          if (extra !== undefined) row.answer_data = extra;
+          return row;
+        });
+      if (rows.length) {
+        const { error: saveErr } = await supabase.from("exam_answers").upsert(rows, { onConflict: "attempt_id,question_id" });
+        if (saveErr) console.error("Final answer save failed:", saveErr);
       }
       await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
 

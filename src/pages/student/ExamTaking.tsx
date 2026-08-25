@@ -505,11 +505,19 @@ const ExamTaking = () => {
   const saveAnswers = async (silent = false) => {
     if (!attemptId || submittedRef.current) return;
     if (!silent) setSaving(true);
-    for (const [qId, ans] of Object.entries(answersRef.current)) {
-      const { data: ex } = await supabase.from("exam_answers").select("id").eq("attempt_id", attemptId).eq("question_id", qId).maybeSingle();
-      const p: any = { answer_text: ans.text, answer_data: { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 }, is_flagged: ans.flagged };
-      if (ex) await supabase.from("exam_answers").update(p).eq("id", ex.id);
-      else await supabase.from("exam_answers").insert({ attempt_id: attemptId, question_id: qId, ...p });
+    const rows = Object.entries(answersRef.current).map(([qId, ans]) => ({
+      attempt_id: attemptId,
+      question_id: qId,
+      answer_text: ans.text,
+      answer_data: { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 },
+      is_flagged: ans.flagged,
+    }));
+    if (rows.length) {
+      // Single upsert instead of a per-question select-then-insert/update loop —
+      // removes both the N+1 round trips and the race window where an overlapping
+      // auto-save/submit could silently drop an edit.
+      const { error } = await supabase.from("exam_answers").upsert(rows, { onConflict: "attempt_id,question_id" });
+      if (error) console.error("saveAnswers upsert failed:", error);
     }
     setLastSaved(new Date()); if (!silent) setSaving(false);
   };
@@ -531,12 +539,18 @@ const ExamTaking = () => {
     if (submittedRef.current) return;
     submittedRef.current = true; setSubmitting(true); setPhase("exam");
     if (attemptId) {
-      for (const [qId, ans] of Object.entries(answersRef.current)) {
-        if (!ans.text && !ans.data) continue;
-        const { data: ex } = await supabase.from("exam_answers").select("id").eq("attempt_id", attemptId).eq("question_id", qId).maybeSingle();
-        const p: any = { answer_text: ans.text || null, answer_data: (ans.data ? { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 } : null), is_flagged: ans.flagged || false };
-        if (ex) await supabase.from("exam_answers").update(p).eq("id", ex.id);
-        else await supabase.from("exam_answers").insert({ attempt_id: attemptId, question_id: qId, ...p });
+      const rows = Object.entries(answersRef.current)
+        .filter(([, ans]) => ans.text || ans.data)
+        .map(([qId, ans]) => ({
+          attempt_id: attemptId,
+          question_id: qId,
+          answer_text: ans.text || null,
+          answer_data: ans.data ? { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 } : null,
+          is_flagged: ans.flagged || false,
+        }));
+      if (rows.length) {
+        const { error: saveErr } = await supabase.from("exam_answers").upsert(rows, { onConflict: "attempt_id,question_id" });
+        if (saveErr) console.error("Final answer save failed:", saveErr);
       }
     }
     const { data: gr, error: ge } = await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });

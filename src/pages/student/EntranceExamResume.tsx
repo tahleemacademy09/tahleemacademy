@@ -92,7 +92,30 @@ const EntranceExamResume = () => {
           const startedAt = existing?.started_at ? new Date(existing.started_at).getTime() : 0;
           const expiredAt = startedAt && limitMin ? startedAt + limitMin * 60_000 : 0;
           if (expiredAt && Date.now() > expiredAt) {
-            try { await supabase.rpc("grade_exam_attempt" as any, { _attempt_id: existing.id } as any); } catch {}
+            // Auto-grade the timed-out attempt. If grading fails for any reason,
+            // don't silently fall through — the attempt would stay stuck at
+            // 'in_progress' forever (Step 3 below only matches submitted/graded/
+            // completed), and Step 4 would then create a brand-new attempt on
+            // top of the orphaned one, leaving a duplicate in-progress record.
+            const { error: gradeErr } = await supabase.rpc("grade_exam_attempt" as any, { _attempt_id: existing.id } as any);
+            if (gradeErr) {
+              console.error("Auto-grade of expired attempt failed:", gradeErr.message);
+              // Best-effort fallback: at least close the attempt out as
+              // 'submitted' so it isn't orphaned and a duplicate isn't created.
+              // Guarded by status='in_progress' so this is safe even if grading
+              // actually succeeded moments earlier.
+              const { error: fallbackErr } = await supabase
+                .from("exam_attempts")
+                .update({ status: "submitted", submitted_at: new Date().toISOString() })
+                .eq("id", existing.id)
+                .eq("status", "in_progress");
+              if (fallbackErr) {
+                clearTimeout(timeoutId);
+                setStatus("error");
+                setMessage("Your previous exam session timed out and we couldn't close it out automatically. Please contact Tahleem Academy support so your attempt isn't lost.");
+                return;
+              }
+            }
             // fall through to Step 3 (submitted-attempt handling)
           } else {
           clearTimeout(timeoutId);
