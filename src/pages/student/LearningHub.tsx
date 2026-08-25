@@ -159,6 +159,52 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     return privateCourseIds.has(courseId);
   };
 
+  // ── Level-based auto-enrollment (compulsory/optional subjects) ──────────
+  // A subject only gets a row here once it's mapped to the student's level
+  // via level_courses (see the trigger in the student_subject_enrollments
+  // migration). Subjects with no row are unaffected — legacy/self-registered
+  // subjects keep working exactly as before.
+  const { data: subjectEnrollments } = useQuery({
+    queryKey: ["subject-enrollments", user?.id],
+    enabled: !!user?.id && !isPrivileged,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("student_subject_enrollments" as any)
+        .select("subject_id, status, is_compulsory")
+        .eq("student_id", user!.id);
+      if (error) throw error;
+      const map: Record<string, { status: "active" | "disenrolled"; is_compulsory: boolean }> = {};
+      (data as any[] || []).forEach((r: any) => { map[r.subject_id] = { status: r.status, is_compulsory: r.is_compulsory }; });
+      return map;
+    },
+  });
+
+  const getEnrollment = (subjectId: string) => subjectEnrollments?.[subjectId] ?? null;
+  // No row → subject isn't level-mapped, so it's unaffected by this system.
+  const isSubjectEnrolled = (subjectId: string): boolean => {
+    const e = getEnrollment(subjectId);
+    return !e || e.status === "active";
+  };
+
+  const [togglingSubjectId, setTogglingSubjectId] = useState<string | null>(null);
+  const toggleSubjectEnrollment = async (subjectId: string, makeActive: boolean) => {
+    setTogglingSubjectId(subjectId);
+    try {
+      const { error } = await supabase.rpc("set_subject_enrollment" as any, { p_subject_id: subjectId, p_active: makeActive });
+      if (error) throw error;
+      await qc.invalidateQueries({ queryKey: ["subject-enrollments", user?.id] });
+      toast({
+        title: makeActive
+          ? (language === "ar" ? "✅ تم إعادة التسجيل" : "✅ Re-enrolled")
+          : (language === "ar" ? "تم إلغاء التسجيل" : "Disenrolled"),
+      });
+    } catch (e: any) {
+      toast({ title: language === "ar" ? "فشل الإجراء" : "Action failed", description: e.message, variant: "destructive" });
+    } finally {
+      setTogglingSubjectId(null);
+    }
+  };
+
   const courses = isPrivileged
     ? (allCourses || [])
     : (allCourses || []).filter((c: any) => levelMatch(c.level, studentLevel) && isCourseVisible(c.id));
@@ -179,7 +225,13 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   const courseSubjects = isPrivileged
     ? (allCourseSubjects || [])
-    : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id));
+    : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id));
+  // Optional subjects the student disenrolled from — kept out of the main
+  // grid (their lessons/materials/assignments are hidden) but still listed
+  // separately with a Re-enroll action.
+  const disenrolledCourseSubjects = isPrivileged ? [] : (allCourseSubjects || []).filter(
+    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id)
+  );
 
   const { data: subjectLessons, isLoading: loadLessons } = useQuery({
     queryKey: ["subject-lessons", selectedSubject?.id],
@@ -291,7 +343,10 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   const urlCourseSubjects = isPrivileged
     ? (allUrlCourseSubjects || [])
-    : (allUrlCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id));
+    : (allUrlCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id));
+  const disenrolledUrlCourseSubjects = isPrivileged ? [] : (allUrlCourseSubjects || []).filter(
+    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id)
+  );
 
   const markComplete = useMutation({
     mutationFn: async (lessonId: string) => {
@@ -349,7 +404,21 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             ) : (
               <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))", gap:14 }}>
                 {urlCourseSubjects.map((sub: any) => (
-                  <SubjectCard key={sub.id} subject={sub} onClick={() => setSelectedSubject(sub)} live={isLive(sub.id)} language={language} />
+                  <SubjectCard
+                    key={sub.id} subject={sub} onClick={() => setSelectedSubject(sub)} live={isLive(sub.id)} language={language}
+                    enrollment={getEnrollment(sub.id)} onToggleEnrollment={toggleSubjectEnrollment} toggling={togglingSubjectId === sub.id}
+                  />
+                ))}
+              </div>
+            )}
+            {disenrolledUrlCourseSubjects.length > 0 && (
+              <div style={{ marginTop:16, display:"flex", flexDirection:"column", gap:8 }}>
+                <p style={{ fontSize:11, fontWeight:700, color:"#9ca3af", textTransform:"uppercase" as const, letterSpacing:0.5 }}>
+                  {t("Disenrolled (optional)", "ملغى التسجيل (اختياري)")}
+                </p>
+                {disenrolledUrlCourseSubjects.map((sub: any) => (
+                  <DisenrolledSubjectRow key={sub.id} subject={sub} language={language} toggling={togglingSubjectId === sub.id}
+                    onReEnroll={() => toggleSubjectEnrollment(sub.id, true)} />
                 ))}
               </div>
             )}
@@ -363,6 +432,35 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   // SUBJECT DETAIL — with tabs
   // ═══════════════════════════════════════════════════════════════════════════
   if (selectedSubject) {
+    const subjEnrollment = getEnrollment(selectedSubject.id);
+    if (!isPrivileged && subjEnrollment?.status === "disenrolled") {
+      return (
+        <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", padding:24 }}>
+          <div style={{ textAlign:"center", maxWidth:340 }}>
+            <Lock style={{ width:40, height:40, color:"#f59e0b", margin:"0 auto 14px" }} />
+            <p style={{ fontWeight:800, color:G, marginBottom:6 }}>
+              {t("You've disenrolled from this subject", "لقد ألغيت تسجيلك في هذه المادة")}
+            </p>
+            <p style={{ fontSize:13, color:"#9ca3af", marginBottom:16, lineHeight:1.6 }}>
+              {t("Its lessons, materials, assignments and exams are hidden until you re-enroll.",
+                 "دروسها ومصادرها وواجباتها واختباراتها مخفية حتى تعيد التسجيل.")}
+            </p>
+            <button
+              onClick={() => toggleSubjectEnrollment(selectedSubject.id, true)}
+              style={{ padding:"10px 20px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}
+            >
+              {t("Re-enroll", "إعادة التسجيل")}
+            </button>
+            <button
+              onClick={() => setSelectedSubject(null)}
+              style={{ display:"block", margin:"12px auto 0", background:"none", border:"none", color:"#9ca3af", fontSize:12, cursor:"pointer" }}
+            >
+              {t("Back", "رجوع")}
+            </button>
+          </div>
+        </div>
+      );
+    }
     const live  = isLive(selectedSubject.id);
     const done  = new Set((myProgress || []).filter((p: any) => p.completed).map((p: any) => p.lesson_id));
     const totalL = (subjectLessons || []).length;
@@ -566,7 +664,21 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                   onClick={() => { setSelectedSubject(sub); setSubjectTab("lessons"); }}
                   live={isLive(sub.id)}
                   language={language}
+                  enrollment={getEnrollment(sub.id)}
+                  onToggleEnrollment={toggleSubjectEnrollment}
+                  toggling={togglingSubjectId === sub.id}
                 />
+              ))}
+            </div>
+          )}
+          {disenrolledCourseSubjects.length > 0 && (
+            <div style={{ marginTop:16, display:"flex", flexDirection:"column", gap:8 }}>
+              <p style={{ fontSize:11, fontWeight:700, color:"#9ca3af", textTransform:"uppercase" as const, letterSpacing:0.5 }}>
+                {t("Disenrolled (optional)", "ملغى التسجيل (اختياري)")}
+              </p>
+              {disenrolledCourseSubjects.map((sub: any) => (
+                <DisenrolledSubjectRow key={sub.id} subject={sub} language={language} toggling={togglingSubjectId === sub.id}
+                  onReEnroll={() => toggleSubjectEnrollment(sub.id, true)} />
               ))}
             </div>
           )}
@@ -749,8 +861,44 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-function SubjectCard({ subject, onClick, live, language }: {
+function DisenrolledSubjectRow({ subject, language, onReEnroll, toggling }: {
+  subject: any; language: string; onReEnroll: () => void; toggling: boolean;
+}) {
+  const name = language === "ar" ? subject.title_ar || subject.title : subject.title;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      background: "#fff", border: "1px dashed #e5e7eb", borderRadius: 12, padding: "10px 14px",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        <BookOpen style={{ width: 14, height: 14, color: "#9ca3af", flexShrink: 0 }} />
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {name}
+        </span>
+        <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 7px", borderRadius: 20, background: "#F0FDF4", color: "#15803D", border: "1px solid #86EFAC", flexShrink: 0 }}>
+          {language === "ar" ? "اختياري" : "Optional"}
+        </span>
+      </div>
+      <button
+        disabled={toggling}
+        onClick={onReEnroll}
+        style={{
+          flexShrink: 0, padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700,
+          background: "#fff", color: "#15803D", border: "1.5px solid #86EFAC",
+          cursor: toggling ? "not-allowed" : "pointer", opacity: toggling ? 0.6 : 1,
+        }}
+      >
+        {language === "ar" ? "إعادة التسجيل" : "Re-enroll"}
+      </button>
+    </div>
+  );
+}
+
+function SubjectCard({ subject, onClick, live, language, enrollment, onToggleEnrollment, toggling }: {
   subject: any; onClick: () => void; live: boolean; language: string;
+  enrollment?: { status: "active" | "disenrolled"; is_compulsory: boolean } | null;
+  onToggleEnrollment?: (subjectId: string, makeActive: boolean) => void;
+  toggling?: boolean;
 }) {
   const lc   = levelColor(subject.level);
   const name = language === "ar" ? subject.title_ar || subject.title : subject.title;
@@ -770,6 +918,11 @@ function SubjectCard({ subject, onClick, live, language }: {
         {subject.level && subject.level !== "all" && (
           <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, ...lc, display:"inline-block", marginBottom:5 }}>{subject.level}</span>
         )}
+        {enrollment && !enrollment.is_compulsory && (
+          <span style={{ fontSize:9, padding:"2px 7px", borderRadius:9, fontWeight:700, background:"#F0FDF4", color:"#15803D", border:"1px solid #86EFAC", display:"inline-block", marginBottom:5, marginLeft:4 }}>
+            {language === "ar" ? "اختياري" : "Optional"}
+          </span>
+        )}
         {subject.title_ar && (
           <p style={{ fontSize:12, color:"#c9a84c", margin:"0 0 2px", fontFamily:"'Amiri',serif" }} dir="rtl">{subject.title_ar}</p>
         )}
@@ -779,9 +932,21 @@ function SubjectCard({ subject, onClick, live, language }: {
             {subject.description}
           </p>
         )}
-        <button style={{ width:"100%", padding:"7px", borderRadius:9, background:"#0f2d1f", border:"none", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
-          <BookOpen style={{ width:11, height:11 }} />Open Subject
-        </button>
+        <div style={{ display:"flex", gap:6 }}>
+          <button style={{ flex:1, padding:"7px", borderRadius:9, background:"#0f2d1f", border:"none", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
+            <BookOpen style={{ width:11, height:11 }} />Open Subject
+          </button>
+          {enrollment && !enrollment.is_compulsory && onToggleEnrollment && (
+            <button
+              disabled={toggling}
+              onClick={(e) => { e.stopPropagation(); onToggleEnrollment(subject.id, false); }}
+              title={language === "ar" ? "إلغاء التسجيل من هذه المادة الاختيارية" : "Disenroll from this optional subject"}
+              style={{ padding:"7px 10px", borderRadius:9, background:"#fff", border:"1.5px solid #FCA5A5", color:"#B91C1C", fontSize:11, fontWeight:700, cursor: toggling ? "not-allowed" : "pointer", opacity: toggling ? 0.6 : 1 }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

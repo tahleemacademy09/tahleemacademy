@@ -210,8 +210,40 @@ const SubjectView = () => {
     if (subject) joinClass(subject);
   };
 
-  if (isLoading) return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64" /></div>;
+  // If this subject is level-mapped and the student has disenrolled from it
+  // (only possible when it's optional), block direct URL access to its
+  // materials/assignments/exams — matches the gating on StudentCourses.tsx.
+  const { data: myEnrollment, isLoading: loadingEnrollment } = useQuery({
+    queryKey: ["subject-enrollment", subjectId, user?.id],
+    enabled: !!subjectId && !!user?.id && !isTeacher,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("student_subject_enrollments" as any)
+        .select("status, is_compulsory")
+        .eq("subject_id", subjectId!)
+        .eq("student_id", user!.id)
+        .maybeSingle();
+      if (error) throw error;
+      return data as any;
+    },
+  });
+
+  if (isLoading || loadingEnrollment) return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64" /></div>;
   if (!subject) return <div className="container mx-auto px-4 py-16 text-center"><h2>{t("Subject not found", "المادة غير موجودة")}</h2></div>;
+
+  if (!isTeacher && myEnrollment?.status === "disenrolled") {
+    return (
+      <div className="container mx-auto px-4 py-16 text-center max-w-md">
+        <XCircle className="mx-auto mb-4 text-amber-500" size={40} />
+        <h2 className="text-lg font-bold mb-2">{t("You've disenrolled from this subject", "لقد ألغيت تسجيلك في هذه المادة")}</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          {t("Its lessons, assignments and exams are hidden until you re-enroll from My Subjects.",
+             "دروسها وواجباتها واختباراتها مخفية حتى تعيد التسجيل من صفحة موادي.")}
+        </p>
+        <Button onClick={() => navigate("/student/courses")}>{t("Go to My Subjects", "الذهاب إلى موادي")}</Button>
+      </div>
+    );
+  }
 
   const subjectLevel = (subject as any).level || profile?.level || "beginner";
 

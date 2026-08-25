@@ -1,14 +1,15 @@
 /*  src/pages/student/StudentCourses.tsx  */
 import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
+import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BookOpen, Play, ArrowRight, ChevronRight, ClipboardCheck } from "lucide-react";
+import { BookOpen, Play, ArrowRight, ChevronRight, ClipboardCheck, XCircle, RotateCcw } from "lucide-react";
 
 const G    = "#064E3B";
 const GOLD = "#C9A84C";
@@ -57,9 +58,12 @@ const CardThumb = ({ url, title, bg }: { url?: string | null; title: string; bg:
 
 // ── Subject banner card (wide, taller — matches admin subject card style) ──
 const SubjectBanner = ({
-  subject, courseCount, language, onViewAll,
+  subject, courseCount, language, onViewAll, enrollment, onToggleEnrollment, toggling,
 }: {
   subject: any; courseCount: number; language: string; onViewAll: () => void;
+  enrollment?: { status: "active" | "disenrolled"; is_compulsory: boolean } | null;
+  onToggleEnrollment?: (subjectId: string, makeActive: boolean) => void;
+  toggling?: boolean;
 }) => {
   const lv = safeLvl(subject.level);
   const title    = language === "ar" ? (subject.title_ar || subject.title) : subject.title;
@@ -131,6 +135,19 @@ const SubjectBanner = ({
               {language === "ar" ? lv.labelAr : lv.label}
             </span>
           </div>
+          {enrollment && (
+            <span style={{
+              display: "inline-block", marginTop: 3, padding: "1px 7px", borderRadius: 20,
+              fontSize: 9, fontWeight: 700,
+              background: enrollment.is_compulsory ? "#FEF2F2" : "#F0FDF4",
+              color: enrollment.is_compulsory ? "#B91C1C" : "#15803D",
+              border: `1px solid ${enrollment.is_compulsory ? "#FCA5A5" : "#86EFAC"}`,
+            }}>
+              {enrollment.is_compulsory
+                ? (language === "ar" ? "إلزامي" : "Compulsory")
+                : (language === "ar" ? "اختياري" : "Optional")}
+            </span>
+          )}
           {subject.description && (
             <p style={{
               fontSize: 11, color: "#6B7280", margin: "4px 0 0", lineHeight: 1.45,
@@ -142,19 +159,40 @@ const SubjectBanner = ({
           )}
         </div>
 
-        {/* View subject button */}
-        <div style={{ marginTop: 8 }}>
-          <Link to={`/student/subjects/${subject.id}`} style={{ textDecoration: "none" }}>
-            <button style={{
-              padding: "6px 14px", borderRadius: 8, border: "none",
-              background: `linear-gradient(135deg, ${G}, #075E54)`,
-              color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
-              display: "inline-flex", alignItems: "center", gap: 4,
-            }}>
-              <ChevronRight size={12} />
-              {language === "ar" ? "عرض المادة" : "View Subject"}
+        {/* View subject + disenroll/re-enroll buttons */}
+        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+          {enrollment?.status !== "disenrolled" && (
+            <Link to={`/student/subjects/${subject.id}`} style={{ textDecoration: "none" }}>
+              <button style={{
+                padding: "6px 14px", borderRadius: 8, border: "none",
+                background: `linear-gradient(135deg, ${G}, #075E54)`,
+                color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                display: "inline-flex", alignItems: "center", gap: 4,
+              }}>
+                <ChevronRight size={12} />
+                {language === "ar" ? "عرض المادة" : "View Subject"}
+              </button>
+            </Link>
+          )}
+
+          {enrollment && !enrollment.is_compulsory && onToggleEnrollment && (
+            <button
+              disabled={toggling}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggleEnrollment(subject.id, enrollment.status !== "active"); }}
+              style={{
+                padding: "6px 12px", borderRadius: 8, cursor: toggling ? "not-allowed" : "pointer",
+                fontSize: 11, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 4,
+                background: "#fff",
+                color: enrollment.status === "active" ? "#B91C1C" : "#15803D",
+                border: `1.5px solid ${enrollment.status === "active" ? "#FCA5A5" : "#86EFAC"}`,
+                opacity: toggling ? 0.6 : 1,
+              }}
+            >
+              {enrollment.status === "active"
+                ? (<><XCircle size={12} />{language === "ar" ? "إلغاء التسجيل" : "Disenroll"}</>)
+                : (<><RotateCcw size={12} />{language === "ar" ? "إعادة التسجيل" : "Re-enroll"}</>)}
             </button>
-          </Link>
+          )}
         </div>
       </div>
     </div>
@@ -318,6 +356,43 @@ const StudentCourses = () => {
   const { isPrivateStudent } = usePrivateStudent();
   const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [togglingSubjectId, setTogglingSubjectId] = useState<string | null>(null);
+
+  // Level-based auto-enrollment records (compulsory/optional + active/disenrolled)
+  const { data: enrollments } = useQuery({
+    queryKey: ["subject-enrollments", user?.id],
+    enabled: !isPrivateStudent && !!user?.id,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("student_subject_enrollments" as any)
+        .select("subject_id, status, is_compulsory")
+        .eq("student_id", user!.id);
+      if (error) throw error;
+      const map: Record<string, { status: "active" | "disenrolled"; is_compulsory: boolean }> = {};
+      (data as any[] || []).forEach((r: any) => { map[r.subject_id] = { status: r.status, is_compulsory: r.is_compulsory }; });
+      return map;
+    },
+  });
+
+  const toggleEnrollment = async (subjectId: string, makeActive: boolean) => {
+    setTogglingSubjectId(subjectId);
+    try {
+      const { error } = await supabase.rpc("set_subject_enrollment" as any, { p_subject_id: subjectId, p_active: makeActive });
+      if (error) throw error;
+      await queryClient.invalidateQueries({ queryKey: ["subject-enrollments", user?.id] });
+      toast({
+        title: makeActive
+          ? (language === "ar" ? "✅ تم إعادة التسجيل" : "✅ Re-enrolled")
+          : (language === "ar" ? "تم إلغاء التسجيل" : "Disenrolled"),
+      });
+    } catch (e: any) {
+      toast({ title: language === "ar" ? "فشل الإجراء" : "Action failed", description: e.message, variant: "destructive" });
+    } finally {
+      setTogglingSubjectId(null);
+    }
+  };
 
   // Private student subject/course assignment sets
   const { data: privateSubjectIds } = useQuery({
@@ -491,8 +566,12 @@ const StudentCourses = () => {
 
       {/* Subject sections */}
       {(subjects || []).map((subject: any) => {
-        const subjectCourses = (courses || []).filter((c: any) => c.subject_id === subject.id);
-        if (subjectCourses.length === 0) return null;
+        const enrollment = enrollments?.[subject.id] ?? null;
+        const isDisenrolled = enrollment?.status === "disenrolled";
+        // Disenrolled (optional) subjects show no course content — the
+        // banner stays visible only so the student has a way to re-enroll.
+        const subjectCourses = isDisenrolled ? [] : (courses || []).filter((c: any) => c.subject_id === subject.id);
+        if (subjectCourses.length === 0 && !enrollment) return null;
 
         return (
           <div key={subject.id} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -503,34 +582,50 @@ const StudentCourses = () => {
               courseCount={subjectCourses.length}
               language={language}
               onViewAll={() => {}}
+              enrollment={enrollment}
+              onToggleEnrollment={toggleEnrollment}
+              toggling={togglingSubjectId === subject.id}
             />
 
-            {/* Course cards — indented slightly */}
-            <div style={{ paddingLeft: 12, borderLeft: `3px solid ${safeLvl(subject.level).border}`, display: "flex", flexDirection: "column", gap: 8 }}>
-              {subjectCourses.map((course: any) => (
-                <CourseCard
-                  key={course.id}
-                  course={course}
-                  lessonCount={getLessonCount(course.id)}
-                  completedCount={getCompletedCount(course.id)}
-                  progressPct={getProgressPct(course.id)}
-                  language={language}
-                />
-              ))}
+            {isDisenrolled && (
+              <div style={{
+                padding: "8px 14px", borderRadius: 10, background: "#FFF7ED", border: "1px solid #FED7AA",
+                color: "#9A3412", fontSize: 11.5, fontWeight: 600,
+              }}>
+                {language === "ar"
+                  ? "لقد ألغيت تسجيلك في هذه المادة الاختيارية. لن تظهر لك دروسها أو واجباتها أو اختباراتها حتى تعيد التسجيل."
+                  : "You've disenrolled from this optional subject. Its lessons, assignments and exams won't show until you re-enroll."}
+              </div>
+            )}
 
-              {/* View all link */}
-              <Link
-                to={`/student/subjects/${subject.id}`}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4,
-                  fontSize: 12, fontWeight: 700, color: G,
-                  textDecoration: "none", padding: "4px 0",
-                }}
-              >
-                <ArrowRight size={13} />
-                {language === "ar" ? "عرض المادة كاملة" : "View full subject"}
-              </Link>
-            </div>
+            {/* Course cards — indented slightly (hidden while disenrolled) */}
+            {!isDisenrolled && (
+              <div style={{ paddingLeft: 12, borderLeft: `3px solid ${safeLvl(subject.level).border}`, display: "flex", flexDirection: "column", gap: 8 }}>
+                {subjectCourses.map((course: any) => (
+                  <CourseCard
+                    key={course.id}
+                    course={course}
+                    lessonCount={getLessonCount(course.id)}
+                    completedCount={getCompletedCount(course.id)}
+                    progressPct={getProgressPct(course.id)}
+                    language={language}
+                  />
+                ))}
+
+                {/* View all link */}
+                <Link
+                  to={`/student/subjects/${subject.id}`}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 4,
+                    fontSize: 12, fontWeight: 700, color: G,
+                    textDecoration: "none", padding: "4px 0",
+                  }}
+                >
+                  <ArrowRight size={13} />
+                  {language === "ar" ? "عرض المادة كاملة" : "View full subject"}
+                </Link>
+              </div>
+            )}
           </div>
         );
       })}
