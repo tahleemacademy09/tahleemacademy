@@ -739,6 +739,8 @@ export default function QuranPage() {
                   ref={isFirstOfAyah ? (el => { verseRefs.current[`${surah}-${ayah}`] = el; }) : undefined}
                   onClick={() => handleVerseTap(surah, ayah)}
                   style={{
+                    position: "relative", // anchors the absolutely-positioned waqf-mark overlay below
+                    display: "inline-block",
                     cursor: "pointer", borderRadius: 6, padding: "2px 1px",
                     background: (engine.currentSurah === surah && engine.currentAyah === ayah) ? Q_GOLD
                       : (selected?.surah === surah && selected?.ayah === ayah) ? Q_PARCH_ALT : "transparent",
@@ -747,15 +749,20 @@ export default function QuranPage() {
                   }}
                 >
                   {text}
-                  {/* Waqf marks (ۖۗۘۙۚۛۜ) are meant to hover above the
-                      letter they follow, but the app's font doesn't apply
-                      that mark-positioning itself — printed inline it just
-                      reads as another baseline character. Lifted here with
-                      CSS instead so it actually sits "on top", not "down". */}
+                  {/* Waqf marks (ۖۗۘۙۚۛۜ) are meant to hover just above the
+                      letter they follow, but the mushaf font here doesn't
+                      apply that positioning itself — printed inline it just
+                      reads as another baseline character. `position:absolute`
+                      (rather than `relative`) takes it out of the flex flow
+                      entirely, so it can never affect this word's width, the
+                      line's space-between distribution, or flex baseline
+                      alignment with neighboring words — it's purely a visual
+                      overlay, centered above the word it belongs to. */}
                   {waqfMark && (
-                    <span style={{
-                      position: "relative", top: "-0.65em", fontSize: "0.55em",
-                      margin: "0 1px", color: "inherit", verticalAlign: "baseline",
+                    <span aria-hidden="true" style={{
+                      position: "absolute", top: "-0.78em", left: "50%", transform: "translateX(-50%)",
+                      fontSize: "0.5em", lineHeight: 1, whiteSpace: "nowrap",
+                      color: "inherit", pointerEvents: "none",
                     }}>
                       {waqfMark}
                     </span>
