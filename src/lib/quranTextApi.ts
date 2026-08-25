@@ -205,12 +205,13 @@ export interface QuranPageLine {
   words: QuranPageWord[];
 }
 
-// v4: waqf marks are now kept on a separate `waqfMark` field instead of
-// being concatenated into `text`, so the renderer can lift them above the
-// line with CSS rather than relying on the font's own mark-positioning
-// (which isn't rendering them raised — see QuranPage.tsx wordSpan).
-// Bumped so already-cached v2/v3 layouts (old shape) don't hide the fix.
-const PAGE_LINES_CACHE_PREFIX = "quran_page_lines_v4_";
+// v5: fixed the real bug — a waqf mark that opens a NEW raw line (this
+// dataset frequently files it there instead of at the end of the line it
+// actually belongs to) now merges into the previous line's last word
+// instead of stranding itself as a lone one-word line. Bumped so already-
+// cached v2/v3/v4 layouts (all still carrying those stray lines) don't
+// mask the fix.
+const PAGE_LINES_CACHE_PREFIX = "quran_page_lines_v5_";
 const MUSHAF_LAYOUT_BASE = "https://raw.githubusercontent.com/zonetecde/mushaf-layout/main/mushaf";
 
 // The source dataset tokenizes on whitespace, and in the raw Uthmani text a
@@ -276,6 +277,10 @@ export async function getPageLines(pageNumber: number): Promise<QuranPageLine[] 
     }
 
     const lines: QuranPageLine[] = [];
+    // Tracks the most recently placed real word across the WHOLE page, not
+    // just the current line — see the comment on WAQF_MARK_REGEX below for
+    // why that matters.
+    let lastWord: QuranPageWord | null = null;
     for (const line of rawLines) {
       // Only "text" lines carry ayah words. "surah-header" and "basmala"
       // lines are intentionally skipped here — QuranPage.tsx already draws
@@ -290,17 +295,33 @@ export async function getPageLines(pageNumber: number): Promise<QuranPageLine[] 
         if (!surah || !ayah || !w?.word) continue;
         const { text, isAyahEnd } = splitAyahEndMarker(w.word);
         if (!text) continue;
-        // Standalone waqf mark: attach to the word already placed rather
-        // than starting a new flex item (see WAQF_MARK_REGEX above). Falls
-        // through to the normal push in the rare case a mark opens a line
-        // with nothing before it to attach to.
-        if (WAQF_MARK_REGEX.test(text) && words.length) {
-          const prev = words[words.length - 1];
-          prev.waqfMark = (prev.waqfMark ?? "") + text;
-          prev.isAyahEnd = prev.isAyahEnd || isAyahEnd;
+        if (WAQF_MARK_REGEX.test(text)) {
+          // Standalone waqf mark — never a printed "word" in its own right.
+          // Usually it trails the word before it on the SAME line, but this
+          // dataset commonly files it instead as the first token of the
+          // NEXT line (the glyph sits in the gap between two printed lines,
+          // so whoever extracted the coordinates attributed it to the row
+          // below). Either way it belongs to whichever real word came
+          // immediately before it on the page — this line's last word so
+          // far, or the previous line's last word if this line hasn't
+          // placed one yet — so it's merged there instead of ever being
+          // allowed to become a lone one-item "line" stranded on its own
+          // row (which is what was still showing up as detached ج/لا/ص
+          // marks floating under lines).
+          const target = words.length ? words[words.length - 1] : lastWord;
+          if (target) {
+            target.waqfMark = (target.waqfMark ?? "") + text;
+            target.isAyahEnd = target.isAyahEnd || isAyahEnd;
+          }
+          // If there's truly no preceding word yet (only possible if the
+          // very first token on the whole page were a stray mark), there's
+          // nothing sensible to attach it to — drop it rather than let it
+          // strand itself as its own line.
           continue;
         }
-        words.push({ surah, ayah, text, isAyahEnd });
+        const word: QuranPageWord = { surah, ayah, text, isAyahEnd };
+        words.push(word);
+        lastWord = word;
       }
       if (words.length) lines.push({ lineNumber: line.line, words });
     }
