@@ -124,16 +124,12 @@ const TeacherAttendance = () => {
         .eq("assigned_teacher_id", user.id).eq("student_type", "private");
       const privateIds = (privateStudents || []).map((p: any) => p.user_id);
 
-      // ── Students: level-based (subject.levels[] matches profile.level) ──
-      const subjectLevels: string[] = subject.levels || (subject.level ? [subject.level] : []);
-      let levelIds: string[] = [];
-      if (subjectLevels.length > 0) {
-        const { data: lvlStudents } = await supabase
-          .from("profiles").select("user_id").in("level", subjectLevels);
-        levelIds = (lvlStudents || []).map((p: any) => p.user_id);
-      }
-
-      const allIds = [...new Set([...userIds, ...privateIds, ...levelIds])];
+      // Note: previously there was also a level-based fallback here that
+      // pulled in any student sharing this subject's level(s), regardless
+      // of whether they were actually enrolled in this subject — removed
+      // so only students actually enrolled in (or privately assigned for)
+      // this specific subject show up for attendance.
+      const allIds = [...new Set([...userIds, ...privateIds])];
       if (allIds.length === 0) {
         setStudents([]);
         setStudentsLoading(false);

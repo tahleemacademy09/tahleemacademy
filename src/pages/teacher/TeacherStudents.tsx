@@ -61,12 +61,14 @@ const TeacherStudents = () => {
       const subjectIds = allSubs.map((s: any) => s.id);
       if (subjectIds.length === 0) { return; }
 
-      // Collect ALL levels covered by this teacher's subjects
-      const teacherLevels = [...new Set(
-        allSubs.flatMap((s: any) => s.levels?.length ? s.levels : (s.level ? [s.level] : []))
-      )].filter(Boolean) as string[];
-
-      // Path A: courses → enrollments (structured enrollments)
+      // Path A: courses → enrollments (structured enrollments) — the only
+      // source of GROUP students. This is intentionally subject-scoped: a
+      // student must actually be enrolled in one of THIS teacher's subjects
+      // to show up here. (Previously there was also a level-based fallback
+      // that pulled in every student sharing a level with one of the
+      // teacher's subjects, even if they were enrolled in a different
+      // subject entirely — removed so the list only ever shows students
+      // actually taking this teacher's subjects.)
       const { data: courses } = await supabase.from("courses").select("id, subject_id").in("subject_id", subjectIds);
       const courseIds = (courses || []).map(c => c.id);
       let enrollments: any[] = [];
@@ -75,17 +77,6 @@ const TeacherStudents = () => {
         const { data: enrData } = await supabase.from("enrollments").select("user_id, course_id").in("course_id", courseIds);
         enrollments = enrData || [];
         enrolledUserIds = [...new Set(enrollments.map(e => e.user_id))];
-      }
-
-      // Path B: level-based GROUP students only (never picks up private students — they must be admin-assigned)
-      let levelUserIds: string[] = [];
-      if (teacherLevels.length > 0) {
-        const { data: lvlStudents } = await supabase
-          .from("profiles").select("user_id")
-          .eq("role", "student")
-          .neq("student_type", "private")
-          .in("level", teacherLevels);
-        levelUserIds = (lvlStudents || []).map((p: any) => p.user_id);
       }
 
       // Path C: private students ONLY if admin explicitly assigned this teacher
@@ -109,7 +100,7 @@ const TeacherStudents = () => {
         });
       }
 
-      const allUserIds = [...new Set([...enrolledUserIds, ...levelUserIds, ...privateIds])];
+      const allUserIds = [...new Set([...enrolledUserIds, ...privateIds])];
       if (allUserIds.length === 0) { return; }
 
       const { data: profiles } = await supabase.from("profiles").select("*").in("user_id", allUserIds).eq("role", "student");

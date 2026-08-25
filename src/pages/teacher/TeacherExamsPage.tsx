@@ -70,7 +70,7 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
     <div className="p-4 md:p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">{label}</h1>
-        <Button onClick={() => navigate("/admin/exams/create")}><Plus className="h-4 w-4 me-2" /> {t("Create", "إنشاء")} {singularLabel}</Button>
+        <Button onClick={() => navigate("/teacher/exams/create")}><Plus className="h-4 w-4 me-2" /> {t("Create", "إنشاء")} {singularLabel}</Button>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -107,7 +107,7 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
                 <Button size="sm" variant="ghost" onClick={() => togglePublish(e.id, e.is_published)}>
                   {e.is_published ? t("Unpublish", "إلغاء النشر") : t("Publish", "نشر")}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => navigate(`/admin/exams/${e.id}/edit`)}><Edit className="h-4 w-4" /></Button>
+                <Button size="sm" variant="ghost" onClick={() => navigate(`/teacher/exams/${e.id}/edit`)}><Edit className="h-4 w-4" /></Button>
                 <Button size="sm" variant="ghost" onClick={() => deleteExam(e.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
               </div>
             </CardContent>
