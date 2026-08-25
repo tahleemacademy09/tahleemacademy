@@ -103,6 +103,28 @@ const TeacherStudents = () => {
         enrolledUserIds = [...new Set(enrollments.map(e => e.user_id))];
       }
 
+      // Path B: level-based access. Students aren't individually enrolled per
+      // subject in this app — the `enrollments` table above only tracks
+      // course_id and is effectively unused (0 rows platform-wide). Real
+      // group-student access is level-based: a non-private student whose
+      // level matches one of THIS teacher's subjects' levels is considered
+      // to be taking that subject. Mirrors fetchSubjectRoster() in
+      // StudentAssignments.tsx, but scoped subject-by-subject so it never
+      // pulls in a student who only shares a level with an unrelated subject.
+      const levelToSubjects: Record<string, any[]> = {};
+      allSubs.forEach((s: any) => {
+        const subLevels: string[] = s.levels?.length ? s.levels : (s.level ? [s.level] : []);
+        subLevels.forEach(lv => { if (!levelToSubjects[lv]) levelToSubjects[lv] = []; levelToSubjects[lv].push(s); });
+      });
+      const allLevels = Object.keys(levelToSubjects);
+      let levelUserIds: string[] = [];
+      if (allLevels.length > 0) {
+        const { data: lvlStudents } = await supabase
+          .from("profiles").select("user_id")
+          .eq("role", "student").neq("student_type", "private").in("level", allLevels);
+        levelUserIds = (lvlStudents || []).map((p: any) => p.user_id);
+      }
+
       // Path C: private students ONLY if admin explicitly assigned this teacher
       const { data: privateStudents } = await supabase
         .from("profiles").select("user_id")
@@ -124,7 +146,7 @@ const TeacherStudents = () => {
         });
       }
 
-      const allUserIds = [...new Set([...enrolledUserIds, ...privateIds])];
+      const allUserIds = [...new Set([...enrolledUserIds, ...levelUserIds, ...privateIds])];
       if (allUserIds.length === 0) { return; }
 
       const { data: profiles } = await supabase.from("profiles").select("*").in("user_id", allUserIds).eq("role", "student");
@@ -144,16 +166,22 @@ const TeacherStudents = () => {
 
       const enriched = (profiles || []).map(p => {
         // Private students: use admin-assigned private_student_subjects
-        // Group students: use courses → enrollments path
+        // Group students: course-enrollments (if any) ∪ level-matched subjects
         let pSubjects: any[];
         if (p.student_type === "private") {
           pSubjects = privateSubjectMap[p.user_id] || [];
         } else {
           const pEnrollments = (enrollments || []).filter((e: any) => e.user_id === p.user_id);
-          pSubjects = pEnrollments.map((e: any) => {
+          const fromEnrollments = pEnrollments.map((e: any) => {
             const course = (courses || []).find((c: any) => c.id === e.course_id);
             return allSubs.find((s: any) => s.id === course?.subject_id);
           }).filter(Boolean);
+          const fromLevel = p.level ? (levelToSubjects[p.level] || []) : [];
+          const seen = new Set<string>();
+          pSubjects = [...fromEnrollments, ...fromLevel].filter((s: any) => {
+            if (!s || seen.has(s.id)) return false;
+            seen.add(s.id); return true;
+          });
         }
 
         // Attendance %

@@ -125,16 +125,40 @@ const TeacherDashboard = () => {
     if (!user) return;
     (async () => {
       const { data: ttAll } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id).eq("is_active", true);
-      const subjectIds = [...new Set((ttAll || []).map((s: any) => s.subject_id).filter(Boolean))];
+      // Also include subjects the teacher owns directly (subjects.teacher_id) —
+      // a subject with no active timetable slot yet was previously invisible
+      // here even though the teacher owns it and it may already have students.
+      const { data: ownedSubs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
+      const subjectIds = [...new Set([
+        ...((ttAll || []).map((s: any) => s.subject_id).filter(Boolean)),
+        ...((ownedSubs || []).map((s: any) => s.id)),
+      ])];
 
       let studentCount = 0, courseIds: string[] = [];
       if (subjectIds.length) {
         const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subjectIds);
         courseIds = (courses || []).map(c => c.id);
+        let enrolledUserIds: string[] = [];
         if (courseIds.length) {
-          const { count } = await supabase.from("enrollments").select("user_id", { count: "exact", head: true }).in("course_id", courseIds);
-          studentCount = count || 0;
+          const { data: enrData } = await supabase.from("enrollments").select("user_id").in("course_id", courseIds);
+          enrolledUserIds = [...new Set((enrData || []).map((e: any) => e.user_id))];
         }
+        // Students aren't individually enrolled per subject in this app — the
+        // `enrollments` table only tracks course_id and is effectively unused.
+        // Real group-student access is level-based: a non-private student
+        // whose level matches one of the teacher's subjects' levels is
+        // considered to be taking that subject. Mirrors fetchSubjectRoster()
+        // in StudentAssignments.tsx so the count here matches what students
+        // actually see and what the "My Students" page lists.
+        const { data: subRows } = await supabase.from("subjects").select("level, levels").in("id", subjectIds);
+        const allLevels = [...new Set((subRows || []).flatMap((s: any) => (s.levels?.length ? s.levels : (s.level ? [s.level] : []))))];
+        let levelUserIds: string[] = [];
+        if (allLevels.length) {
+          const { data: lvlStudents } = await supabase.from("profiles").select("user_id")
+            .eq("role", "student").neq("student_type", "private").in("level", allLevels);
+          levelUserIds = (lvlStudents || []).map((p: any) => p.user_id);
+        }
+        studentCount = new Set([...enrolledUserIds, ...levelUserIds]).size;
       }
       const { count: pvtCount } = await supabase.from("profiles").select("id", { count: "exact", head: true }).eq("assigned_teacher_id", user.id).eq("student_type", "private");
 
