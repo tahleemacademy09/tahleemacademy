@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.1"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
@@ -359,6 +359,7 @@ export type Database = {
           created_at: string | null
           feedback: string | null
           file_url: string | null
+          file_urls: string[] | null
           grade: number | null
           graded_at: string | null
           graded_by: string | null
@@ -377,6 +378,7 @@ export type Database = {
           created_at?: string | null
           feedback?: string | null
           file_url?: string | null
+          file_urls?: string[] | null
           grade?: number | null
           graded_at?: string | null
           graded_by?: string | null
@@ -395,6 +397,7 @@ export type Database = {
           created_at?: string | null
           feedback?: string | null
           file_url?: string | null
+          file_urls?: string[] | null
           grade?: number | null
           graded_at?: string | null
           graded_by?: string | null
@@ -714,6 +717,7 @@ export type Database = {
       class_participants: {
         Row: {
           banned_at: string | null
+          banned_by: string | null
           camera_on: boolean | null
           duration_minutes: number | null
           hand_raised: boolean | null
@@ -730,6 +734,7 @@ export type Database = {
         }
         Insert: {
           banned_at?: string | null
+          banned_by?: string | null
           camera_on?: boolean | null
           duration_minutes?: number | null
           hand_raised?: boolean | null
@@ -746,6 +751,7 @@ export type Database = {
         }
         Update: {
           banned_at?: string | null
+          banned_by?: string | null
           camera_on?: boolean | null
           duration_minutes?: number | null
           hand_raised?: boolean | null
@@ -761,6 +767,13 @@ export type Database = {
           student_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "class_participants_banned_by_fkey"
+            columns: ["banned_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
           {
             foreignKeyName: "class_participants_session_id_fkey"
             columns: ["session_id"]
@@ -1252,11 +1265,15 @@ export type Database = {
       }
       exam_attempts: {
         Row: {
+          admin_note: string | null
           created_at: string
+          current_question_index: number
           exam_id: string
+          extra_time_minutes: number
           feedback: string | null
           id: string
           integrity_score: number | null
+          last_activity_at: string
           passed: boolean | null
           percentage: number | null
           results_released_at: string | null
@@ -1268,16 +1285,22 @@ export type Database = {
           submitted_at: string | null
           suspicion_level: string | null
           tab_switches: number | null
+          time_extended_at: string | null
+          time_extended_by: string | null
           total_points: number | null
           updated_at: string | null
           user_id: string
         }
         Insert: {
+          admin_note?: string | null
           created_at?: string
+          current_question_index?: number
           exam_id: string
+          extra_time_minutes?: number
           feedback?: string | null
           id?: string
           integrity_score?: number | null
+          last_activity_at?: string
           passed?: boolean | null
           percentage?: number | null
           results_released_at?: string | null
@@ -1289,16 +1312,22 @@ export type Database = {
           submitted_at?: string | null
           suspicion_level?: string | null
           tab_switches?: number | null
+          time_extended_at?: string | null
+          time_extended_by?: string | null
           total_points?: number | null
           updated_at?: string | null
           user_id: string
         }
         Update: {
+          admin_note?: string | null
           created_at?: string
+          current_question_index?: number
           exam_id?: string
+          extra_time_minutes?: number
           feedback?: string | null
           id?: string
           integrity_score?: number | null
+          last_activity_at?: string
           passed?: boolean | null
           percentage?: number | null
           results_released_at?: string | null
@@ -1310,6 +1339,8 @@ export type Database = {
           submitted_at?: string | null
           suspicion_level?: string | null
           tab_switches?: number | null
+          time_extended_at?: string | null
+          time_extended_by?: string | null
           total_points?: number | null
           updated_at?: string | null
           user_id?: string
@@ -1537,12 +1568,15 @@ export type Database = {
           record_audio: boolean | null
           record_screen: boolean | null
           record_webcam: boolean | null
+          registration_deadline: string | null
+          registration_open: boolean
           rtl_mode: boolean | null
           screenshot_interval_seconds: number | null
           show_marks_per_question: boolean | null
           show_question_numbers: boolean | null
           show_results_immediately: boolean | null
           start_date: string | null
+          subject_id: string | null
           tab_switch_limit: number | null
           term: string | null
           time_limit_minutes: number | null
@@ -1597,12 +1631,15 @@ export type Database = {
           record_audio?: boolean | null
           record_screen?: boolean | null
           record_webcam?: boolean | null
+          registration_deadline?: string | null
+          registration_open?: boolean
           rtl_mode?: boolean | null
           screenshot_interval_seconds?: number | null
           show_marks_per_question?: boolean | null
           show_question_numbers?: boolean | null
           show_results_immediately?: boolean | null
           start_date?: string | null
+          subject_id?: string | null
           tab_switch_limit?: number | null
           term?: string | null
           time_limit_minutes?: number | null
@@ -1657,12 +1694,15 @@ export type Database = {
           record_audio?: boolean | null
           record_screen?: boolean | null
           record_webcam?: boolean | null
+          registration_deadline?: string | null
+          registration_open?: boolean
           rtl_mode?: boolean | null
           screenshot_interval_seconds?: number | null
           show_marks_per_question?: boolean | null
           show_question_numbers?: boolean | null
           show_results_immediately?: boolean | null
           start_date?: string | null
+          subject_id?: string | null
           tab_switch_limit?: number | null
           term?: string | null
           time_limit_minutes?: number | null
@@ -1679,6 +1719,13 @@ export type Database = {
             columns: ["course_id"]
             isOneToOne: false
             referencedRelation: "courses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "exams_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
             referencedColumns: ["id"]
           },
         ]
@@ -3583,6 +3630,7 @@ export type Database = {
           current_stage: number
           description: string | null
           id: string
+          juz_options: number[] | null
           queue_box_count: number
           queue_reveal_active: boolean
           queue_shuffle_boxes: Json | null
@@ -3593,6 +3641,7 @@ export type Database = {
           room_code: string
           scope_config: Json | null
           scope_type: string
+          session_start_at: string | null
           status: string
           time_limit_seconds: number
           title: string
@@ -3607,6 +3656,7 @@ export type Database = {
           current_stage?: number
           description?: string | null
           id?: string
+          juz_options?: number[] | null
           queue_box_count?: number
           queue_reveal_active?: boolean
           queue_shuffle_boxes?: Json | null
@@ -3617,6 +3667,7 @@ export type Database = {
           room_code: string
           scope_config?: Json | null
           scope_type?: string
+          session_start_at?: string | null
           status?: string
           time_limit_seconds?: number
           title: string
@@ -3631,6 +3682,7 @@ export type Database = {
           current_stage?: number
           description?: string | null
           id?: string
+          juz_options?: number[] | null
           queue_box_count?: number
           queue_reveal_active?: boolean
           queue_shuffle_boxes?: Json | null
@@ -3641,6 +3693,7 @@ export type Database = {
           room_code?: string
           scope_config?: Json | null
           scope_type?: string
+          session_start_at?: string | null
           status?: string
           time_limit_seconds?: number
           title?: string
@@ -3751,8 +3804,11 @@ export type Database = {
       }
       musabaqah_participants: {
         Row: {
+          access_code: string | null
+          assigned_juz: number | null
           bell_counts: Json
           camera_on: boolean
+          code_acknowledged: boolean
           competition_id: string
           created_at: string
           id: string
@@ -3760,6 +3816,7 @@ export type Database = {
           proctor_flagged: boolean
           queue_box_id: number | null
           queue_position: number
+          role: string | null
           school: string | null
           stage_scores: Json
           status: string
@@ -3767,8 +3824,11 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          access_code?: string | null
+          assigned_juz?: number | null
           bell_counts?: Json
           camera_on?: boolean
+          code_acknowledged?: boolean
           competition_id: string
           created_at?: string
           id?: string
@@ -3776,6 +3836,7 @@ export type Database = {
           proctor_flagged?: boolean
           queue_box_id?: number | null
           queue_position?: number
+          role?: string | null
           school?: string | null
           stage_scores?: Json
           status?: string
@@ -3783,8 +3844,11 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          access_code?: string | null
+          assigned_juz?: number | null
           bell_counts?: Json
           camera_on?: boolean
+          code_acknowledged?: boolean
           competition_id?: string
           created_at?: string
           id?: string
@@ -3792,6 +3856,7 @@ export type Database = {
           proctor_flagged?: boolean
           queue_box_id?: number | null
           queue_position?: number
+          role?: string | null
           school?: string | null
           stage_scores?: Json
           status?: string
@@ -3956,6 +4021,36 @@ export type Database = {
           },
         ]
       }
+      notification_deliveries: {
+        Row: {
+          channel: string
+          created_at: string
+          error: string | null
+          id: number
+          notification_id: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          error?: string | null
+          id?: never
+          notification_id?: string | null
+          status: string
+          user_id: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          error?: string | null
+          id?: never
+          notification_id?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       notification_preferences: {
         Row: {
           email_enabled: boolean
@@ -4040,6 +4135,7 @@ export type Database = {
       notifications: {
         Row: {
           created_at: string
+          dedup_key: string | null
           id: string
           is_read: boolean
           link: string | null
@@ -4054,6 +4150,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          dedup_key?: string | null
           id?: string
           is_read?: boolean
           link?: string | null
@@ -4068,6 +4165,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          dedup_key?: string | null
           id?: string
           is_read?: boolean
           link?: string | null
@@ -4166,6 +4264,42 @@ export type Database = {
           tajweed_knowledge?: string | null
           user_id?: string | null
           years_studying?: string | null
+        }
+        Relationships: []
+      }
+      page_views: {
+        Row: {
+          created_at: string
+          device_type: string | null
+          id: string
+          path: string
+          referrer: string | null
+          session_id: string
+          user_agent: string | null
+          user_id: string | null
+          visitor_id: string
+        }
+        Insert: {
+          created_at?: string
+          device_type?: string | null
+          id?: string
+          path: string
+          referrer?: string | null
+          session_id: string
+          user_agent?: string | null
+          user_id?: string | null
+          visitor_id: string
+        }
+        Update: {
+          created_at?: string
+          device_type?: string | null
+          id?: string
+          path?: string
+          referrer?: string | null
+          session_id?: string
+          user_agent?: string | null
+          user_id?: string | null
+          visitor_id?: string
         }
         Relationships: []
       }
@@ -4521,44 +4655,6 @@ export type Database = {
             columns: ["slot_id"]
             isOneToOne: false
             referencedRelation: "subject_timetable"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      proctoring_logs: {
-        Row: {
-          attempt_id: string
-          details: string | null
-          detected_at: string
-          id: string
-          points_deducted: number | null
-          severity: string | null
-          violation_type: string
-        }
-        Insert: {
-          attempt_id: string
-          details?: string | null
-          detected_at?: string
-          id?: string
-          points_deducted?: number | null
-          severity?: string | null
-          violation_type: string
-        }
-        Update: {
-          attempt_id?: string
-          details?: string | null
-          detected_at?: string
-          id?: string
-          points_deducted?: number | null
-          severity?: string | null
-          violation_type?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "proctoring_logs_attempt_id_fkey"
-            columns: ["attempt_id"]
-            isOneToOne: false
-            referencedRelation: "exam_attempts"
             referencedColumns: ["id"]
           },
         ]
@@ -6166,6 +6262,7 @@ export type Database = {
           title: string
           title_ar: string | null
           topic: string | null
+          updated_at: string
           uploaded_by: string
           visibility: string
         }
@@ -6187,6 +6284,7 @@ export type Database = {
           title: string
           title_ar?: string | null
           topic?: string | null
+          updated_at?: string
           uploaded_by: string
           visibility?: string
         }
@@ -6208,6 +6306,7 @@ export type Database = {
           title?: string
           title_ar?: string | null
           topic?: string | null
+          updated_at?: string
           uploaded_by?: string
           visibility?: string
         }
@@ -6221,6 +6320,35 @@ export type Database = {
           },
           {
             foreignKeyName: "subject_materials_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subject_registrations: {
+        Row: {
+          id: string
+          registered_at: string
+          subject_id: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          registered_at?: string
+          subject_id: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          registered_at?: string
+          subject_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_registrations_subject_id_fkey"
             columns: ["subject_id"]
             isOneToOne: false
             referencedRelation: "subjects"
@@ -6751,6 +6879,78 @@ export type Database = {
         }
         Relationships: []
       }
+      teacher_preferences: {
+        Row: {
+          announcement_notifications: boolean | null
+          autoplay_recordings: boolean | null
+          class_reminder: boolean | null
+          compact_timetable: boolean | null
+          created_at: string | null
+          dark_mode: boolean | null
+          default_subject_view: string | null
+          email_notifications: boolean | null
+          exam_submission_alert: boolean | null
+          grading_reminder: boolean | null
+          id: string
+          language: string | null
+          new_recording_alert: boolean | null
+          new_student_assignment: boolean | null
+          playback_speed: string | null
+          session_booking_alert: boolean | null
+          show_student_details: boolean | null
+          student_message_alert: boolean | null
+          updated_at: string | null
+          user_id: string
+          whatsapp_notifications: boolean | null
+        }
+        Insert: {
+          announcement_notifications?: boolean | null
+          autoplay_recordings?: boolean | null
+          class_reminder?: boolean | null
+          compact_timetable?: boolean | null
+          created_at?: string | null
+          dark_mode?: boolean | null
+          default_subject_view?: string | null
+          email_notifications?: boolean | null
+          exam_submission_alert?: boolean | null
+          grading_reminder?: boolean | null
+          id?: string
+          language?: string | null
+          new_recording_alert?: boolean | null
+          new_student_assignment?: boolean | null
+          playback_speed?: string | null
+          session_booking_alert?: boolean | null
+          show_student_details?: boolean | null
+          student_message_alert?: boolean | null
+          updated_at?: string | null
+          user_id: string
+          whatsapp_notifications?: boolean | null
+        }
+        Update: {
+          announcement_notifications?: boolean | null
+          autoplay_recordings?: boolean | null
+          class_reminder?: boolean | null
+          compact_timetable?: boolean | null
+          created_at?: string | null
+          dark_mode?: boolean | null
+          default_subject_view?: string | null
+          email_notifications?: boolean | null
+          exam_submission_alert?: boolean | null
+          grading_reminder?: boolean | null
+          id?: string
+          language?: string | null
+          new_recording_alert?: boolean | null
+          new_student_assignment?: boolean | null
+          playback_speed?: string | null
+          session_booking_alert?: boolean | null
+          show_student_details?: boolean | null
+          student_message_alert?: boolean | null
+          updated_at?: string | null
+          user_id?: string
+          whatsapp_notifications?: boolean | null
+        }
+        Relationships: []
+      }
       teacher_profiles: {
         Row: {
           accepts_group: boolean | null
@@ -6966,6 +7166,10 @@ export type Database = {
         Args: { target_user_id: string }
         Returns: undefined
       }
+      admin_force_submit_exam_attempt: {
+        Args: { _attempt_id: string }
+        Returns: Json
+      }
       admin_grade_attempt: {
         Args: {
           _attempt_id: string
@@ -6974,6 +7178,10 @@ export type Database = {
           _total: number
         }
         Returns: Json
+      }
+      admin_grant_exam_extra_time: {
+        Args: { _attempt_id: string; _minutes: number }
+        Returns: undefined
       }
       bulk_save_hifdh_assignment: {
         Args: {
@@ -7036,6 +7244,18 @@ export type Database = {
           sort_order: number
         }[]
       }
+      get_subject_roster_ids: {
+        Args: { p_subject_id: string }
+        Returns: {
+          user_id: string
+        }[]
+      }
+      get_subject_teacher_ids: {
+        Args: { p_subject_id: string }
+        Returns: {
+          user_id: string
+        }[]
+      }
       get_users_last_login: {
         Args: never
         Returns: {
@@ -7049,6 +7269,14 @@ export type Database = {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
+        Returns: boolean
+      }
+      is_chat_channel_admin: {
+        Args: { _channel_id: string; _user_id: string }
+        Returns: boolean
+      }
+      is_chat_channel_member: {
+        Args: { _channel_id: string; _user_id: string }
         Returns: boolean
       }
       mark_notifications_read: {
