@@ -195,16 +195,22 @@ export interface QuranPageWord {
   ayah: number;
   text: string;       // Uthmani script
   isAyahEnd: boolean;  // true on the last word of its ayah — render the ayah-end marker after it
+  waqfMark?: string;   // trailing waqf/pause glyph(s) (ۖۗۘۙۚۛۜ) — kept separate
+                        // from `text` so the renderer can lift it above the
+                        // line itself instead of depending on the font's own
+                        // (here, unsupported) mark-positioning to do it.
 }
 export interface QuranPageLine {
   lineNumber: number;
   words: QuranPageWord[];
 }
 
-// v3: standalone waqf marks no longer occupy their own flex/word slot (see
-// WAQF_MARK_REGEX below) — bumped so everyone's already-cached v2 layouts
-// (baked with the old, separately-spaced marks) don't hide the fix.
-const PAGE_LINES_CACHE_PREFIX = "quran_page_lines_v3_";
+// v4: waqf marks are now kept on a separate `waqfMark` field instead of
+// being concatenated into `text`, so the renderer can lift them above the
+// line with CSS rather than relying on the font's own mark-positioning
+// (which isn't rendering them raised — see QuranPage.tsx wordSpan).
+// Bumped so already-cached v2/v3 layouts (old shape) don't hide the fix.
+const PAGE_LINES_CACHE_PREFIX = "quran_page_lines_v4_";
 const MUSHAF_LAYOUT_BASE = "https://raw.githubusercontent.com/zonetecde/mushaf-layout/main/mushaf";
 
 // The source dataset tokenizes on whitespace, and in the raw Uthmani text a
@@ -290,7 +296,7 @@ export async function getPageLines(pageNumber: number): Promise<QuranPageLine[] 
         // with nothing before it to attach to.
         if (WAQF_MARK_REGEX.test(text) && words.length) {
           const prev = words[words.length - 1];
-          prev.text += text;
+          prev.waqfMark = (prev.waqfMark ?? "") + text;
           prev.isAyahEnd = prev.isAyahEnd || isAyahEnd;
           continue;
         }
