@@ -137,7 +137,7 @@ def _diff_phonemes(predicted: str, expected):
     return {"score_percent": score, "errors": errors}
 
 
-@app.cls(gpu="T4", image=image, scaledown_window=120)
+@app.cls(gpu="T4", image=image, scaledown_window=120, timeout=900)
 class Muaalem:
     @modal.enter()
     def load(self):
