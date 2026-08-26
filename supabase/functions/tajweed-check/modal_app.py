@@ -66,6 +66,20 @@ image = (
     )
 )
 
+
+def _download_model_weights():
+    """Runs once at IMAGE BUILD TIME (not per-request) so the model is
+    already on local disk when a container starts. This is what fixes the
+    repeated request timeouts — the slow part was downloading ~2GB of
+    weights from Hugging Face during the live HTTP request instead of
+    ahead of time."""
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(repo_id=MODEL_ID)
+
+
+image = image.run_function(_download_model_weights)
+
 with image.imports():
     import numpy as np
     import librosa
