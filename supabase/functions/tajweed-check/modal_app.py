@@ -172,7 +172,7 @@ class Muaalem:
 web_app_image = image
 
 
-@app.function(image=web_app_image)
+@app.function(image=web_app_image, timeout=900)
 @modal.asgi_app()
 def fastapi_app():
     from fastapi import FastAPI, Request
