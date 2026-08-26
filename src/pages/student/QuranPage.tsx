@@ -17,7 +17,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { SURAHS, RECITERS, DEFAULT_RECITER } from "@/components/hifdh/surahData";
 import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage, getPageGlyphLines, prefetchPageGlyphLines, QcfLine } from "@/lib/quranTextApi";
-import { loadQcfPageFont, qcfPageFontFamily, isQcfPageFontLoaded, UTHMANIC_HAFS_FONT_FAMILY, ensureUthmanicHafsFontLoaded } from "@/lib/qcfFontLoader";
+import { loadQcfPageFont, qcfPageFontFamily, isQcfPageFontLoaded, ensureUthmanicHafsFontLoaded } from "@/lib/qcfFontLoader";
 import { listRecitationsForSurah, CustomRecitation } from "@/lib/quranRecitations";
 import { buildAyahSegments, CUSTOM_RECITER_PREFIX } from "@/lib/quranPlaybackSource";
 import { useQuranAudioEngine, AyahSegment } from "@/hooks/useQuranAudioEngine";
@@ -70,7 +70,7 @@ const PAGE_MAX_WIDTH = 1180;
 // change at all, just the font it draws with.
 const Q_MUSHAF_FONT = "'UthmanicHafs', 'Amiri Quran', 'Amiri', 'Scheherazade New', serif";
 
-// Divine-name highlighting (Allah only — see chat): matches the word's
+// Divine-name / divine-reference highlighting: matches the word's
 // *skeleton* (diacritics and pause marks stripped, alef variants folded to
 // one form) against the small, closed set of ways "الله" actually appears
 // in the Qur'an — bare, with a one-letter prefix (بالله/تالله/والله/فالله),
@@ -78,7 +78,7 @@ const Q_MUSHAF_FONT = "'UthmanicHafs', 'Amiri Quran', 'Amiri', 'Scheherazade New
 // skeleton, not just searching for the "لله" substring anywhere in a word,
 // matters: plenty of unrelated words (e.g. "كُلُّهُ", "all of it") contain
 // that same letter sequence internally, and a plain substring search would
-// wrongly light them up. "Rabb" is deliberately excluded — see chat.
+// wrongly light them up.
 const AR_DIACRITICS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u08D3-\u08FF]/g;
 const AR_ALEF_VARIANTS = /[أإآٱ]/g;
 const arabicSkeleton = (raw: string) => raw.replace(AR_DIACRITICS, "").replace(AR_ALEF_VARIANTS, "ا").trim();
@@ -89,7 +89,61 @@ const isAllahWord = (text: string) => {
   const skeleton = arabicSkeleton(text);
   return ALLAH_SKELETONS.has(skeleton) || ALLAH_PREFIXED_FULL.test(skeleton) || ALLAH_ASSIMILATED.test(skeleton);
 };
+
+// "Rabb" ("Lord") + a possessive pronoun suffix — ربّهم، ربّك، ربّنا، ربّي،
+// bare ربّ (which carries an implicit "my" in e.g. رَبِّ ٱغْفِرْ لِى) — with
+// the same optional one-letter prefix (بربهم/فربك/ونحوه) as the Allah
+// pattern above. Overwhelmingly this refers to Allah in the Qur'an, so it's
+// included in the same highlight as the name "Allah" itself, matching how
+// this reference Mushaf edition colors it. A handful of verses in Surah
+// Yusuf use "Rabb" for a human master instead (the Aziz, then the king) —
+// those specific ayahs are excluded below rather than highlighted wrongly.
+const RABB_SKELETON = /^[بوفك]?رب(كما|كن|كم|هما|هن|هم|ها|نا|ي|ك)?$/;
+const RABB_HUMAN_MASTER_EXCEPTIONS = new Set(["12:23", "12:42", "12:50"]);
+const isDivineReferenceWord = (text: string, surah: number, ayah: number) => {
+  if (isAllahWord(text)) return true;
+  if (!RABB_SKELETON.test(arabicSkeleton(text))) return false;
+  return !RABB_HUMAN_MASTER_EXCEPTIONS.has(`${surah}:${ayah}`);
+};
 const Q_ALLAH_RED = "#B3261E";
+
+// ── Ayah-end ornament — a small gold flower/rosette medallion with the
+// verse number centered inside, the way a printed Mushaf marks the end of
+// each ayah, rather than a plain bracketed number. Built from a tiny inline
+// SVG (8 petals rotated around a center disc) instead of relying on a
+// font's own end-of-ayah glyph, so it renders identically regardless of
+// which font/fallback path drew the word before it.
+function AyahMedallion({ ayah }: { ayah: number }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      position: "relative", width: "1.7em", height: "1.7em", margin: "0 2px",
+      verticalAlign: "middle", flexShrink: 0,
+    }}>
+      <svg viewBox="0 0 100 100" aria-hidden="true" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
+        {Array.from({ length: 8 }).map((_, i) => (
+          <ellipse key={i} cx="50" cy="20" rx="13" ry="21" fill={Q_GOLD} stroke={Q_GOLD_DARK} strokeWidth="1.5"
+            opacity={0.92} transform={`rotate(${i * 45} 50 50)`} />
+        ))}
+        <circle cx="50" cy="50" r="20" fill={Q_PARCH_ALT} stroke={Q_GOLD_DARK} strokeWidth="2" />
+      </svg>
+      <span style={{ position: "relative", fontSize: "0.5em", fontWeight: 700, color: Q_GOLD_DARK, lineHeight: 1 }}>
+        {toArabicNum(ayah)}
+      </span>
+    </span>
+  );
+}
+
+// Small woven/braided end-piece for the surah banner — a diagonal lattice
+// standing in for the arabesque strapwork at either end of a printed
+// Mushaf's surah header, without needing an external image asset.
+const arabesqueBlockStyle: CSSProperties = {
+  width: 30, alignSelf: "stretch", borderRadius: 5,
+  backgroundColor: Q_GOLD_DARK,
+  backgroundImage: `repeating-linear-gradient(45deg, transparent 0 4px, rgba(15,45,31,0.55) 4px 8px), repeating-linear-gradient(-45deg, transparent 0 4px, rgba(15,45,31,0.55) 4px 8px)`,
+  border: `1px solid ${Q_GOLD}`,
+  flexShrink: 0,
+};
 
 type SidebarTab = "surah" | "juz" | "bookmarks";
 
@@ -765,7 +819,7 @@ export default function QuranPage() {
                     cursor: "pointer", borderRadius: 6, padding: "2px 1px",
                     background: (engine.currentSurah === surah && engine.currentAyah === ayah) ? Q_GOLD
                       : (selected?.surah === surah && selected?.ayah === ayah) ? Q_PARCH_ALT : "transparent",
-                    color: isAllahWord(text) ? Q_ALLAH_RED : undefined,
+                    color: isDivineReferenceWord(text, surah, ayah) ? Q_ALLAH_RED : undefined,
                     transition: "background .2s",
                   }}
                 >
@@ -788,7 +842,7 @@ export default function QuranPage() {
                       {waqfMark}
                     </span>
                   )}
-                  {isAyahEnd && <span style={{ fontSize: "0.67em", color: Q_GOLD_DARK, margin: "0 3px" }}>﴿{toArabicNum(ayah)}﴾</span>}
+                  {isAyahEnd && <AyahMedallion ayah={ayah} />}
                   {" "}
                 </span>
               );
@@ -801,19 +855,45 @@ export default function QuranPage() {
                 return (
                   <div key={`div-${surah}`} style={{ margin: isFirst ? "0 0 16px" : "26px 0 16px" }}>
                     <div style={{
+                      display: "flex", alignItems: "stretch", gap: 6,
                       borderRadius: 10, padding: 3,
                       background: `linear-gradient(135deg, ${Q_GOLD_DARK} 0%, ${Q_GOLD} 45%, #e9d18f 70%, ${Q_GOLD_DARK} 100%)`,
                       boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
                     }}>
+                      {/* Woven end-piece, echoing the arabesque strapwork
+                          that frames a printed Mushaf's surah header. */}
+                      <div style={arabesqueBlockStyle} />
+
+                      {/* Surah's sequence number + its verse count — the
+                          small roundel and pill sitting beside the header
+                          on a printed page. */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                        <span style={{
+                          width: 28, height: 28, borderRadius: "50%", border: `1.5px solid ${Q_GOLD_DARK}`,
+                          background: Q_PARCH_ALT, display: "flex", alignItems: "center", justifyContent: "center",
+                          fontFamily: Q_ARABIC_FONT, fontSize: 13, color: Q_GREEN, fontWeight: 700, flexShrink: 0,
+                        }}>{toArabicNum(meta.num)}</span>
+                        <span style={{
+                          padding: "3px 8px", borderRadius: 20, border: `1px solid ${Q_GOLD_DARK}`,
+                          background: Q_PARCH_ALT, fontFamily: Q_ARABIC_FONT, fontSize: 11, color: Q_GREEN, whiteSpace: "nowrap",
+                        }}>
+                          آياتها {toArabicNum(meta.verses)}
+                        </span>
+                      </div>
+
                       <div style={{
-                        borderRadius: 7, border: `1px solid ${Q_GOLD}`, background: Q_PARCH_ALT,
+                        flex: 1, borderRadius: 7, border: `1px solid ${Q_GOLD}`, background: Q_PARCH_ALT,
                         backgroundImage: `repeating-linear-gradient(135deg, rgba(201,168,76,0.08) 0 5px, transparent 5px 11px)`,
                         padding: "9px 16px", textAlign: "center",
+                        display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
                         <span style={{ fontFamily: Q_ARABIC_FONT, fontSize: 22, color: Q_GREEN, fontWeight: 700 }}>
                           سُورَةُ {meta.nameAr}
                         </span>
                       </div>
+
+                      {/* Mirrored woven end-piece on the far side. */}
+                      <div style={arabesqueBlockStyle} />
                     </div>
                     {/* Surah 9 (At-Tawbah) has no Bismillah; Surah 1's ayah 1 IS
                         the Bismillah itself, so drawing it again here would
@@ -881,17 +961,22 @@ export default function QuranPage() {
                               const ayahKey = `${w.surah}-${w.ayah}`;
                               const isFirstOfAyah = !seenAyah.has(ayahKey);
                               seenAyah.add(ayahKey);
-                              // Quran Foundation's own guidance: verse-end
-                              // markers (the ﴿n﴾ ayah-number ornament) always
-                              // render with the plain Unicode font, never the
-                              // QCF glyph — that ornament's glyph reads
-                              // better drawn that way. Every other word uses
-                              // this page's real glyph code once its font
-                              // has finished loading; until then it shows the
-                              // API's own Unicode fallback text so nothing is
-                              // ever blank while the font downloads.
+                              // Verse-end markers now render as the same
+                              // flower-medallion ornament used in the
+                              // fallback layout (AyahMedallion) instead of
+                              // trusting a font glyph for it — a hand-built
+                              // rosette looks the same everywhere regardless
+                              // of which page font has or hasn't loaded.
+                              // Every other word uses this page's real glyph
+                              // code once its font has finished loading;
+                              // until then it shows the API's own Unicode
+                              // fallback text so nothing is ever blank while
+                              // the font downloads.
                               const isEndMarker = w.charType === "end";
                               const useGlyph = !isEndMarker && glyphFontReady && !!w.codeV2;
+                              if (isEndMarker) {
+                                return <AyahMedallion key={key} ayah={w.ayah} />;
+                              }
                               return (
                                 <span
                                   key={key}
@@ -899,10 +984,13 @@ export default function QuranPage() {
                                   onClick={() => handleVerseTap(w.surah, w.ayah)}
                                   style={{
                                     cursor: "pointer", borderRadius: 6, padding: "2px 1px",
-                                    fontFamily: isEndMarker ? UTHMANIC_HAFS_FONT_FAMILY : (useGlyph ? pageFontFamily : Q_MUSHAF_FONT),
+                                    fontFamily: useGlyph ? pageFontFamily : Q_MUSHAF_FONT,
                                     background: (engine.currentSurah === w.surah && engine.currentAyah === w.ayah) ? Q_GOLD
                                       : (selected?.surah === w.surah && selected?.ayah === w.ayah) ? Q_PARCH_ALT : "transparent",
-                                    color: isEndMarker ? Q_GOLD_DARK : (!useGlyph && isAllahWord(w.textQpcHafs) ? Q_ALLAH_RED : undefined),
+                                    // CSS `color` still recolors a QCF glyph normally (it's a plain
+                                    // outline font, not a fixed-color one), so this now applies to
+                                    // both the glyph and fallback-text render paths, not just fallback.
+                                    color: isDivineReferenceWord(w.textQpcHafs, w.surah, w.ayah) ? Q_ALLAH_RED : undefined,
                                     transition: "background .2s",
                                   }}
                                 >
