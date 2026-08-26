@@ -253,11 +253,13 @@ const TeacherDashboard = () => {
         @keyframes fadeUp   { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
         .td-qa-tile { text-decoration: none; animation: fadeUp .4s ease both; }
         .td-qa-tile:active > div { transform: scale(.94); }
-        .td-card { background:#fff; border-radius:18px; border:1px solid ${BORDER}; overflow:hidden; box-shadow:0 2px 12px rgba(0,0,0,.06); }
-        .td-card-head { padding:14px 18px; border-bottom:1px solid ${BORDER}; display:flex; align-items:center; justify-content:space-between; }
-        .td-card-body { padding:12px 14px; display:flex; flex-direction:column; gap:9px; }
-        .td-row { display:flex; align-items:center; gap:11px; padding:11px 13px; border-radius:13px; }
-        .td-icon { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+        .td-card { background:#fff; border-radius:20px; border:1px solid ${BORDER}; overflow:hidden; box-shadow:0 10px 25px -8px rgba(15,45,31,0.10); transition:box-shadow .2s ease; }
+        .td-card:hover { box-shadow:0 16px 32px -8px rgba(15,45,31,0.14); }
+        .td-card-head { padding:16px 20px; border-bottom:1px solid ${BORDER}; display:flex; align-items:center; justify-content:space-between; }
+        .td-card-body { padding:14px 16px; display:flex; flex-direction:column; gap:10px; }
+        .td-row { display:flex; align-items:center; gap:11px; padding:12px 14px; border-radius:14px; transition:transform .15s ease; }
+        .td-row:hover { transform:translateY(-1px); }
+        .td-icon { width:38px; height:38px; border-radius:11px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
       `}</style>
 
       <AcademyStatusBanner compact />
@@ -398,7 +400,10 @@ const TeacherDashboard = () => {
             { label: t("Needs Grade", "للتصحيح"),     value: pendingTotal,                           color: "#DC2626", to: "/teacher/grading", icon: CheckSquare },
           ].map(({ label, value, color, to, icon: Icon }, i) => (
             <Link key={i} to={to} style={{ textDecoration: "none" }}>
-              <div style={{ background: "#fff", borderRadius: 14, padding: "12px 10px", border: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 6, boxShadow: "0 1px 4px rgba(0,0,0,.04)" }}>
+              <div style={{ background: "#fff", borderRadius: 16, padding: "14px 12px", border: `1px solid ${BORDER}`, display: "flex", flexDirection: "column", gap: 7, boxShadow: "0 8px 20px -8px rgba(15,45,31,0.10)", transition: "transform .15s ease, box-shadow .15s ease" }}
+                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 12px 26px -8px rgba(15,45,31,0.16)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 8px 20px -8px rgba(15,45,31,0.10)"; }}
+              >
                 <div style={{ width: 34, height: 34, borderRadius: 10, background: `${color}18`, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <Icon size={16} color={color} />
                 </div>

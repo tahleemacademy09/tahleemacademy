@@ -451,58 +451,74 @@ const TeacherClasses = () => {
   );
 
   return (
-    <div className="p-4 md:p-6 space-y-6">
-
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{t("Live Classes", "الفصول المباشرة")}</h1>
-        <Dialog open={showCreate} onOpenChange={setShowCreate}>
-          <DialogTrigger asChild>
-            <Button><Plus className="h-4 w-4 me-2" />{t("Schedule Class", "جدولة حصة")}</Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>{t("Schedule New Class", "جدولة حصة جديدة")}</DialogTitle></DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label>{t("Subject", "المادة")}</Label>
-                <Select value={form.subject_id} onValueChange={v => setForm({ ...form, subject_id: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {subjects.map(s => <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white pb-24">
+      {/* ── Sticky Header ── */}
+      <div className="sticky top-0 z-40 border-b border-white/10 shadow-lg backdrop-blur-md" style={{ background: "linear-gradient(135deg, #064E3B 0%, #083320 100%)" }}>
+        <div className="mx-auto max-w-5xl px-3 py-3 sm:px-6 sm:py-5">
+          <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 sm:h-11 sm:w-11">
+                <Video className="h-5 w-5 text-white" />
               </div>
-              <div><Label>{t("Topic (English)", "الموضوع")}</Label><Input value={form.topic} onChange={e => setForm({ ...form, topic: e.target.value })} /></div>
-              <div><Label>{t("Topic (Arabic)", "الموضوع (عربي)")}</Label><Input dir="rtl" value={form.topic_ar} onChange={e => setForm({ ...form, topic_ar: e.target.value })} /></div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>{t("Date", "التاريخ")}</Label><Input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
-                <div><Label>{t("Time", "الوقت")}</Label><Input type="time" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} /></div>
+              <div className="min-w-0">
+                <h1 className="m-0 truncate text-lg font-black tracking-tight text-white sm:text-xl">{t("Live Classes", "الفصول المباشرة")}</h1>
+                <p className="m-0 truncate text-[11px] font-medium text-white/70">{t("Today's schedule and past sessions", "جدول اليوم والحصص السابقة")}</p>
               </div>
-              <div><Label>{t("Duration (min)", "المدة (دقائق)")}</Label><Input type="number" value={form.duration} onChange={e => setForm({ ...form, duration: Number(e.target.value) })} /></div>
-              <div className="flex items-center justify-between">
-                <Label>{t("Record?", "تسجيل؟")}</Label>
-                <Switch checked={form.is_recorded} onCheckedChange={v => setForm({ ...form, is_recorded: v })} />
-              </div>
-              <Button onClick={handleCreate} className="w-full">{t("Schedule", "جدولة")}</Button>
             </div>
-          </DialogContent>
-        </Dialog>
+            <Dialog open={showCreate} onOpenChange={setShowCreate}>
+              <DialogTrigger asChild>
+                <button className="flex shrink-0 items-center gap-1.5 rounded-xl border-0 px-4 py-2.5 text-xs font-black shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl active:scale-95 sm:gap-2 sm:px-6 sm:text-sm" style={{ background: "#c9a84c", color: "#064E3B" }}>
+                  <Plus className="h-4 w-4" />{t("Schedule Class", "جدولة حصة")}
+                </button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md rounded-2xl">
+                <DialogHeader><DialogTitle>{t("Schedule New Class", "جدولة حصة جديدة")}</DialogTitle></DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <Label className="text-sm font-bold text-slate-700">{t("Subject", "المادة")}</Label>
+                    <Select value={form.subject_id} onValueChange={v => setForm({ ...form, subject_id: v })}>
+                      <SelectTrigger className="h-11 rounded-lg"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {subjects.map(s => <SelectItem key={s.id} value={s.id}>{s.title}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div><Label className="text-sm font-bold text-slate-700">{t("Topic (English)", "الموضوع")}</Label><Input className="h-11 rounded-lg" value={form.topic} onChange={e => setForm({ ...form, topic: e.target.value })} /></div>
+                  <div><Label className="text-sm font-bold text-slate-700">{t("Topic (Arabic)", "الموضوع (عربي)")}</Label><Input dir="rtl" className="h-11 rounded-lg" value={form.topic_ar} onChange={e => setForm({ ...form, topic_ar: e.target.value })} /></div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><Label className="text-sm font-bold text-slate-700">{t("Date", "التاريخ")}</Label><Input type="date" className="h-11 rounded-lg" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
+                    <div><Label className="text-sm font-bold text-slate-700">{t("Time", "الوقت")}</Label><Input type="time" className="h-11 rounded-lg" value={form.time} onChange={e => setForm({ ...form, time: e.target.value })} /></div>
+                  </div>
+                  <div><Label className="text-sm font-bold text-slate-700">{t("Duration (min)", "المدة (دقائق)")}</Label><Input type="number" className="h-11 rounded-lg" value={form.duration} onChange={e => setForm({ ...form, duration: Number(e.target.value) })} /></div>
+                  <div className="flex items-center justify-between rounded-xl border-2 border-slate-200 px-3 py-2.5">
+                    <Label className="text-sm font-bold text-slate-700">{t("Record?", "تسجيل؟")}</Label>
+                    <Switch checked={form.is_recorded} onCheckedChange={v => setForm({ ...form, is_recorded: v })} />
+                  </div>
+                  <button onClick={handleCreate} className="w-full rounded-xl py-3 text-sm font-black text-white shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl active:scale-95" style={{ background: "#064E3B" }}>{t("Schedule", "جدولة")}</button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
       </div>
 
+      {/* ── Main Content ── */}
+      <div className="mx-auto max-w-5xl space-y-5 px-3 pt-6 sm:px-6 sm:pt-8">
+
       {/* ── Upcoming / Active ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Calendar className="h-5 w-5" />
+      <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
+        <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Calendar className="h-5 w-5 text-emerald-700" />
             {t("Today's Classes", "حصص اليوم")}
             {upcoming.length > 0 && (
-              <Badge className="bg-primary/20 text-primary border-primary/30 ms-1">
+              <Badge className="ms-1 rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-100">
                 {upcoming.length}
               </Badge>
             )}
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 p-4 sm:p-6">
           {upcoming.map(s => {
             const isActive = s.status === "active";
             const subInfo = subjects.find(sub => sub.id === s.subject_id) || (s as any).subjects;
@@ -521,12 +537,12 @@ const TeacherClasses = () => {
             return (
               <div
                 key={s.id}
-                className={`rounded-xl border p-4 space-y-2.5 transition-all ${
+                className={`rounded-2xl border-2 p-4 space-y-2.5 shadow-sm transition-all ${
                   isActive
                     ? "border-green-500/50 bg-green-50/50 dark:bg-green-950/20"
                     : isImminent
                     ? "border-amber-400/50 bg-amber-50/50 dark:bg-amber-950/20"
-                    : "border-border bg-muted/30"
+                    : "border-slate-200 bg-white hover:border-slate-300"
                 } ${isPastToday ? "opacity-45" : ""}`}
               >
                 {/* Title row: subject name + status badge (if any) */}
@@ -612,13 +628,13 @@ const TeacherClasses = () => {
       </Card>
 
       {/* ── Past Classes ── */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5" />{t("Past Classes", "الحصص السابقة")}
+      <Card className="overflow-hidden rounded-2xl border-slate-200 shadow-sm">
+        <CardHeader className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white">
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Clock className="h-5 w-5 text-emerald-700" />{t("Past Classes", "الحصص السابقة")}
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-3 p-4 sm:p-6">
           {(() => {
             // Group past sessions by subject so the same class run many
             // times doesn't show as a wall of identical-looking rows.
@@ -652,7 +668,7 @@ const TeacherClasses = () => {
             return groupList.map(g => {
               const isOpen = expandedPastSubject === g.subId;
               return (
-                <div key={g.subId} className="rounded-lg bg-muted/50 overflow-hidden">
+                <div key={g.subId} className="rounded-xl bg-slate-50 border border-slate-200 overflow-hidden">
                   {/* Subject summary row — tap to expand */}
                   <button
                     onClick={() => setExpandedPastSubject(isOpen ? null : g.subId)}
@@ -697,6 +713,7 @@ const TeacherClasses = () => {
           })()}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 };
