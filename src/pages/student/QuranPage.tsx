@@ -79,9 +79,19 @@ const Q_MUSHAF_FONT = "'UthmanicHafs', 'Amiri Quran', 'Amiri', 'Scheherazade New
 // matters: plenty of unrelated words (e.g. "كُلُّهُ", "all of it") contain
 // that same letter sequence internally, and a plain substring search would
 // wrongly light them up.
-const AR_DIACRITICS = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u08D3-\u08FF]/g;
 const AR_ALEF_VARIANTS = /[أإآٱ]/g;
-const arabicSkeleton = (raw: string) => raw.replace(AR_DIACRITICS, "").replace(AR_ALEF_VARIANTS, "ا").trim();
+// Robust against any stray/invisible mark Quran Foundation's per-word data
+// might include (diacritics, tatweel, joiners, annotation glyphs) by doing
+// the opposite of a blocklist: keep ONLY the core Arabic letters, discard
+// everything else. The previous version enumerated diacritic code-point
+// ranges to strip — reliable for the alquran.cloud verse text, but any
+// leftover character it didn't know about (e.g. from the QCF word API)
+// silently broke the skeleton match, which is why "بِرَبِّهِمْ" wasn't
+// matching the Rabb pattern below.
+const arabicSkeleton = (raw: string) => {
+  const lettersOnly = (raw.match(/[\u0621-\u063A\u0641-\u064A]/g) || []).join("");
+  return lettersOnly.replace(AR_ALEF_VARIANTS, "ا");
+};
 const ALLAH_SKELETONS = new Set(["الله", "اللهم"]);
 const ALLAH_PREFIXED_FULL = /^[بتوفك]الله(م)?$/;  // بالله / تالله / والله / فالله / كالله (+ اللهم)
 const ALLAH_ASSIMILATED = /^[وف]?لله$/;            // لله / ولله / فلله
@@ -117,7 +127,15 @@ function AyahMedallion({ ayah }: { ayah: number }) {
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", justifyContent: "center",
-      position: "relative", width: "1.7em", height: "1.7em", margin: "0 2px",
+      // FIX (medallion rendered far bigger than the surrounding text): a
+      // QCF Mushaf glyph's *visible* ink at a given font-size is much
+      // smaller than that font-size number implies — the font reserves a
+      // lot of headroom in its own em-square for stacked diacritics and
+      // waqf marks. This SVG has no such reserved space; it fills its box
+      // edge-to-edge. Sized at the same 1.7em as before, it dwarfed the
+      // actual word glyphs next to it. Shrunk to bring its visible size in
+      // line with a normal word instead of a nominal font-size match.
+      position: "relative", width: "1.05em", height: "1.05em", margin: "0 1px",
       verticalAlign: "middle", flexShrink: 0,
     }}>
       <svg viewBox="0 0 100 100" aria-hidden="true" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
@@ -127,7 +145,7 @@ function AyahMedallion({ ayah }: { ayah: number }) {
         ))}
         <circle cx="50" cy="50" r="20" fill={Q_PARCH_ALT} stroke={Q_GOLD_DARK} strokeWidth="2" />
       </svg>
-      <span style={{ position: "relative", fontSize: "0.5em", fontWeight: 700, color: Q_GOLD_DARK, lineHeight: 1 }}>
+      <span style={{ position: "relative", fontSize: "0.42em", fontWeight: 700, color: Q_GOLD_DARK, lineHeight: 1 }}>
         {toArabicNum(ayah)}
       </span>
     </span>
