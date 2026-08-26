@@ -154,7 +154,6 @@ export default function QuranPage() {
   // shrinks together to stay on one physical page. We measure the page's
   // natural height and scale the entire page uniformly to fit the visible
   // area, instead of scrolling or shrinking only some lines.
-  const [pageScale, setPageScale] = useState(1);
   const [linesReady, setLinesReady] = useState(false);
   const [pageReady, setPageReady] = useState(false); // true once the page is measured + correctly scaled — gates visibility so nothing ever visibly resizes
   // Guards the swipe flash: while a page is turning, `qcfLines` is briefly
@@ -364,36 +363,43 @@ export default function QuranPage() {
 
   // ── Fit the whole page to the screen — no scrolling, ever ──────────────
   // Once the per-line font sizes above have settled the page's *natural*
-  // height, compare that to the space actually available and shrink the
-  // entire page (banner, Bismillah, every line) by one uniform factor so
-  // it always lands exactly inside the visible area, the way a printed
-  // Mushaf page is a fixed size that never needs a scrollbar.
+  // height, compare that to the space actually available. If it's taller
+  // than the screen, shrink pageFontSize itself (not a CSS transform) so
+  // the page fits without ever needing to scroll.
   //
-  // FIX (page visibly "shows big, then shrinks to normal" on every turn):
-  // this used to (a) always render the page as soon as `linesReady` was
-  // true, at whatever `pageScale` was left over from the *previous* page,
-  // and (b) defer the corrected measurement one extra frame via
-  // requestAnimationFrame — so the browser painted the wrong size at least
-  // once before snapping to the right one on the very next frame, which is
-  // exactly what read as an animated shrink. Now the page stays hidden
-  // (`pageReady` below) until this effect has measured and applied the
-  // *correct* scale for the page currently on screen, and it measures
-  // synchronously in this layout effect — before the browser paints at all
-  // — instead of waiting an extra animation frame. The result is a plain
-  // static page at its final size the instant it appears, never a resize.
+  // FIX (page rendered "slim" — narrow column with empty margins left and
+  // right on phones): this used to apply a uniform CSS
+  // `transform: scale(pageScale)` to the whole page box to fit it
+  // vertically. A uniform scale shrinks WIDTH by the exact same factor as
+  // height, and with transformOrigin "top center" that shrinkage is
+  // centered — so on a tall page / small phone screen, the page visibly
+  // sat in a slim, centered column with wasted space on both sides.
+  //
+  // Every full line is `text-align: justify` with `text-align-last:
+  // justify` (see isFullLine below), so it ALWAYS stretches to fill 100%
+  // of the container's width at ANY font-size — that's what CSS justify
+  // does. That means the width-filling behavior never actually depended
+  // on using the width-fit font size specifically; reducing pageFontSize
+  // further to also satisfy the height constraint still fills the full
+  // width, just with a smaller font — instead of the old approach, which
+  // kept the (larger) width-fit font size but then shrank the whole
+  // rendered box (text included) down and in from both edges.
   useLayoutEffect(() => {
     const container = pageBoxRef.current;
     const wrapper = scaleWrapperRef.current;
     if (!container || !wrapper || !linesReady) return;
     const recompute = () => {
       const availableH = container.clientHeight;
-      // Measure at natural size — a CSS transform: scale() never affects
-      // scrollHeight/clientHeight, so this stays accurate even while a
-      // previous scale is already applied.
       const naturalH = wrapper.scrollHeight;
       if (!availableH || !naturalH) return;
-      const next = naturalH > availableH ? Math.max(0.32, availableH / naturalH) : 1;
-      setPageScale(prev => (Math.abs(prev - next) > 0.005 ? next : prev));
+      if (naturalH <= availableH) { setPageReady(true); return; }
+      // Text height scales ~linearly with font-size, so shrink pageFontSize
+      // by the same ratio the height needs to shrink by, floored at the
+      // legibility minimum. Re-measuring after this triggers the
+      // ResizeObserver again, converging quickly (usually one more pass)
+      // since naturalH <= availableH short-circuits above once it fits.
+      const ratio = availableH / naturalH;
+      setPageFontSize(prev => Math.max(MIN_LINE_FONT_SIZE, Math.floor(prev * ratio)));
       setPageReady(true);
     };
     recompute();
@@ -721,7 +727,7 @@ export default function QuranPage() {
             ref={scaleWrapperRef}
             style={{
               width: "100%", maxWidth: PAGE_MAX_WIDTH,
-              transform: `translateX(${dragTranslate}px) scale(${pageScale})`,
+              transform: `translateX(${dragTranslate}px)`,
               transformOrigin: "top center",
               // Stays hidden — not unmounted, so it can still be measured —
               // until it's already sized correctly for this exact page, so
