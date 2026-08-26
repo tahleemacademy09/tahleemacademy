@@ -86,26 +86,28 @@ const MusabaqahHub = () => {
       border:   "1.5px solid rgba(74,222,128,0.3)",
       glow:     "rgba(74,222,128,0.2)",
     },
-    ...(isJudge ? [{
+    {
       id:       "general",
       icon:     <BookOpen size={40} color="#60A5FA"/>,
       emoji:    "📚",
       title:    "General Subject Musabaqah",
       titleAr:  "مسابقة المواد العامة",
       subtitle: "Hadith · Fiqh · Tawheed · Nahw · Sirah",
-      desc:     "Live oral examinations on any Islamic or Arabic subject — create events, build a question bank, admit students, and judge live with rubric scoring.",
+      desc:     isJudge
+        ? "Live oral examinations on any Islamic or Arabic subject — create events, build a question bank, admit students, and judge live with rubric scoring."
+        : "Register for live oral examinations on Hadith, Fiqh, Tawheed and other subjects, then join the waiting room when it's your turn.",
       stats:    [
-        { icon:<Gavel size={12}/>, label:"Live oral judging" },
+        { icon:<Gavel size={12}/>, label: isJudge ? "Live oral judging" : "Live oral exam" },
         { icon:<Users size={12}/>, label:"Registration & queue" },
-        { icon:<Star size={12}/>,  label:"Rubric scoring" },
+        { icon:<Star size={12}/>,  label: isJudge ? "Rubric scoring" : "Access code entry" },
       ],
-      route:    "/musabaqah/general",
+      route:    isJudge ? "/musabaqah/general" : "/student/musabaqah/general",
       accent:   "#60A5FA",
-      badge:    "Create & Judge",
+      badge:    isJudge ? "Create & Judge" : "Register",
       badgeBg:  "rgba(96,165,250,0.15)",
       border:   "1.5px solid rgba(96,165,250,0.3)",
       glow:     "rgba(96,165,250,0.2)",
-    }] : []),
+    },
   ];
 
   return (
