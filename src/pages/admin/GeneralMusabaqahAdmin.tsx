@@ -166,7 +166,7 @@ export default function GeneralMusabaqahAdmin() {
     toast({ title: "Musabaqah created" });
     setDialogOpen(false);
     await load();
-    if (data?.id) navigate(`/admin/musabaqah/general/${data.id}`);
+    if (data?.id) navigate(`/musabaqah/general/${data.id}`);
   };
 
   const deleteEvent = async (id: string, title: string) => {
@@ -223,7 +223,7 @@ export default function GeneralMusabaqahAdmin() {
               return (
                 <Card
                   key={ev.id}
-                  onClick={() => navigate(`/admin/musabaqah/general/${ev.id}`)}
+                  onClick={() => navigate(`/musabaqah/general/${ev.id}`)}
                   style={{ background: GM, border: "1px solid rgba(201,168,76,0.2)", cursor: "pointer" }}
                   className="hover:border-[rgba(201,168,76,0.5)] transition-colors"
                 >
