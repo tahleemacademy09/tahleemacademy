@@ -606,8 +606,10 @@ export default function GeneralMusabaqahEventDetail() {
                               <PhoneCall size={14} className="mr-1" /> Call
                             </Button>
                           )}
-                          {["called", "ready", "in_progress"].includes(p.status) && (
-                            <Badge style={{ background: "rgba(96,165,250,0.15)", color: "#60A5FA", border: "none" }}>Currently examining</Badge>
+                          {["called", "ready", "in_progress", "paused"].includes(p.status) && (
+                            <Button size="sm" onClick={() => navigate(`/musabaqah/general/${id}/exam`)} style={{ background: "#60A5FA", color: "#06131f", fontWeight: 700 }}>
+                              Enter Exam Room
+                            </Button>
                           )}
                           <Button size="sm" variant="outline" onClick={() => regenerateCode(p)}>
                             <RotateCcw size={14} className="mr-1" /> New Code
