@@ -712,7 +712,18 @@ export default function QuranPage() {
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
         style={{
-          flex: 1, overflow: "hidden",
+          flex: 1,
+          // FIX ("some text not showing on a page"): this was `overflow:
+          // "hidden"`. The fit-to-screen effect shrinks the font down to
+          // MIN_LINE_FONT_SIZE trying to make the page fit without
+          // scrolling, but on a very cramped viewport (or a page with an
+          // unusually tall surah banner) it can still come up short even at
+          // that floor. With `hidden`, whatever didn't fit was silently
+          // clipped — present in the DOM, invisible on screen. `auto` keeps
+          // pages that DO fit exactly as static as before (no visible
+          // scrollbar/movement) but means the rare page that doesn't fit
+          // is still fully reachable by scrolling, instead of losing lines.
+          overflowY: "auto", overflowX: "hidden",
           padding: selected != null ? "8px 8px 64px" : "8px 8px 10px",
           position: "relative",
           touchAction: "pan-y", display: "flex", justifyContent: "center", alignItems: "flex-start",
@@ -841,7 +852,15 @@ export default function QuranPage() {
                       // edge-to-edge when it's actually full; a short
                       // leftover line sits at its natural width instead.
                       const isFullLine = line.words.length >= 4;
-                      const rowLineHeight = isFullLine ? 2.1 : line.words.length <= 2 ? 1.25 : 1.6;
+                      // A physical Mushaf page has a fixed line pitch — every
+                      // printed line occupies the same vertical space whether
+                      // it's a full justified line or a short tail-end one.
+                      // Varying this by word count (as before) made short
+                      // lines sit much closer to their neighbors than full
+                      // lines, which reads as a paragraph break appearing
+                      // between ordinary lines. One constant value for every
+                      // line keeps the vertical rhythm even down the page.
+                      const rowLineHeight = 1.9;
                       return (
                         <div key={line.lineNumber}>
                           {showDivider && surahDivider(firstWord.surah, firstWord.ayah, line.lineNumber === qcfLines[0].lineNumber)}
