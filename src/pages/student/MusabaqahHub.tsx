@@ -13,7 +13,7 @@
 
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { Trophy, Mic, Zap, Users, Clock, Star, ChevronRight, Crown } from "lucide-react";
+import { Trophy, Mic, Zap, Users, Clock, Star, ChevronRight, Crown, BookOpen, Gavel } from "lucide-react";
 
 const G    = "#0f2d1f";
 const GM   = "#163d28";
@@ -86,6 +86,26 @@ const MusabaqahHub = () => {
       border:   "1.5px solid rgba(74,222,128,0.3)",
       glow:     "rgba(74,222,128,0.2)",
     },
+    ...(isJudge ? [{
+      id:       "general",
+      icon:     <BookOpen size={40} color="#60A5FA"/>,
+      emoji:    "📚",
+      title:    "General Subject Musabaqah",
+      titleAr:  "مسابقة المواد العامة",
+      subtitle: "Hadith · Fiqh · Tawheed · Nahw · Sirah",
+      desc:     "Live oral examinations on any Islamic or Arabic subject — create events, build a question bank, admit students, and judge live with rubric scoring.",
+      stats:    [
+        { icon:<Gavel size={12}/>, label:"Live oral judging" },
+        { icon:<Users size={12}/>, label:"Registration & queue" },
+        { icon:<Star size={12}/>,  label:"Rubric scoring" },
+      ],
+      route:    "/musabaqah/general",
+      accent:   "#60A5FA",
+      badge:    "Create & Judge",
+      badgeBg:  "rgba(96,165,250,0.15)",
+      border:   "1.5px solid rgba(96,165,250,0.3)",
+      glow:     "rgba(96,165,250,0.2)",
+    }] : []),
   ];
 
   return (
