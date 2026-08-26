@@ -89,6 +89,8 @@ const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
 // Page: standalone full-screen route → the actual Qur'an recitation competition
 const MusabaqahHub   = lazy(() => import("./pages/student/MusabaqahHub"));
 const MustabaqahPage = lazy(() => import("./pages/student/MustabaqahPage"));
+const GeneralMusabaqahAdmin       = lazy(() => import("./pages/admin/GeneralMusabaqahAdmin"));
+const GeneralMusabaqahEventDetail = lazy(() => import("./pages/admin/GeneralMusabaqahEventDetail"));
 
 // ── Admin pages ────────────────────────────────────────────────────────────
 const AdminDashboard        = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -216,6 +218,8 @@ const App = () => (
                   <Route path="/live-quiz" element={<ProtectedRoute><LiveQuiz /></ProtectedRoute>} />
                   {/* New: Qur'an recitation competition — full-screen like /live-quiz */}
                   <Route path="/musabaqah/recitation" element={<ProtectedRoute><MustabaqahPage /></ProtectedRoute>} />
+                  <Route path="/musabaqah/general"     element={<ProtectedRoute><GeneralMusabaqahAdmin /></ProtectedRoute>} />
+                  <Route path="/musabaqah/general/:id" element={<ProtectedRoute><GeneralMusabaqahEventDetail /></ProtectedRoute>} />
 
                   {/* Public quiz — no login needed; guests join a room with a code */}
                   <Route path="/quiz" element={<LiveQuiz />} />
