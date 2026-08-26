@@ -93,6 +93,7 @@ const GeneralMusabaqahAdmin       = lazy(() => import("./pages/admin/GeneralMusa
 const GeneralMusabaqahEventDetail = lazy(() => import("./pages/admin/GeneralMusabaqahEventDetail"));
 const GeneralMusabaqahRegister    = lazy(() => import("./pages/student/GeneralMusabaqahRegister"));
 const GeneralMusabaqahWaitingRoom = lazy(() => import("./pages/student/GeneralMusabaqahWaitingRoom"));
+const GeneralMusabaqahExamRoom    = lazy(() => import("./pages/GeneralMusabaqahExamRoom"));
 
 // ── Admin pages ────────────────────────────────────────────────────────────
 const AdminDashboard        = lazy(() => import("./pages/admin/AdminDashboard"));
@@ -223,6 +224,7 @@ const App = () => (
                   <Route path="/musabaqah/general"     element={<ProtectedRoute><GeneralMusabaqahAdmin /></ProtectedRoute>} />
                   <Route path="/musabaqah/general/:id" element={<ProtectedRoute><GeneralMusabaqahEventDetail /></ProtectedRoute>} />
                   <Route path="/student/musabaqah/general/:id/waiting" element={<ProtectedRoute><GeneralMusabaqahWaitingRoom /></ProtectedRoute>} />
+                  <Route path="/musabaqah/general/:id/exam"           element={<ProtectedRoute><GeneralMusabaqahExamRoom /></ProtectedRoute>} />
 
                   {/* Public quiz — no login needed; guests join a room with a code */}
                   <Route path="/quiz" element={<LiveQuiz />} />
