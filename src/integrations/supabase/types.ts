@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.5"
+    PostgrestVersion: "14.17"
   }
   public: {
     Tables: {
@@ -1730,6 +1730,692 @@ export type Database = {
           },
         ]
       }
+      general_musabaqah_access_codes: {
+        Row: {
+          allow_reconnect: boolean
+          code: string
+          created_at: string
+          event_id: string
+          expires_at: string | null
+          id: string
+          is_active: boolean
+          last_used_at: string | null
+          registration_id: string
+          revoked_at: string | null
+          revoked_reason: string | null
+          usage_count: number
+        }
+        Insert: {
+          allow_reconnect?: boolean
+          code: string
+          created_at?: string
+          event_id: string
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          last_used_at?: string | null
+          registration_id: string
+          revoked_at?: string | null
+          revoked_reason?: string | null
+          usage_count?: number
+        }
+        Update: {
+          allow_reconnect?: boolean
+          code?: string
+          created_at?: string
+          event_id?: string
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          last_used_at?: string | null
+          registration_id?: string
+          revoked_at?: string | null
+          revoked_reason?: string | null
+          usage_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_access_codes_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_access_codes_registration_id_fkey"
+            columns: ["registration_id"]
+            isOneToOne: true
+            referencedRelation: "general_musabaqah_registrations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_answers: {
+        Row: {
+          answer_text: string | null
+          answered_at: string | null
+          asked_at: string
+          event_id: string
+          id: string
+          participant_id: string
+          question_id: string
+          status: string
+        }
+        Insert: {
+          answer_text?: string | null
+          answered_at?: string | null
+          asked_at?: string
+          event_id: string
+          id?: string
+          participant_id: string
+          question_id: string
+          status?: string
+        }
+        Update: {
+          answer_text?: string | null
+          answered_at?: string | null
+          asked_at?: string
+          event_id?: string
+          id?: string
+          participant_id?: string
+          question_id?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_answers_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_answers_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_participants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_answers_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_event_log: {
+        Row: {
+          action_type: string
+          created_at: string
+          created_by: string | null
+          description: string | null
+          event_id: string
+          id: number
+          metadata: Json
+          participant_id: string | null
+        }
+        Insert: {
+          action_type: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          event_id: string
+          id?: number
+          metadata?: Json
+          participant_id?: string | null
+        }
+        Update: {
+          action_type?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          event_id?: string
+          id?: number
+          metadata?: Json
+          participant_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_event_log_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_event_log_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_participants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_events: {
+        Row: {
+          ai_auto_approve_questions: boolean
+          allow_question_repeat: boolean
+          category_targets: Json
+          competition_date: string | null
+          connection_loss_pauses_timer: boolean
+          created_at: string
+          created_by: string | null
+          current_participant_id: string | null
+          description: string | null
+          expected_end_time: string | null
+          id: string
+          instructions: string | null
+          judge_scoring_system: string
+          judges_can_modify_marks: boolean
+          leaderboard_enabled: boolean
+          marks_per_question: number
+          max_attempts: number
+          max_exam_time_seconds: number
+          num_judges: number
+          num_questions_per_student: number
+          passing_score: number | null
+          question_selection_method: string
+          question_time_seconds: number | null
+          randomize_questions: boolean
+          recording_enabled: boolean
+          registration_closes_at: string | null
+          registration_opens_at: string | null
+          repeat_after_n_students: number | null
+          results_visibility: string
+          room_code: string
+          source_reference: string | null
+          start_time: string | null
+          status: string
+          subject: string
+          target_level: string | null
+          timezone: string
+          title: string
+          topic: string | null
+          total_marks: number | null
+          updated_at: string
+        }
+        Insert: {
+          ai_auto_approve_questions?: boolean
+          allow_question_repeat?: boolean
+          category_targets?: Json
+          competition_date?: string | null
+          connection_loss_pauses_timer?: boolean
+          created_at?: string
+          created_by?: string | null
+          current_participant_id?: string | null
+          description?: string | null
+          expected_end_time?: string | null
+          id?: string
+          instructions?: string | null
+          judge_scoring_system?: string
+          judges_can_modify_marks?: boolean
+          leaderboard_enabled?: boolean
+          marks_per_question?: number
+          max_attempts?: number
+          max_exam_time_seconds?: number
+          num_judges?: number
+          num_questions_per_student?: number
+          passing_score?: number | null
+          question_selection_method?: string
+          question_time_seconds?: number | null
+          randomize_questions?: boolean
+          recording_enabled?: boolean
+          registration_closes_at?: string | null
+          registration_opens_at?: string | null
+          repeat_after_n_students?: number | null
+          results_visibility?: string
+          room_code?: string
+          source_reference?: string | null
+          start_time?: string | null
+          status?: string
+          subject: string
+          target_level?: string | null
+          timezone?: string
+          title: string
+          topic?: string | null
+          total_marks?: number | null
+          updated_at?: string
+        }
+        Update: {
+          ai_auto_approve_questions?: boolean
+          allow_question_repeat?: boolean
+          category_targets?: Json
+          competition_date?: string | null
+          connection_loss_pauses_timer?: boolean
+          created_at?: string
+          created_by?: string | null
+          current_participant_id?: string | null
+          description?: string | null
+          expected_end_time?: string | null
+          id?: string
+          instructions?: string | null
+          judge_scoring_system?: string
+          judges_can_modify_marks?: boolean
+          leaderboard_enabled?: boolean
+          marks_per_question?: number
+          max_attempts?: number
+          max_exam_time_seconds?: number
+          num_judges?: number
+          num_questions_per_student?: number
+          passing_score?: number | null
+          question_selection_method?: string
+          question_time_seconds?: number | null
+          randomize_questions?: boolean
+          recording_enabled?: boolean
+          registration_closes_at?: string | null
+          registration_opens_at?: string | null
+          repeat_after_n_students?: number | null
+          results_visibility?: string
+          room_code?: string
+          source_reference?: string | null
+          start_time?: string | null
+          status?: string
+          subject?: string
+          target_level?: string | null
+          timezone?: string
+          title?: string
+          topic?: string | null
+          total_marks?: number | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_events_current_participant_fkey"
+            columns: ["current_participant_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_participants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_judges: {
+        Row: {
+          can_finalize: boolean
+          categories_assigned: Json
+          created_at: string
+          event_id: string
+          id: string
+          judge_name: string
+          judge_role: string
+          user_id: string
+          weight: number
+        }
+        Insert: {
+          can_finalize?: boolean
+          categories_assigned?: Json
+          created_at?: string
+          event_id: string
+          id?: string
+          judge_name: string
+          judge_role?: string
+          user_id: string
+          weight?: number
+        }
+        Update: {
+          can_finalize?: boolean
+          categories_assigned?: Json
+          created_at?: string
+          event_id?: string
+          id?: string
+          judge_name?: string
+          judge_role?: string
+          user_id?: string
+          weight?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_judges_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_participants: {
+        Row: {
+          access_code_id: string | null
+          camera_on: boolean
+          connection_status: string
+          created_at: string
+          current_question_id: string | null
+          disconnected_at: string | null
+          event_id: string
+          id: string
+          mic_on: boolean
+          participant_name: string
+          pause_reason: string | null
+          paused_at: string | null
+          questions_asked: Json
+          queue_position: number | null
+          recording_url: string | null
+          registration_id: string
+          session_state: Json
+          status: string
+          timer_paused_at: string | null
+          timer_remaining_seconds: number | null
+          total_score: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          access_code_id?: string | null
+          camera_on?: boolean
+          connection_status?: string
+          created_at?: string
+          current_question_id?: string | null
+          disconnected_at?: string | null
+          event_id: string
+          id?: string
+          mic_on?: boolean
+          participant_name: string
+          pause_reason?: string | null
+          paused_at?: string | null
+          questions_asked?: Json
+          queue_position?: number | null
+          recording_url?: string | null
+          registration_id: string
+          session_state?: Json
+          status?: string
+          timer_paused_at?: string | null
+          timer_remaining_seconds?: number | null
+          total_score?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          access_code_id?: string | null
+          camera_on?: boolean
+          connection_status?: string
+          created_at?: string
+          current_question_id?: string | null
+          disconnected_at?: string | null
+          event_id?: string
+          id?: string
+          mic_on?: boolean
+          participant_name?: string
+          pause_reason?: string | null
+          paused_at?: string | null
+          questions_asked?: Json
+          queue_position?: number | null
+          recording_url?: string | null
+          registration_id?: string
+          session_state?: Json
+          status?: string
+          timer_paused_at?: string | null
+          timer_remaining_seconds?: number | null
+          total_score?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_participants_access_code_id_fkey"
+            columns: ["access_code_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_access_codes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_participants_current_question_fkey"
+            columns: ["current_question_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_questions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_participants_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_participants_registration_id_fkey"
+            columns: ["registration_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_registrations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_question_usage: {
+        Row: {
+          id: string
+          participant_id: string
+          question_id: string
+          used_at: string
+        }
+        Insert: {
+          id?: string
+          participant_id: string
+          question_id: string
+          used_at?: string
+        }
+        Update: {
+          id?: string
+          participant_id?: string
+          question_id?: string
+          used_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_question_usage_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_participants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_question_usage_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_questions: {
+        Row: {
+          ai_confidence: number | null
+          ai_generated: boolean
+          category: string
+          created_at: string
+          created_by: string | null
+          difficulty: string
+          event_id: string
+          expected_answer: string | null
+          id: string
+          last_used_at: string | null
+          marks: number
+          options: Json | null
+          question_text: string
+          question_text_ar: string | null
+          question_type: string
+          rubric: Json | null
+          source_reference: string | null
+          status: string
+          times_used: number
+          updated_at: string
+        }
+        Insert: {
+          ai_confidence?: number | null
+          ai_generated?: boolean
+          category: string
+          created_at?: string
+          created_by?: string | null
+          difficulty?: string
+          event_id: string
+          expected_answer?: string | null
+          id?: string
+          last_used_at?: string | null
+          marks?: number
+          options?: Json | null
+          question_text: string
+          question_text_ar?: string | null
+          question_type?: string
+          rubric?: Json | null
+          source_reference?: string | null
+          status?: string
+          times_used?: number
+          updated_at?: string
+        }
+        Update: {
+          ai_confidence?: number | null
+          ai_generated?: boolean
+          category?: string
+          created_at?: string
+          created_by?: string | null
+          difficulty?: string
+          event_id?: string
+          expected_answer?: string | null
+          id?: string
+          last_used_at?: string | null
+          marks?: number
+          options?: Json | null
+          question_text?: string
+          question_text_ar?: string | null
+          question_type?: string
+          rubric?: Json | null
+          source_reference?: string | null
+          status?: string
+          times_used?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_questions_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_registrations: {
+        Row: {
+          additional_info: Json
+          created_at: string
+          event_id: string
+          full_name: string
+          id: string
+          level_class: string | null
+          phone: string | null
+          review_notes: string | null
+          reviewed_at: string | null
+          reviewed_by: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          additional_info?: Json
+          created_at?: string
+          event_id: string
+          full_name: string
+          id?: string
+          level_class?: string | null
+          phone?: string | null
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          additional_info?: Json
+          created_at?: string
+          event_id?: string
+          full_name?: string
+          id?: string
+          level_class?: string | null
+          phone?: string | null
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_registrations_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_scores: {
+        Row: {
+          ai_suggested_score: number | null
+          ai_suggestion_note: string | null
+          answer_id: string
+          comment: string | null
+          correctness: string | null
+          created_at: string
+          id: string
+          judge_name: string
+          judge_user_id: string
+          max_score: number
+          participant_id: string
+          rubric_breakdown: Json | null
+          score: number
+          updated_at: string
+        }
+        Insert: {
+          ai_suggested_score?: number | null
+          ai_suggestion_note?: string | null
+          answer_id: string
+          comment?: string | null
+          correctness?: string | null
+          created_at?: string
+          id?: string
+          judge_name: string
+          judge_user_id: string
+          max_score: number
+          participant_id: string
+          rubric_breakdown?: Json | null
+          score: number
+          updated_at?: string
+        }
+        Update: {
+          ai_suggested_score?: number | null
+          ai_suggestion_note?: string | null
+          answer_id?: string
+          comment?: string | null
+          correctness?: string | null
+          created_at?: string
+          id?: string
+          judge_name?: string
+          judge_user_id?: string
+          max_score?: number
+          participant_id?: string
+          rubric_breakdown?: Json | null
+          score?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_scores_answer_id_fkey"
+            columns: ["answer_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_answers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_scores_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_participants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       hifdh_ai_chat: {
         Row: {
           created_at: string | null
@@ -2812,16 +3498,19 @@ export type Database = {
       level_courses: {
         Row: {
           id: string
+          is_compulsory: boolean
           level: string
           subject_id: string | null
         }
         Insert: {
           id?: string
+          is_compulsory?: boolean
           level: string
           subject_id?: string | null
         }
         Update: {
           id?: string
+          is_compulsory?: boolean
           level?: string
           subject_id?: string | null
         }
@@ -6070,6 +6759,50 @@ export type Database = {
         }
         Relationships: []
       }
+      student_subject_enrollments: {
+        Row: {
+          disenrolled_at: string | null
+          enrolled_at: string
+          id: string
+          is_compulsory: boolean
+          level: string
+          status: string
+          student_id: string
+          subject_id: string
+          updated_at: string
+        }
+        Insert: {
+          disenrolled_at?: string | null
+          enrolled_at?: string
+          id?: string
+          is_compulsory?: boolean
+          level: string
+          status?: string
+          student_id: string
+          subject_id: string
+          updated_at?: string
+        }
+        Update: {
+          disenrolled_at?: string | null
+          enrolled_at?: string
+          id?: string
+          is_compulsory?: boolean
+          level?: string
+          status?: string
+          student_id?: string
+          subject_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "student_subject_enrollments_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       student_subscriptions: {
         Row: {
           auto_renew: boolean | null
@@ -6327,6 +7060,42 @@ export type Database = {
           },
         ]
       }
+      subject_opt_outs: {
+        Row: {
+          created_at: string
+          id: string
+          student_id: string
+          subject_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          student_id: string
+          subject_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          student_id?: string
+          subject_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subject_opt_outs_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "subject_opt_outs_subject_id_fkey"
+            columns: ["subject_id"]
+            isOneToOne: false
+            referencedRelation: "subjects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subject_registrations: {
         Row: {
           id: string
@@ -6501,6 +7270,7 @@ export type Database = {
           id: string
           image_url: string | null
           is_active: boolean | null
+          is_compulsory: boolean
           level: string | null
           levels: string[] | null
           livekit_room_name: string | null
@@ -6529,6 +7299,7 @@ export type Database = {
           id?: string
           image_url?: string | null
           is_active?: boolean | null
+          is_compulsory?: boolean
           level?: string | null
           levels?: string[] | null
           livekit_room_name?: string | null
@@ -6557,6 +7328,7 @@ export type Database = {
           id?: string
           image_url?: string | null
           is_active?: boolean | null
+          is_compulsory?: boolean
           level?: string | null
           levels?: string[] | null
           livekit_room_name?: string | null
@@ -7198,6 +7970,10 @@ export type Database = {
         }
         Returns: number
       }
+      can_teacher_view_student: {
+        Args: { p_student_id: string }
+        Returns: boolean
+      }
       claim_queue_box: {
         Args: {
           p_box_id: number
@@ -7279,6 +8055,10 @@ export type Database = {
         Args: { _channel_id: string; _user_id: string }
         Returns: boolean
       }
+      is_gm_judge: {
+        Args: { _event_id: string; _user_id: string }
+        Returns: boolean
+      }
       mark_notifications_read: {
         Args: { p_user_id: string }
         Returns: undefined
@@ -7316,6 +8096,30 @@ export type Database = {
             }
             Returns: string
           }
+      set_subject_enrollment: {
+        Args: { p_active: boolean; p_subject_id: string }
+        Returns: {
+          disenrolled_at: string | null
+          enrolled_at: string
+          id: string
+          is_compulsory: boolean
+          level: string
+          status: string
+          student_id: string
+          subject_id: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "student_subject_enrollments"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      sync_level_enrollments: {
+        Args: { p_level: string; p_student_id: string }
+        Returns: undefined
+      }
       upsert_hifdh_daily_log: {
         Args: {
           p_assignment_id: string
