@@ -42,7 +42,11 @@ const TOTAL_PAGES = 604;
 // measured against the actual column width and shrunk only as much as it
 // needs to fit on one row — most lines stay at BASE_LINE_FONT_SIZE.
 const BASE_LINE_FONT_SIZE = 27;
-const MIN_LINE_FONT_SIZE = 22;
+// Lowered from 22 so unusually dense pages (a full 15-line page with no
+// short/half-empty lines to give the eye a break) can still shrink enough
+// to fit on one screen without needing a scroll. Below ~16px the glyphs
+// themselves start getting hard to make out, so that's the floor.
+const MIN_LINE_FONT_SIZE = 16;
 
 const LAST_PAGE_KEY = "quran_last_page";
 const RECITER_KEY = "quran_reciter";
