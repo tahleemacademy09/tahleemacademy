@@ -17,10 +17,11 @@
     - Judge = any admin/teacher for now; the general_musabaqah_judges
       table exists but there's no assignment UI yet (Section 20/21
       is deferred), so RLS already allows any staff member through.
-    - Question selection: "hybrid"/"category_based" respect the
-      event's category_targets where set, otherwise the next
-      unused approved question is offered; judges can always pick
-      manually from the navigator regardless of method.
+    - Question selection: the STUDENT picks their own number from the
+      navigator (via gm_self_ask_question RPC) — the judge never picks
+      for them, only watches and scores once it's revealed. One pick
+      per stage: once this participant has any answer logged for the
+      active stage, the rest of that stage's tiles lock.
     - Rubric UI is single score + correctness + comment. The
       rubric_breakdown JSONB column is ready for a fuller per-
       criterion UI later without another migration.
@@ -280,8 +281,6 @@ export default function GeneralMusabaqahExamRoom() {
     loadAll();
   };
 
-  const askedQuestionIds = useMemo(() => new Set(answers.map(a => a.question_id)), [answers]);
-
   // Sequential stage progression: a stage is "done" for this participant once
   // they have as many MARKED answers from it as its question_count target.
   // activeIndex points at the first not-yet-done stage; index === stages.length
@@ -298,47 +297,13 @@ export default function GeneralMusabaqahExamRoom() {
     return { markedByStage, activeIndex, activeStage: stages[activeIndex] ?? null };
   }, [stages, answers, questions]);
 
-  // Auto-pick respects stage order; judges can still override manually via
-  // the navigator below (buttons for out-of-sequence questions stay enabled,
-  // just visually dimmed) — useful for skipping a stage for one student.
-
-  const pickNextQuestion = () => {
-    let pool = questions.filter(q => !askedQuestionIds.has(q.id));
-    if (stages.length) {
-      pool = stageProgress?.activeStage
-        ? pool.filter(q => q.stage_id === stageProgress.activeStage.id)
-        : pool.filter(q => !q.stage_id); // all configured stages complete — only ungrouped left
-    }
-    if (pool.length === 0) return null;
-    if (event?.question_selection_method === "manual") return null; // judge must pick
-    if (event?.randomize_questions) return pool[Math.floor(Math.random() * pool.length)];
-    return pool[0];
-  };
-
   // "on stage" = this browser's own participant row IS the one the event
   // currently points at. Only this person (besides the judge) gets to
   // actually act — tap tiles, toggle mic/camera. Everyone else who has
-  // joined watches read-only.
+  // joined watches read-only. The judge never picks a number themselves;
+  // askQuestion/askNext were removed since number selection is the
+  // student's call now, judged only from selfAskQuestion below.
   const isOnStage = !isJudge && !!myParticipant && !!participant && myParticipant.id === participant.id;
-
-  const askQuestion = async (question: any) => {
-    if (!participant) return;
-    const { data: answer, error } = await supabase.from("general_musabaqah_answers")
-      .insert({ event_id: eventId, participant_id: participant.id, question_id: question.id, status: "current" })
-      .select().single();
-    if (error) { toast({ title: "Could not ask question", description: error.message, variant: "destructive" }); return; }
-
-    await supabase.from("general_musabaqah_participants").update({
-      current_question_id: question.id,
-      questions_asked: [...(participant.questions_asked || []), question.id],
-    }).eq("id", participant.id);
-    await supabase.from("general_musabaqah_question_usage").insert({ question_id: question.id, participant_id: participant.id });
-    await supabase.from("general_musabaqah_questions").update({ times_used: (question.times_used || 0) + 1, last_used_at: new Date().toISOString() }).eq("id", question.id);
-    await logEvent("question_asked", `Q asked: ${question.question_text.slice(0, 60)}`, { question_id: question.id });
-
-    setScoreDraft({ score: String(question.marks), correctness: "correct", comment: "" });
-    loadAll();
-  };
 
   // The called student taps their own shuffled tile to self-assign a
   // question — goes through the gm_self_ask_question() RPC (security
@@ -354,12 +319,6 @@ export default function GeneralMusabaqahExamRoom() {
     });
     if (error) { toast({ title: "Could not select question", description: error.message, variant: "destructive" }); return; }
     await loadAll();
-  };
-
-  const askNext = async () => {
-    const next = pickNextQuestion();
-    if (!next) { toast({ title: "No more unused questions — pick one manually or allow repeats" }); return; }
-    askQuestion(next);
   };
 
   const currentAnswer = useMemo(() => answers.find(a => a.question_id === participant?.current_question_id && a.status !== "marked"), [answers, participant?.current_question_id]);
@@ -604,13 +563,16 @@ export default function GeneralMusabaqahExamRoom() {
       </div>
 
       {/* ── Control strip (Section 13) ────────────────────────────── */}
-      <div style={{ display: "flex", gap: 8, padding: "0 16px 12px", flexWrap: "wrap" }}>
-        <Button size="sm" variant="outline" onClick={() => setErrorOpen(true)} style={{ color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
+      <div style={{ display: "flex", gap: 8, padding: "0 16px 12px", flexWrap: "wrap", alignItems: "center" }}>
+        <Button size="sm" variant="outline" onClick={() => setErrorOpen(true)}
+          style={{ background: "rgba(251,191,36,0.1)", color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
           <AlertTriangle size={14} className="mr-1" /> Report Error
         </Button>
         {isJudge && participant && (
           <Button size="sm" variant="outline" onClick={toggleParticipantVideo}
-            style={participant.video_allowed === false ? { color: "#F87171", borderColor: "rgba(248,113,113,0.4)" } : { color: "rgba(255,255,255,0.7)" }}>
+            style={participant.video_allowed === false
+              ? { background: "rgba(248,113,113,0.1)", color: "#F87171", borderColor: "rgba(248,113,113,0.4)" }
+              : { background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.8)", borderColor: "rgba(255,255,255,0.2)" }}>
             {participant.video_allowed === false ? <><VideoOff size={14} className="mr-1" /> Video Off</> : <><Video size={14} className="mr-1" /> Video On</>}
           </Button>
         )}
@@ -620,7 +582,8 @@ export default function GeneralMusabaqahExamRoom() {
           </Button>
         )}
         {isJudge && participant?.status === "in_progress" && (
-          <Button size="sm" variant="outline" onClick={() => setPauseOpen(true)} style={{ color: RED, borderColor: "rgba(248,113,113,0.4)" }}>
+          <Button size="sm" variant="outline" onClick={() => setPauseOpen(true)}
+            style={{ background: "rgba(248,113,113,0.1)", color: RED, borderColor: "rgba(248,113,113,0.4)" }}>
             <Pause size={14} className="mr-1" /> Pause
           </Button>
         )}
@@ -642,7 +605,12 @@ export default function GeneralMusabaqahExamRoom() {
             Earlier stages are done and hidden; later stages aren't shown
             until the participant actually reaches them (finishing the
             active stage's required question_count advances stageProgress,
-            which swaps this section to the next stage's tiles). */}
+            which swaps this section to the next stage's tiles).
+            Numbers are the STUDENT's call, never the judge's — the judge
+            only watches which one lights up and, once it's picked, scores
+            it. And it's one pick per stage: once this participant has any
+            answer (of any status) logged for the active stage, every tile
+            in that stage locks — no second guess, no swapping numbers. */}
         {stages.length > 0 ? (
           (() => {
             const stage = stageProgress?.activeStage ?? null;
@@ -651,6 +619,7 @@ export default function GeneralMusabaqahExamRoom() {
               : questions.filter(q => !q.stage_id); // all configured stages done — only ungrouped left, if any
             const si = stage ? stages.findIndex(s => s.id === stage.id) : stages.length;
             if (stageQuestions.length === 0) return null;
+            const stageHasPick = stageQuestions.some(q => answers.some(a => a.question_id === q.id));
             return (
               <div style={{ marginBottom: 14 }}>
                 <p style={{ color: GOLD, fontSize: 11, fontWeight: 700, margin: "0 0 4px" }}>
@@ -662,18 +631,23 @@ export default function GeneralMusabaqahExamRoom() {
                     const status = a ? a.status : "not_asked";
                     const isCurrent = participant?.current_question_id === q.id;
                     const globalIndex = questions.findIndex(qq => qq.id === q.id);
-                    const canAct = isJudge || isOnStage;
+                    const canAct = isOnStage && !stageHasPick;
+                    const canSee = isOnStage || isCurrent; // judge/spectators only ever see the one that's been picked, not the pool
                     return (
                       <button
                         key={q.id}
-                        disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
-                        onClick={() => (isJudge ? askQuestion(q) : selfAskQuestion(q))}
-                        title={isJudge ? q.question_text : "Tap to reveal your question"}
+                        disabled={!canAct || !["called", "in_progress"].includes(participant?.status || "")}
+                        onClick={() => selfAskQuestion(q)}
+                        title={isOnStage ? "Tap to reveal your question" : undefined}
                         style={{
-                          width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
+                          width: isCurrent ? 40 : 34, height: isCurrent ? 40 : 34, borderRadius: 8,
+                          border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
                           background: QSTATUS_COLORS[status],
                           color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
-                          fontWeight: 800, fontSize: 12, cursor: canAct ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
+                          fontWeight: 800, fontSize: isCurrent ? 14 : 12,
+                          cursor: canAct ? "pointer" : "default", opacity: canSee ? 1 : 0.55,
+                          transition: "width .25s ease, height .25s ease, transform .25s ease",
+                          transform: isCurrent ? "scale(1.05)" : "scale(1)",
                         }}
                       >
                         {globalIndex + 1}
@@ -685,33 +659,48 @@ export default function GeneralMusabaqahExamRoom() {
             );
           })()
         ) : (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-            {questions.map((q, i) => {
-              const a = answers.find(x => x.question_id === q.id);
-              const status = a ? a.status : "not_asked";
-              const isCurrent = participant?.current_question_id === q.id;
-              const canAct = isJudge || isOnStage;
-              return (
-                <button
-                  key={q.id}
-                  disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
-                  onClick={() => (isJudge ? askQuestion(q) : selfAskQuestion(q))}
-                  title={isJudge ? q.question_text : "Tap to reveal your question"}
-                  style={{
-                    width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
-                    background: QSTATUS_COLORS[status], color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
-                    fontWeight: 800, fontSize: 12, cursor: canAct ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
-                  }}
-                >
-                  {i + 1}
-                </button>
-              );
-            })}
-          </div>
+          (() => {
+            const stageHasPick = questions.some(q => answers.some(a => a.question_id === q.id));
+            return (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+                {questions.map((q, i) => {
+                  const a = answers.find(x => x.question_id === q.id);
+                  const status = a ? a.status : "not_asked";
+                  const isCurrent = participant?.current_question_id === q.id;
+                  const canAct = isOnStage && !stageHasPick;
+                  const canSee = isOnStage || isCurrent;
+                  return (
+                    <button
+                      key={q.id}
+                      disabled={!canAct || !["called", "in_progress"].includes(participant?.status || "")}
+                      onClick={() => selfAskQuestion(q)}
+                      title={isOnStage ? "Tap to reveal your question" : undefined}
+                      style={{
+                        width: isCurrent ? 40 : 34, height: isCurrent ? 40 : 34, borderRadius: 8,
+                        border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
+                        background: QSTATUS_COLORS[status], color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
+                        fontWeight: 800, fontSize: isCurrent ? 14 : 12,
+                        cursor: canAct ? "pointer" : "default", opacity: canSee ? 1 : 0.55,
+                        transition: "width .25s ease, height .25s ease, transform .25s ease",
+                        transform: isCurrent ? "scale(1.05)" : "scale(1)",
+                      }}
+                    >
+                      {i + 1}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()
         )}
 
         {currentQuestion ? (
-          <div style={{ background: GM, border: "1px solid rgba(201,168,76,0.25)", borderRadius: 14, padding: 18 }}>
+          <div key={currentQuestion.id} className="gm-card-flip"
+            style={{ background: GM, border: "1px solid rgba(201,168,76,0.25)", borderRadius: 14, padding: 18 }}>
+            <style>{`
+              @keyframes gmCardFlip { from { transform: rotateY(90deg) scale(0.92); opacity: 0; } to { transform: rotateY(0deg) scale(1); opacity: 1; } }
+              .gm-card-flip { animation: gmCardFlip .45s ease-out; transform-style: preserve-3d; }
+            `}</style>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
               <Badge variant="secondary">{labelize(currentQuestion.category)}</Badge>
               <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>{currentQuestion.marks} marks</Badge>
@@ -766,19 +755,15 @@ export default function GeneralMusabaqahExamRoom() {
         ) : (
           <div style={{ background: GM, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 24, textAlign: "center" }}>
             <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
-              {isJudge && participant?.status === "in_progress" ? "No question active."
-                : isJudge && participant ? "Start the examination to begin."
+              {isJudge && participant?.status === "called" ? "Waiting for the participant to pick a number…"
+                : isJudge && participant?.status === "in_progress" ? "Waiting for the participant to pick a number…"
+                : isJudge && participant ? "Press Start once they're ready — they can pick their number before or after."
                 : isJudge ? "No one called yet — open Participants (top right) and call who's next."
-                : isOnStage && participant?.status === "in_progress" ? "Tap a tile above to reveal your question."
-                : isOnStage ? "Waiting for the judge to start your examination…"
-                : participant ? `Watching ${participant.participant_name} — waiting for their next question…`
+                : isOnStage && ["called", "in_progress"].includes(participant?.status || "") ? "Tap a tile above to reveal your question."
+                : isOnStage ? "Waiting for the judge to call you…"
+                : participant ? `Watching ${participant.participant_name} — waiting for their pick…`
                 : "You're in the room — waiting for the judge to call the next participant…"}
             </p>
-            {isJudge && participant?.status === "in_progress" && (
-              <Button onClick={askNext} style={{ marginTop: 10, background: BLUE, color: "#06131f", fontWeight: 700 }}>
-                Ask Next Question
-              </Button>
-            )}
           </div>
         )}
 
@@ -1025,15 +1010,22 @@ function MediaControls({ videoAllowed, micAllowed, participantId }: { videoAllow
     persist({ camera_on: next });
   };
 
+  const iconBtn = (on: boolean, disabled?: boolean) => ({
+    width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+    border: `1px solid ${on ? "rgba(255,255,255,0.2)" : "rgba(248,113,113,0.5)"}`,
+    background: disabled ? "rgba(255,255,255,0.04)" : on ? "rgba(255,255,255,0.08)" : "rgba(248,113,113,0.15)",
+    color: disabled ? "rgba(255,255,255,0.25)" : on ? "#fff" : RED,
+    cursor: disabled ? "default" : "pointer",
+  });
+
   return (
-    <div style={{ display: "flex", gap: 8, padding: "8px 16px 0" }}>
-      <Button size="sm" variant="outline" onClick={toggleMic} style={{ color: micOn ? "#fff" : RED, borderColor: micOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
-        {micOn ? <Mic size={14} className="mr-1" /> : <MicOff size={14} className="mr-1" />} {micOn ? "Mic On" : "Mic Off"}
-      </Button>
-      <Button size="sm" variant="outline" disabled={!videoAllowed} onClick={toggleCam}
-        style={{ color: !videoAllowed ? "rgba(255,255,255,0.3)" : camOn ? "#fff" : RED, borderColor: camOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
-        {camOn ? <Video size={14} className="mr-1" /> : <VideoOff size={14} className="mr-1" />} {camOn ? "Camera On" : "Camera Off"}
-      </Button>
+    <div style={{ display: "flex", gap: 10, padding: "8px 16px 0" }}>
+      <button onClick={toggleMic} aria-label={micOn ? "Mute mic" : "Unmute mic"} style={iconBtn(micOn)}>
+        {micOn ? <Mic size={17} /> : <MicOff size={17} />}
+      </button>
+      <button onClick={toggleCam} disabled={!videoAllowed} aria-label={camOn ? "Turn camera off" : "Turn camera on"} style={iconBtn(camOn, !videoAllowed)}>
+        {camOn ? <Video size={17} /> : <VideoOff size={17} />}
+      </button>
     </div>
   );
 }
