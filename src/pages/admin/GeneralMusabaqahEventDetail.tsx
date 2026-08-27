@@ -291,6 +291,19 @@ export default function GeneralMusabaqahEventDetail() {
     }
   };
 
+  const [bulkAdmitting, setBulkAdmitting] = useState(false);
+  const admitAllPending = async () => {
+    const pending = registrations.filter(r => r.status === "pending" || r.status === "waitlisted");
+    if (pending.length === 0) return;
+    if (!window.confirm(`Admit all ${pending.length} pending/waitlisted registration(s)?`)) return;
+    setBulkAdmitting(true);
+    for (const reg of pending) {
+      await approveAndAdmit(reg); // toasts per-item on success/failure and never throws
+    }
+    setBulkAdmitting(false);
+    toast({ title: `Finished admitting ${pending.length} registration(s)` });
+  };
+
   const setRegistrationStatus = async (reg: any, status: string) => {
     setActingOn(reg.id);
     const { error } = await supabase
@@ -381,23 +394,9 @@ export default function GeneralMusabaqahEventDetail() {
   };
 
 
-  const callParticipant = async (participant: any) => {
-    if (!id) return;
-    const { error: e1 } = await supabase.from("general_musabaqah_participants")
-      .update({ status: "called" }).eq("id", participant.id);
-    const { error: e2 } = await supabase.from("general_musabaqah_events")
-      .update({ current_participant_id: participant.id }).eq("id", id);
-    if (e1 || e2) {
-      toast({ title: "Call failed", description: (e1 || e2)?.message, variant: "destructive" });
-      return;
-    }
-    await supabase.from("general_musabaqah_event_log").insert({
-      event_id: id, participant_id: participant.id, action_type: "called",
-      description: `${participant.participant_name} called to examination`, created_by: user?.id ?? null,
-    });
-    toast({ title: `Calling ${participant.participant_name}…` });
-    loadParticipants();
-  };
+  // Note: calling a student onto the stage now only happens from inside the
+  // live exam room (roster drawer → callRosterParticipant), not from this
+  // page. This page's job is admitting/managing participants, nothing more.
 
   // Section: one-tap launch — validates the event is actually ready, flips it
   // to "in_progress" so it's locked in as live, then drops the admin straight
@@ -1031,6 +1030,14 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
 
           {/* ── REGISTRATIONS ────────────────────────────────────────── */}
           <TabsContent value="registrations" className="mt-4">
+            {registrations.some(r => r.status === "pending" || r.status === "waitlisted") && (
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                <Button size="sm" disabled={bulkAdmitting} onClick={admitAllPending} style={{ background: "#4ADE80", color: "#06301a", fontWeight: 700 }}>
+                  {bulkAdmitting ? <Loader2 size={14} className="animate-spin mr-1" /> : <UserCheck size={14} className="mr-1" />}
+                  Admit All
+                </Button>
+              </div>
+            )}
             {rLoading ? (
               <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
                 <Loader2 className="animate-spin" color={GOLD} size={24} />
@@ -1092,7 +1099,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
           {/* ── QUEUE ────────────────────────────────────────────────── */}
           <TabsContent value="queue" className="mt-4">
             <div style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginBottom: 12 }}>
-              Admitted students only appear here to "Call" once they've pressed Join Competition in their lobby on the day. Once you call someone, everyone else who has joined can watch them live in the exam room but cannot act — only the called student can tap a question tile.
+              Calling students onto the stage happens from inside the live exam room (roster drawer), not here. This tab is just for admitting and managing participants before and during the event.
             </div>
             {pLoading ? (
               <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
@@ -1125,9 +1132,12 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                         </div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {p.status === "waiting" && (
-                            <Button size="sm" onClick={() => callParticipant(p)} style={{ background: "#60A5FA", color: "#06131f", fontWeight: 700 }}>
-                              <PhoneCall size={14} className="mr-1" /> Call
-                            </Button>
+                            <>
+                              <Badge style={{ background: "rgba(96,165,250,0.15)", color: "#60A5FA", border: "none" }}>Joined — waiting to be called</Badge>
+                              <Button size="sm" variant="outline" onClick={() => navigate(`/musabaqah/general/${id}/exam`)}>
+                                Go to Exam Room
+                              </Button>
+                            </>
                           )}
                           {p.status === "admitted" && (
                             <Badge style={{ background: "rgba(148,163,184,0.15)", color: "#94A3B8", border: "none" }}>Not joined yet</Badge>
