@@ -215,9 +215,9 @@ export default function GeneralMusabaqahRegister() {
                       <Badge style={{ background: "rgba(248,113,113,0.15)", color: "#F87171", border: "none" }}>Disqualified</Badge>
                     )}
                     {reg?.status === "completed" && (
-                      <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>
-                        <CheckCircle2 size={11} className="mr-1" /> Completed
-                      </Badge>
+                      <Button onClick={() => navigate(`/student/musabaqah/general/${ev.id}/result`)} style={{ background: GOLD, color: G, fontWeight: 700 }}>
+                        <CheckCircle2 size={14} className="mr-1" /> View Result
+                      </Button>
                     )}
                     {reg?.status === "admitted" && (
                       <div style={{ display: "grid", gap: 10 }}>
