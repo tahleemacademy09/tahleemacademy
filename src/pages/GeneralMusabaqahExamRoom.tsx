@@ -287,11 +287,6 @@ export default function GeneralMusabaqahExamRoom() {
     return { markedByStage, activeIndex, activeStage: stages[activeIndex] ?? null };
   }, [stages, answers, questions]);
 
-  const isStageLocked = (question: any) => {
-    if (!stages.length || !question?.stage_id || !stageProgress) return false;
-    const idx = stages.findIndex(s => s.id === question.stage_id);
-    return idx !== -1 && idx > stageProgress.activeIndex;
-  };
   // Auto-pick respects stage order; judges can still override manually via
   // the navigator below (buttons for out-of-sequence questions stay enabled,
   // just visually dimmed) — useful for skipping a stage for one student.
@@ -580,15 +575,9 @@ export default function GeneralMusabaqahExamRoom() {
           <LiveKitRoom
             serverUrl={lkUrl} token={lkToken} connect={lkConnected}
             audio={canPublish} video={canPublish && videoAllowedForMe}
-            options={LK_OPTIONS} style={{ borderRadius: 12 }}
+            options={LK_OPTIONS}
           >
             <RoomAudioRenderer />
-            {/* Fixed-height + overflow:hidden lives on this inner wrapper only —
-                it previously sat on the LiveKitRoom div itself, and because
-                VideoStage fills 100% of that same box, MediaControls (rendered
-                as a sibling right after it) got pushed below the 300px cutoff
-                and clipped away entirely. That's why the mic/camera toggle
-                buttons never appeared. */}
             <div style={{ height: 300, borderRadius: 12, overflow: "hidden" }}>
               <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} />
             </div>
@@ -647,47 +636,52 @@ export default function GeneralMusabaqahExamRoom() {
 
       {/* ── Question / judging panel (Section 10-12) ──────────────── */}
       <div style={{ flex: 1, padding: "0 16px 24px", maxWidth: 720, margin: "0 auto", width: "100%" }}>
-        {/* Navigator — grouped into stage sections when stages are configured */}
+        {/* Navigator — only the CURRENTLY ACTIVE stage's tiles are shown.
+            Earlier stages are done and hidden; later stages aren't shown
+            until the participant actually reaches them (finishing the
+            active stage's required question_count advances stageProgress,
+            which swaps this section to the next stage's tiles). */}
         {stages.length > 0 ? (
-          <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
-            {[...stages, null].map((stage, si) => {
-              const stageQuestions = stage ? questions.filter(q => q.stage_id === stage.id) : questions.filter(q => !q.stage_id);
-              if (stageQuestions.length === 0) return null;
-              const locked = stage ? si > (stageProgress?.activeIndex ?? 0) : (stageProgress ? stageProgress.activeIndex < stages.length : false);
-              return (
-                <div key={stage?.id || "ungrouped"}>
-                  <p style={{ color: locked ? "rgba(255,255,255,0.35)" : GOLD, fontSize: 11, fontWeight: 700, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 4 }}>
-                    {locked && "🔒 "}{stage ? `Stage ${si + 1}: ${stage.name}` : "Ungrouped"}
-                  </p>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {stageQuestions.map((q) => {
-                      const a = answers.find(x => x.question_id === q.id);
-                      const status = a ? a.status : "not_asked";
-                      const isCurrent = participant?.current_question_id === q.id;
-                      const globalIndex = questions.findIndex(qq => qq.id === q.id);
-                      const canAct = isJudge || (isOnStage && !locked);
-                      return (
-                        <button
-                          key={q.id}
-                          disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
-                          onClick={() => (isJudge ? askQuestion(q) : selfAskQuestion(q))}
-                          title={isJudge ? (locked ? "Out of sequence — click to ask anyway" : q.question_text) : "Tap to reveal your question"}
-                          style={{
-                            width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : locked ? "1px dashed rgba(255,255,255,0.25)" : "1px solid rgba(255,255,255,0.15)",
-                            background: locked ? "rgba(255,255,255,0.06)" : QSTATUS_COLORS[status],
-                            color: locked ? "rgba(255,255,255,0.4)" : status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
-                            fontWeight: 800, fontSize: 12, cursor: canAct ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
-                          }}
-                        >
-                          {globalIndex + 1}
-                        </button>
-                      );
-                    })}
-                  </div>
+          (() => {
+            const stage = stageProgress?.activeStage ?? null;
+            const stageQuestions = stage
+              ? questions.filter(q => q.stage_id === stage.id)
+              : questions.filter(q => !q.stage_id); // all configured stages done — only ungrouped left, if any
+            const si = stage ? stages.findIndex(s => s.id === stage.id) : stages.length;
+            if (stageQuestions.length === 0) return null;
+            return (
+              <div style={{ marginBottom: 14 }}>
+                <p style={{ color: GOLD, fontSize: 11, fontWeight: 700, margin: "0 0 4px" }}>
+                  {stage ? `Stage ${si + 1}: ${stage.name}` : "Ungrouped"}
+                </p>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {stageQuestions.map((q) => {
+                    const a = answers.find(x => x.question_id === q.id);
+                    const status = a ? a.status : "not_asked";
+                    const isCurrent = participant?.current_question_id === q.id;
+                    const globalIndex = questions.findIndex(qq => qq.id === q.id);
+                    const canAct = isJudge || isOnStage;
+                    return (
+                      <button
+                        key={q.id}
+                        disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
+                        onClick={() => (isJudge ? askQuestion(q) : selfAskQuestion(q))}
+                        title={isJudge ? q.question_text : "Tap to reveal your question"}
+                        style={{
+                          width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
+                          background: QSTATUS_COLORS[status],
+                          color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
+                          fontWeight: 800, fontSize: 12, cursor: canAct ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
+                        }}
+                      >
+                        {globalIndex + 1}
+                      </button>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
+              </div>
+            );
+          })()
         ) : (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
             {questions.map((q, i) => {
@@ -983,16 +977,9 @@ function ParticipantTile({ participant, label, mirror, highlight }: { participan
   return (
     <div style={{ position: "relative", background: "#111", display: "flex", alignItems: "center", justifyContent: "center", border: highlight ? `2px solid ${GREEN}` : "none" }}>
       {camPub?.track ? (
-        // objectFit was "cover", which scales the video up until it fills
-        // the tile completely and crops whatever doesn't fit — on a tile
-        // whose aspect ratio doesn't match the phone's front-camera stream
-        // that meant a tight, zoomed-in crop, which is why a participant
-        // had to lean back from the phone just to get their whole head
-        // back into frame. "contain" shows the full, uncropped camera
-        // frame letterboxed instead, so the whole face is always visible.
         <VideoTrack
           trackRef={{ participant, source: Track.Source.Camera, publication: camPub }}
-          style={{ width: "100%", height: "100%", objectFit: "contain", transform: mirror ? "scaleX(-1)" : "none" }}
+          style={{ width: "100%", height: "100%", objectFit: "cover", transform: mirror ? "scaleX(-1)" : "none" }}
         />
       ) : (
         <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Camera off</div>
@@ -1036,7 +1023,7 @@ function MediaControls({ videoAllowed, micAllowed, participantId }: { videoAllow
   };
 
   return (
-    <div style={{ display: "flex", gap: 8, padding: "0 16px 8px" }}>
+    <div style={{ display: "flex", gap: 8, padding: "8px 16px 0" }}>
       <Button size="sm" variant="outline" onClick={toggleMic} style={{ color: micOn ? "#fff" : RED, borderColor: micOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
         {micOn ? <Mic size={14} className="mr-1" /> : <MicOff size={14} className="mr-1" />} {micOn ? "Mic On" : "Mic Off"}
       </Button>
