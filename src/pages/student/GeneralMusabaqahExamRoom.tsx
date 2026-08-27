@@ -366,6 +366,19 @@ export default function GeneralMusabaqahExamRoom() {
   const currentAnswer = useMemo(() => answers.find(a => a.question_id === participant?.current_question_id && a.status !== "marked"), [answers, participant?.current_question_id]);
   const currentQuestion = useMemo(() => questions.find(q => q.id === participant?.current_question_id), [questions, participant?.current_question_id]);
 
+  // The tile number the picked question shows as — same numbering the
+  // navigator grid used (stage-relative when the event has stages,
+  // otherwise the global position) — so the flip card's big number
+  // matches the tile that was actually tapped.
+  const currentQuestionNumber = useMemo(() => {
+    if (!currentQuestion) return null;
+    if (stages.length && currentQuestion.stage_id) {
+      const stageQuestions = questions.filter(q => q.stage_id === currentQuestion.stage_id);
+      return stageQuestions.findIndex(q => q.id === currentQuestion.id) + 1;
+    }
+    return questions.findIndex(q => q.id === currentQuestion.id) + 1;
+  }, [currentQuestion, questions, stages]);
+
   const saveScore = async () => {
     if (!currentAnswer || !currentQuestion || !user) return;
     const scoreNum = Number(scoreDraft.score);
@@ -526,6 +539,42 @@ export default function GeneralMusabaqahExamRoom() {
 
   return (
     <div style={{ minHeight: "100vh", background: `linear-gradient(160deg, ${G} 0%, #0a1f12 60%, #050f09 100%)`, display: "flex", flexDirection: "column", fontFamily: "'Cairo', sans-serif" }}>
+      {/* Flip-reveal animation for the picked question tile — the tapped
+          number scales up big, then rotates away to reveal the question
+          card behind it. Re-triggers each pick because the wrapping div
+          is keyed by currentQuestion.id (remounts = animation replays). */}
+      <style>{`
+        .gm-flip-wrap { perspective: 1200px; }
+        .gm-flip-card {
+          position: relative;
+          width: 100%;
+          min-height: 120px;
+          transform-style: preserve-3d;
+          animation: gm-flip 0.9s cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards;
+        }
+        .gm-flip-face {
+          backface-visibility: hidden;
+        }
+        .gm-flip-front {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 14px;
+          box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+        }
+        .gm-flip-back {
+          transform: rotateY(180deg);
+          position: relative;
+        }
+        @keyframes gm-flip {
+          0%   { transform: scale(0.4) rotateY(0deg); opacity: 0; }
+          25%  { transform: scale(1.15) rotateY(0deg); opacity: 1; }
+          55%  { transform: scale(1.15) rotateY(0deg); }
+          100% { transform: scale(1) rotateY(180deg); }
+        }
+      `}</style>
       {/* ── Top bar ────────────────────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -649,12 +698,17 @@ export default function GeneralMusabaqahExamRoom() {
 
       {/* ── Question / judging panel (Section 10-12) ──────────────── */}
       <div style={{ flex: 1, padding: "0 16px 24px", maxWidth: 720, margin: "0 auto", width: "100%" }}>
-        {/* Navigator — only the CURRENTLY ACTIVE stage's tiles are shown.
-            Earlier stages are done and hidden; later stages aren't shown
-            until the participant actually reaches them (finishing the
-            active stage's required question_count advances stageProgress,
-            which swaps this section to the next stage's tiles). */}
-        {stages.length > 0 ? (
+        {/* Navigator — only shows once a participant has actually been
+            called onto stage, and only the CURRENTLY ACTIVE stage's tiles
+            are shown. Earlier stages are done and hidden; later stages
+            aren't shown until the participant actually reaches them
+            (finishing the active stage's required question_count advances
+            stageProgress, which swaps this section to the next stage's
+            tiles — this is what makes Stage 2's tiles appear). The grid
+            also hides the instant a tile is tapped (currentQuestion becomes
+            truthy) so the flip-reveal panel below has the floor to itself,
+            and reappears once that question is marked/skipped. */}
+        {participant && !currentQuestion && stages.length > 0 ? (
           (() => {
             const stage = stageProgress?.activeStage ?? null;
             const stageQuestions = stage
@@ -695,7 +749,7 @@ export default function GeneralMusabaqahExamRoom() {
               </div>
             );
           })()
-        ) : (
+        ) : participant && !currentQuestion ? (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
             {questions.map((q, i) => {
               const a = answers.find(x => x.question_id === q.id);
@@ -719,9 +773,18 @@ export default function GeneralMusabaqahExamRoom() {
               );
             })}
           </div>
-        )}
+        ) : null}
 
         {currentQuestion ? (
+          // key={currentQuestion.id} forces a remount every time a new tile
+          // is picked, so the flip animation replays for each question
+          // instead of only playing once on the very first pick.
+          <div key={currentQuestion.id} className="gm-flip-wrap">
+            <div className="gm-flip-card">
+              <div className="gm-flip-face gm-flip-front" style={{ background: `linear-gradient(135deg, ${GOLD}, #a9863a)` }}>
+                <span style={{ fontSize: 48, fontWeight: 900, color: "#06131f" }}>{currentQuestionNumber}</span>
+              </div>
+              <div className="gm-flip-face gm-flip-back">
           <div style={{ background: GM, border: "1px solid rgba(201,168,76,0.25)", borderRadius: 14, padding: 18 }}>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
               <Badge variant="secondary">{labelize(currentQuestion.category)}</Badge>
@@ -773,6 +836,9 @@ export default function GeneralMusabaqahExamRoom() {
                 </div>
               </div>
             )}
+          </div>
+              </div>
+            </div>
           </div>
         ) : (
           <div style={{ background: GM, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 24, textAlign: "center" }}>
