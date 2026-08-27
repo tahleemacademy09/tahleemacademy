@@ -116,6 +116,8 @@ export default function GeneralMusabaqahEventDetail() {
   const [participants, setParticipants]   = useState<any[]>([]);
   const [pLoading, setPLoading]           = useState(true);
 
+  const [activeTab, setActiveTab] = useState("overview");
+
   const [resultsLoading, setResultsLoading] = useState(true);
   const [scoresByParticipant, setScoresByParticipant] = useState<Record<string, any[]>>({});
   const [breakdownFor, setBreakdownFor] = useState<any | null>(null);
@@ -182,22 +184,6 @@ export default function GeneralMusabaqahEventDetail() {
   };
 
   useEffect(() => { loadEvent(); loadQuestions(); loadRegistrations(); loadParticipants(); loadResults(); loadStages(); }, [id]);
-
-  // This page previously only loaded each tab's data once on mount — a
-  // student registering (or a participant's status changing) after the
-  // admin opened this page never showed up until they navigated away and
-  // back. That's what caused "Registrations" to sit on "No registrations
-  // yet." even after a student had registered. Every other Musabaqah page
-  // (ExamRoom, WaitingRoom) already does this same live-refresh pattern.
-  useEffect(() => {
-    if (!id) return;
-    const ch = supabase.channel(`gm-admin-${id}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_registrations", filter: `event_id=eq.${id}` }, () => loadRegistrations())
-      .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_participants", filter: `event_id=eq.${id}` }, () => loadParticipants())
-      .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_events", filter: `id=eq.${id}` }, () => loadEvent())
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [id]);
 
   // This page previously only loaded each tab's data once on mount — a
   // student registering (or a participant's status changing) after the
@@ -321,6 +307,19 @@ export default function GeneralMusabaqahEventDetail() {
     }
   };
 
+  const [bulkAdmitting, setBulkAdmitting] = useState(false);
+  const admitAllPending = async () => {
+    const pending = registrations.filter(r => r.status === "pending" || r.status === "waitlisted");
+    if (pending.length === 0) return;
+    if (!window.confirm(`Admit all ${pending.length} pending/waitlisted registration(s)?`)) return;
+    setBulkAdmitting(true);
+    for (const reg of pending) {
+      await approveAndAdmit(reg); // toasts per-item on success/failure and never throws
+    }
+    setBulkAdmitting(false);
+    toast({ title: `Finished admitting ${pending.length} registration(s)` });
+  };
+
   const setRegistrationStatus = async (reg: any, status: string) => {
     setActingOn(reg.id);
     const { error } = await supabase
@@ -362,6 +361,19 @@ export default function GeneralMusabaqahEventDetail() {
 
   const removeParticipant = async (participant: any) => {
     if (!window.confirm(`Remove ${participant.participant_name} from this Musabaqah?`)) return;
+    // If this participant is currently the event's "current_participant_id" (i.e. they were
+    // called), clear that reference first or the delete below hits a foreign key violation.
+    if (id) {
+      const { error: clearError } = await supabase
+        .from("general_musabaqah_events")
+        .update({ current_participant_id: null })
+        .eq("id", id)
+        .eq("current_participant_id", participant.id);
+      if (clearError) {
+        toast({ title: "Remove failed", description: clearError.message, variant: "destructive" });
+        return;
+      }
+    }
     const { error } = await supabase.from("general_musabaqah_participants").delete().eq("id", participant.id);
     if (error) toast({ title: "Remove failed", description: error.message, variant: "destructive" });
     else { toast({ title: "Participant removed" }); loadParticipants(); }
@@ -398,22 +410,38 @@ export default function GeneralMusabaqahEventDetail() {
   };
 
 
-  const callParticipant = async (participant: any) => {
-    if (!id) return;
-    const { error: e1 } = await supabase.from("general_musabaqah_participants")
-      .update({ status: "called" }).eq("id", participant.id);
-    const { error: e2 } = await supabase.from("general_musabaqah_events")
-      .update({ current_participant_id: participant.id }).eq("id", id);
-    if (e1 || e2) {
-      toast({ title: "Call failed", description: (e1 || e2)?.message, variant: "destructive" });
+  // Note: calling a student onto the stage now only happens from inside the
+  // live exam room (roster drawer → callRosterParticipant), not from this
+  // page. This page's job is admitting/managing participants, nothing more.
+
+  // Section: one-tap launch — validates the event is actually ready, flips it
+  // to "in_progress" so it's locked in as live, then drops the admin straight
+  // into the Queue tab where they call students one by one.
+  const startCompetition = async () => {
+    const approvedCount = questions.filter(q => q.status === "approved").length;
+    const pendingCount = questions.filter(q => q.status === "pending_review").length;
+    const admittedCount = participants.length;
+
+    if (approvedCount === 0) {
+      toast({ title: "No approved questions yet", description: "Add or approve at least one question in the Question Bank before starting.", variant: "destructive" });
+      setActiveTab("questions");
       return;
     }
-    await supabase.from("general_musabaqah_event_log").insert({
-      event_id: id, participant_id: participant.id, action_type: "called",
-      description: `${participant.participant_name} called to examination`, created_by: user?.id ?? null,
-    });
-    toast({ title: `Calling ${participant.participant_name}…` });
-    loadParticipants();
+    if (admittedCount === 0) {
+      toast({ title: "No admitted participants yet", description: "Approve at least one registration before starting.", variant: "destructive" });
+      setActiveTab("registrations");
+      return;
+    }
+    if (pendingCount > 0 && !window.confirm(`${pendingCount} question(s) are still awaiting review and won't be used. Start anyway?`)) {
+      setActiveTab("questions");
+      return;
+    }
+
+    if (!["in_progress", "paused"].includes(event.status)) {
+      await saveEvent({ status: "in_progress" });
+    }
+    toast({ title: "Competition started", description: "Call students from the live exam room." });
+    navigate(`/musabaqah/general/${id}/exam`);
   };
 
   const saveEvent = async (patch: Record<string, any>) => {
@@ -630,6 +658,17 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
     if (error) toast({ title: "Approve failed", description: error.message, variant: "destructive" });
     else loadQuestions();
   };
+  const [approvingAll, setApprovingAll] = useState(false);
+  const approveAllQuestions = async () => {
+    const pendingIds = questions.filter(q => q.status === "pending_review").map(q => q.id);
+    if (pendingIds.length === 0) return;
+    if (!window.confirm(`Approve all ${pendingIds.length} pending question(s)? Review them individually first if you're unsure.`)) return;
+    setApprovingAll(true);
+    const { error } = await supabase.from("general_musabaqah_questions").update({ status: "approved" }).in("id", pendingIds);
+    setApprovingAll(false);
+    if (error) toast({ title: "Approve all failed", description: error.message, variant: "destructive" });
+    else { toast({ title: `${pendingIds.length} question(s) approved` }); loadQuestions(); }
+  };
   const rejectQuestion = async (qid: string) => {
     const { error } = await supabase.from("general_musabaqah_questions").update({ status: "rejected" }).eq("id", qid);
     if (error) toast({ title: "Reject failed", description: error.message, variant: "destructive" });
@@ -697,7 +736,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
           </p>
         </div>
 
-        <Tabs defaultValue="overview">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div style={{ overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", marginBottom: 2 }}>
             <TabsList className="flex-nowrap w-max">
               <TabsTrigger className="whitespace-nowrap" value="overview">Overview</TabsTrigger>
@@ -819,6 +858,30 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 </div>
               </CardContent>
             </Card>
+
+            {/* ── Start Competition ─────────────────────────────────────
+                One tap once Overview/Question Bank/Registrations are set:
+                checks there's something to run, locks the event to
+                in_progress, and jumps straight to the calling queue. */}
+            <Card style={{ background: GM, border: "1px solid rgba(201,168,76,0.35)", marginTop: 14 }}>
+              <CardContent className="pt-5 pb-5">
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <p style={{ color: "#fff", fontWeight: 700, fontSize: 14, margin: 0 }}>Ready to run the live exam?</p>
+                    <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "4px 0 0" }}>
+                      {questions.filter(q => q.status === "approved").length} approved question{questions.filter(q => q.status === "approved").length === 1 ? "" : "s"} ·{" "}
+                      {participants.length} admitted participant{participants.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <Button onClick={startCompetition} style={{ background: GOLD, color: G, fontWeight: 800 }}>
+                    <PhoneCall size={16} className="mr-1.5" /> Start Competition
+                  </Button>
+                </div>
+                <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, margin: "10px 0 0" }}>
+                  This sets status to "In Progress" and takes you straight into the live exam room, where you call admitted students one at a time. Each called student self-picks a question tile and the timer (Max exam time above) starts automatically.
+                </p>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* ── QUESTIONS ────────────────────────────────────────────── */}
@@ -901,8 +964,13 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
             </div>
 
             {questions.some(q => q.status === "pending_review") && (
-              <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12, color: "#FBBF24", fontSize: 12 }}>
-                {questions.filter(q => q.status === "pending_review").length} AI-generated question(s) awaiting your review — never enter the live exam until approved.
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>
+                <span style={{ color: "#FBBF24", fontSize: 12 }}>
+                  {questions.filter(q => q.status === "pending_review").length} AI-generated question(s) awaiting your review — never enter the live exam until approved.
+                </span>
+                <Button size="sm" disabled={approvingAll} onClick={approveAllQuestions} style={{ background: "#4ADE80", color: "#06301a", fontWeight: 700, flexShrink: 0 }}>
+                  {approvingAll ? <Loader2 size={13} className="animate-spin mr-1" /> : <ThumbsUp size={13} className="mr-1" />} Approve All
+                </Button>
               </div>
             )}
 
@@ -978,12 +1046,14 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
 
           {/* ── REGISTRATIONS ────────────────────────────────────────── */}
           <TabsContent value="registrations" className="mt-4">
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-              <Button size="sm" variant="outline" onClick={loadRegistrations} disabled={rLoading}
-                style={{ color: "rgba(255,255,255,0.7)", borderColor: "rgba(255,255,255,0.2)" }}>
-                <RefreshCcw size={13} className="mr-1" /> Refresh
-              </Button>
-            </div>
+            {registrations.some(r => r.status === "pending" || r.status === "waitlisted") && (
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                <Button size="sm" disabled={bulkAdmitting} onClick={admitAllPending} style={{ background: "#4ADE80", color: "#06301a", fontWeight: 700 }}>
+                  {bulkAdmitting ? <Loader2 size={14} className="animate-spin mr-1" /> : <UserCheck size={14} className="mr-1" />}
+                  Admit All
+                </Button>
+              </div>
+            )}
             {rLoading ? (
               <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
                 <Loader2 className="animate-spin" color={GOLD} size={24} />
@@ -1045,7 +1115,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
           {/* ── QUEUE ────────────────────────────────────────────────── */}
           <TabsContent value="queue" className="mt-4">
             <div style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginBottom: 12 }}>
-              Admitted students only appear here to "Call" once they've pressed Join Competition in their lobby on the day. Once you call someone, everyone else who has joined can watch them live in the exam room but cannot act — only the called student can tap a question tile.
+              Calling students onto the stage happens from inside the live exam room (roster drawer), not here. This tab is just for admitting and managing participants before and during the event.
             </div>
             {pLoading ? (
               <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
@@ -1078,9 +1148,12 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                         </div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {p.status === "waiting" && (
-                            <Button size="sm" onClick={() => callParticipant(p)} style={{ background: "#60A5FA", color: "#06131f", fontWeight: 700 }}>
-                              <PhoneCall size={14} className="mr-1" /> Call
-                            </Button>
+                            <>
+                              <Badge style={{ background: "rgba(96,165,250,0.15)", color: "#60A5FA", border: "none" }}>Joined — waiting to be called</Badge>
+                              <Button size="sm" variant="outline" onClick={() => navigate(`/musabaqah/general/${id}/exam`)}>
+                                Go to Exam Room
+                              </Button>
+                            </>
                           )}
                           {p.status === "admitted" && (
                             <Badge style={{ background: "rgba(148,163,184,0.15)", color: "#94A3B8", border: "none" }}>Not joined yet</Badge>
@@ -1556,14 +1629,7 @@ function ParticipantStatusBadge({ status }: { status: string }) {
   return <Badge style={{ background: s.bg, color: s.c, border: "none" }}>{labelize(status)}</Badge>;
 }
 function Row2({ children }: { children: React.ReactNode }) {
-  // Two columns from the sm breakpoint up; a single stacked column on
-  // phones. Native date/datetime-local inputs have a non-shrinkable
-  // minimum content width on Android/Chrome — forcing them into a fixed
-  // "1fr 1fr" track on a ~360px screen was what pushed the whole page
-  // wider than the viewport (the field itself refusing to shrink below
-  // its min-content width), which is what was actually cutting off
-  // "Registration closes" and the tab bar on the right edge.
-  return <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 min-w-0">{children}</div>;
+  return <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-2.5">{children}</div>;
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
