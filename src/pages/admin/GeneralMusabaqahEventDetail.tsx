@@ -116,6 +116,8 @@ export default function GeneralMusabaqahEventDetail() {
   const [participants, setParticipants]   = useState<any[]>([]);
   const [pLoading, setPLoading]           = useState(true);
 
+  const [activeTab, setActiveTab] = useState("overview");
+
   const [resultsLoading, setResultsLoading] = useState(true);
   const [scoresByParticipant, setScoresByParticipant] = useState<Record<string, any[]>>({});
   const [breakdownFor, setBreakdownFor] = useState<any | null>(null);
@@ -384,6 +386,36 @@ export default function GeneralMusabaqahEventDetail() {
     loadParticipants();
   };
 
+  // Section: one-tap launch — validates the event is actually ready, flips it
+  // to "in_progress" so it's locked in as live, then drops the admin straight
+  // into the Queue tab where they call students one by one.
+  const startCompetition = async () => {
+    const approvedCount = questions.filter(q => q.status === "approved").length;
+    const pendingCount = questions.filter(q => q.status === "pending_review").length;
+    const admittedCount = participants.length;
+
+    if (approvedCount === 0) {
+      toast({ title: "No approved questions yet", description: "Add or approve at least one question in the Question Bank before starting.", variant: "destructive" });
+      setActiveTab("questions");
+      return;
+    }
+    if (admittedCount === 0) {
+      toast({ title: "No admitted participants yet", description: "Approve at least one registration before starting.", variant: "destructive" });
+      setActiveTab("registrations");
+      return;
+    }
+    if (pendingCount > 0 && !window.confirm(`${pendingCount} question(s) are still awaiting review and won't be used. Start anyway?`)) {
+      setActiveTab("questions");
+      return;
+    }
+
+    if (!["in_progress", "paused"].includes(event.status)) {
+      await saveEvent({ status: "in_progress" });
+    }
+    toast({ title: "Competition started", description: "Call students from the Queue tab when they're ready." });
+    setActiveTab("queue");
+  };
+
   const saveEvent = async (patch: Record<string, any>) => {
     if (!id) return;
     setSaving(true);
@@ -598,6 +630,17 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
     if (error) toast({ title: "Approve failed", description: error.message, variant: "destructive" });
     else loadQuestions();
   };
+  const [approvingAll, setApprovingAll] = useState(false);
+  const approveAllQuestions = async () => {
+    const pendingIds = questions.filter(q => q.status === "pending_review").map(q => q.id);
+    if (pendingIds.length === 0) return;
+    if (!window.confirm(`Approve all ${pendingIds.length} pending question(s)? Review them individually first if you're unsure.`)) return;
+    setApprovingAll(true);
+    const { error } = await supabase.from("general_musabaqah_questions").update({ status: "approved" }).in("id", pendingIds);
+    setApprovingAll(false);
+    if (error) toast({ title: "Approve all failed", description: error.message, variant: "destructive" });
+    else { toast({ title: `${pendingIds.length} question(s) approved` }); loadQuestions(); }
+  };
   const rejectQuestion = async (qid: string) => {
     const { error } = await supabase.from("general_musabaqah_questions").update({ status: "rejected" }).eq("id", qid);
     if (error) toast({ title: "Reject failed", description: error.message, variant: "destructive" });
@@ -665,7 +708,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
           </p>
         </div>
 
-        <Tabs defaultValue="overview">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <div style={{ overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", marginBottom: 2 }}>
             <TabsList className="flex-nowrap w-max">
               <TabsTrigger className="whitespace-nowrap" value="overview">Overview</TabsTrigger>
@@ -787,6 +830,30 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 </div>
               </CardContent>
             </Card>
+
+            {/* ── Start Competition ─────────────────────────────────────
+                One tap once Overview/Question Bank/Registrations are set:
+                checks there's something to run, locks the event to
+                in_progress, and jumps straight to the calling queue. */}
+            <Card style={{ background: GM, border: "1px solid rgba(201,168,76,0.35)", marginTop: 14 }}>
+              <CardContent className="pt-5 pb-5">
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <p style={{ color: "#fff", fontWeight: 700, fontSize: 14, margin: 0 }}>Ready to run the live exam?</p>
+                    <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "4px 0 0" }}>
+                      {questions.filter(q => q.status === "approved").length} approved question{questions.filter(q => q.status === "approved").length === 1 ? "" : "s"} ·{" "}
+                      {participants.length} admitted participant{participants.length === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <Button onClick={startCompetition} style={{ background: GOLD, color: G, fontWeight: 800 }}>
+                    <PhoneCall size={16} className="mr-1.5" /> Start Competition
+                  </Button>
+                </div>
+                <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, margin: "10px 0 0" }}>
+                  This sets status to "In Progress" and opens the Queue tab, where you call admitted students one at a time. Each called student self-picks a question tile and the timer (Max exam time above) starts automatically.
+                </p>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* ── QUESTIONS ────────────────────────────────────────────── */}
@@ -869,8 +936,13 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
             </div>
 
             {questions.some(q => q.status === "pending_review") && (
-              <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12, color: "#FBBF24", fontSize: 12 }}>
-                {questions.filter(q => q.status === "pending_review").length} AI-generated question(s) awaiting your review — never enter the live exam until approved.
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>
+                <span style={{ color: "#FBBF24", fontSize: 12 }}>
+                  {questions.filter(q => q.status === "pending_review").length} AI-generated question(s) awaiting your review — never enter the live exam until approved.
+                </span>
+                <Button size="sm" disabled={approvingAll} onClick={approveAllQuestions} style={{ background: "#4ADE80", color: "#06301a", fontWeight: 700, flexShrink: 0 }}>
+                  {approvingAll ? <Loader2 size={13} className="animate-spin mr-1" /> : <ThumbsUp size={13} className="mr-1" />} Approve All
+                </Button>
               </div>
             )}
 
