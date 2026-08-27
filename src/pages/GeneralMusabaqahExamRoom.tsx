@@ -37,6 +37,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -44,8 +46,20 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Mic, MicOff, Video, VideoOff, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, SkipForward, Save, Flag, Wifi, WifiOff,
-  ArrowLeft, Users, Clock, ShieldCheck, ScrollText,
+  ArrowLeft, Users, Clock, ShieldCheck, ScrollText, Menu, PhoneCall,
 } from "lucide-react";
+
+const PSTATUS_COLORS: Record<string, string> = {
+  waiting: "rgba(255,255,255,0.5)",
+  admitted: "#60A5FA",
+  called: "#FBBF24",
+  in_progress: "#4ADE80",
+  paused: "#F87171",
+  disconnected: "#F87171",
+  resuming: "#FBBF24",
+  completed: "rgba(255,255,255,0.4)",
+  finalized: "rgba(255,255,255,0.4)",
+};
 
 const G    = "#0f2d1f";
 const GM   = "#163d28";
@@ -91,6 +105,8 @@ export default function GeneralMusabaqahExamRoom() {
   const [errorOpen, setErrorOpen]   = useState(false);
   const [errorForm, setErrorForm]   = useState({ type: "audio_failure", reason: "", notes: "" });
   const [finalizeOpen, setFinalizeOpen] = useState(false);
+  const [rosterOpen, setRosterOpen]     = useState(false);
+  const [roster, setRoster]             = useState<any[]>([]);
 
   const [scoreDraft, setScoreDraft] = useState({ score: "", correctness: "correct", comment: "" });
   const [savingScore, setSavingScore] = useState(false);
@@ -147,6 +163,16 @@ export default function GeneralMusabaqahExamRoom() {
     setQueueCount({ waiting: waiting || 0, completed: completed || 0 });
   }, [eventId]);
 
+  // Full roster for the hamburger drawer — every participant in the event,
+  // regardless of status, so the judge can call anyone (not just the "next
+  // in line") and see at a glance who's mic'd on. Students see it read-only
+  // except for their own row.
+  const loadRoster = useCallback(async () => {
+    if (!eventId) return;
+    const { data } = await supabase.from("general_musabaqah_participants").select("*").eq("event_id", eventId).order("created_at");
+    setRoster(data || []);
+  }, [eventId]);
+
   const loadAll = useCallback(async () => {
     const ev = await loadEvent();
     const p  = await loadParticipant(ev);
@@ -154,8 +180,9 @@ export default function GeneralMusabaqahExamRoom() {
     await loadStages();
     if (p) await loadAnswers(p.id);
     await loadQueueCounts();
+    await loadRoster();
     setLoading(false);
-  }, [loadEvent, loadParticipant, loadQuestions, loadStages, loadAnswers, loadQueueCounts]);
+  }, [loadEvent, loadParticipant, loadQuestions, loadStages, loadAnswers, loadQueueCounts, loadRoster]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -394,6 +421,38 @@ export default function GeneralMusabaqahExamRoom() {
     loadAll();
   };
 
+  // Judge-only: call any student from the roster drawer straight onto the
+  // stage, same mechanics as GeneralMusabaqahEventDetail's queue "Call" —
+  // updates their status + points the event at them, which is what makes
+  // isOnStage flip true for that student and hands them the question
+  // navigator to pick their own number.
+  const callRosterParticipant = async (p: any) => {
+    if (!eventId || !isJudge) return;
+    const { error: e1 } = await supabase.from("general_musabaqah_participants").update({ status: "called" }).eq("id", p.id);
+    const { error: e2 } = await supabase.from("general_musabaqah_events").update({ current_participant_id: p.id }).eq("id", eventId);
+    if (e1 || e2) { toast({ title: "Call failed", description: (e1 || e2)?.message, variant: "destructive" }); return; }
+    await supabase.from("general_musabaqah_event_log").insert({
+      event_id: eventId, participant_id: p.id, action_type: "called",
+      description: `${p.participant_name} called to examination`, created_by: user?.id ?? null,
+    });
+    toast({ title: `Calling ${p.participant_name}…` });
+    setRosterOpen(false);
+    loadAll();
+  };
+
+  // Mic toggle from the drawer. Only meaningful for whoever is actually on
+  // stage — LiveKit only grants that person (or the judge) a publish token
+  // (see musabaqah-livekit-token), so this flips the same mic_on flag the
+  // in-room MediaControls button uses. The judge can mute the on-stage
+  // student remotely; the student can do it for themselves too.
+  const toggleRosterMic = async (p: any) => {
+    const next = !(p.mic_on ?? true);
+    const { error } = await supabase.from("general_musabaqah_participants").update({ mic_on: next }).eq("id", p.id);
+    if (error) { toast({ title: "Could not update mic", description: error.message, variant: "destructive" }); return; }
+    setRoster(r => r.map(x => x.id === p.id ? { ...x, mic_on: next } : x));
+    if (p.id === myParticipant?.id) toast({ title: next ? "Mic on" : "Mic off" });
+  };
+
   const submitError = async () => {
     await logEvent("error", errorForm.reason, { error_type: errorForm.type, notes: errorForm.notes, affected_question: currentQuestion?.id });
     setErrorOpen(false);
@@ -493,6 +552,9 @@ export default function GeneralMusabaqahExamRoom() {
             <Clock size={14} /> {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
           </span>
           <ConnectionBadge status={participant?.connection_status} />
+          <button onClick={() => setRosterOpen(true)} aria-label="Participants" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex" }}>
+            <Menu size={20} />
+          </button>
         </div>
       </div>
 
@@ -525,6 +587,7 @@ export default function GeneralMusabaqahExamRoom() {
             {canPublish && (
               <MediaControls
                 videoAllowed={videoAllowedForMe}
+                micAllowed={isJudge ? true : (myParticipant?.mic_on ?? true)}
                 participantId={isJudge ? null : myParticipant?.id}
               />
             )}
@@ -741,6 +804,88 @@ export default function GeneralMusabaqahExamRoom() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Participants drawer (hamburger) ──────────────────────────
+          Judge: sees everyone, can Call anyone onto stage and mute/unmute
+          whoever is currently on stage. Student: sees the same list
+          read-only, except their own row gets a mic toggle once they're
+          the one on stage. */}
+      <Sheet open={rosterOpen} onOpenChange={setRosterOpen}>
+        <SheetContent side="right" className="w-[300px] sm:w-[360px]" style={{ background: G, borderLeft: "1px solid rgba(255,255,255,0.08)", padding: 0 }}>
+          <SheetHeader style={{ padding: "16px 16px 8px" }}>
+            <SheetTitle style={{ color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
+              <Users size={16} color={GOLD} /> Participants
+              <Badge style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", border: "none", marginLeft: "auto" }}>
+                {roster.length}
+              </Badge>
+            </SheetTitle>
+          </SheetHeader>
+          <ScrollArea style={{ height: "calc(100vh - 64px)" }}>
+            <div style={{ padding: "4px 12px 16px", display: "grid", gap: 6 }}>
+              {roster.length === 0 && (
+                <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, textAlign: "center", padding: 24 }}>No participants yet.</p>
+              )}
+              {roster.map(p => {
+                const isCurrent = p.id === participant?.id;
+                const isMe = p.id === myParticipant?.id;
+                const micOn = p.mic_on ?? true;
+                // Mic only actually does anything for whoever is on stage —
+                // that's the only participant LiveKit hands a publish token
+                // (see musabaqah-livekit-token). Show it live for them;
+                // greyed out (but visible, per spec) for everyone else.
+                const micActionable = isCurrent && (isJudge || isMe);
+                return (
+                  <div key={p.id} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 10,
+                    background: isCurrent ? "rgba(74,222,128,0.08)" : "rgba(255,255,255,0.03)",
+                    border: isCurrent ? "1px solid rgba(74,222,128,0.3)" : "1px solid rgba(255,255,255,0.06)",
+                  }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: PSTATUS_COLORS[p.status] || "rgba(255,255,255,0.3)", flexShrink: 0 }} />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <p style={{ color: "#fff", fontSize: 13, fontWeight: 600, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {p.participant_name}{isMe && " (You)"}
+                      </p>
+                      <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 10.5, margin: 0 }}>{labelize(p.status)}</p>
+                    </div>
+
+                    <button
+                      onClick={() => micActionable && toggleRosterMic(p)}
+                      disabled={!micActionable}
+                      title={isCurrent ? (micOn ? "Mute" : "Unmute") : "Only the participant on stage can use audio"}
+                      style={{
+                        background: "none", border: "none", padding: 6, borderRadius: 8,
+                        cursor: micActionable ? "pointer" : "default",
+                        color: !isCurrent ? "rgba(255,255,255,0.2)" : micOn ? GREEN : RED,
+                        display: "flex",
+                      }}
+                    >
+                      {micOn ? <Mic size={16} /> : <MicOff size={16} />}
+                    </button>
+
+                    {isJudge && (
+                      <button
+                        onClick={() => callRosterParticipant(p)}
+                        disabled={isCurrent}
+                        title={isCurrent ? "Already on stage" : `Call ${p.participant_name}`}
+                        style={{
+                          background: isCurrent ? "rgba(255,255,255,0.05)" : "rgba(201,168,76,0.15)",
+                          border: `1px solid ${isCurrent ? "rgba(255,255,255,0.08)" : "rgba(201,168,76,0.4)"}`,
+                          padding: 6, borderRadius: 8,
+                          cursor: isCurrent ? "default" : "pointer",
+                          color: isCurrent ? "rgba(255,255,255,0.25)" : GOLD,
+                          display: "flex",
+                        }}
+                      >
+                        <PhoneCall size={15} />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
+
       {/* ── Error dialog ───────────────────────────────────────────── */}
       <Dialog open={errorOpen} onOpenChange={setErrorOpen}>
         <DialogContent className="max-w-sm">
@@ -846,12 +991,16 @@ function ParticipantTile({ participant, label, mirror, highlight }: { participan
    the student currently on stage). Mirrors the toggle into the DB's
    camera_on/mic_on columns too, purely so the admin's participant list/
    queue view can show accurate live status badges. ────────────────────── */
-function MediaControls({ videoAllowed, participantId }: { videoAllowed: boolean; participantId?: string | null }) {
+function MediaControls({ videoAllowed, micAllowed, participantId }: { videoAllowed: boolean; micAllowed: boolean; participantId?: string | null }) {
   const { localParticipant } = useLocalParticipant();
-  const [micOn, setMicOn] = useState(true);
+  const [micOn, setMicOn] = useState(micAllowed);
   const [camOn, setCamOn] = useState(videoAllowed);
 
   useEffect(() => { setCamOn(videoAllowed); if (!videoAllowed) localParticipant.setCameraEnabled(false); }, [videoAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Remote mute — e.g. the admin flipping this participant's mic off from
+  // the roster drawer — must also cut the actual LiveKit publish, not just
+  // repaint the button, otherwise the DB flag lies about what's audible.
+  useEffect(() => { setMicOn(micAllowed); localParticipant.setMicrophoneEnabled(micAllowed); }, [micAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const persist = (patch: Record<string, boolean>) => {
     if (participantId) supabase.from("general_musabaqah_participants").update(patch).eq("id", participantId);
