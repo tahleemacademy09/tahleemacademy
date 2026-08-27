@@ -1421,6 +1421,9 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 </Field>
                 <Field label="Questions per student">
                   <Input type="number" min={1} value={stageDraft.question_count} onChange={e => setStageDraft({ ...stageDraft, question_count: e.target.value })} />
+                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 4 }}>
+                    How many questions from this stage's bank a student must answer before advancing — not the bank size. For a "pick one tile, answer it, move on" format, use 1.
+                  </p>
                 </Field>
               </Row2>
               <Field label="Categories for this stage">
