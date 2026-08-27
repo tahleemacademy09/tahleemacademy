@@ -38,6 +38,11 @@ const G    = "#0f2d1f";
 const GM   = "#163d28";
 const GOLD = "#c9a84c";
 const BLUE_ACCENT = "#60A5FA";
+// This page's Overview card is dark green — the shared Switch component's
+// theme colors (bg-input / bg-background) are nearly invisible against it.
+// Override just here rather than editing the shared component, since Switch
+// looks fine on the light backgrounds it's used on elsewhere in the app.
+const DARK_SWITCH = "data-[state=unchecked]:bg-white/15 data-[state=unchecked]:border-white/25 data-[state=checked]:bg-[#c9a84c] data-[state=checked]:border-[#c9a84c] [&>span]:bg-white [&>span]:shadow-md";
 
 const CATEGORIES = [
   "memorization","narrator","arabic_text","translation","vocabulary",
@@ -530,8 +535,8 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
   }
 
   return (
-    <div style={{ minHeight: "100%", background: `linear-gradient(160deg, ${G} 0%, #0a1f12 60%, #050f09 100%)`, padding: "20px 16px 56px", fontFamily: "'Cairo', sans-serif" }}>
-      <div style={{ maxWidth: 960, margin: "0 auto" }}>
+    <div style={{ minHeight: "100%", width: "100%", maxWidth: "100vw", overflowX: "hidden", background: `linear-gradient(160deg, ${G} 0%, #0a1f12 60%, #050f09 100%)`, padding: "20px 16px 56px", fontFamily: "'Cairo', sans-serif", boxSizing: "border-box" }}>
+      <div style={{ maxWidth: 960, margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
         <button onClick={() => navigate("/musabaqah/general")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", display: "flex", alignItems: "center", gap: 6, marginBottom: 12, cursor: "pointer", fontSize: 13 }}>
           <ArrowLeft size={14} /> All General Musabaqah events
         </button>
@@ -544,18 +549,20 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
         </div>
 
         <Tabs defaultValue="overview">
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="questions">
-              Question Bank {questions.length > 0 && <Badge className="ml-1.5" variant="secondary">{questions.length}</Badge>}
-            </TabsTrigger>
-            <TabsTrigger value="registrations">
-              Registrations {registrations.filter(r => r.status === "pending").length > 0 &&
-                <Badge className="ml-1.5" style={{ background: "#FBBF24", color: "#1a1400" }}>{registrations.filter(r => r.status === "pending").length}</Badge>}
-            </TabsTrigger>
-            <TabsTrigger value="queue">Queue</TabsTrigger>
-            <TabsTrigger value="results">Results</TabsTrigger>
-          </TabsList>
+          <div style={{ overflowX: "auto", overflowY: "hidden", WebkitOverflowScrolling: "touch", marginBottom: 2 }}>
+            <TabsList className="flex-nowrap w-max">
+              <TabsTrigger className="whitespace-nowrap" value="overview">Overview</TabsTrigger>
+              <TabsTrigger className="whitespace-nowrap" value="questions">
+                Question Bank {questions.length > 0 && <Badge className="ml-1.5" variant="secondary">{questions.length}</Badge>}
+              </TabsTrigger>
+              <TabsTrigger className="whitespace-nowrap" value="registrations">
+                Registrations {registrations.filter(r => r.status === "pending").length > 0 &&
+                  <Badge className="ml-1.5" style={{ background: "#FBBF24", color: "#1a1400" }}>{registrations.filter(r => r.status === "pending").length}</Badge>}
+              </TabsTrigger>
+              <TabsTrigger className="whitespace-nowrap" value="queue">Queue</TabsTrigger>
+              <TabsTrigger className="whitespace-nowrap" value="results">Results</TabsTrigger>
+            </TabsList>
+          </div>
 
           {/* ── OVERVIEW ─────────────────────────────────────────────── */}
           <TabsContent value="overview" className="mt-4">
@@ -621,15 +628,19 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
 
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <Label style={{ color: "#fff", fontSize: 13 }}>Randomize questions</Label>
-                  <Switch checked={event.randomize_questions} onCheckedChange={v => saveEvent({ randomize_questions: v })} />
+                  <Switch checked={event.randomize_questions} onCheckedChange={v => saveEvent({ randomize_questions: v })} className={DARK_SWITCH} />
                 </div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <Label style={{ color: "#fff", fontSize: 13 }}>Connection loss pauses timer</Label>
-                  <Switch checked={event.connection_loss_pauses_timer} onCheckedChange={v => saveEvent({ connection_loss_pauses_timer: v })} />
+                  <Switch checked={event.connection_loss_pauses_timer} onCheckedChange={v => saveEvent({ connection_loss_pauses_timer: v })} className={DARK_SWITCH} />
                 </div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <Label style={{ color: "#fff", fontSize: 13 }}>Leaderboard enabled</Label>
-                  <Switch checked={event.leaderboard_enabled} onCheckedChange={v => saveEvent({ leaderboard_enabled: v })} />
+                  <Switch checked={event.leaderboard_enabled} onCheckedChange={v => saveEvent({ leaderboard_enabled: v })} className={DARK_SWITCH} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Label style={{ color: "#fff", fontSize: 13 }}>Auto-approve AI questions</Label>
+                  <Switch checked={!!event.ai_auto_approve_questions} onCheckedChange={v => saveEvent({ ai_auto_approve_questions: v })} className={DARK_SWITCH} />
                 </div>
 
                 {saving && <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>Saving…</span>}
