@@ -29,7 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   LiveKitRoom, RoomAudioRenderer, useLocalParticipant,
-  useRemoteParticipants, VideoTrack, useRoomContext,
+  useRemoteParticipants, VideoTrack,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { Track } from "livekit-client";
@@ -106,19 +106,21 @@ export default function GeneralMusabaqahExamRoom() {
     return data;
   }, [eventId]);
 
+  // "participant" is always whoever is ON STAGE (event.current_participant_id) —
+  // that's the video/question everyone in the room is looking at, judge or
+  // student. "myParticipant" is a student's own row, which is how we know
+  // whether THIS browser is the one on stage (full control) or just watching
+  // (spectator — every other admitted/waiting/etc. student who has joined).
   const loadParticipant = useCallback(async (ev: any) => {
     if (!eventId || !ev) return null;
-    if (isJudge) {
-      if (!ev.current_participant_id) { setP(null); return null; }
-      const { data } = await supabase.from("general_musabaqah_participants").select("*").eq("id", ev.current_participant_id).single();
-      setP(data);
-      return data;
-    } else {
-      const { data } = await supabase.from("general_musabaqah_participants").select("*").eq("event_id", eventId).eq("user_id", user?.id).single();
-      setMyP(data);
-      setP(data);
-      return data;
+    if (!isJudge) {
+      const { data: mine } = await supabase.from("general_musabaqah_participants").select("*").eq("event_id", eventId).eq("user_id", user?.id).maybeSingle();
+      setMyP(mine);
     }
+    if (!ev.current_participant_id) { setP(null); return null; }
+    const { data } = await supabase.from("general_musabaqah_participants").select("*").eq("id", ev.current_participant_id).single();
+    setP(data);
+    return data;
   }, [eventId, isJudge, user?.id]);
 
   const loadQuestions = useCallback(async () => {
@@ -280,6 +282,12 @@ export default function GeneralMusabaqahExamRoom() {
     return pool[0];
   };
 
+  // "on stage" = this browser's own participant row IS the one the event
+  // currently points at. Only this person (besides the judge) gets to
+  // actually act — tap tiles, toggle mic/camera. Everyone else who has
+  // joined watches read-only.
+  const isOnStage = !isJudge && !!myParticipant && !!participant && myParticipant.id === participant.id;
+
   const askQuestion = async (question: any) => {
     if (!participant) return;
     const { data: answer, error } = await supabase.from("general_musabaqah_answers")
@@ -297,6 +305,22 @@ export default function GeneralMusabaqahExamRoom() {
 
     setScoreDraft({ score: String(question.marks), correctness: "correct", comment: "" });
     loadAll();
+  };
+
+  // The called student taps their own shuffled tile to self-assign a
+  // question — goes through the gm_self_ask_question() RPC (security
+  // definer) since students don't otherwise have write access to the
+  // answers/question_usage/questions tables. The RPC re-checks server-side
+  // that it's actually this participant's turn, so this can't be spoofed
+  // by calling it for someone else's id.
+  const selfAskQuestion = async (question: any) => {
+    if (!myParticipant) return;
+    const { error } = await supabase.rpc("gm_self_ask_question", {
+      p_participant_id: myParticipant.id,
+      p_question_id: question.id,
+    });
+    if (error) { toast({ title: "Could not select question", description: error.message, variant: "destructive" }); return; }
+    await loadAll();
   };
 
   const askNext = async () => {
@@ -361,6 +385,15 @@ export default function GeneralMusabaqahExamRoom() {
     loadAll();
   };
 
+  const toggleParticipantVideo = async () => {
+    if (!participant) return;
+    const nextAllowed = participant.video_allowed === false; // currently off → turn on, and vice versa
+    const { error } = await supabase.from("general_musabaqah_participants").update({ video_allowed: nextAllowed }).eq("id", participant.id);
+    if (error) { toast({ title: "Update failed", description: error.message, variant: "destructive" }); return; }
+    toast({ title: nextAllowed ? "Video allowed" : "Video disabled" });
+    loadAll();
+  };
+
   const submitError = async () => {
     await logEvent("error", errorForm.reason, { error_type: errorForm.type, notes: errorForm.notes, affected_question: currentQuestion?.id });
     setErrorOpen(false);
@@ -403,6 +436,23 @@ export default function GeneralMusabaqahExamRoom() {
     );
   }
 
+  if (!isJudge && !participant) {
+    return (
+      <div style={{ minHeight: "100%", background: G, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24, textAlign: "center" }}>
+        <Users size={32} color={GOLD} />
+        <p style={{ color: "#fff" }}>Waiting for the admin to call the next participant…</p>
+        <Button onClick={() => navigate(`/student/musabaqah/general/${eventId}/waiting`)} style={{ background: GOLD, color: G }}>Back to Waiting Room</Button>
+      </div>
+    );
+  }
+
+  // Spectator = anyone in the room besides the judge and the person on
+  // stage — only they should publish audio/video; everyone else just
+  // subscribes so bandwidth and browser mic/cam permissions aren't needlessly
+  // requested from students who are only here to watch.
+  const canPublish = isJudge || isOnStage;
+  const videoAllowedForMe = isJudge || participant?.video_allowed !== false;
+
   const mm = Math.floor((localTimer ?? 0) / 60), ss = (localTimer ?? 0) % 60;
   const isPaused = participant?.status === "paused";
   const isDisconnected = participant?.status === "disconnected";
@@ -417,6 +467,13 @@ export default function GeneralMusabaqahExamRoom() {
           </button>
           <span style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>{event?.title}</span>
           <Badge style={{ background: "rgba(96,165,250,0.15)", color: BLUE, border: "none" }}>{participant?.participant_name}</Badge>
+          {!isJudge && (
+            <Badge style={isOnStage
+              ? { background: "rgba(74,222,128,0.15)", color: "#4ADE80", border: "none" }
+              : { background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", border: "none" }}>
+              {isOnStage ? "You're up — go ahead" : "Watching"}
+            </Badge>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           {stages.length > 0 && stageProgress && (
@@ -458,14 +515,29 @@ export default function GeneralMusabaqahExamRoom() {
             Video unavailable: {lkError}
           </div>
         ) : lkConnected ? (
-          <LiveKitRoom serverUrl={lkUrl} token={lkToken} connect={lkConnected} audio video options={LK_OPTIONS} style={{ height: 260, borderRadius: 12, overflow: "hidden" }}>
+          <LiveKitRoom
+            serverUrl={lkUrl} token={lkToken} connect={lkConnected}
+            audio={canPublish} video={canPublish && videoAllowedForMe}
+            options={LK_OPTIONS} style={{ height: 300, borderRadius: 12, overflow: "hidden" }}
+          >
             <RoomAudioRenderer />
-            <VideoStage />
+            <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} />
+            {canPublish && (
+              <MediaControls
+                videoAllowed={videoAllowedForMe}
+                participantId={isJudge ? null : myParticipant?.id}
+              />
+            )}
           </LiveKitRoom>
         ) : (
           <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12 }}>
             <Loader2 className="animate-spin" color={GOLD} size={24} />
           </div>
+        )}
+        {isOnStage && !videoAllowedForMe && (
+          <p style={{ color: "#FBBF24", fontSize: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+            <VideoOff size={13} /> Your camera has been disabled by the admin for this turn.
+          </p>
         )}
       </div>
 
@@ -474,6 +546,12 @@ export default function GeneralMusabaqahExamRoom() {
         <Button size="sm" variant="outline" onClick={() => setErrorOpen(true)} style={{ color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
           <AlertTriangle size={14} className="mr-1" /> Report Error
         </Button>
+        {isJudge && participant && (
+          <Button size="sm" variant="outline" onClick={toggleParticipantVideo}
+            style={participant.video_allowed === false ? { color: "#F87171", borderColor: "rgba(248,113,113,0.4)" } : { color: "rgba(255,255,255,0.7)" }}>
+            {participant.video_allowed === false ? <><VideoOff size={14} className="mr-1" /> Video Off</> : <><Video size={14} className="mr-1" /> Video On</>}
+          </Button>
+        )}
         {isJudge && participant?.status === "called" && (
           <Button size="sm" onClick={startExamination} style={{ background: GREEN, color: "#06301a", fontWeight: 700 }}>
             <Play size={14} className="mr-1" /> Start Examination
@@ -516,17 +594,18 @@ export default function GeneralMusabaqahExamRoom() {
                       const status = a ? a.status : "not_asked";
                       const isCurrent = participant?.current_question_id === q.id;
                       const globalIndex = questions.findIndex(qq => qq.id === q.id);
+                      const canAct = isJudge || (isOnStage && !locked);
                       return (
                         <button
                           key={q.id}
-                          disabled={!isJudge || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
-                          onClick={() => askQuestion(q)}
-                          title={locked ? "Out of sequence — click to ask anyway" : q.question_text}
+                          disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
+                          onClick={() => (isJudge ? askQuestion(q) : selfAskQuestion(q))}
+                          title={isJudge ? (locked ? "Out of sequence — click to ask anyway" : q.question_text) : "Tap to reveal your question"}
                           style={{
                             width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : locked ? "1px dashed rgba(255,255,255,0.25)" : "1px solid rgba(255,255,255,0.15)",
                             background: locked ? "rgba(255,255,255,0.06)" : QSTATUS_COLORS[status],
                             color: locked ? "rgba(255,255,255,0.4)" : status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
-                            fontWeight: 800, fontSize: 12, cursor: isJudge ? "pointer" : "default", opacity: isJudge ? 1 : 0.7,
+                            fontWeight: 800, fontSize: 12, cursor: canAct ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
                           }}
                         >
                           {globalIndex + 1}
@@ -544,16 +623,17 @@ export default function GeneralMusabaqahExamRoom() {
               const a = answers.find(x => x.question_id === q.id);
               const status = a ? a.status : "not_asked";
               const isCurrent = participant?.current_question_id === q.id;
+              const canAct = isJudge || isOnStage;
               return (
                 <button
                   key={q.id}
-                  disabled={!isJudge || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
-                  onClick={() => askQuestion(q)}
-                  title={q.question_text}
+                  disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
+                  onClick={() => (isJudge ? askQuestion(q) : selfAskQuestion(q))}
+                  title={isJudge ? q.question_text : "Tap to reveal your question"}
                   style={{
                     width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
                     background: QSTATUS_COLORS[status], color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
-                    fontWeight: 800, fontSize: 12, cursor: isJudge ? "pointer" : "default", opacity: isJudge ? 1 : 0.7,
+                    fontWeight: 800, fontSize: 12, cursor: canAct ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
                   }}
                 >
                   {i + 1}
@@ -619,7 +699,12 @@ export default function GeneralMusabaqahExamRoom() {
         ) : (
           <div style={{ background: GM, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 24, textAlign: "center" }}>
             <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
-              {isJudge && participant?.status === "in_progress" ? "No question active." : isJudge ? "Start the examination to begin." : "Waiting for the judge…"}
+              {isJudge && participant?.status === "in_progress" ? "No question active."
+                : isJudge ? "Start the examination to begin."
+                : isOnStage && participant?.status === "in_progress" ? "Tap a tile above to reveal your question."
+                : isOnStage ? "Waiting for the judge to start your examination…"
+                : participant ? `Watching ${participant.participant_name} — waiting for their next question…`
+                : "Waiting for the judge to call the next participant…"}
             </p>
             {isJudge && participant?.status === "in_progress" && (
               <Button onClick={askNext} style={{ marginTop: 10, background: BLUE, color: "#06131f", fontWeight: 700 }}>
@@ -704,31 +789,97 @@ export default function GeneralMusabaqahExamRoom() {
   );
 }
 
-/* ── Video stage: local + remote tiles side by side ────────────────── */
-function VideoStage() {
+/* ── Video stage: local tile (mirrored, like a real mirror) + every remote
+   participant currently in the room (the on-stage student, the judge, and
+   any spectators who happen to be publishing) shown un-mirrored, exactly as
+   everyone else actually sees them. Previously only the FIRST remote
+   participant was ever rendered and neither tile was mirrored, which is
+   what read as "the camera view is flipped" — your own preview looked
+   backwards compared to a real mirror, and with more than 2 people in the
+   room, everyone past the first was simply invisible. ───────────────── */
+function VideoStage({ canPublish, onStageUserId }: { canPublish: boolean; onStageUserId?: string }) {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants   = useRemoteParticipants();
-  const room = useRoomContext();
-  const other = remoteParticipants[0];
 
+  const tiles = [
+    ...(canPublish ? [{ p: localParticipant, label: "You", mirror: true, isLocal: true }] : []),
+    ...remoteParticipants.map(p => {
+      let meta: any = {};
+      try { meta = p.metadata ? JSON.parse(p.metadata) : {}; } catch { /* ignore */ }
+      const isOnStagePerson = onStageUserId && meta.user_id === onStageUserId;
+      return { p, label: p.name || (meta.role === "judge" ? "Judge" : "Participant"), mirror: false, isLocal: false, isOnStagePerson };
+    }),
+  ];
+
+  if (tiles.length === 0) {
+    return <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Waiting for video…</div>;
+  }
+
+  const cols = tiles.length <= 1 ? 1 : tiles.length <= 4 ? 2 : 3;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: other ? "1fr 1fr" : "1fr", gap: 4, height: "100%", background: "#000" }}>
-      <ParticipantTile participant={localParticipant} label="You" muted={false} />
-      {other && <ParticipantTile participant={other} label={other.name || "Participant"} muted={false} />}
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 4, height: "100%", background: "#000" }}>
+      {tiles.map((t, i) => (
+        <ParticipantTile key={t.isLocal ? "local" : t.p.sid || i} participant={t.p} label={t.label} mirror={t.mirror} highlight={!!t.isOnStagePerson} />
+      ))}
     </div>
   );
 }
 
-function ParticipantTile({ participant, label }: { participant: any; label: string; muted: boolean }) {
+function ParticipantTile({ participant, label, mirror, highlight }: { participant: any; label: string; mirror: boolean; highlight?: boolean }) {
   const camPub = participant?.getTrackPublication?.(Track.Source.Camera);
   return (
-    <div style={{ position: "relative", background: "#111", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ position: "relative", background: "#111", display: "flex", alignItems: "center", justifyContent: "center", border: highlight ? `2px solid ${GREEN}` : "none" }}>
       {camPub?.track ? (
-        <VideoTrack trackRef={{ participant, source: Track.Source.Camera, publication: camPub }} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <VideoTrack
+          trackRef={{ participant, source: Track.Source.Camera, publication: camPub }}
+          style={{ width: "100%", height: "100%", objectFit: "cover", transform: mirror ? "scaleX(-1)" : "none" }}
+        />
       ) : (
         <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Camera off</div>
       )}
       <span style={{ position: "absolute", bottom: 6, left: 8, color: "#fff", fontSize: 11, background: "rgba(0,0,0,0.5)", padding: "2px 8px", borderRadius: 10 }}>{label}</span>
+    </div>
+  );
+}
+
+/* ── Mic/camera toggle strip for whoever is allowed to publish (judge or
+   the student currently on stage). Mirrors the toggle into the DB's
+   camera_on/mic_on columns too, purely so the admin's participant list/
+   queue view can show accurate live status badges. ────────────────────── */
+function MediaControls({ videoAllowed, participantId }: { videoAllowed: boolean; participantId?: string | null }) {
+  const { localParticipant } = useLocalParticipant();
+  const [micOn, setMicOn] = useState(true);
+  const [camOn, setCamOn] = useState(videoAllowed);
+
+  useEffect(() => { setCamOn(videoAllowed); if (!videoAllowed) localParticipant.setCameraEnabled(false); }, [videoAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const persist = (patch: Record<string, boolean>) => {
+    if (participantId) supabase.from("general_musabaqah_participants").update(patch).eq("id", participantId);
+  };
+
+  const toggleMic = async () => {
+    const next = !micOn;
+    await localParticipant.setMicrophoneEnabled(next);
+    setMicOn(next);
+    persist({ mic_on: next });
+  };
+  const toggleCam = async () => {
+    if (!videoAllowed) return;
+    const next = !camOn;
+    await localParticipant.setCameraEnabled(next);
+    setCamOn(next);
+    persist({ camera_on: next });
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 8, padding: "0 16px 8px" }}>
+      <Button size="sm" variant="outline" onClick={toggleMic} style={{ color: micOn ? "#fff" : RED, borderColor: micOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
+        {micOn ? <Mic size={14} className="mr-1" /> : <MicOff size={14} className="mr-1" />} {micOn ? "Mic On" : "Mic Off"}
+      </Button>
+      <Button size="sm" variant="outline" disabled={!videoAllowed} onClick={toggleCam}
+        style={{ color: !videoAllowed ? "rgba(255,255,255,0.3)" : camOn ? "#fff" : RED, borderColor: camOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
+        {camOn ? <Video size={14} className="mr-1" /> : <VideoOff size={14} className="mr-1" />} {camOn ? "Camera On" : "Camera Off"}
+      </Button>
     </div>
   );
 }
