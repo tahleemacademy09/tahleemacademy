@@ -30,7 +30,8 @@ import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft, Plus, Loader2, Trash2, Pencil, Save, ScrollText,
   CheckCircle2, XCircle, Clock3, Copy, UserCheck, UserX, Users,
-  KeyRound, RotateCcw, Ban, PhoneCall, SkipForward,
+  KeyRound, RotateCcw, Ban, PhoneCall, SkipForward, Trophy,
+  BarChart3, Eye, RefreshCcw, Award,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -86,6 +87,10 @@ export default function GeneralMusabaqahEventDetail() {
   const [participants, setParticipants]   = useState<any[]>([]);
   const [pLoading, setPLoading]           = useState(true);
 
+  const [resultsLoading, setResultsLoading] = useState(true);
+  const [scoresByParticipant, setScoresByParticipant] = useState<Record<string, any[]>>({});
+  const [breakdownFor, setBreakdownFor] = useState<any | null>(null);
+
 
   const loadEvent = async () => {
     if (!id) return;
@@ -115,7 +120,26 @@ export default function GeneralMusabaqahEventDetail() {
     setQLoading(false);
   };
 
-  useEffect(() => { loadEvent(); loadQuestions(); loadRegistrations(); loadParticipants(); }, [id]);
+  useEffect(() => { loadEvent(); loadQuestions(); loadRegistrations(); loadParticipants(); loadResults(); }, [id]);
+
+  const loadResults = async () => {
+    if (!id) return;
+    setResultsLoading(true);
+    const { data: scores, error } = await supabase
+      .from("general_musabaqah_scores")
+      .select("*, general_musabaqah_answers(question_id, general_musabaqah_questions(category, marks))")
+      .in("participant_id",
+        (await supabase.from("general_musabaqah_participants").select("id").eq("event_id", id)).data?.map((p: any) => p.id) || []
+      );
+    if (error) { toast({ title: "Failed to load results", description: error.message, variant: "destructive" }); setResultsLoading(false); return; }
+    const grouped: Record<string, any[]> = {};
+    (scores || []).forEach((s: any) => {
+      if (!grouped[s.participant_id]) grouped[s.participant_id] = [];
+      grouped[s.participant_id].push(s);
+    });
+    setScoresByParticipant(grouped);
+    setResultsLoading(false);
+  };
 
   const loadRegistrations = async () => {
     if (!id) return;
@@ -242,7 +266,37 @@ export default function GeneralMusabaqahEventDetail() {
     else { toast({ title: "Participant removed" }); loadParticipants(); }
   };
 
-  // Lightweight queue control (Section 16) — full live judging room ships in the next chunk.
+  // Section 39: controlled reopen — unlocks a finalized/completed exam for correction.
+  const reopenExamination = async (participant: any) => {
+    if (!window.confirm(`Reopen ${participant.participant_name}'s examination? Their status returns to In Progress.`)) return;
+    const { error } = await supabase.from("general_musabaqah_participants").update({ status: "in_progress" }).eq("id", participant.id);
+    if (error) { toast({ title: "Reopen failed", description: error.message, variant: "destructive" }); return; }
+    await supabase.from("general_musabaqah_registrations").update({ status: "admitted" }).eq("id", participant.registration_id);
+    await supabase.from("general_musabaqah_event_log").insert({
+      event_id: id, participant_id: participant.id, action_type: "reopened",
+      description: `${participant.participant_name}'s examination reopened by admin`, created_by: user?.id ?? null,
+    });
+    toast({ title: "Examination reopened" });
+    loadParticipants(); loadResults();
+  };
+
+  const publishResults = async () => {
+    await saveEvent({ results_visibility: "published" });
+  };
+
+  const categoryBreakdown = (participantId: string) => {
+    const rows = scoresByParticipant[participantId] || [];
+    const byCategory: Record<string, { earned: number; possible: number }> = {};
+    rows.forEach(r => {
+      const cat = r.general_musabaqah_answers?.general_musabaqah_questions?.category || "other";
+      if (!byCategory[cat]) byCategory[cat] = { earned: 0, possible: 0 };
+      byCategory[cat].earned += Number(r.score);
+      byCategory[cat].possible += Number(r.max_score);
+    });
+    return byCategory;
+  };
+
+
   const callParticipant = async (participant: any) => {
     if (!id) return;
     const { error: e1 } = await supabase.from("general_musabaqah_participants")
@@ -361,6 +415,7 @@ export default function GeneralMusabaqahEventDetail() {
                 <Badge className="ml-1.5" style={{ background: "#FBBF24", color: "#1a1400" }}>{registrations.filter(r => r.status === "pending").length}</Badge>}
             </TabsTrigger>
             <TabsTrigger value="queue">Queue</TabsTrigger>
+            <TabsTrigger value="results">Results</TabsTrigger>
           </TabsList>
 
           {/* ── OVERVIEW ─────────────────────────────────────────────── */}
@@ -628,8 +683,65 @@ export default function GeneralMusabaqahEventDetail() {
               </div>
             )}
           </TabsContent>
+
+          {/* ── RESULTS ──────────────────────────────────────────────── */}
+          <TabsContent value="results" className="mt-4">
+            <ResultsPanel
+              event={event}
+              registrations={registrations}
+              participants={participants}
+              scoresByParticipant={scoresByParticipant}
+              resultsLoading={resultsLoading}
+              onViewBreakdown={setBreakdownFor}
+              onReopen={reopenExamination}
+              onPublish={publishResults}
+              onVisibilityChange={(v: string) => saveEvent({ results_visibility: v })}
+              onToggleLeaderboard={(v: boolean) => saveEvent({ leaderboard_enabled: v })}
+            />
+          </TabsContent>
         </Tabs>
       </div>
+
+      {/* ── Score breakdown dialog ────────────────────────────────────── */}
+      <Dialog open={!!breakdownFor} onOpenChange={(o) => !o && setBreakdownFor(null)}>
+        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{breakdownFor?.participant_name} — Result Breakdown</DialogTitle>
+          </DialogHeader>
+          {breakdownFor && (
+            <div style={{ display: "grid", gap: 14 }}>
+              <div style={{ textAlign: "center", padding: "8px 0" }}>
+                <p style={{ fontSize: 32, fontWeight: 900, color: G, margin: 0 }}>{breakdownFor.total_score}</p>
+                <p style={{ color: "#6b7280", fontSize: 13 }}>total marks</p>
+              </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {Object.entries(categoryBreakdown(breakdownFor.id)).map(([cat, v]: [string, any]) => (
+                  <div key={cat}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+                      <span>{labelize(cat)}</span>
+                      <span>{v.earned}/{v.possible}</span>
+                    </div>
+                    <div style={{ height: 6, borderRadius: 3, background: "#e5e7eb", overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${v.possible ? (v.earned / v.possible) * 100 : 0}%`, background: GOLD }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                {(scoresByParticipant[breakdownFor.id] || []).map((s: any) => (
+                  <div key={s.id} style={{ border: "1px solid #e5e7eb", borderRadius: 8, padding: 10, fontSize: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
+                      <span>{labelize(s.correctness || "")}</span>
+                      <span>{s.score}/{s.max_score}</span>
+                    </div>
+                    {s.comment && <p style={{ color: "#6b7280", margin: "4px 0 0" }}>{s.comment}</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Question dialog ───────────────────────────────────────────── */}
       <Dialog open={qDialogOpen} onOpenChange={setQDialogOpen}>
@@ -693,6 +805,144 @@ export default function GeneralMusabaqahEventDetail() {
   );
 }
 
+function ResultsPanel({
+  event, registrations, participants, scoresByParticipant, resultsLoading,
+  onViewBreakdown, onReopen, onPublish, onVisibilityChange, onToggleLeaderboard,
+}: any) {
+  const finalized = participants.filter((p: any) => ["completed", "finalized"].includes(p.status));
+  const waiting = participants.filter((p: any) => ["admitted", "waiting"].includes(p.status));
+  const examining = participants.filter((p: any) => ["called", "ready", "in_progress", "paused"].includes(p.status));
+  const avgScore = finalized.length ? (finalized.reduce((s: number, p: any) => s + Number(p.total_score || 0), 0) / finalized.length) : 0;
+  const leaderboard = [...finalized].sort((a: any, b: any) => Number(b.total_score) - Number(a.total_score));
+
+  const totalPossible = (p: any) => {
+    const rows = scoresByParticipant[p.id] || [];
+    if (rows.length) return rows.reduce((s: number, r: any) => s + Number(r.max_score), 0);
+    return event?.total_marks || (event?.num_questions_per_student || 0) * (event?.marks_per_question || 0);
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 16 }}>
+      {/* Dashboard summary (Section 40) */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10 }}>
+        <StatCard label="Registered" value={registrations.length} />
+        <StatCard label="Waiting" value={waiting.length} />
+        <StatCard label="Examining" value={examining.length} />
+        <StatCard label="Completed" value={finalized.length} />
+        <StatCard label="Average Score" value={avgScore ? avgScore.toFixed(1) : "—"} accent />
+      </div>
+
+      {/* Publication controls (Section 29) */}
+      <Card style={{ background: GM, border: "1px solid rgba(201,168,76,0.2)" }}>
+        <CardContent className="pt-4 pb-4">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <p style={{ color: "#fff", fontWeight: 700, fontSize: 13, margin: 0 }}>Results visibility</p>
+              <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "2px 0 0" }}>
+                {event?.results_visibility === "published" ? "Published — students can see their results and the leaderboard." :
+                 event?.results_visibility === "visible_after_completion" ? "Students see their own result once finalized." :
+                 "Private — only staff can see results."}
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <Select value={event?.results_visibility} onValueChange={onVisibilityChange}>
+                <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="private">Private</SelectItem>
+                  <SelectItem value="visible_after_completion">Visible after completion</SelectItem>
+                  <SelectItem value="published">Published</SelectItem>
+                </SelectContent>
+              </Select>
+              {event?.results_visibility !== "published" && (
+                <Button size="sm" onClick={onPublish} style={{ background: GOLD, color: G, fontWeight: 700 }}>
+                  <Trophy size={14} className="mr-1" /> Publish
+                </Button>
+              )}
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 12 }}>
+            <Label style={{ color: "#fff", fontSize: 13 }}>Leaderboard enabled</Label>
+            <Switch checked={!!event?.leaderboard_enabled} onCheckedChange={onToggleLeaderboard} />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Per-participant results */}
+      {resultsLoading ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: 30 }}>
+          <Loader2 className="animate-spin" color={GOLD} size={22} />
+        </div>
+      ) : finalized.length === 0 ? (
+        <Card style={{ background: GM, border: "1px solid rgba(201,168,76,0.2)" }}>
+          <CardContent className="pt-6 pb-6 text-center">
+            <BarChart3 size={26} color={GOLD} style={{ margin: "0 auto 8px" }} />
+            <p style={{ color: "rgba(255,255,255,0.6)" }}>No finalized results yet.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {finalized.map((p: any) => {
+            const possible = totalPossible(p);
+            const pct = possible ? Math.round((Number(p.total_score) / possible) * 100) : 0;
+            const passed = event?.passing_score != null ? Number(p.total_score) >= Number(event.passing_score) : null;
+            return (
+              <Card key={p.id} style={{ background: GM, border: "1px solid rgba(201,168,76,0.15)" }}>
+                <CardContent className="pt-4 pb-4">
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                        <span style={{ color: "#fff", fontWeight: 700 }}>{p.participant_name}</span>
+                        {passed !== null && (
+                          <Badge style={{ background: passed ? "rgba(74,222,128,0.15)" : "rgba(248,113,113,0.15)", color: passed ? "#4ADE80" : "#F87171", border: "none" }}>
+                            {passed ? "Passed" : "Below passing"}
+                          </Badge>
+                        )}
+                      </div>
+                      <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>{p.total_score}/{possible} · {pct}%</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <Button size="sm" variant="outline" onClick={() => onViewBreakdown(p)}>
+                        <Eye size={14} className="mr-1" /> Breakdown
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => onReopen(p)} style={{ color: "rgba(255,255,255,0.5)" }}>
+                        <RefreshCcw size={14} className="mr-1" /> Reopen
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Leaderboard preview */}
+      {event?.leaderboard_enabled && leaderboard.length > 0 && (
+        <div>
+          <p style={{ color: GOLD, fontWeight: 700, fontSize: 13, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+            <Award size={15} /> Leaderboard
+          </p>
+          <div style={{ display: "grid", gap: 6 }}>
+            {leaderboard.slice(0, 10).map((p: any, i: number) => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", borderRadius: 8, background: i === 0 ? "rgba(201,168,76,0.15)" : "rgba(255,255,255,0.03)" }}>
+                <span style={{ color: "#fff", fontSize: 13 }}>#{i + 1} {p.participant_name}</span>
+                <span style={{ color: GOLD, fontWeight: 700, fontSize: 13 }}>{p.total_score}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+function StatCard({ label, value, accent }: { label: string; value: any; accent?: boolean }) {
+  return (
+    <div style={{ background: GM, border: "1px solid rgba(201,168,76,0.2)", borderRadius: 10, padding: "12px 10px", textAlign: "center" }}>
+      <p style={{ color: accent ? GOLD : "#fff", fontSize: 20, fontWeight: 900, margin: 0 }}>{value}</p>
+      <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, margin: "2px 0 0" }}>{label}</p>
+    </div>
+  );
+}
 function labelize(s: string) {
   return s.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
