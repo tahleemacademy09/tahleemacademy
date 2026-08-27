@@ -31,12 +31,13 @@ import {
   ArrowLeft, Plus, Loader2, Trash2, Pencil, Save, ScrollText,
   CheckCircle2, XCircle, Clock3, Copy, UserCheck, UserX, Users,
   KeyRound, RotateCcw, Ban, PhoneCall, SkipForward, Trophy,
-  BarChart3, Eye, RefreshCcw, Award,
+  BarChart3, Eye, RefreshCcw, Award, Sparkles, ThumbsUp, ThumbsDown,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
 const GM   = "#163d28";
 const GOLD = "#c9a84c";
+const BLUE_ACCENT = "#60A5FA";
 
 const CATEGORIES = [
   "memorization","narrator","arabic_text","translation","vocabulary",
@@ -90,6 +91,16 @@ export default function GeneralMusabaqahEventDetail() {
   const [resultsLoading, setResultsLoading] = useState(true);
   const [scoresByParticipant, setScoresByParticipant] = useState<Record<string, any[]>>({});
   const [breakdownFor, setBreakdownFor] = useState<any | null>(null);
+
+  const [aiDialogOpen, setAiDialogOpen] = useState(false);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiForm, setAiForm] = useState({
+    instructions: "",
+    count: 10,
+    difficulty: "medium",
+    language: "both",
+    categories: ["memorization", "translation", "explanation", "comprehension"] as string[],
+  });
 
 
   const loadEvent = async () => {
@@ -377,6 +388,134 @@ export default function GeneralMusabaqahEventDetail() {
     else setQuestions(prev => prev.filter(q => q.id !== qid));
   };
 
+  // ── AI question generation (Phase 2, Section 6/7/32) ──────────────────
+  // Reuses the existing tahleem-ai edge function's generic "generate" action
+  // (systemPrompt + prompt → { text }) rather than adding a new function.
+  const buildAiSystemPrompt = () => `You are an expert Islamic and Arabic studies examiner writing oral examination questions for "${event.subject}"${event.topic ? ` on the topic "${event.topic}"` : ""}.
+${event.source_reference ? `Source/reference material to ground every question in: ${event.source_reference}` : ""}
+${event.instructions ? `Examiner instructions: ${event.instructions}` : ""}
+Target student level: ${event.target_level || "general"}.
+
+Respond with ONLY a raw JSON array (no markdown fences, no prose) of question objects. Each object must have exactly these fields:
+{
+  "category": one of memorization|narrator|arabic_text|translation|vocabulary|explanation|lessons|comprehension|application|related_principles|identification,
+  "question_type": one of oral|recitation|translation|explanation|comprehension|continuation|short_answer|true_false|mcq,
+  "question_text": string (English),
+  "question_text_ar": string or null (Arabic version, only if meaningfully different from English),
+  "expected_answer": string — a model answer / rubric note for the judge,
+  "source_reference": string — which part of the source this draws from,
+  "marks": number,
+  "difficulty": one of easy|medium|hard|expert,
+  "confidence": number between 0 and 1 — your own confidence this question is accurate and well-formed
+}
+Do not invent content outside the given subject/topic/source. Never wrap the array in a parent object.`;
+
+  const buildAiUserPrompt = () => {
+    const catList = aiForm.categories.length ? aiForm.categories.join(", ") : "any suitable categories";
+    return `Generate ${aiForm.count} questions. Draw only from categories: ${catList}. Target difficulty: ${aiForm.difficulty}. ${
+      aiForm.language === "arabic" ? "Write question_text primarily in Arabic (still fill question_text_ar)." :
+      aiForm.language === "both" ? "Provide both English (question_text) and Arabic (question_text_ar) for every question." :
+      "English only — leave question_text_ar null."
+    } ${aiForm.instructions.trim() ? `Additional instructions: ${aiForm.instructions.trim()}` : ""} Marks per question should default to ${event.marks_per_question}.`;
+  };
+
+  const generateWithAI = async () => {
+    if (!event || !id) return;
+    setAiGenerating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+        body: { action: "generate", prompt: buildAiUserPrompt(), context: { systemPrompt: buildAiSystemPrompt() } },
+      });
+      if (error) throw new Error(error.message);
+      if (data?.error) throw new Error(data.error);
+      let raw = (data?.text || "").trim();
+      raw = raw.replace(/^```(json)?/i, "").replace(/```$/, "").trim(); // strip stray fences defensively
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) throw new Error("AI did not return a question array");
+
+      const validCategories = new Set(CATEGORIES);
+      const validTypes = new Set(QUESTION_TYPES);
+      const validDifficulties = new Set(DIFFICULTIES);
+      const autoApprove = !!event.ai_auto_approve_questions;
+
+      const rows = parsed
+        .filter((q: any) => q.question_text && validCategories.has(q.category))
+        .map((q: any) => ({
+          event_id: id,
+          category: q.category,
+          question_type: validTypes.has(q.question_type) ? q.question_type : "oral",
+          question_text: String(q.question_text).slice(0, 2000),
+          question_text_ar: q.question_text_ar ? String(q.question_text_ar).slice(0, 2000) : null,
+          expected_answer: q.expected_answer ? String(q.expected_answer).slice(0, 2000) : null,
+          source_reference: q.source_reference ? String(q.source_reference).slice(0, 500) : null,
+          marks: Number(q.marks) > 0 ? Number(q.marks) : event.marks_per_question,
+          difficulty: validDifficulties.has(q.difficulty) ? q.difficulty : aiForm.difficulty,
+          status: autoApprove ? "approved" : "pending_review",
+          ai_generated: true,
+          ai_confidence: typeof q.confidence === "number" ? Math.max(0, Math.min(1, q.confidence)) : null,
+        }));
+
+      if (rows.length === 0) throw new Error("AI returned no usable questions — try adjusting the instructions.");
+
+      const { error: insErr } = await supabase.from("general_musabaqah_questions").insert(rows);
+      if (insErr) throw insErr;
+
+      toast({
+        title: `${rows.length} question${rows.length === 1 ? "" : "s"} generated`,
+        description: autoApprove ? "Auto-approved and added to the bank." : "Sent to the review queue below.",
+      });
+      setAiDialogOpen(false);
+      loadQuestions();
+    } catch (err: any) {
+      toast({ title: "AI generation failed", description: err.message, variant: "destructive" });
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  const approveQuestion = async (qid: string) => {
+    const { error } = await supabase.from("general_musabaqah_questions").update({ status: "approved" }).eq("id", qid);
+    if (error) toast({ title: "Approve failed", description: error.message, variant: "destructive" });
+    else loadQuestions();
+  };
+  const rejectQuestion = async (qid: string) => {
+    const { error } = await supabase.from("general_musabaqah_questions").update({ status: "rejected" }).eq("id", qid);
+    if (error) toast({ title: "Reject failed", description: error.message, variant: "destructive" });
+    else loadQuestions();
+  };
+
+  // Regenerate: re-ask the AI for one question in this exact category/difficulty, replacing the content in place.
+  const regenerateQuestion = async (q: any) => {
+    if (!event) return;
+    setActingOn(q.id);
+    try {
+      const sys = buildAiSystemPrompt();
+      const prompt = `Generate exactly 1 question. Category: ${q.category}. Difficulty: ${q.difficulty}. Question type: ${q.question_type}. ${aiForm.instructions.trim()}`;
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", { body: { action: "generate", prompt, context: { systemPrompt: sys } } });
+      if (error) throw new Error(error.message);
+      let raw = (data?.text || "").trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+      const parsed = JSON.parse(raw);
+      const item = Array.isArray(parsed) ? parsed[0] : parsed;
+      if (!item?.question_text) throw new Error("AI did not return a usable question");
+
+      const { error: updErr } = await supabase.from("general_musabaqah_questions").update({
+        question_text: String(item.question_text).slice(0, 2000),
+        question_text_ar: item.question_text_ar ? String(item.question_text_ar).slice(0, 2000) : null,
+        expected_answer: item.expected_answer ? String(item.expected_answer).slice(0, 2000) : q.expected_answer,
+        source_reference: item.source_reference ? String(item.source_reference).slice(0, 500) : q.source_reference,
+        status: event.ai_auto_approve_questions ? "approved" : "pending_review",
+        ai_confidence: typeof item.confidence === "number" ? Math.max(0, Math.min(1, item.confidence)) : null,
+      }).eq("id", q.id);
+      if (updErr) throw updErr;
+      toast({ title: "Question regenerated" });
+      loadQuestions();
+    } catch (err: any) {
+      toast({ title: "Regenerate failed", description: err.message, variant: "destructive" });
+    } finally {
+      setActingOn(null);
+    }
+  };
+
   const filteredQuestions = useMemo(
     () => categoryFilter === "all" ? questions : questions.filter(q => q.category === categoryFilter),
     [questions, categoryFilter]
@@ -512,10 +651,21 @@ export default function GeneralMusabaqahEventDetail() {
                   {CATEGORIES.map(c => <SelectItem key={c} value={c}>{labelize(c)}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Button onClick={openNewQuestion} style={{ background: GOLD, color: G, fontWeight: 700 }}>
-                <Plus size={16} className="mr-1" /> Add Question
-              </Button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Button variant="outline" onClick={() => setAiDialogOpen(true)} style={{ color: BLUE_ACCENT, borderColor: "rgba(96,165,250,0.4)" }}>
+                  <Sparkles size={16} className="mr-1" /> Generate with AI
+                </Button>
+                <Button onClick={openNewQuestion} style={{ background: GOLD, color: G, fontWeight: 700 }}>
+                  <Plus size={16} className="mr-1" /> Add Question
+                </Button>
+              </div>
             </div>
+
+            {questions.some(q => q.status === "pending_review") && (
+              <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12, color: "#FBBF24", fontSize: 12 }}>
+                {questions.filter(q => q.status === "pending_review").length} AI-generated question(s) awaiting your review — never enter the live exam until approved.
+              </div>
+            )}
 
             {qLoading ? (
               <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
@@ -525,13 +675,13 @@ export default function GeneralMusabaqahEventDetail() {
               <Card style={{ background: GM, border: "1px solid rgba(201,168,76,0.2)" }}>
                 <CardContent className="pt-6 pb-6 text-center">
                   <ScrollText size={28} color={GOLD} style={{ margin: "0 auto 10px" }} />
-                  <p style={{ color: "rgba(255,255,255,0.65)" }}>No questions yet. Add the first one manually — AI generation arrives in Phase 2.</p>
+                  <p style={{ color: "rgba(255,255,255,0.65)" }}>No questions yet. Add one manually or generate a batch with AI.</p>
                 </CardContent>
               </Card>
             ) : (
               <div style={{ display: "grid", gap: 10 }}>
                 {filteredQuestions.map(q => (
-                  <Card key={q.id} style={{ background: GM, border: "1px solid rgba(201,168,76,0.15)" }}>
+                  <Card key={q.id} style={{ background: GM, border: q.status === "pending_review" ? "1px solid rgba(251,191,36,0.4)" : "1px solid rgba(201,168,76,0.15)" }}>
                     <CardContent className="pt-4 pb-4">
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
@@ -540,13 +690,34 @@ export default function GeneralMusabaqahEventDetail() {
                             <Badge variant="outline" style={{ color: "#fff", borderColor: "rgba(255,255,255,0.25)" }}>{labelize(q.question_type)}</Badge>
                             <Badge variant="outline" style={{ color: "#fff", borderColor: "rgba(255,255,255,0.25)" }}>{labelize(q.difficulty)}</Badge>
                             <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>{q.marks} marks</Badge>
+                            {q.ai_generated && (
+                              <Badge style={{ background: "rgba(96,165,250,0.15)", color: BLUE_ACCENT, border: "none" }}>
+                                <Sparkles size={11} className="mr-1" />AI{q.ai_confidence != null ? ` ${Math.round(q.ai_confidence * 100)}%` : ""}
+                              </Badge>
+                            )}
                             {q.status === "approved"
                               ? <Badge style={{ background: "rgba(74,222,128,0.15)", color: "#4ADE80", border: "none" }}><CheckCircle2 size={11} className="mr-1" />Approved</Badge>
+                              : q.status === "rejected"
+                              ? <Badge style={{ background: "rgba(248,113,113,0.15)", color: "#F87171", border: "none" }}><XCircle size={11} className="mr-1" />Rejected</Badge>
                               : <Badge style={{ background: "rgba(251,191,36,0.15)", color: "#FBBF24", border: "none" }}><Clock3 size={11} className="mr-1" />{labelize(q.status)}</Badge>}
                           </div>
                           <p style={{ color: "#fff", fontSize: 14, margin: 0 }}>{q.question_text}</p>
                           {q.question_text_ar && <p dir="rtl" style={{ color: "rgba(255,255,255,0.8)", fontSize: 15, margin: "4px 0 0" }}>{q.question_text_ar}</p>}
                           {q.expected_answer && <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "6px 0 0" }}>Expected: {q.expected_answer}</p>}
+
+                          {q.status === "pending_review" && (
+                            <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                              <Button size="sm" disabled={actingOn === q.id} onClick={() => approveQuestion(q.id)} style={{ background: "#4ADE80", color: "#06301a", fontWeight: 700 }}>
+                                <ThumbsUp size={13} className="mr-1" /> Approve
+                              </Button>
+                              <Button size="sm" variant="outline" disabled={actingOn === q.id} onClick={() => regenerateQuestion(q)}>
+                                {actingOn === q.id ? <Loader2 size={13} className="animate-spin mr-1" /> : <Sparkles size={13} className="mr-1" />} Regenerate
+                              </Button>
+                              <Button size="sm" variant="outline" disabled={actingOn === q.id} onClick={() => rejectQuestion(q.id)} style={{ color: "#F87171", borderColor: "rgba(248,113,113,0.4)" }}>
+                                <ThumbsDown size={13} className="mr-1" /> Reject
+                              </Button>
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
                           <Button variant="ghost" size="icon" onClick={() => duplicateQuestion(q)} style={{ color: "rgba(255,255,255,0.5)" }}><Copy size={15} /></Button>
@@ -701,6 +872,74 @@ export default function GeneralMusabaqahEventDetail() {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* ── AI generation dialog ──────────────────────────────────────── */}
+      <Dialog open={aiDialogOpen} onOpenChange={(o) => !aiGenerating && setAiDialogOpen(o)}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle><Sparkles size={16} className="inline mr-1" /> Generate Questions with AI</DialogTitle>
+          </DialogHeader>
+          <div style={{ display: "grid", gap: 12 }}>
+            <p style={{ fontSize: 12, color: "#6b7280", background: "#f9fafb", padding: 10, borderRadius: 8 }}>
+              Grounded in this event's subject ({event?.subject}{event?.topic ? ` — ${event.topic}` : ""}) and the source/instructions you set in Overview.
+              {event?.ai_auto_approve_questions
+                ? " Auto-approve is ON — generated questions go straight into the live bank."
+                : " Generated questions land in a review queue below — nothing reaches students until you approve it."}
+            </p>
+            <Row2>
+              <Field label="How many questions">
+                <Input type="number" min={1} max={30} value={aiForm.count} onChange={e => setAiForm({ ...aiForm, count: Number(e.target.value) })} />
+              </Field>
+              <Field label="Difficulty">
+                <Select value={aiForm.difficulty} onValueChange={v => setAiForm({ ...aiForm, difficulty: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{DIFFICULTIES.map(d => <SelectItem key={d} value={d}>{labelize(d)}</SelectItem>)}</SelectContent>
+                </Select>
+              </Field>
+            </Row2>
+            <Field label="Language">
+              <Select value={aiForm.language} onValueChange={v => setAiForm({ ...aiForm, language: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="english">English only</SelectItem>
+                  <SelectItem value="both">English + Arabic</SelectItem>
+                  <SelectItem value="arabic">Arabic-led</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Categories to draw from">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {CATEGORIES.map(c => {
+                  const active = aiForm.categories.includes(c);
+                  return (
+                    <button key={c} type="button"
+                      onClick={() => setAiForm({ ...aiForm, categories: active ? aiForm.categories.filter(x => x !== c) : [...aiForm.categories, c] })}
+                      style={{
+                        padding: "4px 10px", borderRadius: 16, fontSize: 12, cursor: "pointer",
+                        border: active ? "1.5px solid " + GOLD : "1px solid #d1d5db",
+                        background: active ? "rgba(201,168,76,0.12)" : "transparent",
+                        color: active ? "#92720f" : "#6b7280",
+                      }}>
+                      {labelize(c)}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+            <Field label="Additional instructions (optional)">
+              <Textarea rows={3} value={aiForm.instructions} onChange={e => setAiForm({ ...aiForm, instructions: e.target.value })}
+                placeholder="e.g. Focus on memorization and translation, keep questions suitable for intermediate students." />
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" disabled={aiGenerating} onClick={() => setAiDialogOpen(false)}>Cancel</Button>
+            <Button onClick={generateWithAI} disabled={aiGenerating} style={{ background: BLUE_ACCENT, color: "#06131f", fontWeight: 700 }}>
+              {aiGenerating ? <Loader2 size={16} className="animate-spin mr-1" /> : <Sparkles size={16} className="mr-1" />}
+              {aiGenerating ? "Generating…" : "Generate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Score breakdown dialog ────────────────────────────────────── */}
       <Dialog open={!!breakdownFor} onOpenChange={(o) => !o && setBreakdownFor(null)}>
