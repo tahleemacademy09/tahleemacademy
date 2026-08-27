@@ -64,6 +64,7 @@ const emptyQuestion = (eventId: string) => ({
   marks: 10,
   difficulty: "medium",
   status: "approved",
+  stage_id: null as string | null,
 });
 
 export default function GeneralMusabaqahEventDetail() {
@@ -105,7 +106,16 @@ export default function GeneralMusabaqahEventDetail() {
     difficulty: "medium",
     language: "both",
     categories: ["memorization", "translation", "explanation", "comprehension"] as string[],
+    stage_id: "none" as string,
   });
+
+  // ── Stages (sequential Stage 1 → Stage 2 → … grouping of the bank) ──
+  const [stages, setStages] = useState<any[]>([]);
+  const [stagesLoading, setStagesLoading] = useState(true);
+  const [stageFilter, setStageFilter] = useState<string>("all");
+  const [stageDialogOpen, setStageDialogOpen] = useState(false);
+  const [stageDraft, setStageDraft] = useState<any>(null);
+  const [stageSaving, setStageSaving] = useState(false);
 
 
   const loadEvent = async () => {
@@ -136,7 +146,20 @@ export default function GeneralMusabaqahEventDetail() {
     setQLoading(false);
   };
 
-  useEffect(() => { loadEvent(); loadQuestions(); loadRegistrations(); loadParticipants(); loadResults(); }, [id]);
+  const loadStages = async () => {
+    if (!id) return;
+    setStagesLoading(true);
+    const { data, error } = await supabase
+      .from("general_musabaqah_stages")
+      .select("*")
+      .eq("event_id", id)
+      .order("stage_order", { ascending: true });
+    if (error) toast({ title: "Failed to load stages", description: error.message, variant: "destructive" });
+    else setStages(data || []);
+    setStagesLoading(false);
+  };
+
+  useEffect(() => { loadEvent(); loadQuestions(); loadRegistrations(); loadParticipants(); loadResults(); loadStages(); }, [id]);
 
   const loadResults = async () => {
     if (!id) return;
@@ -364,6 +387,7 @@ export default function GeneralMusabaqahEventDetail() {
       marks: Number(qDraft.marks) || 10,
       difficulty: qDraft.difficulty,
       status: qDraft.status || "approved",
+      stage_id: qDraft.stage_id || null,
     };
     const isEdit = !!qDraft.id;
     const { error } = isEdit
@@ -393,6 +417,65 @@ export default function GeneralMusabaqahEventDetail() {
     else setQuestions(prev => prev.filter(q => q.id !== qid));
   };
 
+  // ── Stage CRUD ─────────────────────────────────────────────────────
+  const emptyStage = () => ({ name: "", categories: [] as string[], difficulty: "medium", question_count: 5 });
+  const openNewStage = () => { setStageDraft(emptyStage()); setStageDialogOpen(true); };
+  const openEditStage = (s: any) => { setStageDraft({ ...s, categories: Array.isArray(s.categories) ? s.categories : [] }); setStageDialogOpen(true); };
+
+  const saveStage = async () => {
+    if (!id || !stageDraft.name.trim()) {
+      toast({ title: "Stage name is required", variant: "destructive" });
+      return;
+    }
+    setStageSaving(true);
+    const isEdit = !!stageDraft.id;
+    const payload = {
+      event_id: id,
+      name: stageDraft.name.trim(),
+      categories: stageDraft.categories,
+      difficulty: stageDraft.difficulty,
+      question_count: Number(stageDraft.question_count) || 1,
+      ...(isEdit ? {} : { stage_order: stages.length }),
+    };
+    const { error } = isEdit
+      ? await supabase.from("general_musabaqah_stages").update(payload).eq("id", stageDraft.id)
+      : await supabase.from("general_musabaqah_stages").insert(payload);
+    setStageSaving(false);
+    if (error) {
+      toast({ title: "Could not save stage", description: error.message, variant: "destructive" });
+      return;
+    }
+    toast({ title: isEdit ? "Stage updated" : "Stage added" });
+    setStageDialogOpen(false);
+    loadStages();
+  };
+
+  const deleteStage = async (s: any) => {
+    const attached = questions.filter(q => q.stage_id === s.id).length;
+    if (!window.confirm(`Delete "${s.name}"?${attached ? ` ${attached} question(s) tagged to it will become ungrouped.` : ""}`)) return;
+    const { error } = await supabase.from("general_musabaqah_stages").delete().eq("id", s.id);
+    if (error) { toast({ title: "Delete failed", description: error.message, variant: "destructive" }); return; }
+    toast({ title: "Stage deleted" });
+    loadStages();
+    loadQuestions();
+  };
+
+  const moveStage = async (index: number, dir: -1 | 1) => {
+    const target = index + dir;
+    if (target < 0 || target >= stages.length) return;
+    const a = stages[index], b = stages[target];
+    setStages(prev => {
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+    await Promise.all([
+      supabase.from("general_musabaqah_stages").update({ stage_order: b.stage_order }).eq("id", a.id),
+      supabase.from("general_musabaqah_stages").update({ stage_order: a.stage_order }).eq("id", b.id),
+    ]);
+    loadStages();
+  };
+
   // ── AI question generation (Phase 2, Section 6/7/32) ──────────────────
   // Reuses the existing tahleem-ai edge function's generic "generate" action
   // (systemPrompt + prompt → { text }) rather than adding a new function.
@@ -417,7 +500,8 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
 
   const buildAiUserPrompt = () => {
     const catList = aiForm.categories.length ? aiForm.categories.join(", ") : "any suitable categories";
-    return `Generate ${aiForm.count} questions. Draw only from categories: ${catList}. Target difficulty: ${aiForm.difficulty}. ${
+    const stage = aiForm.stage_id !== "none" ? stages.find(s => s.id === aiForm.stage_id) : null;
+    return `${stage ? `These questions are for the stage "${stage.name}" of the examination — keep them consistent with that stage's focus. ` : ""}Generate ${aiForm.count} questions. Draw only from categories: ${catList}. Target difficulty: ${aiForm.difficulty}. ${
       aiForm.language === "arabic" ? "Write question_text primarily in Arabic (still fill question_text_ar)." :
       aiForm.language === "both" ? "Provide both English (question_text) and Arabic (question_text_ar) for every question." :
       "English only — leave question_text_ar null."
@@ -458,6 +542,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
           status: autoApprove ? "approved" : "pending_review",
           ai_generated: true,
           ai_confidence: typeof q.confidence === "number" ? Math.max(0, Math.min(1, q.confidence)) : null,
+          stage_id: aiForm.stage_id !== "none" ? aiForm.stage_id : null,
         }));
 
       if (rows.length === 0) throw new Error("AI returned no usable questions — try adjusting the instructions.");
@@ -522,8 +607,10 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
   };
 
   const filteredQuestions = useMemo(
-    () => categoryFilter === "all" ? questions : questions.filter(q => q.category === categoryFilter),
-    [questions, categoryFilter]
+    () => questions
+      .filter(q => categoryFilter === "all" || q.category === categoryFilter)
+      .filter(q => stageFilter === "all" || (stageFilter === "ungrouped" ? !q.stage_id : q.stage_id === stageFilter)),
+    [questions, categoryFilter, stageFilter]
   );
 
   if (loading || !event) {
@@ -654,14 +741,73 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
 
           {/* ── QUESTIONS ────────────────────────────────────────────── */}
           <TabsContent value="questions" className="mt-4">
+            {/* Stages — ordered sections the live exam progresses through */}
+            <Card style={{ background: GM, border: "1px solid rgba(201,168,76,0.2)", marginBottom: 14 }}>
+              <CardContent className="pt-4 pb-4">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: stages.length ? 10 : 0, gap: 8, flexWrap: "wrap" }}>
+                  <div>
+                    <p style={{ color: "#fff", fontWeight: 700, fontSize: 13, margin: 0 }}>Stages</p>
+                    <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "2px 0 0" }}>
+                      {stages.length
+                        ? "Students must finish a stage's questions before the next one unlocks in the live exam room."
+                        : "Optional — leave empty to keep one flat question bank."}
+                    </p>
+                  </div>
+                  <Button size="sm" variant="outline" onClick={openNewStage} style={{ color: GOLD, borderColor: "rgba(201,168,76,0.4)" }}>
+                    <Plus size={14} className="mr-1" /> Add Stage
+                  </Button>
+                </div>
+                {stagesLoading ? (
+                  <div style={{ display: "flex", justifyContent: "center", padding: 10 }}>
+                    <Loader2 className="animate-spin" color={GOLD} size={18} />
+                  </div>
+                ) : stages.length > 0 && (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {stages.map((s, i) => {
+                      const count = questions.filter(q => q.stage_id === s.id).length;
+                      return (
+                        <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "rgba(255,255,255,0.03)", borderRadius: 8, padding: "8px 10px", flexWrap: "wrap" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                            <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>Stage {i + 1}</Badge>
+                            <span style={{ color: "#fff", fontWeight: 600, fontSize: 13 }}>{s.name}</span>
+                            <span style={{ color: "rgba(255,255,255,0.45)", fontSize: 12 }}>
+                              {labelize(s.difficulty)} · {s.question_count} question{s.question_count === 1 ? "" : "s"}/student · {count} in bank
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                            <Button variant="ghost" size="icon" disabled={i === 0} onClick={() => moveStage(i, -1)} style={{ color: "rgba(255,255,255,0.5)" }}>↑</Button>
+                            <Button variant="ghost" size="icon" disabled={i === stages.length - 1} onClick={() => moveStage(i, 1)} style={{ color: "rgba(255,255,255,0.5)" }}>↓</Button>
+                            <Button variant="ghost" size="icon" onClick={() => openEditStage(s)} style={{ color: "rgba(255,255,255,0.5)" }}><Pencil size={14} /></Button>
+                            <Button variant="ghost" size="icon" onClick={() => deleteStage(s)} style={{ color: "rgba(255,255,255,0.5)" }}><Trash2 size={14} /></Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
-              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All categories</SelectItem>
-                  {CATEGORIES.map(c => <SelectItem key={c} value={c}>{labelize(c)}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                  <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All categories</SelectItem>
+                    {CATEGORIES.map(c => <SelectItem key={c} value={c}>{labelize(c)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                {stages.length > 0 && (
+                  <Select value={stageFilter} onValueChange={setStageFilter}>
+                    <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All stages</SelectItem>
+                      <SelectItem value="ungrouped">Ungrouped</SelectItem>
+                      {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
               <div style={{ display: "flex", gap: 8 }}>
                 <Button variant="outline" onClick={() => setAiDialogOpen(true)} style={{ color: BLUE_ACCENT, borderColor: "rgba(96,165,250,0.4)" }}>
                   <Sparkles size={16} className="mr-1" /> Generate with AI
@@ -697,6 +843,11 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+                            {q.stage_id && stages.find(s => s.id === q.stage_id) && (
+                              <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>
+                                {stages.find(s => s.id === q.stage_id)?.name}
+                              </Badge>
+                            )}
                             <Badge variant="secondary">{labelize(q.category)}</Badge>
                             <Badge variant="outline" style={{ color: "#fff", borderColor: "rgba(255,255,255,0.25)" }}>{labelize(q.question_type)}</Badge>
                             <Badge variant="outline" style={{ color: "#fff", borderColor: "rgba(255,255,255,0.25)" }}>{labelize(q.difficulty)}</Badge>
@@ -897,6 +1048,24 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 ? " Auto-approve is ON — generated questions go straight into the live bank."
                 : " Generated questions land in a review queue below — nothing reaches students until you approve it."}
             </p>
+            {stages.length > 0 && (
+              <Field label="Stage (optional)">
+                <Select value={aiForm.stage_id} onValueChange={v => {
+                  const stage = stages.find(s => s.id === v);
+                  setAiForm({
+                    ...aiForm,
+                    stage_id: v,
+                    ...(stage ? { categories: Array.isArray(stage.categories) && stage.categories.length ? stage.categories : aiForm.categories, difficulty: stage.difficulty, count: stage.question_count } : {}),
+                  });
+                }}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No stage (ungrouped)</SelectItem>
+                    {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
             <Row2>
               <Field label="How many questions">
                 <Input type="number" min={1} max={30} value={aiForm.count} onChange={e => setAiForm({ ...aiForm, count: Number(e.target.value) })} />
@@ -1040,12 +1209,77 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                   </Select>
                 </Field>
               </Row2>
+
+              {stages.length > 0 && (
+                <Field label="Stage">
+                  <Select value={qDraft.stage_id || "none"} onValueChange={v => setQDraft({ ...qDraft, stage_id: v === "none" ? null : v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Ungrouped</SelectItem>
+                      {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setQDialogOpen(false)}>Cancel</Button>
             <Button onClick={saveQuestion} disabled={qSaving} style={{ background: G, color: "#fff" }}>
               {qSaving ? <Loader2 size={16} className="animate-spin mr-1" /> : <Save size={16} className="mr-1" />}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Stage dialog ───────────────────────────────────────────────── */}
+      <Dialog open={stageDialogOpen} onOpenChange={setStageDialogOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{stageDraft?.id ? "Edit Stage" : "Add Stage"}</DialogTitle>
+          </DialogHeader>
+          {stageDraft && (
+            <div style={{ display: "grid", gap: 12 }}>
+              <Field label="Stage name">
+                <Input value={stageDraft.name} onChange={e => setStageDraft({ ...stageDraft, name: e.target.value })} placeholder="e.g. Memorization" />
+              </Field>
+              <Row2>
+                <Field label="Difficulty">
+                  <Select value={stageDraft.difficulty} onValueChange={v => setStageDraft({ ...stageDraft, difficulty: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>{DIFFICULTIES.map(d => <SelectItem key={d} value={d}>{labelize(d)}</SelectItem>)}</SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Questions per student">
+                  <Input type="number" min={1} value={stageDraft.question_count} onChange={e => setStageDraft({ ...stageDraft, question_count: e.target.value })} />
+                </Field>
+              </Row2>
+              <Field label="Categories for this stage">
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {CATEGORIES.map(c => {
+                    const active = stageDraft.categories.includes(c);
+                    return (
+                      <button key={c} type="button"
+                        onClick={() => setStageDraft({ ...stageDraft, categories: active ? stageDraft.categories.filter((x: string) => x !== c) : [...stageDraft.categories, c] })}
+                        style={{
+                          padding: "4px 10px", borderRadius: 16, fontSize: 12, cursor: "pointer",
+                          border: active ? "1.5px solid " + GOLD : "1px solid #d1d5db",
+                          background: active ? "rgba(201,168,76,0.12)" : "transparent",
+                          color: active ? "#92720f" : "#6b7280",
+                        }}>
+                        {labelize(c)}
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStageDialogOpen(false)}>Cancel</Button>
+            <Button onClick={saveStage} disabled={stageSaving} style={{ background: G, color: "#fff" }}>
+              {stageSaving ? <Loader2 size={16} className="animate-spin mr-1" /> : <Save size={16} className="mr-1" />}
               Save
             </Button>
           </DialogFooter>
