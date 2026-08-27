@@ -2236,6 +2236,7 @@ export type Database = {
           question_type: string
           rubric: Json | null
           source_reference: string | null
+          stage_id: string | null
           status: string
           times_used: number
           updated_at: string
@@ -2258,6 +2259,7 @@ export type Database = {
           question_type?: string
           rubric?: Json | null
           source_reference?: string | null
+          stage_id?: string | null
           status?: string
           times_used?: number
           updated_at?: string
@@ -2280,6 +2282,7 @@ export type Database = {
           question_type?: string
           rubric?: Json | null
           source_reference?: string | null
+          stage_id?: string | null
           status?: string
           times_used?: number
           updated_at?: string
@@ -2287,6 +2290,57 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "general_musabaqah_questions_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "general_musabaqah_questions_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "general_musabaqah_stages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      general_musabaqah_stages: {
+        Row: {
+          categories: Json
+          created_at: string
+          difficulty: string
+          event_id: string
+          id: string
+          name: string
+          question_count: number
+          stage_order: number
+          updated_at: string
+        }
+        Insert: {
+          categories?: Json
+          created_at?: string
+          difficulty?: string
+          event_id: string
+          id?: string
+          name: string
+          question_count?: number
+          stage_order?: number
+          updated_at?: string
+        }
+        Update: {
+          categories?: Json
+          created_at?: string
+          difficulty?: string
+          event_id?: string
+          id?: string
+          name?: string
+          question_count?: number
+          stage_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "general_musabaqah_stages_event_id_fkey"
             columns: ["event_id"]
             isOneToOne: false
             referencedRelation: "general_musabaqah_events"
