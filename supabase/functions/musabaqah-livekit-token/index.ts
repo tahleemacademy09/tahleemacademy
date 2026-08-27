@@ -81,6 +81,36 @@ Deno.serve(async (req) => {
     const isPrivileged    = userRoles.includes("admin") || userRoles.includes("teacher");
     const participantName = profile?.full_name || user.email || "Anonymous";
 
+    // General-subject Musabaqah rooms are shared by three pages (this
+    // function's room naming is generic), so only tighten publish rights
+    // when room_code actually resolves to a general_musabaqah_events row —
+    // any other caller (e.g. the Qur'an Musabaqah) falls through to the
+    // pre-existing "everyone can publish" behavior untouched.
+    //
+    // Within a general_musabaqah event: the judge can always publish; a
+    // student can only publish if THEY are event.current_participant_id
+    // (i.e. it's actually their turn on stage). Every other admitted/
+    // waiting student who has joined to watch connects subscribe-only —
+    // enforced here in the token, not just hidden client-side, so a student
+    // can't just flip a client toggle to broadcast over someone else's turn.
+    let canPublish = true;
+    if (!isPrivileged) {
+      const { data: gmEvent } = await serviceClient
+        .from("general_musabaqah_events")
+        .select("id, current_participant_id")
+        .eq("room_code", room_code.toUpperCase())
+        .maybeSingle();
+      if (gmEvent) {
+        const { data: myParticipant } = await serviceClient
+          .from("general_musabaqah_participants")
+          .select("id")
+          .eq("event_id", gmEvent.id)
+          .eq("user_id", user.id)
+          .maybeSingle();
+        canPublish = !!myParticipant && myParticipant.id === gmEvent.current_participant_id;
+      }
+    }
+
     const roomName = `musabaqah-${room_code.toUpperCase()}`;
 
     // Build JWT
@@ -120,7 +150,7 @@ Deno.serve(async (req) => {
       video: {
         roomJoin:     true,
         room:         roomName,
-        canPublish:   true,   // all can publish; layout controls visibility
+        canPublish,           // gated above for general_musabaqah spectators; unchanged (true) for everyone else
         canSubscribe: true,
         canPublishData: true,
       },
