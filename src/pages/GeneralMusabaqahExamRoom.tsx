@@ -131,6 +131,17 @@ export default function GeneralMusabaqahExamRoom() {
     if (!eventId || !ev) return null;
     if (!isJudge) {
       const { data: mine } = await supabase.from("general_musabaqah_participants").select("*").eq("event_id", eventId).eq("user_id", user?.id).maybeSingle();
+      // Students now come straight here on admission (no separate waiting-room
+      // stop), so flip admitted → waiting on this load path — this is what
+      // makes the admin's roster/queue see them as "joined and in the room".
+      if (mine?.status === "admitted") {
+        await supabase.from("general_musabaqah_participants").update({ status: "waiting" }).eq("id", mine.id);
+        mine.status = "waiting";
+        await supabase.from("general_musabaqah_event_log").insert({
+          event_id: eventId, participant_id: mine.id, action_type: "entered_waiting_room",
+          description: `${mine.participant_name} joined and is watching the exam room`,
+        });
+      }
       setMyP(mine);
     }
     if (!ev.current_participant_id) { setP(null); return null; }
@@ -471,16 +482,6 @@ export default function GeneralMusabaqahExamRoom() {
     return <div style={{ minHeight: "100%", background: G, display: "flex", justifyContent: "center", alignItems: "center" }}><Loader2 className="animate-spin" color={GOLD} size={28} /></div>;
   }
 
-  if (isJudge && !participant) {
-    return (
-      <div style={{ minHeight: "100%", background: G, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24, textAlign: "center" }}>
-        <Users size={32} color={GOLD} />
-        <p style={{ color: "#fff" }}>No student is currently called for this Musabaqah.</p>
-        <Button onClick={() => navigate(`/musabaqah/general/${eventId}`)} style={{ background: GOLD, color: G }}>Go to Queue</Button>
-      </div>
-    );
-  }
-
   if (!isJudge && !myParticipant) {
     return (
       <div style={{ minHeight: "100%", background: G, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24, textAlign: "center" }}>
@@ -490,15 +491,12 @@ export default function GeneralMusabaqahExamRoom() {
     );
   }
 
-  if (!isJudge && !participant) {
-    return (
-      <div style={{ minHeight: "100%", background: G, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24, textAlign: "center" }}>
-        <Users size={32} color={GOLD} />
-        <p style={{ color: "#fff" }}>Waiting for the admin to call the next participant…</p>
-        <Button onClick={() => navigate(`/student/musabaqah/general/${eventId}/waiting`)} style={{ background: GOLD, color: G }}>Back to Waiting Room</Button>
-      </div>
-    );
-  }
+  // No early return when there's no on-stage participant (participant === null)
+  // for either role — everyone (judge included) now stays in the shared
+  // LiveKit room and watches/waits there. The judge calls who's next from
+  // the roster drawer (Menu icon → PhoneCall button) instead of being routed
+  // to a separate "no one called yet" screen; students just see the room and
+  // whoever else is in it, live, with no manual call needed to get in.
 
   // Spectator = anyone in the room besides the judge and the person on
   // stage — only they should publish audio/video; everyone else just
@@ -520,7 +518,11 @@ export default function GeneralMusabaqahExamRoom() {
             <ArrowLeft size={16} />
           </button>
           <span style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>{event?.title}</span>
-          <Badge style={{ background: "rgba(96,165,250,0.15)", color: BLUE, border: "none" }}>{participant?.participant_name}</Badge>
+          {participant ? (
+            <Badge style={{ background: "rgba(96,165,250,0.15)", color: BLUE, border: "none" }}>{participant.participant_name}</Badge>
+          ) : (
+            <Badge style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.5)", border: "none" }}>No one called yet</Badge>
+          )}
           {!isJudge && (
             <Badge style={isOnStage
               ? { background: "rgba(74,222,128,0.15)", color: "#4ADE80", border: "none" }
@@ -765,11 +767,12 @@ export default function GeneralMusabaqahExamRoom() {
           <div style={{ background: GM, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 24, textAlign: "center" }}>
             <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
               {isJudge && participant?.status === "in_progress" ? "No question active."
-                : isJudge ? "Start the examination to begin."
+                : isJudge && participant ? "Start the examination to begin."
+                : isJudge ? "No one called yet — open Participants (top right) and call who's next."
                 : isOnStage && participant?.status === "in_progress" ? "Tap a tile above to reveal your question."
                 : isOnStage ? "Waiting for the judge to start your examination…"
                 : participant ? `Watching ${participant.participant_name} — waiting for their next question…`
-                : "Waiting for the judge to call the next participant…"}
+                : "You're in the room — waiting for the judge to call the next participant…"}
             </p>
             {isJudge && participant?.status === "in_progress" && (
               <Button onClick={askNext} style={{ marginTop: 10, background: BLUE, color: "#06131f", fontWeight: 700 }}>
