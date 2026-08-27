@@ -76,6 +76,7 @@ export default function GeneralMusabaqahExamRoom() {
   const [participant, setP]         = useState<any>(null); // the person "on stage"
   const [myParticipant, setMyP]     = useState<any>(null); // this browser's own participant row (student view)
   const [questions, setQuestions]   = useState<any[]>([]);
+  const [stages, setStages]         = useState<any[]>([]); // ordered Stage 1 → Stage 2 → … groups, empty = legacy flat bank
   const [answers, setAnswers]       = useState<any[]>([]);
   const [queueCount, setQueueCount] = useState({ waiting: 0, completed: 0 });
   const [loading, setLoading]       = useState(true);
@@ -126,6 +127,12 @@ export default function GeneralMusabaqahExamRoom() {
     setQuestions(data || []);
   }, [eventId]);
 
+  const loadStages = useCallback(async () => {
+    if (!eventId) return;
+    const { data } = await supabase.from("general_musabaqah_stages").select("*").eq("event_id", eventId).order("stage_order");
+    setStages(data || []);
+  }, [eventId]);
+
   const loadAnswers = useCallback(async (participantId: string) => {
     const { data } = await supabase.from("general_musabaqah_answers").select("*, general_musabaqah_scores(*)").eq("participant_id", participantId).order("asked_at");
     setAnswers(data || []);
@@ -142,10 +149,11 @@ export default function GeneralMusabaqahExamRoom() {
     const ev = await loadEvent();
     const p  = await loadParticipant(ev);
     await loadQuestions();
+    await loadStages();
     if (p) await loadAnswers(p.id);
     await loadQueueCounts();
     setLoading(false);
-  }, [loadEvent, loadParticipant, loadQuestions, loadAnswers, loadQueueCounts]);
+  }, [loadEvent, loadParticipant, loadQuestions, loadStages, loadAnswers, loadQueueCounts]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -234,12 +242,42 @@ export default function GeneralMusabaqahExamRoom() {
 
   const askedQuestionIds = useMemo(() => new Set(answers.map(a => a.question_id)), [answers]);
 
+  // Sequential stage progression: a stage is "done" for this participant once
+  // they have as many MARKED answers from it as its question_count target.
+  // activeIndex points at the first not-yet-done stage; index === stages.length
+  // means every configured stage is complete (only ungrouped questions, if any, remain).
+  const stageProgress = useMemo(() => {
+    if (!stages.length) return null;
+    const markedByStage = new Map<string, number>();
+    answers.filter(a => a.status === "marked").forEach(a => {
+      const q = questions.find(qq => qq.id === a.question_id);
+      if (q?.stage_id) markedByStage.set(q.stage_id, (markedByStage.get(q.stage_id) || 0) + 1);
+    });
+    let activeIndex = stages.findIndex(s => (markedByStage.get(s.id) || 0) < s.question_count);
+    if (activeIndex === -1) activeIndex = stages.length;
+    return { markedByStage, activeIndex, activeStage: stages[activeIndex] ?? null };
+  }, [stages, answers, questions]);
+
+  const isStageLocked = (question: any) => {
+    if (!stages.length || !question?.stage_id || !stageProgress) return false;
+    const idx = stages.findIndex(s => s.id === question.stage_id);
+    return idx !== -1 && idx > stageProgress.activeIndex;
+  };
+  // Auto-pick respects stage order; judges can still override manually via
+  // the navigator below (buttons for out-of-sequence questions stay enabled,
+  // just visually dimmed) — useful for skipping a stage for one student.
+
   const pickNextQuestion = () => {
-    const unused = questions.filter(q => !askedQuestionIds.has(q.id));
-    if (unused.length === 0) return null;
+    let pool = questions.filter(q => !askedQuestionIds.has(q.id));
+    if (stages.length) {
+      pool = stageProgress?.activeStage
+        ? pool.filter(q => q.stage_id === stageProgress.activeStage.id)
+        : pool.filter(q => !q.stage_id); // all configured stages complete — only ungrouped left
+    }
+    if (pool.length === 0) return null;
     if (event?.question_selection_method === "manual") return null; // judge must pick
-    if (event?.randomize_questions) return unused[Math.floor(Math.random() * unused.length)];
-    return unused[0];
+    if (event?.randomize_questions) return pool[Math.floor(Math.random() * pool.length)];
+    return pool[0];
   };
 
   const askQuestion = async (question: any) => {
@@ -381,8 +419,18 @@ export default function GeneralMusabaqahExamRoom() {
           <Badge style={{ background: "rgba(96,165,250,0.15)", color: BLUE, border: "none" }}>{participant?.participant_name}</Badge>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          {stages.length > 0 && stageProgress && (
+            <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>
+              {stageProgress.activeStage
+                ? `Stage ${stageProgress.activeIndex + 1}/${stages.length}: ${stageProgress.activeStage.name}`
+                : "All stages complete"}
+            </Badge>
+          )}
           <span style={{ display: "flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
-            <ScrollText size={13} /> Q{answers.filter(a => a.status === "marked").length}/{event?.num_questions_per_student}
+            <ScrollText size={13} />
+            {stages.length > 0 && stageProgress?.activeStage
+              ? `Q${stageProgress.markedByStage.get(stageProgress.activeStage.id) || 0}/${stageProgress.activeStage.question_count}`
+              : `Q${answers.filter(a => a.status === "marked").length}/${event?.num_questions_per_student}`}
           </span>
           <span style={{ display: "flex", alignItems: "center", gap: 5, color: localTimer !== null && localTimer < 60 ? RED : "#fff", fontWeight: 800, fontSize: 15, fontFamily: "monospace" }}>
             <Clock size={14} /> {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
@@ -450,29 +498,70 @@ export default function GeneralMusabaqahExamRoom() {
 
       {/* ── Question / judging panel (Section 10-12) ──────────────── */}
       <div style={{ flex: 1, padding: "0 16px 24px", maxWidth: 720, margin: "0 auto", width: "100%" }}>
-        {/* Navigator */}
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-          {questions.map((q, i) => {
-            const a = answers.find(x => x.question_id === q.id);
-            const status = a ? a.status : "not_asked";
-            const isCurrent = participant?.current_question_id === q.id;
-            return (
-              <button
-                key={q.id}
-                disabled={!isJudge || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
-                onClick={() => askQuestion(q)}
-                title={q.question_text}
-                style={{
-                  width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
-                  background: QSTATUS_COLORS[status], color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
-                  fontWeight: 800, fontSize: 12, cursor: isJudge ? "pointer" : "default", opacity: isJudge ? 1 : 0.7,
-                }}
-              >
-                {i + 1}
-              </button>
-            );
-          })}
-        </div>
+        {/* Navigator — grouped into stage sections when stages are configured */}
+        {stages.length > 0 ? (
+          <div style={{ display: "grid", gap: 10, marginBottom: 14 }}>
+            {[...stages, null].map((stage, si) => {
+              const stageQuestions = stage ? questions.filter(q => q.stage_id === stage.id) : questions.filter(q => !q.stage_id);
+              if (stageQuestions.length === 0) return null;
+              const locked = stage ? si > (stageProgress?.activeIndex ?? 0) : (stageProgress ? stageProgress.activeIndex < stages.length : false);
+              return (
+                <div key={stage?.id || "ungrouped"}>
+                  <p style={{ color: locked ? "rgba(255,255,255,0.35)" : GOLD, fontSize: 11, fontWeight: 700, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 4 }}>
+                    {locked && "🔒 "}{stage ? `Stage ${si + 1}: ${stage.name}` : "Ungrouped"}
+                  </p>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {stageQuestions.map((q) => {
+                      const a = answers.find(x => x.question_id === q.id);
+                      const status = a ? a.status : "not_asked";
+                      const isCurrent = participant?.current_question_id === q.id;
+                      const globalIndex = questions.findIndex(qq => qq.id === q.id);
+                      return (
+                        <button
+                          key={q.id}
+                          disabled={!isJudge || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
+                          onClick={() => askQuestion(q)}
+                          title={locked ? "Out of sequence — click to ask anyway" : q.question_text}
+                          style={{
+                            width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : locked ? "1px dashed rgba(255,255,255,0.25)" : "1px solid rgba(255,255,255,0.15)",
+                            background: locked ? "rgba(255,255,255,0.06)" : QSTATUS_COLORS[status],
+                            color: locked ? "rgba(255,255,255,0.4)" : status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
+                            fontWeight: 800, fontSize: 12, cursor: isJudge ? "pointer" : "default", opacity: isJudge ? 1 : 0.7,
+                          }}
+                        >
+                          {globalIndex + 1}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+            {questions.map((q, i) => {
+              const a = answers.find(x => x.question_id === q.id);
+              const status = a ? a.status : "not_asked";
+              const isCurrent = participant?.current_question_id === q.id;
+              return (
+                <button
+                  key={q.id}
+                  disabled={!isJudge || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
+                  onClick={() => askQuestion(q)}
+                  title={q.question_text}
+                  style={{
+                    width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
+                    background: QSTATUS_COLORS[status], color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
+                    fontWeight: 800, fontSize: 12, cursor: isJudge ? "pointer" : "default", opacity: isJudge ? 1 : 0.7,
+                  }}
+                >
+                  {i + 1}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {currentQuestion ? (
           <div style={{ background: GM, border: "1px solid rgba(201,168,76,0.25)", borderRadius: 14, padding: 18 }}>
