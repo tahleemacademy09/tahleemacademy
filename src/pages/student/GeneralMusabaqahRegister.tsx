@@ -233,8 +233,8 @@ export default function GeneralMusabaqahRegister() {
                             </Button>
                           </div>
                         )}
-                        <Button onClick={() => navigate(`/student/musabaqah/general/${ev.id}/waiting`)} style={{ background: BLUE, color: "#06131f", fontWeight: 700 }}>
-                          Enter Waiting Room <ArrowRight size={15} className="ml-1" />
+                        <Button onClick={() => navigate(`/musabaqah/general/${ev.id}/exam`)} style={{ background: BLUE, color: "#06131f", fontWeight: 700 }}>
+                          Enter Examination Room <ArrowRight size={15} className="ml-1" />
                         </Button>
                       </div>
                     )}
