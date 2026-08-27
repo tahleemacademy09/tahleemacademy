@@ -1518,11 +1518,11 @@ function ParticipantStatusBadge({ status }: { status: string }) {
   return <Badge style={{ background: s.bg, color: s.c, border: "none" }}>{labelize(status)}</Badge>;
 }
 function Row2({ children }: { children: React.ReactNode }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{children}</div>;
+  return <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-2.5">{children}</div>;
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
+    <div className="min-w-0">
       <Label style={{ fontSize: 12, marginBottom: 4, display: "block", color: "inherit" }}>{label}</Label>
       {children}
     </div>
