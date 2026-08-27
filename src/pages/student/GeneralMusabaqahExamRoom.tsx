@@ -322,6 +322,20 @@ export default function GeneralMusabaqahExamRoom() {
   // joined watches read-only.
   const isOnStage = !isJudge && !!myParticipant && !!participant && myParticipant.id === participant.id;
 
+  // The moment every stage is done for the participant currently up, nudge
+  // the judge straight to the Finalize confirmation instead of leaving them
+  // to notice on their own — finalize() itself takes care of auto-calling
+  // whoever's next in the queue. autoPromptedFor guards against reopening
+  // the dialog every render (or right back open if the judge cancels it).
+  const autoPromptedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isJudge || !participant || participant.status !== "in_progress") return;
+    if (!stages.length || stageProgress?.activeIndex !== stages.length) return;
+    if (autoPromptedFor.current === participant.id) return;
+    autoPromptedFor.current = participant.id;
+    setFinalizeOpen(true);
+  }, [isJudge, participant, stages.length, stageProgress?.activeIndex]);
+
   const askQuestion = async (question: any) => {
     if (!participant) return;
     if (participant.status !== "in_progress") {
@@ -504,15 +518,38 @@ export default function GeneralMusabaqahExamRoom() {
     toast({ title: "Error logged" });
   };
 
+  // Finalizing used to just clear the stage and boot the judge back to the
+  // event list — now it also auto-advances the room: it looks up whoever's
+  // been waiting longest (admitted/waiting, oldest first) and calls them
+  // straight onto stage, so the judge never has to leave this screen and
+  // manually re-open the roster between participants. Falls back to the
+  // old "clear stage, nobody up" behavior only when the queue is empty.
   const finalize = async () => {
     if (!participant) return;
     await supabase.from("general_musabaqah_participants").update({ status: "finalized" }).eq("id", participant.id);
     await supabase.from("general_musabaqah_registrations").update({ status: "completed" }).eq("id", participant.registration_id);
-    await supabase.from("general_musabaqah_events").update({ current_participant_id: null }).eq("id", eventId);
     await logEvent("finalized", `Final score: ${participant.total_score}`);
-    setFinalizeOpen(false);
-    toast({ title: `${participant.participant_name} finalized — ${participant.total_score} marks` });
-    navigate(`/musabaqah/general/${eventId}`);
+
+    const { data: next } = await supabase.from("general_musabaqah_participants")
+      .select("*").eq("event_id", eventId).neq("id", participant.id)
+      .in("status", ["admitted", "waiting"]).order("created_at").limit(1).maybeSingle();
+
+    if (next) {
+      await supabase.from("general_musabaqah_participants").update({ status: "called" }).eq("id", next.id);
+      await supabase.from("general_musabaqah_events").update({ current_participant_id: next.id }).eq("id", eventId);
+      await supabase.from("general_musabaqah_event_log").insert({
+        event_id: eventId, participant_id: next.id, action_type: "called",
+        description: `${next.participant_name} called to examination`, created_by: user?.id ?? null,
+      });
+      setFinalizeOpen(false);
+      toast({ title: `${participant.participant_name} finalized — now calling ${next.participant_name}` });
+      await loadAll();
+    } else {
+      await supabase.from("general_musabaqah_events").update({ current_participant_id: null }).eq("id", eventId);
+      setFinalizeOpen(false);
+      toast({ title: `${participant.participant_name} finalized — no one else waiting` });
+      navigate(`/musabaqah/general/${eventId}`);
+    }
   };
 
   /* ── RENDER ───────────────────────────────────────────────────────── */
@@ -883,7 +920,10 @@ export default function GeneralMusabaqahExamRoom() {
         )}
 
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 20, fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-          <span>Score so far: <strong style={{ color: GOLD }}>{participant?.total_score ?? 0}</strong></span>
+          {/* Score is judge-only — participants (on-stage or spectating) never see marks live, only the judge does. */}
+          {isJudge ? (
+            <span>Score so far: <strong style={{ color: GOLD }}>{participant?.total_score ?? 0}</strong></span>
+          ) : <span />}
           <span>{queueCount.waiting} waiting · {queueCount.completed} completed</span>
         </div>
       </div>
