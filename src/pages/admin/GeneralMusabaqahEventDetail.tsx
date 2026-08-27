@@ -32,6 +32,7 @@ import {
   CheckCircle2, XCircle, Clock3, Copy, UserCheck, UserX, Users,
   KeyRound, RotateCcw, Ban, PhoneCall, SkipForward, Trophy,
   BarChart3, Eye, RefreshCcw, Award, Sparkles, ThumbsUp, ThumbsDown,
+  Video, VideoOff,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -59,6 +60,20 @@ const QUESTION_TYPES = [
   "mcq","true_false","short_answer","oral","recitation","translation","explanation","comprehension","continuation",
 ] as const;
 const DIFFICULTIES = ["easy","medium","hard","expert"] as const;
+
+// datetime-local inputs need "YYYY-MM-DDTHH:mm" in the browser's local time;
+// the DB gives back an ISO/UTC string. Converting in both directions here
+// keeps the Overview tab's Registration/Start fields showing (and saving)
+// the same wall-clock time the admin actually typed in, rather than drifting
+// by their UTC offset every time the field is edited.
+const toLocalInput = (iso: string | null) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+const fromLocalInput = (val: string) => (val ? new Date(val).toISOString() : null);
 
 const emptyQuestion = (eventId: string) => ({
   event_id: eventId,
@@ -303,6 +318,14 @@ export default function GeneralMusabaqahEventDetail() {
       .eq("id", participant.access_code_id);
     if (error) toast({ title: "Regenerate failed", description: error.message, variant: "destructive" });
     else { toast({ title: "New code generated", description: newCode }); loadParticipants(); }
+  };
+
+  const toggleVideoAllowed = async (participant: any) => {
+    const next = !participant.video_allowed;
+    const { error } = await supabase.from("general_musabaqah_participants").update({ video_allowed: next }).eq("id", participant.id);
+    if (error) { toast({ title: "Update failed", description: error.message, variant: "destructive" }); return; }
+    toast({ title: next ? "Video allowed" : "Video disabled for this participant" });
+    loadParticipants();
   };
 
   const removeParticipant = async (participant: any) => {
@@ -701,14 +724,34 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 </Field>
 
                 <Row2>
+                  <Field label="Registration opens">
+                    <Input className={DARK_FIELD} type="datetime-local" defaultValue={toLocalInput(event.registration_opens_at)}
+                      onBlur={e => fromLocalInput(e.target.value) !== event.registration_opens_at && saveEvent({ registration_opens_at: fromLocalInput(e.target.value) })} />
+                  </Field>
+                  <Field label="Registration closes">
+                    <Input className={DARK_FIELD} type="datetime-local" defaultValue={toLocalInput(event.registration_closes_at)}
+                      onBlur={e => fromLocalInput(e.target.value) !== event.registration_closes_at && saveEvent({ registration_closes_at: fromLocalInput(e.target.value) })} />
+                  </Field>
+                </Row2>
+                <Row2>
                   <Field label="Competition date">
                     <Input className={DARK_FIELD} type="date" defaultValue={event.competition_date || ""} onBlur={e => e.target.value !== event.competition_date && saveEvent({ competition_date: e.target.value || null })} />
                   </Field>
+                  <Field label="Start time">
+                    <Input className={DARK_FIELD} type="datetime-local" defaultValue={toLocalInput(event.start_time)}
+                      onBlur={e => fromLocalInput(e.target.value) !== event.start_time && saveEvent({ start_time: fromLocalInput(e.target.value) })} />
+                  </Field>
+                </Row2>
+                <Row2>
                   <Field label="Questions per student">
                     <Input className={DARK_FIELD} type="number" defaultValue={event.num_questions_per_student}
                       onBlur={e => Number(e.target.value) !== event.num_questions_per_student && saveEvent({ num_questions_per_student: Number(e.target.value) })} />
                   </Field>
+                  <div />
                 </Row2>
+                <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: -6 }}>
+                  Once "Registration closes" has passed, registered students see a live countdown to "Start time" (or the start of "Competition date" if no start time is set).
+                </div>
                 <Row2>
                   <Field label="Marks per question">
                     <Input className={DARK_FIELD} type="number" defaultValue={event.marks_per_question}
@@ -964,7 +1007,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
           {/* ── QUEUE ────────────────────────────────────────────────── */}
           <TabsContent value="queue" className="mt-4">
             <div style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginBottom: 12 }}>
-              Manage admitted participants and call the next student. The full live judging room (video, question navigator, scoring) ships in the next chunk — this confirms the queue and call flow end-to-end.
+              Admitted students only appear here to "Call" once they've pressed Join Competition in their lobby on the day. Once you call someone, everyone else who has joined can watch them live in the exam room but cannot act — only the called student can tap a question tile.
             </div>
             {pLoading ? (
               <div style={{ display: "flex", justifyContent: "center", padding: 40 }}>
@@ -996,16 +1039,23 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                           )}
                         </div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          {["waiting", "admitted"].includes(p.status) && (
+                          {p.status === "waiting" && (
                             <Button size="sm" onClick={() => callParticipant(p)} style={{ background: "#60A5FA", color: "#06131f", fontWeight: 700 }}>
                               <PhoneCall size={14} className="mr-1" /> Call
                             </Button>
+                          )}
+                          {p.status === "admitted" && (
+                            <Badge style={{ background: "rgba(148,163,184,0.15)", color: "#94A3B8", border: "none" }}>Not joined yet</Badge>
                           )}
                           {["called", "ready", "in_progress", "paused"].includes(p.status) && (
                             <Button size="sm" onClick={() => navigate(`/musabaqah/general/${id}/exam`)} style={{ background: "#60A5FA", color: "#06131f", fontWeight: 700 }}>
                               Enter Exam Room
                             </Button>
                           )}
+                          <Button size="sm" variant="outline" onClick={() => toggleVideoAllowed(p)}
+                            style={p.video_allowed === false ? { color: "#F87171", borderColor: "rgba(248,113,113,0.4)" } : {}}>
+                            {p.video_allowed === false ? <><VideoOff size={14} className="mr-1" /> Video Off</> : <><Video size={14} className="mr-1" /> Video On</>}
+                          </Button>
                           <Button size="sm" variant="outline" onClick={() => regenerateCode(p)}>
                             <RotateCcw size={14} className="mr-1" /> New Code
                           </Button>
