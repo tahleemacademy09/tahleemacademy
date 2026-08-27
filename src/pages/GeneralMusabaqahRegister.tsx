@@ -15,7 +15,7 @@
   Admin/teacher who land here (e.g. via a shared link) are bounced
   to the admin management page instead.
 */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +28,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   BookOpen, Calendar, Loader2, CheckCircle2, Clock3, XCircle,
-  KeyRound, Copy, ArrowRight, ArrowLeft, Hourglass,
+  KeyRound, Copy, ArrowRight, ArrowLeft,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -40,7 +40,6 @@ type GMEvent = {
   id: string; title: string; subject: string; topic: string | null;
   status: string; competition_date: string | null; target_level: string | null;
   instructions: string | null;
-  registration_closes_at: string | null; start_time: string | null;
 };
 type GMRegistration = {
   id: string; event_id: string; status: string; full_name: string;
@@ -61,14 +60,6 @@ export default function GeneralMusabaqahRegister() {
   const [form, setForm] = useState({ full_name: "", level_class: "", phone: "" });
   const [submitting, setSubmitting] = useState(false);
 
-  // Drives the "Registration closed → countdown to start" cards below.
-  // One shared ticking clock rather than a timer per card.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
-
   useEffect(() => { if (isStaff) navigate("/musabaqah/general"); }, [isStaff]);
 
   const load = async () => {
@@ -77,7 +68,7 @@ export default function GeneralMusabaqahRegister() {
 
     const { data: ev } = await supabase
       .from("general_musabaqah_events")
-      .select("id,title,subject,topic,status,competition_date,target_level,instructions,registration_closes_at,start_time")
+      .select("id,title,subject,topic,status,competition_date,target_level,instructions")
       .in("status", ["registration_open", "registration_closed", "in_progress", "paused"])
       .order("competition_date", { ascending: true });
     setEvents((ev as GMEvent[]) || []);
@@ -142,25 +133,6 @@ export default function GeneralMusabaqahRegister() {
   const copyCode = (code: string) => {
     navigator.clipboard.writeText(code);
     toast({ title: "Access code copied" });
-  };
-
-  // Competition start = start_time if the admin set one, else midnight of
-  // competition_date. Countdown only ever shows once registration_closes_at
-  // has actually passed — before that, students just see "Awaiting approval".
-  const competitionStartMs = (ev: GMEvent) => {
-    if (ev.start_time) return new Date(ev.start_time).getTime();
-    if (ev.competition_date) return new Date(`${ev.competition_date}T00:00:00`).getTime();
-    return null;
-  };
-
-  const formatCountdown = (ms: number) => {
-    const total = Math.max(0, Math.floor(ms / 1000));
-    const d = Math.floor(total / 86400);
-    const h = Math.floor((total % 86400) / 3600);
-    const m = Math.floor((total % 3600) / 60);
-    const s = total % 60;
-    if (d > 0) return `${d}d ${h}h ${m}m`;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   };
 
   if (loading) {
@@ -247,25 +219,11 @@ export default function GeneralMusabaqahRegister() {
                         <CheckCircle2 size={14} className="mr-1" /> View Result
                       </Button>
                     )}
-                    {reg?.status === "admitted" && (() => {
-                      const closesAt = ev.registration_closes_at ? new Date(ev.registration_closes_at).getTime() : null;
-                      const registrationClosed = closesAt !== null && now >= closesAt;
-                      const startMs = competitionStartMs(ev);
-                      const showCountdown = registrationClosed && startMs !== null && now < startMs;
-                      return (
+                    {reg?.status === "admitted" && (
                       <div style={{ display: "grid", gap: 10 }}>
                         <Badge style={{ background: "rgba(74,222,128,0.15)", color: "#4ADE80", border: "none", width: "fit-content" }}>
                           <CheckCircle2 size={11} className="mr-1" /> Admitted
                         </Badge>
-                        {showCountdown && (
-                          <div style={{ background: "rgba(201,168,76,0.1)", border: "1px solid rgba(201,168,76,0.3)", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 }}>
-                            <Hourglass size={16} color={GOLD} />
-                            <div>
-                              <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 11, margin: 0 }}>Competition starts in</p>
-                              <p style={{ color: GOLD, fontSize: 18, fontWeight: 800, margin: 0, fontFamily: "monospace" }}>{formatCountdown(startMs - now)}</p>
-                            </div>
-                          </div>
-                        )}
                         {code && (
                           <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.05)", border: "1px solid rgba(96,165,250,0.25)", borderRadius: 10, padding: "8px 12px" }}>
                             <KeyRound size={15} color={BLUE} />
@@ -275,12 +233,11 @@ export default function GeneralMusabaqahRegister() {
                             </Button>
                           </div>
                         )}
-                        <Button onClick={() => navigate(`/student/musabaqah/general/${ev.id}/waiting`)} style={{ background: BLUE, color: "#06131f", fontWeight: 700 }}>
-                          Enter Waiting Room <ArrowRight size={15} className="ml-1" />
+                        <Button onClick={() => navigate(`/musabaqah/general/${ev.id}/exam`)} style={{ background: BLUE, color: "#06131f", fontWeight: 700 }}>
+                          Enter Exam Room <ArrowRight size={15} className="ml-1" />
                         </Button>
                       </div>
-                      );
-                    })()}
+                    )}
                   </CardContent>
                 </Card>
               );
