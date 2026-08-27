@@ -332,6 +332,19 @@ export default function GeneralMusabaqahEventDetail() {
 
   const removeParticipant = async (participant: any) => {
     if (!window.confirm(`Remove ${participant.participant_name} from this Musabaqah?`)) return;
+    // If this participant is currently the event's "current_participant_id" (i.e. they were
+    // called), clear that reference first or the delete below hits a foreign key violation.
+    if (id) {
+      const { error: clearError } = await supabase
+        .from("general_musabaqah_events")
+        .update({ current_participant_id: null })
+        .eq("id", id)
+        .eq("current_participant_id", participant.id);
+      if (clearError) {
+        toast({ title: "Remove failed", description: clearError.message, variant: "destructive" });
+        return;
+      }
+    }
     const { error } = await supabase.from("general_musabaqah_participants").delete().eq("id", participant.id);
     if (error) toast({ title: "Remove failed", description: error.message, variant: "destructive" });
     else { toast({ title: "Participant removed" }); loadParticipants(); }
@@ -412,8 +425,8 @@ export default function GeneralMusabaqahEventDetail() {
     if (!["in_progress", "paused"].includes(event.status)) {
       await saveEvent({ status: "in_progress" });
     }
-    toast({ title: "Competition started", description: "Call students from the Queue tab when they're ready." });
-    setActiveTab("queue");
+    toast({ title: "Competition started", description: "Call students from the live exam room." });
+    navigate(`/musabaqah/general/${id}/exam`);
   };
 
   const saveEvent = async (patch: Record<string, any>) => {
@@ -850,7 +863,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                   </Button>
                 </div>
                 <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, margin: "10px 0 0" }}>
-                  This sets status to "In Progress" and opens the Queue tab, where you call admitted students one at a time. Each called student self-picks a question tile and the timer (Max exam time above) starts automatically.
+                  This sets status to "In Progress" and takes you straight into the live exam room, where you call admitted students one at a time. Each called student self-picks a question tile and the timer (Max exam time above) starts automatically.
                 </p>
               </CardContent>
             </Card>
