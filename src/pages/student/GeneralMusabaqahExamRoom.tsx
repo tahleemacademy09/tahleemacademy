@@ -324,6 +324,11 @@ export default function GeneralMusabaqahExamRoom() {
 
   const askQuestion = async (question: any) => {
     if (!participant) return;
+    if (participant.status !== "in_progress") {
+      toast({ title: "Not ready yet", description: "Start the examination before asking questions." });
+      await loadAll();
+      return;
+    }
     const { data: answer, error } = await supabase.from("general_musabaqah_answers")
       .insert({ event_id: eventId, participant_id: participant.id, question_id: question.id, status: "current" })
       .select().single();
@@ -349,11 +354,30 @@ export default function GeneralMusabaqahExamRoom() {
   // by calling it for someone else's id.
   const selfAskQuestion = async (question: any) => {
     if (!myParticipant) return;
+    // Guard against acting on a stale local snapshot — e.g. the judge
+    // hasn't tapped "Start Examination" yet, or a realtime update for a
+    // status change just hasn't landed in this render. Catching it here
+    // avoids a round trip to the RPC (which re-checks the same thing
+    // server-side anyway) and skips surfacing a raw Postgres error to a
+    // student who just tapped a tile at a bad moment.
+    if (participant?.status !== "in_progress") {
+      toast({ title: "Not ready yet", description: "Waiting for the judge to start your examination." });
+      await loadAll(); // resync so the tiles reflect reality instead of staying stuck stale
+      return;
+    }
     const { error } = await supabase.rpc("gm_self_ask_question", {
-      p_participant_id: myParticipant.id,
+      p_participant_id: participant.id,
       p_question_id: question.id,
     });
-    if (error) { toast({ title: "Could not select question", description: error.message, variant: "destructive" }); return; }
+    if (error) {
+      const friendly = /not in progress/i.test(error.message) ? "Waiting for the judge to start your examination."
+        : /not your turn/i.test(error.message) ? "It's not your turn right now."
+        : /already asked/i.test(error.message) ? "That question was already used — pick another."
+        : error.message;
+      toast({ title: "Could not select question", description: friendly, variant: "destructive" });
+      await loadAll(); // resync — this is what actually clears the stale enabled tiles
+      return;
+    }
     await loadAll();
   };
 
