@@ -199,6 +199,22 @@ export default function GeneralMusabaqahEventDetail() {
     return () => { supabase.removeChannel(ch); };
   }, [id]);
 
+  // This page previously only loaded each tab's data once on mount — a
+  // student registering (or a participant's status changing) after the
+  // admin opened this page never showed up until they navigated away and
+  // back. That's what caused "Registrations" to sit on "No registrations
+  // yet." even after a student had registered. Every other Musabaqah page
+  // (ExamRoom, WaitingRoom) already does this same live-refresh pattern.
+  useEffect(() => {
+    if (!id) return;
+    const ch = supabase.channel(`gm-admin-${id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_registrations", filter: `event_id=eq.${id}` }, () => loadRegistrations())
+      .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_participants", filter: `event_id=eq.${id}` }, () => loadParticipants())
+      .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_events", filter: `id=eq.${id}` }, () => loadEvent())
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [id]);
+
   const loadResults = async () => {
     if (!id) return;
     setResultsLoading(true);
