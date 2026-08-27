@@ -580,10 +580,18 @@ export default function GeneralMusabaqahExamRoom() {
           <LiveKitRoom
             serverUrl={lkUrl} token={lkToken} connect={lkConnected}
             audio={canPublish} video={canPublish && videoAllowedForMe}
-            options={LK_OPTIONS} style={{ height: 300, borderRadius: 12, overflow: "hidden" }}
+            options={LK_OPTIONS} style={{ borderRadius: 12 }}
           >
             <RoomAudioRenderer />
-            <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} />
+            {/* Fixed-height + overflow:hidden lives on this inner wrapper only —
+                it previously sat on the LiveKitRoom div itself, and because
+                VideoStage fills 100% of that same box, MediaControls (rendered
+                as a sibling right after it) got pushed below the 300px cutoff
+                and clipped away entirely. That's why the mic/camera toggle
+                buttons never appeared. */}
+            <div style={{ height: 300, borderRadius: 12, overflow: "hidden" }}>
+              <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} />
+            </div>
             {canPublish && (
               <MediaControls
                 videoAllowed={videoAllowedForMe}
@@ -975,9 +983,16 @@ function ParticipantTile({ participant, label, mirror, highlight }: { participan
   return (
     <div style={{ position: "relative", background: "#111", display: "flex", alignItems: "center", justifyContent: "center", border: highlight ? `2px solid ${GREEN}` : "none" }}>
       {camPub?.track ? (
+        // objectFit was "cover", which scales the video up until it fills
+        // the tile completely and crops whatever doesn't fit — on a tile
+        // whose aspect ratio doesn't match the phone's front-camera stream
+        // that meant a tight, zoomed-in crop, which is why a participant
+        // had to lean back from the phone just to get their whole head
+        // back into frame. "contain" shows the full, uncropped camera
+        // frame letterboxed instead, so the whole face is always visible.
         <VideoTrack
           trackRef={{ participant, source: Track.Source.Camera, publication: camPub }}
-          style={{ width: "100%", height: "100%", objectFit: "cover", transform: mirror ? "scaleX(-1)" : "none" }}
+          style={{ width: "100%", height: "100%", objectFit: "contain", transform: mirror ? "scaleX(-1)" : "none" }}
         />
       ) : (
         <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Camera off</div>
