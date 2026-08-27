@@ -43,6 +43,13 @@ const BLUE_ACCENT = "#60A5FA";
 // Override just here rather than editing the shared component, since Switch
 // looks fine on the light backgrounds it's used on elsewhere in the app.
 const DARK_SWITCH = "data-[state=unchecked]:bg-white/15 data-[state=unchecked]:border-white/25 data-[state=checked]:bg-[#c9a84c] data-[state=checked]:border-[#c9a84c] [&>span]:bg-white [&>span]:shadow-md";
+// The Overview card's CardContent sets text-white so its plain labels/paragraphs
+// read on the dark green background — but that white also cascades into Input/
+// Textarea/SelectTrigger, which sit on their own light bg-background surface.
+// White-on-near-white made every field value invisible. Force these back to
+// their own theme-correct foreground color, same "override at the call site"
+// approach as DARK_SWITCH above.
+const DARK_FIELD = "text-foreground placeholder:text-muted-foreground";
 
 const CATEGORIES = [
   "memorization","narrator","arabic_text","translation","vocabulary",
@@ -657,7 +664,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
               <CardContent className="pt-6 grid gap-4 text-white">
                 <Field label="Status">
                   <Select value={event.status} onValueChange={v => saveEvent({ status: v })}>
-                    <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className={`w-56 ${DARK_FIELD}`}><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="draft">Draft</SelectItem>
                       <SelectItem value="registration_open">Registration Open</SelectItem>
@@ -672,43 +679,43 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
 
                 <Row2>
                   <Field label="Title">
-                    <Input defaultValue={event.title} onBlur={e => e.target.value !== event.title && saveEvent({ title: e.target.value })} />
+                    <Input className={DARK_FIELD} defaultValue={event.title} onBlur={e => e.target.value !== event.title && saveEvent({ title: e.target.value })} />
                   </Field>
                   <Field label="Subject">
-                    <Input defaultValue={event.subject} onBlur={e => e.target.value !== event.subject && saveEvent({ subject: e.target.value })} />
+                    <Input className={DARK_FIELD} defaultValue={event.subject} onBlur={e => e.target.value !== event.subject && saveEvent({ subject: e.target.value })} />
                   </Field>
                 </Row2>
                 <Row2>
                   <Field label="Topic">
-                    <Input defaultValue={event.topic || ""} onBlur={e => e.target.value !== event.topic && saveEvent({ topic: e.target.value || null })} />
+                    <Input className={DARK_FIELD} defaultValue={event.topic || ""} onBlur={e => e.target.value !== event.topic && saveEvent({ topic: e.target.value || null })} />
                   </Field>
                   <Field label="Target level">
-                    <Input defaultValue={event.target_level || ""} onBlur={e => e.target.value !== event.target_level && saveEvent({ target_level: e.target.value || null })} />
+                    <Input className={DARK_FIELD} defaultValue={event.target_level || ""} onBlur={e => e.target.value !== event.target_level && saveEvent({ target_level: e.target.value || null })} />
                   </Field>
                 </Row2>
                 <Field label="Description">
-                  <Textarea rows={2} defaultValue={event.description || ""} onBlur={e => e.target.value !== event.description && saveEvent({ description: e.target.value || null })} />
+                  <Textarea className={DARK_FIELD} rows={2} defaultValue={event.description || ""} onBlur={e => e.target.value !== event.description && saveEvent({ description: e.target.value || null })} />
                 </Field>
                 <Field label="Instructions">
-                  <Textarea rows={2} defaultValue={event.instructions || ""} onBlur={e => e.target.value !== event.instructions && saveEvent({ instructions: e.target.value || null })} />
+                  <Textarea className={DARK_FIELD} rows={2} defaultValue={event.instructions || ""} onBlur={e => e.target.value !== event.instructions && saveEvent({ instructions: e.target.value || null })} />
                 </Field>
 
                 <Row2>
                   <Field label="Competition date">
-                    <Input type="date" defaultValue={event.competition_date || ""} onBlur={e => e.target.value !== event.competition_date && saveEvent({ competition_date: e.target.value || null })} />
+                    <Input className={DARK_FIELD} type="date" defaultValue={event.competition_date || ""} onBlur={e => e.target.value !== event.competition_date && saveEvent({ competition_date: e.target.value || null })} />
                   </Field>
                   <Field label="Questions per student">
-                    <Input type="number" defaultValue={event.num_questions_per_student}
+                    <Input className={DARK_FIELD} type="number" defaultValue={event.num_questions_per_student}
                       onBlur={e => Number(e.target.value) !== event.num_questions_per_student && saveEvent({ num_questions_per_student: Number(e.target.value) })} />
                   </Field>
                 </Row2>
                 <Row2>
                   <Field label="Marks per question">
-                    <Input type="number" defaultValue={event.marks_per_question}
+                    <Input className={DARK_FIELD} type="number" defaultValue={event.marks_per_question}
                       onBlur={e => Number(e.target.value) !== event.marks_per_question && saveEvent({ marks_per_question: Number(e.target.value) })} />
                   </Field>
                   <Field label="Max exam time (sec)">
-                    <Input type="number" defaultValue={event.max_exam_time_seconds}
+                    <Input className={DARK_FIELD} type="number" defaultValue={event.max_exam_time_seconds}
                       onBlur={e => Number(e.target.value) !== event.max_exam_time_seconds && saveEvent({ max_exam_time_seconds: Number(e.target.value) })} />
                   </Field>
                 </Row2>
