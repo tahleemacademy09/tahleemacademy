@@ -36,9 +36,51 @@ const GM   = "#163d28";
 const GOLD = "#c9a84c";
 const BLUE = "#60A5FA";
 
+// Live countdown to an event's kickoff. Prefers start_time (has the actual
+// hour) and falls back to midnight on competition_date if that's all the
+// event has set. Ticks once a minute — a live exam timer this is not, so a
+// second-by-second refresh would just be wasted renders.
+function useCountdown(target: string | null) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!target) return;
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, [target]);
+  if (!target) return null;
+  const diffMs = new Date(target).getTime() - now;
+  return diffMs;
+}
+
+function EventCountdown({ competitionDate, startTime }: { competitionDate: string | null; startTime: string | null }) {
+  const target = startTime ?? (competitionDate ? `${competitionDate}T00:00:00` : null);
+  const diffMs = useCountdown(target);
+  if (diffMs === null) return null;
+
+  if (diffMs <= 0) {
+    return (
+      <span style={{ display: "flex", alignItems: "center", gap: 4, color: "#4ADE80", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+        <Clock3 size={12} /> Today
+      </span>
+    );
+  }
+
+  const totalMinutes = Math.floor(diffMs / 60_000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const label = days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 4, color: GOLD, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+      <Clock3 size={12} /> in {label}
+    </span>
+  );
+}
+
 type GMEvent = {
   id: string; title: string; subject: string; topic: string | null;
-  status: string; competition_date: string | null; target_level: string | null;
+  status: string; competition_date: string | null; start_time: string | null; target_level: string | null;
   instructions: string | null;
 };
 type GMRegistration = {
@@ -68,7 +110,7 @@ export default function GeneralMusabaqahRegister() {
 
     const { data: ev } = await supabase
       .from("general_musabaqah_events")
-      .select("id,title,subject,topic,status,competition_date,target_level,instructions")
+      .select("id,title,subject,topic,status,competition_date,start_time,target_level,instructions")
       .in("status", ["registration_open", "registration_closed", "in_progress", "paused"])
       .order("competition_date", { ascending: true });
     setEvents((ev as GMEvent[]) || []);
@@ -187,6 +229,11 @@ export default function GeneralMusabaqahRegister() {
                     </div>
                     {ev.target_level && (
                       <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, margin: "0 0 10px" }}>Level: {ev.target_level}</p>
+                    )}
+                    {(ev.competition_date || ev.start_time) && (ev.status === "registration_open" || ev.status === "registration_closed") && (
+                      <div style={{ margin: "0 0 10px" }}>
+                        <EventCountdown competitionDate={ev.competition_date} startTime={ev.start_time} />
+                      </div>
                     )}
 
                     {!reg && ev.status === "registration_open" && (
