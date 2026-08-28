@@ -508,9 +508,9 @@ export default function GeneralMusabaqahEventDetail() {
   };
 
   // ── Stage CRUD ─────────────────────────────────────────────────────
-  const emptyStage = () => ({ name: "", categories: [] as string[], difficulty: "medium", question_count: 5 });
+  const emptyStage = () => ({ name: "", categories: [] as string[], difficulty: "medium", question_count: 5, time_limit_seconds: "" });
   const openNewStage = () => { setStageDraft(emptyStage()); setStageDialogOpen(true); };
-  const openEditStage = (s: any) => { setStageDraft({ ...s, categories: Array.isArray(s.categories) ? s.categories : [] }); setStageDialogOpen(true); };
+  const openEditStage = (s: any) => { setStageDraft({ ...s, categories: Array.isArray(s.categories) ? s.categories : [], time_limit_seconds: s.time_limit_seconds ? Math.round(s.time_limit_seconds / 60) : "" }); setStageDialogOpen(true); };
 
   const saveStage = async () => {
     if (!id || !stageDraft.name.trim()) {
@@ -525,6 +525,9 @@ export default function GeneralMusabaqahEventDetail() {
       categories: stageDraft.categories,
       difficulty: stageDraft.difficulty,
       question_count: Number(stageDraft.question_count) || 1,
+      // Form field holds minutes for readability; stored column is seconds.
+      // Blank/0 means "no override" — falls back to the event's overall exam timer.
+      time_limit_seconds: stageDraft.time_limit_seconds ? Math.round(Number(stageDraft.time_limit_seconds) * 60) : null,
       ...(isEdit ? {} : { stage_order: stages.length }),
     };
     const { error } = isEdit
@@ -917,6 +920,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                             <span style={{ color: "#fff", fontWeight: 600, fontSize: 13 }}>{s.name}</span>
                             <span style={{ color: "rgba(255,255,255,0.45)", fontSize: 12 }}>
                               {labelize(s.difficulty)} · {s.question_count} question{s.question_count === 1 ? "" : "s"}/student · {count} in bank
+                              {s.time_limit_seconds ? ` · ${Math.round(s.time_limit_seconds / 60)} min timer` : " · uses event timer"}
                             </span>
                           </div>
                           <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
@@ -1426,6 +1430,12 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                   </p>
                 </Field>
               </Row2>
+              <Field label="Time limit for this stage (minutes)">
+                <Input type="number" min={0} value={stageDraft.time_limit_seconds} onChange={e => setStageDraft({ ...stageDraft, time_limit_seconds: e.target.value })} placeholder="Uses the event's overall exam timer" />
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 4 }}>
+                  Countdown a participant gets once this stage becomes active. Leave blank to fall back to the event's overall exam time limit.
+                </p>
+              </Field>
               <Field label="Categories for this stage">
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {CATEGORIES.map(c => {
