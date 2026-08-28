@@ -52,18 +52,13 @@ function useCountdown(target: string | null) {
   return diffMs;
 }
 
-function EventCountdown({ competitionDate, startTime }: { competitionDate: string | null; startTime: string | null }) {
-  const target = startTime ?? (competitionDate ? `${competitionDate}T00:00:00` : null);
+// Registered students count down to kickoff; everyone else counts down to
+// the registration deadline. Once a target's time has passed, we hide the
+// countdown entirely rather than show a stale "Today" — the status badge
+// (registration closed / admitted / etc.) covers that case instead.
+function EventCountdown({ target, prefix, color }: { target: string | null; prefix: string; color: string }) {
   const diffMs = useCountdown(target);
-  if (diffMs === null) return null;
-
-  if (diffMs <= 0) {
-    return (
-      <span style={{ display: "flex", alignItems: "center", gap: 4, color: "#4ADE80", fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
-        <Clock3 size={12} /> Today
-      </span>
-    );
-  }
+  if (diffMs === null || diffMs <= 0) return null;
 
   const totalMinutes = Math.floor(diffMs / 60_000);
   const days = Math.floor(totalMinutes / 1440);
@@ -72,8 +67,8 @@ function EventCountdown({ competitionDate, startTime }: { competitionDate: strin
   const label = days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
 
   return (
-    <span style={{ display: "flex", alignItems: "center", gap: 4, color: GOLD, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
-      <Clock3 size={12} /> in {label}
+    <span style={{ display: "flex", alignItems: "center", gap: 4, color, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
+      <Clock3 size={12} /> {prefix} {label}
     </span>
   );
 }
@@ -81,7 +76,7 @@ function EventCountdown({ competitionDate, startTime }: { competitionDate: strin
 type GMEvent = {
   id: string; title: string; subject: string; topic: string | null;
   status: string; competition_date: string | null; start_time: string | null; target_level: string | null;
-  instructions: string | null;
+  instructions: string | null; registration_closes_at: string | null;
 };
 type GMRegistration = {
   id: string; event_id: string; status: string; full_name: string;
@@ -110,7 +105,7 @@ export default function GeneralMusabaqahRegister() {
 
     const { data: ev } = await supabase
       .from("general_musabaqah_events")
-      .select("id,title,subject,topic,status,competition_date,start_time,target_level,instructions")
+      .select("id,title,subject,topic,status,competition_date,start_time,target_level,instructions,registration_closes_at")
       .in("status", ["registration_open", "registration_closed", "in_progress", "paused"])
       .order("competition_date", { ascending: true });
     setEvents((ev as GMEvent[]) || []);
@@ -230,9 +225,25 @@ export default function GeneralMusabaqahRegister() {
                     {ev.target_level && (
                       <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, margin: "0 0 10px" }}>Level: {ev.target_level}</p>
                     )}
-                    {(ev.competition_date || ev.start_time) && (ev.status === "registration_open" || ev.status === "registration_closed") && (
+                    {(ev.status === "registration_open" || ev.status === "registration_closed") && (
                       <div style={{ margin: "0 0 10px" }}>
-                        <EventCountdown competitionDate={ev.competition_date} startTime={ev.start_time} />
+                        {reg ? (
+                          (ev.competition_date || ev.start_time) && (
+                            <EventCountdown
+                              target={ev.start_time ?? (ev.competition_date ? `${ev.competition_date}T00:00:00` : null)}
+                              prefix="Competition in"
+                              color={GOLD}
+                            />
+                          )
+                        ) : (
+                          ev.registration_closes_at && (
+                            <EventCountdown
+                              target={ev.registration_closes_at}
+                              prefix="Registration closes in"
+                              color={BLUE}
+                            />
+                          )
+                        )}
                       </div>
                     )}
 
