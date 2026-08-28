@@ -275,7 +275,12 @@ export default function GeneralMusabaqahExamRoom() {
 
   const startExamination = async () => {
     if (!participant) return;
-    await supabase.from("general_musabaqah_participants").update({ status: "in_progress", timer_remaining_seconds: event?.max_exam_time_seconds }).eq("id", participant.id);
+    // Seed the very first stage's own time limit if it has one configured,
+    // otherwise fall back to the event's overall exam timer — matches what
+    // the per-stage reset effect below does for every later transition.
+    const firstStage = [...stages].sort((a, b) => a.stage_order - b.stage_order)[0];
+    const initialLimit = firstStage?.time_limit_seconds ?? event?.max_exam_time_seconds ?? 900;
+    await supabase.from("general_musabaqah_participants").update({ status: "in_progress", timer_remaining_seconds: initialLimit }).eq("id", participant.id);
     await logEvent("started", `${participant.participant_name}'s examination started`);
     toast({ title: "Examination started" });
     loadAll();
@@ -298,6 +303,37 @@ export default function GeneralMusabaqahExamRoom() {
     if (activeIndex === -1) activeIndex = stages.length;
     return { markedByStage, activeIndex, activeStage: stages[activeIndex] ?? null };
   }, [stages, answers, questions]);
+
+  // Per-stage timer: each stage can have its own time_limit_seconds (set by
+  // the admin, falls back to the event's overall max_exam_time_seconds when
+  // unset). We only want to hand the participant a *fresh* countdown when
+  // the active stage genuinely advances mid-session — not on first mount or
+  // a reconnect, where the earlier load effect above has already restored
+  // whatever time was actually left from timer_remaining_seconds. The ref
+  // tracks (participant, stage) pairs so we can tell those two cases apart.
+  const stageTimerState = useRef<{ participantId: string | null; stageId: string | null }>({ participantId: null, stageId: null });
+  useEffect(() => {
+    if (!participant || participant.status !== "in_progress") {
+      stageTimerState.current = { participantId: null, stageId: null };
+      return;
+    }
+    const activeStageId = stageProgress?.activeStage?.id ?? null;
+    const sameParticipant = stageTimerState.current.participantId === participant.id;
+    if (sameParticipant && stageTimerState.current.stageId === activeStageId) return;
+
+    if (!sameParticipant) {
+      // First time tracking this participant this session — just note
+      // where they are without touching the clock.
+      stageTimerState.current = { participantId: participant.id, stageId: activeStageId };
+      return;
+    }
+
+    // Same participant, stage moved on — fresh countdown for the new stage.
+    stageTimerState.current = { participantId: participant.id, stageId: activeStageId };
+    const limit = stageProgress?.activeStage?.time_limit_seconds ?? event?.max_exam_time_seconds ?? 900;
+    setLocalTimer(limit);
+    supabase.from("general_musabaqah_participants").update({ timer_remaining_seconds: limit }).eq("id", participant.id);
+  }, [participant?.id, participant?.status, stageProgress?.activeStage?.id]);
 
   // Auto-pick respects stage order; judges can still override manually via
   // the navigator below (buttons for out-of-sequence questions stay enabled,
