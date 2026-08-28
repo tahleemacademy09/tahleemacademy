@@ -36,10 +36,23 @@ const GM   = "#163d28";
 const GOLD = "#c9a84c";
 const BLUE = "#60A5FA";
 
-// Live countdown to an event's kickoff. Prefers start_time (has the actual
-// hour) and falls back to midnight on competition_date if that's all the
-// event has set. Ticks once a minute — a live exam timer this is not, so a
-// second-by-second refresh would just be wasted renders.
+// Builds the kickoff target for the countdown. competition_date is always
+// the authoritative day — start_time only ever contributes its clock time.
+// This matters because admins sometimes leave start_time on whatever date
+// the field defaulted to when the event was created, which would otherwise
+// silently point the countdown at a stale day instead of the real event date.
+function kickoffTarget(competitionDate: string | null, startTime: string | null): string | null {
+  if (!competitionDate) return startTime;
+  let timeOfDay = "00:00:00";
+  if (startTime) {
+    const t = new Date(startTime);
+    if (!isNaN(t.getTime())) timeOfDay = t.toTimeString().slice(0, 8);
+  }
+  return `${competitionDate}T${timeOfDay}`;
+}
+
+// Live countdown to a target ISO datetime. Ticks once a minute — a live exam
+// timer this is not, so a second-by-second refresh would just be wasted renders.
 function useCountdown(target: string | null) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -230,7 +243,7 @@ export default function GeneralMusabaqahRegister() {
                         {reg ? (
                           (ev.competition_date || ev.start_time) && (
                             <EventCountdown
-                              target={ev.start_time ?? (ev.competition_date ? `${ev.competition_date}T00:00:00` : null)}
+                              target={kickoffTarget(ev.competition_date, ev.start_time)}
                               prefix="Competition in"
                               color={GOLD}
                             />
