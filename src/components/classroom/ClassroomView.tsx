@@ -24,7 +24,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
-import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
+import { playJoinSound, playLeaveSound, playRecordingStartSound, playRecordingStopSound } from "@/lib/soundUtils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
@@ -146,6 +146,29 @@ import {
 } from "./classroomComponents";
 
 export * from "./classroomComponents";
+
+// FIX ("interface shakes, particularly the participants number"): this used
+// to be defined AS A NESTED FUNCTION inside ClassroomView's own render body
+// (`const ParticipantCountBadge=()=>{...}` re-created every render). React
+// identifies component types by function identity, so a fresh function every
+// render looks like a brand-new component type to React — it tore down and
+// remounted this badge (and its useParticipants() subscription) on every
+// single re-render of ClassroomView, which happens every second just from
+// the class-duration timer ticking. That teardown/remount is what showed up
+// as the participant-count badge visibly flickering/shaking. Hoisting it out
+// here gives it a stable identity across renders — normal prop changes no
+// longer force a remount.
+const ParticipantCountBadge=({participantCountRef,onOpen}:{participantCountRef:{current:number};onOpen:()=>void})=>{
+  const all=useParticipants();
+  useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length,participantCountRef]);
+  if(all.length===0)return null;
+  return(
+    <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0,cursor:"pointer"}} onClick={onOpen}>
+      <Users style={{width:12,height:12,opacity:.7}}/>
+      <span style={{fontSize:12,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{all.length}</span>
+    </div>
+  );
+};
 
 const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewProps)=>{
   const{user,hasRole}=useAuth();const{t}=useLanguage();const isMobile=useIsMobile();const isPrivileged=hasRole("admin")||hasRole("teacher");const isAdmin=hasRole("admin");
@@ -889,16 +912,44 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const stopTimer=()=>{clearInterval(timerRef.current);setTimerRunning(false);setTimerSeconds(0);};
   const fmtTimer=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
 
-  // ══ Feature 15: Teacher recording → broadcast to students ══
-  // Listen for is_recording DB changes (student side)
+  // ══ Feature 15: Recording start/stop — sound + spoken announcement ══
+  // heard by EVERYONE in the room (admin/teacher included), driven off the
+  // is_recording flag on live_sessions rather than a local click handler —
+  // that way it's one consistent source of truth instead of the person who
+  // clicked Record getting a different (or no) notification than everyone
+  // else. Previously this subscription only ran for students and only drove
+  // a silent visual indicator; no one — including the person recording —
+  // ever heard anything.
   useEffect(()=>{
-    if(!sessionId||isPrivileged)return;
+    if(!sessionId)return;
+    let cancelled=false;
+    // Tracks the last known is_recording value so we can tell a genuine
+    // start/stop transition apart from the live_sessions row being updated
+    // for some unrelated reason (which would otherwise re-announce the same
+    // state). Seeded from a one-time fetch on mount so joining an
+    // already-recording class doesn't fire a false "started" announcement.
+    const lastKnown:{current:boolean|null}={current:null};
+    supabase.from("live_sessions").select("is_recording").eq("id",sessionId).maybeSingle()
+      .then(({data}:any)=>{
+        if(cancelled)return;
+        const initial=typeof data?.is_recording==="boolean"?data.is_recording:false;
+        lastKnown.current=initial;
+        setTeacherIsRecording(initial);
+      },()=>{});
     const ch=supabase.channel(`rec-indicator-${sessionId}`)
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"live_sessions",filter:`id=eq.${sessionId}`},
-        (payload:any)=>{if(typeof payload.new?.is_recording==="boolean")setTeacherIsRecording(payload.new.is_recording);}
+        (payload:any)=>{
+          const next=payload.new?.is_recording;
+          if(typeof next!=="boolean")return;
+          setTeacherIsRecording(next);
+          if(lastKnown.current!==null&&lastKnown.current!==next){
+            try{ next?playRecordingStartSound():playRecordingStopSound(); }catch{}
+          }
+          lastKnown.current=next;
+        }
       ).subscribe();
-    return()=>{supabase.removeChannel(ch);};
-  },[sessionId,isPrivileged]);
+    return()=>{cancelled=true;supabase.removeChannel(ch);};
+  },[sessionId]);
 
   // ══ Feature 17: Session Summary ══
   const generateSessionSummary=async()=>{
@@ -918,17 +969,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       highlights:(msgs||[]).filter((m:any)=>m.is_pinned),
     });
     setSummaryOpen(true);
-  };
-  const ParticipantCountBadge=()=>{
-    const all=useParticipants();
-    useEffect(()=>{if(all.length>participantCountRef.current)participantCountRef.current=all.length;},[all.length]);
-    if(all.length===0)return null;
-    return(
-      <div className="gm-badge" style={{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"rgba(255,255,255,.8)",flexShrink:0,cursor:"pointer"}} onClick={()=>{setPartOpen(v=>!v);setPartPanelOpen(v=>!v);}}>
-        <Users style={{width:12,height:12,opacity:.7}}/>
-        <span style={{fontSize:12,fontWeight:500,fontFamily:"'Google Sans',sans-serif"}}>{all.length}</span>
-      </div>
-    );
   };
   const fmtT=(s:number)=>`${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
 
@@ -1214,7 +1254,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               <NetworkAdaptiveEngine/>
               <CameraUnmirrorEngine/>
               {/* Participant count */}
-              <ParticipantCountBadge/>
+              <ParticipantCountBadge participantCountRef={participantCountRef} onOpen={()=>{setPartOpen(v=>!v);setPartPanelOpen(v=>!v);}}/>
               {/* Student "Record" control — moved here (beside the participant
                   badge) from a separate floating pill below the header, and
                   out of the ⋮ More menu before that. Only shown once

@@ -18,6 +18,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { queueMediaOp } from "./classroomComponents";
+import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -478,6 +479,24 @@ const ClassControls = ({
       room.off(RoomEvent.TrackUnmuted,          sync);
     };
   }, [room, setCtxMicEnabled, setCtxCamEnabled]);
+
+  // ── Join / leave sound — heard by everyone already in the room ────────
+  // Fires on every OTHER participant's own Room instance whenever someone
+  // else connects/disconnects, so each person's browser plays the chime
+  // locally the moment anyone joins or leaves — no server broadcast needed.
+  // (The local participant's own join/leave chime, for themselves, is
+  // played separately in ClassroomView right when THEY connect/disconnect.)
+  useEffect(() => {
+    if (!room) return;
+    const onJoin = () => { try { playJoinSound(); } catch {} };
+    const onLeave = () => { try { playLeaveSound(); } catch {} };
+    room.on(RoomEvent.ParticipantConnected, onJoin);
+    room.on(RoomEvent.ParticipantDisconnected, onLeave);
+    return () => {
+      room.off(RoomEvent.ParticipantConnected, onJoin);
+      room.off(RoomEvent.ParticipantDisconnected, onLeave);
+    };
+  }, [room]);
 
   // ── Mic toggle — busy-guarded ─────────────────────────────────────────
   const toggleMic = useCallback(async () => {
