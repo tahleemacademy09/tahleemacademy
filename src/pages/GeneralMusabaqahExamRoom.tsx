@@ -40,6 +40,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -47,6 +48,7 @@ import {
   Mic, MicOff, Video, VideoOff, Loader2, AlertTriangle, Pause, Play,
   CheckCircle2, XCircle, SkipForward, Save, Flag, Wifi, WifiOff,
   ArrowLeft, Users, Clock, ShieldCheck, ScrollText, Menu, PhoneCall,
+  LayoutGrid, Rows3, Columns2, TimerReset,
 } from "lucide-react";
 
 const PSTATUS_COLORS: Record<string, string> = {
@@ -113,6 +115,27 @@ export default function GeneralMusabaqahExamRoom() {
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [localTimer, setLocalTimer] = useState<number | null>(null);
+
+  // Video layout — which tiles are shown and how they're arranged. Only
+  // the judge and whoever is on stage are ever eligible tiles now (see
+  // VideoStage); this just controls arrangement, not who's included.
+  const [viewLayout, setViewLayout] = useState<"grid" | "spotlight_stage" | "spotlight_admin">("grid");
+
+  // Per-question timer (Section 4/5 of the fix request): distinct from the
+  // overall exam clock above. It sits at rest after a question is revealed
+  // so the judge can read it out loud, then only starts once the judge taps
+  // "Start Timer" — that's the participant's actual cue to start answering.
+  const [questionTimerActive, setQuestionTimerActive] = useState(false);
+  const [questionTimeLeft, setQuestionTimeLeft] = useState<number | null>(null);
+  const [timeUpFlash, setTimeUpFlash] = useState(false);
+  const questionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  // Replaces the old CSS 3D flip (backface-visibility flips are unreliable
+  // in Android WebView, which is what was showing the tile rotated upside
+  // down instead of ever revealing the question). This is a plain state
+  // flag: show the big number briefly, then swap to the question card.
+  const [revealedQuestion, setRevealedQuestion] = useState(false);
 
   /* ── LOAD ─────────────────────────────────────────────────────────── */
   const loadEvent = useCallback(async () => {
@@ -226,7 +249,13 @@ export default function GeneralMusabaqahExamRoom() {
     }
   }, []);
 
-  useEffect(() => { if (event?.room_code) fetchToken(event.room_code); }, [event?.room_code, fetchToken]);
+  // Gated on the event actually being live — otherwise everyone in the room
+  // (called or not) would connect to LiveKit and start publishing/pulling
+  // camera feeds before the admin has pressed Start Competition at all.
+  useEffect(() => {
+    const live = event?.status === "in_progress" || event?.status === "paused";
+    if (event?.room_code && live) fetchToken(event.room_code);
+  }, [event?.room_code, event?.status, fetchToken]);
 
   /* ── CONNECTIVITY (Section 14/37/48) ─────────────────────────────── */
   useEffect(() => {
@@ -266,6 +295,62 @@ export default function GeneralMusabaqahExamRoom() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [participant?.status, participant?.id]);
 
+  /* ── PER-QUESTION TIMER (Section 4/5 of the fix request) ─────────────
+     Resets every time a new question is revealed (or cleared): the clock
+     starts paused so the judge can read the question out loud, and the
+     flip-reveal replaces the fragile CSS 3D flip with a plain timed swap
+     from "big number" to "question card". */
+  const currentQuestionIdForTimer = participant?.current_question_id ?? null;
+  useEffect(() => {
+    setQuestionTimerActive(false);
+    setTimeUpFlash(false);
+    setRevealedQuestion(false);
+    if (questionTimerRef.current) clearInterval(questionTimerRef.current);
+    if (!currentQuestionIdForTimer) { setQuestionTimeLeft(null); return; }
+    setQuestionTimeLeft(event?.question_time_seconds ?? 60);
+    const t = setTimeout(() => setRevealedQuestion(true), 550);
+    return () => clearTimeout(t);
+  }, [currentQuestionIdForTimer]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const playTick = useCallback((freq: number) => {
+    try {
+      const ctx = audioCtxRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
+      audioCtxRef.current = ctx;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.18);
+    } catch { /* audio unavailable — non-fatal */ }
+  }, []);
+
+  useEffect(() => {
+    if (!questionTimerActive) { if (questionTimerRef.current) clearInterval(questionTimerRef.current); return; }
+    questionTimerRef.current = setInterval(() => {
+      setQuestionTimeLeft(prev => {
+        if (prev === null) return prev;
+        const next = prev - 1;
+        if (next >= 1 && next <= 3) playTick(next === 1 ? 440 : 880); // tik-tak on 3, 2, 1
+        if (next <= 0) {
+          setTimeUpFlash(true);
+          setQuestionTimerActive(false);
+          return 0;
+        }
+        return next;
+      });
+    }, 1000);
+    return () => { if (questionTimerRef.current) clearInterval(questionTimerRef.current); };
+  }, [questionTimerActive, playTick]);
+
+  const startQuestionTimer = () => {
+    if (!currentQuestionIdForTimer || questionTimerActive || (questionTimeLeft ?? 0) <= 0) return;
+    setQuestionTimerActive(true);
+    logEvent("question_timer_started", "Judge started the per-question timer — participant may answer now");
+  };
+
   /* ── JUDGE ACTIONS ───────────────────────────────────────────────── */
   const logEvent = async (action_type: string, description?: string, metadata?: any) => {
     await supabase.from("general_musabaqah_event_log").insert({
@@ -283,6 +368,21 @@ export default function GeneralMusabaqahExamRoom() {
     await supabase.from("general_musabaqah_participants").update({ status: "in_progress", timer_remaining_seconds: initialLimit }).eq("id", participant.id);
     await logEvent("started", `${participant.participant_name}'s examination started`);
     toast({ title: "Examination started" });
+    loadAll();
+  };
+
+  // Gate for Section 1 of the fix request: everyone can be in the room
+  // (video area, roster, etc. stay reachable) but nobody's camera/mic
+  // connects and no questions can be asked until the judge explicitly
+  // flips this on. Distinct from startExamination (which starts one
+  // called student's clock) — this is the room-wide "go live" switch.
+  const competitionLive = event?.status === "in_progress" || event?.status === "paused";
+  const startCompetitionFromRoom = async () => {
+    if (!eventId || !isJudge) return;
+    const { error } = await supabase.from("general_musabaqah_events").update({ status: "in_progress" }).eq("id", eventId);
+    if (error) { toast({ title: "Could not start competition", description: error.message, variant: "destructive" }); return; }
+    await logEvent("competition_started", "Competition started by admin");
+    toast({ title: "Competition started" });
     loadAll();
   };
 
@@ -611,42 +711,39 @@ export default function GeneralMusabaqahExamRoom() {
 
   return (
     <div style={{ minHeight: "100vh", background: `linear-gradient(160deg, ${G} 0%, #0a1f12 60%, #050f09 100%)`, display: "flex", flexDirection: "column", fontFamily: "'Cairo', sans-serif" }}>
-      {/* Flip-reveal animation for the picked question tile — the tapped
-          number scales up big, then rotates away to reveal the question
-          card behind it. Re-triggers each pick because the wrapping div
-          is keyed by currentQuestion.id (remounts = animation replays). */}
+      {/* Reveal animation for the picked question tile. Previously this was
+          a CSS 3D flip (rotateY + backface-visibility) — unreliable in
+          Android WebView, which is what read as "the tile just turns
+          upside down and never shows the question": the back face's
+          counter-rotation wasn't being composited correctly, so only the
+          same front number kept rendering, rotated. Replaced with a plain
+          scale/opacity pop that doesn't depend on any 3D compositing, so
+          it renders identically everywhere. */}
       <style>{`
-        .gm-flip-wrap { perspective: 1200px; }
-        .gm-flip-card {
-          position: relative;
-          width: 100%;
-          min-height: 120px;
-          transform-style: preserve-3d;
-          animation: gm-flip 0.9s cubic-bezier(0.45, 0.05, 0.55, 0.95) forwards;
+        .gm-reveal-number {
+          animation: gm-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
         }
-        .gm-flip-face {
-          backface-visibility: hidden;
+        .gm-reveal-question {
+          animation: gm-fade-in 0.35s ease-out both;
         }
-        .gm-flip-front {
-          position: absolute;
-          inset: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 14px;
-          box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+        @keyframes gm-pop {
+          0%   { transform: scale(0.5); opacity: 0; }
+          70%  { transform: scale(1.08); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
         }
-        .gm-flip-back {
-          transform: rotateY(180deg);
-          position: relative;
+        @keyframes gm-fade-in {
+          0%   { transform: scale(0.96); opacity: 0; }
+          100% { transform: scale(1); opacity: 1; }
         }
-        @keyframes gm-flip {
-          0%   { transform: scale(0.4) rotateY(0deg); opacity: 0; }
-          25%  { transform: scale(1.15) rotateY(0deg); opacity: 1; }
-          55%  { transform: scale(1.15) rotateY(0deg); }
-          100% { transform: scale(1) rotateY(180deg); }
+        .gm-timeup-flash { animation: gm-timeup-flash 0.6s ease-in-out 3; }
+        @keyframes gm-timeup-flash {
+          0%, 100% { background-color: rgba(248,113,113,0); }
+          50% { background-color: rgba(248,113,113,0.55); }
         }
       `}</style>
+      {timeUpFlash && (
+        <div className="gm-timeup-flash" style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 60 }} />
+      )}
       {/* ── Top bar ────────────────────────────────────────────────── */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -681,13 +778,50 @@ export default function GeneralMusabaqahExamRoom() {
             <Clock size={14} /> {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
           </span>
           <ConnectionBadge status={participant?.connection_status} />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button aria-label="Video layout" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex" }}>
+                <LayoutGrid size={18} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setViewLayout("grid")}><Columns2 size={14} className="mr-2" /> Side by side</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setViewLayout("spotlight_stage")}><Rows3 size={14} className="mr-2" /> Spotlight participant</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setViewLayout("spotlight_admin")}><Rows3 size={14} className="mr-2" /> Spotlight admin</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <button onClick={() => setRosterOpen(true)} aria-label="Participants" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex" }}>
             <Menu size={20} />
           </button>
         </div>
       </div>
 
-      {isJudge && !participant && (
+      {/* ── Not started yet (Section 1): nobody's camera/mic connects and
+          no questions can be asked until the judge presses this. Everyone
+          who has navigated here (called or not) sees this instead of a
+          live video feed. ────────────────────────────────────────────── */}
+      {!competitionLive && (
+        <div style={{ padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, textAlign: "center" }}>
+          {isJudge ? (
+            <>
+              <p style={{ color: "#fff", fontSize: 15, fontWeight: 700, margin: 0 }}>Everyone's in the room — start when ready.</p>
+              <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: 0, maxWidth: 320 }}>
+                Cameras and mics stay off for everyone until you press start.
+              </p>
+              <Button onClick={startCompetitionFromRoom} style={{ background: GOLD, color: G, fontWeight: 800 }}>
+                <Play size={16} className="mr-1.5" /> Start Competition
+              </Button>
+            </>
+          ) : (
+            <>
+              <Loader2 className="animate-spin" color={GOLD} size={22} />
+              <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, margin: 0 }}>Waiting for the admin to start the competition…</p>
+            </>
+          )}
+        </div>
+      )}
+
+      {isJudge && competitionLive && !participant && (
         <div style={{ background: "rgba(201,168,76,0.12)", borderBottom: "1px solid rgba(201,168,76,0.3)", padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <span style={{ color: GOLD, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
             <Users size={14} /> No student called yet — you're live for everyone waiting. Do your introduction, then call the first student.
@@ -697,7 +831,7 @@ export default function GeneralMusabaqahExamRoom() {
           </Button>
         </div>
       )}
-      {!isJudge && !participant && (
+      {!isJudge && competitionLive && !participant && (
         <div style={{ background: "rgba(96,165,250,0.1)", borderBottom: "1px solid rgba(96,165,250,0.25)", padding: "8px 16px", color: BLUE, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
           <Users size={14} /> Waiting for the admin to call the next participant — you'll see it here live, no need to refresh.
         </div>
@@ -714,6 +848,8 @@ export default function GeneralMusabaqahExamRoom() {
         </div>
       )}
 
+      {competitionLive && (
+      <>
       {/* ── Video area ─────────────────────────────────────────────── */}
       <div style={{ padding: 16 }}>
         {lkError ? (
@@ -727,16 +863,18 @@ export default function GeneralMusabaqahExamRoom() {
             options={LK_OPTIONS}
           >
             <RoomAudioRenderer />
-            <div style={{ height: 300, borderRadius: 12, overflow: "hidden" }}>
-              <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} />
+            {/* position:relative so the mic/camera icons can float inside
+                the video box itself instead of sitting as a row below it. */}
+            <div style={{ position: "relative", height: 300, borderRadius: 12, overflow: "hidden" }}>
+              <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} layout={viewLayout} />
+              {canPublish && (
+                <MediaControls
+                  videoAllowed={videoAllowedForMe}
+                  micAllowed={isJudge ? true : (myParticipant?.mic_on ?? true)}
+                  participantId={isJudge ? null : myParticipant?.id}
+                />
+              )}
             </div>
-            {canPublish && (
-              <MediaControls
-                videoAllowed={videoAllowedForMe}
-                micAllowed={isJudge ? true : (myParticipant?.mic_on ?? true)}
-                participantId={isJudge ? null : myParticipant?.id}
-              />
-            )}
           </LiveKitRoom>
         ) : (
           <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12 }}>
@@ -814,13 +952,18 @@ export default function GeneralMusabaqahExamRoom() {
                     const status = a ? a.status : "not_asked";
                     const isCurrent = participant?.current_question_id === q.id;
                     const globalIndex = questions.findIndex(qq => qq.id === q.id);
-                    const canAct = isJudge || isOnStage;
+                    // Judges are view-only on the tile grid now — they see the
+                    // same progress everyone else does but can't tap a number
+                    // for the participant. Only the participant on stage picks
+                    // their own tile; the judge uses "Ask Next Question" below
+                    // if they need to move things along.
+                    const canAct = isOnStage;
                     return (
                       <button
                         key={q.id}
                         disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
-                        onClick={() => (isJudge ? askQuestion(q) : selfAskQuestion(q))}
-                        title={isJudge ? q.question_text : "Tap to reveal your question"}
+                        onClick={() => (canAct ? selfAskQuestion(q) : undefined)}
+                        title={isJudge ? "View only — the participant picks their own number" : "Tap to reveal your question"}
                         style={{
                           width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
                           background: QSTATUS_COLORS[status],
@@ -842,13 +985,13 @@ export default function GeneralMusabaqahExamRoom() {
               const a = answers.find(x => x.question_id === q.id);
               const status = a ? a.status : "not_asked";
               const isCurrent = participant?.current_question_id === q.id;
-              const canAct = isJudge || isOnStage;
+              const canAct = isOnStage;
               return (
                 <button
                   key={q.id}
                   disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
-                  onClick={() => (isJudge ? askQuestion(q) : selfAskQuestion(q))}
-                  title={isJudge ? q.question_text : "Tap to reveal your question"}
+                  onClick={() => (canAct ? selfAskQuestion(q) : undefined)}
+                  title={isJudge ? "View only — the participant picks their own number" : "Tap to reveal your question"}
                   style={{
                     width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
                     background: QSTATUS_COLORS[status], color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
@@ -864,68 +1007,94 @@ export default function GeneralMusabaqahExamRoom() {
 
         {currentQuestion ? (
           // key={currentQuestion.id} forces a remount every time a new tile
-          // is picked, so the flip animation replays for each question
-          // instead of only playing once on the very first pick.
-          <div key={currentQuestion.id} className="gm-flip-wrap">
-            <div className="gm-flip-card">
-              <div className="gm-flip-face gm-flip-front" style={{ background: `linear-gradient(135deg, ${GOLD}, #a9863a)` }}>
+          // is picked, so the reveal replays for each question instead of
+          // only playing once on the very first pick.
+          <div key={currentQuestion.id}>
+            {!revealedQuestion ? (
+              <div className="gm-reveal-number" style={{ minHeight: 120, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 14, background: `linear-gradient(135deg, ${GOLD}, #a9863a)`, boxShadow: "0 8px 24px rgba(0,0,0,0.35)" }}>
                 <span style={{ fontSize: 48, fontWeight: 900, color: "#06131f" }}>{currentQuestionNumber}</span>
               </div>
-              <div className="gm-flip-face gm-flip-back">
-          <div style={{ background: GM, border: "1px solid rgba(201,168,76,0.25)", borderRadius: 14, padding: 18 }}>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-              <Badge variant="secondary">{labelize(currentQuestion.category)}</Badge>
-              <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>{currentQuestion.marks} marks</Badge>
-              <Badge variant="outline" style={{ color: "#fff", borderColor: "rgba(255,255,255,0.25)" }}>{labelize(currentQuestion.difficulty)}</Badge>
-            </div>
-            <p style={{ color: "#fff", fontSize: 17, fontWeight: 600, margin: "0 0 8px" }}>{currentQuestion.question_text}</p>
-            {currentQuestion.question_text_ar && <p dir="rtl" style={{ color: "rgba(255,255,255,0.85)", fontSize: 18, margin: "0 0 10px" }}>{currentQuestion.question_text_ar}</p>}
-            {isJudge && currentQuestion.expected_answer && (
-              <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, background: "rgba(0,0,0,0.2)", padding: 8, borderRadius: 8 }}>
-                Expected: {currentQuestion.expected_answer}
-              </p>
-            )}
-
-            {isJudge && currentAnswer && (
-              <div style={{ marginTop: 16, borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 16, display: "grid", gap: 10 }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <label style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>Score</label>
-                  <input
-                    type="number" min={0} max={currentQuestion.marks} value={scoreDraft.score}
-                    onChange={e => setScoreDraft({ ...scoreDraft, score: e.target.value })}
-                    style={{ width: 70, padding: "6px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.05)", color: "#fff" }}
-                  />
-                  <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 12 }}>/ {currentQuestion.marks}</span>
-                </div>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {["correct", "partially_correct", "incorrect", "skipped"].map(c => (
-                    <button key={c} onClick={() => setScoreDraft({ ...scoreDraft, correctness: c })}
+            ) : (
+              <div className="gm-reveal-question" style={{ background: GM, border: "1px solid rgba(201,168,76,0.25)", borderRadius: 14, padding: 18 }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10, alignItems: "center" }}>
+                  <Badge variant="secondary">{labelize(currentQuestion.category)}</Badge>
+                  <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>{currentQuestion.marks} marks</Badge>
+                  <Badge variant="outline" style={{ color: "#fff", borderColor: "rgba(255,255,255,0.25)" }}>{labelize(currentQuestion.difficulty)}</Badge>
+                  {/* ── Per-question timer (Section 4/5) ─────────────────
+                      Sits idle right after reveal — the judge reads the
+                      question aloud, then taps Start Timer, which is the
+                      participant's actual cue to begin answering. */}
+                  {questionTimeLeft !== null && (
+                    <Badge
                       style={{
-                        padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                        border: scoreDraft.correctness === c ? "1.5px solid " + GOLD : "1px solid rgba(255,255,255,0.2)",
-                        background: scoreDraft.correctness === c ? "rgba(201,168,76,0.2)" : "transparent",
-                        color: scoreDraft.correctness === c ? GOLD : "rgba(255,255,255,0.6)",
-                      }}>
-                      {labelize(c)}
-                    </button>
-                  ))}
+                        marginLeft: "auto", fontFamily: "monospace", fontWeight: 800,
+                        background: questionTimeLeft <= 3 ? "rgba(248,113,113,0.2)" : "rgba(255,255,255,0.08)",
+                        color: questionTimeLeft <= 3 ? RED : "#fff", border: "none",
+                      }}
+                    >
+                      <Clock size={12} className="mr-1" /> {questionTimeLeft}s
+                    </Badge>
+                  )}
                 </div>
-                <Textarea rows={2} placeholder="Judge comment (optional)" value={scoreDraft.comment}
-                  onChange={e => setScoreDraft({ ...scoreDraft, comment: e.target.value })}
-                  style={{ background: "rgba(255,255,255,0.05)", color: "#fff", borderColor: "rgba(255,255,255,0.2)" }} />
-                <div style={{ display: "flex", gap: 8 }}>
-                  <Button onClick={saveScore} disabled={savingScore} style={{ background: GREEN, color: "#06301a", fontWeight: 700 }}>
-                    {savingScore ? <Loader2 size={14} className="animate-spin mr-1" /> : <Save size={14} className="mr-1" />} Save Score
+                <p style={{ color: "#fff", fontSize: 17, fontWeight: 600, margin: "0 0 8px" }}>{currentQuestion.question_text}</p>
+                {currentQuestion.question_text_ar && <p dir="rtl" style={{ color: "rgba(255,255,255,0.85)", fontSize: 18, margin: "0 0 10px" }}>{currentQuestion.question_text_ar}</p>}
+                {isJudge && currentQuestion.expected_answer && (
+                  <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, background: "rgba(0,0,0,0.2)", padding: 8, borderRadius: 8 }}>
+                    Expected: {currentQuestion.expected_answer}
+                  </p>
+                )}
+
+                {isJudge && !questionTimerActive && (questionTimeLeft ?? 0) > 0 && (
+                  <Button onClick={startQuestionTimer} style={{ marginTop: 12, background: BLUE, color: "#06131f", fontWeight: 700 }}>
+                    <Play size={14} className="mr-1" /> Start Timer
                   </Button>
-                  <Button variant="outline" onClick={skipQuestion} style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.6)", borderColor: "rgba(255,255,255,0.2)" }}>
-                    <SkipForward size={14} className="mr-1" /> Skip
-                  </Button>
-                </div>
+                )}
+                {!isJudge && !questionTimerActive && (questionTimeLeft ?? 0) > 0 && (
+                  <p style={{ marginTop: 12, color: "rgba(255,255,255,0.5)", fontSize: 12 }}>Waiting for the judge to start the timer…</p>
+                )}
+                {questionTimeLeft === 0 && (
+                  <p style={{ marginTop: 12, color: RED, fontSize: 13, fontWeight: 700 }}>⏱ Time's up!</p>
+                )}
+
+                {isJudge && currentAnswer && (
+                  <div style={{ marginTop: 16, borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 16, display: "grid", gap: 10 }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <label style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>Score</label>
+                      <input
+                        type="number" min={0} max={currentQuestion.marks} value={scoreDraft.score}
+                        onChange={e => setScoreDraft({ ...scoreDraft, score: e.target.value })}
+                        style={{ width: 70, padding: "6px 8px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.05)", color: "#fff" }}
+                      />
+                      <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 12 }}>/ {currentQuestion.marks}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {["correct", "partially_correct", "incorrect", "skipped"].map(c => (
+                        <button key={c} onClick={() => setScoreDraft({ ...scoreDraft, correctness: c })}
+                          style={{
+                            padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                            border: scoreDraft.correctness === c ? "1.5px solid " + GOLD : "1px solid rgba(255,255,255,0.2)",
+                            background: scoreDraft.correctness === c ? "rgba(201,168,76,0.2)" : "transparent",
+                            color: scoreDraft.correctness === c ? GOLD : "rgba(255,255,255,0.6)",
+                          }}>
+                          {labelize(c)}
+                        </button>
+                      ))}
+                    </div>
+                    <Textarea rows={2} placeholder="Judge comment (optional)" value={scoreDraft.comment}
+                      onChange={e => setScoreDraft({ ...scoreDraft, comment: e.target.value })}
+                      style={{ background: "rgba(255,255,255,0.05)", color: "#fff", borderColor: "rgba(255,255,255,0.2)" }} />
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Button onClick={saveScore} disabled={savingScore} style={{ background: GREEN, color: "#06301a", fontWeight: 700 }}>
+                        {savingScore ? <Loader2 size={14} className="animate-spin mr-1" /> : <Save size={14} className="mr-1" />} Save Score
+                      </Button>
+                      <Button variant="outline" onClick={skipQuestion} style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.6)", borderColor: "rgba(255,255,255,0.2)" }}>
+                        <SkipForward size={14} className="mr-1" /> Skip
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
-          </div>
-              </div>
-            </div>
           </div>
         ) : (
           <div style={{ background: GM, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 24, textAlign: "center" }}>
@@ -953,6 +1122,8 @@ export default function GeneralMusabaqahExamRoom() {
           <span>{queueCount.waiting} waiting · {queueCount.completed} completed</span>
         </div>
       </div>
+      </>
+      )}
 
       {/* ── Pause dialog ───────────────────────────────────────────── */}
       <Dialog open={pauseOpen} onOpenChange={setPauseOpen}>
@@ -1105,33 +1276,62 @@ export default function GeneralMusabaqahExamRoom() {
   );
 }
 
-/* ── Video stage: local tile (mirrored, like a real mirror) + every remote
-   participant currently in the room (the on-stage student, the judge, and
-   any spectators who happen to be publishing) shown un-mirrored, exactly as
-   everyone else actually sees them. Previously only the FIRST remote
-   participant was ever rendered and neither tile was mirrored, which is
-   what read as "the camera view is flipped" — your own preview looked
-   backwards compared to a real mirror, and with more than 2 people in the
-   room, everyone past the first was simply invisible. ───────────────── */
-function VideoStage({ canPublish, onStageUserId }: { canPublish: boolean; onStageUserId?: string }) {
+/* ── Video stage: only the judge and whoever is actually on stage are ever
+   shown — everyone else who has joined but not been called is a pure
+   spectator and should not appear as a tile to anyone (Section 2 of the
+   fix request). Previously every remote participant who happened to be
+   publishing was rendered, which is what let an uncalled student's camera
+   show up alongside the admin's. `layout` controls arrangement only:
+   "grid" (side by side), or a spotlight on one side with the other as a
+   small corner tile. ─────────────────────────────────────────────────── */
+type StageLayout = "grid" | "spotlight_stage" | "spotlight_admin";
+function VideoStage({ canPublish, onStageUserId, layout = "grid" }: { canPublish: boolean; onStageUserId?: string; layout?: StageLayout }) {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants   = useRemoteParticipants();
 
-  const tiles = [
-    ...(canPublish ? [{ p: localParticipant, label: "You", mirror: true, isLocal: true }] : []),
+  const metaOf = (p: any) => {
+    try { return p.metadata ? JSON.parse(p.metadata) : {}; } catch { return {}; }
+  };
+  const localMeta = metaOf(localParticipant);
+  const isLocalOnStage = !!onStageUserId && localMeta.user_id === onStageUserId;
+  const isLocalJudge = localMeta.role === "judge";
+
+  const allTiles = [
+    ...(canPublish ? [{ p: localParticipant, label: "You", mirror: true, isLocal: true, isJudgeTile: isLocalJudge, isOnStagePerson: isLocalOnStage }] : []),
     ...remoteParticipants.map(p => {
-      let meta: any = {};
-      try { meta = p.metadata ? JSON.parse(p.metadata) : {}; } catch { /* ignore */ }
-      const isOnStagePerson = onStageUserId && meta.user_id === onStageUserId;
-      return { p, label: p.name || (meta.role === "judge" ? "Judge" : "Participant"), mirror: false, isLocal: false, isOnStagePerson };
+      const meta = metaOf(p);
+      const isOnStagePerson = !!onStageUserId && meta.user_id === onStageUserId;
+      const isJudgeTile = meta.role === "judge";
+      return { p, label: p.name || (isJudgeTile ? "Judge" : "Participant"), mirror: false, isLocal: false, isJudgeTile, isOnStagePerson };
     }),
   ];
+
+  // Only the judge tile(s) and the one on-stage participant's tile ever
+  // render — every other spectator is filtered out here, regardless of
+  // whether they happen to be publishing.
+  const tiles = allTiles.filter(t => t.isJudgeTile || t.isOnStagePerson);
 
   if (tiles.length === 0) {
     return <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Waiting for video…</div>;
   }
 
-  const cols = tiles.length <= 1 ? 1 : tiles.length <= 4 ? 2 : 3;
+  if (layout !== "grid" && tiles.length === 2) {
+    const wantJudgeBig = layout === "spotlight_admin";
+    const big = tiles.find(t => (wantJudgeBig ? t.isJudgeTile : t.isOnStagePerson)) ?? tiles[0];
+    const small = tiles.find(t => t !== big) ?? tiles[1];
+    return (
+      <div style={{ position: "relative", height: "100%", background: "#000" }}>
+        <div style={{ position: "absolute", inset: 0 }}>
+          <ParticipantTile participant={big.p} label={big.label} mirror={big.mirror} highlight={!!big.isOnStagePerson} />
+        </div>
+        <div style={{ position: "absolute", bottom: 10, right: 10, width: "28%", maxWidth: 140, aspectRatio: "4/3", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}>
+          <ParticipantTile participant={small.p} label={small.label} mirror={small.mirror} highlight={!!small.isOnStagePerson} />
+        </div>
+      </div>
+    );
+  }
+
+  const cols = tiles.length <= 1 ? 1 : 2;
   return (
     <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 4, height: "100%", background: "#000" }}>
       {tiles.map((t, i) => (
@@ -1158,10 +1358,11 @@ function ParticipantTile({ participant, label, mirror, highlight }: { participan
   );
 }
 
-/* ── Mic/camera toggle strip for whoever is allowed to publish (judge or
-   the student currently on stage). Mirrors the toggle into the DB's
-   camera_on/mic_on columns too, purely so the admin's participant list/
-   queue view can show accurate live status badges. ────────────────────── */
+/* ── Mic/camera toggle — icon-only floating buttons that sit inside the
+   video box itself (bottom-left corner) instead of a row underneath it, so
+   they're quick to tap without taking up page real estate. Mirrors the
+   toggle into the DB's camera_on/mic_on columns too, purely so the admin's
+   participant list/queue view can show accurate live status badges. ───── */
 function MediaControls({ videoAllowed, micAllowed, participantId }: { videoAllowed: boolean; micAllowed: boolean; participantId?: string | null }) {
   const { localParticipant } = useLocalParticipant();
   const [micOn, setMicOn] = useState(micAllowed);
@@ -1191,15 +1392,22 @@ function MediaControls({ videoAllowed, micAllowed, participantId }: { videoAllow
     persist({ camera_on: next });
   };
 
+  const iconBtn = (active: boolean, disabled?: boolean) => ({
+    width: 34, height: 34, borderRadius: "50%" as const, display: "flex", alignItems: "center", justifyContent: "center",
+    border: "none", cursor: disabled ? "default" : "pointer",
+    background: disabled ? "rgba(255,255,255,0.15)" : active ? "rgba(255,255,255,0.18)" : RED,
+    color: disabled ? "rgba(255,255,255,0.4)" : "#fff",
+    backdropFilter: "blur(4px)",
+  });
+
   return (
-    <div style={{ display: "flex", gap: 8, padding: "8px 16px 0" }}>
-      <Button size="sm" variant="outline" onClick={toggleMic} style={{ background: "rgba(255,255,255,0.04)", color: micOn ? "#fff" : RED, borderColor: micOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
-        {micOn ? <Mic size={14} className="mr-1" /> : <MicOff size={14} className="mr-1" />} {micOn ? "Mic On" : "Mic Off"}
-      </Button>
-      <Button size="sm" variant="outline" disabled={!videoAllowed} onClick={toggleCam}
-        style={{ background: "rgba(255,255,255,0.04)", color: !videoAllowed ? "rgba(255,255,255,0.3)" : camOn ? "#fff" : RED, borderColor: camOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
-        {camOn ? <Video size={14} className="mr-1" /> : <VideoOff size={14} className="mr-1" />} {camOn ? "Camera On" : "Camera Off"}
-      </Button>
+    <div style={{ position: "absolute", bottom: 10, left: 10, display: "flex", gap: 8, zIndex: 5 }}>
+      <button onClick={toggleMic} aria-label={micOn ? "Mute" : "Unmute"} style={iconBtn(micOn)}>
+        {micOn ? <Mic size={16} /> : <MicOff size={16} />}
+      </button>
+      <button onClick={toggleCam} disabled={!videoAllowed} aria-label={camOn ? "Turn camera off" : "Turn camera on"} style={iconBtn(camOn, !videoAllowed)}>
+        {camOn ? <Video size={16} /> : <VideoOff size={16} />}
+      </button>
     </div>
   );
 }
