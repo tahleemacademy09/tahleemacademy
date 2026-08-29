@@ -931,6 +931,16 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                       onBlur={e => Number(e.target.value) !== event.max_exam_time_seconds && saveEvent({ max_exam_time_seconds: Number(e.target.value) })} />
                   </Field>
                 </Row2>
+                <Row2>
+                  <Field label="Time per question (sec)">
+                    <Input className={DARK_FIELD} type="number" defaultValue={event.question_time_seconds ?? 60}
+                      onBlur={e => Number(e.target.value) !== event.question_time_seconds && saveEvent({ question_time_seconds: Number(e.target.value) })} />
+                  </Field>
+                  <div />
+                </Row2>
+                <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, marginTop: -6 }}>
+                  This is the per-question countdown in the live exam room — it stays paused after a question is revealed until the judge taps "Start Timer" (so the judge can read the question aloud first).
+                </div>
 
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <Label style={{ color: "#fff", fontSize: 13 }}>Randomize questions</Label>
