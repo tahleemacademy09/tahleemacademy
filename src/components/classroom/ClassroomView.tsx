@@ -343,6 +343,24 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // Student recording — lifted here so SubjectMaterialsPanel can also trigger it
   const[stuRec,setStuRec]=useState(false);
   const stuMrRefTop=useRef<MediaRecorder|null>(null);
+  // FIX ("students say they only hear their own voice back in the
+  // recording"): the old implementation called getUserMedia({audio:true})
+  // and recorded THAT stream directly — which is just the student's own
+  // microphone, nothing else. It never touched any audio from the teacher
+  // or other students, so of course played-back recordings only ever had
+  // the recording student's own voice on them.
+  //
+  // Fix: mix the student's mic together with every OTHER participant's
+  // subscribed audio track (what the student is actually hearing through
+  // their speakers/headphones right now) into one Web Audio destination
+  // node, and record THAT combined stream instead. Tracks that
+  // subscribe/unsubscribe mid-recording (someone unmutes, a late student
+  // joins, etc.) are added/removed from the mix live.
+  const stuAudioCtxRef=useRef<AudioContext|null>(null);
+  const stuDestRef=useRef<MediaStreamAudioDestinationNode|null>(null);
+  const stuLocalMicStreamRef=useRef<MediaStream|null>(null);
+  const stuSourceNodesRef=useRef<Map<string,MediaStreamAudioSourceNode>>(new Map());
+  const stuRoomListenersRef=useRef<{onSub:(...a:any[])=>void;onUnsub:(...a:any[])=>void}|null>(null);
   // Feature 2: Audio-only mode (manual + auto on poor network)
   const[audioOnlyActive,setAudioOnlyActive]=useState(false);
   // Admin/teacher-wide forced audio-only — when true, EVERY participant's camera is
@@ -358,6 +376,38 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     toast({title:next?"📵 Audio-only mode ON for everyone — cameras locked off":"🎥 Audio-only mode ended — cameras unlocked"});
   };
   const stuChunksTop=useRef<Blob[]>([]);
+  const stuAddRemoteTrack=(track:any,pub:any)=>{
+    try{
+      const ac=stuAudioCtxRef.current,dest=stuDestRef.current;
+      if(!ac||!dest||!track?.mediaStreamTrack)return;
+      if(stuSourceNodesRef.current.has(pub.trackSid))return; // already mixed in
+      const ms=new MediaStream([track.mediaStreamTrack]);
+      const node=ac.createMediaStreamSource(ms);
+      node.connect(dest);
+      stuSourceNodesRef.current.set(pub.trackSid,node);
+    }catch{}
+  };
+  const stuRemoveRemoteTrack=(_track:any,pub:any)=>{
+    try{
+      stuSourceNodesRef.current.get(pub.trackSid)?.disconnect();
+      stuSourceNodesRef.current.delete(pub.trackSid);
+    }catch{}
+  };
+  const stuTeardownAudioGraph=()=>{
+    const room=roomRef.current;
+    if(room&&stuRoomListenersRef.current){
+      room.off(RoomEvent.TrackSubscribed,stuRoomListenersRef.current.onSub);
+      room.off(RoomEvent.TrackUnsubscribed,stuRoomListenersRef.current.onUnsub);
+    }
+    stuRoomListenersRef.current=null;
+    stuSourceNodesRef.current.forEach(node=>{try{node.disconnect();}catch{}});
+    stuSourceNodesRef.current.clear();
+    try{stuLocalMicStreamRef.current?.getTracks().forEach(t=>t.stop());}catch{}
+    stuLocalMicStreamRef.current=null;
+    try{stuAudioCtxRef.current?.close();}catch{}
+    stuAudioCtxRef.current=null;
+    stuDestRef.current=null;
+  };
   const toggleStuRecordTop=async()=>{
     if(stuRec){
       stuMrRefTop.current?.stop();
@@ -366,17 +416,56 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         const blob=new Blob(stuChunksTop.current,{type:mt});
         const url=URL.createObjectURL(blob);
         const a=document.createElement("a");a.href=url;a.download=`class-${Date.now()}.webm`;a.click();URL.revokeObjectURL(url);stuChunksTop.current=[];
+        stuTeardownAudioGraph();
       };setStuRec(false);
     }else{
       try{
-        const s=await navigator.mediaDevices.getUserMedia({audio:true});
+        const AC=(window as any).AudioContext||(window as any).webkitAudioContext;
+        const ac:AudioContext=new AC();
+        const dest=ac.createMediaStreamDestination();
+        stuAudioCtxRef.current=ac;stuDestRef.current=dest;
+
+        // Own mic
+        const localStream=await navigator.mediaDevices.getUserMedia({audio:true});
+        stuLocalMicStreamRef.current=localStream;
+        ac.createMediaStreamSource(localStream).connect(dest);
+
+        // Everyone else already in the room — teacher + other students —
+        // whose audio is currently subscribed (i.e. audible to this student).
+        const room=roomRef.current;
+        if(room){
+          room.remoteParticipants?.forEach?.((p:any)=>{
+            p.trackPublications?.forEach?.((pub:any)=>{
+              if(pub?.kind==="audio"&&pub.track)stuAddRemoteTrack(pub.track,pub);
+            });
+          });
+          const onSub=(track:any,pub:any)=>{if(track?.kind==="audio")stuAddRemoteTrack(track,pub);};
+          const onUnsub=(track:any,pub:any)=>{if(track?.kind==="audio")stuRemoveRemoteTrack(track,pub);};
+          room.on(RoomEvent.TrackSubscribed,onSub);
+          room.on(RoomEvent.TrackUnsubscribed,onUnsub);
+          stuRoomListenersRef.current={onSub,onUnsub};
+        }
+
         const mime=["audio/webm","audio/mp4","audio/ogg"].find(t2=>{try{return MediaRecorder.isTypeSupported(t2);}catch{return false;}})||"";
-        const mr=new MediaRecorder(s,mime?{mimeType:mime}:undefined);
+        const mr=new MediaRecorder(dest.stream,mime?{mimeType:mime}:undefined);
         stuChunksTop.current=[];mr.ondataavailable=e=>{if(e.data.size>0)stuChunksTop.current.push(e.data);};
         mr.start(1000);stuMrRefTop.current=mr;setStuRec(true);
-      }catch{toast({title:"Microphone access denied"});}
+      }catch{
+        stuTeardownAudioGraph();
+        toast({title:"Microphone access denied"});
+      }
     }
   };
+  // Safety net: if the component unmounts while a student recording is still
+  // running (navigated away, minimized past unmount, etc.), stop the mic
+  // stream and close the AudioContext instead of leaking them.
+  useEffect(()=>{
+    return()=>{
+      try{stuMrRefTop.current?.stop();}catch{}
+      stuTeardownAudioGraph();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
   const[floatingEmojis,setFloatingEmojis]=useState<FloatingEmoji[]>([]);
   const[raisedHands,setRaisedHands]=useState<RaisedHand[]>([]);
   const[layout,setLayout]=useState<LayoutMode>("grid");
