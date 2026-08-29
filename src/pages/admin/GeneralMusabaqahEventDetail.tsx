@@ -118,7 +118,11 @@ export default function GeneralMusabaqahEventDetail() {
   const [participants, setParticipants]   = useState<any[]>([]);
   const [pLoading, setPLoading]           = useState(true);
 
-  const [activeTab, setActiveTab] = useState("overview");
+  // Lets links from elsewhere (e.g. the live exam room's "Finalize
+  // Competition" action) land directly on a specific tab, such as
+  // ?tab=results to jump straight to the leaderboard after finalizing.
+  const initialTab = new URLSearchParams(window.location.search).get("tab");
+  const [activeTab, setActiveTab] = useState(initialTab && ["overview", "questions", "registrations", "queue", "results"].includes(initialTab) ? initialTab : "overview");
 
   const [resultsLoading, setResultsLoading] = useState(true);
   const [scoresByParticipant, setScoresByParticipant] = useState<Record<string, any[]>>({});
