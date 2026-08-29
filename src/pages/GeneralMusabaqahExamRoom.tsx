@@ -574,12 +574,12 @@ export default function GeneralMusabaqahExamRoom() {
     return <div style={{ minHeight: "100%", background: G, display: "flex", justifyContent: "center", alignItems: "center" }}><Loader2 className="animate-spin" color={GOLD} size={28} /></div>;
   }
 
-  if (isJudge && !participant) {
+  if (isJudge && !event) {
     return (
       <div style={{ minHeight: "100%", background: G, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24, textAlign: "center" }}>
         <Users size={32} color={GOLD} />
-        <p style={{ color: "#fff" }}>No student is currently called for this Musabaqah.</p>
-        <Button onClick={() => navigate(`/musabaqah/general/${eventId}`)} style={{ background: GOLD, color: G }}>Go to Queue</Button>
+        <p style={{ color: "#fff" }}>Musabaqah not found.</p>
+        <Button onClick={() => navigate(`/musabaqah/general`)} style={{ background: GOLD, color: G }}>Back</Button>
       </div>
     );
   }
@@ -593,16 +593,10 @@ export default function GeneralMusabaqahExamRoom() {
     );
   }
 
-  if (!isJudge && !participant) {
-    return (
-      <div style={{ minHeight: "100%", background: G, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24, textAlign: "center" }}>
-        <Users size={32} color={GOLD} />
-        <p style={{ color: "#fff", fontWeight: 700 }}>Waiting for the admin to call the next participant…</p>
-        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13 }}>This page updates automatically — once anyone is called, you'll see them here live.</p>
-        <Button onClick={() => navigate("/student/musabaqah/general")} variant="outline" style={{ color: "rgba(255,255,255,0.7)" }}>Back</Button>
-      </div>
-    );
-  }
+  // Note: a student with no one on stage yet no longer gets bounced to a
+  // static "waiting" screen — they stay in this room (see the video area
+  // below) so they can see/hear the admin's live introduction the moment
+  // the competition auto-launches, same as the judge.
 
   // Spectator = anyone in the room besides the judge and the person on
   // stage — only they should publish audio/video; everyone else just
@@ -693,6 +687,21 @@ export default function GeneralMusabaqahExamRoom() {
         </div>
       </div>
 
+      {isJudge && !participant && (
+        <div style={{ background: "rgba(201,168,76,0.12)", borderBottom: "1px solid rgba(201,168,76,0.3)", padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+          <span style={{ color: GOLD, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+            <Users size={14} /> No student called yet — you're live for everyone waiting. Do your introduction, then call the first student.
+          </span>
+          <Button size="sm" onClick={() => setRosterOpen(true)} style={{ background: GOLD, color: G, fontWeight: 700 }}>
+            <PhoneCall size={13} className="mr-1" /> Call a student
+          </Button>
+        </div>
+      )}
+      {!isJudge && !participant && (
+        <div style={{ background: "rgba(96,165,250,0.1)", borderBottom: "1px solid rgba(96,165,250,0.25)", padding: "8px 16px", color: BLUE, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+          <Users size={14} /> Waiting for the admin to call the next participant — you'll see it here live, no need to refresh.
+        </div>
+      )}
       {isPaused && (
         <div style={{ background: "rgba(248,113,113,0.15)", borderBottom: "1px solid rgba(248,113,113,0.3)", padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <span style={{ color: RED, fontSize: 13, fontWeight: 700 }}>⏸ Paused — {participant.pause_reason || "no reason given"}</span>
@@ -743,12 +752,12 @@ export default function GeneralMusabaqahExamRoom() {
 
       {/* ── Control strip (Section 13) ────────────────────────────── */}
       <div style={{ display: "flex", gap: 8, padding: "0 16px 12px", flexWrap: "wrap" }}>
-        <Button size="sm" variant="outline" onClick={() => setErrorOpen(true)} style={{ color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
+        <Button size="sm" variant="outline" onClick={() => setErrorOpen(true)} style={{ background: "rgba(255,255,255,0.04)", color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
           <AlertTriangle size={14} className="mr-1" /> Report Error
         </Button>
         {isJudge && participant && (
           <Button size="sm" variant="outline" onClick={toggleParticipantVideo}
-            style={participant.video_allowed === false ? { color: "#F87171", borderColor: "rgba(248,113,113,0.4)" } : { color: "rgba(255,255,255,0.7)" }}>
+            style={participant.video_allowed === false ? { background: "rgba(255,255,255,0.04)", color: "#F87171", borderColor: "rgba(248,113,113,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", borderColor: "rgba(255,255,255,0.2)" }}>
             {participant.video_allowed === false ? <><VideoOff size={14} className="mr-1" /> Video Off</> : <><Video size={14} className="mr-1" /> Video On</>}
           </Button>
         )}
@@ -758,7 +767,7 @@ export default function GeneralMusabaqahExamRoom() {
           </Button>
         )}
         {isJudge && participant?.status === "in_progress" && (
-          <Button size="sm" variant="outline" onClick={() => setPauseOpen(true)} style={{ color: RED, borderColor: "rgba(248,113,113,0.4)" }}>
+          <Button size="sm" variant="outline" onClick={() => setPauseOpen(true)} style={{ background: "rgba(255,255,255,0.04)", color: RED, borderColor: "rgba(248,113,113,0.4)" }}>
             <Pause size={14} className="mr-1" /> Pause
           </Button>
         )}
@@ -908,7 +917,7 @@ export default function GeneralMusabaqahExamRoom() {
                   <Button onClick={saveScore} disabled={savingScore} style={{ background: GREEN, color: "#06301a", fontWeight: 700 }}>
                     {savingScore ? <Loader2 size={14} className="animate-spin mr-1" /> : <Save size={14} className="mr-1" />} Save Score
                   </Button>
-                  <Button variant="outline" onClick={skipQuestion} style={{ color: "rgba(255,255,255,0.6)" }}>
+                  <Button variant="outline" onClick={skipQuestion} style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.6)", borderColor: "rgba(255,255,255,0.2)" }}>
                     <SkipForward size={14} className="mr-1" /> Skip
                   </Button>
                 </div>
@@ -1184,11 +1193,11 @@ function MediaControls({ videoAllowed, micAllowed, participantId }: { videoAllow
 
   return (
     <div style={{ display: "flex", gap: 8, padding: "8px 16px 0" }}>
-      <Button size="sm" variant="outline" onClick={toggleMic} style={{ color: micOn ? "#fff" : RED, borderColor: micOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
+      <Button size="sm" variant="outline" onClick={toggleMic} style={{ background: "rgba(255,255,255,0.04)", color: micOn ? "#fff" : RED, borderColor: micOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
         {micOn ? <Mic size={14} className="mr-1" /> : <MicOff size={14} className="mr-1" />} {micOn ? "Mic On" : "Mic Off"}
       </Button>
       <Button size="sm" variant="outline" disabled={!videoAllowed} onClick={toggleCam}
-        style={{ color: !videoAllowed ? "rgba(255,255,255,0.3)" : camOn ? "#fff" : RED, borderColor: camOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
+        style={{ background: "rgba(255,255,255,0.04)", color: !videoAllowed ? "rgba(255,255,255,0.3)" : camOn ? "#fff" : RED, borderColor: camOn ? "rgba(255,255,255,0.25)" : "rgba(248,113,113,0.4)" }}>
         {camOn ? <Video size={14} className="mr-1" /> : <VideoOff size={14} className="mr-1" />} {camOn ? "Camera On" : "Camera Off"}
       </Button>
     </div>
