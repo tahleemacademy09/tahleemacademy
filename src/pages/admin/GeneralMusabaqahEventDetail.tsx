@@ -224,8 +224,23 @@ export default function GeneralMusabaqahEventDetail() {
   // auto-launch DB flip (see autoLaunchCompetition), this tab still needs to
   // follow along the instant it hears about it via realtime — not just the
   // tab that triggered it.
+  //
+  // Guarded with prevStatusRef so this only fires on a genuine LIVE
+  // transition into "in_progress" while this tab is already open — never
+  // on the page's initial load. Without that guard, simply opening this
+  // page while the event already happened to be in_progress (e.g. an
+  // admin coming back to admit a latecomer's registration mid-competition)
+  // satisfied the condition immediately on mount and bounced straight into
+  // the exam room, skipping the Registrations tab entirely — that was the
+  // "admit screen gets skipped" bug.
+  const prevStatusRef = useRef<string | null>(null);
   useEffect(() => {
-    if (event?.status === "in_progress" && kickoffMs !== null && Date.now() >= kickoffMs && !autoLaunchedRef.current) {
+    const prevStatus = prevStatusRef.current;
+    prevStatusRef.current = event?.status ?? null;
+    if (
+      prevStatus && prevStatus !== "in_progress" &&
+      event?.status === "in_progress" && kickoffMs !== null && Date.now() >= kickoffMs && !autoLaunchedRef.current
+    ) {
       autoLaunchedRef.current = true;
       navigate(`/musabaqah/general/${id}/exam`);
     }
