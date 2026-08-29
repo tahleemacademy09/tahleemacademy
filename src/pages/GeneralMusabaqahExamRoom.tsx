@@ -49,6 +49,7 @@ import {
   CheckCircle2, XCircle, SkipForward, Save, Flag, Wifi, WifiOff,
   ArrowLeft, Users, Clock, ScrollText, Menu, PhoneCall,
   LayoutGrid, Rows3, Columns2, TimerReset, Square, Trophy,
+  Zap, Hand,
 } from "lucide-react";
 
 const PSTATUS_COLORS: Record<string, string> = {
@@ -117,6 +118,17 @@ export default function GeneralMusabaqahExamRoom() {
   // which only finalizes whoever is currently on stage.
   const [finalizeEventOpen, setFinalizeEventOpen] = useState(false);
   const [finalizingEvent, setFinalizingEvent]     = useState(false);
+
+  // Live "signal" flash (Error / Stop) — broadcast to everyone in the room
+  // (participant, spectators, other judges) as a full-screen colour+icon
+  // flash. Ephemeral only: it does NOT log anything or change any status
+  // by itself — Error still opens the log dialog below for the judge to
+  // record details, and Stop is signal-only (it does not end or finalize
+  // the participant's turn; that still only happens automatically once
+  // every stage is complete, or was previously via the Stop button before
+  // this change).
+  const [activeSignal, setActiveSignal] = useState<{ kind: "error" | "stop"; id: number } | null>(null);
+  const gmChannelRef = useRef<any>(null);
 
   const [scoreDraft, setScoreDraft] = useState({ score: "", correctness: "correct", comment: "" });
   const [savingScore, setSavingScore] = useState(false);
@@ -235,9 +247,31 @@ export default function GeneralMusabaqahExamRoom() {
     const ch = supabase.channel(`gm-exam-${eventId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_events", filter: `id=eq.${eventId}` }, () => loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_participants", filter: `event_id=eq.${eventId}` }, () => loadAll())
+      // Ephemeral Error/Stop flash — see activeSignal above. Broadcast (not
+      // a DB table) since it's a live "everyone look now" cue, not state
+      // that needs to persist or survive a refresh.
+      .on("broadcast", { event: "gm_signal" }, ({ payload }: any) => {
+        if (payload?.kind !== "error" && payload?.kind !== "stop") return;
+        setActiveSignal({ kind: payload.kind, id: Date.now() });
+      })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    gmChannelRef.current = ch;
+    return () => { supabase.removeChannel(ch); gmChannelRef.current = null; };
   }, [eventId, loadAll]);
+
+  // Auto-clear the flash a few seconds after it appears.
+  useEffect(() => {
+    if (!activeSignal) return;
+    const t = setTimeout(() => setActiveSignal(null), 3200);
+    return () => clearTimeout(t);
+  }, [activeSignal]);
+
+  // Fires the flash for everyone (including the sender, who won't get their
+  // own broadcast back by default) — purely visual, no DB write.
+  const sendSignal = useCallback((kind: "error" | "stop") => {
+    gmChannelRef.current?.send({ type: "broadcast", event: "gm_signal", payload: { kind } });
+    setActiveSignal({ kind, id: Date.now() });
+  }, []);
 
   useEffect(() => {
     if (participant?.id) loadAnswers(participant.id);
@@ -770,9 +804,45 @@ export default function GeneralMusabaqahExamRoom() {
           0%, 100% { background-color: rgba(248,113,113,0); }
           50% { background-color: rgba(248,113,113,0.55); }
         }
+        .gm-signal-flash { animation: gm-signal-fade 3.2s ease-in-out both; }
+        @keyframes gm-signal-fade {
+          0%   { opacity: 0; }
+          8%   { opacity: 1; }
+          82%  { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        .gm-signal-icon { animation: gm-signal-pulse 0.65s ease-in-out infinite; }
+        @keyframes gm-signal-pulse {
+          0%, 100% { transform: scale(1); }
+          50%      { transform: scale(1.18); }
+        }
       `}</style>
       {timeUpFlash && (
         <div className="gm-timeup-flash" style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 60 }} />
+      )}
+      {/* Live Error/Stop signal — full-screen colour + icon flash, visible to
+          everyone in the room (participant, spectators, other judges).
+          pointer-events: none so it never blocks taps on whatever's
+          underneath while it's fading. */}
+      {activeSignal && (
+        <div
+          key={activeSignal.id}
+          className="gm-signal-flash"
+          style={{
+            position: "fixed", inset: 0, zIndex: 90, pointerEvents: "none",
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18,
+            background: activeSignal.kind === "error" ? "rgba(251,191,36,0.94)" : "rgba(248,113,113,0.94)",
+          }}
+        >
+          {activeSignal.kind === "error" ? (
+            <Zap size={100} color="#3a2c00" strokeWidth={2.5} className="gm-signal-icon" />
+          ) : (
+            <Hand size={100} color="#3a0a0a" strokeWidth={2.5} className="gm-signal-icon" />
+          )}
+          <span style={{ fontSize: 30, fontWeight: 800, letterSpacing: 1.5, color: activeSignal.kind === "error" ? "#3a2c00" : "#3a0a0a" }}>
+            {activeSignal.kind === "error" ? "ERROR FLAGGED" : "STOP"}
+          </span>
+        </div>
       )}
       {/* ── Fixed top: header + (when live) video area, pinned together as
           one sticky unit so neither scrolls out of view — only the question/
@@ -925,14 +995,20 @@ export default function GeneralMusabaqahExamRoom() {
       {competitionLive && (
       <>
       {/* ── Control strip (Section 13) ──────────────────────────────
-          Kept to two buttons for the judge mid-turn: Error (flag a mistake
-          the participant just made while answering) and Stop (ends this
-          participant's turn for the current stage and opens the score/
-          finalize confirmation so the judge can lock it in and move on).
+          Kept to two buttons for the judge mid-turn: Error and Stop are
+          now both live SIGNALS — tapping either fires a full-screen
+          colour+icon flash (yellow lightning / red hand) to everyone in
+          the room via sendSignal(), purely to get attention. Neither one
+          ends or finalizes the turn by itself:
+            - Error also still opens the log dialog below, so the judge
+              can record what happened for the record.
+            - Stop is signal-only. It no longer opens the finalize dialog —
+              finalizing a turn now only happens automatically once every
+              stage is complete (see the autoPromptedFor effect above).
           nowrap + overflow-x so they always sit on one line on mobile
           instead of wrapping to a second row. */}
       <div style={{ display: "flex", gap: 8, padding: "0 16px 12px", flexWrap: "nowrap", overflowX: "auto" }}>
-        <Button size="sm" variant="outline" onClick={() => setErrorOpen(true)} style={{ flexShrink: 0, background: "rgba(255,255,255,0.04)", color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
+        <Button size="sm" variant="outline" onClick={() => { sendSignal("error"); setErrorOpen(true); }} style={{ flexShrink: 0, background: "rgba(255,255,255,0.04)", color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
           <AlertTriangle size={14} className="mr-1" /> Error
         </Button>
         {isJudge && participant?.status === "called" && (
@@ -946,7 +1022,7 @@ export default function GeneralMusabaqahExamRoom() {
           </Button>
         )}
         {isJudge && ["in_progress", "paused"].includes(participant?.status) && (
-          <Button size="sm" onClick={() => setFinalizeOpen(true)} style={{ flexShrink: 0, background: RED, color: "#fff", fontWeight: 700, marginLeft: "auto" }}>
+          <Button size="sm" onClick={() => sendSignal("stop")} style={{ flexShrink: 0, background: RED, color: "#fff", fontWeight: 700, marginLeft: "auto" }}>
             <Square size={14} className="mr-1" /> Stop
           </Button>
         )}
@@ -1261,10 +1337,19 @@ export default function GeneralMusabaqahExamRoom() {
           </ScrollArea>
           {/* Ends the whole event, not just one participant — kept at the
               bottom, separated from the roster list, since it's the most
-              consequential action in this drawer. */}
+              consequential action in this drawer. End Turn sits beside it:
+              same finalize dialog Stop used to open, now reachable here
+              instead, for cutting the on-stage participant's turn short
+              manually (disqualification, early stop, etc.) instead of
+              only ever finalizing automatically once every stage is done. */}
           {isJudge && (
-            <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-              <Button onClick={() => setFinalizeEventOpen(true)} style={{ width: "100%", background: GOLD, color: G, fontWeight: 800 }}>
+            <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 8 }}>
+              {["in_progress", "paused"].includes(participant?.status) && (
+                <Button onClick={() => { setRosterOpen(false); setFinalizeOpen(true); }} variant="outline" style={{ flex: 1, borderColor: "rgba(248,113,113,0.4)", color: RED, fontWeight: 700 }}>
+                  <Square size={15} className="mr-1.5" /> End Turn
+                </Button>
+              )}
+              <Button onClick={() => setFinalizeEventOpen(true)} style={{ flex: 1, background: GOLD, color: G, fontWeight: 800 }}>
                 <Trophy size={15} className="mr-1.5" /> Finalize Competition
               </Button>
             </div>
