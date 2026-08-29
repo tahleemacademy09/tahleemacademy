@@ -26,6 +26,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { getCompetitionKickoffMs, getRegistrationCloseMs } from "@/lib/musabaqahTiming";
+import BigCountdown from "@/components/musabaqah/BigCountdown";
 import {
   BookOpen, Calendar, Loader2, CheckCircle2, Clock3, XCircle,
   KeyRound, Copy, ArrowRight, ArrowLeft,
@@ -36,53 +38,19 @@ const GM   = "#163d28";
 const GOLD = "#c9a84c";
 const BLUE = "#60A5FA";
 
-// Builds the kickoff target for the countdown. competition_date is always
-// the authoritative day — start_time only ever contributes its clock time.
-// This matters because admins sometimes leave start_time on whatever date
-// the field defaulted to when the event was created, which would otherwise
-// silently point the countdown at a stale day instead of the real event date.
-function kickoffTarget(competitionDate: string | null, startTime: string | null): string | null {
-  if (!competitionDate) return startTime;
-  let timeOfDay = "00:00:00";
-  if (startTime) {
-    const t = new Date(startTime);
-    if (!isNaN(t.getTime())) timeOfDay = t.toTimeString().slice(0, 8);
-  }
-  return `${competitionDate}T${timeOfDay}`;
-}
-
-// Live countdown to a target ISO datetime. Ticks once a minute — a live exam
-// timer this is not, so a second-by-second refresh would just be wasted renders.
-function useCountdown(target: string | null) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!target) return;
-    const id = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, [target]);
-  if (!target) return null;
-  const diffMs = new Date(target).getTime() - now;
-  return diffMs;
-}
-
-// Registered students count down to kickoff; everyone else counts down to
-// the registration deadline. Once a target's time has passed, we hide the
-// countdown entirely rather than show a stale "Today" — the status badge
+// Registered students count down to kickoff (the same target used on the
+// Waiting Room and admin Event Detail pages — see src/lib/musabaqahTiming.ts
+// so all three never drift apart); everyone else counts down to the
+// registration deadline. Once a target's time has passed, the countdown
+// hides itself rather than show a stale "0:00" — the status badge
 // (registration closed / admitted / etc.) covers that case instead.
-function EventCountdown({ target, prefix, color }: { target: string | null; prefix: string; color: string }) {
-  const diffMs = useCountdown(target);
-  if (diffMs === null || diffMs <= 0) return null;
-
-  const totalMinutes = Math.floor(diffMs / 60_000);
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor((totalMinutes % 1440) / 60);
-  const minutes = totalMinutes % 60;
-  const label = days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
-
+function EventCountdown({ targetMs, prefix, color }: { targetMs: number | null; prefix: string; color: string }) {
+  const [arrived, setArrived] = useState(targetMs !== null && targetMs <= Date.now());
+  if (targetMs === null || arrived) return null;
   return (
-    <span style={{ display: "flex", alignItems: "center", gap: 4, color, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>
-      <Clock3 size={12} /> {prefix} {label}
-    </span>
+    <div style={{ margin: "4px 0 10px" }}>
+      <BigCountdown targetMs={targetMs} color={color} label={prefix} onArrive={() => setArrived(true)} />
+    </div>
   );
 }
 
@@ -241,21 +209,9 @@ export default function GeneralMusabaqahRegister() {
                     {(ev.status === "registration_open" || ev.status === "registration_closed") && (
                       <div style={{ margin: "0 0 10px" }}>
                         {reg ? (
-                          (ev.competition_date || ev.start_time) && (
-                            <EventCountdown
-                              target={kickoffTarget(ev.competition_date, ev.start_time)}
-                              prefix="Competition in"
-                              color={GOLD}
-                            />
-                          )
+                          <EventCountdown targetMs={getCompetitionKickoffMs(ev)} prefix="Competition starts in" color={GOLD} />
                         ) : (
-                          ev.registration_closes_at && (
-                            <EventCountdown
-                              target={ev.registration_closes_at}
-                              prefix="Registration closes in"
-                              color={BLUE}
-                            />
-                          )
+                          <EventCountdown targetMs={getRegistrationCloseMs(ev)} prefix="Registration closes in" color={BLUE} />
                         )}
                       </div>
                     )}
