@@ -1048,7 +1048,7 @@ export default function GeneralMusabaqahExamRoom() {
                   )}
                 </div>
                 <p style={{ color: "#fff", fontSize: 17, fontWeight: 600, margin: "0 0 8px" }}>{currentQuestion.question_text}</p>
-                {currentQuestion.question_text_ar && <p dir="rtl" style={{ color: "rgba(255,255,255,0.85)", fontSize: 18, margin: "0 0 10px" }}>{currentQuestion.question_text_ar}</p>}
+                {currentQuestion.question_text_ar && <p dir="rtl" style={{ color: "rgba(255,255,255,0.85)", fontSize: 20, lineHeight: 1.9, margin: "0 0 10px", fontFamily: "'Amiri', 'Noto Naskh Arabic', serif" }}>{currentQuestion.question_text_ar}</p>}
                 {isJudge && currentQuestion.expected_answer && (
                   <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, background: "rgba(0,0,0,0.2)", padding: 8, borderRadius: 8 }}>
                     Expected: {currentQuestion.expected_answer}
