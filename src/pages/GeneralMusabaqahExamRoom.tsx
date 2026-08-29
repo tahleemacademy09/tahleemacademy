@@ -45,10 +45,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Mic, MicOff, Video, VideoOff, Loader2, AlertTriangle, Pause, Play,
+  Mic, MicOff, Video, VideoOff, Loader2, AlertTriangle, Play,
   CheckCircle2, XCircle, SkipForward, Save, Flag, Wifi, WifiOff,
-  ArrowLeft, Users, Clock, ShieldCheck, ScrollText, Menu, PhoneCall,
-  LayoutGrid, Rows3, Columns2, TimerReset,
+  ArrowLeft, Users, Clock, ScrollText, Menu, PhoneCall,
+  LayoutGrid, Rows3, Columns2, TimerReset, Square, Trophy,
 } from "lucide-react";
 
 const PSTATUS_COLORS: Record<string, string> = {
@@ -80,6 +80,10 @@ const QSTATUS_COLORS: Record<string, string> = {
   skipped:   "rgba(255,255,255,0.3)",
   disputed:  RED,
 };
+// Any tile whose question has already been asked (any status other than
+// not_asked) turns grey — one clear "this number is taken" signal instead of
+// having to read several different status colors to know what's pickable.
+const TAKEN_GREY = "rgba(120,130,140,0.45)";
 
 export default function GeneralMusabaqahExamRoom() {
   const { id: eventId } = useParams<{ id: string }>();
@@ -105,10 +109,14 @@ export default function GeneralMusabaqahExamRoom() {
   const [pauseOpen, setPauseOpen]   = useState(false);
   const [pauseReason, setPauseReason] = useState("technical_issue");
   const [errorOpen, setErrorOpen]   = useState(false);
-  const [errorForm, setErrorForm]   = useState({ type: "audio_failure", reason: "", notes: "" });
+  const [errorForm, setErrorForm]   = useState({ type: "recitation_mistake", reason: "", notes: "" });
   const [finalizeOpen, setFinalizeOpen] = useState(false);
   const [rosterOpen, setRosterOpen]     = useState(false);
   const [roster, setRoster]             = useState<any[]>([]);
+  // Whole-competition finalize (hamburger) — distinct from finalizeOpen,
+  // which only finalizes whoever is currently on stage.
+  const [finalizeEventOpen, setFinalizeEventOpen] = useState(false);
+  const [finalizingEvent, setFinalizingEvent]     = useState(false);
 
   const [scoreDraft, setScoreDraft] = useState({ score: "", correctness: "correct", comment: "" });
   const [savingScore, setSavingScore] = useState(false);
@@ -372,6 +380,12 @@ export default function GeneralMusabaqahExamRoom() {
     // the per-stage reset effect below does for every later transition.
     const firstStage = [...stages].sort((a, b) => a.stage_order - b.stage_order)[0];
     const initialLimit = firstStage?.time_limit_seconds ?? event?.max_exam_time_seconds ?? 900;
+    // Set the visible countdown immediately — the sync effect above only
+    // re-reads timer_remaining_seconds when participant.id changes, which it
+    // doesn't here (same participant, called → in_progress), so without this
+    // the on-screen clock kept whatever stale value it had (often 0 left over
+    // from a previous turn) instead of the fresh stage duration.
+    setLocalTimer(initialLimit);
     await supabase.from("general_musabaqah_participants").update({ status: "in_progress", timer_remaining_seconds: initialLimit }).eq("id", participant.id);
     await logEvent("started", `${participant.participant_name}'s examination started`);
     toast({ title: "Examination started" });
@@ -613,15 +627,6 @@ export default function GeneralMusabaqahExamRoom() {
     loadAll();
   };
 
-  const toggleParticipantVideo = async () => {
-    if (!participant) return;
-    const nextAllowed = participant.video_allowed === false; // currently off → turn on, and vice versa
-    const { error } = await supabase.from("general_musabaqah_participants").update({ video_allowed: nextAllowed }).eq("id", participant.id);
-    if (error) { toast({ title: "Update failed", description: error.message, variant: "destructive" }); return; }
-    toast({ title: nextAllowed ? "Video allowed" : "Video disabled" });
-    loadAll();
-  };
-
   // Judge-only: call any student from the roster drawer straight onto the
   // stage, same mechanics as GeneralMusabaqahEventDetail's queue "Call" —
   // updates their status + points the event at them, which is what makes
@@ -657,7 +662,7 @@ export default function GeneralMusabaqahExamRoom() {
   const submitError = async () => {
     await logEvent("error", errorForm.reason, { error_type: errorForm.type, notes: errorForm.notes, affected_question: currentQuestion?.id });
     setErrorOpen(false);
-    setErrorForm({ type: "audio_failure", reason: "", notes: "" });
+    setErrorForm({ type: "recitation_mistake", reason: "", notes: "" });
     toast({ title: "Error logged" });
   };
 
@@ -674,6 +679,24 @@ export default function GeneralMusabaqahExamRoom() {
     toast({ title: `${participant.participant_name} finalized` });
     setRosterOpen(true); // hand the judge straight to the roster to call whoever's next
     await loadAll();
+  };
+
+  // Ends the whole competition (not just whoever is on stage): locks the
+  // event, publishes results/leaderboard, and drops the judge straight into
+  // the admin Results tab so scores + leaderboard are right there.
+  const finalizeEvent = async () => {
+    if (!eventId || !isJudge) return;
+    setFinalizingEvent(true);
+    const { error } = await supabase.from("general_musabaqah_events").update({
+      status: "completed", results_visibility: "published", leaderboard_enabled: true, current_participant_id: null,
+    }).eq("id", eventId);
+    setFinalizingEvent(false);
+    if (error) { toast({ title: "Could not finalize competition", description: error.message, variant: "destructive" }); return; }
+    await logEvent("event_finalized", "Competition finalized by admin — results published");
+    setFinalizeEventOpen(false);
+    setRosterOpen(false);
+    toast({ title: "Competition finalized — results published" });
+    navigate(`/musabaqah/general/${eventId}?tab=results`);
   };
 
   /* ── RENDER ───────────────────────────────────────────────────────── */
@@ -751,7 +774,10 @@ export default function GeneralMusabaqahExamRoom() {
       {timeUpFlash && (
         <div className="gm-timeup-flash" style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 60 }} />
       )}
-      {/* ── Top bar ────────────────────────────────────────────────── */}
+      {/* ── Fixed top: header + (when live) video area, pinned together as
+          one sticky unit so neither scrolls out of view — only the question/
+          judging panel below them scrolls. ─────────────────────────────── */}
+      <div style={{ position: "sticky", top: 0, zIndex: 25, background: G }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button onClick={() => navigate(isJudge ? `/musabaqah/general/${eventId}` : "/student/musabaqah/general")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer" }}>
@@ -801,6 +827,47 @@ export default function GeneralMusabaqahExamRoom() {
             <Menu size={20} />
           </button>
         </div>
+      </div>
+
+      {/* ── Video area ─────────────────────────────────────────────── */}
+      {competitionLive && (
+      <div style={{ padding: 16 }}>
+        {lkError ? (
+          <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12, color: RED, fontSize: 13 }}>
+            Video unavailable: {lkError}
+          </div>
+        ) : lkConnected ? (
+          <LiveKitRoom
+            serverUrl={lkUrl} token={lkToken} connect={lkConnected}
+            audio={canPublish} video={canPublish && videoAllowedForMe}
+            options={LK_OPTIONS}
+          >
+            <RoomAudioRenderer />
+            {/* position:relative so the mic/camera icons can float inside
+                the video box itself instead of sitting as a row below it. */}
+            <div style={{ position: "relative", height: 300, borderRadius: 12, overflow: "hidden" }}>
+              <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} layout={viewLayout} />
+              {canPublish && (
+                <MediaControls
+                  videoAllowed={videoAllowedForMe}
+                  micAllowed={isJudge ? true : (myParticipant?.mic_on ?? true)}
+                  participantId={isJudge ? null : myParticipant?.id}
+                />
+              )}
+            </div>
+          </LiveKitRoom>
+        ) : (
+          <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12 }}>
+            <Loader2 className="animate-spin" color={GOLD} size={24} />
+          </div>
+        )}
+        {isOnStage && !videoAllowedForMe && (
+          <p style={{ color: "#FBBF24", fontSize: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+            <VideoOff size={13} /> Your camera has been disabled by the admin for this turn.
+          </p>
+        )}
+      </div>
+      )}
       </div>
 
       {/* ── Not started yet (Section 1): nobody's camera/mic connects and
@@ -857,77 +924,30 @@ export default function GeneralMusabaqahExamRoom() {
 
       {competitionLive && (
       <>
-      {/* ── Video area ─────────────────────────────────────────────── */}
-      {/* Sticky so the admin (or anyone) scrolling down through the question/
-          judging panel below keeps the live video pinned in view instead of
-          it scrolling away. Solid background stops the scrolling content
-          from showing through underneath it. */}
-      <div style={{ padding: 16, position: "sticky", top: 0, zIndex: 20, background: G }}>
-        {lkError ? (
-          <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12, color: RED, fontSize: 13 }}>
-            Video unavailable: {lkError}
-          </div>
-        ) : lkConnected ? (
-          <LiveKitRoom
-            serverUrl={lkUrl} token={lkToken} connect={lkConnected}
-            audio={canPublish} video={canPublish && videoAllowedForMe}
-            options={LK_OPTIONS}
-          >
-            <RoomAudioRenderer />
-            {/* position:relative so the mic/camera icons can float inside
-                the video box itself instead of sitting as a row below it. */}
-            <div style={{ position: "relative", height: 300, borderRadius: 12, overflow: "hidden" }}>
-              <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} layout={viewLayout} />
-              {canPublish && (
-                <MediaControls
-                  videoAllowed={videoAllowedForMe}
-                  micAllowed={isJudge ? true : (myParticipant?.mic_on ?? true)}
-                  participantId={isJudge ? null : myParticipant?.id}
-                />
-              )}
-            </div>
-          </LiveKitRoom>
-        ) : (
-          <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12 }}>
-            <Loader2 className="animate-spin" color={GOLD} size={24} />
-          </div>
-        )}
-        {isOnStage && !videoAllowedForMe && (
-          <p style={{ color: "#FBBF24", fontSize: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
-            <VideoOff size={13} /> Your camera has been disabled by the admin for this turn.
-          </p>
-        )}
-      </div>
-
-      {/* ── Control strip (Section 13) ────────────────────────────── */}
-      <div style={{ display: "flex", gap: 8, padding: "0 16px 12px", flexWrap: "wrap" }}>
-        <Button size="sm" variant="outline" onClick={() => setErrorOpen(true)} style={{ background: "rgba(255,255,255,0.04)", color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
-          <AlertTriangle size={14} className="mr-1" /> Report Error
+      {/* ── Control strip (Section 13) ──────────────────────────────
+          Kept to two buttons for the judge mid-turn: Error (flag a mistake
+          the participant just made while answering) and Stop (ends this
+          participant's turn for the current stage and opens the score/
+          finalize confirmation so the judge can lock it in and move on).
+          nowrap + overflow-x so they always sit on one line on mobile
+          instead of wrapping to a second row. */}
+      <div style={{ display: "flex", gap: 8, padding: "0 16px 12px", flexWrap: "nowrap", overflowX: "auto" }}>
+        <Button size="sm" variant="outline" onClick={() => setErrorOpen(true)} style={{ flexShrink: 0, background: "rgba(255,255,255,0.04)", color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
+          <AlertTriangle size={14} className="mr-1" /> Error
         </Button>
-        {isJudge && participant && (
-          <Button size="sm" variant="outline" onClick={toggleParticipantVideo}
-            style={participant.video_allowed === false ? { background: "rgba(255,255,255,0.04)", color: "#F87171", borderColor: "rgba(248,113,113,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.7)", borderColor: "rgba(255,255,255,0.2)" }}>
-            {participant.video_allowed === false ? <><VideoOff size={14} className="mr-1" /> Video Off</> : <><Video size={14} className="mr-1" /> Video On</>}
-          </Button>
-        )}
         {isJudge && participant?.status === "called" && (
-          <Button size="sm" onClick={startExamination} style={{ background: GREEN, color: "#06301a", fontWeight: 700 }}>
+          <Button size="sm" onClick={startExamination} style={{ flexShrink: 0, background: GREEN, color: "#06301a", fontWeight: 700 }}>
             <Play size={14} className="mr-1" /> Start Examination
           </Button>
         )}
-        {isJudge && participant?.status === "in_progress" && (
-          <Button size="sm" variant="outline" onClick={() => setPauseOpen(true)} style={{ background: "rgba(255,255,255,0.04)", color: RED, borderColor: "rgba(248,113,113,0.4)" }}>
-            <Pause size={14} className="mr-1" /> Pause
-          </Button>
-        )}
         {isJudge && isPaused && (
-          <Button size="sm" onClick={resumeExamination} style={{ background: GREEN, color: "#06301a", fontWeight: 700 }}>
+          <Button size="sm" onClick={resumeExamination} style={{ flexShrink: 0, background: GREEN, color: "#06301a", fontWeight: 700 }}>
             <Play size={14} className="mr-1" /> Resume
           </Button>
         )}
         {isJudge && ["in_progress", "paused"].includes(participant?.status) && (
-          <Button size="sm" onClick={() => setFinalizeOpen(true)} style={{ background: GOLD, color: G, fontWeight: 700, marginLeft: "auto" }}>
-            <ShieldCheck size={14} className="mr-1" /> Finalize
+          <Button size="sm" onClick={() => setFinalizeOpen(true)} style={{ flexShrink: 0, background: RED, color: "#fff", fontWeight: 700, marginLeft: "auto" }}>
+            <Square size={14} className="mr-1" /> Stop
           </Button>
         )}
       </div>
@@ -969,17 +989,18 @@ export default function GeneralMusabaqahExamRoom() {
                     // their own tile; the judge uses "Ask Next Question" below
                     // if they need to move things along.
                     const canAct = isOnStage;
+                    const taken = status !== "not_asked";
                     return (
                       <button
                         key={q.id}
-                        disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
+                        disabled={!canAct || taken || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
                         onClick={() => (canAct ? selfAskQuestion(q) : undefined)}
-                        title={isJudge ? "View only — the participant picks their own number" : "Tap to reveal your question"}
+                        title={taken ? "Already picked" : isJudge ? "View only — the participant picks their own number" : "Tap to reveal your question"}
                         style={{
                           width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
-                          background: QSTATUS_COLORS[status],
-                          color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
-                          fontWeight: 800, fontSize: 12, cursor: canAct ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
+                          background: taken ? TAKEN_GREY : QSTATUS_COLORS[status],
+                          color: taken ? "rgba(255,255,255,0.5)" : status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
+                          fontWeight: 800, fontSize: 12, cursor: canAct && !taken ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
                         }}
                       >
                         {globalIndex + 1}
@@ -997,16 +1018,18 @@ export default function GeneralMusabaqahExamRoom() {
               const status = a ? a.status : "not_asked";
               const isCurrent = participant?.current_question_id === q.id;
               const canAct = isOnStage;
+              const taken = status !== "not_asked";
               return (
                 <button
                   key={q.id}
-                  disabled={!canAct || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
+                  disabled={!canAct || taken || participant?.status !== "in_progress" || (!!currentAnswer && !isCurrent)}
                   onClick={() => (canAct ? selfAskQuestion(q) : undefined)}
-                  title={isJudge ? "View only — the participant picks their own number" : "Tap to reveal your question"}
+                  title={taken ? "Already picked" : isJudge ? "View only — the participant picks their own number" : "Tap to reveal your question"}
                   style={{
                     width: 34, height: 34, borderRadius: 8, border: isCurrent ? `2px solid ${BLUE}` : "1px solid rgba(255,255,255,0.15)",
-                    background: QSTATUS_COLORS[status], color: status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
-                    fontWeight: 800, fontSize: 12, cursor: canAct ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
+                    background: taken ? TAKEN_GREY : QSTATUS_COLORS[status],
+                    color: taken ? "rgba(255,255,255,0.5)" : status === "not_asked" ? "rgba(255,255,255,0.6)" : "#06131f",
+                    fontWeight: 800, fontSize: 12, cursor: canAct && !taken ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
                   }}
                 >
                   {i + 1}
@@ -1172,7 +1195,7 @@ export default function GeneralMusabaqahExamRoom() {
               </Badge>
             </SheetTitle>
           </SheetHeader>
-          <ScrollArea style={{ height: "calc(100vh - 64px)" }}>
+          <ScrollArea style={{ height: isJudge ? "calc(100vh - 128px)" : "calc(100vh - 64px)" }}>
             <div style={{ padding: "4px 12px 16px", display: "grid", gap: 6 }}>
               {roster.length === 0 && (
                 <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, textAlign: "center", padding: 24 }}>No participants yet.</p>
@@ -1236,8 +1259,34 @@ export default function GeneralMusabaqahExamRoom() {
               })}
             </div>
           </ScrollArea>
+          {/* Ends the whole event, not just one participant — kept at the
+              bottom, separated from the roster list, since it's the most
+              consequential action in this drawer. */}
+          {isJudge && (
+            <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+              <Button onClick={() => setFinalizeEventOpen(true)} style={{ width: "100%", background: GOLD, color: G, fontWeight: 800 }}>
+                <Trophy size={15} className="mr-1.5" /> Finalize Competition
+              </Button>
+            </div>
+          )}
         </SheetContent>
       </Sheet>
+
+      {/* ── Finalize whole competition dialog ─────────────────────── */}
+      <Dialog open={finalizeEventOpen} onOpenChange={setFinalizeEventOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Finalize the whole competition?</DialogTitle></DialogHeader>
+          <p style={{ color: "#6b7280", fontSize: 13 }}>
+            This ends the competition for everyone, locks all scores, and publishes the results and leaderboard to participants. This can't be undone from here.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFinalizeEventOpen(false)}>Cancel</Button>
+            <Button onClick={finalizeEvent} disabled={finalizingEvent} style={{ background: GOLD, color: G, fontWeight: 700 }}>
+              {finalizingEvent ? <Loader2 size={14} className="animate-spin mr-1" /> : <Trophy size={14} className="mr-1" />} Finalize & View Results
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Error dialog ───────────────────────────────────────────── */}
       <Dialog open={errorOpen} onOpenChange={setErrorOpen}>
@@ -1247,6 +1296,7 @@ export default function GeneralMusabaqahExamRoom() {
             <Select value={errorForm.type} onValueChange={v => setErrorForm({ ...errorForm, type: v })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
+                <SelectItem value="recitation_mistake">Participant made a mistake</SelectItem>
                 <SelectItem value="audio_failure">Audio failure</SelectItem>
                 <SelectItem value="video_failure">Video failure</SelectItem>
                 <SelectItem value="judge_mistake">Judge mistake</SelectItem>
