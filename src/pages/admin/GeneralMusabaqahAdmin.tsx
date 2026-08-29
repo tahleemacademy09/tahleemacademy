@@ -95,6 +95,10 @@ export default function GeneralMusabaqahAdmin() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving]     = useState(false);
   const [draft, setDraft]       = useState<any>(emptyDraft());
+  // Pending-registration count per event, shown as a badge on each card —
+  // this is what admins need to actually notice a student registered,
+  // regardless of whether registration is currently open or closed.
+  const [pendingCounts, setPendingCounts] = useState<Record<string, number>>({});
 
   useEffect(() => { if (!isStaff) navigate("/student/musabaqah"); }, [isStaff]);
 
@@ -112,7 +116,28 @@ export default function GeneralMusabaqahAdmin() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  const loadPendingCounts = async () => {
+    const { data, error } = await supabase
+      .from("general_musabaqah_registrations")
+      .select("event_id")
+      .eq("status", "pending");
+    if (error) return;
+    const counts: Record<string, number> = {};
+    (data || []).forEach((r: any) => { counts[r.event_id] = (counts[r.event_id] || 0) + 1; });
+    setPendingCounts(counts);
+  };
+
+  useEffect(() => { load(); loadPendingCounts(); }, []);
+
+  // Live: a student registering (or an admin approving/rejecting elsewhere)
+  // should update this list's badges immediately, not just on next visit.
+  useEffect(() => {
+    const ch = supabase
+      .channel("gm-admin-list-registrations")
+      .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_registrations" }, () => loadPendingCounts())
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []);
 
   const openCreate = () => {
     setDraft(emptyDraft());
@@ -233,6 +258,12 @@ export default function GeneralMusabaqahAdmin() {
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
                           <h3 style={{ color: "#fff", fontSize: 17, fontWeight: 700, margin: 0 }}>{ev.title}</h3>
                           <Badge style={{ background: sc.bg, color: sc.text, border: "none" }}>{sc.label}</Badge>
+                          {!!pendingCounts[ev.id] && (
+                            <Badge style={{ background: "#FBBF24", color: "#1a1400", fontWeight: 800 }}>
+                              <Users size={11} className="mr-1" />
+                              {pendingCounts[ev.id]} awaiting review
+                            </Badge>
+                          )}
                         </div>
                         <p style={{ color: GOLD, fontSize: 13, fontWeight: 600, margin: "0 0 4px" }}>
                           {ev.subject}{ev.topic ? ` — ${ev.topic}` : ""}

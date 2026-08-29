@@ -12,7 +12,7 @@
   Registrations/waiting-room/live judging room are separate pages
   added in later chunks; this page links out to them once available.
 */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { getCompetitionKickoffMs } from "@/lib/musabaqahTiming";
+import BigCountdown from "@/components/musabaqah/BigCountdown";
 import {
   ArrowLeft, Plus, Loader2, Trash2, Pencil, Save, ScrollText,
   CheckCircle2, XCircle, Clock3, Copy, UserCheck, UserX, Users,
@@ -75,7 +77,7 @@ const toLocalInput = (iso: string | null) => {
 };
 const fromLocalInput = (val: string) => (val ? new Date(val).toISOString() : null);
 
-const emptyQuestion = (eventId: string) => ({
+const emptyQuestion = (eventId: string, defaultStageId: string | null) => ({
   event_id: eventId,
   category: "memorization",
   question_type: "oral",
@@ -86,7 +88,8 @@ const emptyQuestion = (eventId: string) => ({
   marks: 10,
   difficulty: "medium",
   status: "approved",
-  stage_id: null as string | null,
+  // Every question belongs to a stage — no ungrouped questions allowed.
+  stage_id: defaultStageId,
 });
 
 export default function GeneralMusabaqahEventDetail() {
@@ -107,7 +110,6 @@ export default function GeneralMusabaqahEventDetail() {
   const [qDialogOpen, setQDialogOpen] = useState(false);
   const [qDraft, setQDraft]       = useState<any>(null);
   const [qSaving, setQSaving]     = useState(false);
-  const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
   const [registrations, setRegistrations] = useState<any[]>([]);
   const [rLoading, setRLoading]           = useState(true);
@@ -185,6 +187,14 @@ export default function GeneralMusabaqahEventDetail() {
 
   useEffect(() => { loadEvent(); loadQuestions(); loadRegistrations(); loadParticipants(); loadResults(); loadStages(); }, [id]);
 
+  // Every question must belong to a stage — keep the AI form's stage pinned
+  // to a real stage once one exists, instead of defaulting to "none".
+  useEffect(() => {
+    if (stages.length > 0 && (aiForm.stage_id === "none" || !stages.some(s => s.id === aiForm.stage_id))) {
+      setAiForm(prev => ({ ...prev, stage_id: stages[0].id }));
+    }
+  }, [stages]);
+
   // This page previously only loaded each tab's data once on mount — a
   // student registering (or a participant's status changing) after the
   // admin opened this page never showed up until they navigated away and
@@ -200,6 +210,22 @@ export default function GeneralMusabaqahEventDetail() {
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [id]);
+
+  // The same kickoff target used on student Register/Waiting Room pages —
+  // see src/lib/musabaqahTiming.ts. Kept here so the "Ready to run" card's
+  // countdown and this event's live status can never drift apart.
+  const kickoffMs = event ? getCompetitionKickoffMs(event) : null;
+
+  // If another admin/teacher's tab is the one that actually performs the
+  // auto-launch DB flip (see autoLaunchCompetition), this tab still needs to
+  // follow along the instant it hears about it via realtime — not just the
+  // tab that triggered it.
+  useEffect(() => {
+    if (event?.status === "in_progress" && kickoffMs !== null && Date.now() >= kickoffMs && !autoLaunchedRef.current) {
+      autoLaunchedRef.current = true;
+      navigate(`/musabaqah/general/${id}/exam`);
+    }
+  }, [event?.status, kickoffMs]);
 
   const loadResults = async () => {
     if (!id) return;
@@ -417,6 +443,32 @@ export default function GeneralMusabaqahEventDetail() {
   // Section: one-tap launch — validates the event is actually ready, flips it
   // to "in_progress" so it's locked in as live, then drops the admin straight
   // into the Queue tab where they call students one by one.
+  // Auto-launch: the instant the synced kickoff time arrives, flip the event
+  // live and jump every staff member who has this page open straight into
+  // the exam room — no manual "Start Competition" click needed. Uses a
+  // status-conditional update so if several admins have this page open at
+  // once, only the first one actually flips it; everyone else picks up the
+  // change via the realtime event subscription below and navigates too.
+  const autoLaunchedRef = useRef(false);
+  const autoLaunchCompetition = async () => {
+    if (autoLaunchedRef.current || !event) return;
+    if (!["registration_open", "registration_closed"].includes(event.status)) return;
+    autoLaunchedRef.current = true;
+
+    const approvedCount = questions.filter(q => q.status === "approved").length;
+    if (approvedCount === 0 || participants.length === 0) return; // nothing to run — leave status as-is, admin can start manually once ready
+
+    const { error, count } = await supabase.from("general_musabaqah_events")
+      .update({ status: "in_progress" }, { count: "exact" })
+      .eq("id", id)
+      .eq("status", event.status);
+    if (!error) {
+      setEvent((prev: any) => ({ ...prev, status: "in_progress" }));
+      toast({ title: "Competition auto-launched", description: "Kickoff time reached — the live exam room is now open." });
+    }
+    navigate(`/musabaqah/general/${id}/exam`);
+  };
+
   const startCompetition = async () => {
     const approvedCount = questions.filter(q => q.status === "approved").length;
     const pendingCount = questions.filter(q => q.status === "pending_review").length;
@@ -457,12 +509,31 @@ export default function GeneralMusabaqahEventDetail() {
     }
   };
 
-  const openNewQuestion = () => { setQDraft(emptyQuestion(id!)); setQDialogOpen(true); };
+  const openNewQuestion = () => {
+    if (stages.length === 0) {
+      toast({ title: "Add a stage first", description: "Every question must belong to a stage — create one under Stages above.", variant: "destructive" });
+      return;
+    }
+    setQDraft(emptyQuestion(id!, stages[0].id));
+    setQDialogOpen(true);
+  };
   const openEditQuestion = (q: any) => { setQDraft({ ...q }); setQDialogOpen(true); };
+
+  // Quick reassignment from the question card — no need to open the full edit dialog.
+  const moveQuestionToStage = async (qid: string, newStageId: string) => {
+    setQuestions(prev => prev.map(q => q.id === qid ? { ...q, stage_id: newStageId } : q));
+    const { error } = await supabase.from("general_musabaqah_questions").update({ stage_id: newStageId }).eq("id", qid);
+    if (error) { toast({ title: "Move failed", description: error.message, variant: "destructive" }); loadQuestions(); return; }
+    toast({ title: "Question moved" });
+  };
 
   const saveQuestion = async () => {
     if (!qDraft.question_text.trim()) {
       toast({ title: "Question text is required", variant: "destructive" });
+      return;
+    }
+    if (!qDraft.stage_id) {
+      toast({ title: "Stage is required", description: "Every question must belong to a stage.", variant: "destructive" });
       return;
     }
     setQSaving(true);
@@ -477,7 +548,7 @@ export default function GeneralMusabaqahEventDetail() {
       marks: Number(qDraft.marks) || 10,
       difficulty: qDraft.difficulty,
       status: qDraft.status || "approved",
-      stage_id: qDraft.stage_id || null,
+      stage_id: qDraft.stage_id,
     };
     const isEdit = !!qDraft.id;
     const { error } = isEdit
@@ -544,11 +615,32 @@ export default function GeneralMusabaqahEventDetail() {
   };
 
   const deleteStage = async (s: any) => {
-    const attached = questions.filter(q => q.stage_id === s.id).length;
-    if (!window.confirm(`Delete "${s.name}"?${attached ? ` ${attached} question(s) tagged to it will become ungrouped.` : ""}`)) return;
+    const attachedQuestions = questions.filter(q => q.stage_id === s.id);
+    const fallback = stages.find(other => other.id !== s.id);
+
+    if (attachedQuestions.length > 0 && !fallback) {
+      toast({
+        title: "Can't delete the only stage",
+        description: `${attachedQuestions.length} question(s) belong to "${s.name}" and every question must belong to a stage. Add another stage first, or delete these questions.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const confirmMsg = attachedQuestions.length > 0
+      ? `Delete "${s.name}"? ${attachedQuestions.length} question(s) will be moved into "${fallback!.name}".`
+      : `Delete "${s.name}"?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    if (attachedQuestions.length > 0 && fallback) {
+      const { error: moveErr } = await supabase.from("general_musabaqah_questions")
+        .update({ stage_id: fallback.id }).eq("stage_id", s.id);
+      if (moveErr) { toast({ title: "Could not move questions", description: moveErr.message, variant: "destructive" }); return; }
+    }
+
     const { error } = await supabase.from("general_musabaqah_stages").delete().eq("id", s.id);
     if (error) { toast({ title: "Delete failed", description: error.message, variant: "destructive" }); return; }
-    toast({ title: "Stage deleted" });
+    toast({ title: attachedQuestions.length > 0 ? `Stage deleted — questions moved to "${fallback!.name}"` : "Stage deleted" });
     loadStages();
     loadQuestions();
   };
@@ -603,6 +695,10 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
 
   const generateWithAI = async () => {
     if (!event || !id) return;
+    if (!aiForm.stage_id || aiForm.stage_id === "none") {
+      toast({ title: "Stage is required", description: "Every question must belong to a stage.", variant: "destructive" });
+      return;
+    }
     setAiGenerating(true);
     try {
       const { data, error } = await supabase.functions.invoke("tahleem-ai", {
@@ -635,7 +731,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
           status: autoApprove ? "approved" : "pending_review",
           ai_generated: true,
           ai_confidence: typeof q.confidence === "number" ? Math.max(0, Math.min(1, q.confidence)) : null,
-          stage_id: aiForm.stage_id !== "none" ? aiForm.stage_id : null,
+          stage_id: aiForm.stage_id,
         }));
 
       if (rows.length === 0) throw new Error("AI returned no usable questions — try adjusting the instructions.");
@@ -712,9 +808,8 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
 
   const filteredQuestions = useMemo(
     () => questions
-      .filter(q => categoryFilter === "all" || q.category === categoryFilter)
-      .filter(q => stageFilter === "all" || (stageFilter === "ungrouped" ? !q.stage_id : q.stage_id === stageFilter)),
-    [questions, categoryFilter, stageFilter]
+      .filter(q => stageFilter === "all" || q.stage_id === stageFilter),
+    [questions, stageFilter]
   );
 
   if (loading || !event) {
@@ -865,9 +960,17 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
             {/* ── Start Competition ─────────────────────────────────────
                 One tap once Overview/Question Bank/Registrations are set:
                 checks there's something to run, locks the event to
-                in_progress, and jumps straight to the calling queue. */}
+                in_progress, and jumps straight to the calling queue.
+                The countdown below is synced to the same kickoff target
+                used on the student Register/Waiting Room pages, and
+                auto-launches the moment it hits zero — no click needed. */}
             <Card style={{ background: GM, border: "1px solid rgba(201,168,76,0.35)", marginTop: 14 }}>
               <CardContent className="pt-5 pb-5">
+                {["registration_open", "registration_closed"].includes(event.status) && kickoffMs !== null && Date.now() < kickoffMs && (
+                  <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+                    <BigCountdown targetMs={kickoffMs} color={GOLD} label="Auto-launches in" onArrive={autoLaunchCompetition} />
+                  </div>
+                )}
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
                   <div>
                     <p style={{ color: "#fff", fontWeight: 700, fontSize: 14, margin: 0 }}>Ready to run the live exam?</p>
@@ -881,7 +984,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                   </Button>
                 </div>
                 <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 11, margin: "10px 0 0" }}>
-                  This sets status to "In Progress" and takes you straight into the live exam room, where you call admitted students one at a time. Each called student self-picks a question tile and the timer (Max exam time above) starts automatically.
+                  This sets status to "In Progress" and takes you straight into the live exam room, where you call admitted students one at a time. Each called student self-picks a question tile and the timer (Max exam time above) starts automatically. At kickoff time it also launches on its own — for anyone else with this page open (co-admin/judge) too — as long as there's at least one approved question and one admitted participant.
                 </p>
               </CardContent>
             </Card>
@@ -897,8 +1000,8 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                     <p style={{ color: "#fff", fontWeight: 700, fontSize: 13, margin: 0 }}>Stages</p>
                     <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "2px 0 0" }}>
                       {stages.length
-                        ? "Students must finish a stage's questions before the next one unlocks in the live exam room."
-                        : "Optional — leave empty to keep one flat question bank."}
+                        ? "Students must finish a stage's questions before the next one unlocks in the live exam room. Every question belongs to a stage."
+                        : "Add at least one stage — every question in the bank must belong to one."}
                     </p>
                   </div>
                   <Button size="sm" variant="outline" onClick={openNewStage} style={{ color: GOLD, borderColor: "rgba(201,168,76,0.4)" }}>
@@ -939,26 +1042,18 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
 
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                  <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All categories</SelectItem>
-                    {CATEGORIES.map(c => <SelectItem key={c} value={c}>{labelize(c)}</SelectItem>)}
-                  </SelectContent>
-                </Select>
                 {stages.length > 0 && (
                   <Select value={stageFilter} onValueChange={setStageFilter}>
                     <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All stages</SelectItem>
-                      <SelectItem value="ungrouped">Ungrouped</SelectItem>
                       {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 )}
               </div>
               <div style={{ display: "flex", gap: 8 }}>
-                <Button variant="outline" onClick={() => setAiDialogOpen(true)} style={{ color: BLUE_ACCENT, borderColor: "rgba(96,165,250,0.4)" }}>
+                <Button variant="outline" disabled={stages.length === 0} onClick={() => setAiDialogOpen(true)} style={{ color: BLUE_ACCENT, borderColor: "rgba(96,165,250,0.4)" }}>
                   <Sparkles size={16} className="mr-1" /> Generate with AI
                 </Button>
                 <Button onClick={openNewQuestion} style={{ background: GOLD, color: G, fontWeight: 700 }}>
@@ -966,6 +1061,12 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 </Button>
               </div>
             </div>
+
+            {stages.length === 0 && (
+              <div style={{ background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12, color: "#FBBF24", fontSize: 12 }}>
+                Add a stage above before adding questions — every question must belong to one.
+              </div>
+            )}
 
             {questions.some(q => q.status === "pending_review") && (
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", background: "rgba(251,191,36,0.1)", border: "1px solid rgba(251,191,36,0.3)", borderRadius: 10, padding: "8px 12px", marginBottom: 12 }}>
@@ -996,11 +1097,22 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                     <CardContent className="pt-4 pb-4">
                       <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
-                            {q.stage_id && stages.find(s => s.id === q.stage_id) && (
-                              <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>
-                                {stages.find(s => s.id === q.stage_id)?.name}
-                              </Badge>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6, alignItems: "center" }}>
+                            {stages.length > 1 ? (
+                              <Select value={q.stage_id} onValueChange={v => moveQuestionToStage(q.id, v)}>
+                                <SelectTrigger className="h-6 px-2 text-xs w-auto" style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              stages.find(s => s.id === q.stage_id) && (
+                                <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>
+                                  {stages.find(s => s.id === q.stage_id)?.name}
+                                </Badge>
+                              )
                             )}
                             <Badge variant="secondary">{labelize(q.category)}</Badge>
                             <Badge variant="outline" style={{ color: "#fff", borderColor: "rgba(255,255,255,0.25)" }}>{labelize(q.question_type)}</Badge>
@@ -1221,7 +1333,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 : " Generated questions land in a review queue below — nothing reaches students until you approve it."}
             </p>
             {stages.length > 0 && (
-              <Field label="Stage (optional)">
+              <Field label="Stage">
                 <Select value={aiForm.stage_id} onValueChange={v => {
                   const stage = stages.find(s => s.id === v);
                   setAiForm({
@@ -1232,7 +1344,6 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No stage (ungrouped)</SelectItem>
                     {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -1382,17 +1493,14 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 </Field>
               </Row2>
 
-              {stages.length > 0 && (
-                <Field label="Stage">
-                  <Select value={qDraft.stage_id || "none"} onValueChange={v => setQDraft({ ...qDraft, stage_id: v === "none" ? null : v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Ungrouped</SelectItem>
-                      {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              )}
+              <Field label="Stage">
+                <Select value={qDraft.stage_id || ""} onValueChange={v => setQDraft({ ...qDraft, stage_id: v })}>
+                  <SelectTrigger><SelectValue placeholder="Choose a stage" /></SelectTrigger>
+                  <SelectContent>
+                    {stages.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </Field>
             </div>
           )}
           <DialogFooter>
