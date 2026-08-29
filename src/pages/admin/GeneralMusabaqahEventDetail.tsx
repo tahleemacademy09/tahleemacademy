@@ -674,21 +674,21 @@ Respond with ONLY a raw JSON array (no markdown fences, no prose) of question ob
   "category": one of memorization|narrator|arabic_text|translation|vocabulary|explanation|lessons|comprehension|application|related_principles|identification,
   "question_type": one of oral|recitation|translation|explanation|comprehension|continuation|short_answer|true_false|mcq,
   "question_text": string (English),
-  "question_text_ar": string or null (Arabic version, only if meaningfully different from English),
+  "question_text_ar": string or null (Arabic version, only if meaningfully different from English — MUST be fully vocalized with correct Arabic diacritics/tashkeel (fatha, damma, kasra, sukoon, shaddah, tanween) on every word, never bare/undotted Arabic text),
   "expected_answer": string — a model answer / rubric note for the judge,
   "source_reference": string — which part of the source this draws from,
   "marks": number,
   "difficulty": one of easy|medium|hard|expert,
   "confidence": number between 0 and 1 — your own confidence this question is accurate and well-formed
 }
-Do not invent content outside the given subject/topic/source. Never wrap the array in a parent object.`;
+Do not invent content outside the given subject/topic/source. Every "question_text_ar" value must carry full Arabic diacritics (tashkeel) throughout — this is a hard requirement, not optional styling. Never wrap the array in a parent object.`;
 
   const buildAiUserPrompt = () => {
     const catList = aiForm.categories.length ? aiForm.categories.join(", ") : "any suitable categories";
     const stage = aiForm.stage_id !== "none" ? stages.find(s => s.id === aiForm.stage_id) : null;
     return `${stage ? `These questions are for the stage "${stage.name}" of the examination — keep them consistent with that stage's focus. ` : ""}Generate ${aiForm.count} questions. Draw only from categories: ${catList}. Target difficulty: ${aiForm.difficulty}. ${
-      aiForm.language === "arabic" ? "Write question_text primarily in Arabic (still fill question_text_ar)." :
-      aiForm.language === "both" ? "Provide both English (question_text) and Arabic (question_text_ar) for every question." :
+      aiForm.language === "arabic" ? "Write question_text primarily in Arabic (still fill question_text_ar), fully vocalized with tashkeel." :
+      aiForm.language === "both" ? "Provide both English (question_text) and Arabic (question_text_ar) for every question, with question_text_ar fully vocalized with tashkeel." :
       "English only — leave question_text_ar null."
     } ${aiForm.instructions.trim() ? `Additional instructions: ${aiForm.instructions.trim()}` : ""} Marks per question should default to ${event.marks_per_question}.`;
   };
@@ -1140,7 +1140,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                               : <Badge style={{ background: "rgba(251,191,36,0.15)", color: "#FBBF24", border: "none" }}><Clock3 size={11} className="mr-1" />{labelize(q.status)}</Badge>}
                           </div>
                           <p style={{ color: "#fff", fontSize: 14, margin: 0 }}>{q.question_text}</p>
-                          {q.question_text_ar && <p dir="rtl" style={{ color: "rgba(255,255,255,0.8)", fontSize: 15, margin: "4px 0 0" }}>{q.question_text_ar}</p>}
+                          {q.question_text_ar && <p dir="rtl" style={{ color: "rgba(255,255,255,0.8)", fontSize: 17, lineHeight: 1.8, margin: "4px 0 0", fontFamily: "'Amiri', 'Noto Naskh Arabic', serif" }}>{q.question_text_ar}</p>}
                           {q.expected_answer && <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "6px 0 0" }}>Expected: {q.expected_answer}</p>}
 
                           {q.status === "pending_review" && (
@@ -1482,7 +1482,7 @@ Do not invent content outside the given subject/topic/source. Never wrap the arr
                 <Textarea rows={2} value={qDraft.question_text} onChange={e => setQDraft({ ...qDraft, question_text: e.target.value })} />
               </Field>
               <Field label="Question (Arabic) — optional">
-                <Textarea dir="rtl" rows={2} value={qDraft.question_text_ar} onChange={e => setQDraft({ ...qDraft, question_text_ar: e.target.value })} />
+                <Textarea dir="rtl" rows={2} placeholder="مشكول بالتشكيل الكامل" style={{ fontFamily: "'Amiri', 'Noto Naskh Arabic', serif", fontSize: 16 }} value={qDraft.question_text_ar} onChange={e => setQDraft({ ...qDraft, question_text_ar: e.target.value })} />
               </Field>
               <Field label="Expected answer / rubric notes for the judge">
                 <Textarea rows={2} value={qDraft.expected_answer} onChange={e => setQDraft({ ...qDraft, expected_answer: e.target.value })} />
