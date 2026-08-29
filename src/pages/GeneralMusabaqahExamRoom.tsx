@@ -282,7 +282,14 @@ export default function GeneralMusabaqahExamRoom() {
   }, [participant?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (participant?.status !== "in_progress") { if (timerRef.current) clearInterval(timerRef.current); return; }
+    // Pause the overall clock while a question is up on screen but the judge
+    // hasn't pressed "Start Timer" yet (the "read the question aloud" gap) —
+    // otherwise the participant's exam time bleeds away during a phase they
+    // aren't even allowed to answer in yet. It resumes the instant the judge
+    // starts the per-question timer, and keeps running normally whenever no
+    // question is currently up (e.g. picking a tile).
+    const waitingToStart = !!participant?.current_question_id && !questionTimerActive;
+    if (participant?.status !== "in_progress" || waitingToStart) { if (timerRef.current) clearInterval(timerRef.current); return; }
     timerRef.current = setInterval(() => {
       setLocalTimer(prev => {
         const next = Math.max(0, (prev ?? 0) - 1);
@@ -293,7 +300,7 @@ export default function GeneralMusabaqahExamRoom() {
       });
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [participant?.status, participant?.id]);
+  }, [participant?.status, participant?.id, participant?.current_question_id, questionTimerActive]);
 
   /* ── PER-QUESTION TIMER (Section 4/5 of the fix request) ─────────────
      Resets every time a new question is revealed (or cleared): the clock
@@ -851,7 +858,11 @@ export default function GeneralMusabaqahExamRoom() {
       {competitionLive && (
       <>
       {/* ── Video area ─────────────────────────────────────────────── */}
-      <div style={{ padding: 16 }}>
+      {/* Sticky so the admin (or anyone) scrolling down through the question/
+          judging panel below keeps the live video pinned in view instead of
+          it scrolling away. Solid background stops the scrolling content
+          from showing through underneath it. */}
+      <div style={{ padding: 16, position: "sticky", top: 0, zIndex: 20, background: G }}>
         {lkError ? (
           <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12, color: RED, fontSize: 13 }}>
             Video unavailable: {lkError}
