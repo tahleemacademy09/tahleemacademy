@@ -252,7 +252,12 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
               }
 
               <SectionLabel>{t("Speaker / Headset / Bluetooth", "السماعة / سماعة الرأس / البلوتوث")}</SectionLabel>
-              {audioOut.length === 0
+              {!(typeof (HTMLMediaElement.prototype as any)?.setSinkId === "function") ? (
+                <p style={{ fontSize: 13, color: "rgba(255,255,255,.4)", lineHeight: 1.6 }}>
+                  {t("This browser can't switch audio output from a webpage — connect or select your Bluetooth device from your phone's own Bluetooth/sound settings instead; it'll be used automatically once connected.",
+                     "لا يمكن لهذا المتصفح تبديل مخرج الصوت من صفحة ويب — قم بتوصيل أو اختيار جهاز البلوتوث من إعدادات البلوتوث/الصوت في هاتفك، وسيُستخدم تلقائيًا بمجرد الاتصال.")}
+                </p>
+              ) : audioOut.length === 0
                 ? <p style={{ fontSize: 13, color: "rgba(255,255,255,.35)" }}>{t("Output switching not supported on this browser", "تغيير مكبر الصوت غير مدعوم في هذا المتصفح")}</p>
                 : audioOut.map(d => <DeviceRow key={d.deviceId} device={d} selected={selAudioOut === d.deviceId} onClick={() => switchDevice("audiooutput", d.deviceId)} />)
               }
@@ -391,6 +396,16 @@ const ClassControls = ({
   const [activeAudioOut,  setActiveAudioOut]  = useState("");
   const [activeVideoIn,   setActiveVideoIn]   = useState("");
 
+  // Most Android browsers (Chrome for Android included) have never
+  // implemented HTMLMediaElement.setSinkId, which is what
+  // room.switchActiveDevice("audiooutput", …) relies on under the hood.
+  // On those browsers, tapping a speaker/Bluetooth row in the picker is a
+  // guaranteed silent no-op — there's no error to show because the call
+  // never actually attempts anything meaningful. Detect that up front so
+  // the UI can say so instead of pretending the tap will do something.
+  const sinkIdSupported = typeof document !== "undefined"
+    && typeof (HTMLMediaElement.prototype as any)?.setSinkId === "function";
+
   const refreshDevices = useCallback(async () => {
     try {
       const all = await navigator.mediaDevices.enumerateDevices();
@@ -405,7 +420,56 @@ const ClassControls = ({
     } catch {}
   }, [room]);
 
+  // Auto-follow newly connected Bluetooth/wired audio devices — only does
+  // anything useful on browsers that support setSinkId (desktop Chrome/
+  // Edge). On those, when a new audio output device shows up (e.g. a
+  // Bluetooth headset pairs mid-class) we switch straight to it instead of
+  // waiting for a manual pick. On Android/iOS this listener still refreshes
+  // the input-device list (Bluetooth mics DO work there) but leaves output
+  // routing to the OS, since the browser has no hook to control it.
+  useEffect(() => {
+    if (!navigator.mediaDevices?.addEventListener) return;
+    let knownOutIds = new Set<string>();
+    const onDeviceChange = async () => {
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices();
+        const outs = all.filter(d => d.kind === "audiooutput");
+        setAudioInDevices(all.filter(d => d.kind === "audioinput"));
+        setAudioOutDevices(outs);
+        setVideoInDevices(all.filter(d => d.kind === "videoinput"));
+        if (sinkIdSupported) {
+          const nowIds = new Set(outs.map(d => d.deviceId));
+          const justAppeared = outs.find(d => d.deviceId && !knownOutIds.has(d.deviceId) && knownOutIds.size > 0);
+          const looksBluetooth = justAppeared && /bluetooth|headset|airpods|earbuds/i.test(justAppeared.label || "");
+          if (looksBluetooth) {
+            try {
+              await room.switchActiveDevice("audiooutput", justAppeared.deviceId);
+              setActiveAudioOut(justAppeared.deviceId);
+              toast({ title: t(`Switched to ${justAppeared.label} ✓`, `تم التبديل إلى ${justAppeared.label} ✓`) });
+            } catch {}
+          }
+          knownOutIds = nowIds;
+        }
+      } catch {}
+    };
+    navigator.mediaDevices.enumerateDevices().then(all => {
+      knownOutIds = new Set(all.filter(d => d.kind === "audiooutput").map(d => d.deviceId));
+    }).catch(() => {});
+    navigator.mediaDevices.addEventListener("devicechange", onDeviceChange);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", onDeviceChange);
+  }, [room, sinkIdSupported, t]);
+
   const quickSwitchDevice = useCallback(async (kind: MediaDeviceKind, deviceId: string) => {
+    if (kind === "audiooutput" && !sinkIdSupported) {
+      toast({
+        title: t("Can't switch speaker from here", "تعذّر تبديل السماعة من هنا"),
+        description: t(
+          "This browser doesn't support switching audio output from a webpage. Use your phone's Bluetooth/sound settings — it'll route once connected.",
+          "هذا المتصفح لا يدعم تبديل مخرج الصوت من صفحة الويب. استخدم إعدادات البلوتوث/الصوت في هاتفك."
+        ),
+      });
+      return;
+    }
     try {
       await room.switchActiveDevice(kind, deviceId);
       if (kind === "audioinput")  setActiveAudioIn(deviceId);
@@ -415,7 +479,7 @@ const ClassControls = ({
     } catch (e: any) {
       toast({ title: t("Failed to switch device", "فشل تغيير الجهاز"), description: e?.message, variant: "destructive" });
     }
-  }, [room, t]);
+  }, [room, t, sinkIdSupported]);
 
   // ── Quick video quality switcher (three-dot menu) ─────────────────────
   // Lets a student/teacher switch quality with one tap, right from the
@@ -732,7 +796,7 @@ const ClassControls = ({
                 <ChevronUp style={{ width: 11, height: 11 }} />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto"}}>
+            <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
               <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Microphone","الميكروفون")}</div>
               {audioInDevices.length === 0
                 ? <div style={{padding:"6px 10px 10px",fontSize:12,color:"rgba(255,255,255,.35)"}}>{t("No microphones found","لم يُعثر على ميكروفون")}</div>
@@ -745,6 +809,11 @@ const ClassControls = ({
               }
               <DropdownMenuSeparator />
               <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Speaker","السماعة")}</div>
+              {!sinkIdSupported && (
+                <div style={{padding:"2px 10px 8px",fontSize:11,lineHeight:1.5,color:"rgba(255,255,255,.4)"}}>
+                  {t("This browser can't switch speakers from a webpage — use your phone's Bluetooth settings instead.", "لا يمكن لهذا المتصفح تبديل السماعة من صفحة ويب — استخدم إعدادات البلوتوث في هاتفك.")}
+                </div>
+              )}
               {audioOutDevices.length === 0
                 ? <div style={{padding:"6px 10px 10px",fontSize:12,color:"rgba(255,255,255,.35)"}}>{t("Not supported on this browser","غير مدعوم في هذا المتصفح")}</div>
                 : audioOutDevices.map(d => (
@@ -786,7 +855,7 @@ const ClassControls = ({
                   <ChevronUp style={{ width: 11, height: 11 }} />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto"}}>
+              <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
                 <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Camera","الكاميرا")}</div>
                 {videoInDevices.length === 0
                   ? <div style={{padding:"6px 10px 10px",fontSize:12,color:"rgba(255,255,255,.35)"}}>{t("No cameras found","لم يُعثر على كاميرا")}</div>
