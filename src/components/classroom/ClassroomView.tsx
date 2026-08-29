@@ -1327,6 +1327,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                   <span style={{fontSize:11,fontWeight:600,fontFamily:"'Google Sans',sans-serif"}}>{raisedHands.length}</span>
                 </div>
               )}
+              {/* Feature 15: Recording indicator — students only (admin/teacher
+                  already sees recording state via RecController on the right).
+                  Lives in the header row itself now instead of a floating
+                  banner over the content area, which used to sit on top of
+                  the materials bar / video tiles and block them. */}
+              {!isPrivileged&&teacherIsRecording&&(
+                <div className="gm-badge" style={{background:"rgba(239,68,68,.14)",border:"1px solid rgba(239,68,68,.35)",color:"#fca5a5",flexShrink:0,padding:"3px 8px"}} title={t("This class is being recorded","يتم تسجيل هذه الحصة")}>
+                  <Circle style={{width:7,height:7,fill:"#ef4444",color:"#ef4444",animation:"rec-pulse 1s ease-in-out infinite",flexShrink:0}}/>
+                  <span style={{fontSize:11,fontWeight:700,fontFamily:"'Google Sans',sans-serif",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:isMobile?"22vw":"none"}}>{t("Recording","تسجيل")}</span>
+                </div>
+              )}
             </div>
 
             {/* RIGHT — timer · network(degraded only) · participants · [layout] · [rec admin] */}
@@ -1506,13 +1517,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                       </>
                     )}
                   </div>
-                </div>,document.body
-              )}
-              {/* Feature 15: Student recording indicator */}
-              {!isPrivileged&&teacherIsRecording&&createPortal(
-                <div style={{position:"fixed",top:64,left:"50%",transform:"translateX(-50%)",zIndex:9000,background:"rgba(239,68,68,.15)",border:"1px solid rgba(239,68,68,.3)",borderRadius:20,padding:"6px 14px",display:"flex",alignItems:"center",gap:8,backdropFilter:"blur(8px)"}}>
-                  <div style={{width:8,height:8,borderRadius:"50%",background:"#ef4444",animation:"rec-pulse 1s ease-in-out infinite"}}/>
-                  <span style={{fontSize:12,fontWeight:600,color:"#fca5a5"}}>This class is being recorded</span>
                 </div>,document.body
               )}
               {/* Feature 17: Session summary modal */}
