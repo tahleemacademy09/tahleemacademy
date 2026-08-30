@@ -2088,6 +2088,7 @@ export type Database = {
           participant_name: string
           pause_reason: string | null
           paused_at: string | null
+          question_timer_started_at: string | null
           questions_asked: Json
           queue_position: number | null
           recording_url: string | null
@@ -2113,6 +2114,7 @@ export type Database = {
           participant_name: string
           pause_reason?: string | null
           paused_at?: string | null
+          question_timer_started_at?: string | null
           questions_asked?: Json
           queue_position?: number | null
           recording_url?: string | null
@@ -2138,6 +2140,7 @@ export type Database = {
           participant_name?: string
           pause_reason?: string | null
           paused_at?: string | null
+          question_timer_started_at?: string | null
           questions_asked?: Json
           queue_position?: number | null
           recording_url?: string | null
