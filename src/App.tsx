@@ -94,6 +94,8 @@ const GeneralMusabaqahEventDetail = lazy(() => import("./pages/admin/GeneralMusa
 const GeneralMusabaqahRegister    = lazy(() => import("./pages/student/GeneralMusabaqahRegister"));
 const GeneralMusabaqahWaitingRoom = lazy(() => import("./pages/student/GeneralMusabaqahWaitingRoom"));
 const GeneralMusabaqahResult      = lazy(() => import("./pages/student/GeneralMusabaqahResult"));
+const GeneralMusabaqahEventLeaderboard = lazy(() => import("./pages/student/GeneralMusabaqahEventLeaderboard"));
+const MusabaqahOverallLeaderboard      = lazy(() => import("./pages/student/MusabaqahOverallLeaderboard"));
 const GeneralMusabaqahExamRoom    = lazy(() => import("./pages/GeneralMusabaqahExamRoom"));
 
 // ── Admin pages ────────────────────────────────────────────────────────────
@@ -226,6 +228,8 @@ const App = () => (
                   <Route path="/musabaqah/general/:id" element={<ProtectedRoute><GeneralMusabaqahEventDetail /></ProtectedRoute>} />
                   <Route path="/student/musabaqah/general/:id/waiting" element={<ProtectedRoute><GeneralMusabaqahWaitingRoom /></ProtectedRoute>} />
                   <Route path="/student/musabaqah/general/:id/result"  element={<ProtectedRoute><GeneralMusabaqahResult /></ProtectedRoute>} />
+                  <Route path="/student/musabaqah/general/:id/leaderboard" element={<ProtectedRoute><GeneralMusabaqahEventLeaderboard /></ProtectedRoute>} />
+                  <Route path="/musabaqah/general/leaderboard"         element={<ProtectedRoute><MusabaqahOverallLeaderboard /></ProtectedRoute>} />
                   <Route path="/musabaqah/general/:id/exam"           element={<ProtectedRoute><GeneralMusabaqahExamRoom /></ProtectedRoute>} />
 
                   {/* Public quiz — no login needed; guests join a room with a code */}
