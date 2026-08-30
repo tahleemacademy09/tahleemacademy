@@ -49,7 +49,7 @@ import {
   Mic, MicOff, Video, VideoOff, Loader2, AlertTriangle, Play,
   CheckCircle2, XCircle, SkipForward, Save, Flag, Wifi, WifiOff,
   ArrowLeft, Users, Clock, ScrollText, Menu, PhoneCall,
-  LayoutGrid, Rows3, Columns2, TimerReset, Square, Trophy,
+  TimerReset, Square, Trophy,
   Zap, Hand, Settings,
 } from "lucide-react";
 
@@ -166,7 +166,6 @@ export default function GeneralMusabaqahExamRoom() {
   // Video layout — which tiles are shown and how they're arranged. Only
   // the judge and whoever is on stage are ever eligible tiles now (see
   // VideoStage); this just controls arrangement, not who's included.
-  const [viewLayout, setViewLayout] = useState<"grid" | "spotlight_stage" | "spotlight_admin">("grid");
 
   // Per-question timer (Section 4/5 of the fix request): distinct from the
   // overall exam clock above. It sits at rest after a question is revealed
@@ -955,11 +954,11 @@ export default function GeneralMusabaqahExamRoom() {
           one sticky unit so neither scrolls out of view — only the question/
           judging panel below them scrolls. ─────────────────────────────── */}
       <div style={{ position: "sticky", top: 0, zIndex: 25, background: G }}>
-      {/* Inner wrapper caps and centers the header + video on wide screens
-          (desktop) — matches the 720px cap already used by the question/
-          judging panel below, so the whole page reads as one centered
-          column instead of a header/video area stretched full-bleed across
-          a wide browser window while the content below it stays narrow. */}
+      {/* Header text rows still cap at 720px so long labels don't stretch
+          into unreadable full-bleed lines on a wide desktop window — but
+          the video area below breaks out of that cap on purpose (see its
+          own comment) since two side-by-side cameras should actually use
+          the screen's width, not sit narrow in a centered column. */}
       <div style={{ maxWidth: 720, margin: "0 auto", width: "100%" }}>
       {/* Row 1 — kept to a single, never-wrapping line: back button, event
           title (truncates instead of wrapping), and just "Stage X/Y" (no
@@ -1004,18 +1003,6 @@ export default function GeneralMusabaqahExamRoom() {
             : `Q${answers.filter(a => a.status === "marked").length}/${event?.num_questions_per_student}`}
         </span>
         <span style={{ flexShrink: 0 }}><ConnectionBadge status={participant?.connection_status} /></span>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button aria-label="Video layout" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 }}>
-              <LayoutGrid size={18} />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => setViewLayout("grid")}><Columns2 size={14} className="mr-2" /> Side by side</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setViewLayout("spotlight_stage")}><Rows3 size={14} className="mr-2" /> Spotlight participant</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setViewLayout("spotlight_admin")}><Rows3 size={14} className="mr-2" /> Spotlight admin</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
         {isJudge && (
           <button onClick={() => setSettingsOpen(true)} aria-label="Timer settings" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 }}>
             <Settings size={18} />
@@ -1025,10 +1012,14 @@ export default function GeneralMusabaqahExamRoom() {
           <Menu size={20} />
         </button>
       </div>
+      </div>
 
-      {/* ── Video area ─────────────────────────────────────────────── */}
+      {/* Video area breaks out of the 720px header cap on purpose — full
+          page width so the two side-by-side camera tiles actually get to
+          use a wide desktop window instead of being squeezed into a narrow
+          centered column. */}
       {competitionLive && (
-      <div style={{ padding: 16 }}>
+      <div style={{ padding: "0 16px 16px" }}>
         {lkError ? (
           <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12, color: RED, fontSize: 13 }}>
             Video unavailable: {lkError}
@@ -1040,31 +1031,26 @@ export default function GeneralMusabaqahExamRoom() {
             options={LK_OPTIONS}
           >
             <RoomAudioRenderer />
-            {/* Sized from the HEIGHT down, not the width: height is a
-                definite value (a vh-based clamp) and width is derived from
-                it via aspectRatio, so the box is *always* a true portrait
-                (9:16) rectangle no matter how wide its parent is. The old
-                version set width:100% + aspectRatio + maxHeight together —
-                once maxHeight actually clamped the box (any screen wider
-                than it is tall, i.e. every desktop), the browser had no way
-                to shrink the width to match, so the box silently stopped
-                being portrait and stretched out sideways. Centered in a
-                flex row so it doesn't hug the left edge or stretch full-
-                width on larger screens; the cap grows a little on taller
-                viewports (desktop) for a bigger, nicer picture without ever
-                losing the portrait shape. Tile below uses object-fit:
-                contain (not cover) — cover was still cropping the feed to
-                fill the box, which is why someone had to lean back out of
-                frame just to appear inside it. Contain always shows the
-                whole picture, letterboxing rather than cropping when the
-                stream's actual aspect ratio doesn't exactly match the box. */}
-            <div style={{ display: "flex", justifyContent: "center" }}>
-              <div style={{
-                position: "relative", height: "min(48vh, 620px)", aspectRatio: "9 / 16",
-                maxWidth: "100%", borderRadius: 12, overflow: "hidden",
-                background: "#000", boxShadow: "0 8px 28px rgba(0,0,0,0.35)",
-              }}>
-                <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} layout={viewLayout} />
+            {/* Full width, no centering wrapper: this is meant to be a real
+                top-half video pane (participant and judge side by side)
+                with the question/judging panel underneath as the bottom
+                half — not two small portrait cards floating in the middle
+                of the page. Height is a vh-based clamp so it scales with
+                the actual screen instead of being a fixed pixel strip; the
+                upper bound (620px) is generous specifically so it keeps
+                growing on taller/desktop viewports instead of staying
+                "shallow" once there's more vertical room to use. Each tile
+                below is object-fit: cover and flex:1 (equal share of the
+                full width) rather than a fixed 9:16 box, so the pair
+                actually fills this pane edge to edge on any screen size
+                instead of leaving empty space on either side. */}
+            <div style={{
+              position: "relative", width: "100%",
+              height: "clamp(240px, 46vh, 620px)",
+              borderRadius: 12, overflow: "hidden", background: "#000",
+              boxShadow: "0 8px 28px rgba(0,0,0,0.35)",
+            }}>
+              <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} />
               {canPublish && (
                 <MediaControls
                   videoAllowed={videoAllowedForMe}
@@ -1082,11 +1068,10 @@ export default function GeneralMusabaqahExamRoom() {
                 color: localTimer !== null && localTimer < 60 ? RED : "#fff",
                 fontWeight: 800, fontSize: 22, fontFamily: "monospace",
                 background: "rgba(0,0,0,0.45)", padding: "6px 14px", borderRadius: 10,
-                pointerEvents: "none",
+                pointerEvents: "none", zIndex: 5,
               }}>
                 <Clock size={18} /> {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
               </span>
-              </div>
             </div>
           </LiveKitRoom>
         ) : (
@@ -1101,7 +1086,6 @@ export default function GeneralMusabaqahExamRoom() {
         )}
       </div>
       )}
-      </div>
       </div>
 
       {/* ── Not started yet (Section 1): nobody's camera/mic connects and
@@ -1672,11 +1656,12 @@ export default function GeneralMusabaqahExamRoom() {
    spectator and should not appear as a tile to anyone (Section 2 of the
    fix request). Previously every remote participant who happened to be
    publishing was rendered, which is what let an uncalled student's camera
-   show up alongside the admin's. `layout` controls arrangement only:
-   "grid" (side by side), or a spotlight on one side with the other as a
-   small corner tile. ─────────────────────────────────────────────────── */
-type StageLayout = "grid" | "spotlight_stage" | "spotlight_admin";
-function VideoStage({ canPublish, onStageUserId, layout = "grid" }: { canPublish: boolean; onStageUserId?: string; layout?: StageLayout }) {
+   show up alongside the admin's. Every tile that does render is shown at
+   equal size, side by side, full height — there used to be a "spotlight"
+   option that blew one tile up to fill the whole box and squeezed the
+   other into a small corner overlay, which read as if only one camera was
+   actually working. An even split makes it obvious both feeds are live. ── */
+function VideoStage({ canPublish, onStageUserId }: { canPublish: boolean; onStageUserId?: string }) {
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants   = useRemoteParticipants();
 
@@ -1706,36 +1691,22 @@ function VideoStage({ canPublish, onStageUserId, layout = "grid" }: { canPublish
     return <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Waiting for video…</div>;
   }
 
-  if (layout !== "grid" && tiles.length === 2) {
-    const wantJudgeBig = layout === "spotlight_admin";
-    const big = tiles.find(t => (wantJudgeBig ? t.isJudgeTile : t.isOnStagePerson)) ?? tiles[0];
-    const small = tiles.find(t => t !== big) ?? tiles[1];
-    return (
-      <div style={{ position: "relative", height: "100%", background: "#000" }}>
-        <div style={{ position: "absolute", inset: 0 }}>
-          <ParticipantTile participant={big.p} label={big.label} mirror={big.mirror} highlight={!!big.isOnStagePerson} />
-        </div>
-        {/* 9/16 to match the main tile and the actual portrait phone-camera
-            stream (previously 4/3, then 3/4 — both still cropped the corner
-            tile against a true portrait source). */}
-        <div style={{ position: "absolute", bottom: 10, right: 10, width: "26%", maxWidth: 120, aspectRatio: "9/16", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}>
-          <ParticipantTile participant={small.p} label={small.label} mirror={small.mirror} highlight={!!small.isOnStagePerson} />
-        </div>
-      </div>
-    );
-  }
-
-  // Stacked as rows, not side-by-side columns: the surrounding box is now
-  // sized portrait (see the video area's aspectRatio:"3/4" above) to match
-  // a phone's front-camera stream, so splitting it into side-by-side
-  // columns would squeeze each tile into an unnaturally narrow strip and
-  // crop even more aggressively than before. Stacking keeps each tile's
-  // full width, which stays much closer to that portrait source ratio.
-  const rows = tiles.length <= 1 ? 1 : 2;
+  // Every tile is an equal flex share of the FULL WIDTH of the pane, not a
+  // fixed-aspect box hanging off the shared height — that's the difference
+  // between "two portrait cards centered with space around them" and "the
+  // pane is actually split in half, edge to edge". object-fit:cover on the
+  // tile itself (below) fills that flexible box completely instead of
+  // letterboxing when the portrait stream doesn't exactly match the box's
+  // own ratio.
   return (
-    <div style={{ display: "grid", gridTemplateRows: `repeat(${rows}, 1fr)`, gap: 4, height: "100%", background: "#000" }}>
+    <div style={{ display: "flex", gap: 3, height: "100%", width: "100%" }}>
       {tiles.map((t, i) => (
-        <ParticipantTile key={t.isLocal ? "local" : t.p.sid || i} participant={t.p} label={t.label} mirror={t.mirror} highlight={!!t.isOnStagePerson} />
+        <div
+          key={t.isLocal ? "local" : t.p.sid || i}
+          style={{ position: "relative", height: "100%", flex: 1, minWidth: 0, background: "#111" }}
+        >
+          <ParticipantTile participant={t.p} label={t.label} mirror={t.mirror} highlight={!!t.isOnStagePerson} />
+        </div>
       ))}
     </div>
   );
@@ -1744,11 +1715,11 @@ function VideoStage({ canPublish, onStageUserId, layout = "grid" }: { canPublish
 function ParticipantTile({ participant, label, mirror, highlight }: { participant: any; label: string; mirror: boolean; highlight?: boolean }) {
   const camPub = participant?.getTrackPublication?.(Track.Source.Camera);
   return (
-    <div style={{ position: "relative", background: "#111", display: "flex", alignItems: "center", justifyContent: "center", border: highlight ? `2px solid ${GREEN}` : "none" }}>
+    <div style={{ position: "relative", width: "100%", height: "100%", background: "#111", display: "flex", alignItems: "center", justifyContent: "center", border: highlight ? `2px solid ${GREEN}` : "none", boxSizing: "border-box" }}>
       {camPub?.track ? (
         <VideoTrack
           trackRef={{ participant, source: Track.Source.Camera, publication: camPub }}
-          style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000", transform: mirror ? "scaleX(-1)" : "none" }}
+          style={{ width: "100%", height: "100%", objectFit: "cover", background: "#000", transform: mirror ? "scaleX(-1)" : "none" }}
         />
       ) : (
         <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Camera off</div>
