@@ -812,6 +812,25 @@ export default function GeneralMusabaqahExamRoom() {
   const finalizeEvent = async () => {
     if (!eventId || !isJudge) return;
     setFinalizingEvent(true);
+
+    // Sweep up any participant the judge never explicitly finalized —
+    // otherwise their status stays stuck and they never see their result
+    // even after the event is published.
+    const { data: stragglers } = await supabase
+      .from("general_musabaqah_participants")
+      .select("id, registration_id")
+      .eq("event_id", eventId)
+      .not("status", "in", "(finalized,completed,disqualified,no_show)");
+
+    if (stragglers && stragglers.length > 0) {
+      await supabase.from("general_musabaqah_participants")
+        .update({ status: "finalized" })
+        .in("id", stragglers.map(s => s.id));
+      await supabase.from("general_musabaqah_registrations")
+        .update({ status: "completed" })
+        .in("id", stragglers.map(s => s.registration_id));
+    }
+
     const { error } = await supabase.from("general_musabaqah_events").update({
       status: "completed", results_visibility: "published", leaderboard_enabled: true, current_participant_id: null,
     }).eq("id", eventId);
