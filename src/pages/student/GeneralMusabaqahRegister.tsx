@@ -87,7 +87,7 @@ export default function GeneralMusabaqahRegister() {
     const { data: ev } = await supabase
       .from("general_musabaqah_events")
       .select("id,title,subject,topic,status,competition_date,start_time,target_level,instructions,registration_closes_at")
-      .in("status", ["registration_open", "registration_closed", "in_progress", "paused"])
+      .in("status", ["registration_open", "registration_closed", "in_progress", "paused", "completed"])
       .order("competition_date", { ascending: true });
     setEvents((ev as GMEvent[]) || []);
 
@@ -266,6 +266,17 @@ export default function GeneralMusabaqahRegister() {
                       </div>
                     )}
                   </CardContent>
+                  {ev.status === "completed" && (
+                    <div style={{ padding: "0 20px 16px" }}>
+                      <Button
+                        variant="outline"
+                        onClick={() => navigate(`/student/musabaqah/general/${ev.id}/leaderboard`)}
+                        style={{ borderColor: "rgba(96,165,250,0.35)", color: BLUE, background: "transparent", width: "100%" }}
+                      >
+                        View Competition Leaderboard
+                      </Button>
+                    </div>
+                  )}
                 </Card>
               );
             })}
