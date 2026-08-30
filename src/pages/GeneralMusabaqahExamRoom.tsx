@@ -77,6 +77,12 @@ const RED  = "#F87171";
 // falls back to a landscape default (usually 1280x720) regardless of how the
 // phone is being held, which is what read as "the camera looks sideways" —
 // the box around it was portrait, but the stream inside it wasn't.
+// `resolution` alone is only a hint (ideal, not exact) — plenty of Android
+// front cameras will silently ignore a 480x854 "ideal" ask and hand back
+// whatever landscape mode they default to, which is what still shows up
+// sideways/letterboxed in the tile. Pinning aspectRatio as exact-as-possible
+// makes the browser reject/reshape non-portrait candidates instead of just
+// preferring them.
 const LK_OPTIONS = {
   dynacast: true,
   adaptiveStream: true,
@@ -84,6 +90,7 @@ const LK_OPTIONS = {
   videoCaptureDefaults: {
     resolution: { width: 480, height: 854, frameRate: 24 },
     facingMode: "user" as const,
+    aspectRatio: 9 / 16,
   },
 };
 
@@ -922,26 +929,22 @@ export default function GeneralMusabaqahExamRoom() {
           0%, 100% { transform: scale(1); }
           50%      { transform: scale(1.18); }
         }
-        /* Two-camera video stage: split with a CSS grid so the divider
-           direction can flip per screen size via a single media query
-           instead of separate JS layout branches. Mobile gets a vertical
-           split (two side-by-side columns) since the camera pane is now a
-           half-screen-wide strip; desktop gets a horizontal split (stacked
-           rows) since the camera pane there is a half-screen-tall column
-           instead. */
+        /* Two-camera video stage: always a side-by-side split (two equal
+           columns), on both mobile and desktop. This used to flip to
+           stacked rows on desktop, which is what read as "desktop isn't
+           splitting the screen into two" — the split was technically still
+           happening, just top/bottom inside an already-narrow half-width
+           pane, so it rarely looked like two clear boxes. Side-by-side
+           columns everywhere keeps the two tiles unambiguous, and also
+           gives left/right slots that can be swapped (see gm-video-grid
+           order below). */
         .gm-video-grid {
           display: grid;
-          grid-template-columns: 1fr;
-          grid-template-rows: 1fr 1fr;
+          grid-template-columns: 1fr 1fr;
+          grid-template-rows: 1fr;
           gap: 3px;
           width: 100%;
           height: 100%;
-        }
-        @media (max-width: 767px) {
-          .gm-video-grid {
-            grid-template-columns: 1fr 1fr;
-            grid-template-rows: 1fr;
-          }
         }
         /* Full-screen camera/question split. Mobile: stacked halves, camera
            on top. Desktop: side-by-side halves, camera on the left,
@@ -1138,19 +1141,11 @@ export default function GeneralMusabaqahExamRoom() {
                   participantId={isJudge ? null : myParticipant?.id}
                 />
               )}
-              {/* Overall exam clock — moved here from the header (it was
-                  crowding that row and forcing it to wrap) and centered
-                  over the video so it's still always visible at a glance. */}
-              <span style={{
-                position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-                display: "flex", alignItems: "center", gap: 6,
-                color: localTimer !== null && localTimer < 60 ? RED : "#fff",
-                fontWeight: 800, fontSize: 22, fontFamily: "monospace",
-                background: "rgba(0,0,0,0.45)", padding: "6px 14px", borderRadius: 10,
-                pointerEvents: "none", zIndex: 5,
-              }}>
-                <Clock size={18} /> {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
-              </span>
+              {/* Overall exam clock — draggable so it can be dragged clear
+                  of a face/roster button it happens to land on. Starts
+                  centered over the video like before; position is local to
+                  this viewer only and resets on remount. */}
+              <DraggableClock mm={mm} ss={ss} low={localTimer !== null && localTimer < 60} />
             </div>
           </LiveKitRoom>
         ) : (
@@ -1717,6 +1712,12 @@ function VideoStage({ canPublish, onStageUserId }: { canPublish: boolean; onStag
   const { localParticipant } = useLocalParticipant();
   const remoteParticipants   = useRemoteParticipants();
 
+  // Which tile sits in the left/first slot — a viewer can tap "Swap sides"
+  // on either tile to flip who's left vs right. Purely local to this
+  // viewer's screen (not synced), and keyed by userId so it survives
+  // re-renders/track updates rather than resetting every time.
+  const [leftUserId, setLeftUserId] = useState<string | null>(null);
+
   const metaOf = (p: any) => {
     try { return p.metadata ? JSON.parse(p.metadata) : {}; } catch { return {}; }
   };
@@ -1725,19 +1726,25 @@ function VideoStage({ canPublish, onStageUserId }: { canPublish: boolean; onStag
   const isLocalJudge = localMeta.role === "judge";
 
   const allTiles = [
-    ...(canPublish ? [{ p: localParticipant, label: "You", mirror: true, isLocal: true, isJudgeTile: isLocalJudge, isOnStagePerson: isLocalOnStage }] : []),
+    ...(canPublish ? [{ id: localMeta.user_id || "me", p: localParticipant, label: "You", mirror: true, isLocal: true, isJudgeTile: isLocalJudge, isOnStagePerson: isLocalOnStage }] : []),
     ...remoteParticipants.map(p => {
       const meta = metaOf(p);
       const isOnStagePerson = !!onStageUserId && meta.user_id === onStageUserId;
       const isJudgeTile = meta.role === "judge";
-      return { p, label: p.name || (isJudgeTile ? "Judge" : "Participant"), mirror: false, isLocal: false, isJudgeTile, isOnStagePerson };
+      return { id: meta.user_id || p.sid, p, label: p.name || (isJudgeTile ? "Judge" : "Participant"), mirror: false, isLocal: false, isJudgeTile, isOnStagePerson };
     }),
   ];
 
   // Only the judge tile(s) and the one on-stage participant's tile ever
   // render — every other spectator is filtered out here, regardless of
   // whether they happen to be publishing.
-  const tiles = allTiles.filter(t => t.isJudgeTile || t.isOnStagePerson);
+  let tiles = allTiles.filter(t => t.isJudgeTile || t.isOnStagePerson);
+
+  // Apply the viewer's chosen left/right order, if they've swapped at
+  // least once. Falls back to natural order (judge first) otherwise.
+  if (leftUserId && tiles.length === 2 && tiles[0].id !== leftUserId) {
+    tiles = [tiles[1], tiles[0]];
+  }
 
   if (tiles.length === 0) {
     return <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Waiting for video…</div>;
@@ -1752,12 +1759,7 @@ function VideoStage({ canPublish, onStageUserId }: { canPublish: boolean; onStag
   }
 
   // Grid split (see .gm-video-grid, defined once in the page's <style>
-  // block): vertical divider — two side-by-side columns — on mobile
-  // (the camera pane is a half-screen-wide strip there), horizontal
-  // divider — stacked rows — on desktop (the camera pane is a
-  // half-screen-tall column there instead), purely via a media query, so
-  // this one markup works for both instead of needing separate JS layout
-  // branches.
+  // block): always two side-by-side columns, on mobile and desktop alike.
   return (
     <div className="gm-video-grid">
       {tiles.map((t, i) => (
@@ -1766,26 +1768,84 @@ function VideoStage({ canPublish, onStageUserId }: { canPublish: boolean; onStag
           style={{ position: "relative", width: "100%", height: "100%", background: "#111" }}
         >
           <ParticipantTile participant={t.p} label={t.label} mirror={t.mirror} highlight={!!t.isOnStagePerson} />
+          {/* Swap-sides handle — tap to send this tile to the other slot.
+              Only shown when there are two tiles to reorder. */}
+          <button
+            onClick={() => setLeftUserId(tiles[i === 0 ? 1 : 0].id)}
+            aria-label={i === 0 ? "Move to right" : "Move to left"}
+            title={i === 0 ? "Move to right" : "Move to left"}
+            style={{
+              position: "absolute", top: 6, [i === 0 ? "right" : "left"]: 6, zIndex: 6,
+              width: 26, height: 26, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.35)",
+              background: "rgba(0,0,0,0.55)", color: "#fff", cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, lineHeight: 1,
+            }}
+          >
+            {i === 0 ? "→" : "←"}
+          </button>
         </div>
       ))}
     </div>
   );
 }
 
+/* ── Draggable exam clock — starts centered over the video, and can be
+   dragged anywhere within the video pane so it never sits stuck on top of
+   a face or a control button. Position is per-viewer and local-only (not
+   synced), reset on remount, same pattern used for the draggable PiP tile
+   stack elsewhere in the app. */
+function DraggableClock({ mm, ss, low }: { mm: number; ss: number; low: boolean }) {
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const drag = useRef<{ startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLSpanElement>) => {
+    (e.currentTarget as HTMLSpanElement).setPointerCapture(e.pointerId);
+    drag.current = { startX: e.clientX, startY: e.clientY, origX: offset.x, origY: offset.y, moved: false };
+  };
+  const onPointerMove = (e: React.PointerEvent<HTMLSpanElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX, dy = e.clientY - d.startY;
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) d.moved = true;
+    setOffset({ x: d.origX + dx, y: d.origY + dy });
+  };
+  const onPointerUp = () => { drag.current = null; };
+
+  return (
+    <span
+      onPointerDown={onPointerDown} onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp} onPointerCancel={onPointerUp}
+      style={{
+        position: "absolute", top: "50%", left: "50%",
+        transform: `translate(calc(-50% + ${offset.x}px), calc(-50% + ${offset.y}px))`,
+        display: "flex", alignItems: "center", gap: 6,
+        color: low ? RED : "#fff",
+        fontWeight: 800, fontSize: 22, fontFamily: "monospace",
+        background: "rgba(0,0,0,0.45)", padding: "6px 14px", borderRadius: 10,
+        touchAction: "none", cursor: "grab", zIndex: 5, userSelect: "none",
+      }}
+    >
+      <Clock size={18} /> {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
+    </span>
+  );
+}
+
 function ParticipantTile({ participant, label, mirror, highlight }: { participant: any; label: string; mirror: boolean; highlight?: boolean }) {
   const camPub = participant?.getTrackPublication?.(Track.Source.Camera);
   return (
-    <div style={{ position: "relative", width: "100%", height: "100%", background: "#111", display: "flex", alignItems: "center", justifyContent: "center", border: highlight ? `2px solid ${GREEN}` : "none", boxSizing: "border-box" }}>
+    <div style={{ position: "relative", width: "100%", height: "100%", background: "#111", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", border: highlight ? `2px solid ${GREEN}` : "none", boxSizing: "border-box" }}>
       {camPub?.track ? (
         <VideoTrack
           trackRef={{ participant, source: Track.Source.Camera, publication: camPub }}
-          /* object-fit: contain, not cover — cover crops in tight on a
-             portrait phone stream stretched into a wide grid cell, which is
-             what made someone need to lean back/move away from the camera
-             just to appear fully in frame. Contain always shows the whole
-             picture at its normal size, letterboxing rather than zooming
-             in when the cell's shape doesn't exactly match the stream's. */
-          style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000", transform: mirror ? "scaleX(-1)" : "none" }}
+          /* object-fit: cover, not contain — contain was letterboxing hard
+             whenever a tile's stream didn't exactly match the cell's shape
+             (e.g. a camera that ignored the portrait capture request below
+             and published landscape), which is what showed up as thick
+             black bars and the feed only filling part of the frame. Cover
+             always fills the tile; the capture-side aspectRatio constraint
+             (see LK_OPTIONS) is what keeps cover's crop minimal instead of
+             cutting someone's face off. */
+          style={{ width: "100%", height: "100%", objectFit: "cover", background: "#000", transform: mirror ? "scaleX(-1)" : "none" }}
         />
       ) : (
         <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Camera off</div>
