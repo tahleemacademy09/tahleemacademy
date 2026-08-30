@@ -934,7 +934,7 @@ export default function GeneralMusabaqahExamRoom() {
             <Hand size={100} color="#3a0a0a" strokeWidth={2.5} className="gm-signal-icon" />
           )}
           <span style={{ fontSize: 30, fontWeight: 800, letterSpacing: 1.5, color: activeSignal.kind === "error" ? "#3a2c00" : "#3a0a0a" }}>
-            {activeSignal.kind === "error" ? "ERROR FLAGGED" : "STOP"}
+            {activeSignal.kind === "error" ? "MISTAKE" : "STOP"}
           </span>
         </div>
       )}
@@ -942,60 +942,69 @@ export default function GeneralMusabaqahExamRoom() {
           one sticky unit so neither scrolls out of view — only the question/
           judging panel below them scrolls. ─────────────────────────────── */}
       <div style={{ position: "sticky", top: 0, zIndex: 25, background: G }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={() => navigate(isJudge ? `/musabaqah/general/${eventId}` : "/student/musabaqah/general")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer" }}>
-            <ArrowLeft size={16} />
-          </button>
-          <span style={{ color: "#fff", fontWeight: 700, fontSize: 14 }}>{event?.title}</span>
-          <Badge style={{ background: "rgba(96,165,250,0.15)", color: BLUE, border: "none" }}>{participant?.participant_name}</Badge>
-          {!isJudge && (
-            <Badge style={isOnStage
+      {/* Row 1 — kept to a single, never-wrapping line: back button, event
+          title (truncates instead of wrapping), and just "Stage X/Y" (no
+          stage name — that used to make this whole header wrap onto 2-3
+          lines on narrow phones). Everything else that was here moved down
+          to the swipeable strip below. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px 6px", flexWrap: "nowrap", overflow: "hidden" }}>
+        <button onClick={() => navigate(isJudge ? `/musabaqah/general/${eventId}` : "/student/musabaqah/general")} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", flexShrink: 0 }}>
+          <ArrowLeft size={16} />
+        </button>
+        <span style={{ color: "#fff", fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{event?.title}</span>
+        {stages.length > 0 && stageProgress && (
+          <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none", flexShrink: 0, whiteSpace: "nowrap" }}>
+            {stageProgress.activeStage ? `Stage ${stageProgress.activeIndex + 1}/${stages.length}` : "All stages complete"}
+          </Badge>
+        )}
+      </div>
+      {/* Row 2 — everything that used to crowd/wrap row 1: full stage name,
+          participant badges, question count, connection status, and the
+          icon buttons. One line, horizontally scrollable (swipe left) so
+          it never wraps either — same nowrap+overflow-x pattern as the
+          Error/Stop control strip further down. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "0 16px 10px", borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "nowrap", overflowX: "auto" }}>
+        {stages.length > 0 && stageProgress?.activeStage && (
+          <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, flexShrink: 0, whiteSpace: "nowrap" }}>{stageProgress.activeStage.name}</span>
+        )}
+        <Badge style={{ background: "rgba(96,165,250,0.15)", color: BLUE, border: "none", flexShrink: 0, whiteSpace: "nowrap" }}>{participant?.participant_name}</Badge>
+        {!isJudge && (
+          <Badge style={{
+            flexShrink: 0, whiteSpace: "nowrap",
+            ...(isOnStage
               ? { background: "rgba(74,222,128,0.15)", color: "#4ADE80", border: "none" }
-              : { background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", border: "none" }}>
-              {isOnStage ? "You're up — go ahead" : "Watching"}
-            </Badge>
-          )}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {stages.length > 0 && stageProgress && (
-            <Badge style={{ background: "rgba(201,168,76,0.15)", color: GOLD, border: "none" }}>
-              {stageProgress.activeStage
-                ? `Stage ${stageProgress.activeIndex + 1}/${stages.length}: ${stageProgress.activeStage.name}`
-                : "All stages complete"}
-            </Badge>
-          )}
-          <span style={{ display: "flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
-            <ScrollText size={13} />
-            {stages.length > 0 && stageProgress?.activeStage
-              ? `Q${stageProgress.markedByStage.get(stageProgress.activeStage.id) || 0}/${QUESTIONS_PER_STAGE}`
-              : `Q${answers.filter(a => a.status === "marked").length}/${event?.num_questions_per_student}`}
-          </span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5, color: localTimer !== null && localTimer < 60 ? RED : "#fff", fontWeight: 800, fontSize: 15, fontFamily: "monospace" }}>
-            <Clock size={14} /> {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
-          </span>
-          <ConnectionBadge status={participant?.connection_status} />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button aria-label="Video layout" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex" }}>
-                <LayoutGrid size={18} />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setViewLayout("grid")}><Columns2 size={14} className="mr-2" /> Side by side</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setViewLayout("spotlight_stage")}><Rows3 size={14} className="mr-2" /> Spotlight participant</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setViewLayout("spotlight_admin")}><Rows3 size={14} className="mr-2" /> Spotlight admin</DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {isJudge && (
-            <button onClick={() => setSettingsOpen(true)} aria-label="Timer settings" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex" }}>
-              <Settings size={18} />
+              : { background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", border: "none" }),
+          }}>
+            {isOnStage ? "You're up — go ahead" : "Watching"}
+          </Badge>
+        )}
+        <span style={{ display: "flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.6)", fontSize: 12, flexShrink: 0, whiteSpace: "nowrap" }}>
+          <ScrollText size={13} />
+          {stages.length > 0 && stageProgress?.activeStage
+            ? `Q${stageProgress.markedByStage.get(stageProgress.activeStage.id) || 0}/${QUESTIONS_PER_STAGE}`
+            : `Q${answers.filter(a => a.status === "marked").length}/${event?.num_questions_per_student}`}
+        </span>
+        <span style={{ flexShrink: 0 }}><ConnectionBadge status={participant?.connection_status} /></span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button aria-label="Video layout" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 }}>
+              <LayoutGrid size={18} />
             </button>
-          )}
-          <button onClick={() => setRosterOpen(true)} aria-label="Participants" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex" }}>
-            <Menu size={20} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setViewLayout("grid")}><Columns2 size={14} className="mr-2" /> Side by side</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setViewLayout("spotlight_stage")}><Rows3 size={14} className="mr-2" /> Spotlight participant</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setViewLayout("spotlight_admin")}><Rows3 size={14} className="mr-2" /> Spotlight admin</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {isJudge && (
+          <button onClick={() => setSettingsOpen(true)} aria-label="Timer settings" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 }}>
+            <Settings size={18} />
           </button>
-        </div>
+        )}
+        <button onClick={() => setRosterOpen(true)} aria-label="Participants" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 }}>
+          <Menu size={20} />
+        </button>
       </div>
 
       {/* ── Video area ─────────────────────────────────────────────── */}
@@ -1012,17 +1021,20 @@ export default function GeneralMusabaqahExamRoom() {
             options={LK_OPTIONS}
           >
             <RoomAudioRenderer />
-            {/* position:relative so the mic/camera icons can float inside
-                the video box itself instead of sitting as a row below it.
-                Box is sized portrait (3:4, capped by maxHeight) to roughly
-                match a phone front camera's stream. Tile below now uses
-                object-fit:contain (not cover) — cover was still cropping
-                the feed to fill the box, which is why someone had to lean
-                back out of frame just to appear inside it. Contain always
-                shows the whole picture, letterboxing rather than cropping
-                when the stream's actual aspect ratio doesn't exactly match
-                the box. */}
-            <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", maxHeight: "70vh", borderRadius: 12, overflow: "hidden" }}>
+            {/* position:relative so the mic/camera icons (and now the
+                timer) can float inside the video box itself instead of
+                sitting as a row below it. Box is sized portrait (3:4) to
+                roughly match a phone front camera's stream, capped by
+                maxHeight at roughly half the screen — was 70vh (nearly the
+                whole screen), which pushed the question panel below the
+                fold; ~40vh leaves the other half for questions/judging.
+                Tile below uses object-fit:contain (not cover) — cover was
+                still cropping the feed to fill the box, which is why
+                someone had to lean back out of frame just to appear inside
+                it. Contain always shows the whole picture, letterboxing
+                rather than cropping when the stream's actual aspect ratio
+                doesn't exactly match the box. */}
+            <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", maxHeight: "40vh", borderRadius: 12, overflow: "hidden" }}>
               <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} layout={viewLayout} />
               {canPublish && (
                 <MediaControls
@@ -1032,6 +1044,19 @@ export default function GeneralMusabaqahExamRoom() {
                   participantId={isJudge ? null : myParticipant?.id}
                 />
               )}
+              {/* Overall exam clock — moved here from the header (it was
+                  crowding that row and forcing it to wrap) and centered
+                  over the video so it's still always visible at a glance. */}
+              <span style={{
+                position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+                display: "flex", alignItems: "center", gap: 6,
+                color: localTimer !== null && localTimer < 60 ? RED : "#fff",
+                fontWeight: 800, fontSize: 22, fontFamily: "monospace",
+                background: "rgba(0,0,0,0.45)", padding: "6px 14px", borderRadius: 10,
+                pointerEvents: "none",
+              }}>
+                <Clock size={18} /> {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
+              </span>
             </div>
           </LiveKitRoom>
         ) : (
@@ -1103,24 +1128,37 @@ export default function GeneralMusabaqahExamRoom() {
       {competitionLive && (
       <>
       {/* ── Control strip (Section 13) ──────────────────────────────
-          Kept to two buttons for the judge mid-turn: Error and Stop both
+          Kept to two buttons for the judge mid-turn: Mistake and Stop both
           fire a full-screen colour+icon flash (yellow lightning / red
           hand) to everyone in the room via sendSignal(), purely to get
           attention. Neither one ends or finalizes the turn by itself —
           finalizing still only happens automatically once every stage is
           complete (see the autoPromptedFor effect above):
-            - Error also still opens the log dialog below, so the judge
-              can record what happened for the record.
+            - Mistake (formerly labelled "Error") is NOT a technical fault
+              report — it's the judge's live signal to the participant that
+              they made a mistake in what they just said, the moment it
+              happens, same as a real muhawarah judge would speak up. It
+              also still opens the log dialog below so the judge can record
+              what the mistake was, for the record.
             - Stop (handleStop) additionally freezes the countdown clock
               immediately and pre-loads it with the next stage's duration,
               ready to go once that stage actually starts. It does NOT
               change participant.status or advance the stage itself.
+          Start Timer sits between the two — same button/handler that used
+          to live down in the question card, moved up here so the judge
+          doesn't have to scroll to it, and so it visually reads as "flag a
+          mistake → start the clock → stop" in one line.
           nowrap + overflow-x so they always sit on one line on mobile
           instead of wrapping to a second row. */}
       <div style={{ display: "flex", gap: 8, padding: "0 16px 12px", flexWrap: "nowrap", overflowX: "auto" }}>
         <Button size="sm" variant="outline" onClick={() => { sendSignal("error"); setErrorOpen(true); }} style={{ flexShrink: 0, background: "rgba(255,255,255,0.04)", color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
-          <AlertTriangle size={14} className="mr-1" /> Error
+          <AlertTriangle size={14} className="mr-1" /> Mistake
         </Button>
+        {isJudge && currentQuestion && revealedQuestion && !questionTimerActive && (questionTimeLeft ?? 0) > 0 && (
+          <Button size="sm" onClick={startQuestionTimer} style={{ flexShrink: 0, background: BLUE, color: "#06131f", fontWeight: 700 }}>
+            <Play size={14} className="mr-1" /> Start Timer
+          </Button>
+        )}
         {isJudge && participant?.status === "called" && (
           <Button size="sm" onClick={startExamination} style={{ flexShrink: 0, background: GREEN, color: "#06301a", fontWeight: 700 }}>
             <Play size={14} className="mr-1" /> Start Examination
@@ -1268,11 +1306,10 @@ export default function GeneralMusabaqahExamRoom() {
                   </p>
                 )}
 
-                {isJudge && !questionTimerActive && (questionTimeLeft ?? 0) > 0 && (
-                  <Button onClick={startQuestionTimer} style={{ marginTop: 12, background: BLUE, color: "#06131f", fontWeight: 700 }}>
-                    <Play size={14} className="mr-1" /> Start Timer
-                  </Button>
-                )}
+                {/* Judge's "Start Timer" button now lives in the control
+                    strip above (between Error and Stop) instead of here —
+                    see Section 13 — so it stays reachable without scrolling
+                    down to the question card first. */}
                 {!isJudge && !questionTimerActive && (questionTimeLeft ?? 0) > 0 && (
                   <p style={{ marginTop: 12, color: "rgba(255,255,255,0.5)", fontSize: 12 }}>Waiting for the judge to start the timer…</p>
                 )}
@@ -1291,16 +1328,31 @@ export default function GeneralMusabaqahExamRoom() {
                       />
                       <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 12 }}>/ {currentQuestion.marks}</span>
                     </div>
+                    {/* Score-suggestion presets: each one both sets the
+                        correctness tag AND fills in the score box from the
+                        question's mark allocation, so marking a clear-cut
+                        answer is one tap instead of typing a number. The
+                        judge can still edit the score box manually
+                        afterward — these are a starting point, not a
+                        lock. Replaces the old plain correctness toggle
+                        (which didn't touch the score) and drops "skipped"
+                        from this row since that's its own Skip button
+                        below. */}
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {["correct", "partially_correct", "incorrect", "skipped"].map(c => (
-                        <button key={c} onClick={() => setScoreDraft({ ...scoreDraft, correctness: c })}
+                      {([
+                        { c: "correct", label: "Correct", fraction: 1 },
+                        { c: "partially_correct", label: "Partly Correct", fraction: 0.75 },
+                        { c: "partially_incorrect", label: "Partly Incorrect", fraction: 0.25 },
+                        { c: "incorrect", label: "Incorrect", fraction: 0 },
+                      ] as const).map(({ c, label, fraction }) => (
+                        <button key={c} onClick={() => setScoreDraft({ ...scoreDraft, correctness: c, score: String(Math.round(currentQuestion.marks * fraction)) })}
                           style={{
                             padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
                             border: scoreDraft.correctness === c ? "1.5px solid " + GOLD : "1px solid rgba(255,255,255,0.2)",
                             background: scoreDraft.correctness === c ? "rgba(201,168,76,0.2)" : "transparent",
                             color: scoreDraft.correctness === c ? GOLD : "rgba(255,255,255,0.6)",
                           }}>
-                          {labelize(c)}
+                          {label}
                         </button>
                       ))}
                     </div>
@@ -1532,10 +1584,13 @@ export default function GeneralMusabaqahExamRoom() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Error dialog ───────────────────────────────────────────── */}
+      {/* ── Mistake dialog — logs what the judge flagged (default option
+          is "Participant made a mistake" since that's the primary use;
+          the technical-fault options stay available for the rare case
+          this doubles as an actual error report). ─────────────────── */}
       <Dialog open={errorOpen} onOpenChange={setErrorOpen}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Report Error</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Flag a Mistake</DialogTitle></DialogHeader>
           <div style={{ display: "grid", gap: 10 }}>
             <Select value={errorForm.type} onValueChange={v => setErrorForm({ ...errorForm, type: v })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1554,7 +1609,7 @@ export default function GeneralMusabaqahExamRoom() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setErrorOpen(false)}>Cancel</Button>
-            <Button onClick={submitError} style={{ background: "#FBBF24", color: "#1a1400" }}><Flag size={14} className="mr-1" /> Log Error</Button>
+            <Button onClick={submitError} style={{ background: "#FBBF24", color: "#1a1400" }}><Flag size={14} className="mr-1" /> Log Mistake</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
