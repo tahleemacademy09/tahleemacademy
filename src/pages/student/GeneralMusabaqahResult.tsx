@@ -43,8 +43,11 @@ export default function GeneralMusabaqahResult() {
         .eq("event_id", eventId).eq("user_id", user.id).maybeSingle();
       setMe(mine);
 
-      const visible = ev?.results_visibility !== "private" &&
-        (mine?.status === "completed" || mine?.status === "finalized" || ev?.results_visibility === "published");
+      // Results only unlock once the admin has finalized the WHOLE event
+      // (results_visibility flips to "published" at that point, alongside
+      // event.status → "completed"). Finishing your own turn is not enough
+      // on its own — you can be done and everyone else still competing.
+      const visible = ev?.results_visibility === "published";
 
       if (mine && visible) {
         const { data: s } = await supabase
@@ -73,8 +76,7 @@ export default function GeneralMusabaqahResult() {
     return <div style={{ minHeight: "100%", background: G, display: "flex", justifyContent: "center", alignItems: "center" }}><Loader2 className="animate-spin" color={GOLD} size={28} /></div>;
   }
 
-  const visible = event?.results_visibility !== "private" &&
-    (me?.status === "completed" || me?.status === "finalized" || event?.results_visibility === "published");
+  const visible = event?.results_visibility === "published";
 
   const byCategory: Record<string, { earned: number; possible: number }> = {};
   scores.forEach(s => {

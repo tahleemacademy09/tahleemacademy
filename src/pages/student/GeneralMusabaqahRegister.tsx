@@ -241,10 +241,27 @@ export default function GeneralMusabaqahRegister() {
                     {reg?.status === "disqualified" && (
                       <Badge style={{ background: "rgba(248,113,113,0.15)", color: "#F87171", border: "none" }}>Disqualified</Badge>
                     )}
-                    {reg?.status === "completed" && (
+                    {/* Finishing your own turn does NOT mean the competition
+                        is over for everyone — results only unlock once the
+                        admin finalizes the whole event (ev.status ===
+                        "completed"). Until then, a finished participant
+                        stays able to rejoin the live room to watch the rest
+                        of the competition; only after finalization do they
+                        get "View Result" instead. */}
+                    {reg?.status === "completed" && ev.status === "completed" && (
                       <Button onClick={() => navigate(`/student/musabaqah/general/${ev.id}/result`)} style={{ background: GOLD, color: G, fontWeight: 700 }}>
                         <CheckCircle2 size={14} className="mr-1" /> View Result
                       </Button>
+                    )}
+                    {reg?.status === "completed" && ev.status !== "completed" && (
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <Badge style={{ background: "rgba(74,222,128,0.15)", color: "#4ADE80", border: "none", width: "fit-content" }}>
+                          <CheckCircle2 size={11} className="mr-1" /> Your turn is done
+                        </Badge>
+                        <Button onClick={() => navigate(`/musabaqah/general/${ev.id}/exam`)} variant="outline" style={{ borderColor: "rgba(96,165,250,0.35)", color: BLUE, background: "transparent" }}>
+                          Watch Live Class <ArrowRight size={15} className="ml-1" />
+                        </Button>
+                      </div>
                     )}
                     {reg?.status === "admitted" && (
                       <div style={{ display: "grid", gap: 10 }}>
