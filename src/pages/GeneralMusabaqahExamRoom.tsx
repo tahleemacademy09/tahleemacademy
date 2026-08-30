@@ -99,6 +99,11 @@ export default function GeneralMusabaqahExamRoom() {
   const [questions, setQuestions]   = useState<any[]>([]);
   const [stages, setStages]         = useState<any[]>([]); // ordered Stage 1 → Stage 2 → … groups, empty = legacy flat bank
   const [answers, setAnswers]       = useState<any[]>([]);
+  // Event-wide "has any participant used this question" set — see
+  // loadUsedQuestions. Distinct from answers (which is scoped to whoever is
+  // currently on stage) so a tile can show as taken/grey for participant B
+  // even though participant A — not B — is the one who actually answered it.
+  const [usedQuestionIds, setUsedQuestionIds] = useState<Set<string>>(new Set());
   const [queueCount, setQueueCount] = useState({ waiting: 0, completed: 0 });
   const [loading, setLoading]       = useState(true);
 
@@ -195,9 +200,10 @@ export default function GeneralMusabaqahExamRoom() {
   }, [eventId, isJudge, user?.id]);
 
   const loadQuestions = useCallback(async () => {
-    if (!eventId) return;
+    if (!eventId) return [];
     const { data } = await supabase.from("general_musabaqah_questions").select("*").eq("event_id", eventId).eq("status", "approved").order("created_at");
     setQuestions(data || []);
+    return data || [];
   }, [eventId]);
 
   const loadStages = useCallback(async () => {
@@ -209,6 +215,21 @@ export default function GeneralMusabaqahExamRoom() {
   const loadAnswers = useCallback(async (participantId: string) => {
     const { data } = await supabase.from("general_musabaqah_answers").select("*, general_musabaqah_scores(*)").eq("participant_id", participantId).order("asked_at");
     setAnswers(data || []);
+  }, []);
+
+  // Question usage across the WHOLE event, not just the participant
+  // currently on stage — a question one participant already used must show
+  // as taken/grey for the next participant reaching that same stage too, so
+  // nobody gets asked the same question twice. general_musabaqah_answers is
+  // scoped per-participant (used for tile status/scoring of whoever's up
+  // right now); general_musabaqah_question_usage is the event-wide record
+  // every askQuestion/selfAskQuestion call already writes to, so it's the
+  // right source for "has ANY participant used this one".
+  const loadUsedQuestions = useCallback(async (eventQuestions: any[]) => {
+    const ids = eventQuestions.map(q => q.id);
+    if (!ids.length) { setUsedQuestionIds(new Set()); return; }
+    const { data } = await supabase.from("general_musabaqah_question_usage").select("question_id").in("question_id", ids);
+    setUsedQuestionIds(new Set((data || []).map((r: any) => r.question_id)));
   }, []);
 
   const loadQueueCounts = useCallback(async () => {
@@ -231,13 +252,14 @@ export default function GeneralMusabaqahExamRoom() {
   const loadAll = useCallback(async () => {
     const ev = await loadEvent();
     const p  = await loadParticipant(ev);
-    await loadQuestions();
+    const qs = await loadQuestions();
     await loadStages();
     if (p) await loadAnswers(p.id);
+    await loadUsedQuestions(qs);
     await loadQueueCounts();
     await loadRoster();
     setLoading(false);
-  }, [loadEvent, loadParticipant, loadQuestions, loadStages, loadAnswers, loadQueueCounts, loadRoster]);
+  }, [loadEvent, loadParticipant, loadQuestions, loadStages, loadAnswers, loadUsedQuestions, loadQueueCounts, loadRoster]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -318,9 +340,15 @@ export default function GeneralMusabaqahExamRoom() {
   }, [myParticipant?.id, myParticipant?.status, eventId, toast]);
 
   /* ── TIMER (autosaved, not fully server-authoritative — see file header) */
+  // Frozen by the Stop button below — halts the countdown immediately and
+  // stays frozen until the active stage genuinely advances (see the
+  // stageTimerState effect further down, which clears it and hands the
+  // participant a fresh countdown for whatever stage comes next).
+  const [timerFrozen, setTimerFrozen] = useState(false);
   useEffect(() => {
     if (!participant) return;
     setLocalTimer(participant.timer_remaining_seconds ?? event?.max_exam_time_seconds ?? 900);
+    setTimerFrozen(false);
   }, [participant?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -329,9 +357,10 @@ export default function GeneralMusabaqahExamRoom() {
     // otherwise the participant's exam time bleeds away during a phase they
     // aren't even allowed to answer in yet. It resumes the instant the judge
     // starts the per-question timer, and keeps running normally whenever no
-    // question is currently up (e.g. picking a tile).
+    // question is currently up (e.g. picking a tile). timerFrozen is the
+    // Stop button's manual override on top of all that.
     const waitingToStart = !!participant?.current_question_id && !questionTimerActive;
-    if (participant?.status !== "in_progress" || waitingToStart) { if (timerRef.current) clearInterval(timerRef.current); return; }
+    if (participant?.status !== "in_progress" || waitingToStart || timerFrozen) { if (timerRef.current) clearInterval(timerRef.current); return; }
     timerRef.current = setInterval(() => {
       setLocalTimer(prev => {
         const next = Math.max(0, (prev ?? 0) - 1);
@@ -342,7 +371,7 @@ export default function GeneralMusabaqahExamRoom() {
       });
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [participant?.status, participant?.id, participant?.current_question_id, questionTimerActive]);
+  }, [participant?.status, participant?.id, participant?.current_question_id, questionTimerActive, timerFrozen]);
 
   /* ── PER-QUESTION TIMER (Section 4/5 of the fix request) ─────────────
      Resets every time a new question is revealed (or cleared): the clock
@@ -441,7 +470,6 @@ export default function GeneralMusabaqahExamRoom() {
     loadAll();
   };
 
-  const askedQuestionIds = useMemo(() => new Set(answers.map(a => a.question_id)), [answers]);
 
   // Sequential stage progression: a stage is "done" for this participant once
   // they have as many MARKED answers from it as its question_count target.
@@ -458,6 +486,24 @@ export default function GeneralMusabaqahExamRoom() {
     if (activeIndex === -1) activeIndex = stages.length;
     return { markedByStage, activeIndex, activeStage: stages[activeIndex] ?? null };
   }, [stages, answers, questions]);
+
+  // Stop: freezes the countdown immediately (the interval effect above
+  // checks timerFrozen) and pre-loads the clock with the NEXT stage's
+  // duration so it's ready to go the moment that stage actually starts.
+  // The freeze itself is lifted automatically by the stageTimerState effect
+  // below once the active stage genuinely advances. This never changes
+  // participant.status or ends/finalizes the turn — see the Stop button's
+  // own comment for that history.
+  const handleStop = () => {
+    sendSignal("stop");
+    setTimerFrozen(true);
+    const nextStage = stageProgress ? stages[stageProgress.activeIndex + 1] : null;
+    const resetLimit = nextStage?.time_limit_seconds ?? event?.max_exam_time_seconds ?? 900;
+    setLocalTimer(resetLimit);
+    if (participant?.id) {
+      supabase.from("general_musabaqah_participants").update({ timer_remaining_seconds: resetLimit }).eq("id", participant.id);
+    }
+  };
 
   // Per-stage timer: each stage can have its own time_limit_seconds (set by
   // the admin, falls back to the event's overall max_exam_time_seconds when
@@ -483,29 +529,20 @@ export default function GeneralMusabaqahExamRoom() {
       return;
     }
 
-    // Same participant, stage moved on — fresh countdown for the new stage.
+    // Same participant, stage moved on — fresh countdown for the new stage,
+    // and clear any manual Stop freeze so the new stage's clock actually runs.
     stageTimerState.current = { participantId: participant.id, stageId: activeStageId };
     const limit = stageProgress?.activeStage?.time_limit_seconds ?? event?.max_exam_time_seconds ?? 900;
     setLocalTimer(limit);
+    setTimerFrozen(false);
     supabase.from("general_musabaqah_participants").update({ timer_remaining_seconds: limit }).eq("id", participant.id);
   }, [participant?.id, participant?.status, stageProgress?.activeStage?.id]);
 
-  // Auto-pick respects stage order; judges can still override manually via
-  // the navigator below (buttons for out-of-sequence questions stay enabled,
-  // just visually dimmed) — useful for skipping a stage for one student.
-
-  const pickNextQuestion = () => {
-    let pool = questions.filter(q => !askedQuestionIds.has(q.id));
-    if (stages.length) {
-      pool = stageProgress?.activeStage
-        ? pool.filter(q => q.stage_id === stageProgress.activeStage.id)
-        : pool.filter(q => !q.stage_id); // all configured stages complete — only ungrouped left
-    }
-    if (pool.length === 0) return null;
-    if (event?.question_selection_method === "manual") return null; // judge must pick
-    if (event?.randomize_questions) return pool[Math.floor(Math.random() * pool.length)];
-    return pool[0];
-  };
+  // Question selection is self-serve only now: the participant on stage taps
+  // their own tile to reveal a question (selfAskQuestion below). There is no
+  // judge-side auto-pick anymore — a button that silently picked a number
+  // for the student was confusing and skipped the point of the tile reveal,
+  // so it was removed along with pickNextQuestion/askNext.
 
   // "on stage" = this browser's own participant row IS the one the event
   // currently points at. Only this person (besides the judge) gets to
@@ -527,29 +564,10 @@ export default function GeneralMusabaqahExamRoom() {
     setFinalizeOpen(true);
   }, [isJudge, participant, stages.length, stageProgress?.activeIndex]);
 
-  const askQuestion = async (question: any) => {
-    if (!participant) return;
-    if (participant.status !== "in_progress") {
-      toast({ title: "Not ready yet", description: "Start the examination before asking questions." });
-      await loadAll();
-      return;
-    }
-    const { data: answer, error } = await supabase.from("general_musabaqah_answers")
-      .insert({ event_id: eventId, participant_id: participant.id, question_id: question.id, status: "current" })
-      .select().single();
-    if (error) { toast({ title: "Could not ask question", description: error.message, variant: "destructive" }); return; }
-
-    await supabase.from("general_musabaqah_participants").update({
-      current_question_id: question.id,
-      questions_asked: [...(participant.questions_asked || []), question.id],
-    }).eq("id", participant.id);
-    await supabase.from("general_musabaqah_question_usage").insert({ question_id: question.id, participant_id: participant.id });
-    await supabase.from("general_musabaqah_questions").update({ times_used: (question.times_used || 0) + 1, last_used_at: new Date().toISOString() }).eq("id", question.id);
-    await logEvent("question_asked", `Q asked: ${question.question_text.slice(0, 60)}`, { question_id: question.id });
-
-    setScoreDraft({ score: String(question.marks), correctness: "correct", comment: "" });
-    loadAll();
-  };
+  // Direct judge-side question assignment was removed along with "Ask Next
+  // Question" — see the note near pickNextQuestion above. Only
+  // selfAskQuestion (the participant tapping their own tile) creates an
+  // answer row now.
 
   // The called student taps their own shuffled tile to self-assign a
   // question — goes through the gm_self_ask_question() RPC (security
@@ -584,12 +602,6 @@ export default function GeneralMusabaqahExamRoom() {
       return;
     }
     await loadAll();
-  };
-
-  const askNext = async () => {
-    const next = pickNextQuestion();
-    if (!next) { toast({ title: "No more unused questions — pick one manually or allow repeats" }); return; }
-    askQuestion(next);
   };
 
   const currentAnswer = useMemo(() => answers.find(a => a.question_id === participant?.current_question_id && a.status !== "marked"), [answers, participant?.current_question_id]);
@@ -686,7 +698,7 @@ export default function GeneralMusabaqahExamRoom() {
   // in-room MediaControls button uses. The judge can mute the on-stage
   // student remotely; the student can do it for themselves too.
   const toggleRosterMic = async (p: any) => {
-    const next = !(p.mic_on ?? true);
+    const next = !(p.mic_on ?? false);
     const { error } = await supabase.from("general_musabaqah_participants").update({ mic_on: next }).eq("id", p.id);
     if (error) { toast({ title: "Could not update mic", description: error.message, variant: "destructive" }); return; }
     setRoster(r => r.map(x => x.id === p.id ? { ...x, mic_on: next } : x));
@@ -768,6 +780,12 @@ export default function GeneralMusabaqahExamRoom() {
   // requested from students who are only here to watch.
   const canPublish = isJudge || isOnStage;
   const videoAllowedForMe = isJudge || participant?.video_allowed !== false;
+  // Whether the camera should actually be ON right now — separate from
+  // videoAllowedForMe above, which is just the admin's permission gate.
+  // Defaults to off (mirrors the mic_on default a few lines up) so camera
+  // and mic both start muted/off until the person taps to turn them on;
+  // judges have no persisted participant row so always start off too.
+  const cameraOnForMe = isJudge ? false : (myParticipant?.camera_on ?? false);
 
   const mm = Math.floor((localTimer ?? 0) / 60), ss = (localTimer ?? 0) % 60;
   const isPaused = participant?.status === "paused";
@@ -909,7 +927,7 @@ export default function GeneralMusabaqahExamRoom() {
         ) : lkConnected ? (
           <LiveKitRoom
             serverUrl={lkUrl} token={lkToken} connect={lkConnected}
-            audio={canPublish} video={canPublish && videoAllowedForMe}
+            audio={false} video={false}
             options={LK_OPTIONS}
           >
             <RoomAudioRenderer />
@@ -920,7 +938,8 @@ export default function GeneralMusabaqahExamRoom() {
               {canPublish && (
                 <MediaControls
                   videoAllowed={videoAllowedForMe}
-                  micAllowed={isJudge ? true : (myParticipant?.mic_on ?? true)}
+                  videoOn={cameraOnForMe}
+                  micAllowed={isJudge ? false : (myParticipant?.mic_on ?? false)}
                   participantId={isJudge ? null : myParticipant?.id}
                 />
               )}
@@ -995,16 +1014,18 @@ export default function GeneralMusabaqahExamRoom() {
       {competitionLive && (
       <>
       {/* ── Control strip (Section 13) ──────────────────────────────
-          Kept to two buttons for the judge mid-turn: Error and Stop are
-          now both live SIGNALS — tapping either fires a full-screen
-          colour+icon flash (yellow lightning / red hand) to everyone in
-          the room via sendSignal(), purely to get attention. Neither one
-          ends or finalizes the turn by itself:
+          Kept to two buttons for the judge mid-turn: Error and Stop both
+          fire a full-screen colour+icon flash (yellow lightning / red
+          hand) to everyone in the room via sendSignal(), purely to get
+          attention. Neither one ends or finalizes the turn by itself —
+          finalizing still only happens automatically once every stage is
+          complete (see the autoPromptedFor effect above):
             - Error also still opens the log dialog below, so the judge
               can record what happened for the record.
-            - Stop is signal-only. It no longer opens the finalize dialog —
-              finalizing a turn now only happens automatically once every
-              stage is complete (see the autoPromptedFor effect above).
+            - Stop (handleStop) additionally freezes the countdown clock
+              immediately and pre-loads it with the next stage's duration,
+              ready to go once that stage actually starts. It does NOT
+              change participant.status or advance the stage itself.
           nowrap + overflow-x so they always sit on one line on mobile
           instead of wrapping to a second row. */}
       <div style={{ display: "flex", gap: 8, padding: "0 16px 12px", flexWrap: "nowrap", overflowX: "auto" }}>
@@ -1022,7 +1043,7 @@ export default function GeneralMusabaqahExamRoom() {
           </Button>
         )}
         {isJudge && ["in_progress", "paused"].includes(participant?.status) && (
-          <Button size="sm" onClick={() => sendSignal("stop")} style={{ flexShrink: 0, background: RED, color: "#fff", fontWeight: 700, marginLeft: "auto" }}>
+          <Button size="sm" onClick={handleStop} style={{ flexShrink: 0, background: RED, color: "#fff", fontWeight: 700, marginLeft: "auto" }}>
             <Square size={14} className="mr-1" /> Stop
           </Button>
         )}
@@ -1054,18 +1075,22 @@ export default function GeneralMusabaqahExamRoom() {
                   {stage ? `Stage ${si + 1}: ${stage.name}` : "Ungrouped"}
                 </p>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {stageQuestions.map((q) => {
+                  {stageQuestions.map((q, stageIndex) => {
                     const a = answers.find(x => x.question_id === q.id);
                     const status = a ? a.status : "not_asked";
                     const isCurrent = participant?.current_question_id === q.id;
-                    const globalIndex = questions.findIndex(qq => qq.id === q.id);
                     // Judges are view-only on the tile grid now — they see the
                     // same progress everyone else does but can't tap a number
                     // for the participant. Only the participant on stage picks
-                    // their own tile; the judge uses "Ask Next Question" below
-                    // if they need to move things along.
+                    // their own tile.
                     const canAct = isOnStage;
-                    const taken = status !== "not_asked";
+                    // Taken if THIS participant already has an answer for it,
+                    // OR any other participant already used it earlier in the
+                    // competition (usedQuestionIds is event-wide) — a question
+                    // only ever gets asked once across everybody, stage by
+                    // stage, so it must show grey for every later participant
+                    // too, not just reset back to available for them.
+                    const taken = status !== "not_asked" || usedQuestionIds.has(q.id);
                     return (
                       <button
                         key={q.id}
@@ -1079,7 +1104,7 @@ export default function GeneralMusabaqahExamRoom() {
                           fontWeight: 800, fontSize: 12, cursor: canAct && !taken ? "pointer" : "default", opacity: canAct ? 1 : 0.7,
                         }}
                       >
-                        {globalIndex + 1}
+                        {stageIndex + 1}
                       </button>
                     );
                   })}
@@ -1094,7 +1119,7 @@ export default function GeneralMusabaqahExamRoom() {
               const status = a ? a.status : "not_asked";
               const isCurrent = participant?.current_question_id === q.id;
               const canAct = isOnStage;
-              const taken = status !== "not_asked";
+              const taken = status !== "not_asked" || usedQuestionIds.has(q.id);
               return (
                 <button
                   key={q.id}
@@ -1209,18 +1234,13 @@ export default function GeneralMusabaqahExamRoom() {
         ) : (
           <div style={{ background: GM, border: "1px solid rgba(255,255,255,0.1)", borderRadius: 14, padding: 24, textAlign: "center" }}>
             <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
-              {isJudge && participant?.status === "in_progress" ? "No question active."
+              {isJudge && participant?.status === "in_progress" ? "Waiting for the participant to pick their number."
                 : isJudge ? "Start the examination to begin."
                 : isOnStage && participant?.status === "in_progress" ? "Tap a tile above to reveal your question."
                 : isOnStage ? "Waiting for the judge to start your examination…"
                 : participant ? `Watching ${participant.participant_name} — waiting for their next question…`
                 : "Waiting for the judge to call the next participant…"}
             </p>
-            {isJudge && participant?.status === "in_progress" && (
-              <Button onClick={askNext} style={{ marginTop: 10, background: BLUE, color: "#06131f", fontWeight: 700 }}>
-                Ask Next Question
-              </Button>
-            )}
           </div>
         )}
 
@@ -1279,7 +1299,7 @@ export default function GeneralMusabaqahExamRoom() {
               {roster.map(p => {
                 const isCurrent = p.id === participant?.id;
                 const isMe = p.id === myParticipant?.id;
-                const micOn = p.mic_on ?? true;
+                const micOn = p.mic_on ?? false;
                 // Mic only actually does anything for whoever is on stage —
                 // that's the only participant LiveKit hands a publish token
                 // (see musabaqah-livekit-token). Show it live for them;
@@ -1509,12 +1529,21 @@ function ParticipantTile({ participant, label, mirror, highlight }: { participan
    they're quick to tap without taking up page real estate. Mirrors the
    toggle into the DB's camera_on/mic_on columns too, purely so the admin's
    participant list/queue view can show accurate live status badges. ───── */
-function MediaControls({ videoAllowed, micAllowed, participantId }: { videoAllowed: boolean; micAllowed: boolean; participantId?: string | null }) {
+function MediaControls({ videoAllowed, videoOn, micAllowed, participantId }: { videoAllowed: boolean; videoOn: boolean; micAllowed: boolean; participantId?: string | null }) {
   const { localParticipant } = useLocalParticipant();
-  const [micOn, setMicOn] = useState(micAllowed);
-  const [camOn, setCamOn] = useState(videoAllowed);
+  // Both start false — camera and mic are off by default until the person
+  // taps to enable them (see videoOn/micAllowed callers above).
+  const [micOn, setMicOn] = useState(false);
+  const [camOn, setCamOn] = useState(false);
 
-  useEffect(() => { setCamOn(videoAllowed); if (!videoAllowed) localParticipant.setCameraEnabled(false); }, [videoAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
+  // videoAllowed is purely the admin's permission gate (can this person use
+  // video at all) — it should only ever be able to force the camera OFF,
+  // never turn it on by itself. videoOn is the actual current on/off state.
+  useEffect(() => {
+    if (!videoAllowed) { setCamOn(false); localParticipant.setCameraEnabled(false); return; }
+    setCamOn(videoOn);
+    localParticipant.setCameraEnabled(videoOn);
+  }, [videoAllowed, videoOn]); // eslint-disable-line react-hooks/exhaustive-deps
   // Remote mute — e.g. the admin flipping this participant's mic off from
   // the roster drawer — must also cut the actual LiveKit publish, not just
   // repaint the button, otherwise the DB flag lies about what's audible.
