@@ -1917,6 +1917,7 @@ export type Database = {
           num_questions_per_student: number
           passing_score: number | null
           question_selection_method: string
+          reveal_index: number | null
           question_time_seconds: number | null
           randomize_questions: boolean
           recording_enabled: boolean
@@ -1959,6 +1960,7 @@ export type Database = {
           num_questions_per_student?: number
           passing_score?: number | null
           question_selection_method?: string
+          reveal_index?: number | null
           question_time_seconds?: number | null
           randomize_questions?: boolean
           recording_enabled?: boolean
@@ -2001,6 +2003,7 @@ export type Database = {
           num_questions_per_student?: number
           passing_score?: number | null
           question_selection_method?: string
+          reveal_index?: number | null
           question_time_seconds?: number | null
           randomize_questions?: boolean
           recording_enabled?: boolean
