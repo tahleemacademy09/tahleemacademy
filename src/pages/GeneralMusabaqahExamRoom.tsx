@@ -1497,8 +1497,8 @@ export default function GeneralMusabaqahExamRoom() {
           read-only, except their own row gets a mic toggle once they're
           the one on stage. */}
       <Sheet open={rosterOpen} onOpenChange={setRosterOpen}>
-        <SheetContent side="right" className="w-[300px] sm:w-[360px]" style={{ background: G, borderLeft: "1px solid rgba(255,255,255,0.08)", padding: 0 }}>
-          <SheetHeader style={{ padding: "16px 16px 8px" }}>
+        <SheetContent side="right" className="w-[300px] sm:w-[360px]" style={{ background: G, borderLeft: "1px solid rgba(255,255,255,0.08)", padding: 0, display: "flex", flexDirection: "column", height: "100dvh" }}>
+          <SheetHeader style={{ padding: "16px 16px 8px", flexShrink: 0 }}>
             <SheetTitle style={{ color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
               <Users size={16} color={GOLD} /> Participants
               <Badge style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", border: "none", marginLeft: "auto" }}>
@@ -1506,7 +1506,16 @@ export default function GeneralMusabaqahExamRoom() {
               </Badge>
             </SheetTitle>
           </SheetHeader>
-          <ScrollArea style={{ height: isJudge ? "calc(100vh - 128px)" : "calc(100vh - 64px)" }}>
+          {/* flex:1 + minHeight:0 — not a hardcoded calc(100vh - Npx) —
+              so this area fills exactly whatever space is left between the
+              header and the action bar below, on any screen size. The old
+              fixed-height version reserved a huge chunk of the sheet for
+              the list regardless of how few participants there were,
+              which shoved End Turn / Finalize Competition down past the
+              bottom of the visible drawer — clipped on mobile, invisible
+              entirely on a laptop where the sheet is shorter relative to
+              that hardcoded number. */}
+          <ScrollArea style={{ flex: 1, minHeight: 0 }}>
             <div style={{ padding: "4px 12px 16px", display: "grid", gap: 6 }}>
               {roster.length === 0 && (
                 <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, textAlign: "center", padding: 24 }}>No participants yet.</p>
@@ -1583,9 +1592,11 @@ export default function GeneralMusabaqahExamRoom() {
               min-width based on its own content, so the row simply grew
               past the drawer's edge and the label ran off-screen instead
               of wrapping or shrinking. Full-width stacked rows have no
-              such squeeze. */}
+              such squeeze. flexShrink:0 keeps this bar at its natural
+              height and pinned right under the scroll area — it's a flex
+              sibling now, not something the list's height can push away. */}
           {isJudge && (
-            <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
               {["in_progress", "paused"].includes(participant?.status) && (
                 <Button onClick={() => { setRosterOpen(false); setFinalizeOpen(true); }} variant="outline" style={{ width: "100%", borderColor: "rgba(248,113,113,0.4)", color: RED, fontWeight: 700 }}>
                   <Square size={15} className="mr-1.5" /> End Turn
