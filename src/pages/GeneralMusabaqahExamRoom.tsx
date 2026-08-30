@@ -922,6 +922,27 @@ export default function GeneralMusabaqahExamRoom() {
           0%, 100% { transform: scale(1); }
           50%      { transform: scale(1.18); }
         }
+        /* Two-camera video stage: split with a CSS grid so the divider
+           direction can flip per screen size via a single media query
+           instead of separate JS layout branches. Desktop gets a vertical
+           split (two side-by-side columns, judge | participant) since
+           there's width to spare; mobile gets a horizontal split (stacked
+           rows) since phone screens are narrow but the video pane itself
+           is comfortably tall. */
+        .gm-video-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          grid-template-rows: 1fr;
+          gap: 3px;
+          width: 100%;
+          height: 100%;
+        }
+        @media (max-width: 767px) {
+          .gm-video-grid {
+            grid-template-columns: 1fr;
+            grid-template-rows: 1fr 1fr;
+          }
+        }
       `}</style>
       {timeUpFlash && (
         <div className="gm-timeup-flash" style={{ position: "fixed", inset: 0, pointerEvents: "none", zIndex: 60 }} />
@@ -1039,11 +1060,9 @@ export default function GeneralMusabaqahExamRoom() {
                 the actual screen instead of being a fixed pixel strip; the
                 upper bound (620px) is generous specifically so it keeps
                 growing on taller/desktop viewports instead of staying
-                "shallow" once there's more vertical room to use. Each tile
-                below is object-fit: cover and flex:1 (equal share of the
-                full width) rather than a fixed 9:16 box, so the pair
-                actually fills this pane edge to edge on any screen size
-                instead of leaving empty space on either side. */}
+                "shallow" once there's more vertical room to use. The grid
+                split direction (columns on desktop, rows on mobile) lives
+                in VideoStage/.gm-video-grid below. */}
             <div style={{
               position: "relative", width: "100%",
               height: "clamp(240px, 46vh, 620px)",
@@ -1691,19 +1710,25 @@ function VideoStage({ canPublish, onStageUserId }: { canPublish: boolean; onStag
     return <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Waiting for video…</div>;
   }
 
-  // Every tile is an equal flex share of the FULL WIDTH of the pane, not a
-  // fixed-aspect box hanging off the shared height — that's the difference
-  // between "two portrait cards centered with space around them" and "the
-  // pane is actually split in half, edge to edge". object-fit:cover on the
-  // tile itself (below) fills that flexible box completely instead of
-  // letterboxing when the portrait stream doesn't exactly match the box's
-  // own ratio.
+  if (tiles.length === 1) {
+    return (
+      <div style={{ position: "relative", width: "100%", height: "100%", background: "#111" }}>
+        <ParticipantTile participant={tiles[0].p} label={tiles[0].label} mirror={tiles[0].mirror} highlight={!!tiles[0].isOnStagePerson} />
+      </div>
+    );
+  }
+
+  // Grid split (see .gm-video-grid, defined once in the page's <style>
+  // block): vertical divider — two side-by-side columns — on desktop,
+  // horizontal divider — stacked rows — on mobile, purely via a media
+  // query, so this one markup works for both instead of needing separate
+  // JS layout branches.
   return (
-    <div style={{ display: "flex", gap: 3, height: "100%", width: "100%" }}>
+    <div className="gm-video-grid">
       {tiles.map((t, i) => (
         <div
           key={t.isLocal ? "local" : t.p.sid || i}
-          style={{ position: "relative", height: "100%", flex: 1, minWidth: 0, background: "#111" }}
+          style={{ position: "relative", width: "100%", height: "100%", background: "#111" }}
         >
           <ParticipantTile participant={t.p} label={t.label} mirror={t.mirror} highlight={!!t.isOnStagePerson} />
         </div>
@@ -1719,7 +1744,13 @@ function ParticipantTile({ participant, label, mirror, highlight }: { participan
       {camPub?.track ? (
         <VideoTrack
           trackRef={{ participant, source: Track.Source.Camera, publication: camPub }}
-          style={{ width: "100%", height: "100%", objectFit: "cover", background: "#000", transform: mirror ? "scaleX(-1)" : "none" }}
+          /* object-fit: contain, not cover — cover crops in tight on a
+             portrait phone stream stretched into a wide grid cell, which is
+             what made someone need to lean back/move away from the camera
+             just to appear fully in frame. Contain always shows the whole
+             picture at its normal size, letterboxing rather than zooming
+             in when the cell's shape doesn't exactly match the stream's. */
+          style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000", transform: mirror ? "scaleX(-1)" : "none" }}
         />
       ) : (
         <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Camera off</div>
