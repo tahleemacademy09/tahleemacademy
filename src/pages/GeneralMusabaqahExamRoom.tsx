@@ -163,6 +163,13 @@ export default function GeneralMusabaqahExamRoom() {
   const [activeSignal, setActiveSignal] = useState<{ kind: "error" | "stop"; id: number } | null>(null);
   const gmChannelRef = useRef<any>(null);
 
+  // Who's actually got a live connection to this room right now (browser
+  // tab open, realtime channel joined) — independent of exam status like
+  // "waiting"/"admitted"/"called". Tracked via Supabase Presence on the
+  // same gm-exam-{eventId} channel below; drives the green online dot in
+  // the Participants drawer.
+  const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
+
   const [scoreDraft, setScoreDraft] = useState({ score: "", correctness: "correct", comment: "" });
   const [savingScore, setSavingScore] = useState(false);
 
@@ -303,10 +310,25 @@ export default function GeneralMusabaqahExamRoom() {
         if (payload?.kind !== "error" && payload?.kind !== "stop") return;
         setActiveSignal({ kind: payload.kind, id: Date.now() });
       })
-      .subscribe();
+      // Presence: every client that has this room open tracks itself under
+      // its own user id. "sync" fires with the full current set whenever
+      // anyone joins/leaves, so onlineIds just gets rebuilt from that —
+      // no manual add/remove bookkeeping needed.
+      .on("presence", { event: "sync" }, () => {
+        const state = ch.presenceState();
+        const ids = new Set<string>(
+          Object.values(state).flat().map((m: any) => m.user_id).filter(Boolean)
+        );
+        setOnlineIds(ids);
+      })
+      .subscribe(async (status: string) => {
+        if (status === "SUBSCRIBED" && user?.id) {
+          await ch.track({ user_id: user.id, online_at: new Date().toISOString() });
+        }
+      });
     gmChannelRef.current = ch;
     return () => { supabase.removeChannel(ch); gmChannelRef.current = null; };
-  }, [eventId, loadAll]);
+  }, [eventId, loadAll, user?.id]);
 
   // Auto-clear the flash a few seconds after it appears.
   useEffect(() => {
@@ -771,11 +793,13 @@ export default function GeneralMusabaqahExamRoom() {
     loadAll();
   };
 
-  // Mic toggle from the drawer. Only meaningful for whoever is actually on
-  // stage — LiveKit only grants that person (or the judge) a publish token
-  // (see musabaqah-livekit-token), so this flips the same mic_on flag the
-  // in-room MediaControls button uses. The judge can mute the on-stage
-  // student remotely; the student can do it for themselves too.
+  // Mic toggle from the drawer. Anyone who's joined the room (not just
+  // whoever is on stage) can publish audio now — see musabaqah-livekit-
+  // token, which grants a publish token to any non-finished participant so
+  // people can chat, not only perform their turn. This flips the same
+  // mic_on flag the in-room MediaControls button uses. Every participant
+  // can do this for themselves; the judge can also mute/unmute anyone
+  // remotely for moderation.
   const toggleRosterMic = async (p: any) => {
     const next = !(p.mic_on ?? false);
     const { error } = await supabase.from("general_musabaqah_participants").update({ mic_on: next }).eq("id", p.id);
@@ -887,11 +911,13 @@ export default function GeneralMusabaqahExamRoom() {
   // below) so they can see/hear the admin's live introduction the moment
   // the competition auto-launches, same as the judge.
 
-  // Spectator = anyone in the room besides the judge and the person on
-  // stage — only they should publish audio/video; everyone else just
-  // subscribes so bandwidth and browser mic/cam permissions aren't needlessly
-  // requested from students who are only here to watch.
-  const canPublish = isJudge || isOnStage;
+  // Anyone who's joined the room and hasn't finished their turn can
+  // publish audio (not just the judge and whoever's on stage) — the room
+  // doubles as a general chat, so participants can unmute themselves to
+  // talk even when it isn't their turn. musabaqah-livekit-token grants the
+  // matching publish token server-side for the same set of people.
+  const canChat = !isJudge && !!myParticipant && !["completed", "finalized"].includes(myParticipant.status);
+  const canPublish = isJudge || isOnStage || canChat;
   const videoAllowedForMe = isJudge || participant?.video_allowed !== false;
   // Whether the camera should actually be ON right now — separate from
   // videoAllowedForMe above, which is just the admin's permission gate.
@@ -1512,15 +1538,19 @@ export default function GeneralMusabaqahExamRoom() {
 
       {/* ── Participants drawer (hamburger) ──────────────────────────
           Judge: sees everyone, can Call anyone onto stage and mute/unmute
-          whoever is currently on stage. Student: sees the same list
-          read-only, except their own row gets a mic toggle once they're
-          the one on stage. */}
+          any participant's mic for moderation. Student: sees the same
+          list, with a mic toggle on their own row at all times (not just
+          while on stage) so the room can be used for general chat. */}
       <Sheet open={rosterOpen} onOpenChange={setRosterOpen}>
         <SheetContent side="right" className="w-[300px] sm:w-[360px]" style={{ background: G, borderLeft: "1px solid rgba(255,255,255,0.08)", padding: 0, display: "flex", flexDirection: "column", height: "100dvh" }}>
           <SheetHeader style={{ padding: "16px 16px 8px", flexShrink: 0 }}>
             <SheetTitle style={{ color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
               <Users size={16} color={GOLD} /> Participants
-              <Badge style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", border: "none", marginLeft: "auto" }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 400, color: "rgba(255,255,255,0.45)", marginLeft: "auto" }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: GREEN, flexShrink: 0 }} />
+                {onlineIds.size} online
+              </span>
+              <Badge style={{ background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.6)", border: "none" }}>
                 {roster.length}
               </Badge>
             </SheetTitle>
@@ -1543,18 +1573,29 @@ export default function GeneralMusabaqahExamRoom() {
                 const isCurrent = p.id === participant?.id;
                 const isMe = p.id === myParticipant?.id;
                 const micOn = p.mic_on ?? false;
-                // Mic only actually does anything for whoever is on stage —
-                // that's the only participant LiveKit hands a publish token
-                // (see musabaqah-livekit-token). Show it live for them;
-                // greyed out (but visible, per spec) for everyone else.
-                const micActionable = isCurrent && (isJudge || isMe);
+                const isOnline = !!p.user_id && onlineIds.has(p.user_id);
+                // Anyone (not just whoever's on stage) can publish audio now
+                // — see musabaqah-livekit-token, which grants a publish
+                // token to any non-finished participant so people can chat.
+                // A participant can always control their own mic; the judge
+                // can also mute/unmute anyone remotely for moderation.
+                const micActionable = isMe || isJudge;
                 return (
                   <div key={p.id} style={{
                     display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 10,
                     background: isCurrent ? "rgba(74,222,128,0.08)" : "rgba(255,255,255,0.03)",
                     border: isCurrent ? "1px solid rgba(74,222,128,0.3)" : "1px solid rgba(255,255,255,0.06)",
                   }}>
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: PSTATUS_COLORS[p.status] || "rgba(255,255,255,0.3)", flexShrink: 0 }} />
+                    <div style={{ position: "relative", width: 8, height: 8, flexShrink: 0 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: PSTATUS_COLORS[p.status] || "rgba(255,255,255,0.3)" }} />
+                      {/* Presence dot — genuinely connected to the room right
+                          now (Realtime presence), separate from exam status
+                          above (which can say "waiting"/"admitted" etc. even
+                          while offline). */}
+                      {isOnline && (
+                        <div title="Online" style={{ position: "absolute", bottom: -3, right: -3, width: 6, height: 6, borderRadius: "50%", background: GREEN, border: `1.5px solid ${G}` }} />
+                      )}
+                    </div>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <p style={{ color: "#fff", fontSize: 13, fontWeight: 600, margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {p.participant_name}{isMe && " (You)"}
@@ -1565,11 +1606,12 @@ export default function GeneralMusabaqahExamRoom() {
                     <button
                       onClick={() => micActionable && toggleRosterMic(p)}
                       disabled={!micActionable}
-                      title={isCurrent ? (micOn ? "Mute" : "Unmute") : "Only the participant on stage can use audio"}
+                      title={isMe ? (micOn ? "Mute yourself" : "Unmute yourself") : isJudge ? (micOn ? "Mute" : "Unmute") : "Mic status"}
                       style={{
                         background: "none", border: "none", padding: 6, borderRadius: 8,
                         cursor: micActionable ? "pointer" : "default",
-                        color: !isCurrent ? "rgba(255,255,255,0.2)" : micOn ? GREEN : RED,
+                        opacity: micActionable ? 1 : 0.4,
+                        color: micOn ? GREEN : RED,
                         display: "flex",
                       }}
                     >
