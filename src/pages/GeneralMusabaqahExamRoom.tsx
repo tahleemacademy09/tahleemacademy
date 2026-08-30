@@ -72,7 +72,20 @@ const BLUE = "#60A5FA";
 const GREEN = "#4ADE80";
 const RED  = "#F87171";
 
-const LK_OPTIONS = { dynacast: true, adaptiveStream: true, publishDefaults: { dtx: true, red: true } };
+// videoCaptureDefaults forces the browser to actually request a portrait
+// (9:16) camera stream and the front-facing lens. Without this, getUserMedia
+// falls back to a landscape default (usually 1280x720) regardless of how the
+// phone is being held, which is what read as "the camera looks sideways" —
+// the box around it was portrait, but the stream inside it wasn't.
+const LK_OPTIONS = {
+  dynacast: true,
+  adaptiveStream: true,
+  publishDefaults: { dtx: true, red: true },
+  videoCaptureDefaults: {
+    resolution: { width: 480, height: 854, frameRate: 24 },
+    facingMode: "user" as const,
+  },
+};
 
 const QSTATUS_COLORS: Record<string, string> = {
   not_asked: "rgba(255,255,255,0.15)",
@@ -942,6 +955,12 @@ export default function GeneralMusabaqahExamRoom() {
           one sticky unit so neither scrolls out of view — only the question/
           judging panel below them scrolls. ─────────────────────────────── */}
       <div style={{ position: "sticky", top: 0, zIndex: 25, background: G }}>
+      {/* Inner wrapper caps and centers the header + video on wide screens
+          (desktop) — matches the 720px cap already used by the question/
+          judging panel below, so the whole page reads as one centered
+          column instead of a header/video area stretched full-bleed across
+          a wide browser window while the content below it stays narrow. */}
+      <div style={{ maxWidth: 720, margin: "0 auto", width: "100%" }}>
       {/* Row 1 — kept to a single, never-wrapping line: back button, event
           title (truncates instead of wrapping), and just "Stage X/Y" (no
           stage name — that used to make this whole header wrap onto 2-3
@@ -1021,21 +1040,31 @@ export default function GeneralMusabaqahExamRoom() {
             options={LK_OPTIONS}
           >
             <RoomAudioRenderer />
-            {/* position:relative so the mic/camera icons (and now the
-                timer) can float inside the video box itself instead of
-                sitting as a row below it. Box is sized portrait (3:4) to
-                roughly match a phone front camera's stream, capped by
-                maxHeight at roughly half the screen — was 70vh (nearly the
-                whole screen), which pushed the question panel below the
-                fold; ~40vh leaves the other half for questions/judging.
-                Tile below uses object-fit:contain (not cover) — cover was
-                still cropping the feed to fill the box, which is why
-                someone had to lean back out of frame just to appear inside
-                it. Contain always shows the whole picture, letterboxing
-                rather than cropping when the stream's actual aspect ratio
-                doesn't exactly match the box. */}
-            <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", maxHeight: "40vh", borderRadius: 12, overflow: "hidden" }}>
-              <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} layout={viewLayout} />
+            {/* Sized from the HEIGHT down, not the width: height is a
+                definite value (a vh-based clamp) and width is derived from
+                it via aspectRatio, so the box is *always* a true portrait
+                (9:16) rectangle no matter how wide its parent is. The old
+                version set width:100% + aspectRatio + maxHeight together —
+                once maxHeight actually clamped the box (any screen wider
+                than it is tall, i.e. every desktop), the browser had no way
+                to shrink the width to match, so the box silently stopped
+                being portrait and stretched out sideways. Centered in a
+                flex row so it doesn't hug the left edge or stretch full-
+                width on larger screens; the cap grows a little on taller
+                viewports (desktop) for a bigger, nicer picture without ever
+                losing the portrait shape. Tile below uses object-fit:
+                contain (not cover) — cover was still cropping the feed to
+                fill the box, which is why someone had to lean back out of
+                frame just to appear inside it. Contain always shows the
+                whole picture, letterboxing rather than cropping when the
+                stream's actual aspect ratio doesn't exactly match the box. */}
+            <div style={{ display: "flex", justifyContent: "center" }}>
+              <div style={{
+                position: "relative", height: "min(48vh, 620px)", aspectRatio: "9 / 16",
+                maxWidth: "100%", borderRadius: 12, overflow: "hidden",
+                background: "#000", boxShadow: "0 8px 28px rgba(0,0,0,0.35)",
+              }}>
+                <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} layout={viewLayout} />
               {canPublish && (
                 <MediaControls
                   videoAllowed={videoAllowedForMe}
@@ -1057,6 +1086,7 @@ export default function GeneralMusabaqahExamRoom() {
               }}>
                 <Clock size={18} /> {String(mm).padStart(2, "0")}:{String(ss).padStart(2, "0")}
               </span>
+              </div>
             </div>
           </LiveKitRoom>
         ) : (
@@ -1071,6 +1101,7 @@ export default function GeneralMusabaqahExamRoom() {
         )}
       </div>
       )}
+      </div>
       </div>
 
       {/* ── Not started yet (Section 1): nobody's camera/mic connects and
@@ -1684,10 +1715,10 @@ function VideoStage({ canPublish, onStageUserId, layout = "grid" }: { canPublish
         <div style={{ position: "absolute", inset: 0 }}>
           <ParticipantTile participant={big.p} label={big.label} mirror={big.mirror} highlight={!!big.isOnStagePerson} />
         </div>
-        {/* aspectRatio was 4/3 (landscape) against a portrait phone-camera
-            stream, which cropped the corner tile hard. 3/4 matches the
-            source better. */}
-        <div style={{ position: "absolute", bottom: 10, right: 10, width: "28%", maxWidth: 140, aspectRatio: "3/4", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}>
+        {/* 9/16 to match the main tile and the actual portrait phone-camera
+            stream (previously 4/3, then 3/4 — both still cropped the corner
+            tile against a true portrait source). */}
+        <div style={{ position: "absolute", bottom: 10, right: 10, width: "26%", maxWidth: 120, aspectRatio: "9/16", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}>
           <ParticipantTile participant={small.p} label={small.label} mirror={small.mirror} highlight={!!small.isOnStagePerson} />
         </div>
       </div>
