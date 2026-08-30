@@ -48,7 +48,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Mic, MicOff, Video, VideoOff, Loader2, AlertTriangle, Play,
   CheckCircle2, XCircle, SkipForward, Save, Flag, Wifi, WifiOff,
-  ArrowLeft, Users, Clock, ScrollText, Menu, PhoneCall,
+  ArrowLeft, ArrowRight, Users, Clock, ScrollText, Menu, PhoneCall,
   TimerReset, Square, Trophy,
   Zap, Hand, Settings, MessageCircle, Send,
 } from "lucide-react";
@@ -162,6 +162,12 @@ export default function GeneralMusabaqahExamRoom() {
   // this change).
   const [activeSignal, setActiveSignal] = useState<{ kind: "error" | "stop"; id: number } | null>(null);
   const gmChannelRef = useRef<any>(null);
+  // Imperative bridge into whatever LiveKit local participant is currently
+  // connected, so code outside the LiveKitRoom tree (the roster drawer's own
+  // mic toggle) can flip the real mic the instant someone taps it, rather
+  // than only writing the DB flag and waiting for it to echo back through
+  // realtime. Populated by <MicBridge> below whenever the room is connected.
+  const localMicControlRef = useRef<((on: boolean) => void) | null>(null);
 
   // Who's actually got a live connection to this room right now (browser
   // tab open, realtime channel joined) — independent of exam status like
@@ -839,10 +845,23 @@ export default function GeneralMusabaqahExamRoom() {
   // remotely for moderation.
   const toggleRosterMic = async (p: any) => {
     const next = !(p.mic_on ?? false);
+    const isSelf = p.id === myParticipant?.id;
+    // Flip the actual LiveKit mic immediately instead of waiting on the DB
+    // round-trip through realtime — that round-trip still happens (below)
+    // and is what makes this reach the *other* side (a remote student the
+    // judge just muted), but for your own row it used to only update the
+    // roster badge and rely on the echo coming back before your mic really
+    // changed, which could lag or silently miss if realtime hiccuped. This
+    // is exactly the "I toggled it myself and it didn't actually work" gap.
+    if (isSelf) localMicControlRef.current?.(next);
     const { error } = await supabase.from("general_musabaqah_participants").update({ mic_on: next }).eq("id", p.id);
-    if (error) { toast({ title: "Could not update mic", description: error.message, variant: "destructive" }); return; }
+    if (error) {
+      if (isSelf) localMicControlRef.current?.(!next); // revert the instant local change
+      toast({ title: "Could not update mic", description: error.message, variant: "destructive" });
+      return;
+    }
     setRoster(r => r.map(x => x.id === p.id ? { ...x, mic_on: next } : x));
-    if (p.id === myParticipant?.id) toast({ title: next ? "Mic on" : "Mic off" });
+    if (isSelf) toast({ title: next ? "Mic on" : "Mic off" });
   };
 
   const sendChatMessage = async () => {
@@ -880,9 +899,14 @@ export default function GeneralMusabaqahExamRoom() {
     await loadAll();
   };
 
-  // Ends the whole competition (not just whoever is on stage): locks the
-  // event, publishes results/leaderboard, and drops the judge straight into
-  // the admin Results tab so scores + leaderboard are right there.
+  // Ends the whole competition (not just whoever is on stage). This used to
+  // publish results and boot everyone out of the room in the same instant —
+  // no ceremony, no announcement, just a redirect. Now it instead opens the
+  // in-room results announcement (event.status = "revealing"): everyone
+  // stays in the room and watches positions get called out one at a time,
+  // last place first, building up to the winner. Only endCeremony() below
+  // (after the winner is revealed) actually publishes results and moves
+  // everyone on.
   const finalizeEvent = async () => {
     if (!eventId || !isJudge) return;
     setFinalizingEvent(true);
@@ -906,14 +930,56 @@ export default function GeneralMusabaqahExamRoom() {
     }
 
     const { error } = await supabase.from("general_musabaqah_events").update({
-      status: "completed", results_visibility: "published", leaderboard_enabled: true, current_participant_id: null,
+      status: "revealing", reveal_index: 0, current_participant_id: null,
     }).eq("id", eventId);
     setFinalizingEvent(false);
-    if (error) { toast({ title: "Could not finalize competition", description: error.message, variant: "destructive" }); return; }
-    await logEvent("event_finalized", "Competition finalized by admin — results published");
+    if (error) { toast({ title: "Could not start the results announcement", description: error.message, variant: "destructive" }); return; }
+    await logEvent("results_ceremony_started", "Judge began the results announcement");
     setFinalizeEventOpen(false);
     setRosterOpen(false);
-    toast({ title: "Competition finalized — results published" });
+    toast({ title: "Announcing results…" });
+    // No navigate here on purpose — everyone (judge + students) transitions
+    // into the ceremony view in place via the realtime event-row update.
+  };
+
+  // Ranking for the results ceremony — everyone who actually finished,
+  // best score first. Recomputed from the same roster the Participants
+  // drawer already keeps live, so it updates the instant a straggler above
+  // gets swept into "finalized".
+  const rankedParticipants = useMemo(() => (
+    roster
+      .filter(p => ["completed", "finalized"].includes(p.status))
+      .slice()
+      .sort((a, b) => Number(b.total_score ?? 0) - Number(a.total_score ?? 0))
+  ), [roster]);
+
+  const showCeremony = event?.status === "revealing";
+  const ceremonyRevealIndex = Math.min(event?.reveal_index ?? 0, Math.max(rankedParticipants.length - 1, 0));
+  const ceremonyWinnerRevealed = rankedParticipants.length > 0 && ceremonyRevealIndex >= rankedParticipants.length - 1;
+
+  // Advances the ceremony to the next (better) position. Writing to the
+  // event row is all that's needed — every connected client (judge and
+  // every student) is already subscribed to it, so they all advance in
+  // lockstep off the same realtime update.
+  const revealNextPosition = async () => {
+    if (!isJudge || !eventId) return;
+    const next = Math.min((event?.reveal_index ?? -1) + 1, Math.max(rankedParticipants.length - 1, 0));
+    await supabase.from("general_musabaqah_events").update({ reveal_index: next }).eq("id", eventId);
+  };
+
+  // The real finish line: only after the winner has been announced does this
+  // actually publish results and let everyone move on to their own result /
+  // the leaderboard.
+  const endCeremony = async () => {
+    if (!eventId || !isJudge) return;
+    setFinalizingEvent(true);
+    const { error } = await supabase.from("general_musabaqah_events").update({
+      status: "completed", results_visibility: "published", leaderboard_enabled: true,
+    }).eq("id", eventId);
+    setFinalizingEvent(false);
+    if (error) { toast({ title: "Could not conclude the competition", description: error.message, variant: "destructive" }); return; }
+    await logEvent("event_finalized", "Competition finalized by admin — results published");
+    toast({ title: "Competition concluded — results published" });
     navigate(`/musabaqah/general/${eventId}?tab=results`);
   };
 
@@ -930,6 +996,41 @@ export default function GeneralMusabaqahExamRoom() {
     if (error) { toast({ title: "Could not save timer setting", description: error.message, variant: "destructive" }); return; }
     toast({ title: `Question timer set to ${seconds}s` });
     setSettingsOpen(false);
+  };
+
+  // NEW: unlike saveTimerSettings above (which only sets the template for
+  // whichever question starts *next*), this pushes a new value straight
+  // onto the clock that's actually running right now, for whoever is
+  // on stage — this is the "change it live, not just from the overview
+  // screen" behaviour.
+  const applyCurrentTimerNow = async (seconds: number) => {
+    if (!participant?.id || !Number.isFinite(seconds) || seconds < 0) return;
+    setSavingSettings(true);
+    setLocalTimer(seconds);
+    setTimerFrozen(false);
+    const { error } = await supabase.from("general_musabaqah_participants").update({ timer_remaining_seconds: seconds }).eq("id", participant.id);
+    setSavingSettings(false);
+    if (error) { toast({ title: "Could not update the running timer", description: error.message, variant: "destructive" }); return; }
+    await logEvent("timer_adjusted", `Judge set the live timer to ${seconds}s`);
+    toast({ title: `Timer set to ${seconds}s` });
+  };
+
+  // "Refresh timer" — resets the clock straight back to its full configured
+  // duration and clears any stuck/frozen state, so a judge can restart it
+  // from a clean slate mid-class if something glitched (a missed Stop, a
+  // dropped connection, a timer that never started). Available any time the
+  // competition is live, not only from the pre-class overview settings.
+  const refreshCurrentTimer = async () => {
+    if (!participant?.id) return;
+    const limit = stageProgress?.activeStage?.time_limit_seconds ?? event?.max_exam_time_seconds ?? 900;
+    setLocalTimer(limit);
+    setTimerFrozen(false);
+    setQuestionTimerActive(false);
+    if (questionTimerRef.current) clearInterval(questionTimerRef.current);
+    const { error } = await supabase.from("general_musabaqah_participants").update({ timer_remaining_seconds: limit, question_timer_started_at: null }).eq("id", participant.id);
+    if (error) { toast({ title: "Could not refresh timer", description: error.message, variant: "destructive" }); return; }
+    await logEvent("timer_refreshed", "Judge refreshed the timer to start it again");
+    toast({ title: "Timer refreshed" });
   };
 
   /* ── RENDER ───────────────────────────────────────────────────────── */
@@ -1186,7 +1287,7 @@ export default function GeneralMusabaqahExamRoom() {
           live video feed. Sits here, fully outside the live split below,
           now that camera + question share one gm-live-split unit — it
           can no longer sit between the two panes. ─────────────────────── */}
-      {!competitionLive && (
+      {!competitionLive && !showCeremony && event?.status !== "completed" && (
         <div style={{ padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, textAlign: "center" }}>
           {isJudge ? (
             <>
@@ -1207,6 +1308,39 @@ export default function GeneralMusabaqahExamRoom() {
         </div>
       )}
 
+      {/* ── Concluded: the judge is auto-navigated away by endCeremony, but
+          students stay on this page, so give them a real end state instead
+          of leaving them stuck on the old "waiting to start" spinner. ───── */}
+      {!competitionLive && !showCeremony && event?.status === "completed" && (
+        <div style={{ padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, textAlign: "center" }}>
+          <Trophy size={26} color={GOLD} />
+          <p style={{ color: "#fff", fontSize: 15, fontWeight: 700, margin: 0 }}>Competition concluded — results are published.</p>
+          <Button onClick={() => navigate("/student/musabaqah/general")} style={{ background: GOLD, color: G, fontWeight: 800 }}>
+            View Your Result
+          </Button>
+        </div>
+      )}
+
+
+      {/* ── Results ceremony (Finalize Competition lands here first): stays
+          in the room instead of booting everyone straight to a results
+          page. The judge calls out positions one at a time, last place
+          first, building up to the winner — everyone watches the same
+          reveal together via the event row's realtime updates. ─────────── */}
+      {showCeremony && (
+        <ResultsCeremony
+          ranked={rankedParticipants}
+          revealIndex={ceremonyRevealIndex}
+          isJudge={isJudge}
+          onRevealNext={revealNextPosition}
+          onEnd={endCeremony}
+          ending={finalizingEvent}
+          totalMarks={event?.total_marks}
+          eventTitle={event?.title}
+        />
+      )}
+
+
       {/* ── Live layout: camera pane + question pane, split so together
           they always fill exactly the rest of the screen below the
           header. Mobile stacks them (camera on top, question below);
@@ -1226,6 +1360,7 @@ export default function GeneralMusabaqahExamRoom() {
             options={LK_OPTIONS}
           >
             <RoomAudioRenderer />
+            <MicBridge registerRef={localMicControlRef} />
             {/* Fills the entire gm-video-pane (half the screen — top half on
                 mobile, left half on desktop). The grid split direction for
                 two on-stage cameras (columns on mobile, rows on desktop)
@@ -1782,14 +1917,14 @@ export default function GeneralMusabaqahExamRoom() {
       {/* ── Finalize whole competition dialog ─────────────────────── */}
       <Dialog open={finalizeEventOpen} onOpenChange={setFinalizeEventOpen}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Finalize the whole competition?</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Announce results?</DialogTitle></DialogHeader>
           <p style={{ color: "#6b7280", fontSize: 13 }}>
-            This ends the competition for everyone, locks all scores, and publishes the results and leaderboard to participants. This can't be undone from here.
+            This locks all scores and starts the results announcement in the room — positions get called out one at a time, last place first, up to the winner. Results only get published once you end it after announcing 1st place.
           </p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFinalizeEventOpen(false)}>Cancel</Button>
             <Button onClick={finalizeEvent} disabled={finalizingEvent} style={{ background: GOLD, color: G, fontWeight: 700 }}>
-              {finalizingEvent ? <Loader2 size={14} className="animate-spin mr-1" /> : <Trophy size={14} className="mr-1" />} Finalize & View Results
+              {finalizingEvent ? <Loader2 size={14} className="animate-spin mr-1" /> : <Trophy size={14} className="mr-1" />} Finalize & Announce Results
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2034,6 +2169,19 @@ function ParticipantTile({ participant, label, mirror, highlight }: { participan
   );
 }
 
+// Registers this connection's real setMicrophoneEnabled into a ref owned by
+// the parent page, so the roster drawer (which lives outside the LiveKitRoom
+// tree) can flip a mic instantly instead of only writing the DB and waiting
+// for the change to come back through realtime. Renders nothing.
+function MicBridge({ registerRef }: { registerRef: { current: ((on: boolean) => void) | null } }) {
+  const { localParticipant } = useLocalParticipant();
+  useEffect(() => {
+    registerRef.current = (on: boolean) => { localParticipant.setMicrophoneEnabled(on); };
+    return () => { registerRef.current = null; };
+  }, [localParticipant, registerRef]);
+  return null;
+}
+
 /* ── Mic/camera toggle — icon-only floating buttons that sit inside the
    video box itself (bottom-left corner) instead of a row underneath it, so
    they're quick to tap without taking up page real estate. Mirrors the
@@ -2093,6 +2241,100 @@ function MediaControls({ videoAllowed, videoOn, micAllowed, participantId }: { v
       <button onClick={toggleCam} disabled={!videoAllowed} aria-label={camOn ? "Turn camera off" : "Turn camera on"} style={iconBtn(camOn, !videoAllowed)}>
         {camOn ? <Video size={16} /> : <VideoOff size={16} />}
       </button>
+    </div>
+  );
+}
+
+function ordinal(n: number) {
+  const s = ["th", "st", "nd", "rd"], v = n % 100;
+  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
+}
+
+// Full-room results announcement shown after "Finalize Competition". Judge
+// calls positions one at a time, worst to best, so the winner lands last —
+// every connected client (judge + all students) renders off the same
+// event.reveal_index via realtime, so everyone sees the same position at
+// the same time.
+function ResultsCeremony({ ranked, revealIndex, isJudge, onRevealNext, onEnd, ending, totalMarks, eventTitle }: {
+  ranked: any[]; revealIndex: number; isJudge: boolean; onRevealNext: () => void; onEnd: () => void;
+  ending: boolean; totalMarks?: number | null; eventTitle?: string;
+}) {
+  const total = ranked.length;
+
+  if (total === 0) {
+    return (
+      <div style={{ padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, textAlign: "center" }}>
+        <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 14 }}>No finalized participants to announce.</p>
+        {isJudge && (
+          <Button onClick={onEnd} disabled={ending} style={{ background: GOLD, color: G, fontWeight: 800 }}>
+            {ending ? <Loader2 className="animate-spin mr-1" size={14} /> : <Trophy size={14} className="mr-1" />} End Competition
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  const idx = Math.max(total - 1 - revealIndex, 0); // index into `ranked` for the position currently on screen
+  const current = ranked[idx];
+  const rank = idx + 1; // 1-based position
+  const isWinner = rank === 1;
+  const alreadyAnnounced = ranked.slice(idx + 1); // worse positions, already called before this one
+
+  return (
+    <div style={{ padding: "28px 20px 44px", display: "flex", flexDirection: "column", alignItems: "center", gap: 16, textAlign: "center" }}>
+      <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, margin: 0, fontFamily: "'Amiri','Noto Naskh Arabic',serif" }}>بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</p>
+      <p style={{ color: GOLD, fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", margin: 0 }}>Results Announcement</p>
+      <h2 style={{ color: "#fff", fontSize: 15, margin: 0, fontWeight: 700 }}>{eventTitle}</h2>
+
+      <div style={{
+        marginTop: 6, padding: "24px 28px", borderRadius: 16, minWidth: 260,
+        background: isWinner ? "rgba(201,168,76,0.15)" : "rgba(255,255,255,0.04)",
+        border: `1px solid ${isWinner ? GOLD : "rgba(255,255,255,0.1)"}`,
+      }}>
+        {isWinner && <Trophy size={30} color={GOLD} style={{ marginBottom: 8 }} />}
+        <p style={{ color: "rgba(255,255,255,0.55)", fontSize: 13, margin: "0 0 4px", fontWeight: 600 }}>
+          {isWinner ? "In first place, by the tawfīq of Allah —" : `In ${ordinal(rank)} place —`}
+        </p>
+        <p style={{ color: "#fff", fontSize: 26, fontWeight: 800, margin: "0 0 8px" }}>{current.participant_name}</p>
+        <p style={{ color: GOLD, fontSize: 18, fontWeight: 700, margin: 0 }}>
+          {current.total_score}{totalMarks != null ? `/${totalMarks}` : ""} <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, fontWeight: 600 }}>marks</span>
+        </p>
+        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: "12px 0 0", fontStyle: "italic" }}>
+          {isWinner ? "بارك الله فيهم وتقبل منهم — may Allah bless and accept their effort" : "بارك الله فيهم — may Allah bless their effort"}
+        </p>
+      </div>
+
+      {alreadyAnnounced.length > 0 && (
+        <div style={{ marginTop: 6, width: "100%", maxWidth: 320 }}>
+          <p style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, margin: "0 0 6px" }}>Announced so far</p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {alreadyAnnounced.map(p => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "rgba(255,255,255,0.55)", padding: "4px 10px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
+                <span>{ordinal(ranked.indexOf(p) + 1)} — {p.participant_name}</span>
+                <span>{p.total_score}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isJudge ? (
+        <div style={{ marginTop: 16 }}>
+          {!isWinner ? (
+            <Button onClick={onRevealNext} style={{ background: GOLD, color: G, fontWeight: 800 }}>
+              Reveal Next Position <ArrowRight size={15} className="ml-1" />
+            </Button>
+          ) : (
+            <Button onClick={onEnd} disabled={ending} style={{ background: GOLD, color: G, fontWeight: 800 }}>
+              {ending ? <Loader2 className="animate-spin mr-1" size={14} /> : <Trophy size={14} className="mr-1" />} End Competition
+            </Button>
+          )}
+        </div>
+      ) : (
+        <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, marginTop: 16 }}>
+          {isWinner ? "Alhamdulillāh — the judge will conclude the competition shortly." : "Waiting for the judge to reveal the next position…"}
+        </p>
+      )}
     </div>
   );
 }
