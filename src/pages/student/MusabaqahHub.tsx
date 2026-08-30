@@ -13,7 +13,7 @@
 
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { Trophy, Mic, Zap, Users, Clock, Star, ChevronRight, Crown, BookOpen, Gavel } from "lucide-react";
+import { Trophy, Mic, Zap, Users, Clock, Star, ChevronRight, Crown, BookOpen, Gavel, Calendar } from "lucide-react";
 
 const G    = "#0f2d1f";
 const GM   = "#163d28";
@@ -107,6 +107,25 @@ const MusabaqahHub = () => {
       badgeBg:  "rgba(96,165,250,0.15)",
       border:   "1.5px solid rgba(96,165,250,0.3)",
       glow:     "rgba(96,165,250,0.2)",
+    },
+    {
+      id:       "hall-of-fame",
+      icon:     <Crown size={40} color={GOLD}/>,
+      emoji:    "👑",
+      title:    "Hall of Fame",
+      titleAr:  "قاعة المشاهير",
+      subtitle: "All-Time Musābaqah Standings",
+      desc:     "Combined results across every General Subject Musābaqah — total points, medals, and full event history.",
+      stats:    [
+        { icon:<Trophy size={12}/>,    label:"All-time standings" },
+        { icon:<Calendar size={12}/>,  label:"Event history" },
+      ],
+      route:    "/musabaqah/general/leaderboard",
+      accent:   GOLD,
+      badge:    "View Standings",
+      badgeBg:  "rgba(201,168,76,0.2)",
+      border:   `1.5px solid rgba(201,168,76,0.35)`,
+      glow:     "rgba(201,168,76,0.25)",
     },
   ];
 

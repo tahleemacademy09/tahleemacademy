@@ -163,6 +163,16 @@ export default function GeneralMusabaqahResult() {
                 </div>
               </div>
             )}
+
+            <div style={{ marginTop: 24, textAlign: "center" }}>
+              <Button
+                variant="outline"
+                onClick={() => navigate(`/student/musabaqah/general/${eventId}/leaderboard`)}
+                style={{ borderColor: "rgba(201,168,76,0.35)", color: GOLD, background: "transparent" }}
+              >
+                View Full Leaderboard →
+              </Button>
+            </div>
           </>
         )}
       </div>
