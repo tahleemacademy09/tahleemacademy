@@ -29,10 +29,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   LiveKitRoom, RoomAudioRenderer, useLocalParticipant,
-  useRemoteParticipants, VideoTrack,
+  useRemoteParticipants, useRoomContext, VideoTrack,
 } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { Track } from "livekit-client";
+import { Track, RoomEvent } from "livekit-client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -168,6 +168,19 @@ export default function GeneralMusabaqahExamRoom() {
   // than only writing the DB flag and waiting for it to echo back through
   // realtime. Populated by <MicBridge> below whenever the room is connected.
   const localMicControlRef = useRef<((on: boolean) => void) | null>(null);
+  // Same idea, but for muting/unmuting SOMEONE ELSE from the roster drawer.
+  // Until this existed, a remote mute only ever wrote general_musabaqah_
+  // participants.mic_on and waited for Postgres realtime to carry it back
+  // to that student's own tab, which re-applies it via MediaControls' own
+  // micAllowed effect — a real round trip (network latency, a backgrounded/
+  // throttled tab, a realtime hiccup) during which the judge keeps hearing
+  // full audio, unlike the instant, guaranteed delivery a LiveKit data-
+  // channel message gets. This mirrors the force_mute pattern already used
+  // by the regular classroom (ClassParticipants/AdminMuteListener) — send
+  // an immediate signal over the room's own data channel, DB write stays as
+  // the persisted source of truth for the roster UI.
+  const broadcastMuteRef = useRef<((targetUserId: string, muted: boolean) => void) | null>(null);
+
 
   // Who's actually got a live connection to this room right now (browser
   // tab open, realtime channel joined) — independent of exam status like
@@ -854,9 +867,14 @@ export default function GeneralMusabaqahExamRoom() {
     // changed, which could lag or silently miss if realtime hiccuped. This
     // is exactly the "I toggled it myself and it didn't actually work" gap.
     if (isSelf) localMicControlRef.current?.(next);
+    // For a REMOTE student, don't rely on realtime alone — send an instant
+    // data-channel signal too, so the mic actually cuts the moment the judge
+    // taps it instead of "whenever Postgres realtime gets around to it".
+    else if (p.user_id) broadcastMuteRef.current?.(p.user_id, !next);
     const { error } = await supabase.from("general_musabaqah_participants").update({ mic_on: next }).eq("id", p.id);
     if (error) {
       if (isSelf) localMicControlRef.current?.(!next); // revert the instant local change
+      else if (p.user_id) broadcastMuteRef.current?.(p.user_id, next); // revert the instant remote signal too
       toast({ title: "Could not update mic", description: error.message, variant: "destructive" });
       return;
     }
@@ -1361,6 +1379,7 @@ export default function GeneralMusabaqahExamRoom() {
           >
             <RoomAudioRenderer />
             <MicBridge registerRef={localMicControlRef} />
+            <RemoteMuteBridge broadcastRef={broadcastMuteRef} myUserId={user?.id} />
             {/* Fills the entire gm-video-pane (half the screen — top half on
                 mobile, left half on desktop). The grid split direction for
                 two on-stage cameras (columns on mobile, rows on desktop)
@@ -2179,6 +2198,55 @@ function MicBridge({ registerRef }: { registerRef: { current: ((on: boolean) => 
     registerRef.current = (on: boolean) => { localParticipant.setMicrophoneEnabled(on); };
     return () => { registerRef.current = null; };
   }, [localParticipant, registerRef]);
+  return null;
+}
+
+// Two jobs, both needed for a remote mute to actually cut audio instantly
+// instead of only ever changing once Postgres realtime echoes the mic_on
+// write back: (1) exposes a broadcast() into the ref the judge's roster
+// drawer calls, which sends a "force_mute"/"force_unmute" data-channel
+// message targeted at the muted student's user_id (their LiveKit identity —
+// musabaqah-livekit-token signs the JWT with sub: user.id); (2) every
+// client, including the one being muted, listens for that same message and
+// — only when it's actually addressed to *them* — flips their own real mic
+// right there, with no DB round trip in the loop at all. The DB write in
+// toggleRosterMic stays as the source of truth the roster badges read from;
+// this is purely the fast path so the audio itself doesn't lag behind it.
+function RemoteMuteBridge({
+  broadcastRef, myUserId,
+}: {
+  broadcastRef: { current: ((targetUserId: string, muted: boolean) => void) | null };
+  myUserId?: string | null;
+}) {
+  const { localParticipant } = useLocalParticipant();
+  const room = useRoomContext();
+
+  useEffect(() => {
+    broadcastRef.current = (targetUserId: string, muted: boolean) => {
+      try {
+        localParticipant.publishData(
+          new TextEncoder().encode(JSON.stringify({ type: muted ? "force_mute" : "force_unmute", target: targetUserId })),
+          { reliable: true },
+        );
+      } catch { /* best-effort — the DB write is still the fallback path */ }
+    };
+    return () => { broadcastRef.current = null; };
+  }, [localParticipant, broadcastRef]);
+
+  useEffect(() => {
+    if (!myUserId) return;
+    const onData = (payload: Uint8Array) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload));
+        if (msg.target !== myUserId) return;
+        if (msg.type === "force_mute")   localParticipant.setMicrophoneEnabled(false);
+        if (msg.type === "force_unmute") localParticipant.setMicrophoneEnabled(true);
+      } catch { /* not our message shape — ignore */ }
+    };
+    room.on(RoomEvent.DataReceived, onData);
+    return () => { room.off(RoomEvent.DataReceived, onData); };
+  }, [room, localParticipant, myUserId]);
+
   return null;
 }
 
