@@ -50,7 +50,7 @@ import {
   CheckCircle2, XCircle, SkipForward, Save, Flag, Wifi, WifiOff,
   ArrowLeft, Users, Clock, ScrollText, Menu, PhoneCall,
   TimerReset, Square, Trophy,
-  Zap, Hand, Settings,
+  Zap, Hand, Settings, MessageCircle, Send,
 } from "lucide-react";
 
 const PSTATUS_COLORS: Record<string, string> = {
@@ -170,6 +170,26 @@ export default function GeneralMusabaqahExamRoom() {
   // the Participants drawer.
   const [onlineIds, setOnlineIds] = useState<Set<string>>(new Set());
 
+  // Room-wide text chat — separate drawer from Participants. Loaded once
+  // in loadAll(), then kept live via a postgres_changes INSERT listener on
+  // the same gm-exam-{eventId} channel (see below). unreadChat only counts
+  // up while the drawer is closed, so people get a badge instead of
+  // needing to keep it open.
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState<any[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [sendingChat, setSendingChat] = useState(false);
+  const [unreadChat, setUnreadChat] = useState(0);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const chatOpenRef = useRef(false);
+  useEffect(() => { chatOpenRef.current = chatOpen; if (chatOpen) setUnreadChat(0); }, [chatOpen]);
+  // Auto-scroll to the newest message whenever the drawer is open and the
+  // list grows.
+  useEffect(() => {
+    if (!chatOpen) return;
+    chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight });
+  }, [chatOpen, chatMessages.length]);
+
   const [scoreDraft, setScoreDraft] = useState({ score: "", correctness: "correct", comment: "" });
   const [savingScore, setSavingScore] = useState(false);
 
@@ -283,6 +303,12 @@ export default function GeneralMusabaqahExamRoom() {
     setRoster(data || []);
   }, [eventId]);
 
+  const loadChatMessages = useCallback(async () => {
+    if (!eventId) return;
+    const { data } = await supabase.from("general_musabaqah_chat_messages").select("*").eq("event_id", eventId).order("created_at").limit(200);
+    setChatMessages(data || []);
+  }, [eventId]);
+
   const loadAll = useCallback(async () => {
     const ev = await loadEvent();
     const p  = await loadParticipant(ev);
@@ -292,8 +318,9 @@ export default function GeneralMusabaqahExamRoom() {
     await loadUsedQuestions(qs);
     await loadQueueCounts();
     await loadRoster();
+    await loadChatMessages();
     setLoading(false);
-  }, [loadEvent, loadParticipant, loadQuestions, loadStages, loadAnswers, loadUsedQuestions, loadQueueCounts, loadRoster]);
+  }, [loadEvent, loadParticipant, loadQuestions, loadStages, loadAnswers, loadUsedQuestions, loadQueueCounts, loadRoster, loadChatMessages]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -303,6 +330,16 @@ export default function GeneralMusabaqahExamRoom() {
     const ch = supabase.channel(`gm-exam-${eventId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_events", filter: `id=eq.${eventId}` }, () => loadAll())
       .on("postgres_changes", { event: "*", schema: "public", table: "general_musabaqah_participants", filter: `event_id=eq.${eventId}` }, () => loadAll())
+      // Chat: append new messages live instead of a full loadAll() reload
+      // (which would also needlessly re-fetch the last 200 messages on
+      // every keystroke-worth of chat activity). Dedup by id in case the
+      // sender's own optimistic path and the realtime echo both land.
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "general_musabaqah_chat_messages", filter: `event_id=eq.${eventId}` }, (payload: any) => {
+        const row = payload?.new;
+        if (!row) return;
+        setChatMessages(prev => prev.some(m => m.id === row.id) ? prev : [...prev, row]);
+        if (!chatOpenRef.current) setUnreadChat(n => n + 1);
+      })
       // Ephemeral Error/Stop flash — see activeSignal above. Broadcast (not
       // a DB table) since it's a live "everyone look now" cue, not state
       // that needs to persist or survive a refresh.
@@ -808,6 +845,19 @@ export default function GeneralMusabaqahExamRoom() {
     if (p.id === myParticipant?.id) toast({ title: next ? "Mic on" : "Mic off" });
   };
 
+  const sendChatMessage = async () => {
+    const text = chatInput.trim();
+    if (!text || !eventId || !user?.id || sendingChat) return;
+    setSendingChat(true);
+    const senderName = isJudge ? "Judge" : (myParticipant?.participant_name || "Participant");
+    const { error } = await supabase.from("general_musabaqah_chat_messages").insert({
+      event_id: eventId, sender_id: user.id, sender_name: senderName, sender_role: isJudge ? "judge" : "participant", message: text,
+    });
+    setSendingChat(false);
+    if (error) { toast({ title: "Message failed", description: error.message, variant: "destructive" }); return; }
+    setChatInput("");
+  };
+
   const submitError = async () => {
     await logEvent("error", errorForm.reason, { error_type: errorForm.type, notes: errorForm.notes, affected_question: currentQuestion?.id });
     setErrorOpen(false);
@@ -1115,6 +1165,14 @@ export default function GeneralMusabaqahExamRoom() {
             <Settings size={18} />
           </button>
         )}
+        <button onClick={() => setChatOpen(true)} aria-label="Chat" style={{ position: "relative", background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 }}>
+          <MessageCircle size={18} />
+          {unreadChat > 0 && (
+            <span style={{ position: "absolute", top: -4, right: -4, minWidth: 14, height: 14, padding: "0 3px", borderRadius: 7, background: GOLD, color: G, fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {unreadChat > 9 ? "9+" : unreadChat}
+            </span>
+          )}
+        </button>
         <button onClick={() => setRosterOpen(true)} aria-label="Participants" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex", flexShrink: 0 }}>
           <Menu size={20} />
         </button>
@@ -1668,6 +1726,56 @@ export default function GeneralMusabaqahExamRoom() {
               </Button>
             </div>
           )}
+        </SheetContent>
+      </Sheet>
+
+      {/* ── Chat drawer ──────────────────────────────────────────────
+          Room-wide text chat — everyone who's joined (judge + every
+          participant, regardless of stage) can read and post. Realtime
+          INSERT listener (see the gm-exam-{eventId} channel above) keeps
+          this live across every open tab. */}
+      <Sheet open={chatOpen} onOpenChange={setChatOpen}>
+        <SheetContent side="right" className="w-[300px] sm:w-[360px]" style={{ background: G, borderLeft: "1px solid rgba(255,255,255,0.08)", padding: 0, display: "flex", flexDirection: "column", height: "100dvh" }}>
+          <SheetHeader style={{ padding: "16px 16px 8px", flexShrink: 0 }}>
+            <SheetTitle style={{ color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
+              <MessageCircle size={16} color={GOLD} /> Chat
+            </SheetTitle>
+          </SheetHeader>
+          <div ref={chatScrollRef} style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "4px 12px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+            {chatMessages.length === 0 && (
+              <p style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, textAlign: "center", padding: 24 }}>No messages yet — say something.</p>
+            )}
+            {chatMessages.map(m => {
+              const mine = m.sender_id === user?.id;
+              return (
+                <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: mine ? "flex-end" : "flex-start" }}>
+                  <span style={{ fontSize: 10, color: m.sender_role === "judge" ? GOLD : "rgba(255,255,255,0.4)", marginBottom: 2, padding: "0 2px" }}>
+                    {mine ? "You" : m.sender_name}{m.sender_role === "judge" && !mine ? " · Judge" : ""}
+                  </span>
+                  <div style={{
+                    maxWidth: "80%", padding: "7px 11px", borderRadius: 12,
+                    background: mine ? "rgba(201,168,76,0.18)" : "rgba(255,255,255,0.06)",
+                    border: mine ? "1px solid rgba(201,168,76,0.35)" : "1px solid rgba(255,255,255,0.08)",
+                    color: "#fff", fontSize: 13, wordBreak: "break-word", whiteSpace: "pre-wrap",
+                  }}>
+                    {m.message}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid rgba(255,255,255,0.08)", flexShrink: 0 }}>
+            <Input
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }}
+              placeholder="Message the room…"
+              style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff" }}
+            />
+            <Button onClick={sendChatMessage} disabled={!chatInput.trim() || sendingChat} style={{ background: GOLD, color: G, flexShrink: 0, padding: "0 12px" }}>
+              <Send size={15} />
+            </Button>
+          </div>
         </SheetContent>
       </Sheet>
 
