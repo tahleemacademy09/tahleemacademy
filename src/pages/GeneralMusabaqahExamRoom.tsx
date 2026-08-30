@@ -880,7 +880,7 @@ export default function GeneralMusabaqahExamRoom() {
   const isDisconnected = participant?.status === "disconnected";
 
   return (
-    <div style={{ minHeight: "100vh", background: `linear-gradient(160deg, ${G} 0%, #0a1f12 60%, #050f09 100%)`, display: "flex", flexDirection: "column", fontFamily: "'Cairo', sans-serif" }}>
+    <div style={{ height: "100dvh", background: `linear-gradient(160deg, ${G} 0%, #0a1f12 60%, #050f09 100%)`, display: "flex", flexDirection: "column", fontFamily: "'Cairo', sans-serif", overflow: "hidden" }}>
       {/* Reveal animation for the picked question tile. Previously this was
           a CSS 3D flip (rotateY + backface-visibility) — unreliable in
           Android WebView, which is what read as "the tile just turns
@@ -924,23 +924,62 @@ export default function GeneralMusabaqahExamRoom() {
         }
         /* Two-camera video stage: split with a CSS grid so the divider
            direction can flip per screen size via a single media query
-           instead of separate JS layout branches. Desktop gets a vertical
-           split (two side-by-side columns, judge | participant) since
-           there's width to spare; mobile gets a horizontal split (stacked
-           rows) since phone screens are narrow but the video pane itself
-           is comfortably tall. */
+           instead of separate JS layout branches. Mobile gets a vertical
+           split (two side-by-side columns) since the camera pane is now a
+           half-screen-wide strip; desktop gets a horizontal split (stacked
+           rows) since the camera pane there is a half-screen-tall column
+           instead. */
         .gm-video-grid {
           display: grid;
-          grid-template-columns: 1fr 1fr;
-          grid-template-rows: 1fr;
+          grid-template-columns: 1fr;
+          grid-template-rows: 1fr 1fr;
           gap: 3px;
           width: 100%;
           height: 100%;
         }
         @media (max-width: 767px) {
           .gm-video-grid {
-            grid-template-columns: 1fr;
-            grid-template-rows: 1fr 1fr;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr;
+          }
+        }
+        /* Full-screen camera/question split. Mobile: stacked halves, camera
+           on top. Desktop: side-by-side halves, camera on the left,
+           question on the right (order follows DOM order — video pane
+           markup comes first — so no explicit left/right rule is needed,
+           just a direction flip). Root page height must be a real 100dvh
+           (not just min-height) for the 50%/flex-1 math below to resolve
+           against an actual bounded height instead of growing forever. */
+        .gm-live-split {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          min-height: 0;
+          width: 100%;
+        }
+        .gm-video-pane {
+          position: relative;
+          width: 100%;
+          height: 50%;
+          flex-shrink: 0;
+          overflow: hidden;
+          background: #000;
+        }
+        .gm-content-pane {
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+          height: 50%;
+          min-height: 0;
+          overflow: hidden;
+        }
+        @media (min-width: 768px) {
+          .gm-live-split {
+            flex-direction: row;
+          }
+          .gm-video-pane, .gm-content-pane {
+            width: 50%;
+            height: 100%;
           }
         }
       `}</style>
@@ -1034,15 +1073,45 @@ export default function GeneralMusabaqahExamRoom() {
         </button>
       </div>
       </div>
+      </div>
 
-      {/* Video area breaks out of the 720px header cap on purpose — full
-          page width so the two side-by-side camera tiles actually get to
-          use a wide desktop window instead of being squeezed into a narrow
-          centered column. */}
+      {/* ── Not started yet (Section 1): nobody's camera/mic connects and
+          no questions can be asked until the judge presses this. Everyone
+          who has navigated here (called or not) sees this instead of a
+          live video feed. Sits here, fully outside the live split below,
+          now that camera + question share one gm-live-split unit — it
+          can no longer sit between the two panes. ─────────────────────── */}
+      {!competitionLive && (
+        <div style={{ padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, textAlign: "center" }}>
+          {isJudge ? (
+            <>
+              <p style={{ color: "#fff", fontSize: 15, fontWeight: 700, margin: 0 }}>Everyone's in the room — start when ready.</p>
+              <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: 0, maxWidth: 320 }}>
+                Cameras and mics stay off for everyone until you press start.
+              </p>
+              <Button onClick={startCompetitionFromRoom} style={{ background: GOLD, color: G, fontWeight: 800 }}>
+                <Play size={16} className="mr-1.5" /> Start Competition
+              </Button>
+            </>
+          ) : (
+            <>
+              <Loader2 className="animate-spin" color={GOLD} size={22} />
+              <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, margin: 0 }}>Waiting for the admin to start the competition…</p>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Live layout: camera pane + question pane, split so together
+          they always fill exactly the rest of the screen below the
+          header. Mobile stacks them (camera on top, question below);
+          desktop places camera on the left, question on the right — see
+          .gm-live-split in the stylesheet above. ───────────────────────── */}
       {competitionLive && (
-      <div style={{ padding: "0 16px 16px" }}>
+      <div className="gm-live-split">
+      <div className="gm-video-pane">
         {lkError ? (
-          <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12, color: RED, fontSize: 13 }}>
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: GM, color: RED, fontSize: 13 }}>
             Video unavailable: {lkError}
           </div>
         ) : lkConnected ? (
@@ -1052,22 +1121,13 @@ export default function GeneralMusabaqahExamRoom() {
             options={LK_OPTIONS}
           >
             <RoomAudioRenderer />
-            {/* Full width, no centering wrapper: this is meant to be a real
-                top-half video pane (participant and judge side by side)
-                with the question/judging panel underneath as the bottom
-                half — not two small portrait cards floating in the middle
-                of the page. Height is a vh-based clamp so it scales with
-                the actual screen instead of being a fixed pixel strip; the
-                upper bound (620px) is generous specifically so it keeps
-                growing on taller/desktop viewports instead of staying
-                "shallow" once there's more vertical room to use. The grid
-                split direction (columns on desktop, rows on mobile) lives
-                in VideoStage/.gm-video-grid below. */}
+            {/* Fills the entire gm-video-pane (half the screen — top half on
+                mobile, left half on desktop). The grid split direction for
+                two on-stage cameras (columns on mobile, rows on desktop)
+                lives in VideoStage/.gm-video-grid below. */}
             <div style={{
-              position: "relative", width: "100%",
-              height: "clamp(240px, 46vh, 620px)",
-              borderRadius: 12, overflow: "hidden", background: "#000",
-              boxShadow: "0 8px 28px rgba(0,0,0,0.35)",
+              position: "relative", width: "100%", height: "100%",
+              overflow: "hidden", background: "#000",
             }}>
               <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} />
               {canPublish && (
@@ -1094,44 +1154,18 @@ export default function GeneralMusabaqahExamRoom() {
             </div>
           </LiveKitRoom>
         ) : (
-          <div style={{ height: 220, display: "flex", alignItems: "center", justifyContent: "center", background: GM, borderRadius: 12 }}>
+          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: GM }}>
             <Loader2 className="animate-spin" color={GOLD} size={24} />
           </div>
         )}
         {isOnStage && !videoAllowedForMe && (
-          <p style={{ color: "#FBBF24", fontSize: 12, marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
-            <VideoOff size={13} /> Your camera has been disabled by the admin for this turn.
+          <p style={{ position: "absolute", left: 8, right: 8, bottom: 8, color: "#FBBF24", fontSize: 11, margin: 0, display: "flex", alignItems: "center", gap: 6, background: "rgba(0,0,0,0.55)", padding: "4px 8px", borderRadius: 6, zIndex: 6 }}>
+            <VideoOff size={13} /> Camera disabled by admin for this turn.
           </p>
         )}
       </div>
-      )}
-      </div>
 
-      {/* ── Not started yet (Section 1): nobody's camera/mic connects and
-          no questions can be asked until the judge presses this. Everyone
-          who has navigated here (called or not) sees this instead of a
-          live video feed. ────────────────────────────────────────────── */}
-      {!competitionLive && (
-        <div style={{ padding: "40px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, textAlign: "center" }}>
-          {isJudge ? (
-            <>
-              <p style={{ color: "#fff", fontSize: 15, fontWeight: 700, margin: 0 }}>Everyone's in the room — start when ready.</p>
-              <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, margin: 0, maxWidth: 320 }}>
-                Cameras and mics stay off for everyone until you press start.
-              </p>
-              <Button onClick={startCompetitionFromRoom} style={{ background: GOLD, color: G, fontWeight: 800 }}>
-                <Play size={16} className="mr-1.5" /> Start Competition
-              </Button>
-            </>
-          ) : (
-            <>
-              <Loader2 className="animate-spin" color={GOLD} size={22} />
-              <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, margin: 0 }}>Waiting for the admin to start the competition…</p>
-            </>
-          )}
-        </div>
-      )}
-
+      <div className="gm-content-pane">
       {isJudge && competitionLive && !participant && (
         <div style={{ background: "rgba(201,168,76,0.12)", borderBottom: "1px solid rgba(201,168,76,0.3)", padding: "8px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <span style={{ color: GOLD, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
@@ -1159,8 +1193,6 @@ export default function GeneralMusabaqahExamRoom() {
         </div>
       )}
 
-      {competitionLive && (
-      <>
       {/* ── Control strip (Section 13) ──────────────────────────────
           Kept to two buttons for the judge mid-turn: Mistake and Stop both
           fire a full-screen colour+icon flash (yellow lightning / red
@@ -1184,7 +1216,7 @@ export default function GeneralMusabaqahExamRoom() {
           mistake → start the clock → stop" in one line.
           nowrap + overflow-x so they always sit on one line on mobile
           instead of wrapping to a second row. */}
-      <div style={{ display: "flex", gap: 8, padding: "0 16px 12px", flexWrap: "nowrap", overflowX: "auto" }}>
+      <div style={{ display: "flex", gap: 8, padding: "12px 16px 12px", flexWrap: "nowrap", overflowX: "auto", flexShrink: 0 }}>
         <Button size="sm" variant="outline" onClick={() => { sendSignal("error"); setErrorOpen(true); }} style={{ flexShrink: 0, background: "rgba(255,255,255,0.04)", color: "#FBBF24", borderColor: "rgba(251,191,36,0.4)" }}>
           <AlertTriangle size={14} className="mr-1" /> Mistake
         </Button>
@@ -1211,7 +1243,7 @@ export default function GeneralMusabaqahExamRoom() {
       </div>
 
       {/* ── Question / judging panel (Section 10-12) ──────────────── */}
-      <div style={{ flex: 1, padding: "0 16px 24px", maxWidth: 720, margin: "0 auto", width: "100%" }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 16px 24px", maxWidth: 720, margin: "0 auto", width: "100%" }}>
         {/* Navigator — only shows once a participant has actually been
             called onto stage, and only the CURRENTLY ACTIVE stage's tiles
             are shown. Earlier stages are done and hidden; later stages
@@ -1440,7 +1472,8 @@ export default function GeneralMusabaqahExamRoom() {
           <span>{queueCount.waiting} waiting · {queueCount.completed} completed</span>
         </div>
       </div>
-      </>
+      </div>
+      </div>
       )}
 
       {/* ── Pause dialog ───────────────────────────────────────────── */}
@@ -1719,10 +1752,12 @@ function VideoStage({ canPublish, onStageUserId }: { canPublish: boolean; onStag
   }
 
   // Grid split (see .gm-video-grid, defined once in the page's <style>
-  // block): vertical divider — two side-by-side columns — on desktop,
-  // horizontal divider — stacked rows — on mobile, purely via a media
-  // query, so this one markup works for both instead of needing separate
-  // JS layout branches.
+  // block): vertical divider — two side-by-side columns — on mobile
+  // (the camera pane is a half-screen-wide strip there), horizontal
+  // divider — stacked rows — on desktop (the camera pane is a
+  // half-screen-tall column there instead), purely via a media query, so
+  // this one markup works for both instead of needing separate JS layout
+  // branches.
   return (
     <div className="gm-video-grid">
       {tiles.map((t, i) => (
