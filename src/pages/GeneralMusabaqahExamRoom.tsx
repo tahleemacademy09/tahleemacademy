@@ -35,6 +35,7 @@ import "@livekit/components-styles";
 import { Track } from "livekit-client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -49,7 +50,7 @@ import {
   CheckCircle2, XCircle, SkipForward, Save, Flag, Wifi, WifiOff,
   ArrowLeft, Users, Clock, ScrollText, Menu, PhoneCall,
   LayoutGrid, Rows3, Columns2, TimerReset, Square, Trophy,
-  Zap, Hand,
+  Zap, Hand, Settings,
 } from "lucide-react";
 
 const PSTATUS_COLORS: Record<string, string> = {
@@ -122,6 +123,14 @@ export default function GeneralMusabaqahExamRoom() {
   // Whole-competition finalize (hamburger) — distinct from finalizeOpen,
   // which only finalizes whoever is currently on stage.
   const [finalizeEventOpen, setFinalizeEventOpen] = useState(false);
+  // Live-room timer settings — the per-question timer (question_time_seconds)
+  // previously could only be changed from the separate event setup admin
+  // page before the competition started. This lets the judge open it right
+  // here mid-room without leaving the exam room, and saves straight to the
+  // same event row / column that page uses.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const questionTimeInputRef = useRef<HTMLInputElement>(null);
   const [finalizingEvent, setFinalizingEvent]     = useState(false);
 
   // Live "signal" flash (Error / Stop) — broadcast to everyone in the room
@@ -797,6 +806,21 @@ export default function GeneralMusabaqahExamRoom() {
     navigate(`/musabaqah/general/${eventId}?tab=results`);
   };
 
+  // Saves the per-question timer straight from the live room. Same column
+  // (question_time_seconds) the pre-event admin settings page writes, so
+  // whichever one was used most recently wins — nothing else needs to
+  // change since the room already reads event.question_time_seconds live
+  // via the general_musabaqah_events realtime subscription.
+  const saveTimerSettings = async (seconds: number) => {
+    if (!eventId || !isJudge || !Number.isFinite(seconds) || seconds <= 0) return;
+    setSavingSettings(true);
+    const { error } = await supabase.from("general_musabaqah_events").update({ question_time_seconds: seconds }).eq("id", eventId);
+    setSavingSettings(false);
+    if (error) { toast({ title: "Could not save timer setting", description: error.message, variant: "destructive" }); return; }
+    toast({ title: `Question timer set to ${seconds}s` });
+    setSettingsOpen(false);
+  };
+
   /* ── RENDER ───────────────────────────────────────────────────────── */
   if (loading) {
     return <div style={{ minHeight: "100%", background: G, display: "flex", justifyContent: "center", alignItems: "center" }}><Loader2 className="animate-spin" color={GOLD} size={28} /></div>;
@@ -963,6 +987,11 @@ export default function GeneralMusabaqahExamRoom() {
               <DropdownMenuItem onClick={() => setViewLayout("spotlight_admin")}><Rows3 size={14} className="mr-2" /> Spotlight admin</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          {isJudge && (
+            <button onClick={() => setSettingsOpen(true)} aria-label="Timer settings" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex" }}>
+              <Settings size={18} />
+            </button>
+          )}
           <button onClick={() => setRosterOpen(true)} aria-label="Participants" style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", padding: 2, display: "flex" }}>
             <Menu size={20} />
           </button>
@@ -985,17 +1014,14 @@ export default function GeneralMusabaqahExamRoom() {
             <RoomAudioRenderer />
             {/* position:relative so the mic/camera icons can float inside
                 the video box itself instead of sitting as a row below it.
-                Was a fixed height:300 on a full-width box — since phone
-                front cameras publish a portrait (taller-than-wide) stream,
-                stretching that into a wide/short landscape box and
-                object-fit:cover'ing it cropped away most of the top and
-                bottom, which read as "too zoomed in" and "cuts off the
-                lower part". Sizing the box itself as portrait (3:4) means
-                cover no longer has to crop nearly as much, so someone
-                sitting at a normal arm's-length distance shows head-to-
-                chest instead of a tight, cropped close-up. Capped by
-                maxHeight so it doesn't get excessively tall on wide
-                screens/tablets. */}
+                Box is sized portrait (3:4, capped by maxHeight) to roughly
+                match a phone front camera's stream. Tile below now uses
+                object-fit:contain (not cover) — cover was still cropping
+                the feed to fill the box, which is why someone had to lean
+                back out of frame just to appear inside it. Contain always
+                shows the whole picture, letterboxing rather than cropping
+                when the stream's actual aspect ratio doesn't exactly match
+                the box. */}
             <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", maxHeight: "70vh", borderRadius: 12, overflow: "hidden" }}>
               <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} layout={viewLayout} />
               {canPublish && (
@@ -1433,19 +1459,26 @@ export default function GeneralMusabaqahExamRoom() {
           </ScrollArea>
           {/* Ends the whole event, not just one participant — kept at the
               bottom, separated from the roster list, since it's the most
-              consequential action in this drawer. End Turn sits beside it:
+              consequential action in this drawer. End Turn sits above it:
               same finalize dialog Stop used to open, now reachable here
               instead, for cutting the on-stage participant's turn short
               manually (disqualification, early stop, etc.) instead of
-              only ever finalizing automatically once every stage is done. */}
+              only ever finalizing automatically once every stage is done.
+              Stacked full-width (not side by side) — the drawer is only
+              300px wide, and "Finalize Competition" alongside "End Turn"
+              in a flex row had no room to fit: each button defaults to a
+              min-width based on its own content, so the row simply grew
+              past the drawer's edge and the label ran off-screen instead
+              of wrapping or shrinking. Full-width stacked rows have no
+              such squeeze. */}
           {isJudge && (
-            <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 8 }}>
+            <div style={{ padding: 12, borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: 8 }}>
               {["in_progress", "paused"].includes(participant?.status) && (
-                <Button onClick={() => { setRosterOpen(false); setFinalizeOpen(true); }} variant="outline" style={{ flex: 1, borderColor: "rgba(248,113,113,0.4)", color: RED, fontWeight: 700 }}>
+                <Button onClick={() => { setRosterOpen(false); setFinalizeOpen(true); }} variant="outline" style={{ width: "100%", borderColor: "rgba(248,113,113,0.4)", color: RED, fontWeight: 700 }}>
                   <Square size={15} className="mr-1.5" /> End Turn
                 </Button>
               )}
-              <Button onClick={() => setFinalizeEventOpen(true)} style={{ flex: 1, background: GOLD, color: G, fontWeight: 800 }}>
+              <Button onClick={() => setFinalizeEventOpen(true)} style={{ width: "100%", background: GOLD, color: G, fontWeight: 800 }}>
                 <Trophy size={15} className="mr-1.5" /> Finalize Competition
               </Button>
             </div>
@@ -1464,6 +1497,36 @@ export default function GeneralMusabaqahExamRoom() {
             <Button variant="outline" onClick={() => setFinalizeEventOpen(false)}>Cancel</Button>
             <Button onClick={finalizeEvent} disabled={finalizingEvent} style={{ background: GOLD, color: G, fontWeight: 700 }}>
               {finalizingEvent ? <Loader2 size={14} className="animate-spin mr-1" /> : <Trophy size={14} className="mr-1" />} Finalize & View Results
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Live timer settings dialog ────────────────────────────── */}
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Timer settings</DialogTitle></DialogHeader>
+          <div style={{ display: "grid", gap: 6 }}>
+            <label style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Per-question time limit (seconds)</label>
+            <Input
+              key={event?.question_time_seconds}
+              ref={questionTimeInputRef}
+              type="number" min={5}
+              defaultValue={event?.question_time_seconds ?? 60}
+              onKeyDown={e => { if (e.key === "Enter") saveTimerSettings(Number(questionTimeInputRef.current?.value)); }}
+            />
+            <p style={{ color: "#6b7280", fontSize: 12, margin: 0 }}>
+              How long a participant has to answer once you start their question timer. Takes effect on the next question started — it doesn't change a timer already running.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSettingsOpen(false)}>Cancel</Button>
+            <Button
+              disabled={savingSettings}
+              onClick={() => saveTimerSettings(Number(questionTimeInputRef.current?.value))}
+              style={{ background: GOLD, color: G, fontWeight: 700 }}
+            >
+              {savingSettings ? <Loader2 size={14} className="animate-spin mr-1" /> : <TimerReset size={14} className="mr-1" />} Save
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1599,7 +1662,7 @@ function ParticipantTile({ participant, label, mirror, highlight }: { participan
       {camPub?.track ? (
         <VideoTrack
           trackRef={{ participant, source: Track.Source.Camera, publication: camPub }}
-          style={{ width: "100%", height: "100%", objectFit: "cover", transform: mirror ? "scaleX(-1)" : "none" }}
+          style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000", transform: mirror ? "scaleX(-1)" : "none" }}
         />
       ) : (
         <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Camera off</div>
