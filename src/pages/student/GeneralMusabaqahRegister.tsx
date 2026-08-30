@@ -30,7 +30,7 @@ import { getCompetitionKickoffMs, getRegistrationCloseMs } from "@/lib/musabaqah
 import BigCountdown from "@/components/musabaqah/BigCountdown";
 import {
   BookOpen, Calendar, Loader2, CheckCircle2, Clock3, XCircle,
-  KeyRound, Copy, ArrowRight, ArrowLeft,
+  KeyRound, Copy, ArrowRight, ArrowLeft, Trophy,
 } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -87,7 +87,7 @@ export default function GeneralMusabaqahRegister() {
     const { data: ev } = await supabase
       .from("general_musabaqah_events")
       .select("id,title,subject,topic,status,competition_date,start_time,target_level,instructions,registration_closes_at")
-      .in("status", ["registration_open", "registration_closed", "in_progress", "paused", "completed"])
+      .in("status", ["registration_open", "registration_closed", "in_progress", "paused", "revealing", "completed"])
       .order("competition_date", { ascending: true });
     setEvents((ev as GMEvent[]) || []);
 
@@ -247,13 +247,33 @@ export default function GeneralMusabaqahRegister() {
                         "completed"). Until then, a finished participant
                         stays able to rejoin the live room to watch the rest
                         of the competition; only after finalization do they
-                        get "View Result" instead. */}
+                        get "View Result" instead.
+
+                        "revealing" is the live results-announcement ceremony
+                        (positions called out worst-to-best in the room,
+                        right before the admin presses the final "End" /
+                        conclude button). It is deliberately checked BEFORE
+                        the reg-status branches below so nobody — admitted,
+                        completed, whatever — gets a stale "Watch Live Class"
+                        / "Enter Room" label while the ceremony is live; and
+                        it is checked before ev.status === "completed" so
+                        results/leaderboard never leak early. */}
+                    {(reg?.status === "completed" || reg?.status === "admitted") && ev.status === "revealing" && (
+                      <div style={{ display: "grid", gap: 10 }}>
+                        <Badge style={{ background: "rgba(201,168,76,0.18)", color: GOLD, border: "none", width: "fit-content" }}>
+                          <Trophy size={11} className="mr-1" /> Results being announced live
+                        </Badge>
+                        <Button onClick={() => navigate(`/musabaqah/general/${ev.id}/exam`)} style={{ background: GOLD, color: G, fontWeight: 700 }}>
+                          Join Results Ceremony <ArrowRight size={15} className="ml-1" />
+                        </Button>
+                      </div>
+                    )}
                     {reg?.status === "completed" && ev.status === "completed" && (
                       <Button onClick={() => navigate(`/student/musabaqah/general/${ev.id}/result`)} style={{ background: GOLD, color: G, fontWeight: 700 }}>
                         <CheckCircle2 size={14} className="mr-1" /> View Result
                       </Button>
                     )}
-                    {reg?.status === "completed" && ev.status !== "completed" && (
+                    {reg?.status === "completed" && ev.status !== "completed" && ev.status !== "revealing" && (
                       <div style={{ display: "grid", gap: 10 }}>
                         <Badge style={{ background: "rgba(74,222,128,0.15)", color: "#4ADE80", border: "none", width: "fit-content" }}>
                           <CheckCircle2 size={11} className="mr-1" /> Your turn is done
@@ -263,7 +283,7 @@ export default function GeneralMusabaqahRegister() {
                         </Button>
                       </div>
                     )}
-                    {reg?.status === "admitted" && (
+                    {reg?.status === "admitted" && ev.status !== "revealing" && (
                       <div style={{ display: "grid", gap: 10 }}>
                         <Badge style={{ background: "rgba(74,222,128,0.15)", color: "#4ADE80", border: "none", width: "fit-content" }}>
                           <CheckCircle2 size={11} className="mr-1" /> Admitted
