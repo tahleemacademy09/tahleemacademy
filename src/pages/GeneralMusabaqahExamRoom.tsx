@@ -375,22 +375,34 @@ export default function GeneralMusabaqahExamRoom() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [participant?.status, participant?.id, participant?.current_question_id, questionTimerActive, timerFrozen]);
 
-  /* ── PER-QUESTION TIMER (Section 4/5 of the fix request) ─────────────
+  /* ── PER-QUESTION TIMER (server-synced) ────────────────────────────
      Resets every time a new question is revealed (or cleared): the clock
-     starts paused so the judge can read the question out loud, and the
+     starts idle so the judge can read the question out loud, and the
      flip-reveal replaces the fragile CSS 3D flip with a plain timed swap
-     from "big number" to "question card". */
+     from "big number" to "question card".
+
+     The countdown itself is now driven by participant.question_timer_
+     started_at — a real timestamp written to the DB the moment the judge
+     presses "Start Timer" — instead of a boolean that only ever lived in
+     the judge's own browser tab. Every client in the room (judge, the
+     on-stage participant, spectators) is already subscribed to
+     participant-row changes for other things (current question, status,
+     etc.), so the same realtime update that carries the new timestamp is
+     what makes the countdown start ticking in sync everywhere at once,
+     not just for whoever tapped the button. */
   const currentQuestionIdForTimer = participant?.current_question_id ?? null;
+  const questionDurationSeconds = event?.question_time_seconds ?? 60;
+  const timerStartedAtMs = participant?.question_timer_started_at
+    ? new Date(participant.question_timer_started_at).getTime()
+    : null;
+
   useEffect(() => {
-    setQuestionTimerActive(false);
     setTimeUpFlash(false);
     setRevealedQuestion(false);
-    if (questionTimerRef.current) clearInterval(questionTimerRef.current);
-    if (!currentQuestionIdForTimer) { setQuestionTimeLeft(null); return; }
-    setQuestionTimeLeft(event?.question_time_seconds ?? 60);
+    if (!currentQuestionIdForTimer) return;
     const t = setTimeout(() => setRevealedQuestion(true), 550);
     return () => clearTimeout(t);
-  }, [currentQuestionIdForTimer]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentQuestionIdForTimer]);
 
   const playTick = useCallback((freq: number) => {
     try {
@@ -407,28 +419,39 @@ export default function GeneralMusabaqahExamRoom() {
     } catch { /* audio unavailable — non-fatal */ }
   }, []);
 
+  // Recomputed from wall-clock elapsed time against timerStartedAtMs each
+  // tick (rather than decrementing a counter), so every device converges
+  // on the same remaining seconds regardless of small network/render
+  // delays in when each one actually received the started_at update.
+  const lastTickLeftRef = useRef<number | null>(null);
   useEffect(() => {
-    if (!questionTimerActive) { if (questionTimerRef.current) clearInterval(questionTimerRef.current); return; }
-    questionTimerRef.current = setInterval(() => {
-      setQuestionTimeLeft(prev => {
-        if (prev === null) return prev;
-        const next = prev - 1;
-        if (next >= 1 && next <= 3) playTick(next === 1 ? 440 : 880); // tik-tak on 3, 2, 1
-        if (next <= 0) {
-          setTimeUpFlash(true);
-          setQuestionTimerActive(false);
-          return 0;
-        }
-        return next;
-      });
-    }, 1000);
-    return () => { if (questionTimerRef.current) clearInterval(questionTimerRef.current); };
-  }, [questionTimerActive, playTick]);
-
-  const startQuestionTimer = () => {
-    if (!currentQuestionIdForTimer || questionTimerActive || (questionTimeLeft ?? 0) <= 0) return;
+    if (questionTimerRef.current) clearInterval(questionTimerRef.current);
+    if (!currentQuestionIdForTimer) { setQuestionTimerActive(false); setQuestionTimeLeft(null); return; }
+    if (!timerStartedAtMs) { setQuestionTimerActive(false); setQuestionTimeLeft(questionDurationSeconds); return; }
+    lastTickLeftRef.current = null;
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - timerStartedAtMs) / 1000);
+      const left = Math.max(0, questionDurationSeconds - elapsed);
+      setQuestionTimeLeft(left);
+      if (left !== lastTickLeftRef.current && left >= 1 && left <= 3) playTick(left === 1 ? 440 : 880); // tik-tak on 3, 2, 1
+      lastTickLeftRef.current = left;
+      if (left <= 0) {
+        setTimeUpFlash(true);
+        setQuestionTimerActive(false);
+        if (questionTimerRef.current) clearInterval(questionTimerRef.current);
+      }
+    };
     setQuestionTimerActive(true);
-    logEvent("question_timer_started", "Judge started the per-question timer — participant may answer now");
+    tick();
+    questionTimerRef.current = setInterval(tick, 1000);
+    return () => { if (questionTimerRef.current) clearInterval(questionTimerRef.current); };
+  }, [currentQuestionIdForTimer, timerStartedAtMs, questionDurationSeconds]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const startQuestionTimer = async () => {
+    if (!currentQuestionIdForTimer || questionTimerActive || (questionTimeLeft ?? 0) <= 0 || !participant?.id) return;
+    await supabase.from("general_musabaqah_participants").update({ question_timer_started_at: new Date().toISOString() }).eq("id", participant.id);
+    await logEvent("question_timer_started", "Judge started the per-question timer — participant may answer now");
+    loadAll();
   };
 
   /* ── JUDGE ACTIONS ───────────────────────────────────────────────── */
@@ -504,15 +527,17 @@ export default function GeneralMusabaqahExamRoom() {
   const handleStop = () => {
     sendSignal("stop");
     setTimerFrozen(true);
-    // Also kill the per-question timer so it can't keep silently ticking
-    // down in the background after Stop — both clocks now halt together.
+    // Also kill the per-question timer — locally right away for the judge's
+    // own screen, and by clearing question_timer_started_at in the DB so
+    // the participant's and any spectator's screens stop counting too,
+    // not just the judge's.
     setQuestionTimerActive(false);
     if (questionTimerRef.current) clearInterval(questionTimerRef.current);
     const nextStage = stageProgress ? stages[stageProgress.activeIndex + 1] : null;
     const resetLimit = nextStage?.time_limit_seconds ?? event?.max_exam_time_seconds ?? 900;
     setLocalTimer(resetLimit);
     if (participant?.id) {
-      supabase.from("general_musabaqah_participants").update({ timer_remaining_seconds: resetLimit }).eq("id", participant.id);
+      supabase.from("general_musabaqah_participants").update({ timer_remaining_seconds: resetLimit, question_timer_started_at: null }).eq("id", participant.id);
     }
   };
 
