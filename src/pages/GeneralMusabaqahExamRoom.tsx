@@ -73,24 +73,23 @@ const GREEN = "#4ADE80";
 const RED  = "#F87171";
 
 // videoCaptureDefaults forces the browser to actually request a portrait
-// (9:16) camera stream and the front-facing lens. Without this, getUserMedia
-// falls back to a landscape default (usually 1280x720) regardless of how the
-// phone is being held, which is what read as "the camera looks sideways" —
-// the box around it was portrait, but the stream inside it wasn't.
-// `resolution` alone is only a hint (ideal, not exact) — plenty of Android
-// front cameras will silently ignore a 480x854 "ideal" ask and hand back
-// whatever landscape mode they default to, which is what still shows up
-// sideways/letterboxed in the tile. Pinning aspectRatio as exact-as-possible
-// makes the browser reject/reshape non-portrait candidates instead of just
-// preferring them.
+// camera stream and the front-facing lens, so the feed isn't landscape
+// regardless of how the phone is held. A previous version of this asked
+// for a tight 9:16 (480x854) ratio, which on most Android front cameras
+// isn't a native sensor mode — the driver satisfies it by digitally
+// cropping the sensor's wider natural field of view down to that narrow
+// strip, which is what showed up as an extreme, chest-and-forehead-cutting
+// zoom on the self-view. 3:4 (480x640) is a gentler portrait ratio that
+// most front cameras support natively without cropping in, so more of the
+// person (face down to chest) stays in frame while still being portrait
+// rather than landscape.
 const LK_OPTIONS = {
   dynacast: true,
   adaptiveStream: true,
   publishDefaults: { dtx: true, red: true },
   videoCaptureDefaults: {
-    resolution: { width: 480, height: 854, frameRate: 24 },
+    resolution: { width: 480, height: 640, frameRate: 24 },
     facingMode: "user" as const,
-    aspectRatio: 9 / 16,
   },
 };
 
@@ -1837,15 +1836,15 @@ function ParticipantTile({ participant, label, mirror, highlight }: { participan
       {camPub?.track ? (
         <VideoTrack
           trackRef={{ participant, source: Track.Source.Camera, publication: camPub }}
-          /* object-fit: cover, not contain — contain was letterboxing hard
-             whenever a tile's stream didn't exactly match the cell's shape
-             (e.g. a camera that ignored the portrait capture request below
-             and published landscape), which is what showed up as thick
-             black bars and the feed only filling part of the frame. Cover
-             always fills the tile; the capture-side aspectRatio constraint
-             (see LK_OPTIONS) is what keeps cover's crop minimal instead of
-             cutting someone's face off. */
-          style={{ width: "100%", height: "100%", objectFit: "cover", background: "#000", transform: mirror ? "scaleX(-1)" : "none" }}
+          /* object-fit: contain — cover was cropping in tight enough to cut
+             off the top of the head and the chin, since "fill the tile
+             completely" and "keep the whole person in frame while they're
+             just holding the phone up naturally" pull in opposite
+             directions. Contain always shows the full picture (face down
+             to chest) at its natural size; the gentler 3:4 capture ratio
+             in LK_OPTIONS keeps any leftover letterboxing minimal since it
+             already roughly matches the tile's shape. */
+          style={{ width: "100%", height: "100%", objectFit: "contain", background: "#000", transform: mirror ? "scaleX(-1)" : "none" }}
         />
       ) : (
         <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>Camera off</div>
