@@ -352,15 +352,17 @@ export default function GeneralMusabaqahExamRoom() {
   }, [participant?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    // Pause the overall clock while a question is up on screen but the judge
-    // hasn't pressed "Start Timer" yet (the "read the question aloud" gap) —
-    // otherwise the participant's exam time bleeds away during a phase they
-    // aren't even allowed to answer in yet. It resumes the instant the judge
-    // starts the per-question timer, and keeps running normally whenever no
-    // question is currently up (e.g. picking a tile). timerFrozen is the
-    // Stop button's manual override on top of all that.
-    const waitingToStart = !!participant?.current_question_id && !questionTimerActive;
-    if (participant?.status !== "in_progress" || waitingToStart || timerFrozen) { if (timerRef.current) clearInterval(timerRef.current); return; }
+    // The visible clock is now fully tied to the per-question timer: it
+    // never runs on its own just because the participant is "in_progress".
+    // It only counts down while the judge has actually pressed "Start
+    // Timer" for the question currently on screen (questionTimerActive) —
+    // not while a question is being read aloud, not while the participant
+    // is picking a tile, and not at any other idle moment. It stops the
+    // instant the per-question timer stops, whether that's because time
+    // ran out (questionTimerActive flips false on its own) or because the
+    // judge pressed Stop (timerFrozen, set by handleStop below, which also
+    // kills questionTimerActive so both clocks halt together).
+    if (participant?.status !== "in_progress" || !questionTimerActive || timerFrozen) { if (timerRef.current) clearInterval(timerRef.current); return; }
     timerRef.current = setInterval(() => {
       setLocalTimer(prev => {
         const next = Math.max(0, (prev ?? 0) - 1);
@@ -475,6 +477,11 @@ export default function GeneralMusabaqahExamRoom() {
   // they have as many MARKED answers from it as its question_count target.
   // activeIndex points at the first not-yet-done stage; index === stages.length
   // means every configured stage is complete (only ungrouped questions, if any, remain).
+  // Each stage offers a bank of question tiles (question_count, set by the
+  // admin) to pick from, but the participant only ever answers ONE of them
+  // per stage — picking one, having the judge mark it, and moving on is
+  // what completes the stage, regardless of how many tiles were on offer.
+  const QUESTIONS_PER_STAGE = 1;
   const stageProgress = useMemo(() => {
     if (!stages.length) return null;
     const markedByStage = new Map<string, number>();
@@ -482,7 +489,7 @@ export default function GeneralMusabaqahExamRoom() {
       const q = questions.find(qq => qq.id === a.question_id);
       if (q?.stage_id) markedByStage.set(q.stage_id, (markedByStage.get(q.stage_id) || 0) + 1);
     });
-    let activeIndex = stages.findIndex(s => (markedByStage.get(s.id) || 0) < s.question_count);
+    let activeIndex = stages.findIndex(s => (markedByStage.get(s.id) || 0) < QUESTIONS_PER_STAGE);
     if (activeIndex === -1) activeIndex = stages.length;
     return { markedByStage, activeIndex, activeStage: stages[activeIndex] ?? null };
   }, [stages, answers, questions]);
@@ -497,6 +504,10 @@ export default function GeneralMusabaqahExamRoom() {
   const handleStop = () => {
     sendSignal("stop");
     setTimerFrozen(true);
+    // Also kill the per-question timer so it can't keep silently ticking
+    // down in the background after Stop — both clocks now halt together.
+    setQuestionTimerActive(false);
+    if (questionTimerRef.current) clearInterval(questionTimerRef.current);
     const nextStage = stageProgress ? stages[stageProgress.activeIndex + 1] : null;
     const resetLimit = nextStage?.time_limit_seconds ?? event?.max_exam_time_seconds ?? 900;
     setLocalTimer(resetLimit);
@@ -639,11 +650,27 @@ export default function GeneralMusabaqahExamRoom() {
 
     const { data: allScores } = await supabase.from("general_musabaqah_scores").select("score").eq("participant_id", participant.id);
     const total = (allScores || []).reduce((s, r) => s + Number(r.score), 0);
-    await supabase.from("general_musabaqah_participants").update({ total_score: total, current_question_id: null }).eq("id", participant.id);
+    // Note: current_question_id is deliberately NOT cleared here anymore.
+    // The question (now marked) stays on screen and the tile grid stays
+    // hidden until the judge explicitly taps "Next" (advanceAfterMark) —
+    // that's the only thing that reveals the next stage's tiles now,
+    // instead of them reappearing the instant a score is saved.
+    await supabase.from("general_musabaqah_participants").update({ total_score: total }).eq("id", participant.id);
 
     await logEvent("score_saved", `Score ${scoreNum}/${currentQuestion.marks} for "${currentQuestion.question_text.slice(0, 40)}"`);
     setSavingScore(false);
     toast({ title: "Score saved" });
+    loadAll();
+  };
+
+  // Judge-only: advances past the just-marked question once they're ready.
+  // Clearing current_question_id is what reveals the tile grid again —
+  // by then stageProgress has already recomputed off the freshly marked
+  // answer, so the grid that appears is the NEXT stage's, in sequence.
+  const advanceAfterMark = async () => {
+    if (!participant) return;
+    await supabase.from("general_musabaqah_participants").update({ current_question_id: null }).eq("id", participant.id);
+    await logEvent("advanced", "Judge moved on after recording the score");
     loadAll();
   };
 
@@ -892,7 +919,7 @@ export default function GeneralMusabaqahExamRoom() {
           <span style={{ display: "flex", alignItems: "center", gap: 5, color: "rgba(255,255,255,0.6)", fontSize: 12 }}>
             <ScrollText size={13} />
             {stages.length > 0 && stageProgress?.activeStage
-              ? `Q${stageProgress.markedByStage.get(stageProgress.activeStage.id) || 0}/${stageProgress.activeStage.question_count}`
+              ? `Q${stageProgress.markedByStage.get(stageProgress.activeStage.id) || 0}/${QUESTIONS_PER_STAGE}`
               : `Q${answers.filter(a => a.status === "marked").length}/${event?.num_questions_per_student}`}
           </span>
           <span style={{ display: "flex", alignItems: "center", gap: 5, color: localTimer !== null && localTimer < 60 ? RED : "#fff", fontWeight: 800, fontSize: 15, fontFamily: "monospace" }}>
@@ -932,8 +959,19 @@ export default function GeneralMusabaqahExamRoom() {
           >
             <RoomAudioRenderer />
             {/* position:relative so the mic/camera icons can float inside
-                the video box itself instead of sitting as a row below it. */}
-            <div style={{ position: "relative", height: 300, borderRadius: 12, overflow: "hidden" }}>
+                the video box itself instead of sitting as a row below it.
+                Was a fixed height:300 on a full-width box — since phone
+                front cameras publish a portrait (taller-than-wide) stream,
+                stretching that into a wide/short landscape box and
+                object-fit:cover'ing it cropped away most of the top and
+                bottom, which read as "too zoomed in" and "cuts off the
+                lower part". Sizing the box itself as portrait (3:4) means
+                cover no longer has to crop nearly as much, so someone
+                sitting at a normal arm's-length distance shows head-to-
+                chest instead of a tight, cropped close-up. Capped by
+                maxHeight so it doesn't get excessively tall on wide
+                screens/tablets. */}
+            <div style={{ position: "relative", width: "100%", aspectRatio: "3 / 4", maxHeight: "70vh", borderRadius: 12, overflow: "hidden" }}>
               <VideoStage canPublish={canPublish} onStageUserId={participant?.user_id} layout={viewLayout} />
               {canPublish && (
                 <MediaControls
@@ -1228,6 +1266,19 @@ export default function GeneralMusabaqahExamRoom() {
                     </div>
                   </div>
                 )}
+                {/* Score recorded — tiles stay hidden until the judge taps
+                    Next, which is what actually advances to the next
+                    stage's tile grid (see advanceAfterMark above). */}
+                {isJudge && !currentAnswer && (
+                  <div style={{ marginTop: 16, borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: 16 }}>
+                    <Button onClick={advanceAfterMark} style={{ background: GOLD, color: "#06131f", fontWeight: 700 }}>
+                      <SkipForward size={14} className="mr-1" /> Next
+                    </Button>
+                  </div>
+                )}
+                {!isJudge && !currentAnswer && (
+                  <p style={{ marginTop: 12, color: "rgba(255,255,255,0.5)", fontSize: 12 }}>Waiting for the judge to move on…</p>
+                )}
               </div>
             )}
           </div>
@@ -1490,16 +1541,25 @@ function VideoStage({ canPublish, onStageUserId, layout = "grid" }: { canPublish
         <div style={{ position: "absolute", inset: 0 }}>
           <ParticipantTile participant={big.p} label={big.label} mirror={big.mirror} highlight={!!big.isOnStagePerson} />
         </div>
-        <div style={{ position: "absolute", bottom: 10, right: 10, width: "28%", maxWidth: 140, aspectRatio: "4/3", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}>
+        {/* aspectRatio was 4/3 (landscape) against a portrait phone-camera
+            stream, which cropped the corner tile hard. 3/4 matches the
+            source better. */}
+        <div style={{ position: "absolute", bottom: 10, right: 10, width: "28%", maxWidth: 140, aspectRatio: "3/4", borderRadius: 8, overflow: "hidden", boxShadow: "0 4px 16px rgba(0,0,0,0.5)" }}>
           <ParticipantTile participant={small.p} label={small.label} mirror={small.mirror} highlight={!!small.isOnStagePerson} />
         </div>
       </div>
     );
   }
 
-  const cols = tiles.length <= 1 ? 1 : 2;
+  // Stacked as rows, not side-by-side columns: the surrounding box is now
+  // sized portrait (see the video area's aspectRatio:"3/4" above) to match
+  // a phone's front-camera stream, so splitting it into side-by-side
+  // columns would squeeze each tile into an unnaturally narrow strip and
+  // crop even more aggressively than before. Stacking keeps each tile's
+  // full width, which stays much closer to that portrait source ratio.
+  const rows = tiles.length <= 1 ? 1 : 2;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 4, height: "100%", background: "#000" }}>
+    <div style={{ display: "grid", gridTemplateRows: `repeat(${rows}, 1fr)`, gap: 4, height: "100%", background: "#000" }}>
       {tiles.map((t, i) => (
         <ParticipantTile key={t.isLocal ? "local" : t.p.sid || i} participant={t.p} label={t.label} mirror={t.mirror} highlight={!!t.isOnStagePerson} />
       ))}
