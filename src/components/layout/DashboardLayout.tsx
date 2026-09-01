@@ -167,12 +167,16 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const studentNav: NavItem[] = [
     { type:"link", to:"/student",              icon:LayoutDashboard, label:t("Dashboard","الصفحة الرئيسية") },
-    { type:"link", to:"/student/quran",        icon:BookText,        label:t("Al-Qur'an","القرآن الكريم") },
-    { type:"link", to:"/student/adhkaar",      icon:Sparkles,        label:t("Adhkaar","الأذكار") },
-    { type:"link", to:"/student/courses",      icon:BookOpenCheck,   label:t("At-Ta'allum","التعلّم") },
-    { type:"link", to:"/student/timetable",    icon:Calendar,        label:t("Jadwal (Timetable)","الجدول الدراسي") },
-    { type:"link", to:"/student/live-now",     icon:Video,           label:t("Live Now","مباشر الآن") },
-    { type:"link", to:"/student/assignments",  icon:ClipboardList,   label:t("Assignments","الواجبات") },
+    { type:"group", key:"quran", icon:BookText, label:t("Al-Qur'an","القرآن الكريم"), children:[
+      { to:"/student/quran",   icon:BookText, label:t("Al-Qur'an","القرآن الكريم") },
+      { to:"/student/adhkaar", icon:Sparkles, label:t("Adhkaar","الأذكار") },
+    ]},
+    { type:"group", key:"taallum", icon:BookOpenCheck, label:t("At-Ta'allum","التعلّم"), children:[
+      { to:"/student/courses",     icon:BookOpenCheck, label:t("Courses","الدورات") },
+      { to:"/student/timetable",   icon:Calendar,       label:t("Jadwal (Timetable)","الجدول الدراسي") },
+      { to:"/student/live-now",    icon:Video,          label:t("Live Now","مباشر الآن") },
+      { to:"/student/assignments", icon:ClipboardList,  label:t("Assignments","الواجبات") },
+    ]},
     { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murāja'ah","المراجعة"), children:[
       { to:"/student/revision", icon:BookMarked, label:t("At-Tadārus","التدارس") },
       { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
