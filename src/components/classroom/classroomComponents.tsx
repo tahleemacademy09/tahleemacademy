@@ -1686,10 +1686,39 @@ export const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
     const lp = () => room?.localParticipant;
 
     // The actual repair routine — republishes the mic track if it's the
-    // wrong state. Runs from BOTH the heartbeat and the visibility/track
-    // event listeners, and does NOT gate on document.visibilityState —
-    // that was the bug: a mic that dies while backgrounded needs fixing
-    // while still backgrounded, not only when the user returns.
+    // wrong state.
+    //
+    // ROOT CAUSE FIX ("mic gets killed in the background, doesn't come
+    // back"): the full off→on republish cycle needs a FRESH getUserMedia()
+    // grant for the "on" half. Android routinely refuses *new* mic-capture
+    // requests from a backgrounded WebView (even with a microphone-type
+    // foreground service running) while it generally lets an
+    // already-flowing stream continue uninterrupted. Two bugs followed from
+    // treating "muted" the same as "ended" and always running the
+    // destructive cycle regardless of visibility:
+    //
+    //   1. A `mute` event is often just a brief OS audio-focus blip that
+    //      would have recovered on its own. Reacting to it by forcibly
+    //      calling setMicrophoneEnabled(false) actively releases a mic that
+    //      was probably fine — then the follow-up setMicrophoneEnabled(true)
+    //      can't get a fresh grant while still backgrounded, so a
+    //      recoverable blip becomes a permanent mute.
+    //   2. If that getUserMedia() call hangs (rather than rejecting) — which
+    //      happens when Android has no foreground UI to resolve a
+    //      permission grant against — `repairingRef.current` was only ever
+    //      reset in `finally`, which never ran. Every heartbeat tick after
+    //      that silently no-op'd via the `if (repairingRef.current) return`
+    //      guard, permanently, even after the user returned to foreground.
+    //
+    // Fix: only run the destructive off→on cycle when either (a) the track
+    // is truly `ended` (nothing left to lose — it's already gone), or
+    // (b) the document is actually visible (foreground), where a fresh
+    // getUserMedia() grant is reliably available. A merely-`muted` track
+    // while hidden is left alone — it either self-recovers, or gets caught
+    // by the visible/focus/pageshow "onWake" handlers the instant the user
+    // actually returns, which is the one moment this repair is guaranteed
+    // to be able to succeed. A hard timeout also guarantees repairingRef
+    // always gets released even if setMicrophoneEnabled() never settles.
     const repairMic = async () => {
       if (!micWasEnabledRef.current) return; // user had mic off — nothing to keep alive
       if (repairingRef.current) return;
@@ -1698,29 +1727,39 @@ export const MicKeepAlive = ({ micWasEnabled }: { micWasEnabled: boolean }) => {
 
       const micPub = p.getTrackPublication(Track.Source.Microphone);
       const track  = micPub?.track?.mediaStreamTrack;
-      const dead   = !p.isMicrophoneEnabled
-        || !track
-        || track.readyState === "ended"
-        || track.muted === true;
+      const ended  = !track || track.readyState === "ended";
+      const stale  = !p.isMicrophoneEnabled || track?.muted === true;
 
-      if (!dead) return;
+      if (!ended && !stale) return; // healthy — nothing to do
+
+      // Muted-but-not-ended while still hidden: don't proactively kill a
+      // track that may well recover on its own or on the next visibility
+      // event. Only a truly ended track (already gone either way) or the
+      // visible/foreground case is worth the destructive republish.
+      if (!ended && document.visibilityState !== "visible") return;
 
       repairingRef.current = true;
       try {
         // Full cycle (off → on) forces LiveKit to grab a fresh getUserMedia
-        // track rather than trying to resume a dead one, which is what
-        // actually recovers audio after Android suspends/kills the capture.
-        // Queued as a single op so this whole off→wait→on cycle can't be
-        // interleaved with some other component's mic/cam call mid-cycle.
-        await queueMediaOp(room, async () => {
+        // track rather than trying to resume a dead one. Queued as a single
+        // op so this whole off→wait→on cycle can't be interleaved with some
+        // other component's mic/cam call mid-cycle. Wrapped in a timeout so
+        // a hung getUserMedia() (common with no foreground UI to grant
+        // against) can never permanently wedge repairingRef and block every
+        // future repair attempt, including the one on actual return.
+        const cycle = queueMediaOp(room, async () => {
           await p.setMicrophoneEnabled(false);
           await new Promise(r => setTimeout(r, 150));
           await p.setMicrophoneEnabled(true);
         });
+        const timeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("mic repair timed out")), 6_000)
+        );
+        await Promise.race([cycle, timeout]);
       } catch {
-        // getUserMedia can legitimately fail while the tab is fully
-        // suspended (screen truly locked, no JS running at all) — the
-        // heartbeat below will retry on the next tick or on resume.
+        // getUserMedia can legitimately fail/hang while the tab is fully
+        // suspended or backgrounded — the heartbeat/onWake handlers above
+        // will retry on the next tick or the moment the user returns.
       } finally {
         repairingRef.current = false;
       }
