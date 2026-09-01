@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "cap:android:patch": "node capacitor.android.patch.mjs",
+    "cap:android:sync": "npx cap sync android && npm run cap:android:patch",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
