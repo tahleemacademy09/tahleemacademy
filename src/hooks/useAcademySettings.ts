@@ -21,6 +21,12 @@ export interface AcademySettings {
   payment_disabled_at: string | null;
   payment_enabled_at: string | null;
   payment_auto_on_date: string | null;
+  exams_module_enabled: string;
+  exams_module_message: string | null;
+  exams_module_message_ar: string | null;
+  timetable_module_enabled: string;
+  timetable_module_message: string | null;
+  timetable_module_message_ar: string | null;
 }
 
 const DEFAULT_SETTINGS: AcademySettings = {
@@ -42,6 +48,12 @@ const DEFAULT_SETTINGS: AcademySettings = {
   payment_disabled_at: null,
   payment_enabled_at: null,
   payment_auto_on_date: null,
+  exams_module_enabled: "true",
+  exams_module_message: null,
+  exams_module_message_ar: null,
+  timetable_module_enabled: "true",
+  timetable_module_message: null,
+  timetable_module_message_ar: null,
 };
 
 export const useAcademySettings = () => {
@@ -109,6 +121,8 @@ export const useAcademySettings = () => {
   const isPaymentEnabled = settings.payment_enabled === "true";
   const isHoliday = settings.academy_status === "holiday";
   const isActive = settings.academy_status === "active";
+  const isExamsModuleEnabled = settings.exams_module_enabled === "true";
+  const isTimetableModuleEnabled = settings.timetable_module_enabled === "true";
 
   return {
     settings,
@@ -119,5 +133,7 @@ export const useAcademySettings = () => {
     isPaymentEnabled,
     isHoliday,
     isActive,
+    isExamsModuleEnabled,
+    isTimetableModuleEnabled,
   };
 };
