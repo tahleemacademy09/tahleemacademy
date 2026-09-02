@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useImpersonation } from "@/hooks/useImpersonation";
 import { usePaymentAccess } from "@/hooks/usePaymentAccess";
 import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
@@ -103,6 +104,12 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { t, language, setLanguage, dir } = useLanguage();
   const { signOut, profile } = useAuth();
   const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
+  // Admin/teacher-controlled on/off switches for the Exams and Timetable
+  // sections — meant to be flipped on only for the current test/exam
+  // period rather than left visible year-round. Nav items below hide when
+  // off; the pages themselves (StudentExams / StudentTimetable) also guard
+  // against direct URL access, not just the nav link.
+  const { isExamsModuleEnabled, isTimetableModuleEnabled } = useAcademySettings();
   const { isImpersonating, impersonatedName, impersonatedEmail } = useImpersonation();
   const location = useLocation();
   const navigate = useNavigate();
@@ -173,7 +180,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     ]},
     { type:"group", key:"taallum", icon:BookOpenCheck, label:t("At-Ta'allum","التعلّم"), children:[
       { to:"/student/courses",     icon:BookOpenCheck, label:t("Courses","الدورات") },
-      { to:"/student/timetable",   icon:Calendar,       label:t("Jadwal (Timetable)","الجدول الدراسي") },
+      ...(isTimetableModuleEnabled ? [{ to:"/student/timetable", icon:Calendar, label:t("Jadwal (Timetable)","الجدول الدراسي") }] : []),
       { to:"/student/live-now",    icon:Video,          label:t("Live Now","مباشر الآن") },
       { to:"/student/assignments", icon:ClipboardList,  label:t("Assignments","الواجبات") },
     ]},
@@ -182,7 +189,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
     ]},
     { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
-      { to:"/student/exams",          icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") },
+      ...(isExamsModuleEnabled ? [{ to:"/student/exams", icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") }] : []),
       ...(subjectRegistrationOpen ? [{ to:"/student/exams/register", icon:UserPlus,      label:t("Register for Exams","التسجيل للاختبارات") }] : []),
       { to:"/student/transcripts",    icon:GraduationCap, label:t("As-Sijill","السجل الأكاديمي") },
       { to:"/student/attendance",     icon:CheckSquare,   label:t("Al-Ḥuḍūr (Attendance)","الحضور والغياب") },
