@@ -4,12 +4,13 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useSubjectRegistrationSettings } from "@/hooks/useSubjectRegistrationSettings";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
   Clock, CheckCircle, XCircle, PlayCircle,
   BookOpen, History, Star,
-  Shield, Zap, Trophy, RotateCcw, Eye, ChevronRight,
+  Shield, Zap, Trophy, RotateCcw, Eye, ChevronRight, ClipboardList,
 } from "lucide-react";
 
 /* ── Brand tokens ────────────────────────────────────── */
@@ -310,11 +311,16 @@ const HistoryRow = ({ attempt, language, t, navigate }: HistoryRowProps) => {
 
 const StudentExams = () => {
   const { t, language } = useLanguage();
-  const { user }        = useAuth();
+  const { user, hasRole } = useAuth();
   const { toast }       = useToast();
   const navigate        = useNavigate();
   const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
   const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
+  // Admin/teacher-controlled on/off switch, meant for outside actual
+  // test/exam periods. Admins and teachers bypass it — they're the ones
+  // who need in here to manage/grade exams regardless of the toggle.
+  const { isExamsModuleEnabled, settings } = useAcademySettings();
+  const isPrivileged = hasRole("admin") || hasRole("teacher");
 
   const [assignedExams, setAssignedExams] = useState<any[]>([]);
   const [pastAttempts,  setPastAttempts]  = useState<any[]>([]);
@@ -445,6 +451,20 @@ const StudentExams = () => {
         <p style={{ color:TL, fontSize:14 }}>{t("Loading…","جارٍ التحميل…")}</p>
       </div>
       <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+    </div>
+  );
+
+  if (!isPrivileged && !isExamsModuleEnabled) return (
+    <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:CREAM, padding:24 }}>
+      <div style={{ textAlign:"center", maxWidth:360 }}>
+        <ClipboardList style={{ width:40, height:40, color:"#9ca3af", margin:"0 auto 14px" }} />
+        <h2 style={{ fontSize:17, fontWeight:800, color:G, margin:"0 0 8px" }}>{t("Exams Not Available","الاختبارات غير متاحة")}</h2>
+        <p style={{ fontSize:13, color:TL, lineHeight:1.6 }}>
+          {language === "ar"
+            ? (settings.exams_module_message_ar || "الاختبارات غير متاحة حالياً.")
+            : (settings.exams_module_message || "Exams aren't available right now.")}
+        </p>
+      </div>
     </div>
   );
 
