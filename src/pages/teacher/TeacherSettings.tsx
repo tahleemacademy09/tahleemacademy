@@ -17,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 import { applyDark, isDarkModeEnabled, DM_KEY } from "@/lib/theme";
 import {
@@ -120,6 +121,26 @@ export default function TeacherSettings() {
   const { toast }                  = useToast();
   const navigate                   = useNavigate();
   const avatarRef                  = useRef<HTMLInputElement>(null);
+
+  // Exams/Timetable visibility — teachers can flip these two academy-wide
+  // switches (scoped via RLS to just these two keys), meant to be turned on
+  // only for the current test/exam or class-schedule period. Everything
+  // else on this page stays teacher-profile-local; this pair is the one
+  // shared, academy-wide setting teachers are allowed to touch.
+  const { isExamsModuleEnabled, isTimetableModuleEnabled, updateSetting } = useAcademySettings();
+  const [moduleToggling, setModuleToggling] = useState<"exams" | "timetable" | null>(null);
+  const handleExamsModuleToggle = async (v: boolean) => {
+    setModuleToggling("exams");
+    await updateSetting("exams_module_enabled", v ? "true" : "false", user?.id);
+    setModuleToggling(null);
+    toast({ title: v ? "✅ Exams section turned on for students" : "Exams section turned off for students" });
+  };
+  const handleTimetableModuleToggle = async (v: boolean) => {
+    setModuleToggling("timetable");
+    await updateSetting("timetable_module_enabled", v ? "true" : "false", user?.id);
+    setModuleToggling(null);
+    toast({ title: v ? "✅ Timetable turned on for students" : "Timetable turned off for students" });
+  };
 
   const [tab,             setTab]             = useState("profile");
   const [saving,          setSaving]          = useState(false);
@@ -868,6 +889,24 @@ export default function TeacherSettings() {
               checked={teaching.accepts_private} onChange={v => setTeaching(t => ({ ...t, accepts_private: v }))} />
             <Tog label="Accept Group Classes" sub="Multiple students in one session"
               checked={teaching.accepts_group} onChange={v => setTeaching(t => ({ ...t, accepts_group: v }))} />
+          </Sec>
+          <Sec title="Exams & Timetable Access">
+            <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 10px", lineHeight: 1.5 }}>
+              Academy-wide switches — turn these on only during the current test/exam or class-schedule period. This affects all students, not just yours.
+            </p>
+            <Tog
+              label="Exams section"
+              sub="Students' 'My Exams' list — hidden and blocked on direct link when off"
+              checked={isExamsModuleEnabled}
+              onChange={handleExamsModuleToggle}
+            />
+            <Tog
+              label="Timetable"
+              sub="Students' Timetable page — hidden and blocked on direct link when off"
+              checked={isTimetableModuleEnabled}
+              onChange={handleTimetableModuleToggle}
+            />
+            {moduleToggling && <p style={{ fontSize: 11, color: "#9CA3AF", margin: "4px 0 0" }}>Saving…</p>}
           </Sec>
           <SaveBtn fn={saveTeaching} saving={saving} />
         </>}
