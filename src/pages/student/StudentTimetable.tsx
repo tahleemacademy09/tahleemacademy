@@ -15,6 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck, LayoutGrid } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -584,6 +585,27 @@ export default function StudentTimetable() {
   const { isPrivateStudent } = usePrivateStudent();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
   const studentLevel = (profile as any)?.level || (profile as any)?.course_level || "beginner";
+  // Admin/teacher can flip this off outside test/exam or term-schedule
+  // periods. Guards direct URL access too, not just the nav link — admins
+  // and teachers themselves are never blocked since they're the ones who
+  // need to see/manage it regardless of the toggle.
+  const { isTimetableModuleEnabled, settings } = useAcademySettings();
+
+  if (!isPrivileged && !isTimetableModuleEnabled) {
+    return (
+      <div style={{ fontFamily: "'Cairo', sans-serif", background: "#f8fafb", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ textAlign: "center", maxWidth: 360 }}>
+          <Calendar style={{ width: 40, height: 40, color: "#9ca3af", margin: "0 auto 14px" }} />
+          <h2 style={{ fontSize: 17, fontWeight: 800, color: G, margin: "0 0 8px" }}>{t("Timetable Not Available", "الجدول غير متاح")}</h2>
+          <p style={{ fontSize: 13, color: "#6b7280", lineHeight: 1.6 }}>
+            {language === "ar"
+              ? (settings.timetable_module_message_ar || "الجدول الدراسي غير متاح حالياً.")
+              : (settings.timetable_module_message || "The timetable isn't available right now.")}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ fontFamily: "'Cairo', sans-serif", background: "#f8fafb", minHeight: "100vh" }}>
