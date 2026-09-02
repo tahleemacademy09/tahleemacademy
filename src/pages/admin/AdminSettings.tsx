@@ -119,7 +119,7 @@ export default function AdminSettings() {
   const { toast }                  = useToast();
   const navigate                   = useNavigate();
   const avatarRef                  = useRef<HTMLInputElement>(null);
-  const { settings, loading: acLoading, updateMultiple } = useAcademySettings();
+  const { settings, loading: acLoading, updateMultiple, updateSetting, isExamsModuleEnabled, isTimetableModuleEnabled } = useAcademySettings();
   const [notifyStudents, setNotifyStudents] = useState(true);
   const [prevAcademyStatus, setPrevAcademyStatus] = useState<string | null>(null);
   const { settings: hifdhSettings, loading: hifdhLoading, save: saveHifdh } = useHifdhSettings();
@@ -366,6 +366,27 @@ export default function AdminSettings() {
       setNotifs(n => ({ ...n, push_notifications: false }));
       toast({ title: "Push notifications disabled" });
     }
+  };
+
+  /* ── Exams / Timetable visibility toggles ──────────────────────
+     Meant to be flipped on only for the current test/exam or
+     term-schedule period, not left on year-round. Saves immediately
+     (like the notifications master toggle) rather than needing the
+     Academy tab's full Save — admins need this to be a quick flip.
+     Teachers get the same two switches (see TeacherSettings.tsx) via a
+     narrowly-scoped RLS policy that only lets them touch these two keys. */
+  const [moduleToggling, setModuleToggling] = useState<"exams" | "timetable" | null>(null);
+  const handleExamsModuleToggle = async (v: boolean) => {
+    setModuleToggling("exams");
+    await updateSetting("exams_module_enabled", v ? "true" : "false", user?.id);
+    setModuleToggling(null);
+    toast({ title: v ? "✅ Exams section turned on for students" : "Exams section turned off for students" });
+  };
+  const handleTimetableModuleToggle = async (v: boolean) => {
+    setModuleToggling("timetable");
+    await updateSetting("timetable_module_enabled", v ? "true" : "false", user?.id);
+    setModuleToggling(null);
+    toast({ title: v ? "✅ Timetable turned on for students" : "Timetable turned off for students" });
   };
 
   /* ── Master "All Notifications" toggle ────────────────────────
@@ -645,6 +666,28 @@ export default function AdminSettings() {
                 value={academy.maintenance_bypass_user_ids}
                 onChange={e => setAcademy(a => ({ ...a, maintenance_bypass_user_ids: e.target.value }))} />
             </Fld>
+          </Sec>
+
+          <Sec title="Exams & Timetable Access">
+            <p style={{ fontSize: 12, color: "#6B7280", margin: "0 0 12px", lineHeight: 1.5 }}>
+              Turn these on only during the current test/exam or class-schedule period — leave off otherwise so students aren't looking at a stale timetable or an exam list before it's time.
+            </p>
+            <Tog
+              label="Exams section"
+              sub="Students' 'Ikhtibārātī' (My Exams) list — hidden from nav and blocked on direct link when off. Transcripts and attendance stay visible either way."
+              checked={isExamsModuleEnabled}
+              onChange={handleExamsModuleToggle}
+            />
+            <Tog
+              label="Timetable"
+              sub="Students' Jadwal (Timetable) page — hidden from nav and blocked on direct link when off."
+              checked={isTimetableModuleEnabled}
+              onChange={handleTimetableModuleToggle}
+            />
+            {moduleToggling && <p style={{ fontSize: 11, color: "#9CA3AF", margin: "4px 0 0" }}>Saving…</p>}
+            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "8px 0 0" }}>
+              Teachers can also flip these two from their own Settings page — everything else here stays admin-only.
+            </p>
           </Sec>
 
           <div style={{
