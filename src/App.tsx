@@ -104,6 +104,7 @@ const SubjectManagement     = lazy(() => import("./pages/admin/SubjectManagement
 const CourseManagement      = lazy(() => import("./pages/admin/CourseManagement"));
 const SyllabusManager       = lazy(() => import("./pages/admin/SyllabusManager"));
 const TimetableManagement   = lazy(() => import("./pages/admin/TimetableManagement"));
+const ExamTimetableManagement = lazy(() => import("./pages/admin/ExamTimetableManagement"));
 const ExamManager           = lazy(() => import("./pages/admin/ExamManager"));
 const ExamLiveMonitor       = lazy(() => import("./pages/admin/ExamLiveMonitor"));
 const ExamEditor            = lazy(() => import("./pages/admin/ExamEditor"));
@@ -335,6 +336,7 @@ const App = () => (
                     <Route path="/admin/syllabus"                    element={<SyllabusManager />} />
                     <Route path="/admin/level-subject-mapping"       element={<LevelSubjectMapping />} />
                     <Route path="/admin/timetable"                   element={<TimetableManagement />} />
+                    <Route path="/admin/exam-timetable"              element={<ExamTimetableManagement />} />
                     <Route path="/admin/live-classes"                element={<LiveClassManagement />} />
                     <Route path="/admin/exams"                       element={<ExamManager />} />
                     <Route path="/admin/exams/:examId/live"          element={<ExamLiveMonitor />} />
