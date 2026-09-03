@@ -16,7 +16,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
-import { Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck, LayoutGrid } from "lucide-react";
+import { Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck, LayoutGrid, ClipboardList, MapPin } from "lucide-react";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -123,6 +123,157 @@ function PrivateSessionCard({ session, isToday, navigate }: { session: any; isTo
       ) : (
         <div style={{ flexShrink: 0, opacity: .45 }}>
           <Lock style={{ width: 14, height: 14, color: "#9ca3af", display: "block" }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Exam / Test Schedule Card (one-off dated slots from exam_timetable_slots) ─
+const EXAM_TYPE_LABEL: Record<string, { en: string; ar: string }> = {
+  test:     { en: "Test",     ar: "اختبار قصير" },
+  quiz:     { en: "Quiz",     ar: "مسابقة" },
+  mid_term: { en: "Mid-Term", ar: "امتحان منتصف الفصل" },
+  final:    { en: "Final",    ar: "امتحان نهائي" },
+  exam:     { en: "Exam",     ar: "امتحان" },
+};
+
+function ExamScheduleCard({ slot, isToday, navigate, t, language }: { slot: any; isToday: boolean; navigate: any; t: any; language: string }) {
+  const minsLeft  = minutesUntilDateTime(slot.exam_date, slot.start_time);
+  const minsToEnd = minutesUntilDateTime(slot.exam_date, slot.end_time);
+  const isNow     = isToday && minsLeft <= 0 && minsToEnd > 0;
+  const isSoon    = isToday && minsLeft > 0 && minsLeft <= 15;
+  const isPast    = isToday && minsToEnd <= 0;
+  const canJoin   = (isNow || isSoon) && (slot.live_url || slot.subject_id);
+  const typeInfo  = EXAM_TYPE_LABEL[slot.exam_type] || { en: slot.exam_type, ar: slot.exam_type };
+  const title     = language === "ar" ? (slot.title_ar || slot.title) : slot.title;
+
+  return (
+    <div style={{
+      background: "#fff", borderRadius: 16,
+      border: `1.5px solid ${isNow ? GOLD : isSoon ? GOLD + "80" : "#e5e7eb"}`,
+      padding: "16px", display: "flex", gap: 14, alignItems: "flex-start",
+      opacity: isPast ? .5 : 1,
+      boxShadow: isNow ? `0 0 0 3px ${GOLD}33` : "0 1px 4px rgba(0,0,0,.04)",
+    }}>
+      <div style={{ textAlign: "center", flexShrink: 0, minWidth: 64 }}>
+        <div style={{ fontSize: 14, fontWeight: 900, color: isNow ? "#b7791f" : G }}>{to12hr(slot.start_time)}</div>
+        <div style={{ fontSize: 10, color: "#d1d5db", margin: "1px 0" }}>—</div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "#9ca3af" }}>{to12hr(slot.end_time)}</div>
+        {isNow && <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#fffbeb", color: "#b7791f", display: "block", marginTop: 5 }}>LIVE</span>}
+        {isSoon && <span style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#fffbeb", color: "#b7791f", display: "block", marginTop: 5 }}>{formatCountdown(minsLeft)}</span>}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 14, fontWeight: 800, color: G }}>{title}</span>
+          <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 9, background: "#fffbeb", color: "#b7791f", fontWeight: 700, border: "1px solid #f6d860", flexShrink: 0 }}>
+            {language === "ar" ? typeInfo.ar : typeInfo.en}
+          </span>
+        </div>
+        {slot.subjects?.title && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, color: "#6b7280", fontSize: 12, marginTop: 4 }}>
+            <BookOpen style={{ width: 11, height: 11 }} /> {language === "ar" ? (slot.subjects.title_ar || slot.subjects.title) : slot.subjects.title}
+          </div>
+        )}
+        {slot.venue && (
+          <div style={{ display: "flex", alignItems: "center", gap: 5, color: "#6b7280", fontSize: 12, marginTop: 4 }}>
+            <MapPin style={{ width: 11, height: 11 }} /> {slot.venue}
+          </div>
+        )}
+        {slot.notes && <p style={{ fontSize: 11, color: "#9ca3af", margin: "6px 0 0", lineHeight: 1.5 }}>{language === "ar" ? (slot.notes_ar || slot.notes) : slot.notes}</p>}
+        {isToday && !isNow && !isSoon && !isPast && (
+          <p style={{ fontSize: 10, color: "#9ca3af", margin: "6px 0 0", display: "flex", alignItems: "center", gap: 4 }}>
+            <Lock style={{ width: 9, height: 9 }} /> {t("Opens 15 min before", "يفتح قبل 15 دقيقة")}
+          </p>
+        )}
+      </div>
+      {isPast ? (
+        <span style={{ fontSize: 11, color: "#9ca3af", fontWeight: 700, padding: "9px 10px", flexShrink: 0 }}>{t("Ended", "انتهت")}</span>
+      ) : canJoin ? (
+        <button onClick={() => { if (slot.live_url) window.open(slot.live_url, "_blank", "noopener"); else if (slot.subject_id) navigate(`/student/live-classes?subject=${slot.subject_id}`); }}
+          style={{ display: "flex", alignItems: "center", gap: 5, padding: "9px 14px", borderRadius: 11, border: "none", background: GOLD, color: G, fontSize: 11, fontWeight: 800, cursor: "pointer", flexShrink: 0 }}>
+          <Video style={{ width: 12, height: 12 }} /> {t("Join", "انضمام")}
+        </button>
+      ) : !isToday ? (
+        <div style={{ fontSize: 10, color: "#9ca3af", flexShrink: 0, textAlign: "center" }}>
+          <Calendar style={{ width: 14, height: 14, display: "block", margin: "0 auto 2px", color: "#d1d5db" }} />
+          {formatDate(slot.exam_date)}
+        </div>
+      ) : (
+        <div style={{ flexShrink: 0, opacity: .45 }}>
+          <Lock style={{ width: 14, height: 14, color: "#9ca3af", display: "block" }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Exam / Test Schedule Section (shown on both General & Private timetables) ─
+function ExamScheduleSection({ studentLevel, isPrivileged, navigate, t, language }: any) {
+  const { isExamsModuleEnabled } = useAcademySettings();
+  const today = new Date().toISOString().split("T")[0];
+
+  const { data: allSlots, isLoading } = useQuery({
+    queryKey: ["exam-timetable-student"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("exam_timetable_slots")
+        .select(`*, subjects(id, title, title_ar)`)
+        .eq("is_active", true)
+        .gte("exam_date", today)
+        .order("exam_date")
+        .order("start_time");
+      if (error) return [];
+      return data || [];
+    },
+    enabled: isExamsModuleEnabled,
+  });
+
+  // Module toggled off — this section simply doesn't render, same as the
+  // rest of the Timetable page when timetable_module_enabled is off.
+  if (!isExamsModuleEnabled) return null;
+
+  const slots = (allSlots || []).filter((s: any) => {
+    if (isPrivileged) return true;
+    const lvs: string[] = s.levels || [];
+    return lvs.length === 0 || lvs.includes(studentLevel) || lvs.includes("all");
+  });
+
+  const todaySlots  = slots.filter((s: any) => s.exam_date === today);
+  const futureSlots = slots.filter((s: any) => s.exam_date > today);
+
+  return (
+    <div>
+      <h3 style={{ fontSize: 13, fontWeight: 800, color: G, margin: "0 0 12px", display: "flex", alignItems: "center", gap: 6 }}>
+        <ClipboardList style={{ width: 14, height: 14, color: GOLD }} />
+        {t("Exam & Test Schedule", "جدول الامتحانات والاختبارات")}
+      </h3>
+      {isLoading ? (
+        <div style={{ textAlign: "center", padding: 30, color: "#9ca3af", fontSize: 12 }}>{t("Loading…", "جارٍ التحميل…")}</div>
+      ) : slots.length === 0 ? (
+        <div style={{ background: "#fff", borderRadius: 16, padding: "24px 18px", textAlign: "center", border: "1px solid #e5e7eb" }}>
+          <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>{t("No exams or tests scheduled right now.", "لا توجد امتحانات أو اختبارات مجدولة حالياً.")}</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {todaySlots.length > 0 && (
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 800, color: "#b7791f", margin: "0 0 8px", display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#b7791f", display: "inline-block" }} /> {t("Today", "اليوم")}
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {todaySlots.map((s: any) => <ExamScheduleCard key={s.id} slot={s} isToday navigate={navigate} t={t} language={language} />)}
+              </div>
+            </div>
+          )}
+          {futureSlots.length > 0 && (
+            <div>
+              {todaySlots.length > 0 && <p style={{ fontSize: 11, fontWeight: 800, color: "#6b7280", margin: "0 0 8px" }}>{t("Upcoming", "القادمة")}</p>}
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {futureSlots.map((s: any) => <ExamScheduleCard key={s.id} slot={s} isToday={false} navigate={navigate} t={t} language={language} />)}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -636,12 +787,13 @@ export default function StudentTimetable() {
         </p>
       </div>
 
-      <div style={{ padding: "16px", maxWidth: 720, margin: "0 auto" }}>
+      <div style={{ padding: "16px", maxWidth: 720, margin: "0 auto", display: "flex", flexDirection: "column", gap: 28 }}>
         {isPrivateStudent ? (
           <PrivateTimetable profile={profile} navigate={navigate} />
         ) : (
           <GeneralTimetable profile={profile} hasRole={hasRole} t={t} language={language} navigate={navigate} showBanner={false} />
         )}
+        <ExamScheduleSection studentLevel={studentLevel} isPrivileged={isPrivileged} navigate={navigate} t={t} language={language} />
       </div>
     </div>
   );
