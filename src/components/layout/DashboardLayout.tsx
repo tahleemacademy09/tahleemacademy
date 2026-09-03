@@ -247,6 +247,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     // 5 ── Assessments ──────────────────────────────────────────
     { type:"group", key:"assess", icon:ClipboardList, label:t("Assessments","التقييمات"), children:[
       { to:"/admin/exams",         icon:ClipboardList, label:t("Exams","الامتحانات") },
+      { to:"/admin/exam-timetable", icon:Clock,         label:t("Exam & Test Timetable","جدول الامتحانات والاختبارات") },
       { to:"/admin/question-bank", icon:Library,       label:t("Question Bank","بنك الأسئلة") },
       { to:"/admin/grading",       icon:CheckSquare,   label:t("Grading","التصحيح") },
       { to:"/admin/entrance-exam", icon:GraduationCap, label:t("Entrance Exam","اختبار القبول") },
