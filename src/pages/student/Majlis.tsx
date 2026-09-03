@@ -24,6 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import CreateChannelDialog from "@/components/majlis/CreateChannelDialog";
 import BrowseChannelsDialog from "@/components/majlis/BrowseChannelsDialog";
 import GroupInfoPanel from "@/components/majlis/GroupInfoPanel";
+import MajlisCallRoom from "@/components/majlis/MajlisCallRoom";
 import type { ChatChannel, ChatMessage, UserProfile } from "@/components/majlis/types";
 
 // ── Constants ────────────────────────────────────────────────────
@@ -473,6 +474,8 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
   const isAdmin     = hasRole("admin");
   const isTeacher   = hasRole("teacher");
   const canModerate = isAdmin||isTeacher||adminMode;
+  const [showMajlisCall,setShowMajlisCall]           = useState(false);
+  const [channelHasLiveCall,setChannelHasLiveCall]    = useState(false);
   const activeChannel = channels.find(c=>c.id===activeChannelId)||null;
   const isDark    = settings.darkMode||settings.wallpaper==="dark"||settings.wallpaper==="forest";
   const msgFontSz = FONT_SIZES[settings.fontSize]||"14px";
@@ -865,6 +868,22 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
       document.removeEventListener("visibilitychange", onVisibility);
       teardownChannel();
     };
+  },[activeChannelId]);
+
+  // ── Majlis live-call presence: poll + realtime so the header can show
+  //    "call in progress" and members can tap in to join. ──
+  useEffect(()=>{
+    if(!activeChannelId){setChannelHasLiveCall(false);return;}
+    let cancelled=false;
+    const check=async()=>{
+      const{data}=await supabase.from("majlis_calls" as any).select("id").eq("channel_id",activeChannelId).eq("status","live").maybeSingle();
+      if(!cancelled)setChannelHasLiveCall(!!data);
+    };
+    check();
+    const ch=supabase.channel(`majlis-call-presence-${activeChannelId}`)
+      .on("postgres_changes" as any,{event:"*",schema:"public",table:"majlis_calls",filter:`channel_id=eq.${activeChannelId}`},check)
+      .subscribe();
+    return()=>{cancelled=true;supabase.removeChannel(ch);};
   },[activeChannelId]);
 
   useEffect(()=>{ if(scrollRef.current) scrollRef.current.scrollTop=scrollRef.current.scrollHeight; },[messages]);
@@ -1965,6 +1984,12 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
               </div>
               <div style={{display:"flex",gap:2,alignItems:"center"}}>
                 {loadingMessages&&<div style={{width:8,height:8,borderRadius:"50%",border:"2px solid rgba(255,255,255,.4)",borderTopColor:"#fff",animation:"spin .8s linear infinite",marginRight:4,flexShrink:0}}/>}
+                {activeChannel.type!=="dm"&&(
+                  <button onClick={()=>setShowMajlisCall(true)} title={channelHasLiveCall?"Join Majlis call":"Start Majlis call"} style={{background:channelHasLiveCall?"rgba(76,175,80,.9)":"none",border:"none",color:"#fff",cursor:"pointer",padding:6,borderRadius:8,position:"relative",display:"flex"}}>
+                    <Phone size={18}/>
+                    {channelHasLiveCall&&<span style={{position:"absolute",top:2,right:2,width:7,height:7,borderRadius:"50%",background:"#fff",animation:"pulse 1.5s infinite"}}/>}
+                  </button>
+                )}
                 <button onClick={()=>{setShowChatSearch(p=>!p);setChatSearchQuery("");}} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><Search size={18}/></button>
                 <button onClick={()=>setShowHeaderMenu(p=>!p)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:6}}><MoreVertical size={18}/></button>
               </div>
@@ -2517,6 +2542,16 @@ const Majlis = ({ adminMode=false, onBroadcast, onCreateChannel }:MajlisProps) =
             </div>
           </div>
         </div>
+      )}
+
+      {/* Al-Majlis discussion call — multi-party LiveKit room, distinct from the Go Live broadcast */}
+      {showMajlisCall&&activeChannel&&(
+        <MajlisCallRoom
+          channelId={activeChannel.id}
+          channelName={getCN(activeChannel)}
+          isPrivileged={canModerate}
+          onLeave={()=>setShowMajlisCall(false)}
+        />
       )}
     </div>
   );
