@@ -558,6 +558,70 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
       <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
         <style>{`@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&display=swap');@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}`}</style>
 
+        {/* ── Full-screen lesson viewer — opens over everything, own scroll, own back button ── */}
+        {activeLesson && activeL && (
+          <div style={{ position:"fixed", inset:0, zIndex:1000, background:"#fff", display:"flex", flexDirection:"column" }}>
+            <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"14px 16px", display:"flex", alignItems:"center", gap:12, flexShrink:0 }}>
+              <button
+                onClick={() => setActiveLesson(null)}
+                style={{ display:"flex", alignItems:"center", gap:6, color:"#fff", background:"rgba(255,255,255,.14)", border:"none", borderRadius:20, padding:"7px 14px", cursor:"pointer", fontSize:12, fontFamily:"'Cairo',sans-serif", flexShrink:0 }}>
+                <ArrowLeft style={{ width:13, height:13 }} />{t("Back","رجوع")}
+              </button>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:14, fontWeight:800, color:"#fff", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {language === "ar" ? activeL.title_ar || activeL.title : activeL.title}
+                </div>
+                {activeL.duration_minutes > 0 && (
+                  <div style={{ fontSize:11, color:"rgba(255,255,255,.65)", marginTop:1 }}>
+                    <Clock style={{ width:10, height:10, display:"inline", marginRight:3 }} />{activeL.duration_minutes} {t("min","د")}
+                  </div>
+                )}
+              </div>
+              {done.has(activeL.id) && (
+                <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, fontWeight:700, color:"#86efac", flexShrink:0 }}>
+                  <CheckCircle style={{ width:14, height:14 }} />{t("Done","مكتمل")}
+                </span>
+              )}
+            </div>
+
+            <div style={{ flex:1, overflowY:"auto", background:"#fbfdfc" }}>
+              {activeL.interactive_html ? (
+                <iframe
+                  srcDoc={activeL.interactive_html}
+                  sandbox="allow-scripts"
+                  style={{ width:"100%", height:"100%", minHeight:"100%", border:"none", display:"block" }}
+                  title={activeL.title}
+                />
+              ) : activeL.video_url ? (
+                <div style={{ aspectRatio:"16/9", background:"#000" }}>
+                  <iframe src={activeL.video_url} style={{ width:"100%", height:"100%", border:"none" }} allowFullScreen />
+                </div>
+              ) : activeL.content ? (
+                <div style={{ padding:"18px 20px", maxWidth:720, margin:"0 auto" }}>{renderLessonContent(activeL.content, language === "ar" ? "ar" : "en")}</div>
+              ) : (
+                <div style={{ height:"100%", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:8 }}>
+                  <Play style={{ width:44, height:44, color:"#d1d5db" }} />
+                  <p style={{ fontSize:13, color:"#9ca3af" }}>{t("No video for this lesson","لا يوجد فيديو")}</p>
+                </div>
+              )}
+            </div>
+
+            <div style={{ padding:"14px 20px", borderTop:"1px solid #f0f4f0", background:"#fff", flexShrink:0 }}>
+              {!done.has(activeL.id) ? (
+                <button onClick={() => markComplete.mutate(activeL.id)} disabled={markComplete.isPending}
+                  style={{ width:"100%", display:"flex", alignItems:"center", justifyContent:"center", gap:8, padding:"12px 22px", borderRadius:12, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                  <CheckCircle style={{ width:15, height:15 }} />
+                  {markComplete.isPending ? "Saving…" : t("Mark as Complete","تحديد كمكتمل")}
+                </button>
+              ) : (
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:6, padding:"10px 16px", borderRadius:20, background:"#f0fff4", color:"#22c55e", fontSize:13, fontWeight:700, border:"1px solid #86efac" }}>
+                  <CheckCircle style={{ width:14, height:14 }} />{t("Completed","مكتمل")}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <div style={{ background:`linear-gradient(135deg,${G},${GM})`, padding:"14px 16px 0" }}>
           <button
             onClick={() => { setSelectedSubject(null); setActiveLesson(null); }}
@@ -634,65 +698,20 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                   </div>
                   {(subjectLessons||[]).map((lesson: any, idx: number) => {
                     const isComp = done.has(lesson.id);
-                    const isAct  = activeLesson === lesson.id;
                     return (
-                      <div key={lesson.id} style={{ borderBottom:"1px solid #f0f4f0" }}>
-                        <button onClick={() => setActiveLesson(isAct ? null : lesson.id)}
-                          style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 18px", background: isAct ? "#f0fff4" : "#fff", border:"none", cursor:"pointer", textAlign:"left", transition:"background .15s" }}>
-                          {isComp
-                            ? <CheckCircle style={{ width:19, height:19, color:"#22c55e", flexShrink:0 }} />
-                            : <Circle     style={{ width:19, height:19, color:"#d1d5db", flexShrink:0 }} />}
-                          <div style={{ flex:1, minWidth:0 }}>
-                            <div style={{ fontSize:13, fontWeight: isAct ? 700 : 500, color: isComp ? "#9ca3af" : G, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                              {idx+1}. {language === "ar" ? lesson.title_ar || lesson.title : lesson.title}
-                            </div>
-                            {lesson.duration_minutes > 0 && <div style={{ fontSize:11, color:"#9ca3af", marginTop:2 }}><Clock style={{ width:10, height:10, display:"inline", marginRight:3 }} />{lesson.duration_minutes} {t("min","د")}</div>}
+                      <button key={lesson.id} onClick={() => setActiveLesson(lesson.id)}
+                        style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 18px", background:"#fff", border:"none", borderBottom:"1px solid #f0f4f0", cursor:"pointer", textAlign:"left", transition:"background .15s" }}>
+                        {isComp
+                          ? <CheckCircle style={{ width:19, height:19, color:"#22c55e", flexShrink:0 }} />
+                          : <Circle     style={{ width:19, height:19, color:"#d1d5db", flexShrink:0 }} />}
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:13, fontWeight:500, color: isComp ? "#9ca3af" : G, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                            {idx+1}. {language === "ar" ? lesson.title_ar || lesson.title : lesson.title}
                           </div>
-                          <ChevronRight style={{ width:14, height:14, color: isAct ? GM : "#d1d5db", transform: isAct ? "rotate(90deg)" : "none", transition:"transform .15s" }} />
-                        </button>
-
-                        {/* Collapsible content — expands inline under this row only, accordion-style (one open at a time) */}
-                        {isAct && activeL && (
-                          <div style={{ background:"#fbfdfc" }}>
-                            {activeL.interactive_html ? (
-                              // Self-contained interactive lesson (own HTML/CSS/JS) —
-                              // sandboxed so it can't reach into the parent app.
-                              <div style={{ minHeight: 420, background:"#f4f1ea" }}>
-                                <iframe
-                                  srcDoc={activeL.interactive_html}
-                                  sandbox="allow-scripts"
-                                  style={{ width:"100%", height:"75vh", minHeight:420, border:"none", display:"block" }}
-                                  title={activeL.title}
-                                />
-                              </div>
-                            ) : activeL.video_url ? (
-                              <div style={{ aspectRatio:"16/9", background:"#000" }}>
-                                <iframe src={activeL.video_url} style={{ width:"100%", height:"100%", border:"none" }} allowFullScreen />
-                              </div>
-                            ) : activeL.content ? (
-                              <div style={{ padding:"14px 18px 4px" }}>{renderLessonContent(activeL.content, language === "ar" ? "ar" : "en")}</div>
-                            ) : (
-                              <div style={{ aspectRatio:"16/9", background:"#f8fafb", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:8 }}>
-                                <Play style={{ width:44, height:44, color:"#d1d5db" }} />
-                                <p style={{ fontSize:13, color:"#9ca3af" }}>{t("No video for this lesson","لا يوجد فيديو")}</p>
-                              </div>
-                            )}
-                            <div style={{ padding:"14px 18px 18px" }}>
-                              {!done.has(activeL.id) ? (
-                                <button onClick={() => markComplete.mutate(activeL.id)} disabled={markComplete.isPending}
-                                  style={{ display:"flex", alignItems:"center", gap:8, padding:"11px 22px", borderRadius:12, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-                                  <CheckCircle style={{ width:15, height:15 }} />
-                                  {markComplete.isPending ? "Saving…" : t("Mark as Complete","تحديد كمكتمل")}
-                                </button>
-                              ) : (
-                                <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"8px 16px", borderRadius:20, background:"#f0fff4", color:"#22c55e", fontSize:13, fontWeight:700, border:"1px solid #86efac" }}>
-                                  <CheckCircle style={{ width:14, height:14 }} />{t("Completed","مكتمل")}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
+                          {lesson.duration_minutes > 0 && <div style={{ fontSize:11, color:"#9ca3af", marginTop:2 }}><Clock style={{ width:10, height:10, display:"inline", marginRight:3 }} />{lesson.duration_minutes} {t("min","د")}</div>}
+                        </div>
+                        <ChevronRight style={{ width:14, height:14, color:"#d1d5db", flexShrink:0 }} />
+                      </button>
                     );
                   })}
                 </div>

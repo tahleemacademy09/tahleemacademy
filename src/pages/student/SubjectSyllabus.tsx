@@ -10,9 +10,9 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
-import { Plus, Target, Edit, Trash2, Save, ChevronDown, ChevronUp, BookOpen, ArrowRight } from "lucide-react";
+import { Plus, Target, Edit, Trash2, Save, ChevronDown, ChevronUp, BookOpen } from "lucide-react";
 
-const SubjectSyllabus = ({ subjectId, onOpenLesson }: { subjectId: string; onOpenLesson?: (lessonId: string) => void }) => {
+const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
   const { t } = useLanguage();
   const { hasRole } = useAuth();
   const qc = useQueryClient();
@@ -184,10 +184,7 @@ const SubjectSyllabus = ({ subjectId, onOpenLesson }: { subjectId: string; onOpe
                     {/* Header row */}
                     <button
                       className="w-full flex items-center justify-between p-4 text-left"
-                      onClick={() => {
-                        if (s.lesson_id && onOpenLesson) onOpenLesson(s.lesson_id);
-                        else if (hasDetail) toggleExpand(s.id);
-                      }}
+                      onClick={() => hasDetail && toggleExpand(s.id)}
                     >
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-sm leading-snug" style={{ color: color.text }}>{s.title}</p>
@@ -197,15 +194,6 @@ const SubjectSyllabus = ({ subjectId, onOpenLesson }: { subjectId: string; onOpe
                         </p>
                       </div>
                       <div className="flex items-center gap-1 shrink-0 ml-2">
-                        {s.lesson_id && onOpenLesson && (
-                          <span
-                            className="h-7 px-2 inline-flex items-center gap-1 rounded-lg text-xs font-semibold"
-                            style={{ color: color.badge }}
-                          >
-                            {t("Go to lesson", "الذهاب للدرس")}
-                            <ArrowRight className="h-3 w-3" />
-                          </span>
-                        )}
                         {isPrivileged && (
                           <>
                             <Button size="icon" variant="ghost" className="h-7 w-7 rounded-lg" onClick={e => { e.stopPropagation(); openEdit(s); }}>
@@ -228,7 +216,7 @@ const SubjectSyllabus = ({ subjectId, onOpenLesson }: { subjectId: string; onOpe
                     {isOpen && hasDetail && (
                       <div className="px-4 pb-4 space-y-3 border-t" style={{ borderColor: color.border }}>
                         {s.description && (
-                          <p className="text-sm leading-relaxed pt-3" style={{ color: color.text, opacity: 0.85 }}>
+                          <p className="text-sm leading-relaxed pt-3 text-justify" style={{ color: color.text, opacity: 0.85 }}>
                             {s.description}
                           </p>
                         )}
@@ -242,7 +230,7 @@ const SubjectSyllabus = ({ subjectId, onOpenLesson }: { subjectId: string; onOpe
                                 <div className="w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-white text-xs font-bold" style={{ background: color.badge }}>
                                   {i + 1}
                                 </div>
-                                <span className="text-sm leading-relaxed" style={{ color: color.text, opacity: 0.9 }}>{obj}</span>
+                                <span className="text-sm leading-relaxed text-justify" style={{ color: color.text, opacity: 0.9 }}>{obj}</span>
                               </div>
                             ))}
                           </div>
