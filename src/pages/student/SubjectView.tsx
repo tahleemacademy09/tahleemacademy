@@ -21,6 +21,7 @@ import SubjectMaterials from "@/components/classroom/SubjectMaterials";
 import SubjectAssignments from "@/components/classroom/SubjectAssignments";
 import SubjectSyllabus from "@/components/classroom/SubjectSyllabus";
 import SubjectRecordings from "@/components/classroom/SubjectRecordings";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import {
   ArrowLeft, BookOpen, FileText, Download, Play, ExternalLink, Video, Clock,
   Calendar, CheckCircle, XCircle, AlertCircle, Plus, Upload, Eye, BarChart3,
@@ -43,6 +44,11 @@ const SubjectView = () => {
   const queryClient = useQueryClient();
   const { joinClass } = useLiveClass();
   const isTeacher = hasRole("teacher") || hasRole("admin");
+  // Session-gating: a subject with unlock_session set stays fully hidden
+  // (including via direct URL) from students until the admin advances
+  // academy_settings.current_session to that value. Teachers/admins bypass.
+  const { settings: academySettings } = useAcademySettings();
+  const currentSession = parseInt(academySettings.current_session || "1", 10) || 1;
   const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleForm, setScheduleForm] = useState({
     topic: "", topic_ar: "", date: "", time: "", duration: 60, is_recorded: true, homework: "", homework_ar: "",
@@ -230,6 +236,14 @@ const SubjectView = () => {
 
   if (isLoading || loadingEnrollment) return <div className="container mx-auto px-4 py-8"><Skeleton className="h-64" /></div>;
   if (!subject) return <div className="container mx-auto px-4 py-16 text-center"><h2>{t("Subject not found", "المادة غير موجودة")}</h2></div>;
+
+  // Fully hidden until unlocked — even a direct link to the subject ID
+  // shows the same "not found" state a student would see for any other
+  // nonexistent subject, so nothing reveals that gated content exists.
+  const sessionGate = (subject as any).unlock_session;
+  if (!isTeacher && sessionGate != null && currentSession < Number(sessionGate)) {
+    return <div className="container mx-auto px-4 py-16 text-center"><h2>{t("Subject not found", "المادة غير موجودة")}</h2></div>;
+  }
 
   if (!isTeacher && myEnrollment?.status === "disenrolled") {
     return (

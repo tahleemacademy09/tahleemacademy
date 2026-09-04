@@ -30,6 +30,7 @@ import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -68,6 +69,69 @@ const levelMatch = (itemLevel: string | null | undefined, studentLevel: string):
   return itemLevel === studentLevel;
 };
 
+// Session-gating: a subject with unlock_session set is hidden from students
+// (never from admins/teachers) until academy_settings.current_session
+// reaches that value. NULL/undefined unlock_session = always visible.
+const subjectSessionUnlocked = (subject: any, currentSession: number): boolean => {
+  const gate = subject?.unlock_session;
+  if (gate === null || gate === undefined) return true;
+  return currentSession >= Number(gate);
+};
+
+// Very small markdown-ish renderer for lesson.content: plain paragraphs +
+// "| a | b |" pipe tables (with a "|---|---|" separator row ignored).
+// Deliberately minimal — this is teacher/curriculum reference text, not a
+// full CMS field.
+const renderLessonContent = (md: string, lang: "en" | "ar") => {
+  const lines = (md || "").split("\n");
+  const blocks: React.ReactNode[] = [];
+  let i = 0;
+  let key = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim().startsWith("|")) {
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      const rows = tableLines
+        .filter((l) => !/^\|[\s-]*\|[\s-:|]*$/.test(l.trim()))
+        .map((l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim()));
+      if (rows.length) {
+        const [head, ...body] = rows;
+        blocks.push(
+          <div key={key++} style={{ overflowX: "auto", margin: "10px 0" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12.5 }} dir={lang === "ar" ? "rtl" : "ltr"}>
+              <thead>
+                <tr>
+                  {head.map((h, hi) => (
+                    <th key={hi} style={{ textAlign: "left", padding: "6px 10px", borderBottom: "2px solid #e5e7eb", color: "#0f2d1f", fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {body.map((r, ri) => (
+                  <tr key={ri}>
+                    {r.map((c, ci) => (
+                      <td key={ci} style={{ padding: "6px 10px", borderBottom: "1px solid #f0f4f0", color: "#374151" }}>{c}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+      continue;
+    }
+    if (line.trim() === "") { i++; continue; }
+    blocks.push(<p key={key++} style={{ fontSize: 13.5, lineHeight: 1.6, color: "#374151", margin: "0 0 10px" }}>{line}</p>);
+    i++;
+  }
+  return blocks;
+};
+
 interface Props { defaultTab?: "courses" | "live"; }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -81,6 +145,10 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const isPrivileged               = hasRole("admin") || hasRole("teacher");
   const { joinClass }              = useLiveClass();
   const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
+  // Session-gating: subjects with unlock_session set stay hidden from
+  // students until academy_settings.current_session catches up.
+  const { settings: academySettings } = useAcademySettings();
+  const currentSession = parseInt(academySettings.current_session || "1", 10) || 1;
 
   // ── Private student: load assigned subjects FIRST (used in filters below) ──
   const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string> | null>(null);
@@ -225,12 +293,12 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   const courseSubjects = isPrivileged
     ? (allCourseSubjects || [])
-    : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id));
+    : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession));
   // Optional subjects the student disenrolled from — kept out of the main
   // grid (their lessons/materials/assignments are hidden) but still listed
   // separately with a Re-enroll action.
   const disenrolledCourseSubjects = isPrivileged ? [] : (allCourseSubjects || []).filter(
-    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id)
+    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession)
   );
 
   const { data: subjectLessons, isLoading: loadLessons } = useQuery({
@@ -240,7 +308,11 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
       const { data } = await supabase
         .from("lessons")
         .select("*")
-        .eq("course_id", selectedSubject!.id)
+        // FIX: lessons are keyed by subject_id (matches admin CourseManagement's
+        // saveLesson, which writes subject_id). This previously queried
+        // course_id === subject.id, which never matched anything lessons were
+        // actually saved with, so no lesson ever appeared here.
+        .eq("subject_id", selectedSubject!.id)
         .order("sort_order");
       return data || [];
     },
@@ -343,9 +415,9 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   const urlCourseSubjects = isPrivileged
     ? (allUrlCourseSubjects || [])
-    : (allUrlCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id));
+    : (allUrlCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession));
   const disenrolledUrlCourseSubjects = isPrivileged ? [] : (allUrlCourseSubjects || []).filter(
-    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id)
+    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession)
   );
 
   const markComplete = useMutation({
@@ -580,10 +652,23 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
                   {activeL && (
                     <div style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", overflow:"hidden" }}>
-                      {activeL.video_url ? (
+                      {activeL.interactive_html ? (
+                        // Self-contained interactive lesson (own HTML/CSS/JS) —
+                        // sandboxed so it can't reach into the parent app.
+                        <div style={{ minHeight: 520, background:"#f4f1ea" }}>
+                          <iframe
+                            srcDoc={activeL.interactive_html}
+                            sandbox="allow-scripts"
+                            style={{ width:"100%", height:"80vh", minHeight:520, border:"none", display:"block" }}
+                            title={activeL.title}
+                          />
+                        </div>
+                      ) : activeL.video_url ? (
                         <div style={{ aspectRatio:"16/9", background:"#000" }}>
                           <iframe src={activeL.video_url} style={{ width:"100%", height:"100%", border:"none" }} allowFullScreen />
                         </div>
+                      ) : activeL.content ? (
+                        <div style={{ padding:"18px 18px 4px" }}>{renderLessonContent(activeL.content, language === "ar" ? "ar" : "en")}</div>
                       ) : (
                         <div style={{ aspectRatio:"16/9", background:"#f8fafb", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:8 }}>
                           <Play style={{ width:44, height:44, color:"#d1d5db" }} />
