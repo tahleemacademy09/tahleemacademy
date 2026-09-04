@@ -588,7 +588,12 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
               {activeL.interactive_html ? (
                 <iframe
                   srcDoc={activeL.interactive_html}
-                  sandbox="allow-scripts"
+                  // allow-same-origin is required for the mic (speech recognition) to
+                  // get a real, non-opaque origin — without it, getUserMedia is denied
+                  // outright in a srcDoc iframe. allow="microphone" is the permissions-
+                  // policy grant that actually lets the mic prompt appear at all.
+                  sandbox="allow-scripts allow-same-origin"
+                  allow="microphone; autoplay"
                   style={{ width:"100%", height:"100%", minHeight:"100%", border:"none", display:"block" }}
                   title={activeL.title}
                 />
