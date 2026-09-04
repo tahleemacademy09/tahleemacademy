@@ -27,6 +27,11 @@ export interface AcademySettings {
   timetable_module_enabled: string;
   timetable_module_message: string | null;
   timetable_module_message_ar: string | null;
+  // Two sessions per academic year. Increments by 1 each time admin advances
+  // to the next session (never resets). Independent of current_term /
+  // current_academic_year. Used to gate session-locked subjects
+  // (subjects.unlock_session).
+  current_session: string;
 }
 
 const DEFAULT_SETTINGS: AcademySettings = {
@@ -54,6 +59,7 @@ const DEFAULT_SETTINGS: AcademySettings = {
   timetable_module_enabled: "true",
   timetable_module_message: null,
   timetable_module_message_ar: null,
+  current_session: "1",
 };
 
 export const useAcademySettings = () => {
