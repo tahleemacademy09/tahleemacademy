@@ -33,6 +33,13 @@ const EXAM_TYPES = [
   { value: "exam",      en: "Exam",      ar: "امتحان" },
 ];
 
+// Local calendar-date string (YYYY-MM-DD) using local fields only — never
+// toISOString(), which round-trips through UTC and silently lands on the
+// wrong calendar day in any positive-UTC-offset timezone (e.g. Lagos, UTC+1).
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 interface SlotForm {
   title: string;
   title_ar: string;
@@ -53,7 +60,7 @@ const EMPTY: SlotForm = {
   title_ar: "",
   subject_id: "",
   exam_type: "test",
-  exam_date: new Date().toISOString().split("T")[0],
+  exam_date: localDateStr(new Date()),
   start_time: "09:00",
   end_time: "10:00",
   levels: [],
@@ -171,7 +178,7 @@ export default function ExamTimetableManagement() {
     setForm(f => ({ ...f, levels: f.levels.includes(lv) ? f.levels.filter(x => x !== lv) : [...f.levels, lv] }));
   };
 
-  const todayStr = new Date().toISOString().split("T")[0];
+  const todayStr = localDateStr(new Date());
   const upcoming = (slots || []).filter((s: any) => s.exam_date >= todayStr);
   const past     = (slots || []).filter((s: any) => s.exam_date < todayStr);
 
