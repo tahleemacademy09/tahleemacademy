@@ -214,10 +214,25 @@ const WEEKDAY_SHORT = [
   { en: "Wed", ar: "أربعاء" }, { en: "Thu", ar: "خميس" }, { en: "Fri", ar: "جمعة" }, { en: "Sat", ar: "سبت" },
 ];
 
+// Local calendar-date string (YYYY-MM-DD) using the device's own local
+// fields — never toISOString(), which converts through UTC first and
+// silently shifts the date by a day in any positive-UTC-offset timezone
+// (e.g. Africa/Lagos, UTC+1) once the clock/date math crosses midnight.
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+// Weekday of a plain "YYYY-MM-DD" string, computed from its own digits
+// (via Date.UTC + getUTCDay, both UTC-only — never mixed with local
+// getters) so it can never disagree with the date it's labelling.
+function weekdayOfDateStr(dateStr: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
 function ExamScheduleSection({ studentLevel, isPrivileged, navigate, t, language }: any) {
   const { isExamsModuleEnabled } = useAcademySettings();
-  const today = new Date().toISOString().split("T")[0];
-  const [selectedDate, setSelectedDate] = useState(today);
+  const today = localDateStr(new Date());
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const { data: allSlots, isLoading } = useQuery({
     queryKey: ["exam-timetable-student"],
@@ -245,24 +260,23 @@ function ExamScheduleSection({ studentLevel, isPrivileged, navigate, t, language
     return lvs.length === 0 || lvs.includes(studentLevel) || lvs.includes("all");
   });
 
-  // Build a 7-day strip starting today (Sun…Sat labels, real calendar dates
-  // underneath) so students can jump to a day and see what's on it — same
-  // navigation pattern as the class timetable above, but date-based since
-  // exams are one-off rather than recurring weekly.
-  const dayTabs = Array.from({ length: 7 }).map((_, i) => {
-    const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + i);
-    const dateStr = d.toISOString().split("T")[0];
-    return {
-      dateStr,
-      dayNum: d.getDate(),
-      weekday: WEEKDAY_SHORT[d.getDay()],
-      isToday: i === 0,
-      hasSlots: slots.some((s: any) => s.exam_date === dateStr),
-    };
-  });
+  // Tests aren't a daily/recurring thing, so the tab strip isn't a rolling
+  // "today + 7 days" window — it's just every distinct date that actually
+  // has a test scheduled, in order, each labelled from its own date string.
+  const distinctDates = Array.from(new Set(slots.map((s: any) => s.exam_date))).sort() as string[];
+  const dayTabs = distinctDates.map(dateStr => ({
+    dateStr,
+    dayNum: Number(dateStr.split("-")[2]),
+    weekday: WEEKDAY_SHORT[weekdayOfDateStr(dateStr)],
+    isToday: dateStr === today,
+  }));
 
-  const slotsForDate = slots.filter((s: any) => s.exam_date === selectedDate);
-  const selectedIsToday = selectedDate === today;
+  const effectiveDate = (selectedDate && distinctDates.includes(selectedDate))
+    ? selectedDate
+    : (distinctDates.includes(today) ? today : distinctDates[0]);
+
+  const slotsForDate = slots.filter((s: any) => s.exam_date === effectiveDate);
+  const selectedIsToday = effectiveDate === today;
 
   return (
     <div>
@@ -271,33 +285,41 @@ function ExamScheduleSection({ studentLevel, isPrivileged, navigate, t, language
         {t("Exam & Test Schedule", "جدول الامتحانات والاختبارات")}
       </h3>
 
-      {/* Date tabs */}
-      <div style={{ display: "flex", overflowX: "auto", scrollbarWidth: "none", marginBottom: 14, background: `linear-gradient(135deg,${G},${GM})`, borderRadius: 16, padding: "12px 14px 0" }}>
-        {dayTabs.map(d => {
-          const isSel = d.dateStr === selectedDate;
-          return (
-            <button key={d.dateStr} onClick={() => setSelectedDate(d.dateStr)}
-              style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 12px 10px", border: "none", background: "none", cursor: "pointer", borderBottom: isSel ? `3px solid ${GOLD}` : "3px solid transparent", flexShrink: 0 }}>
-              <span style={{ fontSize: 10, color: d.isToday ? GOLD : "rgba(255,255,255,.55)", fontWeight: d.isToday ? 800 : 400, marginBottom: 3 }}>
-                {d.isToday ? t("Today", "اليوم") : (language === "ar" ? d.weekday.ar : d.weekday.en)}
-              </span>
-              <span style={{ fontSize: 13, fontWeight: isSel ? 900 : 500, color: isSel ? "#fff" : "rgba(255,255,255,.55)" }}>{d.dayNum}</span>
-              {d.hasSlots && <div style={{ width: 5, height: 5, borderRadius: "50%", background: isSel ? GOLD : "rgba(255,255,255,.35)", marginTop: 4 }} />}
-            </button>
-          );
-        })}
-      </div>
-
       {isLoading ? (
         <div style={{ textAlign: "center", padding: 30, color: "#9ca3af", fontSize: 12 }}>{t("Loading…", "جارٍ التحميل…")}</div>
-      ) : slotsForDate.length === 0 ? (
+      ) : distinctDates.length === 0 ? (
         <div style={{ background: "#fff", borderRadius: 16, padding: "24px 18px", textAlign: "center", border: "1px solid #e5e7eb" }}>
-          <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>{t("No exams or tests scheduled for this day.", "لا توجد امتحانات أو اختبارات مجدولة في هذا اليوم.")}</p>
+          <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>{t("No exams or tests scheduled right now.", "لا توجد امتحانات أو اختبارات مجدولة حالياً.")}</p>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {slotsForDate.map((s: any) => <ExamScheduleCard key={s.id} slot={s} isToday={selectedIsToday} navigate={navigate} t={t} language={language} />)}
-        </div>
+        <>
+          {/* Date tabs — one per date that actually has a test */}
+          <div style={{ display: "flex", overflowX: "auto", scrollbarWidth: "none", marginBottom: 14, background: `linear-gradient(135deg,${G},${GM})`, borderRadius: 16, padding: "12px 14px 0" }}>
+            {dayTabs.map(d => {
+              const isSel = d.dateStr === effectiveDate;
+              return (
+                <button key={d.dateStr} onClick={() => setSelectedDate(d.dateStr)}
+                  style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 12px 10px", border: "none", background: "none", cursor: "pointer", borderBottom: isSel ? `3px solid ${GOLD}` : "3px solid transparent", flexShrink: 0 }}>
+                  <span style={{ fontSize: 10, color: d.isToday ? GOLD : "rgba(255,255,255,.55)", fontWeight: d.isToday ? 800 : 400, marginBottom: 3 }}>
+                    {language === "ar" ? d.weekday.ar : d.weekday.en}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: isSel ? 900 : 500, color: isSel ? "#fff" : "rgba(255,255,255,.55)" }}>{d.dayNum}</span>
+                  {d.isToday && <div style={{ width: 5, height: 5, borderRadius: "50%", background: isSel ? GOLD : "rgba(255,255,255,.35)", marginTop: 4 }} />}
+                </button>
+              );
+            })}
+          </div>
+
+          {slotsForDate.length === 0 ? (
+            <div style={{ background: "#fff", borderRadius: 16, padding: "24px 18px", textAlign: "center", border: "1px solid #e5e7eb" }}>
+              <p style={{ color: "#9ca3af", fontSize: 12, margin: 0 }}>{t("No exams or tests scheduled for this day.", "لا توجد امتحانات أو اختبارات مجدولة في هذا اليوم.")}</p>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {slotsForDate.map((s: any) => <ExamScheduleCard key={s.id} slot={s} isToday={selectedIsToday} navigate={navigate} t={t} language={language} />)}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
