@@ -335,7 +335,7 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateS
     if (!stored || stored === "all") return new Set(LEVELS_LIST);
     return new Set(stored.split(",").map((s: string) => s.trim()).filter(Boolean));
   };
-  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "", visibility: ((ed?.visibility || "all") as "all" | "general" | "private") });
+  const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "", visibility: ((ed?.visibility || "all") as "all" | "general" | "private"), unlock_session: ed?.unlock_session != null ? String(ed.unlock_session) : "" });
   const [up, setUp] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
 
@@ -455,6 +455,15 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateS
             <label htmlFor="sact" style={{ fontSize: 13, color: "#374151" }}>Active (visible to students)</label>
           </div>
 
+          <Fld label="Unlocks at Session #  (optional)">
+            <input type="number" min={1} value={f.unlock_session} placeholder="Leave blank = always visible"
+              onChange={e => setF(s => ({ ...s, unlock_session: e.target.value }))}
+              style={inp} />
+            <p style={{ fontSize: 10, color: "#9CA3AF", margin: "4px 0 0" }}>
+              If set, this subject stays completely hidden from students (even via direct link) until the admin advances Platform Session to this number or higher, in Settings → Academy.
+            </p>
+          </Fld>
+
           {/* ── Assign to Private Students ── */}
           <div style={{ borderTop: "1.5px solid #E5E7EB", paddingTop: 14 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
@@ -502,7 +511,7 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateS
             )}
           </div>
 
-          <button type="button" onClick={() => onSave({ ...f, level: buildLevelValue(), visibility: f.visibility }, privAssigned)} disabled={busy || !f.title || f.selectedLevels.size === 0}
+          <button type="button" onClick={() => onSave({ ...f, level: buildLevelValue(), visibility: f.visibility, unlock_session: f.unlock_session }, privAssigned)} disabled={busy || !f.title || f.selectedLevels.size === 0}
             style={{ padding: "12px", borderRadius: 12, border: "none", background: busy || !f.title || f.selectedLevels.size === 0 ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: busy || !f.title || f.selectedLevels.size === 0 ? "#9ca3af" : "#fff", fontWeight: 800, cursor: busy || !f.title || f.selectedLevels.size === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <Save size={14} /> {busy ? "Saving…" : ed ? "Update Subject" : "Create Subject"}
           </button>
@@ -605,6 +614,9 @@ const SubjectsTabView = React.memo(({ fSubjects, search, sLoad, unlinked, selCou
                   )}
                   {s.visibility === "general" && (
                     <div style={{ position: "absolute", bottom: 6, left: 5, padding: "2px 6px", borderRadius: 20, background: "#eff6ff", color: "#3b82f6", fontSize: 8, fontWeight: 700, border: "1px solid #bfdbfe" }}>👥 Class</div>
+                  )}
+                  {s.unlock_session != null && (
+                    <div style={{ position: "absolute", top: 6, left: 5, padding: "2px 6px", borderRadius: 20, background: "#FEF3C7", color: "#92400E", fontSize: 8, fontWeight: 700, border: "1px solid #FDE68A" }}>⏳ Session {s.unlock_session}</div>
                   )}
                 </div>
 
@@ -1134,7 +1146,7 @@ export default function CourseManagement() {
           ? []
           : levelStr.split(",").map((x: string) => x.trim()).filter(Boolean);
 
-      const d: any = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, levels: levelsArray, is_active: p.is_active, image_url: p.image_url || null, teacher_id: p.teacher_id || null, course_id: selCourse?.id || null, visibility: p.visibility || "all", updated_at: new Date().toISOString() };
+      const d: any = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, levels: levelsArray, is_active: p.is_active, image_url: p.image_url || null, teacher_id: p.teacher_id || null, course_id: selCourse?.id || null, visibility: p.visibility || "all", unlock_session: p.unlock_session === "" || p.unlock_session == null ? null : parseInt(p.unlock_session, 10), updated_at: new Date().toISOString() };
       if (edSubject) {
         const { error: subjErr } = await supabase.from("subjects").update(d).eq("id", edSubject.id);
         if (subjErr) throw subjErr;

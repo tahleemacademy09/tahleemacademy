@@ -152,6 +152,10 @@ export default function AdminSettings() {
     resume_date:          "",
     maintenance_bypass_user_ids: "",
   });
+  // Separate from term/academic year: two sessions per academic year,
+  // used purely to gate session-locked content (e.g. subjects.unlock_session).
+  const [currentSession, setCurrentSession] = useState(1);
+  const [sessionSaving, setSessionSaving] = useState(false);
 
   /* ── Notification preferences ────────────────────────────────── */
   const [notifs, setNotifs] = useState({
@@ -219,6 +223,7 @@ export default function AdminSettings() {
         resume_date:           settings.resume_date           || "",
         maintenance_bypass_user_ids: settings.maintenance_bypass_user_ids || "",
       });
+      setCurrentSession(parseInt(settings.current_session || "1", 10) || 1);
       setPrevAcademyStatus((prev) => prev ?? (settings.academy_status || "active"));
     }
   }, [acLoading, settings]);
@@ -320,6 +325,18 @@ export default function AdminSettings() {
       title: "✅ Academy settings saved!",
       description: notifyStudents && statusChanged ? "Students have been notified." : undefined,
     });
+  };
+
+  /* ── Advance platform session (gates session-locked subjects) ────── */
+  const advanceSession = async () => {
+    if (!user) return;
+    const next = currentSession + 1;
+    if (!window.confirm(`Advance from Session ${currentSession} to Session ${next}? Any subjects locked to unlock at Session ${next} or earlier will immediately become visible to students.`)) return;
+    setSessionSaving(true);
+    await updateSetting("current_session", String(next), user.id);
+    setCurrentSession(next);
+    setSessionSaving(false);
+    toast({ title: `✅ Advanced to Session ${next}`, description: "Session-gated subjects unlocked at this session are now visible to students." });
   };
 
   /* ── Push notification toggle ─────────────────────────────── */
@@ -631,6 +648,22 @@ export default function AdminSettings() {
                 <input style={inp} placeholder="2025/2026" value={academy.current_academic_year}
                   onChange={e => setAcademy(a => ({ ...a, current_academic_year: e.target.value }))} />
               </Fld>
+            </div>
+          </Sec>
+
+          <Sec title="Platform Session">
+            <p style={{ fontSize: 11, color: "#6B7280", margin: "0 0 12px", lineHeight: 1.5 }}>
+              Separate from Term/Academic Year above. Two sessions per academic year — this counter only ever increases. Subjects can be locked to a session number (see Course Management) and stay completely hidden from students, even via direct link, until you advance to that session here.
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 12, padding: "10px 18px", textAlign: "center", minWidth: 90 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#15803D", textTransform: "uppercase", letterSpacing: .5 }}>Current</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: "#166534" }}>{currentSession}</div>
+              </div>
+              <button onClick={advanceSession} disabled={sessionSaving}
+                style={{ padding: "10px 18px", borderRadius: 12, border: "none", cursor: sessionSaving ? "not-allowed" : "pointer", fontWeight: 700, fontSize: 13, color: "#fff", background: sessionSaving ? "#9CA3AF" : G, fontFamily: "'Cairo', sans-serif" }}>
+                {sessionSaving ? "Advancing…" : `Advance to Session ${currentSession + 1} →`}
+              </button>
             </div>
           </Sec>
 
