@@ -170,7 +170,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   const [selCourse,       setSelCourseRaw]       = useState<any | null>(null);
   const [selectedSubject, setSelectedSubjectRaw] = useState<any | null>(null);
-  const [subjectTab,      setSubjectTab]          = useState("lessons");
+  const [subjectTab,      setSubjectTab]          = useState("syllabus");
   const [viewMode,        setViewMode]            = useState<"list" | "grid">("grid");
   const [activeLesson,    setActiveLesson]        = useState<string | null>(null);
 
@@ -444,12 +444,9 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const completedSet = new Set((myProgress || []).map((p: any) => p.lesson_id));
   const isLive = (sid: string) => liveSessions?.some((s: any) => s.subject_id === sid);
 
-  useEffect(() => {
-    if (subjectLessons && !activeLesson) {
-      const first = subjectLessons.find((l: any) => !completedSet.has(l.id));
-      setActiveLesson(first?.id || subjectLessons[0]?.id || null);
-    }
-  }, [subjectLessons]);
+  // Lessons render as a collapsible accordion now — nothing auto-expands on
+  // load. activeLesson only gets set when the student taps a lesson row, or
+  // when a Syllabus item is clicked (openLessonFromSyllabus below).
 
   // ═══════════════════════════════════════════════════════════════════════════
   // URL-BASED COURSE VIEW (/student/courses/:courseId)
@@ -540,15 +537,22 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     const pct    = totalL > 0 ? Math.round((doneL / totalL) * 100) : 0;
 
     const TABS = [
-      { id:"lessons",       icon:BookOpen,      label:t("Lessons","الدروس"),        count:totalL },
-      { id:"recordings",    icon:Video,         label:t("Recordings","التسجيلات"),  count:null },
       { id:"syllabus",      icon:Calendar,      label:t("Syllabus","المنهج"),       count:null },
-      { id:"materials",     icon:FileText,      label:t("Materials","المواد"),      count:null },
+      { id:"lessons",       icon:BookOpen,      label:t("Lessons","الدروس"),        count:totalL },
       { id:"assignments",   icon:ClipboardList, label:t("Tasks","الواجبات"),        count:null },
+      { id:"materials",     icon:FileText,      label:t("Materials","المواد"),      count:null },
+      { id:"recordings",    icon:Video,         label:t("Recordings","التسجيلات"),  count:null },
       { id:"announcements", icon:Megaphone,     label:t("News","الإعلانات"),        count:null },
     ];
 
     const activeL = subjectLessons?.find((l: any) => l.id === activeLesson);
+
+    // Jump here from a Syllabus item: switch to the Lessons tab and expand
+    // that specific lesson in the accordion.
+    const openLessonFromSyllabus = (lessonId: string) => {
+      setSubjectTab("lessons");
+      setActiveLesson(lessonId);
+    };
 
     return (
       <div style={{ fontFamily:"'Cairo',sans-serif", background:"#f8fafb", minHeight:"100vh" }}>
@@ -624,17 +628,17 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                   <p style={{ color:"#9ca3af", fontSize:14 }}>{t("No lessons yet", "لا توجد دروس بعد")}</p>
                 </div>
               ) : (
-                <>
-                  <div style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", overflow:"hidden", marginBottom:14 }}>
-                    <div style={{ padding:"14px 18px", borderBottom:"1px solid #f0f4f0", fontSize:13, fontWeight:700, color:G }}>
-                      {t("Lessons", "الدروس")} ({(subjectLessons||[]).length})
-                    </div>
-                    {(subjectLessons||[]).map((lesson: any, idx: number) => {
-                      const isComp = done.has(lesson.id);
-                      const isAct  = activeLesson === lesson.id;
-                      return (
-                        <button key={lesson.id} onClick={() => setActiveLesson(lesson.id)}
-                          style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 18px", background: isAct ? "#f0fff4" : "#fff", border:"none", cursor:"pointer", borderBottom:"1px solid #f0f4f0", textAlign:"left", transition:"background .15s" }}>
+                <div style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", overflow:"hidden" }}>
+                  <div style={{ padding:"14px 18px", borderBottom:"1px solid #f0f4f0", fontSize:13, fontWeight:700, color:G }}>
+                    {t("Lessons", "الدروس")} ({(subjectLessons||[]).length})
+                  </div>
+                  {(subjectLessons||[]).map((lesson: any, idx: number) => {
+                    const isComp = done.has(lesson.id);
+                    const isAct  = activeLesson === lesson.id;
+                    return (
+                      <div key={lesson.id} style={{ borderBottom:"1px solid #f0f4f0" }}>
+                        <button onClick={() => setActiveLesson(isAct ? null : lesson.id)}
+                          style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"12px 18px", background: isAct ? "#f0fff4" : "#fff", border:"none", cursor:"pointer", textAlign:"left", transition:"background .15s" }}>
                           {isComp
                             ? <CheckCircle style={{ width:19, height:19, color:"#22c55e", flexShrink:0 }} />
                             : <Circle     style={{ width:19, height:19, color:"#d1d5db", flexShrink:0 }} />}
@@ -644,61 +648,59 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                             </div>
                             {lesson.duration_minutes > 0 && <div style={{ fontSize:11, color:"#9ca3af", marginTop:2 }}><Clock style={{ width:10, height:10, display:"inline", marginRight:3 }} />{lesson.duration_minutes} {t("min","د")}</div>}
                           </div>
-                          {isAct && <ChevronRight style={{ width:14, height:14, color:GM }} />}
+                          <ChevronRight style={{ width:14, height:14, color: isAct ? GM : "#d1d5db", transform: isAct ? "rotate(90deg)" : "none", transition:"transform .15s" }} />
                         </button>
-                      );
-                    })}
-                  </div>
 
-                  {activeL && (
-                    <div style={{ background:"#fff", borderRadius:16, border:"1px solid #e5e7eb", overflow:"hidden" }}>
-                      {activeL.interactive_html ? (
-                        // Self-contained interactive lesson (own HTML/CSS/JS) —
-                        // sandboxed so it can't reach into the parent app.
-                        <div style={{ minHeight: 520, background:"#f4f1ea" }}>
-                          <iframe
-                            srcDoc={activeL.interactive_html}
-                            sandbox="allow-scripts"
-                            style={{ width:"100%", height:"80vh", minHeight:520, border:"none", display:"block" }}
-                            title={activeL.title}
-                          />
-                        </div>
-                      ) : activeL.video_url ? (
-                        <div style={{ aspectRatio:"16/9", background:"#000" }}>
-                          <iframe src={activeL.video_url} style={{ width:"100%", height:"100%", border:"none" }} allowFullScreen />
-                        </div>
-                      ) : activeL.content ? (
-                        <div style={{ padding:"18px 18px 4px" }}>{renderLessonContent(activeL.content, language === "ar" ? "ar" : "en")}</div>
-                      ) : (
-                        <div style={{ aspectRatio:"16/9", background:"#f8fafb", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:8 }}>
-                          <Play style={{ width:44, height:44, color:"#d1d5db" }} />
-                          <p style={{ fontSize:13, color:"#9ca3af" }}>{t("No video for this lesson","لا يوجد فيديو")}</p>
-                        </div>
-                      )}
-                      <div style={{ padding:"16px 18px" }}>
-                        <h2 style={{ fontSize:16, fontWeight:700, color:G, marginBottom:14 }}>
-                          {language === "ar" ? activeL.title_ar || activeL.title : activeL.title}
-                        </h2>
-                        {!done.has(activeL.id) ? (
-                          <button onClick={() => markComplete.mutate(activeL.id)} disabled={markComplete.isPending}
-                            style={{ display:"flex", alignItems:"center", gap:8, padding:"11px 22px", borderRadius:12, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
-                            <CheckCircle style={{ width:15, height:15 }} />
-                            {markComplete.isPending ? "Saving…" : t("Mark as Complete","تحديد كمكتمل")}
-                          </button>
-                        ) : (
-                          <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"8px 16px", borderRadius:20, background:"#f0fff4", color:"#22c55e", fontSize:13, fontWeight:700, border:"1px solid #86efac" }}>
-                            <CheckCircle style={{ width:14, height:14 }} />{t("Completed","مكتمل")}
+                        {/* Collapsible content — expands inline under this row only, accordion-style (one open at a time) */}
+                        {isAct && activeL && (
+                          <div style={{ background:"#fbfdfc" }}>
+                            {activeL.interactive_html ? (
+                              // Self-contained interactive lesson (own HTML/CSS/JS) —
+                              // sandboxed so it can't reach into the parent app.
+                              <div style={{ minHeight: 420, background:"#f4f1ea" }}>
+                                <iframe
+                                  srcDoc={activeL.interactive_html}
+                                  sandbox="allow-scripts"
+                                  style={{ width:"100%", height:"75vh", minHeight:420, border:"none", display:"block" }}
+                                  title={activeL.title}
+                                />
+                              </div>
+                            ) : activeL.video_url ? (
+                              <div style={{ aspectRatio:"16/9", background:"#000" }}>
+                                <iframe src={activeL.video_url} style={{ width:"100%", height:"100%", border:"none" }} allowFullScreen />
+                              </div>
+                            ) : activeL.content ? (
+                              <div style={{ padding:"14px 18px 4px" }}>{renderLessonContent(activeL.content, language === "ar" ? "ar" : "en")}</div>
+                            ) : (
+                              <div style={{ aspectRatio:"16/9", background:"#f8fafb", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:8 }}>
+                                <Play style={{ width:44, height:44, color:"#d1d5db" }} />
+                                <p style={{ fontSize:13, color:"#9ca3af" }}>{t("No video for this lesson","لا يوجد فيديو")}</p>
+                              </div>
+                            )}
+                            <div style={{ padding:"14px 18px 18px" }}>
+                              {!done.has(activeL.id) ? (
+                                <button onClick={() => markComplete.mutate(activeL.id)} disabled={markComplete.isPending}
+                                  style={{ display:"flex", alignItems:"center", gap:8, padding:"11px 22px", borderRadius:12, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}>
+                                  <CheckCircle style={{ width:15, height:15 }} />
+                                  {markComplete.isPending ? "Saving…" : t("Mark as Complete","تحديد كمكتمل")}
+                                </button>
+                              ) : (
+                                <div style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"8px 16px", borderRadius:20, background:"#f0fff4", color:"#22c55e", fontSize:13, fontWeight:700, border:"1px solid #86efac" }}>
+                                  <CheckCircle style={{ width:14, height:14 }} />{t("Completed","مكتمل")}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
-                    </div>
-                  )}
-                </>
+                    );
+                  })}
+                </div>
               )}
             </>
           )}
+          {subjectTab === "syllabus"      && <SubjectSyllabus      subjectId={selectedSubject.id} onOpenLesson={openLessonFromSyllabus} />}
           {subjectTab === "recordings"    && <SubjectRecordings    subjectId={selectedSubject.id} />}
-          {subjectTab === "syllabus"      && <SubjectSyllabus      subjectId={selectedSubject.id} />}
           {subjectTab === "materials"     && <SubjectMaterials     subjectId={selectedSubject.id} />}
           {subjectTab === "assignments"   && <SubjectAssignments   subjectId={selectedSubject.id} />}
           {subjectTab === "announcements" && <SubjectAnnouncements subjectId={selectedSubject.id} />}
