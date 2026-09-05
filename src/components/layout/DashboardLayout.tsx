@@ -259,6 +259,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/recitation-review",        icon:Mic,      label:t("Recitation Review","مراجعة التلاوة") },
       { to:"/admin/recitation-test-settings", icon:Settings, label:t("Recitation Settings","إعدادات التلاوة") },
       { to:"/admin/quran-recitations",        icon:BookText, label:t("Qur'an Recitations","تسجيلات القرآن") },
+      { to:"/admin/letter-audio",             icon:Sparkles, label:t("Letter Audio Library","مكتبة صوت الحروف") },
     ]},
 
     // 7 ── Finance ──────────────────────────────────────────────
