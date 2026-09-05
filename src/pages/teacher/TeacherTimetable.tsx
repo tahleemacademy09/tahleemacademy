@@ -9,7 +9,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { format } from "date-fns";
-import { Clock, Video, Calendar, BookOpen, Plus, ChevronRight, Users, Mic } from "lucide-react";
+import { Clock, Video, Calendar, BookOpen, Plus, ChevronRight, Users, Mic, ClipboardList, MapPin } from "lucide-react";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -47,6 +47,29 @@ function formatCountdown(minutes: number): string {
   if (minutes < 60) return `${Math.round(minutes)}m`;
   return `${Math.floor(minutes / 60)}h ${Math.round(minutes % 60)}m`;
 }
+
+// Local calendar-date string (YYYY-MM-DD) from local fields only — never
+// toISOString(), which round-trips through UTC and silently lands a day
+// off in any positive-UTC-offset timezone (e.g. Africa/Lagos, UTC+1).
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+// Weekday of a plain "YYYY-MM-DD" string, derived purely from its own
+// digits via Date.UTC + getUTCDay (never mixed with local getters), so it
+// can never disagree with the date it's labelling.
+function weekdayOfDateStr(dateStr: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+const WEEKDAY_SHORT_TT = [
+  { en: "Sun", ar: "أحد" }, { en: "Mon", ar: "إثنين" }, { en: "Tue", ar: "ثلاثاء" },
+  { en: "Wed", ar: "أربعاء" }, { en: "Thu", ar: "خميس" }, { en: "Fri", ar: "جمعة" }, { en: "Sat", ar: "سبت" },
+];
+const EXAM_TYPE_LABEL_TT: Record<string, { en: string; ar: string }> = {
+  test: { en: "Test", ar: "اختبار قصير" }, quiz: { en: "Quiz", ar: "مسابقة" },
+  mid_term: { en: "Mid-Term", ar: "امتحان منتصف الفصل" }, final: { en: "Final", ar: "امتحان نهائي" }, exam: { en: "Exam", ar: "امتحان" },
+};
+
 export default function TeacherTimetable() {
   const { user }        = useAuth();
   const { t, language } = useLanguage();
@@ -120,6 +143,38 @@ export default function TeacherTimetable() {
       return data || [];
     },
   });
+
+  const examToday = localDateStr(new Date());
+  const [selectedExamDate, setSelectedExamDate] = useState<string | null>(null);
+  const { data: allExamSlots, isLoading: examLoading } = useQuery({
+    queryKey: ["teacher-exam-timetable"],
+    queryFn: async () => {
+      const { data, error } = await (supabase as any)
+        .from("exam_timetable_slots")
+        .select(`*, subjects(id, title, title_ar)`)
+        .eq("is_active", true)
+        .gte("exam_date", examToday)
+        .order("exam_date")
+        .order("start_time");
+      if (error) return [];
+      return data || [];
+    },
+  });
+  // Only tests that are relevant to this teacher — for one of their own
+  // subjects, or a general test not tied to any single subject.
+  const examSlots = (allExamSlots || []).filter((s: any) => !s.subject_id || subjectIds.includes(s.subject_id));
+  const examDistinctDates = Array.from(new Set(examSlots.map((s: any) => s.exam_date))).sort() as string[];
+  const examDayTabs = examDistinctDates.map(dateStr => ({
+    dateStr,
+    dayNum: Number(dateStr.split("-")[2]),
+    weekday: WEEKDAY_SHORT_TT[weekdayOfDateStr(dateStr)],
+    isToday: dateStr === examToday,
+  }));
+  const effectiveExamDate = (selectedExamDate && examDistinctDates.includes(selectedExamDate))
+    ? selectedExamDate
+    : (examDistinctDates.includes(examToday) ? examToday : examDistinctDates[0]);
+  const examSlotsForDate = examSlots.filter((s: any) => s.exam_date === effectiveExamDate);
+
 
   const todaySlots    = (timetableSlots || []).filter((s: any) => s.day_of_week === todayIndex);
   const selectedSlots = (timetableSlots || []).filter((s: any) => s.day_of_week === selectedDay);
@@ -338,6 +393,88 @@ export default function TeacherTimetable() {
             </div>
           </div>
         )}
+        {/* Exam & Test Schedule — tests for subjects this teacher teaches,
+            plus any general test not tied to one subject */}
+        <div style={{ marginTop: 24 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 800, color: G, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+            <ClipboardList size={16} color={GOLD} />
+            {t("Exam & Test Schedule", "جدول الامتحانات والاختبارات")}
+          </h2>
+
+          {examLoading ? (
+            <div style={{ textAlign: "center", padding: 24, color: "#9CA3AF", fontSize: 12 }}>{t("Loading…", "جارٍ التحميل…")}</div>
+          ) : examDistinctDates.length === 0 ? (
+            <div style={{ background: "#fff", borderRadius: 16, padding: "20px 16px", textAlign: "center", border: "1px solid #E5E7EB" }}>
+              <p style={{ color: "#9CA3AF", fontSize: 12, margin: 0 }}>{t("No exams or tests scheduled right now.", "لا توجد امتحانات أو اختبارات مجدولة حالياً.")}</p>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", overflowX: "auto", scrollbarWidth: "none", marginBottom: 12, background: `linear-gradient(135deg,${G},${GM})`, borderRadius: 16, padding: "10px 12px 0" }}>
+                {examDayTabs.map(d => {
+                  const isSel = d.dateStr === effectiveExamDate;
+                  return (
+                    <button key={d.dateStr} onClick={() => setSelectedExamDate(d.dateStr)}
+                      style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "7px 11px 9px", border: "none", background: "none", cursor: "pointer", borderBottom: isSel ? `3px solid ${GOLD}` : "3px solid transparent", flexShrink: 0 }}>
+                      <span style={{ fontSize: 10, color: d.isToday ? GOLD : "rgba(255,255,255,.55)", fontWeight: d.isToday ? 800 : 400, marginBottom: 3 }}>
+                        {language === "ar" ? d.weekday.ar : d.weekday.en}
+                      </span>
+                      <span style={{ fontSize: 13, fontWeight: isSel ? 900 : 500, color: isSel ? "#fff" : "rgba(255,255,255,.55)" }}>{d.dayNum}</span>
+                      {d.isToday && <div style={{ width: 5, height: 5, borderRadius: "50%", background: isSel ? GOLD : "rgba(255,255,255,.35)", marginTop: 4 }} />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {examSlotsForDate.length === 0 ? (
+                <div style={{ background: "#fff", borderRadius: 16, padding: "20px 16px", textAlign: "center", border: "1px solid #E5E7EB" }}>
+                  <p style={{ color: "#9CA3AF", fontSize: 12, margin: 0 }}>{t("No exams or tests scheduled for this day.", "لا توجد امتحانات أو اختبارات مجدولة في هذا اليوم.")}</p>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {examSlotsForDate.map((s: any) => {
+                    const typeInfo = EXAM_TYPE_LABEL_TT[s.exam_type] || { en: s.exam_type, ar: s.exam_type };
+                    const title = language === "ar" ? (s.title_ar || s.title) : s.title;
+                    return (
+                      <div key={s.id} style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #E5E7EB", padding: 16, display: "flex", gap: 14, alignItems: "flex-start" }}>
+                        <div style={{ textAlign: "center", flexShrink: 0, minWidth: 64 }}>
+                          <div style={{ fontSize: 13, fontWeight: 900, color: G }}>{to12hr(s.start_time)}</div>
+                          <div style={{ fontSize: 10, color: "#D1D5DB", margin: "1px 0" }}>—</div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: "#9CA3AF" }}>{to12hr(s.end_time)}</div>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 14, fontWeight: 800, color: G }}>{title}</span>
+                            <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 9, background: "#FFFBEB", color: "#B7791F", fontWeight: 700, border: "1px solid #F6D860" }}>
+                              {language === "ar" ? typeInfo.ar : typeInfo.en}
+                            </span>
+                          </div>
+                          {s.subjects?.title && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 5, color: "#6B7280", fontSize: 12, marginTop: 4 }}>
+                              <BookOpen size={11} /> {language === "ar" ? (s.subjects.title_ar || s.subjects.title) : s.subjects.title}
+                            </div>
+                          )}
+                          {s.venue && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 5, color: "#6B7280", fontSize: 12, marginTop: 4 }}>
+                              <MapPin size={11} /> {s.venue}
+                            </div>
+                          )}
+                          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 7 }}>
+                            {(s.levels || []).length === 0
+                              ? <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 9, background: "#F0FFF4", color: "#22C55E", fontWeight: 700 }}>{t("All Levels", "جميع المستويات")}</span>
+                              : (s.levels || []).map((lv: string) => {
+                                  const lc = levelColors[lv] || { bg: "#F3F4F6", color: "#374151", border: "#D1D5DB" };
+                                  return <span key={lv} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 9, fontWeight: 700, background: lc.bg, color: lc.color }}>{lv}</span>;
+                                })}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
