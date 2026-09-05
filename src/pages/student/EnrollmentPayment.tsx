@@ -231,10 +231,18 @@ const EnrollmentPayment = () => {
       termMonths = activeTerm * 3;
     }
 
-    // Demo mode
+    // Demo mode — dev-only. This used to run in production too whenever
+    // VITE_PAYSTACK_PUBLIC_KEY failed to load (env var typo, build issue,
+    // etc), which silently marked a student "paid" with zero real payment.
+    // Restricting it to import.meta.env.DEV means a missing key in
+    // production now correctly blocks payment instead of faking success.
     if (!PAYSTACK_KEY) {
-      toast({ title:"⚠️ Demo mode", description:"No Paystack key configured — simulating success." });
-      await handlePaymentSuccess(ref, amount, selectedPlan, termMonths);
+      if (import.meta.env.DEV) {
+        toast({ title:"⚠️ Demo mode", description:"No Paystack key configured — simulating success (dev only)." });
+        await handlePaymentSuccess(ref, amount, selectedPlan, termMonths);
+      } else {
+        toast({ title:"Payment unavailable", description:"Payment configuration error. Please contact support.", variant:"destructive" });
+      }
       return;
     }
 
@@ -296,66 +304,45 @@ const EnrollmentPayment = () => {
     }
   };
 
+  // IMPORTANT: this used to write "paid" straight to the database itself,
+  // trusting Paystack's client-side callback with no server-side check
+  // that money had actually moved. That's what let some students end up
+  // marked "paid" without paying. It also ran independently of the
+  // paystack-webhook — which does its own (also unguarded) extension of
+  // the subscription for the same charge — so a single month's payment
+  // could get credited twice.
+  //
+  // Now this just hands the reference to the paystack-verify edge
+  // function, which checks the transaction against Paystack's own server
+  // and applies the credit exactly once (shared idempotency guard with
+  // the webhook, keyed on paystack_reference).
   const handlePaymentSuccess = async (ref: string, amount: number, plan: Plan, termMonthsParam = 3) => {
     if (!user || !profile) return;
     try {
-      const now      = new Date();
-      const end      = new Date(now);
-      end.setMonth(end.getMonth() + (termMonthsParam || plan.duration_months || 3));
-      const endStr   = end.toISOString().split("T")[0];
-      const startStr = now.toISOString().split("T")[0];
+      const { data, error } = await supabase.functions.invoke("paystack-verify", {
+        body: { reference: ref },
+      });
 
-      await Promise.all([
-        // Update profile payment status
-        supabase.from("profiles").update({
-          payment_status: "paid",
-          subscription_end_date: endStr,
-        } as any).eq("user_id", user.id),
+      if (error || !data?.ok) {
+        const msg = data?.error || error?.message || "Payment could not be confirmed.";
+        toast({
+          title: "Payment not confirmed",
+          description: `${msg} If you were charged, contact admin with ref: ${ref}`,
+          variant: "destructive",
+        });
+        return;
+      }
 
-        // Record payment (type must satisfy validate_payment_type trigger:
-        // enrollment | subscription | private_session | manual)
-        supabase.from("payments" as any).insert({
-          student_id: user.id,
-          plan_id: plan.id,
-          amount,
-          status: "success",
-          type: "subscription",
-          paystack_reference: ref,
-          paystack_transaction_id: ref,
-          payment_method: "card",
-          paid_at: now.toISOString(),
-          currency: plan.currency || "NGN",
-        }),
-
-        // Mirror to payment_history for the admin "Payment Records" view
-        supabase.from("payment_history" as any).insert({
-          user_id: user.id,
-          amount,
-          status: "success",
-          payment_type: "subscription",
-          payment_ref: ref,
-          receipt_id: `RCPT-${ref}`,
-          plan_type: plan.name,
-          level: (profile as any)?.level || null,
-          paid_at: now.toISOString(),
-        }),
-
-        // Record subscription
-        supabase.from("student_subscriptions" as any).insert({
-          student_id: user.id,
-          plan_id: plan.id,
-          status: "active",
-          start_date: startStr,
-          end_date: endStr,
-        }),
-      ]);
-
-      toast({ title:"✅ Payment Successful!", description:`Ref: ${ref} · Active until ${fmtDate(endStr)}` });
+      const endStr = data.subscription_end_date;
+      toast({
+        title: "✅ Payment Successful!",
+        description: endStr ? `Ref: ${ref} · Active until ${fmtDate(endStr)}` : `Ref: ${ref}`,
+      });
       await loadData();
       await loadHistory();
       setTab("status");
     } catch (err: any) {
-      toast({ title:"Payment recorded but profile update failed", description:"Contact admin with ref: " + ref, variant:"destructive" });
+      toast({ title:"Could not confirm payment", description:"Contact admin with ref: " + ref, variant:"destructive" });
     } finally {
       setPaying(false);
     }
