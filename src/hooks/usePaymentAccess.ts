@@ -45,8 +45,7 @@ export const usePaymentAccess = (): PaymentAccessResult => {
   // roles[] is populated. Before that, hasRole() always returns false.
   const isStaff = !authLoading && (isAdmin || isTeacher);
 
-  const fetchStatus = useCallback(async () => {
-    // Wait for auth to finish so roles are available before checking isStaff
+  const fetchStatus = useCallback(async () => {    // Wait for auth to finish so roles are available before checking isStaff
     if (authLoading) return;
     if (!userId) { setStatus("loading"); return; }
     if (isStaff) { setStatus("active"); setIsLoading(false); return; }
@@ -123,6 +122,26 @@ export const usePaymentAccess = (): PaymentAccessResult => {
   }, [userId, isStaff, authLoading]);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  // ── Live updates ─────────────────────────────────────────────────────────
+  // Without this, a payment (verified by paystack-verify, or applied later
+  // by the paystack-webhook) never reaches an already-open tab — this hook
+  // only fetched once on mount, so PaymentGuard-gated pages stayed "locked"
+  // until the student did a hard refresh. Subscribing to the student's own
+  // profile row means any payment update — from this tab, the webhook, an
+  // admin action, or a manual sync — reflects immediately everywhere.
+  useEffect(() => {
+    if (!userId || isStaff) return;
+    const channel = supabase
+      .channel(`payment-access-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles", filter: `user_id=eq.${userId}` },
+        () => fetchStatus(),
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [userId, isStaff, fetchStatus]);
 
   const daysInGrace = graceEnd
     ? Math.max(0, Math.ceil((new Date(graceEnd).getTime() - Date.now()) / 86400000))
