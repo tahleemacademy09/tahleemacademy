@@ -150,3 +150,4 @@ const AdminAudioPlayer = ({ src, label }: AdminAudioPlayerProps) => {
 };
 
 export default AdminAudioPlayer;
+
