@@ -93,7 +93,7 @@ export const PaymentLockedOverlay = ({ onPay }: { onPay: () => void }) => (
 
 // ══════════════════════════════════════════════════════════════════
 const EnrollmentPayment = () => {
-  const { user, profile: authProfile, hasRole } = useAuth();
+  const { user, profile: authProfile, hasRole, refreshProfile } = useAuth();
   const { toast }   = useToast();
   const navigate    = useNavigate();
 
@@ -340,6 +340,7 @@ const EnrollmentPayment = () => {
       });
       await loadData();
       await loadHistory();
+      await refreshProfile(); // so navbar/other components using AuthContext.profile update immediately too
       setTab("status");
     } catch (err: any) {
       toast({ title:"Could not confirm payment", description:"Contact admin with ref: " + ref, variant:"destructive" });
