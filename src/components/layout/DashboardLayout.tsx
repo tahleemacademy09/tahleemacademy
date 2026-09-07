@@ -211,26 +211,25 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"link", to:"/admin/analytics", icon:Eye, label:t("Site Analytics","إحصائيات الموقع") },
 
     // 1 ── Student Pipeline ─────────────────────────────────────
+    // New Registrations, Pipeline Tracker, Student Registration, Registration
+    // Settings & Subject Registration now live together as tabs on one page
+    // (RegistrationHub) instead of being split across separate screens.
     { type:"group", key:"pipeline", icon:UserPlus, label:t("Student Pipeline","سير التسجيل"), children:[
-      { to:"/admin/level-assignment",             icon:GraduationCap, label:t("New Registrations","الطلاب الجدد") },
-      { to:"/admin/student-registration",         icon:UserCheck,     label:t("Student Registration","تسجيل الطلاب") },
+      { to:"/admin/level-assignment",             icon:GraduationCap, label:t("Registration","التسجيل") },
       { to:"/admin/levels",                       icon:Layers,        label:t("Manage Levels","إدارة المستويات") },
-      { to:"/admin/tasjeel",                      icon:ClipboardList, label:t("Pipeline Tracker","متابعة التسجيل") },
       { to:"/admin/registration-diagnostics",     icon:Activity,      label:t("Reg. Diagnostics 🔍","تشخيص التسجيل 🔍") },
     ]},
 
     // 2 ── Students ─────────────────────────────────────────────
+    // All Students, Attendance, Transcripts & Private Sessions now live
+    // together as tabs on one page (StudentsHub) instead of four screens.
     { type:"group", key:"students", icon:Users, label:t("Students","الطلاب"), children:[
-      { to:"/admin/students",         icon:Users,         label:t("All Students","جميع الطلاب") },
-      { to:"/admin/attendance",       icon:CheckSquare,   label:t("Attendance","الحضور والغياب") },
-      { to:"/admin/transcripts",      icon:GraduationCap, label:t("Transcripts","السجلات الأكاديمية") },
-      { to:"/admin/private-sessions", icon:UserCheck,     label:t("Private Sessions","الجلسات الخاصة") },
+      { to:"/admin/students",         icon:Users,         label:t("Students","الطلاب") },
     ]},
 
     // 3 ── Academic ─────────────────────────────────────────────
     { type:"group", key:"academic", icon:BookOpen, label:t("Academic","الأكاديمي"), children:[
       { to:"/admin/courses",          icon:Layers,      label:t("Courses & Subjects","الدورات والمواد") },
-      { to:"/admin/subject-registration", icon:Settings, label:t("Subject Registration","تسجيل المواد") },
       { to:"/admin/timetable",        icon:Clock,       label:t("Timetable","الجدول الدراسي") },
       { to:"/admin/material-manager", icon:FolderOpen,  label:t("Materials","المواد التعليمية") },
       { to:"/admin/level-subject-mapping", icon:BookMarked,  label:t("Level–Subject Map","ربط المستويات") },
