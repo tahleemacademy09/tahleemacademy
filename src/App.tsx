@@ -82,7 +82,6 @@ const StudentAssignments   = lazy(() => import("./pages/student/StudentAssignmen
 const StudentAttendance    = lazy(() => import("./pages/student/StudentAttendance"));
 const StudentSupport       = lazy(() => import("./pages/student/StudentSupport"));
 const AdhkaarPage          = lazy(() => import("./pages/student/AdhkaarPage"));
-const TasjeelAdmin         = lazy(() => import("./pages/admin/TasjeelAdmin"));
 
 // ── Musabaqah ──────────────────────────────────────────────────────────────
 // Hub:  inside DashboardLayout → shows Quiz vs Recitation choice cards
@@ -111,14 +110,11 @@ const ExamEditor            = lazy(() => import("./pages/admin/ExamEditor"));
 const GradingPage           = lazy(() => import("./pages/admin/GradingPage"));
 const QuestionBank          = lazy(() => import("./pages/admin/QuestionBank"));
 const ProctoringDashboard   = lazy(() => import("./pages/admin/ProctoringDashboard"));
-const StudentManagement     = lazy(() => import("./pages/admin/StudentManagement"));
 const EntranceExamAdmin     = lazy(() => import("./pages/admin/EntranceExamAdmin"));
 const ViewAsStudent         = lazy(() => import("./pages/admin/ViewAsStudent"));
 const RecordingManagement   = lazy(() => import("./pages/admin/RecordingManagement"));
 const LiveClassManagement   = lazy(() => import("./pages/admin/LiveClassManagement"));
 const MajlisModeration      = lazy(() => import("./pages/admin/MajlisModeration"));const NotificationManagement = lazy(() => import("./pages/admin/NotificationManagement"));
-const TranscriptManagement  = lazy(() => import("./pages/admin/TranscriptManagement"));
-const AttendanceManagement  = lazy(() => import("./pages/admin/AttendanceManagement"));
 const SupportTickets        = lazy(() => import("./pages/admin/SupportTickets"));
 const PaymentManagement     = lazy(() => import("./pages/admin/PaymentManagement"));
 const TeacherPayments       = lazy(() => import("./pages/admin/TeacherPayments"));
@@ -130,15 +126,17 @@ const HifdhRevisionTracker  = lazy(() => import("./pages/admin/HifdhRevisionTrac
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
 const QuranRecitationAdmin  = lazy(() => import("./pages/admin/QuranRecitationAdmin"));
 const LetterAudioRecorder   = lazy(() => import("./pages/admin/LetterAudioRecorder"));
-const LevelAssignment       = lazy(() => import("./pages/admin/LevelAssignment"));
 const AdminRecitationSession = lazy(() => import("./pages/admin/RecitationSession"));
 const LevelSubjectMapping   = lazy(() => import("./pages/admin/LevelSubjectMapping"));
 const LevelManagement       = lazy(() => import("./pages/admin/LevelManagement"));
-const PrivateSessions       = lazy(() => import("./pages/admin/PrivateSessions"));
-const RegistrationSettings      = lazy(() => import("./pages/admin/RegistrationSettings"));
-const SubjectRegistrationSettings = lazy(() => import("./pages/admin/SubjectRegistrationSettings"));
 const RegistrationDiagnostics   = lazy(() => import("./pages/admin/RegistrationDiagnostics"));
-const StudentRegistration       = lazy(() => import("./pages/admin/StudentRegistration"));
+// Merged hub pages — group several of the above into one tabbed page so
+// related admin functions are accessed together instead of being split
+// across separate settings screens. The individual routes below still
+// exist and render these hubs (with the matching tab pre-selected) so no
+// existing links break.
+const RegistrationHub       = lazy(() => import("./pages/admin/RegistrationHub"));
+const StudentsHub           = lazy(() => import("./pages/admin/StudentsHub"));
 const AdminSettings         = lazy(() => import("./pages/admin/AdminSettings"));
 const SiteAnalytics         = lazy(() => import("./pages/admin/SiteAnalytics"));
 
@@ -346,8 +344,10 @@ const App = () => (
                     <Route path="/admin/grading"                     element={<GradingPage />} />
                     <Route path="/admin/question-bank"               element={<QuestionBank />} />
                     <Route path="/admin/proctoring"                  element={<ProctoringDashboard />} />
-                    <Route path="/admin/private-sessions"            element={<PrivateSessions />} />
-                    <Route path="/admin/students"                    element={<StudentManagement />} />
+                    {/* Students hub — All Students / Attendance / Transcripts / Private
+                        Sessions merged into one tabbed page (see StudentsHub.tsx) */}
+                    <Route path="/admin/private-sessions"            element={<StudentsHub />} />
+                    <Route path="/admin/students"                    element={<StudentsHub />} />
                     <Route path="/admin/students/:userId/view"       element={<ViewAsStudent />} />
                     <Route path="/admin/view-as-student/:userId"     element={<ViewAsStudent />} />
                     <Route path="/admin/recordings"                  element={<RecordingManagement />} />
@@ -360,11 +360,14 @@ const App = () => (
                     <Route path="/admin/recitation-test-settings"    element={<RecitationTestAdmin />} />
                     <Route path="/admin/quran-recitations"           element={<QuranRecitationAdmin />} />
                     <Route path="/admin/letter-audio"                element={<LetterAudioRecorder />} />
-                    <Route path="/admin/level-assignment"            element={<LevelAssignment />} />
+                    {/* Registration hub — New Registrations / Pipeline Tracker /
+                        Student Registration / Registration Settings / Subject
+                        Registration merged into one tabbed page (see RegistrationHub.tsx) */}
+                    <Route path="/admin/level-assignment"            element={<RegistrationHub />} />
                     <Route path="/admin/recitation-session"          element={<AdminRecitationSession />} />
                     <Route path="/admin/levels"                      element={<LevelManagement />} />
-                    <Route path="/admin/transcripts"                 element={<TranscriptManagement />} />
-                    <Route path="/admin/attendance"                  element={<AttendanceManagement />} />
+                    <Route path="/admin/transcripts"                 element={<StudentsHub />} />
+                    <Route path="/admin/attendance"                  element={<StudentsHub />} />
                     <Route path="/admin/support-tickets"             element={<SupportTickets />} />
                     <Route path="/admin/analytics"                   element={<SiteAnalytics />} />
                     <Route path="/admin/payments"                    element={<PaymentManagement />} />
@@ -372,12 +375,12 @@ const App = () => (
                     <Route path="/admin/calendar"                    element={<AcademicCalendar />} />
                     <Route path="/admin/payment-settings"            element={<PaymentSettings />} />
                     <Route path="/admin/public-classes"              element={<PublicClassManagement />} />
-                    <Route path="/admin/registration-settings"       element={<RegistrationSettings />} />
-                    <Route path="/admin/subject-registration"        element={<SubjectRegistrationSettings />} />
+                    <Route path="/admin/registration-settings"       element={<RegistrationHub />} />
+                    <Route path="/admin/subject-registration"        element={<RegistrationHub />} />
                     <Route path="/admin/registration-diagnostics"   element={<RegistrationDiagnostics />} />
-                    <Route path="/admin/student-registration"        element={<StudentRegistration />} />
+                    <Route path="/admin/student-registration"        element={<RegistrationHub />} />
                     <Route path="/admin/settings"                    element={<AdminSettings />} />
-                    <Route path="/admin/tasjeel"                     element={<TasjeelAdmin />} />
+                    <Route path="/admin/tasjeel"                     element={<RegistrationHub />} />
                     {/* Hub: choose between Quiz Arena or Recitation Competition */}
                     <Route path="/admin/musabaqah"                   element={<MusabaqahHub />} />
                   </Route>
