@@ -303,18 +303,11 @@ export default function AdminDashboard() {
           <div className="space-y-3">
 
             <Section title={t("Student Pipeline","سير التسجيل")} ck="pipeline" items={[
-              {to:"/admin/level-assignment",      icon:GraduationCap, label:t("New Registrations","الطلاب الجدد"),         sub:t("Review & assign course levels","مراجعة وتعيين المستويات"),        badge:stats.pendingRegistrations},
-              {to:"/admin/tasjeel",               icon:ClipboardList, label:t("Pipeline Tracker","متابعة التسجيل"),         sub:t("Full registration state machine","متابعة مسار التسجيل الكامل")},
-              {to:"/admin/student-registration",  icon:UserCheck,     label:t("Student Registration","تسجيل الطلاب"),        sub:t("Manage student registrations","إدارة تسجيل الطلاب")},
-              {to:"/admin/registration-settings", icon:Settings,      label:t("Registration Settings","إعدادات التسجيل"),   sub:t("Toggle fees, flow & rules","ضبط الرسوم والقواعد")},
-              {to:"/admin/subject-registration",  icon:Layers,        label:t("Subject Registration","تسجيل المواد"),        sub:t("Open/close the subject registration portal","فتح/إغلاق بوابة تسجيل المواد")},
+              {to:"/admin/level-assignment",  icon:GraduationCap, label:t("Registration","التسجيل"),   sub:t("New registrations, pipeline, settings — all in one","الطلاب الجدد، المتابعة، والإعدادات في مكان واحد"),        badge:stats.pendingRegistrations},
             ]}/>
 
             <Section title={t("Students","الطلاب")} ck="students" items={[
-              {to:"/admin/students",         icon:Users,         label:t("All Students","جميع الطلاب"),             sub:t("Browse, search & manage","تصفح وإدارة")},
-              {to:"/admin/attendance",       icon:CheckSquare,   label:t("Attendance","الحضور والغياب"),            sub:t("Mark & view attendance","تسجيل ومتابعة الحضور")},
-              {to:"/admin/transcripts",      icon:GraduationCap, label:t("Transcripts","السجلات الأكاديمية"),       sub:t("CGPA, grades & history","المعدل والسجل الأكاديمي")},
-              {to:"/admin/private-sessions", icon:UserCheck,     label:t("Private Sessions","الجلسات الخاصة"),      sub:t("Manage 1-on-1 tuition","إدارة الدروس الخاصة")},
+              {to:"/admin/students",         icon:Users,         label:t("Students","الطلاب"),             sub:t("Profile, attendance, transcripts & private sessions","الملف، الحضور، السجل الأكاديمي، والجلسات الخاصة")},
             ]}/>
 
             <Section title={t("Academic","الأكاديمي")} ck="academic" items={[
