@@ -63,6 +63,8 @@ interface QuestionForm {
   question_timer_seconds: number;
   background_image: string;
   audio_response_type: "text" | "audio";
+  group_name: string;         // e.g. "section1" — blank means always included
+  group_pick_count: number;   // how many random questions to pull from this group per student
 }
 
 interface ExamForm {
@@ -104,6 +106,7 @@ const emptyQuestion = (): QuestionForm => ({
   partial_credit: false, case_sensitive: false,
   min_words: 0, max_words: 0, question_timer_seconds: 0,
   background_image: "", audio_response_type: "text",
+  group_name: "", group_pick_count: 1,
 });
 
 const questionTypes = [
@@ -621,6 +624,9 @@ const ExamEditor = () => {
         question_timer_seconds: q.question_timer_seconds || null,
         background_image: q.background_image || null,
         audio_response_type: q.audio_response_type || null,
+        question_group: q.group_name?.trim()
+          ? `${q.group_name.trim()}::pick=${Math.max(1, q.group_pick_count || 1)}`
+          : null,
       }));
 
       if (qPayloads.length) {
@@ -690,6 +696,12 @@ const ExamEditor = () => {
           question_timer_seconds: q.question_timer_seconds || 0,
           background_image: q.background_image || "",
           audio_response_type: (q.audio_response_type as "text" | "audio") || "text",
+          group_name: (q as any).question_group
+            ? String((q as any).question_group).replace(/::pick=\d+$/, "")
+            : "",
+          group_pick_count: (q as any).question_group
+            ? parseInt((String((q as any).question_group).match(/::pick=(\d+)$/) || [,"1"])[1], 10)
+            : 1,
         })));
       }
     })();
@@ -1161,6 +1173,39 @@ const ExamEditor = () => {
                         </p>
                       </div>
                     )}
+
+                    {/* Question Pool — group questions and randomly pull N per student */}
+                    <div className="space-y-2 pt-1 border-t border-slate-100 mt-2">
+                      <Label className="text-xs sm:text-sm font-black text-slate-800">
+                        {t("Question Pool (optional)", "مجموعة الأسئلة (اختياري)")}
+                      </Label>
+                      <div className="flex gap-2 items-center flex-wrap">
+                        <Input
+                          className="w-[140px] sm:w-[180px] h-8 sm:h-9 text-[10px] sm:text-xs rounded-lg"
+                          placeholder={t("Group name (e.g. section1)", "اسم المجموعة")}
+                          value={q.group_name}
+                          onChange={e => updateQuestion(idx, { group_name: e.target.value })}
+                        />
+                        <div className="relative flex items-center">
+                          <Input
+                            type="number" min={1}
+                            className="w-[70px] sm:w-[90px] h-8 sm:h-9 pr-10 sm:pr-12 text-[10px] sm:text-xs font-bold rounded-lg text-center"
+                            value={q.group_pick_count}
+                            disabled={!q.group_name.trim()}
+                            onChange={e => updateQuestion(idx, { group_pick_count: Math.max(1, +e.target.value) })}
+                          />
+                          <span className="absolute right-1.5 sm:right-3 text-[8px] sm:text-[10px] text-slate-400 font-bold uppercase">
+                            {t("Pick", "اختر")}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        {t(
+                          "Leave the group name blank if this question should always be shown. Give two or more questions the same group name to pull a random subset — e.g. name a group \"section1\" with Pick = 5 across 10 questions, and each student gets a different random 5 from that group, in no visible order or grouping.",
+                          "اتركه فارغًا إذا أردت أن يظهر السؤال دائمًا. أعطِ مجموعة من الأسئلة نفس اسم المجموعة لسحب مجموعة عشوائية منها — مثلاً مجموعة اسمها \"section1\" مع اختيار 5 من أصل 10 أسئلة، فيحصل كل طالب على 5 أسئلة عشوائية مختلفة من تلك المجموعة دون أي ترتيب ظاهر."
+                        )}
+                      </p>
+                    </div>
 
                     {/* MCQ Options */}
                     {(q.question_type==="mcq" || q.question_type==="image_mcq") && (
