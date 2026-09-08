@@ -20,12 +20,23 @@ import {
   ArrowLeft, RefreshCw, Clock, Plus, Send, ShieldAlert,
   Camera, Mic, Maximize, X, StickyNote, RotateCcw, CheckCircle2,
   AlertTriangle, Wifi, WifiOff, Users, Circle, Video, VideoOff,
+  Volume2, VolumeX,
 } from "lucide-react";
 
-/* ── Live video tile — subscribes to one participant's video track ──── */
-const LiveTile = ({ participant, name, Track, onExpand, expanded, style }: { participant: any; name: string; Track: any; onExpand?: () => void; expanded?: boolean; style?: CSSProperties }) => {
+/* ── Live video tile — subscribes to one participant's video AND
+     microphone tracks. Audio always plays muted-by-default (a grid of
+     several students' mics all at once would be an unusable mess); an
+     admin explicitly picks who to listen to via the speaker toggle
+     (or fullscreen), and only that one participant's track is unmuted
+     at a time — driven by the `listening` prop from the parent. ──── */
+const LiveTile = ({ participant, name, Track, onExpand, expanded, style, listening, onToggleListen }: {
+  participant: any; name: string; Track: any; onExpand?: () => void; expanded?: boolean; style?: CSSProperties;
+  listening?: boolean; onToggleListen?: () => void;
+}) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [hasVideo, setHasVideo] = useState(false);
+  const [hasAudio, setHasAudio] = useState(false);
 
   useEffect(() => {
     const attach = () => {
@@ -36,6 +47,17 @@ const LiveTile = ({ participant, name, Track, onExpand, expanded, style }: { par
         setHasVideo(true);
       } else {
         setHasVideo(false);
+      }
+
+      const audioPub = participant.getTrackPublication?.(Track.Source.Microphone) || [...participant.audioTrackPublications.values()]?.[0];
+      const audioTrack = audioPub?.track;
+      if (audioTrack && audioRef.current) {
+        audioTrack.attach(audioRef.current);
+        audioRef.current.muted = !listening;
+        audioRef.current.play?.().catch(() => {}); // muted autoplay is always allowed; unmuting happens on a real click below
+        setHasAudio(true);
+      } else {
+        setHasAudio(false);
       }
     };
     attach();
@@ -48,8 +70,43 @@ const LiveTile = ({ participant, name, Track, onExpand, expanded, style }: { par
         const pub = participant.getTrackPublication?.(Track.Source.Camera);
         pub?.track?.detach();
       } catch (_) {}
+      try {
+        const audioPub = participant.getTrackPublication?.(Track.Source.Microphone);
+        audioPub?.track?.detach();
+      } catch (_) {}
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [participant, Track]);
+
+  // Flip mute on the already-attached element when the admin picks a
+  // different participant to listen to — no need to re-attach the track.
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.muted = !listening;
+  }, [listening]);
+
+  // Resume playback when the tab/app comes back from being backgrounded.
+  // Mobile browsers (especially iOS Safari, and Android Chrome to a lesser
+  // extent) pause <video>/<audio> elements — even muted ones — the moment
+  // the app is minimized, and do NOT automatically resume them when it's
+  // foregrounded again. The WebRTC track is still fine; the DOM element
+  // just needs an explicit .play() nudge, which is exactly what was
+  // missing before (tiles stayed frozen/black after minimizing and
+  // returning even though the underlying connection never dropped).
+  useEffect(() => {
+    const resume = () => {
+      if (document.visibilityState !== "visible") return;
+      videoRef.current?.play?.().catch(() => {});
+      audioRef.current?.play?.().catch(() => {});
+    };
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("pageshow", resume);
+    window.addEventListener("focus", resume);
+    return () => {
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("pageshow", resume);
+      window.removeEventListener("focus", resume);
+    };
+  }, []);
 
   return (
     <div
@@ -67,10 +124,25 @@ const LiveTile = ({ participant, name, Track, onExpand, expanded, style }: { par
           shows the whole frame, with small letterbox bars if needed, so we
           never lose part of the student's face. */}
       <video ref={videoRef} autoPlay playsInline muted style={{ width: "100%", height: "100%", objectFit: "contain", display: hasVideo ? "block" : "none" }} />
+      <audio ref={audioRef} autoPlay playsInline muted={!listening} style={{ display: "none" }} />
       {!hasVideo && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, color: "rgba(255,255,255,.4)" }}>
           <VideoOff size={expanded ? 18 : 13} />
         </div>
+      )}
+      {onToggleListen && hasAudio && (
+        <button
+          onClick={e => { e.stopPropagation(); onToggleListen(); }}
+          title={listening ? "Listening — tap to mute" : "Tap to listen"}
+          style={{
+            position: "absolute", top: expanded ? 14 : 6, right: expanded ? 14 : 6, zIndex: 2,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: listening ? "#22c55e" : "rgba(0,0,0,.55)", border: "none", borderRadius: 8,
+            padding: expanded ? 9 : 5, cursor: "pointer",
+          }}
+        >
+          {listening ? <Volume2 size={expanded ? 16 : 11} color="#fff" /> : <VolumeX size={expanded ? 16 : 11} color="#fff" />}
+        </button>
       )}
       {!expanded && style?.width && Number(style.width) < 100 ? null : (
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent,rgba(0,0,0,.75))", color: "#fff", fontSize: expanded ? 14 : 10, fontWeight: 700, padding: expanded ? "20px 14px 10px" : "12px 8px 5px" }}>
@@ -133,6 +205,16 @@ const useLiveKitViewer = (examId: string | undefined) => {
         room.on(RoomEvent.ParticipantDisconnected, () => setParticipants([...room.remoteParticipants.values()]));
         room.on(RoomEvent.TrackSubscribed, () => setParticipants([...room.remoteParticipants.values()]));
         room.on(RoomEvent.TrackUnsubscribed, () => setParticipants([...room.remoteParticipants.values()]));
+        // LiveKit tries its own ICE-restart reconnect first for brief drops
+        // (e.g. the phone's network stalling while the app is backgrounded)
+        // without ever firing Disconnected. Refresh the tile list once it
+        // succeeds so tracks that were re-subscribed under the hood actually
+        // get re-attached to their <video>/<audio> elements.
+        room.on(RoomEvent.Reconnecting, () => setStatus("connecting"));
+        room.on(RoomEvent.Reconnected, () => {
+          setStatus("connected");
+          setParticipants([...room.remoteParticipants.values()]);
+        });
         // Server-side kicks / network blips used to leave the grid stuck on
         // its last frame (black) with no way to recover short of a manual
         // page refresh. Reconnect automatically instead.
@@ -165,9 +247,32 @@ const useLiveKitViewer = (examId: string | undefined) => {
 
     connect();
 
+    // Backgrounding the tab throttles the setTimeout retry above (some
+    // mobile browsers delay it for minutes, or indefinitely if the OS
+    // suspends the page). Coming back to the tab is the one moment we know
+    // for sure the admin actually needs the feed working — so if the room
+    // isn't connected at that point, reconnect immediately instead of
+    // waiting on whatever's left of the throttled timer.
+    const kickIfStale = () => {
+      if (document.visibilityState !== "visible") return;
+      const room = roomRef.current;
+      if (!room || room.state === "disconnected") {
+        if (retryTimer) clearTimeout(retryTimer);
+        connect();
+      } else {
+        // Connection is fine — just refresh so tiles re-render against
+        // current track references in case a media element quietly paused.
+        setParticipants([...room.remoteParticipants.values()]);
+      }
+    };
+    document.addEventListener("visibilitychange", kickIfStale);
+    window.addEventListener("focus", kickIfStale);
+
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
+      document.removeEventListener("visibilitychange", kickIfStale);
+      window.removeEventListener("focus", kickIfStale);
       try { roomRef.current?.disconnect(); } catch (_) {}
       try { channelRef.current?.untrack(); channelRef.current?.unsubscribe(); } catch (_) {}
     };
@@ -178,7 +283,9 @@ const useLiveKitViewer = (examId: string | undefined) => {
 
 /* ── Full-screen single-student viewer — opened by tapping a student's
      inline live thumbnail. ───────────────────────────────────────── */
-const LiveFullscreen = ({ participant, name, Track, onClose }: { participant: any; name: string; Track: any; onClose: () => void }) => (
+const LiveFullscreen = ({ participant, name, Track, onClose, listening, onToggleListen }: {
+  participant: any; name: string; Track: any; onClose: () => void; listening?: boolean; onToggleListen?: () => void;
+}) => (
   <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 110, display: "flex", flexDirection: "column" }}>
     <button
       onClick={onClose}
@@ -190,7 +297,7 @@ const LiveFullscreen = ({ participant, name, Track, onClose }: { participant: an
       <X size={18} color="#fff" />
     </button>
     <div style={{ flex: 1 }}>
-      <LiveTile participant={participant} name={name} Track={Track} expanded />
+      <LiveTile participant={participant} name={name} Track={Track} expanded listening={listening} onToggleListen={onToggleListen} />
     </div>
   </div>
 );
@@ -198,10 +305,11 @@ const LiveFullscreen = ({ participant, name, Track, onClose }: { participant: an
 /* ── Live grid — every currently-publishing student at once, tap a tile
      to open it fullscreen (via the parent's expandedId state). ────────── */
 const LiveGridModal = ({
-  participants, nameFor, Track, status, onExpand, onClose,
+  participants, nameFor, Track, status, onExpand, onClose, listeningId, onToggleListen,
 }: {
   participants: any[]; nameFor: (id: string) => string; Track: any;
   status: "connecting" | "connected" | "error"; onExpand: (id: string) => void; onClose: () => void;
+  listeningId?: string | null; onToggleListen?: (id: string) => void;
 }) => (
   <div style={{ position: "fixed", inset: 0, background: "#0b1a12", zIndex: 100, display: "flex", flexDirection: "column" }}>
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,.08)" }}>
@@ -220,13 +328,18 @@ const LiveGridModal = ({
       {participants.length === 0 ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "rgba(255,255,255,.4)", fontSize: 13, fontWeight: 700, textAlign: "center", padding: 24 }}>
           {status === "connected"
-            ? "No one is currently publishing video — students only stream while they have an in-progress attempt with this monitor open."
+            ? "No one is currently publishing video or audio — students only stream while they have an in-progress attempt with this monitor open."
             : "Connecting to live grid…"}
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
           {participants.map((p: any) => (
-            <LiveTile key={p.identity} participant={p} name={nameFor(p.identity)} Track={Track} onExpand={() => onExpand(p.identity)} />
+            <LiveTile
+              key={p.identity} participant={p} name={nameFor(p.identity)} Track={Track}
+              onExpand={() => onExpand(p.identity)}
+              listening={listeningId === p.identity}
+              onToggleListen={onToggleListen ? () => onToggleListen(p.identity) : undefined}
+            />
           ))}
         </div>
       )}
@@ -321,6 +434,15 @@ export default function ExamLiveMonitor() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [expandedId, setExpandedId]   = useState<string | null>(null);
   const [showLiveGrid, setShowLiveGrid] = useState(false);
+  // Which student's mic (if any) the admin is currently listening to — only
+  // ever one at a time, so a room full of students isn't all talking over
+  // each other in the admin's ears.
+  const [listeningId, setListeningId] = useState<string | null>(null);
+  const toggleListen = (id: string) => setListeningId(cur => cur === id ? null : id);
+  // Expanding a tile fullscreen focuses audio on that student too; closing
+  // drops back to silence rather than leaving an off-screen mic playing.
+  const openFullscreen = (id: string) => { setExpandedId(id); setListeningId(id); };
+  const closeFullscreen = () => { setListeningId(cur => cur === expandedId ? null : cur); setExpandedId(null); };
 
   const [, forceTick] = useState(0); // re-render every second for live timers
 
@@ -336,8 +458,15 @@ export default function ExamLiveMonitor() {
   // If the expanded student's camera disconnects, fall back automatically
   // instead of showing a dead tile.
   useEffect(() => {
-    if (expandedId && !liveParticipants.some((p: any) => p.identity === expandedId)) setExpandedId(null);
+    if (expandedId && !liveParticipants.some((p: any) => p.identity === expandedId)) {
+      setExpandedId(null);
+      setListeningId(cur => cur === expandedId ? null : cur);
+    }
   }, [liveParticipants, expandedId]);
+  // Same cleanup for a grid-only listen selection (no fullscreen involved).
+  useEffect(() => {
+    if (listeningId && !liveParticipants.some((p: any) => p.identity === listeningId)) setListeningId(null);
+  }, [liveParticipants, listeningId]);
 
   const rowsRef = useRef<Row[]>([]);
   useEffect(() => { rowsRef.current = rows; }, [rows]);
@@ -689,7 +818,7 @@ export default function ExamLiveMonitor() {
                         participant={liveParticipant}
                         name={name}
                         Track={LKTrack}
-                        onExpand={() => setExpandedId(row.profile.user_id)}
+                        onExpand={() => openFullscreen(row.profile.user_id)}
                         style={{ width: 52, height: 68, borderRadius: 10 }}
                       />
                     </div>
@@ -905,8 +1034,10 @@ export default function ExamLiveMonitor() {
           nameFor={nameForIdentity}
           Track={LKTrack}
           status={liveStatus}
-          onExpand={(id) => setExpandedId(id)}
+          onExpand={(id) => openFullscreen(id)}
           onClose={() => setShowLiveGrid(false)}
+          listeningId={listeningId}
+          onToggleListen={toggleListen}
         />
       )}
 
@@ -918,7 +1049,9 @@ export default function ExamLiveMonitor() {
             return r ? (language === "ar" ? r.profile.full_name_ar || r.profile.full_name : r.profile.full_name) : expandedParticipant.identity;
           })()}
           Track={LKTrack}
-          onClose={() => setExpandedId(null)}
+          onClose={closeFullscreen}
+          listening={listeningId === expandedParticipant.identity}
+          onToggleListen={() => toggleListen(expandedParticipant.identity)}
         />
       )}
 
