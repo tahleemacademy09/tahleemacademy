@@ -62,7 +62,7 @@ const TeacherGrading = () => {
       const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subjectIds);
       const courseIds = (courses || []).map(c => c.id);
       if (!courseIds.length) { setLoading(false); return; }
-      const { data: exams } = await supabase.from("exams").select("id, title, title_ar").in("course_id", courseIds);
+      const { data: exams } = await supabase.from("exams").select("id, title, title_ar, session").in("course_id", courseIds);
       const ids = (exams || []).map(e => e.id);
       setExamIds(ids);
       setExamsList(exams || []);
@@ -551,7 +551,7 @@ const TeacherGrading = () => {
                   {attempt.profiles?.full_name || "Student"}
                 </div>
                 <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {attempt.exams?.title} {subject && `• ${subject}`}
+                  {attempt.exams?.title} {subject && `• ${subject}`} {attempt.exams?.session && `• 📅 ${attempt.exams.session}`}
                 </div>
                 <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>
                   {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : "—"}
