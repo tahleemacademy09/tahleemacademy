@@ -30,6 +30,27 @@ const CONFIDENT = "#22c55e", UNSURE = "#f59e0b", GUESSING = "#ef4444";
 type Confidence = "confident" | "unsure" | "guessing" | null;
 type AnswerState = { text: string; data: any; flagged: boolean; confidence: Confidence };
 
+/* ── Deterministic per-student option shuffle ───────────────────────
+   Seeds off (userId + questionId) so the order is stable across
+   reloads/re-renders within the same attempt, but differs student
+   to student — mirrors how the RPC deterministically randomizes
+   question selection via md5(auth.uid() || question.id).
+─────────────────────────────────────────────────────────────────── */
+function seededShuffle<T>(items: T[], seedStr: string): T[] {
+  let seed = 0;
+  for (let i = 0; i < seedStr.length; i++) seed = (seed * 31 + seedStr.charCodeAt(i)) >>> 0;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 /* ── Bilingual question renderer ────────────────────────────────────
    Splits "Arabic (English)" → Arabic first, English below, no brackets.
 ─────────────────────────────────────────────────────────────────── */
@@ -430,6 +451,14 @@ const ExamTaking = () => {
           return q;
         }));
         if (ad.exams.randomize_questions) ql = ql.sort(() => Math.random() - 0.5);
+        if (ad.exams.randomize_answers) {
+          ql = ql.map((q: any) => {
+            if ((q.question_type === "mcq" || q.question_type === "image_mcq") && Array.isArray(q.options)) {
+              return { ...q, options: seededShuffle(q.options, `${user.id}:${q.id}`) };
+            }
+            return q;
+          });
+        }
         setQuestions(ql);
 
         const { data: ea } = await supabase.from("exam_answers").select("*").eq("attempt_id", attemptId);
