@@ -390,6 +390,17 @@ const StudentExams = () => {
         });
       setAssignedExams(list);
 
+      // Attach live question-pool counts (respects section pull tags,
+      // not just a raw row count) since exams has no stored question_count column.
+      const countEntries = await Promise.all(
+        list.map(async (e: any) => {
+          const { data: c } = await supabase.rpc("get_exam_question_pool_count", { _exam_id: e.id });
+          return [e.id, c ?? 0] as const;
+        })
+      );
+      const countMap = Object.fromEntries(countEntries);
+      setAssignedExams(list.map((e: any) => ({ ...e, question_count: countMap[e.id] ?? 0 })));
+
       const { data: att } = await supabase
         .from("exam_attempts").select("*, exams(title,title_ar,max_attempts,type)")
         .eq("user_id", user!.id).order("created_at", { ascending: false });
