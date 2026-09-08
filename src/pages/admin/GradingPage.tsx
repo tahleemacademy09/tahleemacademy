@@ -157,9 +157,15 @@ const GradingPage = () => {
       const scaledTotal = 30;
       const scaledEarned = totalPoints > 0 ? Number(((earned / totalPoints) * 30).toFixed(2)) : 0;
 
+      // If this attempt was already released, keep it released after an admin
+      // edit — don't silently pull it back to "graded" and hide it from the
+      // student again. Anything else (submitted/in_progress) moves to "graded"
+      // as before.
+      const nextStatus = selectedAttempt.status === "released" ? "released" : "graded";
+
       // Primary: direct update (works when RLS is patched via SQL step 9)
       const { error: attemptErr } = await supabase.from("exam_attempts").update({
-        status: "graded", score: scaledEarned, total_points: scaledTotal,
+        status: nextStatus, score: scaledEarned, total_points: scaledTotal,
         percentage: pct, passed: pct >= passing,
       }).eq("id", selectedAttempt.id);
 
@@ -170,6 +176,7 @@ const GradingPage = () => {
           _score:      scaledEarned,
           _total:      scaledTotal,
           _passing:    passing,
+          _status:     nextStatus,
         });
         if (rpcErr) throw new Error(`Grading failed: ${rpcErr.message}`);
       }
@@ -331,11 +338,12 @@ const GradingPage = () => {
             <p style={{ fontSize: 11, color: "rgba(255,255,255,.65)", margin: 0 }}>
               {language === "ar" ? selectedAttempt.exams?.title_ar || selectedAttempt.exams?.title : selectedAttempt.exams?.title}
               {selectedAttempt.status === "in_progress" && <span style={{ marginLeft: 8, background: "#f59e0b", color: "#fff", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700 }}>⚠ IMPORTED — status will be updated on save</span>}
+              {selectedAttempt.status === "released" && <span style={{ marginLeft: 8, background: "#16A34A", color: "#fff", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700 }}>✓ RELEASED — editing keeps it released &amp; visible to student</span>}
             </p>
           </div>
           <Button onClick={saveGrading} disabled={saving}
             style={{ background: "#fff", color: G, borderRadius: 10, fontWeight: 800, gap: 6, fontSize: 13 }}>
-            {saving ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><CheckCircle size={14} /> Save Grades</>}
+            {saving ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Saving…</> : <><CheckCircle size={14} /> {selectedAttempt.status === "released" ? "Save Changes" : "Save Grades"}</>}
           </Button>
         </div>
 
@@ -629,11 +637,17 @@ const GradingPage = () => {
                       </>
                     )}
 
-                    {/* RELEASED */}
+                    {/* RELEASED: still viewable/editable by admin */}
                     {attempt.status === "released" && (
-                      <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, background: "#DCFCE7", color: "#166534", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
-                        <CheckCircle size={11} /> Released
-                      </span>
+                      <>
+                        <span style={{ fontSize: 11, padding: "4px 10px", borderRadius: 20, background: "#DCFCE7", color: "#166534", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                          <CheckCircle size={11} /> Released
+                        </span>
+                        <button onClick={() => openAttempt(attempt)}
+                          style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#374151" }}>
+                          <Eye size={12} /> View / Edit
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
