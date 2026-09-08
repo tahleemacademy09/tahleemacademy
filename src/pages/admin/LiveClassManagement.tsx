@@ -195,9 +195,44 @@ const LiveClassManagement = () => {
 
   useEffect(()=>{
     (async()=>{
-      const {data} = await supabase.from("manual_attendance")
-        .select("subject_id,session_id,status,student_id,profiles:student_id(level)").limit(3000);
-      setGeneralAtt(data||[]);
+      // Attendance is derived from real attendance_logs (auto-tracked
+      // join/leave events from the live class), not from manual_attendance
+      // roll calls — those are rarely filled in, which is why this used to
+      // show "Not recorded yet" for almost every session. Absent students
+      // (enrolled but with no matching attendance_logs row for a session)
+      // are still counted, so percentages reflect the full class roster.
+      const [{data: roster}, {data: sessRows}, {data: logs}] = await Promise.all([
+        supabase.from("student_subject_enrollments")
+          .select("subject_id,student_id,profiles:student_id(level)")
+          .eq("status","active"),
+        supabase.from("live_sessions")
+          .select("id,subject_id,status")
+          .not("status","in","(scheduled,cancelled)"),
+        supabase.from("attendance_logs").select("session_id,user_id"),
+      ]);
+
+      const attended = new Set((logs||[]).map((l:any)=>`${l.session_id}|${l.user_id}`));
+      const rosterBySubject = new Map<string, any[]>();
+      (roster||[]).forEach((r:any)=>{
+        if (!rosterBySubject.has(r.subject_id)) rosterBySubject.set(r.subject_id, []);
+        rosterBySubject.get(r.subject_id)!.push(r);
+      });
+
+      const rows: any[] = [];
+      (sessRows||[]).forEach((s:any)=>{
+        const enrolled = rosterBySubject.get(s.subject_id) || [];
+        enrolled.forEach((stu:any)=>{
+          rows.push({
+            subject_id: s.subject_id,
+            session_id: s.id,
+            student_id: stu.student_id,
+            profiles: stu.profiles,
+            status: attended.has(`${s.id}|${stu.student_id}`) ? "present" : "absent",
+          });
+        });
+      });
+
+      setGeneralAtt(rows);
     })();
   },[]);
 
