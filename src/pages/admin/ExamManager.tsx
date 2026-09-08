@@ -264,6 +264,16 @@ export default function ExamManager() {
 
   const sessionOptions = Array.from(new Set(exams.map(e => e.session).filter(Boolean))).sort().reverse();
 
+  const filtered = exams.filter(e => {
+    const name = language === "ar" ? (e.title_ar || e.title) : e.title;
+    if (search && !name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (termFilter !== "all" && e.term !== termFilter) return false;
+    if (sessionFilter !== "all" && (e.session || "") !== sessionFilter) return false;
+    if (typeFilter !== "all" && e.type !== typeFilter) return false;
+    if (levelFilter !== "all" && (e.level || "") !== levelFilter) return false;
+    return true;
+  });
+
   const TERM_ORDER: Record<string, number> = { first: 0, second: 1, final: 2 };
   const TERM_LABEL: Record<string, string> = { first: "First Term", second: "Second Term", final: "Final Term" };
   const groupedSections = (() => {
@@ -281,16 +291,6 @@ export default function ExamManager() {
         .map(term => ({ term, exams: bySession[session][term] })),
     }));
   })();
-
-  const filtered = exams.filter(e => {
-    const name = language === "ar" ? (e.title_ar || e.title) : e.title;
-    if (search && !name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (termFilter !== "all" && e.term !== termFilter) return false;
-    if (sessionFilter !== "all" && (e.session || "") !== sessionFilter) return false;
-    if (typeFilter !== "all" && e.type !== typeFilter) return false;
-    if (levelFilter !== "all" && (e.level || "") !== levelFilter) return false;
-    return true;
-  });
 
   const filteredStudents = allStudents.filter(s =>
     s.full_name.toLowerCase().includes(studentSearch.toLowerCase()) ||
