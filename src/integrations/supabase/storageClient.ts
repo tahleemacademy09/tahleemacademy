@@ -1,18 +1,38 @@
 /*
-storageClient.ts — Tahleem Academy [FIXED]
+storageClient.ts — Tahleem Academy [R2 migration]
 ─────────────────────────────────────────────────────────────────────
-Fix: Use the MAIN supabase client for storage operations.
-The main client already carries the user's auth session.
+Recordings moved from Supabase Storage to Cloudflare R2 (egress cost).
+"sessions/" and "recordings/" paths now resolve through the recording-url
+edge function (signed R2 URL) instead of supabase.storage. Everything
+else (subject-materials, legacy subject-files) is unchanged.
 */
 
 import { supabase } from "./client";
 
 export const storageSupabase = supabase;
 export const BUCKET_MATERIALS = "subject-materials";
-export const BUCKET_RECORDINGS = "recordings";
+export const BUCKET_RECORDINGS = "recordings"; // legacy Supabase bucket name, kept as read fallback only
 // Legacy bucket some older student-submission uploads mistakenly wrote to.
 // Kept only as a read fallback so previously-submitted files still resolve.
 const LEGACY_SUBMISSION_BUCKET = "subject-files";
+
+function isRecordingPath(fileUrl: string): boolean {
+  return fileUrl.startsWith("sessions/") || fileUrl.startsWith("recordings/");
+}
+
+async function getR2SignedUrl(fileUrl: string, expiresInSeconds: number): Promise<string | null> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return null;
+
+  const { data, error } = await supabase.functions.invoke("recording-url", {
+    body: { path: fileUrl, action: "sign", expiresIn: expiresInSeconds },
+  });
+  if (error || !data?.url) {
+    console.error("[StorageClient] R2 sign failed:", error || data);
+    return null;
+  }
+  return data.url as string;
+}
 
 async function resolveInBucket(bucket: string, fileUrl: string, expiresInSeconds: number): Promise<string | null> {
   const { data: pub } = supabase.storage.from(bucket).getPublicUrl(fileUrl);
@@ -36,29 +56,44 @@ export async function getSignedUrl(
   if (!fileUrl) return null;
   if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
 
-  const bucket =
-    fileUrl.startsWith("sessions/") || fileUrl.startsWith("recordings/")
-      ? BUCKET_RECORDINGS
-      : BUCKET_MATERIALS;
+  if (isRecordingPath(fileUrl)) {
+    const r2Url = await getR2SignedUrl(fileUrl, expiresInSeconds);
+    if (r2Url) return r2Url;
 
-  const primary = await resolveInBucket(bucket, fileUrl, expiresInSeconds);
+    // Fallback: file hasn't been migrated to R2 yet (or migration script
+    // hasn't run for it) — check the old Supabase bucket before giving up.
+    // Safe to delete this fallback once the one-time migration is confirmed
+    // complete for all rows in session_recordings.
+    const legacyRecording = await resolveInBucket(BUCKET_RECORDINGS, fileUrl, expiresInSeconds);
+    if (legacyRecording) return legacyRecording;
+
+    console.error("[StorageClient] Could not resolve recording in R2 or legacy Supabase bucket:", fileUrl);
+    return null;
+  }
+
+  const primary = await resolveInBucket(BUCKET_MATERIALS, fileUrl, expiresInSeconds);
   if (primary) return primary;
 
   // Fallback: older student-submission files may still live in the legacy bucket.
-  if (bucket === BUCKET_MATERIALS) {
-    const legacy = await resolveInBucket(LEGACY_SUBMISSION_BUCKET, fileUrl, expiresInSeconds);
-    if (legacy) return legacy;
-  }
+  const legacy = await resolveInBucket(LEGACY_SUBMISSION_BUCKET, fileUrl, expiresInSeconds);
+  if (legacy) return legacy;
 
-  console.error("[StorageClient] Could not resolve signed URL in any bucket:", { bucket, path: fileUrl });
+  console.error("[StorageClient] Could not resolve signed URL in any bucket:", { bucket: BUCKET_MATERIALS, path: fileUrl });
   return null;
 }
 
 export async function uploadStorageFile(
-  bucket: "subject-materials" | "recordings",  path: string,
+  bucket: "subject-materials" | "recordings", path: string,
   file: File | Blob,
   options?: { upsert?: boolean; contentType?: string }
 ): Promise<{ success: boolean; path?: string; error?: string }> {
+  // Recordings are no longer uploaded from the client — LiveKit Egress
+  // writes them straight to R2 server-side (see start-recording function).
+  // This path stays for subject-materials uploads only.
+  if (bucket === "recordings") {
+    return { success: false, error: "Recordings are written by the server-side egress job, not uploaded from the client." };
+  }
+
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) {
     return { success: false, error: "Not signed in — please log in and try again." };
@@ -73,7 +108,7 @@ export async function uploadStorageFile(
   if (error) {
     const msg = error.message || "";
     let friendly = `Upload failed: ${msg}`;
-    
+
     if (msg.includes("row-level security") || msg.includes("policy") || (error as any).status === 403) {
       friendly = `Permission denied on '${bucket}'. Add an INSERT policy in Supabase Storage settings.`;
     } else if (msg.includes("already exists")) {
@@ -83,53 +118,55 @@ export async function uploadStorageFile(
     } else if (msg.includes("Invalid API key") || (error as any).status === 401) {
       friendly = "Invalid API key. Check VITE_SUPABASE_PUBLISHABLE_KEY.";
     }
-    
+
     return { success: false, error: friendly };
   }
-  
+
   return { success: true, path: data?.path || path };
 }
 
 export async function removeStorageFile(fileUrl: string): Promise<void> {
   if (!fileUrl || fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return;
-  
-  const bucket =
-    fileUrl.startsWith("sessions/") || fileUrl.startsWith("recordings/")
-      ? BUCKET_RECORDINGS
-      : BUCKET_MATERIALS;
 
-  await supabase.storage.from(bucket).remove([fileUrl]);
+  if (isRecordingPath(fileUrl)) {
+    const { error } = await supabase.functions.invoke("recording-url", {
+      body: { path: fileUrl, action: "delete" },
+    });
+    if (error) console.error("[StorageClient] R2 delete failed:", error);
+    return;
+  }
+
+  await supabase.storage.from(BUCKET_MATERIALS).remove([fileUrl]);
 }
 
 export async function testStorageConnection() {
   console.group("[StorageClient] Diagnostic");
-  
-  const { data: { session } } = await supabase.auth.getSession();  console.log(session ? `Signed in as ${session.user.email}` : "NOT signed in — uploads require auth");
+
+  const { data: { session } } = await supabase.auth.getSession();
+  console.log(session ? `Signed in as ${session.user.email}` : "NOT signed in — uploads require auth");
 
   try {
     const { data: buckets, error } = await supabase.storage.listBuckets();
-    if (error) { 
-      console.error("List buckets failed:", error.message); 
-      console.groupEnd(); 
-      return { success: false }; 
+    if (error) {
+      console.error("List buckets failed:", error.message);
+      console.groupEnd();
+      return { success: false };
     }
-    
+
     const names = (buckets || []).map((b: any) => b.name);
     console.log("Buckets:", names.join(", ") || "(none)");
-    
+
     if (!names.includes("subject-materials")) {
       console.warn("Create 'subject-materials' bucket in Supabase Dashboard → Storage");
     }
-    if (!names.includes("recordings")) {
-      console.warn("Create 'recordings' bucket in Supabase Dashboard → Storage");
-    }
-    
+    console.log("Recordings now live in Cloudflare R2 — not a Supabase bucket. Check R2 dashboard for that bucket's status.");
+
     console.groupEnd();
     return { success: true, buckets: names };
-  } catch (e) { 
-    console.error(e); 
-    console.groupEnd(); 
-    return { success: false }; 
+  } catch (e) {
+    console.error(e);
+    console.groupEnd();
+    return { success: false };
   }
 }
 
