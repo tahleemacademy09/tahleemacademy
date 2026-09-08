@@ -30,6 +30,7 @@ import {
   Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2,
   Upload, Download, Image as ImageIcon, Loader2, Eye, Library, Clock,
   AlertCircle, CheckCircle, XCircle, HelpCircle, Monitor,
+  ChevronDown, ChevronUp, FolderPlus, Shuffle,
 } from "lucide-react";
 import RichTextEditor from "@/components/exam/RichTextEditor";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -322,6 +323,78 @@ const ExamEditor = () => {
   const removeQuestion = (idx: number) => setQuestions(q => q.filter((_, i) => i !== idx));
   const updateQuestion = (idx: number, updates: Partial<QuestionForm>) =>
     setQuestions(q => q.map((qq, i) => i === idx ? { ...qq, ...updates } : qq));
+
+  // ── Sections (question pools) ───────────────────────────────────────────
+  // A "section" is a UI-level shell around a group_name. It lets an admin
+  // create the pool first, name it, set how many to pull, then add
+  // questions into it — instead of retyping the same group name on every
+  // question card. The underlying persisted data is unchanged: each
+  // question still just carries group_name + group_pick_count.
+  interface SectionDef { name: string; pick: number; }
+  const [sections, setSections] = useState<SectionDef[]>([]);
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set());
+
+  // Keep `sections` in sync with whatever group names actually show up on
+  // questions (loaded from DB, imported from CSV, or pulled from the
+  // Question Bank) — without ever dropping a section the admin created
+  // that doesn't have questions in it yet.
+  useEffect(() => {
+    const seen = new Set(sections.map(s => s.name));
+    const missing: SectionDef[] = [];
+    questions.forEach(q => {
+      const name = q.group_name?.trim();
+      if (name && !seen.has(name)) {
+        seen.add(name);
+        missing.push({ name, pick: Math.max(1, q.group_pick_count || 1) });
+      }
+    });
+    if (missing.length) setSections(s => [...s, ...missing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [questions]);
+
+  const toggleSectionCollapse = (name: string) =>
+    setCollapsedSections(s => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n; });
+
+  const addSection = () => {
+    let n = sections.length + 1;
+    while (sections.some(s => s.name === `Section ${n}`)) n++;
+    const name = `Section ${n}`;
+    setSections(s => [...s, { name, pick: 1 }]);
+  };
+
+  const renameSection = (oldName: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName) { setSections(s => s.map(sec => sec.name === oldName ? { ...sec, name: oldName } : sec)); return; }
+    setSections(s => s.map(sec => sec.name === oldName ? { ...sec, name: trimmed } : sec));
+    setQuestions(qs => qs.map(q => q.group_name === oldName ? { ...q, group_name: trimmed } : q));
+    setCollapsedSections(s => { if (!s.has(oldName)) return s; const n = new Set(s); n.delete(oldName); n.add(trimmed); return n; });
+  };
+
+  const setSectionPick = (name: string, pick: number) => {
+    const safePick = Math.max(1, pick || 1);
+    setSections(s => s.map(sec => sec.name === name ? { ...sec, pick: safePick } : sec));
+    setQuestions(qs => qs.map(q => q.group_name === name ? { ...q, group_pick_count: safePick } : q));
+  };
+
+  const deleteSection = (name: string) => {
+    const memberCount = questions.filter(q => q.group_name === name).length;
+    if (memberCount > 0 && !window.confirm(`Delete "${name}" and its ${memberCount} question${memberCount !== 1 ? "s" : ""}? This cannot be undone.`)) return;
+    setQuestions(qs => qs.filter(q => q.group_name !== name));
+    setSections(s => s.filter(sec => sec.name !== name));
+    setCollapsedSections(s => { const n = new Set(s); n.delete(name); return n; });
+  };
+
+  const addQuestionToSection = (name: string) => {
+    const sec = sections.find(s => s.name === name);
+    setQuestions(q => [...q, { ...emptyQuestion(), sort_order: q.length, group_name: name, group_pick_count: sec?.pick || 1 }]);
+    setCollapsedSections(s => { if (!s.has(name)) return s; const n = new Set(s); n.delete(name); return n; });
+  };
+
+  // Move a question into a section (or back to standalone via "").
+  const moveQuestionToSection = (idx: number, name: string) => {
+    const sec = sections.find(s => s.name === name);
+    updateQuestion(idx, { group_name: name, group_pick_count: name ? (sec?.pick || 1) : 1 });
+  };
 
   // ── Media upload ────────────────────────────────────────────────────────
   const uploadMedia = async (file: File, idx: number) => {
@@ -707,6 +780,249 @@ const ExamEditor = () => {
     })();
   }, [examId]);
 
+  // ── Question card renderer (shared by sections + standalone list) ──────
+  const renderQuestionCard = (q: QuestionForm, idx: number) => (
+                <Card key={idx} className="border-slate-200 shadow-md rounded-2xl overflow-hidden transition-all hover:shadow-lg focus-within:ring-2 focus-within:ring-emerald-500/20 mb-4">
+                  {/* Card header */}
+                  <div className={cn("bg-slate-100/80 px-3 sm:px-4 py-2.5 sm:py-3 border-b border-slate-200 flex items-center justify-between gap-2", isMobile ? "flex-wrap" : "flex-nowrap")}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <GripVertical className="h-4 w-4 sm:h-5 sm:w-5 text-slate-400 cursor-grab" />
+                      <div className="min-w-0">
+                        <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">{t("Q","س")} {idx+1}</span>
+                        <Badge variant="outline" className="bg-white border-slate-300 text-slate-700 shadow-sm mt-0.5 text-[10px] sm:text-xs px-1.5 py-0 h-5 ml-1">
+                          {questionTypes.find(t=>t.value===q.question_type)?.icon}
+                          <span className="ml-1 hidden sm:inline">{language==="ar" ? questionTypes.find(t=>t.value===q.question_type)?.label_ar : questionTypes.find(t=>t.value===q.question_type)?.label}</span>
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                      <Select value={q.question_type} onValueChange={v=>updateQuestion(idx,{question_type:v})}>
+                        <SelectTrigger className="w-[100px] sm:w-[140px] h-8 sm:h-9 text-[10px] sm:text-xs rounded-lg bg-white border-slate-300 font-semibold"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {questionTypes.map(type=>(
+                            <SelectItem key={type.value} value={type.value} className="text-xs">{type.icon} {language==="ar"?type.label_ar:type.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select value={q.difficulty} onValueChange={v=>updateQuestion(idx,{difficulty:v})}>
+                        <SelectTrigger className="w-[70px] sm:w-[90px] h-8 sm:h-9 text-[10px] sm:text-xs rounded-lg bg-white border-slate-300 font-semibold"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="easy">{t("Easy","سهل")}</SelectItem>
+                          <SelectItem value="medium">{t("Medium","متوسط")}</SelectItem>
+                          <SelectItem value="hard">{t("Hard","صعب")}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div className="relative flex items-center">
+                        <Input type="number" className="w-[50px] sm:w-[70px] h-8 sm:h-9 pr-6 sm:pr-8 text-[10px] sm:text-xs font-bold rounded-lg text-center" value={q.points} onChange={e=>updateQuestion(idx,{points:+e.target.value})} />
+                        <span className="absolute right-1.5 sm:right-3 text-[8px] sm:text-[10px] text-slate-400 font-bold uppercase">{t("Pts","ن")}</span>
+                      </div>
+                      <Button variant="ghost" size="icon" onClick={()=>removeQuestion(idx)} className="h-8 w-8 sm:h-9 sm:w-9 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg shrink-0">
+                        <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <CardContent className={cn("space-y-4 bg-white", isMobile ? "p-3" : "p-5 sm:p-6")}>
+
+                    {/* ── FIX 2: Arabic question text ── */}
+                    <div className="space-y-2">
+                      <Label className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-2">
+                        {t("Question (Arabic)","السؤال (عربي)")}
+                        <span className="text-[10px] font-normal text-slate-400 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                          RTL · يُعرض للطلاب أثناء الامتحان
+                        </span>
+                      </Label>
+                      <div className="rounded-lg sm:rounded-xl border border-amber-200 shadow-sm overflow-hidden focus-within:border-amber-400 focus-within:ring-1 focus-within:ring-amber-400 transition-all bg-amber-50/30">
+                        <RichTextEditor
+                          placeholder="اكتب السؤال بالعربية هنا…"
+                          value={q.question_text_ar}
+                          onChange={val => updateQuestion(idx, { question_text_ar: val })}
+                          dir="rtl"
+                          className="min-h-[70px] sm:min-h-[90px]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* ── FIX 2: English question text — NEW FIELD ── */}
+                    <div className="space-y-2">
+                      <Label className="text-xs sm:text-sm font-black text-slate-800">
+                        {t("Question (English)","السؤال (إنجليزي)")}
+                      </Label>
+                      <div className="rounded-lg sm:rounded-xl border border-slate-200 shadow-sm overflow-hidden focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500 transition-all">
+                        <RichTextEditor
+                          placeholder={t("Type question in English...","اكتب السؤال بالإنجليزية...")}
+                          value={q.question_text}
+                          onChange={val => updateQuestion(idx, { question_text: val })}
+                          dir="ltr"
+                          className="min-h-[70px] sm:min-h-[90px]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Media */}
+                    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
+                      <Label className="flex items-center gap-1.5 mb-2 text-xs font-bold text-slate-700">
+                        {q.question_type==="audio" ? <Music className="h-3.5 w-3.5 text-emerald-600"/> : <ImageIcon className="h-3.5 w-3.5 text-emerald-600"/>}
+                        {t("Media","وسائط")}
+                      </Label>
+                      {q.media_url ? (
+                        <div className="space-y-2 bg-white p-2 rounded-lg border border-slate-200">
+                          <div className="flex items-center justify-between gap-2 text-[10px] text-slate-600">
+                            <span className="truncate flex-1 font-mono">{q.media_url.split("/").pop()?.substring(0,30)}</span>
+                            <Button variant="ghost" size="sm" className="text-red-500 h-6 px-1.5" onClick={()=>updateQuestion(idx,{media_url:""})}>Remove</Button>
+                          </div>
+                          {q.media_url.match(/\.(mp3|wav|ogg)$/i) && <audio controls src={q.media_url} className="w-full h-8" />}
+                          {q.media_url.match(/\.(jpg|jpeg|png|gif|webp)$/i) && <img src={q.media_url} alt="Media" className="max-h-32 rounded mx-auto" />}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <input
+                            id={`exam-media-${idx}`}
+                            type="file"
+                            accept="audio/*,image/*"
+                            className="hidden"
+                            disabled={uploadingMedia === idx}
+                            onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadMedia(f, idx); e.target.value = ""; }}
+                          />
+                          <label htmlFor={uploadingMedia === idx ? undefined : `exam-media-${idx}`} className={`gap-1.5 inline-flex items-center justify-center rounded-lg font-bold bg-white border border-slate-200 text-[10px] sm:text-xs h-7 sm:h-8 px-2 sm:px-3 ${uploadingMedia === idx ? "opacity-50 cursor-not-allowed" : "hover:bg-slate-50 cursor-pointer"}`}>
+                            {uploadingMedia===idx ? <Loader2 className="h-3 w-3 animate-spin text-emerald-600"/> : <Upload className="h-3 w-3 text-emerald-600"/>}
+                            {t("Upload","رفع")}
+                          </label>
+                          <Input placeholder="URL..." value={q.media_url} onChange={e=>updateQuestion(idx,{media_url:e.target.value})} className="flex-1 min-w-[120px] h-7 sm:h-9 rounded-lg text-[10px] sm:text-sm" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Audio response mode — Listen & Type (dictation) vs Record Voice (recitation) */}
+                    {q.question_type === "audio" && (
+                      <div className="space-y-2 pt-1">
+                        <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Response Mode", "نوع الإجابة")}</Label>
+                        <div className="flex gap-3">
+                          <button type="button" onClick={() => updateQuestion(idx, { audio_response_type: "text" })}
+                            className={cn("flex-1 py-2 rounded-lg border-2 text-xs sm:text-sm font-bold transition-all",
+                              (q.audio_response_type || "text") === "text" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500 hover:border-slate-300")}>
+                            🎧 {t("Listen & Type", "استمع واكتب")}
+                          </button>
+                          <button type="button" onClick={() => updateQuestion(idx, { audio_response_type: "audio" })}
+                            className={cn("flex-1 py-2 rounded-lg border-2 text-xs sm:text-sm font-bold transition-all",
+                              q.audio_response_type === "audio" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500 hover:border-slate-300")}>
+                            🎙️ {t("Record Voice", "سجّل صوتك")}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                          {(q.audio_response_type || "text") === "text"
+                            ? t("Student listens to the Media audio above and types what they hear.", "يستمع الطالب للصوت أعلاه ويكتب ما سمعه.")
+                            : t("Student reads the Arabic question text on screen and records themself reciting it — no listening audio required (Media upload is optional here).", "يقرأ الطالب النص العربي ويسجل نفسه وهو يتلوه — لا حاجة لصوت استماع.")}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Section — assign this question to a pool (or leave standalone) */}
+                    <div className="space-y-1.5 pt-1 border-t border-slate-100 mt-2">
+                      <Label className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-1.5">
+                        <Shuffle className="w-3.5 h-3.5 text-slate-400" />
+                        {t("Section", "القسم")}
+                      </Label>
+                      <Select value={q.group_name || "__none__"} onValueChange={v => moveQuestionToSection(idx, v === "__none__" ? "" : v)}>
+                        <SelectTrigger className="w-full sm:w-[260px] h-8 sm:h-9 text-[10px] sm:text-xs rounded-lg bg-white">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__" className="text-xs">{t("— Standalone (always shown) —", "— مستقل (يظهر دائمًا) —")}</SelectItem>
+                          {sections.map(sec => (
+                            <SelectItem key={sec.name} value={sec.name} className="text-xs">{sec.name} · {t("pick","اختر")} {sec.pick}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        {t(
+                          "Standalone questions always show. Assign a question to a section to make it part of that pool — create and manage sections with the \"+ Add Section\" button above the question list.",
+                          "الأسئلة المستقلة تظهر دائمًا. أضف السؤال إلى قسم ليصبح جزءًا من تلك المجموعة — أنشئ الأقسام وأدرها من زر \"+ إضافة قسم\" أعلى قائمة الأسئلة."
+                        )}
+                      </p>
+                    </div>
+
+
+                    {/* MCQ Options */}
+                    {(q.question_type==="mcq" || q.question_type==="image_mcq") && (
+                      <div className="space-y-2 pt-1">
+                        <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Options","الخيارات")}</Label>
+                        <div className="grid gap-2">
+                          {q.options.slice(0,4).map((opt:any, oi:number) => (
+                            <div key={opt.id} className={cn("flex items-start gap-2 rounded-lg border p-2 transition-all", opt.is_correct ? "border-emerald-500 bg-emerald-50/50" : "border-slate-200 bg-white hover:border-slate-300")}>
+                              <div className="pt-1.5">
+                                <input type="radio" name={`correct-${idx}`} checked={opt.is_correct} onChange={()=>{ const newOpts=q.options.map((o:any,j:number)=>({...o,is_correct:j===oi})); updateQuestion(idx,{options:newOpts,correct_answer:newOpts[oi].id}); }} className="h-4 w-4 accent-emerald-600" />
+                              </div>
+                              <div className="flex-1 space-y-1.5">
+                                {/* Arabic option field */}
+                                <Input className="h-8 text-sm font-medium rounded-lg border-amber-200 bg-amber-50/30" placeholder={`${String.fromCharCode(65+oi)}. عربي`} value={opt.text_ar||""} dir="rtl" style={{ fontFamily:"'Amiri',serif" }} onChange={e=>{ const n=[...q.options]; n[oi]={...n[oi],text_ar:e.target.value}; updateQuestion(idx,{options:n}); }} />
+                                <Input className={cn("h-8 text-sm font-medium rounded-lg border-slate-200", opt.is_correct?"bg-white border-emerald-200":"")} placeholder={`${String.fromCharCode(65+oi)}. English`} value={opt.text} dir="ltr" onChange={e=>{ const n=[...q.options]; n[oi]={...n[oi],text:e.target.value}; updateQuestion(idx,{options:n}); }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* True/False */}
+                    {q.question_type==="true_false" && (
+                      <div className="space-y-2 pt-1">
+                        <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Answer","الإجابة")}</Label>
+                        <div className="flex gap-3">
+                          {["true","false"].map(v => (
+                            <button key={v} type="button" onClick={()=>updateQuestion(idx,{correct_answer:v})} className={cn("flex-1 py-2 rounded-lg border-2 text-sm font-bold transition-all", q.correct_answer===v ? v==="true" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-red-400 bg-red-50 text-red-700" : "border-slate-200 text-slate-500 hover:border-slate-300")}>
+                              {v==="true" ? "✓ True / صح" : "✗ False / خطأ"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Fill in blank / Short answer */}
+                    {(q.question_type==="fill_blank" || q.question_type==="short_answer") && (
+                      <div className="space-y-2 pt-1">
+                        <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Correct Answer","الإجابة الصحيحة")}</Label>
+                        <Input value={q.correct_answer} onChange={e=>updateQuestion(idx,{correct_answer:e.target.value})} className="rounded-lg" placeholder={t("Type the correct answer…","اكتب الإجابة الصحيحة…")} dir="auto" />
+                      </div>
+                    )}
+                  </CardContent>
+
+                  {/* Footer */}
+                  <div className={cn("bg-slate-50/80 p-3 border-t border-slate-100", isMobile ? "px-3 py-2" : "px-4 py-3")}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-slate-400"/>
+                        <span className="text-[10px] sm:text-sm font-semibold text-slate-700">{t("Timer","مؤقت")}</span>
+                        <Input type="number" min={0} step={5} className="w-14 h-6 sm:h-8 text-center text-[10px] sm:text-sm font-bold bg-white rounded border-slate-200" value={q.question_timer_seconds||0} onChange={e=>updateQuestion(idx,{question_timer_seconds:+e.target.value})} />
+                        <span className="text-[8px] sm:text-[10px] text-slate-400">{t("sec","ث")}</span>
+                      </div>
+                      <Dialog>
+                        <DialogTrigger asChild>
+                          <Button variant="ghost" size="sm" className="text-[10px] sm:text-xs h-7 gap-1"><HelpCircle className="w-3 h-3 sm:w-4 sm:h-4"/>{t("Feedback","تعليق")}</Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-md">
+                          <DialogHeader><DialogTitle>{t("Feedback Messages","رسائل التعليق")}</DialogTitle></DialogHeader>
+                          <div className="space-y-3 py-2">
+                            <div>
+                              <Label className="text-xs font-bold text-emerald-700 flex items-center gap-1"><CheckCircle className="w-3 h-3"/>{t("Correct","صحيح")}</Label>
+                              <Input className="h-8 text-sm mt-1" placeholder={t("Great job!","أحسنت!")} value={q.explanation||""} onChange={e=>updateQuestion(idx,{explanation:e.target.value})} dir="auto" />
+                            </div>
+                            <div>
+                              <Label className="text-xs font-bold text-red-700 flex items-center gap-1"><XCircle className="w-3 h-3"/>{t("Incorrect","خطأ")}</Label>
+                              <Input className="h-8 text-sm mt-1" placeholder={t("Review this...","راجع هذا...")} value={q.feedback_incorrect||""} onChange={e=>updateQuestion(idx,{feedback_incorrect:e.target.value})} dir="auto" />
+                            </div>
+                            <div>
+                              <Label className="text-xs font-bold text-slate-700 flex items-center gap-1">{t("Explanation (Arabic)","الشرح بالعربية")}</Label>
+                              <Input className="h-8 text-sm mt-1" placeholder="شرح الإجابة بالعربية…" value={q.explanation_ar||""} onChange={e=>updateQuestion(idx,{explanation_ar:e.target.value})} dir="rtl" style={{fontFamily:"'Amiri',serif"}} />
+                            </div>
+                          </div>
+                        </DialogContent>
+                      </Dialog>
+                    </div>
+                  </div>
+                </Card>
+  );
+
   // ── Render ───────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white font-['Cairo'] pb-24">
@@ -871,6 +1187,51 @@ const ExamEditor = () => {
                     ))}
                   </div>
                 </div>
+                {/* Question Pools — quick view/edit of section pick counts, mirrors the section controls in the Questions tab */}
+                <div className="bg-gradient-to-br from-emerald-50/50 to-white border border-emerald-100 rounded-2xl overflow-hidden">
+                  <div className="p-3 sm:p-4 bg-emerald-100/30 border-b border-emerald-100 flex items-center justify-between gap-2 flex-wrap">
+                    <h3 className="text-sm font-bold text-emerald-900 flex items-center gap-2"><Shuffle className="w-4 h-4"/>{t("Question Pools","مجموعات الأسئلة")}</h3>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setActiveTab("questions")}
+                      className="h-8 rounded-lg text-xs font-bold bg-white border-emerald-200 text-emerald-700 gap-1">
+                      <FolderPlus className="w-3.5 h-3.5"/>{t("Manage in Questions","إدارة في الأسئلة")}
+                    </Button>
+                  </div>
+                  <div className="p-4 space-y-3">
+                    {sections.length === 0 ? (
+                      <p className="text-xs text-slate-400 text-center py-2">
+                        {t(
+                          "No sections yet. Create one from the Questions tab, group questions under it, then set how many to randomly pull per student.",
+                          "لا توجد أقسام بعد. أنشئ قسمًا من تبويب الأسئلة، جمّع الأسئلة تحته، ثم حدد عدد الأسئلة التي تُسحب عشوائيًا لكل طالب."
+                        )}
+                      </p>
+                    ) : sections.map(sec => {
+                      const count = questions.filter(q => q.group_name === sec.name).length;
+                      return (
+                        <div key={sec.name} className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-100 shadow-sm">
+                          <div className="min-w-0">
+                            <Label className="text-sm font-semibold block truncate">{sec.name}</Label>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              {t(
+                                `Randomly pulls ${Math.min(sec.pick, count)} of ${count} question${count !== 1 ? "s" : ""} per student`,
+                                `سحب عشوائي لـ ${Math.min(sec.pick, count)} من أصل ${count} سؤال لكل طالب`
+                              )}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[10px] font-bold text-emerald-700 uppercase">{t("Pick","اختر")}</span>
+                            <Input
+                              type="number" min={1} max={Math.max(1, count)}
+                              value={sec.pick}
+                              onChange={e => setSectionPick(sec.name, +e.target.value)}
+                              className="w-14 h-8 text-center font-bold rounded-lg"
+                            />
+                            <span className="text-[10px] text-slate-400">/ {count}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -1011,11 +1372,24 @@ const ExamEditor = () => {
                     <Eye className="h-4 w-4"/><span className="hidden sm:inline">{t("Preview","معاينة")}</span><span className="sm:hidden">View</span>
                   </Button>
 
+                  <Button variant="outline" size="sm" onClick={addSection} className="gap-1.5 sm:gap-2 rounded-xl text-slate-700 font-bold text-xs sm:text-sm h-9">
+                    <FolderPlus className="h-4 w-4"/><span className="hidden sm:inline">{t("Add Section","إضافة قسم")}</span><span className="sm:hidden">Section</span>
+                  </Button>
+
                   <Button onClick={addQuestion} className="gap-1.5 sm:gap-2 rounded-xl shadow-md font-bold text-xs sm:text-sm px-3 sm:px-4 h-9" style={{ background: "#064E3B", color: GOLD }}>
                     <Plus className="h-4 w-4"/><span className="hidden sm:inline">{t("Add Question","إضافة سؤال")}</span><span className="sm:hidden">Add</span>
                   </Button>
                 </div>
               </div>
+
+              {sections.length > 0 && (
+                <p className="text-[11px] sm:text-xs text-slate-500 -mt-2 px-1">
+                  {t(
+                    "Sections group questions into a pool — set \"Pick\" to how many should be randomly pulled per student. \"Add Question\" above always adds a standalone question; use \"+ Question\" inside a section to add into that pool.",
+                    "تُجمّع الأقسام الأسئلة في مجموعة — اضبط \"اختر\" على عدد الأسئلة التي تُسحب عشوائيًا لكل طالب. زر \"إضافة سؤال\" أعلاه يضيف سؤالاً مستقلاً دائمًا؛ استخدم \"+ سؤال\" داخل القسم لإضافته إلى تلك المجموعة."
+                  )}
+                </p>
+              )}
 
               {/* Bulk Formatter — FIX 4: onApply actually does something */}
               <details className="group bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -1037,255 +1411,69 @@ const ExamEditor = () => {
                 </div>
               </details>
 
-              {/* Question Cards */}
-              {questions.map((q, idx) => (
-                <Card key={idx} className="border-slate-200 shadow-md rounded-2xl overflow-hidden transition-all hover:shadow-lg focus-within:ring-2 focus-within:ring-emerald-500/20 mb-4">
-                  {/* Card header */}
-                  <div className={cn("bg-slate-100/80 px-3 sm:px-4 py-2.5 sm:py-3 border-b border-slate-200 flex items-center justify-between gap-2", isMobile ? "flex-wrap" : "flex-nowrap")}>
-                    <div className="flex items-center gap-2 min-w-0">
-                      <GripVertical className="h-4 w-4 sm:h-5 sm:w-5 text-slate-400 cursor-grab" />
-                      <div className="min-w-0">
-                        <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">{t("Q","س")} {idx+1}</span>
-                        <Badge variant="outline" className="bg-white border-slate-300 text-slate-700 shadow-sm mt-0.5 text-[10px] sm:text-xs px-1.5 py-0 h-5 ml-1">
-                          {questionTypes.find(t=>t.value===q.question_type)?.icon}
-                          <span className="ml-1 hidden sm:inline">{language==="ar" ? questionTypes.find(t=>t.value===q.question_type)?.label_ar : questionTypes.find(t=>t.value===q.question_type)?.label}</span>
-                        </Badge>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                      <Select value={q.question_type} onValueChange={v=>updateQuestion(idx,{question_type:v})}>
-                        <SelectTrigger className="w-[100px] sm:w-[140px] h-8 sm:h-9 text-[10px] sm:text-xs rounded-lg bg-white border-slate-300 font-semibold"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {questionTypes.map(type=>(
-                            <SelectItem key={type.value} value={type.value} className="text-xs">{type.icon} {language==="ar"?type.label_ar:type.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Select value={q.difficulty} onValueChange={v=>updateQuestion(idx,{difficulty:v})}>
-                        <SelectTrigger className="w-[70px] sm:w-[90px] h-8 sm:h-9 text-[10px] sm:text-xs rounded-lg bg-white border-slate-300 font-semibold"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="easy">{t("Easy","سهل")}</SelectItem>
-                          <SelectItem value="medium">{t("Medium","متوسط")}</SelectItem>
-                          <SelectItem value="hard">{t("Hard","صعب")}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <div className="relative flex items-center">
-                        <Input type="number" className="w-[50px] sm:w-[70px] h-8 sm:h-9 pr-6 sm:pr-8 text-[10px] sm:text-xs font-bold rounded-lg text-center" value={q.points} onChange={e=>updateQuestion(idx,{points:+e.target.value})} />
-                        <span className="absolute right-1.5 sm:right-3 text-[8px] sm:text-[10px] text-slate-400 font-bold uppercase">{t("Pts","ن")}</span>
-                      </div>
-                      <Button variant="ghost" size="icon" onClick={()=>removeQuestion(idx)} className="h-8 w-8 sm:h-9 sm:w-9 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg shrink-0">
-                        <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                      </Button>
-                    </div>
-                  </div>
-
-                  <CardContent className={cn("space-y-4 bg-white", isMobile ? "p-3" : "p-5 sm:p-6")}>
-
-                    {/* ── FIX 2: Arabic question text ── */}
-                    <div className="space-y-2">
-                      <Label className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-2">
-                        {t("Question (Arabic)","السؤال (عربي)")}
-                        <span className="text-[10px] font-normal text-slate-400 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
-                          RTL · يُعرض للطلاب أثناء الامتحان
-                        </span>
-                      </Label>
-                      <div className="rounded-lg sm:rounded-xl border border-amber-200 shadow-sm overflow-hidden focus-within:border-amber-400 focus-within:ring-1 focus-within:ring-amber-400 transition-all bg-amber-50/30">
-                        <RichTextEditor
-                          placeholder="اكتب السؤال بالعربية هنا…"
-                          value={q.question_text_ar}
-                          onChange={val => updateQuestion(idx, { question_text_ar: val })}
-                          dir="rtl"
-                          className="min-h-[70px] sm:min-h-[90px]"
-                        />
-                      </div>
-                    </div>
-
-                    {/* ── FIX 2: English question text — NEW FIELD ── */}
-                    <div className="space-y-2">
-                      <Label className="text-xs sm:text-sm font-black text-slate-800">
-                        {t("Question (English)","السؤال (إنجليزي)")}
-                      </Label>
-                      <div className="rounded-lg sm:rounded-xl border border-slate-200 shadow-sm overflow-hidden focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500 transition-all">
-                        <RichTextEditor
-                          placeholder={t("Type question in English...","اكتب السؤال بالإنجليزية...")}
-                          value={q.question_text}
-                          onChange={val => updateQuestion(idx, { question_text: val })}
-                          dir="ltr"
-                          className="min-h-[70px] sm:min-h-[90px]"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Media */}
-                    <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
-                      <Label className="flex items-center gap-1.5 mb-2 text-xs font-bold text-slate-700">
-                        {q.question_type==="audio" ? <Music className="h-3.5 w-3.5 text-emerald-600"/> : <ImageIcon className="h-3.5 w-3.5 text-emerald-600"/>}
-                        {t("Media","وسائط")}
-                      </Label>
-                      {q.media_url ? (
-                        <div className="space-y-2 bg-white p-2 rounded-lg border border-slate-200">
-                          <div className="flex items-center justify-between gap-2 text-[10px] text-slate-600">
-                            <span className="truncate flex-1 font-mono">{q.media_url.split("/").pop()?.substring(0,30)}</span>
-                            <Button variant="ghost" size="sm" className="text-red-500 h-6 px-1.5" onClick={()=>updateQuestion(idx,{media_url:""})}>Remove</Button>
-                          </div>
-                          {q.media_url.match(/\.(mp3|wav|ogg)$/i) && <audio controls src={q.media_url} className="w-full h-8" />}
-                          {q.media_url.match(/\.(jpg|jpeg|png|gif|webp)$/i) && <img src={q.media_url} alt="Media" className="max-h-32 rounded mx-auto" />}
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <input
-                            id={`exam-media-${idx}`}
-                            type="file"
-                            accept="audio/*,image/*"
-                            className="hidden"
-                            disabled={uploadingMedia === idx}
-                            onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadMedia(f, idx); e.target.value = ""; }}
-                          />
-                          <label htmlFor={uploadingMedia === idx ? undefined : `exam-media-${idx}`} className={`gap-1.5 inline-flex items-center justify-center rounded-lg font-bold bg-white border border-slate-200 text-[10px] sm:text-xs h-7 sm:h-8 px-2 sm:px-3 ${uploadingMedia === idx ? "opacity-50 cursor-not-allowed" : "hover:bg-slate-50 cursor-pointer"}`}>
-                            {uploadingMedia===idx ? <Loader2 className="h-3 w-3 animate-spin text-emerald-600"/> : <Upload className="h-3 w-3 text-emerald-600"/>}
-                            {t("Upload","رفع")}
-                          </label>
-                          <Input placeholder="URL..." value={q.media_url} onChange={e=>updateQuestion(idx,{media_url:e.target.value})} className="flex-1 min-w-[120px] h-7 sm:h-9 rounded-lg text-[10px] sm:text-sm" />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Audio response mode — Listen & Type (dictation) vs Record Voice (recitation) */}
-                    {q.question_type === "audio" && (
-                      <div className="space-y-2 pt-1">
-                        <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Response Mode", "نوع الإجابة")}</Label>
-                        <div className="flex gap-3">
-                          <button type="button" onClick={() => updateQuestion(idx, { audio_response_type: "text" })}
-                            className={cn("flex-1 py-2 rounded-lg border-2 text-xs sm:text-sm font-bold transition-all",
-                              (q.audio_response_type || "text") === "text" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500 hover:border-slate-300")}>
-                            🎧 {t("Listen & Type", "استمع واكتب")}
-                          </button>
-                          <button type="button" onClick={() => updateQuestion(idx, { audio_response_type: "audio" })}
-                            className={cn("flex-1 py-2 rounded-lg border-2 text-xs sm:text-sm font-bold transition-all",
-                              q.audio_response_type === "audio" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-slate-200 text-slate-500 hover:border-slate-300")}>
-                            🎙️ {t("Record Voice", "سجّل صوتك")}
-                          </button>
-                        </div>
-                        <p className="text-[10px] text-slate-400 leading-relaxed">
-                          {(q.audio_response_type || "text") === "text"
-                            ? t("Student listens to the Media audio above and types what they hear.", "يستمع الطالب للصوت أعلاه ويكتب ما سمعه.")
-                            : t("Student reads the Arabic question text on screen and records themself reciting it — no listening audio required (Media upload is optional here).", "يقرأ الطالب النص العربي ويسجل نفسه وهو يتلوه — لا حاجة لصوت استماع.")}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Question Pool — group questions and randomly pull N per student */}
-                    <div className="space-y-2 pt-1 border-t border-slate-100 mt-2">
-                      <Label className="text-xs sm:text-sm font-black text-slate-800">
-                        {t("Question Pool (optional)", "مجموعة الأسئلة (اختياري)")}
-                      </Label>
-                      <div className="flex gap-2 items-center flex-wrap">
+              {/* Sections (question pools) */}
+              {sections.map(sec => {
+                const items = questions
+                  .map((q, idx) => ({ q, idx }))
+                  .filter(x => x.q.group_name === sec.name);
+                const collapsed = collapsedSections.has(sec.name);
+                return (
+                  <div key={sec.name} className="rounded-2xl border-2 border-emerald-100 bg-emerald-50/40 mb-4 overflow-hidden">
+                    <div className={cn("flex items-center gap-2 p-3 sm:p-4 bg-emerald-50/80 border-b border-emerald-100", isMobile ? "flex-wrap" : "flex-nowrap")}>
+                      <button type="button" onClick={() => toggleSectionCollapse(sec.name)}
+                        className="h-8 w-8 shrink-0 rounded-lg border border-emerald-200 bg-white flex items-center justify-center text-emerald-700">
+                        {collapsed ? <ChevronDown className="w-4 h-4"/> : <ChevronUp className="w-4 h-4"/>}
+                      </button>
+                      <Shuffle className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <Input
+                        value={sec.name}
+                        onChange={e => renameSection(sec.name, e.target.value)}
+                        className="h-8 sm:h-9 w-[140px] sm:w-[220px] font-bold text-sm rounded-lg bg-white border-emerald-200"
+                      />
+                      <Badge variant="outline" className="bg-white border-emerald-200 text-emerald-700 shrink-0">
+                        {items.length} {t("questions","سؤال")}
+                      </Badge>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-[10px] sm:text-xs font-bold text-emerald-700 uppercase">{t("Pick","اختر")}</span>
                         <Input
-                          className="w-[140px] sm:w-[180px] h-8 sm:h-9 text-[10px] sm:text-xs rounded-lg"
-                          placeholder={t("Group name (e.g. section1)", "اسم المجموعة")}
-                          value={q.group_name}
-                          onChange={e => updateQuestion(idx, { group_name: e.target.value })}
+                          type="number" min={1} max={Math.max(1, items.length)}
+                          value={sec.pick}
+                          onChange={e => setSectionPick(sec.name, +e.target.value)}
+                          className="h-8 sm:h-9 w-14 sm:w-16 text-center font-bold rounded-lg bg-white border-emerald-200"
                         />
-                        <div className="relative flex items-center">
-                          <Input
-                            type="number" min={1}
-                            className="w-[70px] sm:w-[90px] h-8 sm:h-9 pr-10 sm:pr-12 text-[10px] sm:text-xs font-bold rounded-lg text-center"
-                            value={q.group_pick_count}
-                            disabled={!q.group_name.trim()}
-                            onChange={e => updateQuestion(idx, { group_pick_count: Math.max(1, +e.target.value) })}
-                          />
-                          <span className="absolute right-1.5 sm:right-3 text-[8px] sm:text-[10px] text-slate-400 font-bold uppercase">
-                            {t("Pick", "اختر")}
-                          </span>
-                        </div>
+                        <span className="text-[10px] sm:text-xs text-emerald-700/70">/ {items.length}</span>
                       </div>
-                      <p className="text-[10px] text-slate-400 leading-relaxed">
-                        {t(
-                          "Leave the group name blank if this question should always be shown. Give two or more questions the same group name to pull a random subset — e.g. name a group \"section1\" with Pick = 5 across 10 questions, and each student gets a different random 5 from that group, in no visible order or grouping.",
-                          "اتركه فارغًا إذا أردت أن يظهر السؤال دائمًا. أعطِ مجموعة من الأسئلة نفس اسم المجموعة لسحب مجموعة عشوائية منها — مثلاً مجموعة اسمها \"section1\" مع اختيار 5 من أصل 10 أسئلة، فيحصل كل طالب على 5 أسئلة عشوائية مختلفة من تلك المجموعة دون أي ترتيب ظاهر."
-                        )}
-                      </p>
+                      <div className="flex items-center gap-1.5 ml-auto shrink-0">
+                        <Button type="button" variant="outline" size="sm" onClick={() => addQuestionToSection(sec.name)}
+                          className="gap-1 h-8 sm:h-9 rounded-lg text-xs font-bold bg-white border-emerald-200 text-emerald-700">
+                          <Plus className="w-3.5 h-3.5"/>{t("Question","سؤال")}
+                        </Button>
+                        <Button type="button" variant="ghost" size="icon" onClick={() => deleteSection(sec.name)}
+                          className="h-8 w-8 sm:h-9 sm:w-9 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50">
+                          <Trash2 className="w-4 h-4"/>
+                        </Button>
+                      </div>
                     </div>
-
-                    {/* MCQ Options */}
-                    {(q.question_type==="mcq" || q.question_type==="image_mcq") && (
-                      <div className="space-y-2 pt-1">
-                        <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Options","الخيارات")}</Label>
-                        <div className="grid gap-2">
-                          {q.options.slice(0,4).map((opt:any, oi:number) => (
-                            <div key={opt.id} className={cn("flex items-start gap-2 rounded-lg border p-2 transition-all", opt.is_correct ? "border-emerald-500 bg-emerald-50/50" : "border-slate-200 bg-white hover:border-slate-300")}>
-                              <div className="pt-1.5">
-                                <input type="radio" name={`correct-${idx}`} checked={opt.is_correct} onChange={()=>{ const newOpts=q.options.map((o:any,j:number)=>({...o,is_correct:j===oi})); updateQuestion(idx,{options:newOpts,correct_answer:newOpts[oi].id}); }} className="h-4 w-4 accent-emerald-600" />
-                              </div>
-                              <div className="flex-1 space-y-1.5">
-                                {/* Arabic option field */}
-                                <Input className="h-8 text-sm font-medium rounded-lg border-amber-200 bg-amber-50/30" placeholder={`${String.fromCharCode(65+oi)}. عربي`} value={opt.text_ar||""} dir="rtl" style={{ fontFamily:"'Amiri',serif" }} onChange={e=>{ const n=[...q.options]; n[oi]={...n[oi],text_ar:e.target.value}; updateQuestion(idx,{options:n}); }} />
-                                <Input className={cn("h-8 text-sm font-medium rounded-lg border-slate-200", opt.is_correct?"bg-white border-emerald-200":"")} placeholder={`${String.fromCharCode(65+oi)}. English`} value={opt.text} dir="ltr" onChange={e=>{ const n=[...q.options]; n[oi]={...n[oi],text:e.target.value}; updateQuestion(idx,{options:n}); }} />
-                              </div>
-                            </div>
-                          ))}
-                        </div>
+                    {!collapsed && (
+                      <div className="p-3 sm:p-4 space-y-4">
+                        {items.length === 0 ? (
+                          <p className="text-xs text-slate-400 text-center py-4">
+                            {t("No questions in this section yet — tap \"+ Question\" above to add one.", "لا توجد أسئلة في هذا القسم بعد — اضغط \"+ سؤال\" أعلاه لإضافة واحد.")}
+                          </p>
+                        ) : items.map(({ q, idx }) => renderQuestionCard(q, idx))}
                       </div>
                     )}
-
-                    {/* True/False */}
-                    {q.question_type==="true_false" && (
-                      <div className="space-y-2 pt-1">
-                        <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Answer","الإجابة")}</Label>
-                        <div className="flex gap-3">
-                          {["true","false"].map(v => (
-                            <button key={v} type="button" onClick={()=>updateQuestion(idx,{correct_answer:v})} className={cn("flex-1 py-2 rounded-lg border-2 text-sm font-bold transition-all", q.correct_answer===v ? v==="true" ? "border-emerald-500 bg-emerald-50 text-emerald-700" : "border-red-400 bg-red-50 text-red-700" : "border-slate-200 text-slate-500 hover:border-slate-300")}>
-                              {v==="true" ? "✓ True / صح" : "✗ False / خطأ"}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Fill in blank / Short answer */}
-                    {(q.question_type==="fill_blank" || q.question_type==="short_answer") && (
-                      <div className="space-y-2 pt-1">
-                        <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Correct Answer","الإجابة الصحيحة")}</Label>
-                        <Input value={q.correct_answer} onChange={e=>updateQuestion(idx,{correct_answer:e.target.value})} className="rounded-lg" placeholder={t("Type the correct answer…","اكتب الإجابة الصحيحة…")} dir="auto" />
-                      </div>
-                    )}
-                  </CardContent>
-
-                  {/* Footer */}
-                  <div className={cn("bg-slate-50/80 p-3 border-t border-slate-100", isMobile ? "px-3 py-2" : "px-4 py-3")}>
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-slate-400"/>
-                        <span className="text-[10px] sm:text-sm font-semibold text-slate-700">{t("Timer","مؤقت")}</span>
-                        <Input type="number" min={0} step={5} className="w-14 h-6 sm:h-8 text-center text-[10px] sm:text-sm font-bold bg-white rounded border-slate-200" value={q.question_timer_seconds||0} onChange={e=>updateQuestion(idx,{question_timer_seconds:+e.target.value})} />
-                        <span className="text-[8px] sm:text-[10px] text-slate-400">{t("sec","ث")}</span>
-                      </div>
-                      <Dialog>
-                        <DialogTrigger asChild>
-                          <Button variant="ghost" size="sm" className="text-[10px] sm:text-xs h-7 gap-1"><HelpCircle className="w-3 h-3 sm:w-4 sm:h-4"/>{t("Feedback","تعليق")}</Button>
-                        </DialogTrigger>
-                        <DialogContent className="sm:max-w-md">
-                          <DialogHeader><DialogTitle>{t("Feedback Messages","رسائل التعليق")}</DialogTitle></DialogHeader>
-                          <div className="space-y-3 py-2">
-                            <div>
-                              <Label className="text-xs font-bold text-emerald-700 flex items-center gap-1"><CheckCircle className="w-3 h-3"/>{t("Correct","صحيح")}</Label>
-                              <Input className="h-8 text-sm mt-1" placeholder={t("Great job!","أحسنت!")} value={q.explanation||""} onChange={e=>updateQuestion(idx,{explanation:e.target.value})} dir="auto" />
-                            </div>
-                            <div>
-                              <Label className="text-xs font-bold text-red-700 flex items-center gap-1"><XCircle className="w-3 h-3"/>{t("Incorrect","خطأ")}</Label>
-                              <Input className="h-8 text-sm mt-1" placeholder={t("Review this...","راجع هذا...")} value={q.feedback_incorrect||""} onChange={e=>updateQuestion(idx,{feedback_incorrect:e.target.value})} dir="auto" />
-                            </div>
-                            <div>
-                              <Label className="text-xs font-bold text-slate-700 flex items-center gap-1">{t("Explanation (Arabic)","الشرح بالعربية")}</Label>
-                              <Input className="h-8 text-sm mt-1" placeholder="شرح الإجابة بالعربية…" value={q.explanation_ar||""} onChange={e=>updateQuestion(idx,{explanation_ar:e.target.value})} dir="rtl" style={{fontFamily:"'Amiri',serif"}} />
-                            </div>
-                          </div>
-                        </DialogContent>
-                      </Dialog>
-                    </div>
                   </div>
-                </Card>
-              ))}
+                );
+              })}
+
+              {/* Standalone questions (always shown, not part of any pool) */}
+              {sections.length > 0 && questions.some(q => !q.group_name) && (
+                <p className="text-xs font-black text-slate-500 uppercase tracking-wider mb-2 mt-1">
+                  {t("Standalone Questions","أسئلة مستقلة")}
+                </p>
+              )}
+              {questions.map((q, idx) => q.group_name ? null : renderQuestionCard(q, idx))}
 
               {questions.length === 0 && (
                 <Card className="border-dashed border-2 border-slate-300 bg-slate-50/50">
