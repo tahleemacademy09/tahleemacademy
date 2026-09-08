@@ -130,8 +130,11 @@ const TeacherGrading = () => {
       const scaledTotal = 30;
       const scaledEarned = totalPossible > 0 ? Number(((totalEarned / totalPossible) * 30).toFixed(2)) : 0;
       const passing = selectedAttempt.exams?.passing_score || 50;
+      // Keep it released if it already was — don't hide an edited result from
+      // the student by silently pulling it back to "graded".
+      const nextStatus = selectedAttempt.status === "released" ? "released" : "graded";
       await supabase.from("exam_attempts").update({
-        status: "graded",
+        status: nextStatus,
         score: scaledEarned,
         total_points: scaledTotal,
         percentage: pct,
