@@ -51,6 +51,7 @@ const GradingPage = () => {
   const [questions,      setQuestions]      = useState<any[]>([]);
   const [gradingTab,     setGradingTab]     = useState<GradingTab>("pending");
   const [examFilter,     setExamFilter]     = useState("all");
+  const [sessionFilter,  setSessionFilter]  = useState("all");
   const [studentFilter,  setStudentFilter]  = useState("");
   const [examsList,      setExamsList]      = useState<any[]>([]);
   const [saving,         setSaving]         = useState(false);
@@ -74,7 +75,7 @@ const GradingPage = () => {
         .in("status", ["in_progress", "submitted", "graded", "released"])
         .order("submitted_at", { ascending: false, nullsFirst: false }),
       supabase.from("profiles").select("user_id, full_name, email, avatar_url"),
-      supabase.from("exams").select("id, title, title_ar, passing_score, term, type"),
+      supabase.from("exams").select("id, title, title_ar, passing_score, term, type, session"),
     ]);
     const profiles = profilesRes.data || [];
     const exams    = examsRes.data    || [];
@@ -89,6 +90,8 @@ const GradingPage = () => {
 
   useEffect(() => { fetchAttempts(); }, []);
 
+  const sessionOptions = Array.from(new Set(examsList.map(e => e.session).filter(Boolean))).sort().reverse();
+
   const tabCounts = {
     pending:  allAttempts.filter(a => a.status === "submitted").length,
     graded:   allAttempts.filter(a => a.status === "graded").length,
@@ -102,6 +105,7 @@ const GradingPage = () => {
     if (gradingTab === "released"  && a.status !== "released")    return false;
     if (gradingTab === "imported"  && a.status !== "in_progress") return false;
     if (examFilter !== "all" && a.exam_id !== examFilter) return false;
+    if (sessionFilter !== "all" && (a.exams?.session || "") !== sessionFilter) return false;
     if (studentFilter) {
       const name = (a.profiles?.full_name || "").toLowerCase();
       if (!name.includes(studentFilter.toLowerCase())) return false;
@@ -545,6 +549,11 @@ const GradingPage = () => {
             <input value={studentFilter} onChange={e => setStudentFilter(e.target.value)} placeholder="Search student…"
               style={{ width: "100%", padding: "8px 10px 8px 30px", borderRadius: 9, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none", boxSizing: "border-box" as const }} />
           </div>
+          <select value={sessionFilter} onChange={e => setSessionFilter(e.target.value)}
+            style={{ padding: "8px 12px", borderRadius: 9, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none", minWidth: 140 }}>
+            <option value="all">All Sessions</option>
+            {sessionOptions.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
           <select value={examFilter} onChange={e => setExamFilter(e.target.value)}
             style={{ padding: "8px 12px", borderRadius: 9, border: "1.5px solid #E5E7EB", fontSize: 13, outline: "none", minWidth: 160 }}>
             <option value="all">All Exams</option>
@@ -577,6 +586,7 @@ const GradingPage = () => {
                     <p style={{ fontWeight: 700, fontSize: 14, color: "#111", margin: 0 }}>{attempt.profiles?.full_name || "Student"}</p>
                     <p style={{ fontSize: 12, color: "#9CA3AF", margin: "2px 0 0" }}>
                       {language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}
+                      {attempt.exams?.session && <span style={{ color: "#0E7490", fontWeight: 600 }}> · 📅 {attempt.exams.session}</span>}
                     </p>
                     {attempt.status === "in_progress" && (
                       <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>

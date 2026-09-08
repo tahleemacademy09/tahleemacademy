@@ -83,7 +83,7 @@ interface ExamForm {
   auto_submit_on_violation: boolean;
   screenshot_interval_seconds: number; idle_timeout_seconds: number;
   blur_detection: boolean; face_detection: boolean;
-  timezone: string; term: string; max_review_views: number;
+  timezone: string; term: string; session: string; max_review_views: number;
   type: "exam" | "test";
   level: string;
   subject_id: string;
@@ -276,7 +276,7 @@ const ExamEditor = () => {
     auto_submit_on_violation: false,
     screenshot_interval_seconds: 0, idle_timeout_seconds: 300,
     blur_detection: false, face_detection: false,
-    timezone: "UTC", term: "first", max_review_views: 1,
+    timezone: "UTC", term: "first", session: "2026/2027", max_review_views: 1,
     type: "exam", level: "", subject_id: "",
   });
 
@@ -662,7 +662,7 @@ const ExamEditor = () => {
         screenshot_interval_seconds: examForm.screenshot_interval_seconds,
         idle_timeout_seconds: examForm.idle_timeout_seconds,
         blur_detection: examForm.blur_detection, face_detection: examForm.face_detection,
-        timezone: examForm.timezone, term: examForm.term, max_review_views: examForm.max_review_views,
+        timezone: examForm.timezone, term: examForm.term, session: examForm.session, max_review_views: examForm.max_review_views,
         type: examForm.type, level: examForm.level || null,
         subject_id: examForm.subject_id || null,
         ...formatSettings, created_by: user?.id,
@@ -746,7 +746,7 @@ const ExamEditor = () => {
           blur_detection: (exam as any).blur_detection || false,
           face_detection: (exam as any).face_detection || false,
           timezone: (exam as any).timezone || "UTC",
-          term: exam.term || "first", max_review_views: exam.max_review_views || 1,
+          term: exam.term || "first", session: exam.session || "2026/2027", max_review_views: exam.max_review_views || 1,
           type: (exam.type as "exam" | "test") || "exam", level: exam.level || "",
           subject_id: (exam as any).subject_id || "",
         });
@@ -1115,7 +1115,7 @@ const ExamEditor = () => {
                   <p className="text-[11px] text-slate-400">{t("Only students registered for this subject will see this exam/test.","لن يرى هذا الامتحان/التمرين إلا الطلاب المسجلون في هذه المادة.")}</p>
                 </div>
                 {/* Level & Term */}
-                <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
+                <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-3")}>
                   <div className="space-y-2">
                     <Label className="text-sm font-bold text-slate-700">{t("Target Level","المستوى المستهدف")}</Label>
                     <Select value={examForm.level||"none"} onValueChange={v => setExamForm({ ...examForm, level: v==="none" ? "" : v })}>
@@ -1138,6 +1138,11 @@ const ExamEditor = () => {
                         <SelectItem value="third">{t("Third Term","الفصل الثالث")}</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-sm font-bold text-slate-700">{t("Academic Session","الموسم الدراسي")}</Label>
+                    <Input value={examForm.session} onChange={e => setExamForm({ ...examForm, session: e.target.value })}
+                      className="rounded-lg bg-slate-50/50 h-11" placeholder="2026/2027" />
                   </div>
                 </div>
                 {/* Titles */}

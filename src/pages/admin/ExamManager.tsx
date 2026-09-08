@@ -45,6 +45,7 @@ export default function ExamManager() {
   const [loading, setLoading]           = useState(true);
   const [search, setSearch]             = useState("");
   const [termFilter, setTermFilter]     = useState("all");
+  const [sessionFilter, setSessionFilter] = useState("all");
   const [typeFilter, setTypeFilter]     = useState("all");
   const [levelFilter, setLevelFilter]   = useState("all");
 
@@ -261,10 +262,31 @@ export default function ExamManager() {
 
   const qCount = (e: any) => e.exam_questions?.length ?? 0;
 
+  const sessionOptions = Array.from(new Set(exams.map(e => e.session).filter(Boolean))).sort().reverse();
+
+  const TERM_ORDER: Record<string, number> = { first: 0, second: 1, final: 2 };
+  const TERM_LABEL: Record<string, string> = { first: "First Term", second: "Second Term", final: "Final Term" };
+  const groupedSections = (() => {
+    const bySession: Record<string, Record<string, any[]>> = {};
+    for (const e of filtered) {
+      const s = e.session || "Unspecified session";
+      const tm = e.term || "unspecified";
+      (bySession[s] ??= {})[tm] ??= [];
+      bySession[s][tm].push(e);
+    }
+    return Object.keys(bySession).sort().reverse().map(session => ({
+      session,
+      terms: Object.keys(bySession[session])
+        .sort((a, b) => (TERM_ORDER[a] ?? 99) - (TERM_ORDER[b] ?? 99))
+        .map(term => ({ term, exams: bySession[session][term] })),
+    }));
+  })();
+
   const filtered = exams.filter(e => {
     const name = language === "ar" ? (e.title_ar || e.title) : e.title;
     if (search && !name.toLowerCase().includes(search.toLowerCase())) return false;
     if (termFilter !== "all" && e.term !== termFilter) return false;
+    if (sessionFilter !== "all" && (e.session || "") !== sessionFilter) return false;
     if (typeFilter !== "all" && e.type !== typeFilter) return false;
     if (levelFilter !== "all" && (e.level || "") !== levelFilter) return false;
     return true;
@@ -322,6 +344,7 @@ export default function ExamManager() {
               style={{ ...inp, width: "100%", paddingLeft: 32, boxSizing: "border-box" }} />
           </div>
           {[
+            { val: sessionFilter, set: setSessionFilter, opts: [["all", "All Sessions"], ...sessionOptions.map(s => [s, s])] },
             { val: termFilter, set: setTermFilter, opts: [["all", "All Terms"], ["first", "First"], ["second", "Second"], ["final", "Final"]] },
             { val: typeFilter, set: setTypeFilter, opts: [["all", "All Types"], ["exam", "Exam"], ["test", "Test"], ["quiz", "Quiz"]] },
             { val: levelFilter, set: setLevelFilter, opts: [["all", "All Levels"], ...academicLevels.map(l => [l.slug, l.name_en])] },
@@ -348,11 +371,24 @@ export default function ExamManager() {
             </button>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {filtered.map(exam => {
-              const qc   = qCount(exam);
-              const stat = counts[exam.id] || { assigned: 0, attempts: 0 };
-              return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 22 }}>
+            {groupedSections.map(({ session, terms }) => (
+              <div key={session}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                  <span style={{ fontSize: 13, fontWeight: 900, color: "#0E7490" }}>📅 {session}</span>
+                  <div style={{ flex: 1, height: 1, background: "#E5E7EB" }} />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+                  {terms.map(({ term, exams: termExams }) => (
+                    <div key={term}>
+                      <p style={{ fontSize: 11, fontWeight: 700, color: "#6D28D9", textTransform: "uppercase", letterSpacing: .4, margin: "0 0 8px" }}>
+                        {TERM_LABEL[term] || term}
+                      </p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {termExams.map(exam => {
+                          const qc   = qCount(exam);
+                          const stat = counts[exam.id] || { assigned: 0, attempts: 0 };
+                          return (
                 <div key={exam.id} style={{ background: "#fff", borderRadius: 16, border: "1.5px solid #E5E7EB", padding: 16, boxShadow: "0 1px 4px rgba(0,0,0,.04)" }}>
                   <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
                     <div style={{ flex: 1, minWidth: 200 }}>
@@ -367,6 +403,7 @@ export default function ExamManager() {
                           {exam.registration_open ? "📝 Self-reg open" : "📝 Self-reg closed"}
                         </span>
                         {exam.type && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#EFF6FF", color: "#1D4ED8", fontWeight: 600 }}>{exam.type}</span>}
+                        {exam.session && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#ECFEFF", color: "#0E7490", fontWeight: 700 }}>📅 {exam.session}</span>}
                         {exam.term && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#F5F3FF", color: "#6D28D9", fontWeight: 600 }}>{exam.term}</span>}
                         {exam.level && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 600, textTransform: "capitalize" }}>📚 {exam.level}</span>}
                       </div>
@@ -422,8 +459,14 @@ export default function ExamManager() {
                     </div>
                   </div>
                 </div>
-              );
-            })}
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
