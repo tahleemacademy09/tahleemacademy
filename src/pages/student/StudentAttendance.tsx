@@ -1,12 +1,13 @@
 /*
   src/pages/student/StudentAttendance.tsx — Tahleem Academy
   ──────────────────────────────────────────────────────────
-  Read-only view of the student's own attendance record, sourced from
-  manual_attendance (the teacher-confirmed record — now auto-prefilled
-  from live-class join data, see syncManualAttendanceFromSession).
-
-  RLS already allows this: "Students can view own attendance" on
-  manual_attendance (student_id = auth.uid()).
+  Read-only view of the student's own attendance record, computed from
+  attendance_logs (real auto-tracked join/leave events) against every
+  session that happened for subjects the student is enrolled in — not
+  from manual_attendance, which is only populated when a teacher
+  explicitly ends a class through the one code path that pre-fills it
+  (and stays empty otherwise, which is why this page used to show almost
+  nothing).
 */
 
 import { useState, useMemo } from "react";
@@ -40,13 +41,36 @@ const StudentAttendance = () => {
     queryKey: ["student-attendance", user?.id],
     enabled: !!user,
     queryFn: async () => {
-      const { data } = await supabase
-        .from("manual_attendance")
-        .select("id, date, status, notes, subject_id, subjects(title, title_ar)")
+      const { data: enrolled } = await supabase
+        .from("student_subject_enrollments")
+        .select("subject_id")
         .eq("student_id", user!.id)
-        .order("date", { ascending: false })
+        .eq("status", "active");
+      const subjectIds = [...new Set((enrolled || []).map((e: any) => e.subject_id))];
+      if (subjectIds.length === 0) return [];
+
+      const { data: sessions } = await supabase
+        .from("live_sessions")
+        .select("id, subject_id, scheduled_at, subjects(title, title_ar)")
+        .in("subject_id", subjectIds)
+        .not("status", "in", "(scheduled,cancelled)")
+        .order("scheduled_at", { ascending: false })
         .limit(200);
-      return (data || []) as any[];
+
+      const { data: logs } = await supabase
+        .from("attendance_logs")
+        .select("session_id")
+        .eq("user_id", user!.id);
+      const attended = new Set((logs || []).map((l: any) => l.session_id));
+
+      return (sessions || []).map((s: any) => ({
+        id: s.id,
+        date: s.scheduled_at,
+        status: attended.has(s.id) ? "present" : "absent",
+        notes: null,
+        subject_id: s.subject_id,
+        subjects: s.subjects,
+      })) as any[];
     },
   });
 
