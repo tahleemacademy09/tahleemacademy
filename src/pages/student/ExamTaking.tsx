@@ -389,13 +389,32 @@ const ExamTaking = () => {
           const { data: qs } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
           ql = qs || [];
         } catch {
-          // RPC failed — fall back to direct query
+          // RPC failed — fall back to direct query, applying the same
+          // question_group "name::pick=N" draw logic as the RPC so
+          // students never see the full question bank here either.
           const { data: qs2 } = await supabase
             .from("exam_questions")
-            .select("*, questions(*)")
+            .select("*")
             .eq("exam_id", ad.exam_id)
-            .order("order_index");
-          ql = (qs2 || []).map((eq: any) => ({ ...eq.questions, ...eq, id: eq.question_id || eq.id }));
+            .order("sort_order");
+          const all = qs2 || [];
+          const groups: Record<string, { pick: number; items: any[] }> = {};
+          const ungrouped: any[] = [];
+          all.forEach((q: any) => {
+            if (!q.question_group) { ungrouped.push(q); return; }
+            const m = String(q.question_group).match(/^(.*?)(?:::pick=(\d+))?$/);
+            const key = m?.[1] || q.question_group;
+            const pick = m?.[2] ? parseInt(m[2], 10) : 1;
+            if (!groups[key]) groups[key] = { pick, items: [] };
+            groups[key].items.push(q);
+          });
+          const picked: any[] = [...ungrouped];
+          Object.values(groups).forEach(({ pick, items }) => {
+            const shuffled = [...items].sort(() => Math.random() - 0.5);
+            picked.push(...shuffled.slice(0, pick));
+          });
+          picked.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+          ql = picked;
         }
         // FIX: refresh signed media_url for audio questions (signed URLs expire after 1h)
         ql = await Promise.all(ql.map(async (q: any) => {
