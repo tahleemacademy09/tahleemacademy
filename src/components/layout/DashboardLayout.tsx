@@ -857,7 +857,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                     <p style={{ margin:"0 0 6px", fontSize:17, fontWeight:800, color:"#111", lineHeight:1.3, letterSpacing:"-0.4px" }}>
                       {langs.en.title}
                     </p>
-                    <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.65 }}>
+                    <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.65, whiteSpace:"pre-wrap" }}>
                       {langs.en.message}
                     </p>
                   </div>
@@ -875,7 +875,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                     <p style={{ margin:"0 0 6px", fontSize:17, fontWeight:800, color:"#111", lineHeight:1.4, fontFamily:"serif", letterSpacing:"0px" }}>
                       {langs.ar.title}
                     </p>
-                    <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.9, fontFamily:"serif" }}>
+                    <p style={{ margin:0, fontSize:13.5, color:"#555", lineHeight:1.9, fontFamily:"serif", whiteSpace:"pre-wrap" }}>
                       {langs.ar.message}
                     </p>
                   </div>
