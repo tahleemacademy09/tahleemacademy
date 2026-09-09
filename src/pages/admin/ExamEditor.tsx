@@ -43,6 +43,8 @@ interface QuestionForm {
   question_type: string;
   question_text: string;
   question_text_ar: string;          // ← Arabic question text
+  instruction_text: string;          // ← optional instruction shown above the question (English)
+  instruction_text_ar: string;       // ← optional instruction shown above the question (Arabic)
   options: Array<{
     id: string; text: string; text_ar: string; is_correct: boolean; image_url: string;
   }>;
@@ -92,6 +94,7 @@ interface ExamForm {
 // ── Constants ────────────────────────────────────────────────────────────────
 const emptyQuestion = (): QuestionForm => ({
   question_type: "mcq", question_text: "", question_text_ar: "",
+  instruction_text: "", instruction_text_ar: "",
   options: [
     { id: "a", text: "", text_ar: "", is_correct: false, image_url: "" },
     { id: "b", text: "", text_ar: "", is_correct: false, image_url: "" },
@@ -587,6 +590,8 @@ const ExamEditor = () => {
         question_type:    q.question_type || "mcq",
         question_text:    q.question_text || "",
         question_text_ar: q.question_text_ar || "",
+        instruction_text:    q.instruction_text || "",
+        instruction_text_ar: q.instruction_text_ar || "",
         options:          (q.options as any[]) || emptyQuestion().options,
         correct_answer:   q.correct_answer || "",
         points:           q.points || 1,
@@ -687,6 +692,8 @@ const ExamEditor = () => {
         question_type:    q.question_type,
         question_text:    sanitizeHtml(q.question_text),
         question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : null,
+        instruction_text:    q.instruction_text ? sanitizeHtml(q.instruction_text) : null,
+        instruction_text_ar: q.instruction_text_ar ? sanitizeHtml(q.instruction_text_ar) : null,
         options:          q.options?.length ? q.options : null,
         correct_answer:   q.correct_answer || null,
         points: q.points || 1, difficulty: q.difficulty || "medium", sort_order: i,
@@ -758,6 +765,7 @@ const ExamEditor = () => {
         setQuestions(qs.map(q => ({
           id: q.id, question_type: q.question_type || "mcq",
           question_text: q.question_text || "", question_text_ar: q.question_text_ar || "",
+          instruction_text: (q as any).instruction_text || "", instruction_text_ar: (q as any).instruction_text_ar || "",
           options: (q.options as any[]) || emptyQuestion().options,
           correct_answer: q.correct_answer || "", accepted_answers: (q.accepted_answers as string[]) || [""],
           points: q.points || 1, difficulty: q.difficulty || "medium", sort_order: q.sort_order || 0,
@@ -824,6 +832,39 @@ const ExamEditor = () => {
                   </div>
 
                   <CardContent className={cn("space-y-4 bg-white", isMobile ? "p-3" : "p-5 sm:p-6")}>
+
+                    {/* ── Instruction text (optional, global to all exam/question types) ── */}
+                    <div className="space-y-2">
+                      <Label className="text-xs sm:text-sm font-black text-slate-600 flex items-center gap-2">
+                        {t("Instruction (Arabic)","التعليمات (عربي)")}
+                        <span className="text-[10px] font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                          {t("optional","اختياري")}
+                        </span>
+                      </Label>
+                      <Textarea
+                        placeholder={t("e.g. \"Choose the correct answer:\" — shown above the question, in Arabic","مثال: \"اختر الإجابة الصحيحة:\" — تُعرض فوق السؤال بالعربية")}
+                        value={q.instruction_text_ar}
+                        onChange={e => updateQuestion(idx, { instruction_text_ar: e.target.value })}
+                        dir="rtl"
+                        className="min-h-[50px] sm:min-h-[60px] text-xs sm:text-sm rounded-lg sm:rounded-xl border-slate-200 bg-slate-50/50 focus-visible:ring-slate-400"
+                        style={{fontFamily:"'Amiri',serif"}}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs sm:text-sm font-black text-slate-600 flex items-center gap-2">
+                        {t("Instruction (English)","التعليمات (إنجليزي)")}
+                        <span className="text-[10px] font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                          {t("optional","اختياري")}
+                        </span>
+                      </Label>
+                      <Textarea
+                        placeholder={t("e.g. \"Choose the correct answer:\" — shown above the question","مثال: \"Choose the correct answer:\" — تُعرض فوق السؤال")}
+                        value={q.instruction_text}
+                        onChange={e => updateQuestion(idx, { instruction_text: e.target.value })}
+                        className="min-h-[50px] sm:min-h-[60px] text-xs sm:text-sm rounded-lg sm:rounded-xl border-slate-200 bg-slate-50/50 focus-visible:ring-slate-400"
+                      />
+                    </div>
 
                     {/* ── FIX 2: Arabic question text ── */}
                     <div className="space-y-2">

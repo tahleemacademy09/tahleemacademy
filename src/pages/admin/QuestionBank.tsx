@@ -260,6 +260,12 @@ const QuestionBank = () => {
                 {previewQ.difficulty && <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: (diffColors[previewQ.difficulty]||{bg:"#F3F4F6"}).bg, color: (diffColors[previewQ.difficulty]||{text:"#374151"}).text, fontWeight: 700 }}>{previewQ.difficulty}</span>}
                 <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#F3F4F6", color: "#6B7280", fontWeight: 700 }}>{previewQ.points} pts</span>
               </div>
+              {(previewQ.instruction_text || previewQ.instruction_text_ar) && (
+                <div style={{ padding: "8px 12px", borderRadius: 10, background: "#F9FAFB", border: "1px solid #E5E7EB" }}>
+                  {previewQ.instruction_text_ar && <div style={{ fontSize: 13, color: "#6B7280", fontWeight: 600, fontFamily: "'Amiri',serif" }} dir="rtl">{previewQ.instruction_text_ar}</div>}
+                  {previewQ.instruction_text && <div style={{ fontSize: 12, color: "#9CA3AF", fontStyle: "italic", marginTop: previewQ.instruction_text_ar ? 4 : 0 }}>{previewQ.instruction_text}</div>}
+                </div>
+              )}
               <div style={{ fontSize: 15, fontWeight: 600, color: "#111", lineHeight: 1.6, fontFamily: "'Amiri',serif" }} dir="auto"
                 dangerouslySetInnerHTML={{ __html: sanitizeHtml(previewQ.question_text||"") }} />
               {previewQ.question_text_ar && previewQ.question_text_ar !== previewQ.question_text && (

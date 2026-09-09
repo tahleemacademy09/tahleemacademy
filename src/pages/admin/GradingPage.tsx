@@ -385,6 +385,11 @@ const GradingPage = () => {
                   </span>
                 </div>
 
+                {(q.instruction_text || q.instruction_text_ar) && (
+                  <div style={{ fontSize: 11, color: "#9CA3AF", fontStyle: "italic", marginBottom: 6 }}>
+                    {language === "ar" && q.instruction_text_ar ? q.instruction_text_ar : q.instruction_text}
+                  </div>
+                )}
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#111", marginBottom: 8, lineHeight: 1.6 }}
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(bi ? `${bi.ar}<br/><span style="font-size:12px;color:#6B7280">${bi.en}</span>` : q.question_text || "") }} />
 
