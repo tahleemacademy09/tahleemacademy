@@ -903,6 +903,13 @@ const ExamTaking = () => {
 
                 {/* Question body */}
                 <div style={{ padding: "22px 22px 10px" }}>
+                  {/* Reading passage — optional, shown above the question (comprehension type) */}
+                  {q.reading_passage && (
+                    <div style={{ marginBottom: 16, padding: "16px 20px", background: "#fffbeb", borderRadius: 14, border: `1px solid ${GOLD}44`, borderLeft: `4px solid ${GOLD}` }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: GOLD, letterSpacing: 1, marginBottom: 8 }}>📖 {t("READING PASSAGE", "نص القراءة")}</div>
+                      <div dir="auto" style={{ fontSize: 16, lineHeight: 2, color: G, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
+                    </div>
+                  )}
                   {/* Instruction — optional, shown above the question when set */}
                   {(q.instruction_text || q.instruction_text_ar) && (
                     <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 10, background: "#f8fafb", border: `1px solid ${BORDER}` }}>
