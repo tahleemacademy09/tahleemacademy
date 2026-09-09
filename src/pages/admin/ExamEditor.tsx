@@ -1155,6 +1155,10 @@ const ExamEditor = () => {
                     <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Description (Arabic)","الوصف (عربي)")}</Label><Textarea value={examForm.description_ar} onChange={e=>setExamForm({...examForm,description_ar:e.target.value})} dir="rtl" className="rounded-lg bg-slate-50/50 min-h-[80px]" placeholder="وصف مختصر..." /></div>
                     <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Description","الوصف")}</Label><Textarea value={examForm.description} onChange={e=>setExamForm({...examForm,description:e.target.value})} dir="ltr" className="rounded-lg bg-slate-50/50 min-h-[80px]" placeholder="Brief description..." /></div>
                   </div>
+                  <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
+                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Guidelines / Passage (Arabic)","الإرشادات / النص (عربي)")}</Label><Textarea value={examForm.guidelines_ar} onChange={e=>setExamForm({...examForm,guidelines_ar:e.target.value})} dir="rtl" className="rounded-lg bg-slate-50/50 min-h-[220px] font-['Amiri',serif] text-base leading-relaxed" placeholder="النص أو التعليمات التي تظهر للطالب قبل بدء الامتحان..." /></div>
+                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Guidelines / Passage (English)","الإرشادات / النص (إنجليزي)")}</Label><Textarea value={examForm.guidelines} onChange={e=>setExamForm({...examForm,guidelines:e.target.value})} dir="ltr" className="rounded-lg bg-slate-50/50 min-h-[220px]" placeholder="Passage or instructions shown to the student before starting..." /></div>
+                  </div>
                 </div>
                 {/* Logistics */}
                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
