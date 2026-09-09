@@ -65,6 +65,12 @@ const ExamFormatPreview = ({ open, onClose, format, questions, examTitle, examTi
           {/* Questions */}
           {questions.map((q, idx) => (
             <div key={idx} style={{ paddingTop: `${format.question_padding}px`, paddingBottom: `${format.question_padding}px` }} className="border-b border-gray-100 last:border-0">
+              {q.reading_passage && (
+                <div className="mb-2 rounded bg-amber-50 border-l-4 border-amber-400 border-y border-r border-amber-200 px-3 py-2" style={{ marginLeft: format.show_question_numbers ? "1.5rem" : 0 }}>
+                  <div className="text-[10px] font-bold text-amber-600 tracking-wide mb-1">📖 {t("READING PASSAGE", "نص القراءة")}</div>
+                  <div className="text-sm" dir="auto" style={{ fontFamily: "Amiri", lineHeight: 1.9 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
+                </div>
+              )}
               {(q.instruction_text || q.instruction_text_ar) && (
                 <div className="mb-1.5 rounded bg-gray-50 border border-gray-200 px-2 py-1.5 text-xs text-gray-500" style={{ marginLeft: format.show_question_numbers ? "1.5rem" : 0 }}>
                   {q.instruction_text_ar && <div dir="rtl" className="font-medium" style={{ fontFamily: "Amiri" }}>{q.instruction_text_ar}</div>}
