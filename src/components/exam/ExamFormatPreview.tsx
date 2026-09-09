@@ -65,6 +65,12 @@ const ExamFormatPreview = ({ open, onClose, format, questions, examTitle, examTi
           {/* Questions */}
           {questions.map((q, idx) => (
             <div key={idx} style={{ paddingTop: `${format.question_padding}px`, paddingBottom: `${format.question_padding}px` }} className="border-b border-gray-100 last:border-0">
+              {(q.instruction_text || q.instruction_text_ar) && (
+                <div className="mb-1.5 rounded bg-gray-50 border border-gray-200 px-2 py-1.5 text-xs text-gray-500" style={{ marginLeft: format.show_question_numbers ? "1.5rem" : 0 }}>
+                  {q.instruction_text_ar && <div dir="rtl" className="font-medium" style={{ fontFamily: "Amiri" }}>{q.instruction_text_ar}</div>}
+                  {q.instruction_text && <div className="italic">{q.instruction_text}</div>}
+                </div>
+              )}
               <div className="flex items-start gap-2" style={getQuestionStyle(q)}>
                 {format.show_question_numbers && (
                   <span className="font-bold shrink-0" style={{ color: format.question_color }}>Q{idx + 1}.</span>
