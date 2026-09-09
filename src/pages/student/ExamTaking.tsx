@@ -453,7 +453,7 @@ const ExamTaking = () => {
         if (ad.exams.randomize_questions) ql = ql.sort(() => Math.random() - 0.5);
         if (ad.exams.randomize_answers) {
           ql = ql.map((q: any) => {
-            if ((q.question_type === "mcq" || q.question_type === "image_mcq") && Array.isArray(q.options)) {
+            if ((q.question_type === "mcq" || q.question_type === "image_mcq" || q.question_type === "comprehension") && Array.isArray(q.options)) {
               return { ...q, options: seededShuffle(q.options, `${user.id}:${q.id}`) };
             }
             return q;
@@ -926,7 +926,7 @@ const ExamTaking = () => {
                   </div>
 
                   {/* MCQ */}
-                  {(q.question_type === "mcq" || q.question_type === "image_mcq") && q.options && (
+                  {(q.question_type === "mcq" || q.question_type === "image_mcq" || q.question_type === "comprehension") && q.options && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
                       {(q.options as any[]).map((opt: any, idx: number) => {
                         const sel = answers[q.id]?.text === opt.id;

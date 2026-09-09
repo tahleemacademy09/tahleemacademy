@@ -391,7 +391,7 @@ const ExamResults = () => {
                         {/* Student's answer */}
                         <div style={{ background: "#f8fafb", borderRadius: 12, padding: "12px 16px", marginBottom: 10 }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", marginBottom: 6 }}>{t("YOUR ANSWER", "إجابتك")}</div>
-                          {(q.question_type === "mcq" || q.question_type === "image_mcq") && q.options ? (
+                          {(q.question_type === "mcq" || q.question_type === "image_mcq" || q.question_type === "comprehension") && q.options ? (
                             <div style={{ fontSize: 14, color: G, fontFamily: "'Amiri',serif" }}>
                               {(() => { const opt = (q.options as any[]).find((o: any) => o.id === ans?.answer_text); return opt ? (language === "ar" ? opt.text_ar || opt.text : opt.text) : <span style={{ color: "#9ca3af", fontStyle: "italic" }}>{t("No answer", "لا إجابة")}</span>; })()}
                             </div>
@@ -409,7 +409,7 @@ const ExamResults = () => {
                         {isReleased && exam.show_results_immediately !== false && (
                           <div style={{ background: "#f0fff4", borderRadius: 12, padding: "12px 16px", marginBottom: 10, border: "1px solid #86efac" }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: "#22c55e", marginBottom: 6 }}>{t("CORRECT ANSWER", "الإجابة الصحيحة")}</div>
-                            {(q.question_type === "mcq" || q.question_type === "image_mcq") && q.options && (
+                            {(q.question_type === "mcq" || q.question_type === "image_mcq" || q.question_type === "comprehension") && q.options && (
                               <div style={{ fontSize: 14, color: G, fontFamily: "'Amiri',serif" }}>
                                 {(q.options as any[]).filter((o: any) => o.is_correct).map((o: any) => language === "ar" ? o.text_ar || o.text : o.text).join(", ")}
                               </div>
