@@ -385,6 +385,12 @@ const GradingPage = () => {
                   </span>
                 </div>
 
+                {q.reading_passage && (
+                  <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", borderLeft: "4px solid #C9A84C" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#C9A84C", letterSpacing: 1, marginBottom: 4 }}>📖 READING PASSAGE</div>
+                    <div dir="auto" style={{ fontSize: 12, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
+                  </div>
+                )}
                 {(q.instruction_text || q.instruction_text_ar) && (
                   <div style={{ fontSize: 11, color: "#9CA3AF", fontStyle: "italic", marginBottom: 6 }}>
                     {language === "ar" && q.instruction_text_ar ? q.instruction_text_ar : q.instruction_text}

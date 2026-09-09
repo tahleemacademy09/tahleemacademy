@@ -45,6 +45,7 @@ interface QuestionForm {
   question_text_ar: string;          // ← Arabic question text
   instruction_text: string;          // ← optional instruction shown above the question (English)
   instruction_text_ar: string;       // ← optional instruction shown above the question (Arabic)
+  reading_passage: string;           // ← optional passage shown above the question (comprehension/reading types)
   options: Array<{
     id: string; text: string; text_ar: string; is_correct: boolean; image_url: string;
   }>;
@@ -95,6 +96,7 @@ interface ExamForm {
 const emptyQuestion = (): QuestionForm => ({
   question_type: "mcq", question_text: "", question_text_ar: "",
   instruction_text: "", instruction_text_ar: "",
+  reading_passage: "",
   options: [
     { id: "a", text: "", text_ar: "", is_correct: false, image_url: "" },
     { id: "b", text: "", text_ar: "", is_correct: false, image_url: "" },
@@ -592,6 +594,7 @@ const ExamEditor = () => {
         question_text_ar: q.question_text_ar || "",
         instruction_text:    q.instruction_text || "",
         instruction_text_ar: q.instruction_text_ar || "",
+        reading_passage:     q.reading_passage || "",
         options:          (q.options as any[]) || emptyQuestion().options,
         correct_answer:   q.correct_answer || "",
         points:           q.points || 1,
@@ -694,6 +697,7 @@ const ExamEditor = () => {
         question_text_ar: q.question_text_ar ? sanitizeHtml(q.question_text_ar) : null,
         instruction_text:    q.instruction_text ? sanitizeHtml(q.instruction_text) : null,
         instruction_text_ar: q.instruction_text_ar ? sanitizeHtml(q.instruction_text_ar) : null,
+        reading_passage:     q.reading_passage ? sanitizeHtml(q.reading_passage) : null,
         options:          q.options?.length ? q.options : null,
         correct_answer:   q.correct_answer || null,
         points: q.points || 1, difficulty: q.difficulty || "medium", sort_order: i,
@@ -766,6 +770,7 @@ const ExamEditor = () => {
           id: q.id, question_type: q.question_type || "mcq",
           question_text: q.question_text || "", question_text_ar: q.question_text_ar || "",
           instruction_text: (q as any).instruction_text || "", instruction_text_ar: (q as any).instruction_text_ar || "",
+          reading_passage: (q as any).reading_passage || "",
           options: (q.options as any[]) || emptyQuestion().options,
           correct_answer: q.correct_answer || "", accepted_answers: (q.accepted_answers as string[]) || [""],
           points: q.points || 1, difficulty: q.difficulty || "medium", sort_order: q.sort_order || 0,
@@ -832,6 +837,27 @@ const ExamEditor = () => {
                   </div>
 
                   <CardContent className={cn("space-y-4 bg-white", isMobile ? "p-3" : "p-5 sm:p-6")}>
+
+                    {/* ── Reading passage (optional, shown above the question — comprehension type) ── */}
+                    {q.question_type === "comprehension" && (
+                      <div className="space-y-2">
+                        <Label className="text-xs sm:text-sm font-black text-amber-700 flex items-center gap-2">
+                          📖 {t("Reading Passage","نص القراءة")}
+                          <span className="text-[10px] font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                            {t("optional","اختياري")}
+                          </span>
+                        </Label>
+                        <div className="rounded-lg sm:rounded-xl border border-amber-300 shadow-sm overflow-hidden focus-within:border-amber-500 focus-within:ring-1 focus-within:ring-amber-500 transition-all bg-amber-50/40">
+                          <RichTextEditor
+                            placeholder={t("Paste the passage / dialogue students should read before answering…","الصق النص أو الحوار الذي يجب أن يقرأه الطلاب قبل الإجابة…")}
+                            value={q.reading_passage}
+                            onChange={val => updateQuestion(idx, { reading_passage: val })}
+                            dir="rtl"
+                            className="min-h-[90px] sm:min-h-[120px]"
+                          />
+                        </div>
+                      </div>
+                    )}
 
                     {/* ── Instruction text (optional, global to all exam/question types) ── */}
                     <div className="space-y-2">

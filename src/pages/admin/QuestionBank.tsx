@@ -260,6 +260,12 @@ const QuestionBank = () => {
                 {previewQ.difficulty && <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: (diffColors[previewQ.difficulty]||{bg:"#F3F4F6"}).bg, color: (diffColors[previewQ.difficulty]||{text:"#374151"}).text, fontWeight: 700 }}>{previewQ.difficulty}</span>}
                 <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: "#F3F4F6", color: "#6B7280", fontWeight: 700 }}>{previewQ.points} pts</span>
               </div>
+              {previewQ.reading_passage && (
+                <div style={{ padding: "12px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", borderLeft: "4px solid #C9A84C" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#C9A84C", letterSpacing: 1, marginBottom: 6 }}>📖 READING PASSAGE</div>
+                  <div dir="auto" style={{ fontSize: 13, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(previewQ.reading_passage) }} />
+                </div>
+              )}
               {(previewQ.instruction_text || previewQ.instruction_text_ar) && (
                 <div style={{ padding: "8px 12px", borderRadius: 10, background: "#F9FAFB", border: "1px solid #E5E7EB" }}>
                   {previewQ.instruction_text_ar && <div style={{ fontSize: 13, color: "#6B7280", fontWeight: 600, fontFamily: "'Amiri',serif" }} dir="rtl">{previewQ.instruction_text_ar}</div>}
