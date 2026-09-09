@@ -385,6 +385,12 @@ const ExamResults = () => {
                       </div>
 
                       <div style={{ padding: "16px 18px" }}>
+                        {(q.instruction_text || q.instruction_text_ar) && (
+                          <div style={{ marginBottom: 10, padding: "8px 12px", borderRadius: 10, background: "#f8fafb", border: "1px solid #e5e7eb" }}>
+                            {q.instruction_text_ar && <div dir="rtl" style={{ fontFamily: "'Amiri',serif", fontSize: 13, color: "#6b7280", fontWeight: 600 }}>{q.instruction_text_ar}</div>}
+                            {q.instruction_text && <div style={{ fontSize: 12, color: "#9ca3af", fontStyle: "italic", marginTop: q.instruction_text_ar ? 4 : 0 }}>{q.instruction_text}</div>}
+                          </div>
+                        )}
                         {q.question_text && <div dir="auto" dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text) }} style={{ fontSize: 16, fontWeight: 600, color: G, lineHeight: 1.9, marginBottom: 8, fontFamily: "'Amiri',serif" }} />}
                         {q.question_text_ar && q.question_text_ar !== q.question_text && <div dir="rtl" dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }} style={{ fontSize: 18, fontFamily: "'Amiri Quran',serif", color: G, lineHeight: 2.2, marginBottom: 8 }} />}
 

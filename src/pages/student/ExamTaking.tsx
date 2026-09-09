@@ -903,6 +903,17 @@ const ExamTaking = () => {
 
                 {/* Question body */}
                 <div style={{ padding: "22px 22px 10px" }}>
+                  {/* Instruction — optional, shown above the question when set */}
+                  {(q.instruction_text || q.instruction_text_ar) && (
+                    <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 10, background: "#f8fafb", border: `1px solid ${BORDER}` }}>
+                      {q.instruction_text_ar && (
+                        <p dir="rtl" style={{ fontFamily: "'Amiri',serif", fontSize: 14, color: "#4b5563", margin: 0, fontWeight: 600 }}>{q.instruction_text_ar}</p>
+                      )}
+                      {q.instruction_text && (
+                        <p style={{ fontSize: 13, color: "#6b7280", margin: q.instruction_text_ar ? "4px 0 0" : 0, fontStyle: "italic" }}>{q.instruction_text}</p>
+                      )}
+                    </div>
+                  )}
                   {/* Question text — Arabic first, English below, brackets removed */}
                   <div style={{ marginBottom: 20 }}>
                     {(q.question_text || q.question_text_ar)
