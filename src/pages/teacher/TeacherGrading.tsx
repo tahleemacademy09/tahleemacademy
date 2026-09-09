@@ -92,7 +92,7 @@ const TeacherGrading = () => {
     setSelectedAttempt(attempt);
     setExamFeedback(attempt.feedback || "");
     const { data } = await supabase.from("exam_answers")
-      .select(`*, exam_questions(id, question_type, question_text, question_text_ar, options, correct_answer, points, media_url, explanation)`)
+      .select(`*, exam_questions(id, question_type, question_text, question_text_ar, instruction_text, instruction_text_ar, options, correct_answer, points, media_url, explanation)`)
       .eq("attempt_id", attempt.id)
       .order("created_at");
     setAnswers(data || []);
@@ -305,6 +305,11 @@ const TeacherGrading = () => {
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
                   <div style={{ width: 28, height: 28, borderRadius: 8, background: G, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900, color: "#fff", flexShrink: 0 }}>{i + 1}</div>
                   <div style={{ flex: 1 }}>
+                    {(q.instruction_text || q.instruction_text_ar) && (
+                      <div style={{ fontSize: 11, color: "#9CA3AF", fontStyle: "italic", marginBottom: 4 }}>
+                        {language === "ar" && q.instruction_text_ar ? q.instruction_text_ar : q.instruction_text}
+                      </div>
+                    )}
                     <div
                       style={{ fontSize: 14, color: G, lineHeight: 1.6, fontWeight: 500 }}
                       dangerouslySetInnerHTML={{ __html: sanitizeHtml(language === "ar" && q.question_text_ar ? q.question_text_ar : q.question_text) }}
