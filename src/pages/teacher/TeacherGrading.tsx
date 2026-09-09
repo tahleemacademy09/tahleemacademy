@@ -92,7 +92,7 @@ const TeacherGrading = () => {
     setSelectedAttempt(attempt);
     setExamFeedback(attempt.feedback || "");
     const { data } = await supabase.from("exam_answers")
-      .select(`*, exam_questions(id, question_type, question_text, question_text_ar, instruction_text, instruction_text_ar, options, correct_answer, points, media_url, explanation)`)
+      .select(`*, exam_questions(id, question_type, question_text, question_text_ar, instruction_text, instruction_text_ar, reading_passage, options, correct_answer, points, media_url, explanation)`)
       .eq("attempt_id", attempt.id)
       .order("created_at");
     setAnswers(data || []);
@@ -305,6 +305,12 @@ const TeacherGrading = () => {
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
                   <div style={{ width: 28, height: 28, borderRadius: 8, background: G, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900, color: "#fff", flexShrink: 0 }}>{i + 1}</div>
                   <div style={{ flex: 1 }}>
+                    {q.reading_passage && (
+                      <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", borderLeft: "4px solid #C9A84C" }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: "#C9A84C", letterSpacing: 1, marginBottom: 4 }}>📖 {t("READING PASSAGE", "نص القراءة")}</div>
+                        <div dir="auto" style={{ fontSize: 13, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
+                      </div>
+                    )}
                     {(q.instruction_text || q.instruction_text_ar) && (
                       <div style={{ fontSize: 11, color: "#9CA3AF", fontStyle: "italic", marginBottom: 4 }}>
                         {language === "ar" && q.instruction_text_ar ? q.instruction_text_ar : q.instruction_text}
