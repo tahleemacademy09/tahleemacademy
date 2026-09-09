@@ -122,6 +122,7 @@ const questionTypes = [
   { value: "drawing",      label: "Drawing / Whiteboard",    label_ar: "رسم / لوحة بيضاء",      icon: "✏️", cat: "Media" },
   { value: "matching",     label: "Matching (Drag & Drop)",  label_ar: "مطابقة (سحب وإفلات)",    icon: "🔗", cat: "Interactive" },
   { value: "ordering",     label: "Ordering / Sequence",     label_ar: "ترتيب / تسلسل",          icon: "📋", cat: "Interactive" },
+  { value: "comprehension",label: "Comprehension (MCQ)",     label_ar: "استيعاب (اختيار من متعدد)", icon: "📖", cat: "Standard" },
 ];
 
 const toLocalDatetimeString = (date: Date): string => {
@@ -944,7 +945,7 @@ const ExamEditor = () => {
 
 
                     {/* MCQ Options */}
-                    {(q.question_type==="mcq" || q.question_type==="image_mcq") && (
+                    {(q.question_type==="mcq" || q.question_type==="image_mcq" || q.question_type==="comprehension") && (
                       <div className="space-y-2 pt-1">
                         <Label className="text-xs sm:text-sm font-black text-slate-800">{t("Options","الخيارات")}</Label>
                         <div className="grid gap-2">

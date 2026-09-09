@@ -213,7 +213,7 @@ const QuestionBank = () => {
                         style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #FECACA", background: "#FEF2F2", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         {deleting === q.id ? <Loader2 size={12} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={13} color="#DC2626" />}
                       </button>
-                      {q.question_type === "mcq" && (
+                      {(q.question_type === "mcq" || q.question_type === "comprehension") && (
                         <button onClick={() => toggleExpand(q.id)}
                           style={{ width: 30, height: 30, borderRadius: 8, border: "1px solid #E5E7EB", background: isExpanded ? "#ECFDF5" : "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                           {isExpanded ? <ChevronUp size={13} color={G} /> : <ChevronDown size={13} color="#6B7280" />}
