@@ -94,7 +94,7 @@ const ExamFormatPreview = ({ open, onClose, format, questions, examTitle, examTi
               )}
 
               {/* MCQ / Multi-Select Options */}
-              {(q.question_type === "mcq" || q.question_type === "image_mcq" || q.question_type === "multi_select") && q.options && (
+              {(q.question_type === "mcq" || q.question_type === "image_mcq" || q.question_type === "multi_select" || q.question_type === "comprehension") && q.options && (
                 <div className="mt-2 space-y-1" style={{ marginLeft: format.show_question_numbers ? "1.5rem" : 0, marginRight: format.rtl_mode && format.show_question_numbers ? "1.5rem" : 0 }}>
                   {(Array.isArray(q.options) ? q.options : []).map((opt: any, oi: number) => (
                     <div key={oi} className="flex items-center gap-2 rounded px-2 py-1" style={getOptionStyle()}>
