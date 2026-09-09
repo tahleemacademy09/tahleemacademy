@@ -1402,6 +1402,8 @@ export type Database = {
           explanation_ar: string | null
           feedback_incorrect: string | null
           id: string
+          instruction_text: string | null
+          instruction_text_ar: string | null
           marks: number | null
           matching_pairs: Json | null
           max_words: number | null
@@ -1416,6 +1418,7 @@ export type Database = {
           question_text_ar: string | null
           question_timer_seconds: number | null
           question_type: string
+          reading_passage: string | null
           sort_order: number | null
           tags: string[] | null
         }
@@ -1433,6 +1436,8 @@ export type Database = {
           explanation_ar?: string | null
           feedback_incorrect?: string | null
           id?: string
+          instruction_text?: string | null
+          instruction_text_ar?: string | null
           marks?: number | null
           matching_pairs?: Json | null
           max_words?: number | null
@@ -1447,6 +1452,7 @@ export type Database = {
           question_text_ar?: string | null
           question_timer_seconds?: number | null
           question_type?: string
+          reading_passage?: string | null
           sort_order?: number | null
           tags?: string[] | null
         }
@@ -1464,6 +1470,8 @@ export type Database = {
           explanation_ar?: string | null
           feedback_incorrect?: string | null
           id?: string
+          instruction_text?: string | null
+          instruction_text_ar?: string | null
           marks?: number | null
           matching_pairs?: Json | null
           max_words?: number | null
@@ -1478,6 +1486,7 @@ export type Database = {
           question_text_ar?: string | null
           question_timer_seconds?: number | null
           question_type?: string
+          reading_passage?: string | null
           sort_order?: number | null
           tags?: string[] | null
         }
@@ -8054,12 +8063,15 @@ export type Database = {
           explanation: string
           explanation_ar: string
           id: string
+          instruction_text: string
+          instruction_text_ar: string
           media_url: string
           options: Json
           points: number
           question_text: string
           question_text_ar: string
           question_type: string
+          reading_passage: string
           sort_order: number
         }[]
       }
@@ -8071,12 +8083,16 @@ export type Database = {
           explanation: string
           explanation_ar: string
           id: string
+          instruction_text: string
+          instruction_text_ar: string
           media_url: string
+          metadata: Json
           options: Json
           points: number
           question_text: string
           question_text_ar: string
           question_type: string
+          reading_passage: string
           sort_order: number
         }[]
       }
