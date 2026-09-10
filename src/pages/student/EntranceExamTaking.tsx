@@ -14,6 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useProctoring } from "@/hooks/useProctoring";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
+import { enableExamPrivacyScreen, disableExamPrivacyScreen } from "@/lib/examPrivacyScreen";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
@@ -585,6 +586,14 @@ const EntranceExamTaking = () => {
       examActiveRef.current = false;
       unlockReload("entrance-exam");
     };
+  }, [showInstructions, showCameraSetup, loading]);
+
+  // Native screenshot / screen-recording block for the duration of the
+  // attempt (Android FLAG_SECURE + iOS app-switcher cover). No-op on web.
+  useEffect(() => {
+    if (showInstructions || showCameraSetup || loading) return;
+    enableExamPrivacyScreen();
+    return () => { disableExamPrivacyScreen(); };
   }, [showInstructions, showCameraSetup, loading]);
 
   // ── Proctoring — only enabled after camera setup ──────────────────────────

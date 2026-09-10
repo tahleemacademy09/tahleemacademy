@@ -16,11 +16,13 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import {
   Clock, Flag, AlertTriangle, BookOpen, CheckCircle2,
   Lock, ChevronLeft, ChevronRight, Save, Eye, Grid, Send,
-  Zap, ThumbsUp, ThumbsDown, Minus, RotateCcw, Keyboard
+  Zap, ThumbsUp, ThumbsDown, Minus, RotateCcw, Keyboard, Search
 } from "lucide-react";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
+import ExamFocusGuard from "@/components/exam/ExamFocusGuard";
+import { enableExamPrivacyScreen, disableExamPrivacyScreen } from "@/lib/examPrivacyScreen";
 import { useProctoring } from "@/hooks/useProctoring";
 import { useIsMobile } from "@/hooks/use-mobile";
 
@@ -295,6 +297,40 @@ const ExamTaking = () => {
   const [questionStartTime, setQuestionStartTime] = useState<Record<string, number>>({});
   const [timePerQuestion, setTimePerQuestion] = useState<Record<string, number>>({});
 
+  // ── Fit-to-screen zoom ──────────────────────────────────────────
+  // Default behaviour: shrink the question card so it (question + all
+  // answer options + nav buttons) fits within the visible area without
+  // scrolling. Manual +/- controls (magnifier) let the student zoom in
+  // when they want bigger text; "Fit" resets to the auto-fit scale.
+  const [zoom, setZoom] = useState<number | "fit">("fit");
+  const [fitScale, setFitScale] = useState(1);
+  const [naturalH, setNaturalH] = useState(0);
+  const [showZoomPanel, setShowZoomPanel] = useState(false);
+  const qScrollRef = useRef<HTMLDivElement>(null);
+  const qCardRef = useRef<HTMLDivElement>(null);
+  const effectiveScale = zoom === "fit" ? fitScale : zoom;
+
+  useEffect(() => {
+    const compute = () => {
+      const container = qScrollRef.current, card = qCardRef.current;
+      if (!container || !card) return;
+      const h = card.scrollHeight;
+      setNaturalH(h);
+      const availH = container.clientHeight - 20;
+      setFitScale(h > availH && availH > 0 ? Math.max(0.55, availH / h) : 1);
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    if (qCardRef.current) ro.observe(qCardRef.current);
+    window.addEventListener("resize", compute);
+    return () => { ro.disconnect(); window.removeEventListener("resize", compute); };
+  }, [currentIdx]);
+
+  const zoomBy = (delta: number) => setZoom(z => {
+    const base = z === "fit" ? fitScale : z;
+    return Math.min(1.5, Math.max(0.5, +(base + delta).toFixed(2)));
+  });
+
   const submittedRef = useRef(false);
   const answersRef = useRef(answers);
   const questionsRef = useRef(questions);
@@ -550,6 +586,14 @@ const ExamTaking = () => {
     return () => unlockReload("exam-taking");
   }, [loading, submitted]);
 
+  // Native screenshot / screen-recording block for the duration of the
+  // attempt (Android FLAG_SECURE + iOS app-switcher cover). No-op on web.
+  useEffect(() => {
+    if (loading || submitted) return;
+    enableExamPrivacyScreen();
+    return () => { disableExamPrivacyScreen(); };
+  }, [loading, submitted]);
+
   const saveAnswers = async (silent = false) => {
     if (!attemptId || submittedRef.current) return;
     if (!silent) setSaving(true);
@@ -676,6 +720,13 @@ const ExamTaking = () => {
           recentViolations={(proc as any).recentViolations} getStream={(proc as any).getStream}
           attemptId={attemptId || ""} onPointDeduction={handlePointDeduction} />
       )}
+      <ExamFocusGuard
+        active={!submitted}
+        language={language === "ar" ? "ar" : "en"}
+        onViolation={(awaySeconds) => {
+          if (procEnabled) (proc as any).logViolation?.("tab_switch", 2, `Locked out — away ${awaySeconds}s`);
+        }}
+      />
       <div style={{ background: G, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
         <button onClick={() => setPhase("exam")} style={{ background: "rgba(255,255,255,.15)", border: "none", color: "#fff", borderRadius: 10, padding: "7px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: "'Cairo',sans-serif" }}>
           <ChevronLeft style={{ width: 14, height: 14 }} />{t("Back", "عودة")}
@@ -770,6 +821,16 @@ const ExamTaking = () => {
           recentViolations={(proc as any).recentViolations} getStream={(proc as any).getStream}
           attemptId={attemptId || ""} onPointDeduction={handlePointDeduction} />
       )}
+
+      {/* Lockdown — covers the screen whenever the tab loses focus/visibility,
+          on every exam regardless of whether webcam proctoring is on. */}
+      <ExamFocusGuard
+        active={!submitted && !loading}
+        language={language === "ar" ? "ar" : "en"}
+        onViolation={(awaySeconds) => {
+          if (procEnabled) (proc as any).logViolation?.("tab_switch", 2, `Locked out — away ${awaySeconds}s`);
+        }}
+      />
 
       {/* HEADER */}
       <div style={{ height: 56, background: G, display: "flex", alignItems: "center", padding: "0 10px", gap: 8, flexShrink: 0, zIndex: 40, boxShadow: "0 2px 8px rgba(0,0,0,.3)" }}>
@@ -875,9 +936,11 @@ const ExamTaking = () => {
         )}
 
         {/* CENTER: QUESTION */}
-        <div style={{ flex: 1, overflow: "auto", padding: "12px", display: "flex", flexDirection: "column" }}>
+        <div ref={qScrollRef} style={{ flex: 1, overflow: "auto", padding: "12px", display: "flex", flexDirection: "column", position: "relative" }}>
           {q && (
-            <div style={{ maxWidth: 720, margin: "0 auto", width: "100%", animation: "slideIn .2s ease" }} key={currentIdx}>
+            <div style={{ maxWidth: 720, margin: "0 auto", width: "100%" }}>
+              <div style={{ height: naturalH ? naturalH * effectiveScale : undefined, overflow: "hidden", transition: "height .15s ease" }}>
+              <div ref={qCardRef} key={currentIdx} style={{ transform: `scale(${effectiveScale})`, transformOrigin: "top center", transition: "transform .15s ease", animation: "slideIn .2s ease" }}>
               <div style={{ background: "#fff", borderRadius: 20, boxShadow: "0 4px 24px rgba(0,0,0,.1)", overflow: "hidden" }}>
 
                 {/* Question header */}
@@ -1087,6 +1150,27 @@ const ExamTaking = () => {
                   )}
                 </div>
               </div>
+              </div>
+              </div>
+            </div>
+          )}
+
+          {/* Magnifier / zoom control — floating so it never covers question content permanently */}
+          {q && (
+            <div style={{ position: "fixed", bottom: isMobile ? 148 : 20, right: 14, zIndex: 60, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+              {showZoomPanel && (
+                <div style={{ display: "flex", alignItems: "center", gap: 2, background: "rgba(15,45,31,.92)", backdropFilter: "blur(8px)", borderRadius: 20, padding: 4, boxShadow: "0 4px 16px rgba(0,0,0,.25)" }}>
+                  <button onClick={() => zoomBy(-0.1)} title="Zoom out" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>−</button>
+                  <button onClick={() => setZoom("fit")} title="Fit to screen" style={{ padding: "0 10px", height: 30, borderRadius: 15, border: "none", background: zoom === "fit" ? GOLD : "rgba(255,255,255,.12)", color: zoom === "fit" ? G : "#fff", fontSize: 10, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    {zoom === "fit" ? t("Fit", "ملائم") : `${Math.round(effectiveScale * 100)}%`}
+                  </button>
+                  <button onClick={() => zoomBy(0.1)} title="Zoom in" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>+</button>
+                </div>
+              )}
+              <button onClick={() => setShowZoomPanel(v => !v)} title="Zoom"
+                style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: G, color: GOLD, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 14px rgba(0,0,0,.3)" }}>
+                <Search style={{ width: 17, height: 17 }} />
+              </button>
             </div>
           )}
         </div>
