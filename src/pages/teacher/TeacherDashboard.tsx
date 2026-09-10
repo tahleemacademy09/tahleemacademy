@@ -202,8 +202,10 @@ const TeacherDashboard = () => {
       const { data: pvtSessions } = await supabase.from("private_sessions").select("*,profiles!private_sessions_student_id_fkey(full_name),subjects(title)").eq("teacher_id", user.id).eq("session_date", todayStr);
 
       let pendingTests = 0, pendingExams = 0, pendingList: any[] = [];
-      if (courseIds.length) {
-        const { data: exams } = await supabase.from("exams").select("id,type,title").in("course_id", courseIds);
+      if (subjectIds.length) {
+        // Exams are attached via exams.subject_id (set by ExamEditor), not
+        // the legacy course_id column which the editor never populates.
+        const { data: exams } = await supabase.from("exams").select("id,type,title").in("subject_id", subjectIds);
         const examIds = (exams || []).filter(e => (e.type || "exam") === "exam").map(e => e.id);
         const testIds = (exams || []).filter(e => e.type === "test").map(e => e.id);
         if (examIds.length) { const { count } = await supabase.from("exam_attempts").select("id", { count: "exact", head: true }).in("exam_id", examIds).eq("status", "submitted"); pendingExams = count || 0; }

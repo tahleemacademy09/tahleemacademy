@@ -143,7 +143,7 @@ const TeacherTranscript = () => {
     const { data: profile } = await supabase.from("profiles").select("*").eq("user_id", student.user_id).maybeSingle();
     setStudentProfile(profile);
     const { data } = await supabase.from("exam_attempts")
-      .select("*, exams(title, title_ar, type, term, course_id, courses(subject_id, subjects(title, title_ar)))")
+      .select("*, exams(title, title_ar, type, term, subject_id, subjects(title, title_ar))")
       .eq("user_id", student.user_id).eq("status", "graded")
       .order("submitted_at", { ascending: false });
     const termResults = (data || []).filter((a: any) => (a.exams?.term || "first") === term);
@@ -161,8 +161,8 @@ const TeacherTranscript = () => {
     testAttemptId?: string; examAttemptId?: string;
   }>();
   results.forEach((r: any) => {
-    const subTitle   = r.exams?.courses?.subjects?.title || r.exams?.title || "Unknown";
-    const subTitleAr = r.exams?.courses?.subjects?.title_ar || subTitle;
+    const subTitle   = r.exams?.subjects?.title || r.exams?.title || "Unknown";
+    const subTitleAr = r.exams?.subjects?.title_ar || subTitle;
     const type       = r.exams?.type || "exam";
     if (!subjectMap.has(subTitle))
       subjectMap.set(subTitle, { title: subTitle, title_ar: subTitleAr, test: 0, exam: 0 });

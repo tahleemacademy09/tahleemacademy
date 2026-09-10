@@ -168,8 +168,9 @@ const TeacherStudents = () => {
       const { data: attendance } = await supabase.from("manual_attendance").select("student_id, status")
         .eq("teacher_id", user.id);
 
-      // Get latest exam scores
-      const examIds = (await supabase.from("exams").select("id").in("course_id", courseIds)).data?.map(e => e.id) || [];
+      // Get latest exam scores — exams are attached via exams.subject_id
+      // (set by ExamEditor), not the legacy course_id column.
+      const examIds = (await supabase.from("exams").select("id").in("subject_id", subjectIds)).data?.map(e => e.id) || [];
       setTeacherExamIds(examIds);
       let attemptsMap: Record<string, any> = {};
       if (examIds.length > 0) {

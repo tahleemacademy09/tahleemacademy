@@ -77,11 +77,10 @@ function ExamsList({ user, t, type }: { user: any; t: any; type: "exam" | "test"
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
       const subjectIds = (subs || []).map((s: any) => s.id);
       if (!subjectIds.length) { setLoading(false); return; }
-      const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subjectIds);
-      const courseIds = (courses || []).map((c: any) => c.id);
-      if (!courseIds.length) { setLoading(false); return; }
+      // Exams are attached via exams.subject_id (set by ExamEditor), not the
+      // legacy course_id column which the editor never populates.
       const { data } = await supabase.from("exams")
-        .select("*, courses(title, subject_id, subjects(title))").in("course_id", courseIds)
+        .select("*, subjects(title)").in("subject_id", subjectIds)
         .order("created_at", { ascending: false });
       setExams((data || []).filter((e: any) => (e.type || "exam") === type));
       setLoading(false);
@@ -158,7 +157,7 @@ function ExamsList({ user, t, type }: { user: any; t: any; type: "exam" | "test"
                 {e.is_published && <span style={badge("#16A34A")}>{t("Live", "منشور")}</span>}
               </div>
               <div style={{ fontSize: 12, color: "#7a9e88" }}>
-                {e.courses?.subjects?.title || e.courses?.title || ""}
+                {e.subjects?.title || ""}
                 {e.total_points ? ` · ${e.total_points} ${t("pts", "نقطة")}` : ""}
                 {e.time_limit_minutes ? ` · ${e.time_limit_minutes}m` : ""}
               </div>
@@ -198,14 +197,11 @@ function ResultsTab({ user, t }: any) {
       setSubjects(subs || []);
       const subjectIds = (subs || []).map((s: any) => s.id);
       if (!subjectIds.length) { setLoading(false); return; }
-      const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subjectIds);
-      const courseIds = (courses || []).map((c: any) => c.id);
-      if (!courseIds.length) { setLoading(false); return; }
-      const { data: examList } = await supabase.from("exams").select("id").in("course_id", courseIds);
+      const { data: examList } = await supabase.from("exams").select("id").in("subject_id", subjectIds);
       const examIds = (examList || []).map((e: any) => e.id);
       if (!examIds.length) { setLoading(false); return; }
       const { data } = await supabase.from("exam_attempts")
-        .select("*, profiles!exam_attempts_user_id_fkey(full_name), exams(title, type, term, courses(subject_id, subjects(title)))")
+        .select("*, profiles!exam_attempts_user_id_fkey(full_name), exams(title, type, term, subject_id, subjects(title))")
         .in("exam_id", examIds).in("status", ["graded", "submitted"])
         .order("submitted_at", { ascending: false }).limit(100);
       setResults(data || []);
@@ -216,7 +212,7 @@ function ResultsTab({ user, t }: any) {
 
   const filtered = results.filter(r => {
     if (subFilter !== "all") {
-      const sid = r.exams?.courses?.subject_id;
+      const sid = r.exams?.subject_id;
       if (sid !== subFilter) return false;
     }
     if (termFilter !== "all" && (r.exams?.term || "first") !== termFilter) return false;
@@ -236,7 +232,7 @@ function ResultsTab({ user, t }: any) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: 13, color: "#374151" }}>{r.profiles?.full_name || "—"}</div>
         <div style={{ fontSize: 11, color: "#9ca3af" }}>
-          {r.exams?.title} · {r.exams?.courses?.subjects?.title} · {r.exams?.term || "first"}
+          {r.exams?.title} · {r.exams?.subjects?.title} · {r.exams?.term || "first"}
         </div>
       </div>
       {r.status === "submitted" ? (
@@ -328,10 +324,7 @@ export default function TeacherAssessmentsHub() {
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
       const subIds = (subs || []).map((s: any) => s.id);
       if (!subIds.length) return;
-      const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subIds);
-      const cIds = (courses || []).map((c: any) => c.id);
-      if (!cIds.length) return;
-      const { data: exams } = await supabase.from("exams").select("id").in("course_id", cIds);
+      const { data: exams } = await supabase.from("exams").select("id").in("subject_id", subIds);
       const eIds = (exams || []).map((e: any) => e.id);
       if (!eIds.length) return;
       const { count } = await supabase.from("exam_attempts").select("id", { count: "exact", head: true }).in("exam_id", eIds).eq("status", "submitted");

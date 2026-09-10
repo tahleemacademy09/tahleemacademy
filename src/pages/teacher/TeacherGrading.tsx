@@ -59,10 +59,9 @@ const TeacherGrading = () => {
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
       const subjectIds = (subs || []).map(s => s.id);
       if (!subjectIds.length) { setLoading(false); return; }
-      const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subjectIds);
-      const courseIds = (courses || []).map(c => c.id);
-      if (!courseIds.length) { setLoading(false); return; }
-      const { data: exams } = await supabase.from("exams").select("id, title, title_ar, session").in("course_id", courseIds);
+      // Exams are attached via exams.subject_id (set by ExamEditor), not the
+      // legacy course_id column which the editor never populates.
+      const { data: exams } = await supabase.from("exams").select("id, title, title_ar, session").in("subject_id", subjectIds);
       const ids = (exams || []).map(e => e.id);
       setExamIds(ids);
       setExamsList(exams || []);
@@ -81,7 +80,7 @@ const TeacherGrading = () => {
       .select(`*,
         profiles!exam_attempts_user_id_fkey(full_name, email, student_id),
         exams(id, title, title_ar, type, passing_score, allow_review, term,
-              courses(title, subject_id, subjects(title)))`)
+              subject_id, subjects(title))`)
       .in("exam_id", examIds)
       .in("status", ["submitted", "graded", "released"])
       .order("submitted_at", { ascending: false });
@@ -544,7 +543,7 @@ const TeacherGrading = () => {
         ) : filtered.map(attempt => {
           const examType = attempt.exams?.type || "exam";
           const isTest   = examType === "test";
-          const subject  = attempt.exams?.courses?.subjects?.title || "";
+          const subject  = attempt.exams?.subjects?.title || "";
           return (
             <div key={attempt.id} style={{
               background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB",

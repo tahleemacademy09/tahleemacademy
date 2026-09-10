@@ -25,13 +25,12 @@ const TeacherResults = () => {
       setSubjects(subs || []);
       const subjectIds = (subs || []).map(s => s.id);
       if (subjectIds.length === 0) { setLoading(false); return; }
-      const { data: courses } = await supabase.from("courses").select("id, subject_id, subjects(title)").in("subject_id", subjectIds);
-      const courseIds = (courses || []).map(c => c.id);
-      if (courseIds.length === 0) { setLoading(false); return; }
 
+      // Exams are attached via exams.subject_id (set by ExamEditor), not the
+      // legacy course_id column which the editor never populates.
       const { data } = await supabase.from("exam_attempts")
-        .select("*, profiles!exam_attempts_user_id_fkey(full_name), exams(title, type, term, course_id, courses(subject_id, subjects(title)))")
-        .in("exam_id", (await supabase.from("exams").select("id").in("course_id", courseIds)).data?.map((e: any) => e.id) || [])
+        .select("*, profiles!exam_attempts_user_id_fkey(full_name), exams(title, type, term, subject_id, subjects(title))")
+        .in("exam_id", (await supabase.from("exams").select("id").in("subject_id", subjectIds)).data?.map((e: any) => e.id) || [])
         .in("status", ["graded", "submitted"])
         .order("submitted_at", { ascending: false });
 
@@ -45,7 +44,7 @@ const TeacherResults = () => {
     const examType = (r as any).exams?.type || "exam";
     if (examType !== type) return false;
     if (subjectFilter !== "all") {
-      const subId = (r as any).exams?.courses?.subject_id;
+      const subId = (r as any).exams?.subject_id;
       if (subId !== subjectFilter) return false;
     }
     if (termFilter !== "all" && ((r as any).exams?.term || "first") !== termFilter) return false;
@@ -69,7 +68,7 @@ const TeacherResults = () => {
         {data.map(r => (
           <TableRow key={r.id} className="hover:bg-slate-50">
             <TableCell className="font-medium text-slate-800">{(r as any).profiles?.full_name || "---"}</TableCell>
-            <TableCell className="text-slate-600">{(r as any).exams?.courses?.subjects?.title || "---"}</TableCell>
+            <TableCell className="text-slate-600">{(r as any).exams?.subjects?.title || "---"}</TableCell>
             <TableCell className="text-slate-600 capitalize">{(r as any).exams?.term || "first"}</TableCell>
             <TableCell className="font-semibold text-slate-800">{Math.round(r.score || 0)}</TableCell>
             <TableCell className="text-slate-500">{Math.round(r.total_points || 0)}</TableCell>

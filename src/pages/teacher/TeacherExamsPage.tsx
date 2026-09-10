@@ -36,11 +36,12 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
       const subjectIds = (subs || []).map(s => s.id);
       if (subjectIds.length === 0) { setLoading(false); return; }
-      const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subjectIds);
-      const courseIds = (courses || []).map(c => c.id);
-      if (courseIds.length === 0) { setLoading(false); return; }
 
-      const { data } = await supabase.from("exams").select("*, courses(title, subject_id, subjects(title))").in("course_id", courseIds).order("created_at", { ascending: false });
+      // NOTE: exams are linked to the teacher via exams.subject_id (set by
+      // ExamEditor on save), not via the legacy courses→course_id path —
+      // exams.course_id is never populated by the editor, so filtering on
+      // it here silently hid every exam a teacher just created.
+      const { data } = await supabase.from("exams").select("*, subjects(title, title_ar)").in("subject_id", subjectIds).order("created_at", { ascending: false });
       setExams((data || []).filter((e: any) => (e.type || "exam") === type));
       setLoading(false);
     };
@@ -147,7 +148,7 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
                     <Badge variant={isTest ? "secondary" : "default"} className="rounded-full text-xs">{singularLabel}</Badge>
                     <Badge variant="outline" className="rounded-full text-xs capitalize">{e.term || "first"}</Badge>
                   </div>
-                  <p className="text-xs text-slate-500">{(e as any).courses?.subjects?.title || (e as any).courses?.title || ""}</p>
+                  <p className="text-xs text-slate-500">{(e as any).subjects?.title || ""}</p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <Badge

@@ -93,9 +93,9 @@ export default function TeacherSubjects() {
           : { count: 0 };
         const { count: rc } = await supabase.from("session_recordings").select("id", { count: "exact", head: true }).eq("subject_id", sub.id);
         const { count: mc } = await supabase.from("subject_materials").select("id", { count: "exact", head: true }).eq("subject_id", sub.id);
-        const { data: examsData } = courseIds.length > 0
-          ? await supabase.from("exams").select("id, type").in("course_id", courseIds)
-          : { data: [] };
+        // Exams are attached via exams.subject_id (set by ExamEditor), not
+        // the legacy course_id column which the editor never populates.
+        const { data: examsData } = await supabase.from("exams").select("id, type").eq("subject_id", sub.id);
         counts[sub.id] = {
           studentCount: sc || 0,
           recordingCount: rc || 0,
@@ -130,8 +130,10 @@ export default function TeacherSubjects() {
     }
 
     let exams: any[] = [], tests: any[] = [];
-    if (courseIds.length > 0) {
-      const { data } = await supabase.from("exams").select("*").in("course_id", courseIds).order("created_at", { ascending: false });
+    {
+      // Exams are attached via exams.subject_id (set by ExamEditor), not the
+      // legacy course_id column which the editor never populates.
+      const { data } = await supabase.from("exams").select("*").eq("subject_id", sub.id).order("created_at", { ascending: false });
       exams = (data || []).filter((e: any) => (e.type || "exam") === "exam");
       tests = (data || []).filter((e: any) => e.type === "test");
     }
