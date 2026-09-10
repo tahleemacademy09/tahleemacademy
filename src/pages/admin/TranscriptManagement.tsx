@@ -142,7 +142,7 @@ const TranscriptManagement = () => {
     setSelectedStudent(student);
     setActiveTab("transcript");
     const { data } = await supabase.from("exam_attempts")
-      .select("*, exams(title, title_ar, type, term, course_id, courses(subject_id, subjects(title, title_ar)))")
+      .select("*, exams(title, title_ar, type, term, subject_id, subjects(title, title_ar))")
       .eq("user_id", student.user_id)
       .eq("status", "graded")
       .order("submitted_at", { ascending: false });
@@ -153,7 +153,7 @@ const TranscriptManagement = () => {
   useEffect(() => {
     if (selectedStudent) {
       supabase.from("exam_attempts")
-        .select("*, exams(title, title_ar, type, term, course_id, courses(subject_id, subjects(title, title_ar)))")
+        .select("*, exams(title, title_ar, type, term, subject_id, subjects(title, title_ar))")
         .eq("user_id", selectedStudent.user_id)
         .eq("status", "graded")
         .order("submitted_at", { ascending: false })
@@ -171,8 +171,8 @@ const TranscriptManagement = () => {
     testAttemptId?: string; examAttemptId?: string;
   }>();
   results.forEach((r: any) => {
-    const subTitle   = r.exams?.courses?.subjects?.title || r.exams?.title || "Unknown";
-    const subTitleAr = r.exams?.courses?.subjects?.title_ar || subTitle;
+    const subTitle   = r.exams?.subjects?.title || r.exams?.title || "Unknown";
+    const subTitleAr = r.exams?.subjects?.title_ar || subTitle;
     const type       = r.exams?.type || "exam";
     if (!subjectMap.has(subTitle))
       subjectMap.set(subTitle, { title: subTitle, title_ar: subTitleAr, test: 0, exam: 0 });
