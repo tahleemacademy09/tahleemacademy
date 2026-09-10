@@ -20,7 +20,7 @@ async function getPlugin() {
   if (!Capacitor.isNativePlatform()) return null;
   if (cached) return cached;
   try {
-    const mod = await import("@capacitor/privacy-screen");
+    const mod = await import("@capacitor-community/privacy-screen");
     cached = mod.PrivacyScreen;
     return cached;
   } catch {
