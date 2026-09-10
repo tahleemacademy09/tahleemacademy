@@ -300,35 +300,45 @@ const ExamTaking = () => {
   // Default behaviour: shrink the question card so it (question + all
   // answer options + nav buttons) fits within the visible area without
   // scrolling. Manual +/- controls (magnifier) let the student zoom in
-  // when they want bigger text; "Fit" resets to the auto-fit scale.
-  const [zoom, setZoom] = useState<number | "fit">("fit");
-  const [fitScale, setFitScale] = useState(1);
+  // when they want bigger text; "Fit" re-runs the auto-fit calculation.
+  //
+  // IMPORTANT: this measures the card's natural (unscaled, full-width)
+  // height ONCE per question, then applies a single scale — it does not
+  // keep watching the card with a ResizeObserver after that. An earlier
+  // version re-measured continuously while the card's own width was
+  // simultaneously changing to compensate for the scale, which fed back
+  // on itself (shrink → remeasure → reflow → shrink again) and showed up
+  // as a shaky, constantly-rearranging layout. One measurement per
+  // question avoids that.
+  const [zoom, setZoom] = useState(1);
+  const [fitTarget, setFitTarget] = useState(1);
   const [naturalH, setNaturalH] = useState(0);
   const [showZoomPanel, setShowZoomPanel] = useState(false);
   const qScrollRef = useRef<HTMLDivElement>(null);
   const qCardRef = useRef<HTMLDivElement>(null);
-  const effectiveScale = zoom === "fit" ? fitScale : zoom;
+  const effectiveScale = zoom;
 
-  useEffect(() => {
-    const compute = () => {
+  const runAutoFit = useCallback(() => {
+    setZoom(1); // reset to natural size first so measurement is accurate
+    requestAnimationFrame(() => {
       const container = qScrollRef.current, card = qCardRef.current;
       if (!container || !card) return;
       const h = card.scrollHeight;
-      setNaturalH(h);
       const availH = container.clientHeight - 20;
-      setFitScale(h > availH && availH > 0 ? Math.max(0.55, availH / h) : 1);
-    };
-    compute();
-    const ro = new ResizeObserver(compute);
-    if (qCardRef.current) ro.observe(qCardRef.current);
-    window.addEventListener("resize", compute);
-    return () => { ro.disconnect(); window.removeEventListener("resize", compute); };
-  }, [currentIdx]);
+      const fit = h > availH && availH > 0 ? Math.max(0.55, availH / h) : 1;
+      setNaturalH(h);
+      setFitTarget(fit);
+      setZoom(fit);
+    });
+  }, []);
 
-  const zoomBy = (delta: number) => setZoom(z => {
-    const base = z === "fit" ? fitScale : z;
-    return Math.min(1.5, Math.max(0.5, +(base + delta).toFixed(2)));
-  });
+  useEffect(() => {
+    const raf = requestAnimationFrame(runAutoFit);
+    window.addEventListener("resize", runAutoFit);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", runAutoFit); };
+  }, [currentIdx, runAutoFit]);
+
+  const zoomBy = (delta: number) => setZoom(z => Math.min(1.5, Math.max(0.5, +(z + delta).toFixed(2))));
 
   const submittedRef = useRef(false);
   const answersRef = useRef(answers);
@@ -888,8 +898,8 @@ const ExamTaking = () => {
       {showZoomPanel && q && (
         <div style={{ position: "fixed", top: 64, right: 10, zIndex: 100, display: "flex", alignItems: "center", gap: 2, background: "rgba(15,45,31,.95)", backdropFilter: "blur(8px)", borderRadius: 20, padding: 4, boxShadow: "0 8px 32px rgba(0,0,0,.4)" }}>
           <button onClick={() => zoomBy(-0.1)} title="Zoom out" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>−</button>
-          <button onClick={() => setZoom("fit")} title="Fit to screen" style={{ padding: "0 10px", height: 30, borderRadius: 15, border: "none", background: zoom === "fit" ? GOLD : "rgba(255,255,255,.12)", color: zoom === "fit" ? G : "#fff", fontSize: 10, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
-            {zoom === "fit" ? t("Fit", "ملائم") : `${Math.round(effectiveScale * 100)}%`}
+          <button onClick={runAutoFit} title="Fit to screen" style={{ padding: "0 10px", height: 30, borderRadius: 15, border: "none", background: Math.abs(zoom - fitTarget) < 0.01 ? GOLD : "rgba(255,255,255,.12)", color: Math.abs(zoom - fitTarget) < 0.01 ? G : "#fff", fontSize: 10, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
+            {Math.abs(zoom - fitTarget) < 0.01 ? t("Fit", "ملائم") : `${Math.round(effectiveScale * 100)}%`}
           </button>
           <button onClick={() => zoomBy(0.1)} title="Zoom in" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>+</button>
         </div>
