@@ -558,6 +558,7 @@ const RecitationTest = () => {
             title:      "📅 Virtual Recitation Session Requested",
             message:    `${(profile as any)?.full_name || "A student"} has booked a virtual recitation session for ${sessionDate} at ${sessionTime}. Go to Tasjeel → Reviews to join.`,
             type:       "recitation_booking",
+            link:       "/admin/tasjeel",
             is_read:    false,
             created_at: new Date().toISOString(),
           }));

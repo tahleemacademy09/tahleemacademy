@@ -26,7 +26,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   LifeBuoy, Plus, ChevronLeft, Send, Loader2, MessageSquare,
-  Paperclip, X, FileText, Shield, GraduationCap,
+  Paperclip, X, FileText, Shield, GraduationCap, CheckCheck,
 } from "lucide-react";
 
 const G      = "#0f2d1f";
@@ -114,7 +114,7 @@ const StudentSupport = () => {
         .order("updated_at", { ascending: false });
       return (data || []) as any[];
     },
-    refetchInterval: 20000,
+    refetchInterval: 8000,
   });
 
   const { data: teachers = [], isLoading: teachersLoading } = useQuery({
@@ -271,7 +271,7 @@ const StudentSupport = () => {
   if (view === "thread" && activeTicket) {
     const cfg = STATUS_CFG[activeTicket.status] || STATUS_CFG.open;
     return (
-      <div style={{ padding: "16px", maxWidth: 640, margin: "0 auto", fontFamily: "'Cairo', sans-serif", display: "flex", flexDirection: "column", height: "calc(100dvh - 32px)" }}>
+      <div style={{ padding: "16px", maxWidth: 640, margin: "0 auto", fontFamily: "'Cairo', sans-serif", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box" }}>
         <button onClick={() => { setActiveTicket(null); setView("list"); }} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: G, fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
           <ChevronLeft size={16} /> {t("Back", "رجوع")}
         </button>
@@ -290,6 +290,13 @@ const StudentSupport = () => {
             <div style={{ textAlign: "center", padding: 30 }}><Loader2 size={20} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
           ) : thread.map((m: any) => {
             const mine = m.sender_id === user?.id;
+            // Staff (admin or teacher — whichever this ticket is addressed to)
+            // read state is tracked on the ticket row, not per-message. Look it
+            // up from the live `tickets` list (polled every 8s) rather than the
+            // static `activeTicket` snapshot, so the tick updates without
+            // needing to reopen the thread.
+            const liveTicket = tickets.find((tk: any) => tk.id === activeTicket.id) || activeTicket;
+            const seen = mine && liveTicket.last_read_by_admin_at && new Date(liveTicket.last_read_by_admin_at) >= new Date(m.created_at);
             return (
               <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "80%" }}>
                 <div style={{
@@ -300,7 +307,10 @@ const StudentSupport = () => {
                   <AttachmentBubble m={m} />
                   {m.message}
                 </div>
-                <p style={{ fontSize: 9, color: TL, margin: "3px 4px 0", textAlign: mine ? "right" : "left" }}>{fmtDT(m.created_at)}</p>
+                <p style={{ fontSize: 9, color: TL, margin: "3px 4px 0", display: "flex", alignItems: "center", gap: 3, justifyContent: mine ? "flex-end" : "flex-start" }}>
+                  {fmtDT(m.created_at)}
+                  {mine && <CheckCheck size={12} style={{ color: seen ? "#53BDEB" : TL, flexShrink: 0 }} />}
+                </p>
               </div>
             );
           })}

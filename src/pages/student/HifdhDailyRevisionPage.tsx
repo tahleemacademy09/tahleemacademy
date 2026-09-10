@@ -2209,10 +2209,14 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
       const msg=`${modeLabel} ${items} — Recitation: ${recAvg}% · Test: ${tScore}% · Overall: ${overall}% · ${todayPages.length} page${todayPages.length>1?"s":""} done`;
       const notifBase={title:`📖 ${name} completed Daily Hifdh Revision`,message:msg,type:"hifdh_complete",is_read:false,created_at:new Date().toISOString()};
       const {data:admins}=await (supabase as any).from("profiles").select("user_id").eq("role","admin");
-      const recipients=[...(admins||[]).map((a:any)=>a.user_id)];
-      if(assignedTeacher && !recipients.includes(assignedTeacher)) recipients.push(assignedTeacher);
-      for(const uid of recipients){
-        await (supabase as any).from("notifications").insert({...notifBase,user_id:uid});
+      const adminIds=(admins||[]).map((a:any)=>a.user_id);
+      // Admin and teacher review this from different pages, so each recipient
+      // needs its own deep link rather than one shared link for both.
+      for(const uid of adminIds){
+        await (supabase as any).from("notifications").insert({...notifBase,user_id:uid,link:"/admin/recitation-review"});
+      }
+      if(assignedTeacher && !adminIds.includes(assignedTeacher)){
+        await (supabase as any).from("notifications").insert({...notifBase,user_id:assignedTeacher,link:"/teacher/hifdh"});
       }
     } catch(e){ console.error("Submit error",e); }
     setSubmitting(false); setPhase("complete");
