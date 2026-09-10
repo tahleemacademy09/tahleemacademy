@@ -229,6 +229,29 @@ const ProctoringOverlay = ({
   const isAr = language === "ar";
   const statusColor = {low:"#22c55e",medium:"#f59e0b",high:"#ef4444",critical:"#dc2626"}[suspicionLevel]||"#22c55e";
 
+  // ── Collapse the SECURE / Face pills to a small dot after 2s ─────
+  // Keeps the corner readable at a glance without permanently covering
+  // exam content. Re-expands briefly whenever the underlying status
+  // actually changes (e.g. camera drops, suspicion level rises), or
+  // if the student taps the dot.
+  const [secureExpanded, setSecureExpanded] = useState(true);
+  const [faceExpanded, setFaceExpanded] = useState(true);
+
+  useEffect(() => {
+    setSecureExpanded(true);
+    const id = setTimeout(() => setSecureExpanded(false), 2000);
+    return () => clearTimeout(id);
+  }, [suspicionLevel]);
+
+  useEffect(() => {
+    setFaceExpanded(true);
+    const id = setTimeout(() => setFaceExpanded(false), 2000);
+    return () => clearTimeout(id);
+  }, [cameraReady, faceDetected]);
+
+  const faceLabel = !cameraReady ? "📷 Camera Off" : !faceDetected ? "👤 No Face!" : "Face ✓";
+  const faceColor = cameraReady && faceDetected ? "#22c55e" : "#ef4444";
+
   return (
     <>
       <video ref={videoRef} muted playsInline
@@ -296,24 +319,38 @@ const ProctoringOverlay = ({
         })}
       </div>
 
-      {/* Status pills */}
-      <div style={{position:"fixed",bottom:80,left:10,zIndex:300,pointerEvents:"none",
-        background:"rgba(0,0,0,.75)",backdropFilter:"blur(8px)",borderRadius:20,
-        padding:"5px 10px 5px 7px",border:"1px solid "+statusColor+"44",
-        display:"flex",alignItems:"center",gap:6,fontSize:10,color:statusColor,fontWeight:700,letterSpacing:.5}}>
-        <div style={{width:6,height:6,borderRadius:"50%",background:statusColor,
+      {/* Status pills — collapse to a small dot after 2s so they don't sit over content */}
+      {secureExpanded ? (
+        <div onClick={()=>setSecureExpanded(true)} style={{position:"fixed",bottom:80,left:10,zIndex:300,pointerEvents:"auto",cursor:"pointer",
+          background:"rgba(0,0,0,.75)",backdropFilter:"blur(8px)",borderRadius:20,
+          padding:"5px 10px 5px 7px",border:"1px solid "+statusColor+"44",
+          display:"flex",alignItems:"center",gap:6,fontSize:10,color:statusColor,fontWeight:700,letterSpacing:.5,
+          animation:"procBannerIn .18s ease"}}>
+          <div style={{width:6,height:6,borderRadius:"50%",background:statusColor,
+            animation:suspicionLevel!=="low"?"procPulse 1s infinite":"none"}}/>
+          {{low:"SECURE",medium:"CAUTION",high:"WARNING",critical:"CRITICAL"}[suspicionLevel]||"SECURE"}
+          {pointsLost > 0 && <span style={{color:"#ef4444",marginLeft:4}}>−{pointsLost}pts</span>}
+        </div>
+      ) : (
+        <div onClick={()=>setSecureExpanded(true)} title="Proctoring status" style={{position:"fixed",bottom:82,left:12,zIndex:300,pointerEvents:"auto",cursor:"pointer",
+          width:12,height:12,borderRadius:"50%",background:statusColor,
+          border:"2px solid rgba(0,0,0,.4)",boxShadow:"0 0 0 2px rgba(255,255,255,.15)",
           animation:suspicionLevel!=="low"?"procPulse 1s infinite":"none"}}/>
-        {{low:"SECURE",medium:"CAUTION",high:"WARNING",critical:"CRITICAL"}[suspicionLevel]||"SECURE"}
-        {pointsLost > 0 && <span style={{color:"#ef4444",marginLeft:4}}>−{pointsLost}pts</span>}
-      </div>
-      <div style={{position:"fixed",bottom:80,right:10,zIndex:300,pointerEvents:"none",
-        background:"rgba(0,0,0,.75)",backdropFilter:"blur(8px)",borderRadius:20,
-        padding:"5px 10px",border:"1px solid "+(cameraReady?"#22c55e44":"#ef444444"),
-        display:"flex",alignItems:"center",gap:5,
-        fontSize:10,color:cameraReady?"#22c55e":"#ef4444",fontWeight:700}}>
-        <Camera style={{width:10,height:10}}/>
-        {!cameraReady ? "📷 Camera Off" : !faceDetected ? "👤 No Face!" : "Face ✓"}
-      </div>
+      )}
+      {faceExpanded ? (
+        <div onClick={()=>setFaceExpanded(true)} style={{position:"fixed",bottom:80,right:10,zIndex:300,pointerEvents:"auto",cursor:"pointer",
+          background:"rgba(0,0,0,.75)",backdropFilter:"blur(8px)",borderRadius:20,
+          padding:"5px 10px",border:"1px solid "+(cameraReady?"#22c55e44":"#ef444444"),
+          display:"flex",alignItems:"center",gap:5,
+          fontSize:10,color:faceColor,fontWeight:700,animation:"procBannerIn .18s ease"}}>
+          <Camera style={{width:10,height:10}}/>
+          {faceLabel}
+        </div>
+      ) : (
+        <div onClick={()=>setFaceExpanded(true)} title="Camera status" style={{position:"fixed",bottom:82,right:12,zIndex:300,pointerEvents:"auto",cursor:"pointer",
+          width:12,height:12,borderRadius:"50%",background:faceColor,
+          border:"2px solid rgba(0,0,0,.4)",boxShadow:"0 0 0 2px rgba(255,255,255,.15)"}}/>
+      )}
 
       <style>{`
         @keyframes procBannerIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
