@@ -26,7 +26,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useToast } from "@/hooks/use-toast";
 import {
   LifeBuoy, Plus, ChevronLeft, Send, Loader2, MessageSquare,
-  Paperclip, X, FileText, Shield, GraduationCap, CheckCheck,
+  Paperclip, X, FileText, Shield, GraduationCap, CheckCheck, Trash2, Copy,
 } from "lucide-react";
 
 const G      = "#0f2d1f";
@@ -102,6 +102,59 @@ const StudentSupport = () => {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // ── Swipe-left-to-act on a message bubble (copy / delete own message) ──
+  const SWIPE_ACTION_W = 64;
+  const [openSwipeId, setOpenSwipeId] = useState<string | null>(null);
+  const [dragOffset, setDragOffset] = useState<{ id: string; dx: number } | null>(null);
+  const dragStartX = useRef<number | null>(null);
+  const dragStartOpen = useRef(0);
+  const dragActive = useRef(false);
+
+  const closeSwipe = () => { setOpenSwipeId(null); setDragOffset(null); };
+  const swipeWidthFor = (canDelete: boolean) => SWIPE_ACTION_W * (canDelete ? 2 : 1);
+
+  const beginDrag = (id: string, clientX: number, canDelete: boolean) => {
+    dragStartX.current = clientX;
+    dragActive.current = true;
+    dragStartOpen.current = openSwipeId === id ? -swipeWidthFor(canDelete) : 0;
+  };
+  const moveDrag = (id: string, clientX: number, canDelete: boolean) => {
+    if (dragStartX.current == null || !dragActive.current) return;
+    const delta = clientX - dragStartX.current;
+    const max = swipeWidthFor(canDelete);
+    const next = Math.max(-max, Math.min(0, dragStartOpen.current + delta));
+    setDragOffset({ id, dx: next });
+  };
+  const endDrag = (id: string, canDelete: boolean) => {
+    if (dragStartX.current == null) return;
+    const max = swipeWidthFor(canDelete);
+    const finalDx = dragOffset?.id === id ? dragOffset.dx : dragStartOpen.current;
+    dragStartX.current = null;
+    dragActive.current = false;
+    if (finalDx <= -max / 2) { setOpenSwipeId(id); setDragOffset({ id, dx: -max }); }
+    else { setOpenSwipeId(null); setDragOffset({ id, dx: 0 }); }
+  };
+
+  const deleteMessage = async (id: string) => {
+    if (!activeTicket) return;
+    if (!window.confirm(t("Delete this message? This can't be undone.", "حذف هذه الرسالة؟ لا يمكن التراجع عن ذلك."))) return;
+    try {
+      await supabase.from("support_ticket_messages" as any).delete().eq("id", id);
+      qc.invalidateQueries({ queryKey: ["support-thread", activeTicket.id] });
+      qc.invalidateQueries({ queryKey: ["support-tickets", user?.id] });
+    } catch (e: any) {
+      toast({ title: t("Could not delete message", "تعذر حذف الرسالة"), description: e?.message, variant: "destructive" });
+    } finally {
+      closeSwipe();
+    }
+  };
+
+  const copyMessage = (text: string) => {
+    navigator.clipboard?.writeText(text || "");
+    toast({ title: t("Copied to clipboard", "تم النسخ") });
+    closeSwipe();
+  };
 
   const { data: tickets = [], isLoading } = useQuery({
     queryKey: ["support-tickets", user?.id],
@@ -297,15 +350,46 @@ const StudentSupport = () => {
             // needing to reopen the thread.
             const liveTicket = tickets.find((tk: any) => tk.id === activeTicket.id) || activeTicket;
             const seen = mine && liveTicket.last_read_by_admin_at && new Date(liveTicket.last_read_by_admin_at) >= new Date(m.created_at);
+            // Students can only remove messages they themselves sent.
+            const canDelete = mine;
+            const maxOffset = swipeWidthFor(canDelete);
+            const offset = dragOffset?.id === m.id ? dragOffset.dx : (openSwipeId === m.id ? -maxOffset : 0);
             return (
-              <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "80%" }}>
-                <div style={{
-                  padding: "9px 13px", borderRadius: 14,
-                  background: mine ? G : "#fff", color: mine ? "#fff" : "#111",
-                  border: mine ? "none" : `1px solid ${BORDER}`, fontSize: 13,
-                }}>
-                  <AttachmentBubble m={m} />
-                  {m.message}
+              <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "80%", width: "100%" }}>
+                <div style={{ position: "relative", overflow: "hidden", borderRadius: 14 }}>
+                  <div style={{ position: "absolute", top: 0, bottom: 0, right: 0, display: "flex" }}>
+                    <button onClick={() => copyMessage(m.message)} style={{
+                      width: SWIPE_ACTION_W, border: "none", cursor: "pointer", background: "#6B7280", color: "#fff",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <Copy size={15} />
+                    </button>
+                    {canDelete && (
+                      <button onClick={() => deleteMessage(m.id)} style={{
+                        width: SWIPE_ACTION_W, border: "none", cursor: "pointer", background: "#DC2626", color: "#fff",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        <Trash2 size={15} />
+                      </button>
+                    )}
+                  </div>
+                  <div
+                    onPointerDown={e => beginDrag(m.id, e.clientX, canDelete)}
+                    onPointerMove={e => moveDrag(m.id, e.clientX, canDelete)}
+                    onPointerUp={() => endDrag(m.id, canDelete)}
+                    onPointerCancel={() => endDrag(m.id, canDelete)}
+                    onClick={() => { if (openSwipeId === m.id) closeSwipe(); }}
+                    style={{
+                      padding: "9px 13px", borderRadius: 14, position: "relative", touchAction: "pan-y",
+                      background: mine ? G : "#fff", color: mine ? "#fff" : "#111",
+                      border: mine ? "none" : `1px solid ${BORDER}`, fontSize: 13,
+                      transform: `translateX(${offset}px)`,
+                      transition: dragOffset?.id === m.id ? "none" : "transform 0.2s ease",
+                    }}
+                  >
+                    <AttachmentBubble m={m} />
+                    {m.message}
+                  </div>
                 </div>
                 <p style={{ fontSize: 9, color: TL, margin: "3px 4px 0", display: "flex", alignItems: "center", gap: 3, justifyContent: mine ? "flex-end" : "flex-start" }}>
                   {fmtDT(m.created_at)}
