@@ -310,19 +310,13 @@ const ExamTaking = () => {
   const qCardRef = useRef<HTMLDivElement>(null);
   const effectiveScale = zoom === "fit" ? fitScale : zoom;
 
-  // Reserve room at the bottom of the scroll area for the floating
-  // magnifier button so the auto-fit shrink never lets it sit on top
-  // of the last answer option — the button lives in this gap instead
-  // of overlapping content.
-  const ZOOM_CONTROL_SPACE = 56;
-
   useEffect(() => {
     const compute = () => {
       const container = qScrollRef.current, card = qCardRef.current;
       if (!container || !card) return;
       const h = card.scrollHeight;
       setNaturalH(h);
-      const availH = container.clientHeight - 20 - ZOOM_CONTROL_SPACE;
+      const availH = container.clientHeight - 20;
       setFitScale(h > availH && availH > 0 ? Math.max(0.55, availH / h) : 1);
     };
     compute();
@@ -875,11 +869,32 @@ const ExamTaking = () => {
         <button onClick={() => setShowNav(v => !v)} style={{ background: "rgba(255,255,255,.12)", border: "none", color: "rgba(255,255,255,.8)", borderRadius: 8, padding: "5px 7px", cursor: "pointer", flexShrink: 0 }}>
           <Grid style={{ width: 13, height: 13 }} />
         </button>
+
+        {/* Zoom / magnifier trigger — lives in the header chrome, not
+            floating over the question card, so it never overlaps content */}
+        {q && (
+          <button onClick={() => setShowZoomPanel(v => !v)} title="Zoom"
+            style={{ background: showZoomPanel ? GOLD : "rgba(255,255,255,.12)", border: "none", color: showZoomPanel ? G : "rgba(255,255,255,.8)", borderRadius: 8, padding: "5px 7px", cursor: "pointer", flexShrink: 0 }}>
+            <Search style={{ width: 13, height: 13 }} />
+          </button>
+        )}
         <button onClick={() => { saveAnswers(true); setPhase("review"); }}
           style={{ background: "#dc2626", border: "none", color: "#fff", borderRadius: 9, padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontFamily: "'Cairo',sans-serif", flexShrink: 0 }}>
           <Eye style={{ width: 12, height: 12 }} />{t("Submit", "تقديم")}
         </button>
       </div>
+
+      {/* Zoom panel — drops down from the header onto the page background,
+          above the question card, so it never sits on top of content */}
+      {showZoomPanel && q && (
+        <div style={{ position: "fixed", top: 64, right: 10, zIndex: 100, display: "flex", alignItems: "center", gap: 2, background: "rgba(15,45,31,.95)", backdropFilter: "blur(8px)", borderRadius: 20, padding: 4, boxShadow: "0 8px 32px rgba(0,0,0,.4)" }}>
+          <button onClick={() => zoomBy(-0.1)} title="Zoom out" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>−</button>
+          <button onClick={() => setZoom("fit")} title="Fit to screen" style={{ padding: "0 10px", height: 30, borderRadius: 15, border: "none", background: zoom === "fit" ? GOLD : "rgba(255,255,255,.12)", color: zoom === "fit" ? G : "#fff", fontSize: 10, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
+            {zoom === "fit" ? t("Fit", "ملائم") : `${Math.round(effectiveScale * 100)}%`}
+          </button>
+          <button onClick={() => zoomBy(0.1)} title="Zoom in" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>+</button>
+        </div>
+      )}
 
       {/* Keyboard help overlay */}
       {showKeyboardHelp && (
@@ -944,10 +959,10 @@ const ExamTaking = () => {
         {/* CENTER: QUESTION */}
         <div ref={qScrollRef} style={{ flex: 1, overflow: "auto", padding: "12px", display: "flex", flexDirection: "column", position: "relative" }}>
           {q && (
-            <div style={{ maxWidth: 720, margin: "0 auto", width: "100%" }}>
+            <div style={{ width: "100%" }}>
               <div style={{ height: naturalH ? naturalH * effectiveScale : undefined, overflow: "hidden", transition: "height .15s ease" }}>
               <div ref={qCardRef} key={currentIdx} style={{ transform: `scale(${effectiveScale})`, transformOrigin: "top center", transition: "transform .15s ease", animation: "slideIn .2s ease" }}>
-              <div style={{ background: "#fff", borderRadius: 20, boxShadow: "0 4px 24px rgba(0,0,0,.1)", overflow: "hidden" }}>
+              <div>
 
                 {/* Question header */}
                 <div style={{ background: `linear-gradient(135deg,${G} 0%,${GM} 100%)`, padding: "16px 20px", display: "flex", alignItems: "center", gap: 10 }}>
@@ -1161,29 +1176,6 @@ const ExamTaking = () => {
             </div>
           )}
 
-          {/* Magnifier / zoom control — sticky within the scroll container's
-              reserved bottom gap (see ZOOM_CONTROL_SPACE). At the default
-              "fit" zoom this sits in empty space below the card, never
-              overlapping content; if a student zooms in further and the
-              card grows taller than the screen, it stays reachable by
-              sticking to the bottom of the viewport as they scroll. */}
-          {q && (
-            <div style={{ position: "sticky", bottom: 10, marginTop: 8, marginRight: 14, alignSelf: "flex-end", zIndex: 60, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
-              {showZoomPanel && (
-                <div style={{ display: "flex", alignItems: "center", gap: 2, background: "rgba(15,45,31,.92)", backdropFilter: "blur(8px)", borderRadius: 20, padding: 4, boxShadow: "0 4px 16px rgba(0,0,0,.25)" }}>
-                  <button onClick={() => zoomBy(-0.1)} title="Zoom out" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>−</button>
-                  <button onClick={() => setZoom("fit")} title="Fit to screen" style={{ padding: "0 10px", height: 30, borderRadius: 15, border: "none", background: zoom === "fit" ? GOLD : "rgba(255,255,255,.12)", color: zoom === "fit" ? G : "#fff", fontSize: 10, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
-                    {zoom === "fit" ? t("Fit", "ملائم") : `${Math.round(effectiveScale * 100)}%`}
-                  </button>
-                  <button onClick={() => zoomBy(0.1)} title="Zoom in" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>+</button>
-                </div>
-              )}
-              <button onClick={() => setShowZoomPanel(v => !v)} title="Zoom"
-                style={{ width: 40, height: 40, borderRadius: "50%", border: "none", background: G, color: GOLD, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 14px rgba(0,0,0,.3)" }}>
-                <Search style={{ width: 17, height: 17 }} />
-              </button>
-            </div>
-          )}
         </div>
 
         {/* RIGHT: Summary + timer (desktop) */}
