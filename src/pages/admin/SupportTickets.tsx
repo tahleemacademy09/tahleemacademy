@@ -1,19 +1,25 @@
 /*
   src/pages/admin/SupportTickets.tsx — Tahleem Academy
   Admin inbox for the student help/support channel (support_tickets +
-  support_ticket_messages). Teachers also have SELECT/UPDATE access per RLS
-  but this UI is wired for admin nav only for now.
+  support_ticket_messages). RLS scopes what actually comes back: an admin
+  gets every ticket; a teacher (this same component is reused at
+  /teacher/support) only gets threads where teacher_id = their own id, so
+  no extra filtering is needed here — the query is identical either way.
+
+  Unread badges, message previews, and attachment-type previews are kept
+  in sync server-side by the sync_ticket_on_new_message DB trigger.
 */
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useToast } from "@/hooks/use-toast";
-import { LifeBuoy, ChevronLeft, Send, Loader2, MessageSquare, CheckCircle2 } from "lucide-react";
+import { LifeBuoy, ChevronLeft, Send, Loader2, MessageSquare, CheckCircle2, Paperclip, X, FileText } from "lucide-react";
 
 const G      = "#064E3B";
+const GOLD   = "#c9a84c";
 const BORDER = "#E5E7EB";
 
 const STATUS_CFG: Record<string, { label: string; color: string; bg: string }> = {
@@ -27,6 +33,35 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 const fmtDT = (d: string) => new Date(d).toLocaleString("en-NG", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
+const attachmentKind = (file: File): "image" | "video" | "audio" | "file" => {
+  if (file.type.startsWith("image/")) return "image";
+  if (file.type.startsWith("video/")) return "video";
+  if (file.type.startsWith("audio/")) return "audio";
+  return "file";
+};
+
+const AttachmentBubble = ({ m }: { m: any }) => {
+  if (!m.attachment_url) return null;
+  if (m.attachment_type === "image") {
+    return <img src={m.attachment_url} alt={m.attachment_name || "photo"} style={{ maxWidth: "100%", borderRadius: 10, display: "block", marginBottom: m.message ? 6 : 0 }} />;
+  }
+  if (m.attachment_type === "video") {
+    return <video src={m.attachment_url} controls style={{ maxWidth: "100%", borderRadius: 10, display: "block", marginBottom: m.message ? 6 : 0 }} />;
+  }
+  if (m.attachment_type === "audio") {
+    return <audio src={m.attachment_url} controls style={{ maxWidth: 220, display: "block", marginBottom: m.message ? 6 : 0 }} />;
+  }
+  return (
+    <a href={m.attachment_url} target="_blank" rel="noreferrer" style={{
+      display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 8,
+      background: "rgba(0,0,0,0.06)", color: "inherit", textDecoration: "none", fontSize: 12, fontWeight: 700,
+      marginBottom: m.message ? 6 : 0,
+    }}>
+      <FileText size={14} /> {m.attachment_name || "Attachment"}
+    </a>
+  );
+};
+
 const SupportTickets = () => {
   const { user } = useAuth();
   const { t } = useLanguage();
@@ -37,6 +72,10 @@ const SupportTickets = () => {
   const [activeTicket, setActiveTicket] = useState<any>(null);
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   const { data: tickets = [], isLoading } = useQuery({
     queryKey: ["admin-support-tickets"],
@@ -47,7 +86,7 @@ const SupportTickets = () => {
         .order("updated_at", { ascending: false });
       return (data || []) as any[];
     },
-    refetchInterval: 30000,
+    refetchInterval: 20000,
   });
 
   const { data: thread = [], isLoading: threadLoading } = useQuery({
@@ -61,7 +100,24 @@ const SupportTickets = () => {
         .order("created_at", { ascending: true });
       return (data || []) as any[];
     },
+    refetchInterval: 8000,
   });
+
+  useEffect(() => {
+    if (activeTicket) bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [activeTicket?.id, thread.length]);
+
+  const isUnread = (tkt: any) =>
+    !!tkt.last_sender_id && tkt.last_sender_id !== user?.id && tkt.last_message_at &&
+    (!tkt.last_read_by_admin_at || new Date(tkt.last_read_by_admin_at) < new Date(tkt.last_message_at));
+
+  const openTicket = async (tkt: any) => {
+    setActiveTicket(tkt);
+    if (tkt.last_sender_id && tkt.last_sender_id !== user?.id) {
+      await supabase.from("support_tickets" as any).update({ last_read_by_admin_at: new Date().toISOString() }).eq("id", tkt.id);
+      qc.invalidateQueries({ queryKey: ["admin-support-tickets"] });
+    }
+  };
 
   const filtered = tickets.filter(tk => tk.status === statusFilter);
 
@@ -71,25 +127,38 @@ const SupportTickets = () => {
     if (activeTicket?.id === ticketId) setActiveTicket({ ...activeTicket, status });
   };
 
+  const uploadAttachment = async (ticketId: string, file: File) => {
+    const kind = attachmentKind(file);
+    const path = `${user!.id}/${ticketId}/${Date.now()}-${file.name}`;
+    const { error } = await supabase.storage.from("support-attachments").upload(path, file);
+    if (error) throw error;
+    const { data: pub } = supabase.storage.from("support-attachments").getPublicUrl(path);
+    return { url: pub.publicUrl, kind, name: file.name };
+  };
+
   const sendReply = async () => {
-    if (!user || !activeTicket || !reply.trim()) return;
+    if (!user || !activeTicket || (!reply.trim() && !pendingFile)) return;
     setSending(true);
     try {
+      let attachment: any = {};
+      if (pendingFile) {
+        setUploading(true);
+        const up = await uploadAttachment(activeTicket.id, pendingFile);
+        attachment = { attachment_url: up.url, attachment_type: up.kind, attachment_name: up.name };
+        setUploading(false);
+      }
       await supabase.from("support_ticket_messages" as any).insert({
-        ticket_id: activeTicket.id, sender_id: user.id, message: reply.trim(),
+        ticket_id: activeTicket.id, sender_id: user.id, message: reply.trim(), ...attachment,
       });
-      await supabase.from("notifications").insert({
-        user_id: activeTicket.student_id, title: "Reply to your support ticket",
-        message: `${activeTicket.subject}: ${reply.trim().slice(0, 80)}`,
-        type: "info", link: "/student/support", is_read: false,
-      });
-      setReply("");
+      // Notifying the student is handled by the notify_on_support_ticket_message_insert DB trigger.
+      setReply(""); setPendingFile(null);
       qc.invalidateQueries({ queryKey: ["admin-support-thread", activeTicket.id] });
       qc.invalidateQueries({ queryKey: ["admin-support-tickets"] });
     } catch (e: any) {
       toast({ title: "Could not send reply", description: e?.message, variant: "destructive" });
     } finally {
       setSending(false);
+      setUploading(false);
     }
   };
 
@@ -105,7 +174,7 @@ const SupportTickets = () => {
         <div style={{ marginBottom: 12 }}>
           <h2 style={{ fontSize: 16, fontWeight: 900, color: G, margin: "0 0 2px" }}>{activeTicket.subject}</h2>
           <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>
-            {activeTicket.profiles?.full_name || "Student"} · {CATEGORY_LABEL[activeTicket.category] || activeTicket.category}
+            {activeTicket.profiles?.full_name || "Student"} · {activeTicket.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[activeTicket.category] || activeTicket.category)}
           </p>
         </div>
 
@@ -135,26 +204,42 @@ const SupportTickets = () => {
                   background: mine ? G : "#fff", color: mine ? "#fff" : "#111",
                   border: mine ? "none" : `1px solid ${BORDER}`, fontSize: 13,
                 }}>
+                  <AttachmentBubble m={m} />
                   {m.message}
                 </div>
                 <p style={{ fontSize: 9, color: "#9CA3AF", margin: "3px 4px 0", textAlign: mine ? "right" : "left" }}>{fmtDT(m.created_at)}</p>
               </div>
             );
           })}
+          <div ref={bottomRef} />
         </div>
 
+        {pendingFile && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", marginBottom: 6, background: "#F3F4F6", borderRadius: 10, fontSize: 12 }}>
+            <Paperclip size={13} /> <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pendingFile.name}</span>
+            <button onClick={() => setPendingFile(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={14} /></button>
+          </div>
+        )}
         <div style={{ display: "flex", gap: 8, paddingTop: 8, borderTop: `1px solid ${BORDER}` }}>
+          <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*" style={{ display: "none" }}
+            onChange={e => setPendingFile(e.target.files?.[0] || null)} />
+          <button onClick={() => fileInputRef.current?.click()} style={{
+            width: 40, height: 40, borderRadius: "50%", border: `1px solid ${BORDER}`, cursor: "pointer",
+            background: "#fff", color: G, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+          }}>
+            <Paperclip size={16} />
+          </button>
           <input
             value={reply} onChange={e => setReply(e.target.value)}
             onKeyDown={e => e.key === "Enter" && sendReply()}
             placeholder="Type a reply…"
             style={{ flex: 1, padding: "10px 14px", borderRadius: 20, border: `1px solid ${BORDER}`, fontSize: 13, outline: "none" }}
           />
-          <button onClick={sendReply} disabled={sending || !reply.trim()} style={{
+          <button onClick={sendReply} disabled={sending || (!reply.trim() && !pendingFile)} style={{
             width: 40, height: 40, borderRadius: "50%", border: "none", cursor: "pointer",
             background: G, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
           }}>
-            <Send size={16} />
+            {uploading ? <Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> : <Send size={16} />}
           </button>
         </div>
       </div>
@@ -168,7 +253,7 @@ const SupportTickets = () => {
       <h1 style={{ fontSize: 22, fontWeight: 900, color: G, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
         <LifeBuoy size={20} /> Support Tickets
       </h1>
-      <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 16px" }}>Student help requests from the app</p>
+      <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 16px" }}>Student help requests and direct messages from the app</p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {(["open", "in_progress", "resolved"] as const).map(s => {
@@ -195,22 +280,32 @@ const SupportTickets = () => {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtered.map((tkt: any) => (
-            <button key={tkt.id} onClick={() => setActiveTicket(tkt)} style={{
-              textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "13px 14px",
-              background: "#fff", borderRadius: 14, border: `1.5px solid ${BORDER}`, cursor: "pointer",
-            }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: "#F3F4F6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <MessageSquare size={16} color={G} />
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontWeight: 700, fontSize: 13, color: "#111", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tkt.subject}</p>
-                <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>
-                  {tkt.profiles?.full_name || "Student"} · {CATEGORY_LABEL[tkt.category] || tkt.category} · {fmtDT(tkt.updated_at)}
-                </p>
-              </div>
-            </button>
-          ))}
+          {filtered.map((tkt: any) => {
+            const unread = isUnread(tkt);
+            return (
+              <button key={tkt.id} onClick={() => openTicket(tkt)} style={{
+                textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "13px 14px",
+                background: "#fff", borderRadius: 14, border: `1.5px solid ${unread ? GOLD : BORDER}`, cursor: "pointer",
+              }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: "#F3F4F6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <MessageSquare size={16} color={G} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    {unread && <span style={{ color: GOLD, fontWeight: 900, fontSize: 14, lineHeight: 1 }}>*</span>}
+                    <p style={{ fontWeight: unread ? 900 : 700, fontSize: 13, color: "#111", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tkt.subject}</p>
+                  </div>
+                  <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>
+                    {tkt.profiles?.full_name || "Student"} · {tkt.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[tkt.category] || tkt.category)}
+                  </p>
+                  <p style={{ fontSize: 11, color: unread ? "#111" : "#9CA3AF", fontWeight: unread ? 700 : 400, margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {tkt.last_message_preview || "No messages yet"}
+                  </p>
+                </div>
+                <p style={{ fontSize: 9, color: "#9CA3AF", margin: 0, flexShrink: 0 }}>{fmtDT(tkt.last_message_at || tkt.updated_at)}</p>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
