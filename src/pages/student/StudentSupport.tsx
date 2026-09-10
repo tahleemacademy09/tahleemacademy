@@ -18,6 +18,7 @@
 */
 
 import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -86,6 +87,7 @@ const StudentSupport = () => {
   const { t } = useLanguage();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [view, setView] = useState<"list" | "recipient" | "teachers" | "new" | "thread">("list");
   const [activeTicket, setActiveTicket] = useState<any>(null);
@@ -158,6 +160,18 @@ const StudentSupport = () => {
       qc.invalidateQueries({ queryKey: ["support-tickets", user?.id] });
     }
   };
+
+  // Deep-link from a push notification: /student/support?ticket=<id> should
+  // land straight in that thread instead of the inbox list. Runs once the
+  // tickets have loaded, and strips the param immediately after so "Back
+  // to inbox" behaves normally rather than re-opening the same thread.
+  useEffect(() => {
+    const ticketId = searchParams.get("ticket");
+    if (!ticketId || activeTicket || tickets.length === 0) return;
+    const found = tickets.find((t: any) => t.id === ticketId);
+    if (found) openTicket(found);
+    setSearchParams(prev => { prev.delete("ticket"); return prev; }, { replace: true });
+  }, [searchParams, tickets]);
 
   const isUnread = (tkt: any) =>
     !!tkt.last_sender_id && tkt.last_sender_id !== user?.id && tkt.last_message_at &&
