@@ -57,6 +57,7 @@ const RegistrationComplete = () => {
             title:      "New Student Ready for Review",
             message:    `${studentName} (${studentEmail}) has completed all registration stages (onboarding, entrance exam, recitation test) and is awaiting level assignment.`,
             type:       "registration_complete",
+            link:       "/admin/level-assignment",
             is_read:    false,
             created_at: new Date().toISOString(),
             metadata: JSON.stringify({
