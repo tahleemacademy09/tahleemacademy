@@ -219,7 +219,7 @@ const Transcripts = () => {
     if (!user) return;
     supabase
       .from("exam_attempts")
-      .select("id, exam_id, score, total_points, percentage, passed, submitted_at, exams(title, title_ar, type, term, course_id, courses(title))")
+      .select("id, exam_id, score, total_points, percentage, passed, submitted_at, exams(title, title_ar, type, term, subject_id, subjects(title))")
       .eq("user_id", user.id)
       .eq("status", "released")
       .order("submitted_at", { ascending: true })
@@ -230,8 +230,8 @@ const Transcripts = () => {
           score:Number(a.score)||0, total_points:Number(a.total_points)||0,
           percentage:Number(a.percentage)||0, passed:a.passed,
           submitted_at:a.submitted_at,
-          course_title:a.exams?.courses?.title,
-          course_id:a.exams?.course_id,
+          course_title:a.exams?.subjects?.title,
+          course_id:a.exams?.subject_id,
           term:a.exams?.term||"first", type:a.exams?.type||"exam",
         })));
         setLoading(false);

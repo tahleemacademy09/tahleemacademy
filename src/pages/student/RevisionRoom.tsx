@@ -178,9 +178,9 @@ const RevisionRoom = () => {
     queryKey: ["subject-exams-for-quiz", subjectId],
     enabled: !!subjectId,
     queryFn: async () => {
-      const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId!);
-      if (!courses?.length) return [];
-      const { data } = await supabase.from("exams").select("id,title,title_ar").in("course_id", courses.map(c=>c.id)).eq("is_published", true);
+      // Exams are attached via exams.subject_id (set by ExamEditor), not the
+      // legacy course_id column which the editor never populates.
+      const { data } = await supabase.from("exams").select("id,title,title_ar").eq("subject_id", subjectId!).eq("is_published", true);
       return (data||[]) as any[];
     },
   });

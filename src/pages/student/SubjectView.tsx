@@ -100,9 +100,9 @@ const SubjectView = () => {
   const { data: exams = [] } = useQuery({
     queryKey: ["subject-exams", subjectId],
     queryFn: async () => {
-      const { data: courses } = await supabase.from("courses").select("id").eq("subject_id", subjectId!);
-      if (!courses?.length) return [];
-      const { data } = await supabase.from("exams").select("*").in("course_id", courses.map(c => c.id)).eq("is_published", true);
+      // Exams are attached via exams.subject_id (set by ExamEditor), not the
+      // legacy course_id column which the editor never populates.
+      const { data } = await supabase.from("exams").select("*").eq("subject_id", subjectId!).eq("is_published", true);
       return (data || []) as any[];
     },
   });
