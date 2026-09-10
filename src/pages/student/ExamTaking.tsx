@@ -310,13 +310,19 @@ const ExamTaking = () => {
   const qCardRef = useRef<HTMLDivElement>(null);
   const effectiveScale = zoom === "fit" ? fitScale : zoom;
 
+  // Reserve room at the bottom of the scroll area for the floating
+  // magnifier button so the auto-fit shrink never lets it sit on top
+  // of the last answer option — the button lives in this gap instead
+  // of overlapping content.
+  const ZOOM_CONTROL_SPACE = 56;
+
   useEffect(() => {
     const compute = () => {
       const container = qScrollRef.current, card = qCardRef.current;
       if (!container || !card) return;
       const h = card.scrollHeight;
       setNaturalH(h);
-      const availH = container.clientHeight - 20;
+      const availH = container.clientHeight - 20 - ZOOM_CONTROL_SPACE;
       setFitScale(h > availH && availH > 0 ? Math.max(0.55, availH / h) : 1);
     };
     compute();
@@ -1155,9 +1161,14 @@ const ExamTaking = () => {
             </div>
           )}
 
-          {/* Magnifier / zoom control — floating so it never covers question content permanently */}
+          {/* Magnifier / zoom control — sticky within the scroll container's
+              reserved bottom gap (see ZOOM_CONTROL_SPACE). At the default
+              "fit" zoom this sits in empty space below the card, never
+              overlapping content; if a student zooms in further and the
+              card grows taller than the screen, it stays reachable by
+              sticking to the bottom of the viewport as they scroll. */}
           {q && (
-            <div style={{ position: "fixed", bottom: isMobile ? 148 : 20, right: 14, zIndex: 60, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+            <div style={{ position: "sticky", bottom: 10, marginTop: 8, marginRight: 14, alignSelf: "flex-end", zIndex: 60, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
               {showZoomPanel && (
                 <div style={{ display: "flex", alignItems: "center", gap: 2, background: "rgba(15,45,31,.92)", backdropFilter: "blur(8px)", borderRadius: 20, padding: 4, boxShadow: "0 4px 16px rgba(0,0,0,.25)" }}>
                   <button onClick={() => zoomBy(-0.1)} title="Zoom out" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>−</button>
