@@ -17,7 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useToast } from "@/hooks/use-toast";
-import { LifeBuoy, ChevronLeft, Send, Loader2, MessageSquare, CheckCircle2, Paperclip, X, FileText } from "lucide-react";
+import { LifeBuoy, ChevronLeft, Send, Loader2, MessageSquare, CheckCircle2, Paperclip, X, FileText, Plus, GraduationCap } from "lucide-react";
 
 const G      = "#064E3B";
 const GOLD   = "#c9a84c";
@@ -64,7 +64,7 @@ const AttachmentBubble = ({ m }: { m: any }) => {
 };
 
 const SupportTickets = () => {
-  const { user } = useAuth();
+  const { user, hasRole } = useAuth();
   const { t } = useLanguage();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -79,12 +79,39 @@ const SupportTickets = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // ── Admin → Teacher direct messages ─────────────────────────────────────
+  // Only an admin gets the "New Message" entry point (this component is
+  // also reused as-is at /teacher/support, so this stays gated by role).
+  // A DM is just a support_tickets row with student_id = the admin's own
+  // uid — RLS already allows that (student_insert only checks
+  // student_id = auth.uid(), no role restriction) and the reply-routing
+  // trigger already knows to send an admin-owned ticket's replies back to
+  // /admin/support-tickets instead of /student/support.
+  const [composeStep, setComposeStep] = useState<null | "chooseTeacher" | "message">(null);
+  const [selectedTeacher, setSelectedTeacher] = useState<any>(null);
+  const [newSubject, setNewSubject] = useState("");
+  const [newMessage, setNewMessage] = useState("");
+  const [creating, setCreating] = useState(false);
+
+  const { data: teacherDirectory = [], isLoading: teachersLoading } = useQuery({
+    queryKey: ["support-teacher-directory"],
+    enabled: composeStep === "chooseTeacher",
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, full_name_ar, avatar_url")
+        .eq("role", "teacher")
+        .order("full_name");
+      return data || [];
+    },
+  });
+
   const { data: tickets = [], isLoading } = useQuery({
     queryKey: ["admin-support-tickets"],
     queryFn: async () => {
       const { data } = await supabase
         .from("support_tickets" as any)
-        .select("*, profiles:student_id(full_name, email)")
+        .select("*, profiles:student_id(full_name, email), teacher:teacher_id(full_name)")
         .order("updated_at", { ascending: false });
       return (data || []) as any[];
     },
@@ -112,6 +139,15 @@ const SupportTickets = () => {
   const isUnread = (tkt: any) =>
     !!tkt.last_sender_id && tkt.last_sender_id !== user?.id && tkt.last_message_at &&
     (!tkt.last_read_by_admin_at || new Date(tkt.last_read_by_admin_at) < new Date(tkt.last_message_at));
+
+  // For a ticket the current admin started themselves (an admin→teacher DM,
+  // where student_id is the admin's own uid), the usual "profiles:student_id"
+  // name would just be the admin's own name — show who it's addressed to
+  // instead.
+  const ownerLabel = (tkt: any) =>
+    tkt.student_id === user?.id
+      ? `To: ${tkt.teacher?.full_name || "Teacher"}`
+      : (tkt.profiles?.full_name || "Student");
 
   const openTicket = async (tkt: any) => {
     setActiveTicket(tkt);
@@ -181,6 +217,89 @@ const SupportTickets = () => {
     }
   };
 
+  const startConversation = async () => {
+    if (!user || !selectedTeacher || !newSubject.trim() || !newMessage.trim()) return;
+    setCreating(true);
+    try {
+      const { data: ticket, error } = await supabase
+        .from("support_tickets" as any)
+        .insert({ student_id: user.id, subject: newSubject.trim(), recipient_type: "teacher", teacher_id: selectedTeacher.user_id, status: "open" })
+        .select()
+        .single();
+      if (error) throw error;
+      await supabase.from("support_ticket_messages" as any).insert({ ticket_id: (ticket as any).id, sender_id: user.id, message: newMessage.trim() });
+      qc.invalidateQueries({ queryKey: ["admin-support-tickets"] });
+      setComposeStep(null); setSelectedTeacher(null); setNewSubject(""); setNewMessage("");
+      setActiveTicket(ticket);
+    } catch (e: any) {
+      toast({ title: "Could not start conversation", description: e?.message, variant: "destructive" });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // ── Choose a teacher (new DM) ────────────────────────────────────────────
+  if (composeStep === "chooseTeacher") {
+    return (
+      <div style={{ padding: "16px", maxWidth: 700, margin: "0 auto", fontFamily: "'Cairo', sans-serif" }}>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        <button onClick={() => setComposeStep(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: G, fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
+          <ChevronLeft size={16} /> Back
+        </button>
+        <h1 style={{ fontSize: 20, fontWeight: 900, color: G, margin: "0 0 16px" }}>Choose a Teacher</h1>
+        {teachersLoading ? (
+          <div style={{ textAlign: "center", padding: 40 }}><Loader2 size={22} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
+        ) : teacherDirectory.length === 0 ? (
+          <p style={{ fontSize: 13, color: "#9CA3AF" }}>No teachers available yet.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {teacherDirectory.map((tc: any) => (
+              <button key={tc.user_id} onClick={() => { setSelectedTeacher(tc); setComposeStep("message"); }} style={{
+                textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "13px 14px",
+                background: "#fff", borderRadius: 14, border: `1.5px solid ${BORDER}`, cursor: "pointer",
+              }}>
+                <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#F3F4F6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <GraduationCap size={16} color={G} />
+                </div>
+                <p style={{ fontWeight: 700, fontSize: 13, color: "#111", margin: 0 }}>{tc.full_name || "Teacher"}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── New DM composer ───────────────────────────────────────────────────
+  if (composeStep === "message") {
+    return (
+      <div style={{ padding: "16px", maxWidth: 700, margin: "0 auto", fontFamily: "'Cairo', sans-serif" }}>
+        <button onClick={() => { setComposeStep("chooseTeacher"); setSelectedTeacher(null); }} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: G, fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
+          <ChevronLeft size={16} /> Back
+        </button>
+        <h1 style={{ fontSize: 20, fontWeight: 900, color: G, margin: "0 0 4px" }}>Message {selectedTeacher?.full_name || "Teacher"}</h1>
+        <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 16px" }}>This starts a direct message thread with this teacher.</p>
+        <input
+          value={newSubject} onChange={e => setNewSubject(e.target.value)}
+          placeholder="Subject"
+          style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 13, outline: "none", marginBottom: 10, boxSizing: "border-box" }}
+        />
+        <textarea
+          value={newMessage} onChange={e => setNewMessage(e.target.value)}
+          placeholder="Type a message…" rows={5}
+          style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 13, outline: "none", marginBottom: 12, boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" }}
+        />
+        <button onClick={startConversation} disabled={creating || !newSubject.trim() || !newMessage.trim()} style={{
+          width: "100%", padding: "12px", borderRadius: 12, border: "none", cursor: "pointer",
+          background: G, color: "#fff", fontWeight: 800, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+        }}>
+          {creating ? <Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> : <Send size={15} />}
+          Send
+        </button>
+      </div>
+    );
+  }
+
   // ── Thread view ───────────────────────────────────────────────────────
   if (activeTicket) {
     const cfg = STATUS_CFG[activeTicket.status] || STATUS_CFG.open;
@@ -193,7 +312,7 @@ const SupportTickets = () => {
         <div style={{ marginBottom: 12 }}>
           <h2 style={{ fontSize: 16, fontWeight: 900, color: G, margin: "0 0 2px" }}>{activeTicket.subject}</h2>
           <p style={{ fontSize: 12, color: "#9CA3AF", margin: 0 }}>
-            {activeTicket.profiles?.full_name || "Student"} · {activeTicket.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[activeTicket.category] || activeTicket.category)}
+            {ownerLabel(activeTicket)} · {activeTicket.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[activeTicket.category] || activeTicket.category)}
           </p>
         </div>
 
@@ -269,10 +388,22 @@ const SupportTickets = () => {
   return (
     <div style={{ padding: "16px", maxWidth: 700, margin: "0 auto", fontFamily: "'Cairo', sans-serif" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      <h1 style={{ fontSize: 22, fontWeight: 900, color: G, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
-        <LifeBuoy size={20} /> Support Tickets
-      </h1>
-      <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 16px" }}>Student help requests and direct messages from the app</p>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 900, color: G, margin: "0 0 4px", display: "flex", alignItems: "center", gap: 8 }}>
+            <LifeBuoy size={20} /> Support Tickets
+          </h1>
+          <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 16px" }}>Student help requests and direct messages from the app</p>
+        </div>
+        {hasRole("admin") && (
+          <button onClick={() => setComposeStep("chooseTeacher")} style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, flexShrink: 0,
+            border: "none", cursor: "pointer", background: G, color: "#fff", fontWeight: 800, fontSize: 12,
+          }}>
+            <Plus size={14} /> Message a Teacher
+          </button>
+        )}
+      </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {(["open", "in_progress", "resolved"] as const).map(s => {
@@ -315,7 +446,7 @@ const SupportTickets = () => {
                     <p style={{ fontWeight: unread ? 900 : 700, fontSize: 13, color: "#111", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tkt.subject}</p>
                   </div>
                   <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>
-                    {tkt.profiles?.full_name || "Student"} · {tkt.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[tkt.category] || tkt.category)}
+                    {ownerLabel(tkt)} · {tkt.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[tkt.category] || tkt.category)}
                   </p>
                   <p style={{ fontSize: 11, color: unread ? "#111" : "#9CA3AF", fontWeight: unread ? 700 : 400, margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {tkt.last_message_preview || "No messages yet"}
