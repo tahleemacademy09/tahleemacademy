@@ -269,7 +269,7 @@ const TeacherStudents = () => {
       : `Teacher requests to REMOVE student "${requestDialog.student.full_name}" from a subject. ${requestMsg}`;
     const inserts = admins.map(a => ({
       user_id: a.user_id, title: requestDialog.type === "enrol" ? "Enrol Request" : "Remove Request",
-      message: msg, type: "admin",
+      message: msg, type: "admin", link: "/admin/students",
     }));
     await supabase.from("notifications").insert(inserts);
     toast({ title: t("Request sent to admin", "تم إرسال الطلب للمدير") });
