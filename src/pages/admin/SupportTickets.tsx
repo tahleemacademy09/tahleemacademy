@@ -11,6 +11,7 @@
 */
 
 import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -67,6 +68,7 @@ const SupportTickets = () => {
   const { t } = useLanguage();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [statusFilter, setStatusFilter] = useState<string>("open");
   const [activeTicket, setActiveTicket] = useState<any>(null);
@@ -118,6 +120,23 @@ const SupportTickets = () => {
       qc.invalidateQueries({ queryKey: ["admin-support-tickets"] });
     }
   };
+
+  // Deep-link from a push notification: /admin/support-tickets?ticket=<id>
+  // (also reused as-is at /teacher/support) should land straight in that
+  // thread instead of the inbox list. `tickets` is unfiltered by status,
+  // so this finds the ticket regardless of which tab it lives under, then
+  // flips statusFilter to match so "Back to inbox" shows the right tab.
+  // The param is stripped right after so going back doesn't reopen it.
+  useEffect(() => {
+    const ticketId = searchParams.get("ticket");
+    if (!ticketId || activeTicket || tickets.length === 0) return;
+    const found = tickets.find((tk: any) => tk.id === ticketId);
+    if (found) {
+      openTicket(found);
+      setStatusFilter(found.status);
+    }
+    setSearchParams(prev => { prev.delete("ticket"); return prev; }, { replace: true });
+  }, [searchParams, tickets]);
 
   const filtered = tickets.filter(tk => tk.status === statusFilter);
 
