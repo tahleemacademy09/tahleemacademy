@@ -121,10 +121,16 @@ const StudentSupport = () => {
     queryKey: ["support-teacher-directory"],
     enabled: view === "teachers",
     queryFn: async () => {
-      const { data: roles } = await supabase.from("user_roles").select("user_id").eq("role", "teacher");
-      const ids = [...new Set((roles || []).map((r: any) => r.user_id))];
-      if (ids.length === 0) return [];
-      const { data: profs } = await supabase.from("profiles").select("user_id, full_name, full_name_ar, avatar_url").in("user_id", ids);
+      // Reads profiles.role directly (matches the pattern already used in
+      // admin/TeacherPayments.tsx). The previous version went through
+      // user_roles, but RLS on that table only lets an admin view all rows
+      // or a user view their own — a student querying role='teacher' always
+      // got back zero rows, hence "No teachers available yet." for everyone.
+      const { data: profs } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, full_name_ar, avatar_url")
+        .eq("role", "teacher")
+        .order("full_name");
       return profs || [];
     },
   });
