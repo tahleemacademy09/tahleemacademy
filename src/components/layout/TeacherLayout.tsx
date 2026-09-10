@@ -11,7 +11,7 @@ import {
   LogOut, Globe, Menu, X, Settings, Trophy, MessageSquare,
   CheckSquare, Mic, BookOpen, GraduationCap, BarChart2,
   Megaphone, Calendar, Headphones, Radio, ChevronDown,
-  ChevronRight, Bell, BookMarked, Clock, Trash2,
+  ChevronRight, Bell, BookMarked, Clock, Trash2, LifeBuoy,
 } from "lucide-react";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
 
@@ -110,6 +110,10 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
     type: "link",
     link: { to: "/teacher/majlis", icon: MessageSquare, label: t("Al-Majlis", "المجلس") },
   },
+  {
+    type: "link",
+    link: { to: "/teacher/support", icon: LifeBuoy, label: t("Student Messages", "رسائل الطلاب"), badge: badges.support },
+  },
 
   // ── Al-Musābaqah ─────────────────────────────────────────────────
   // Points to the hub (Quiz Arena + Qur'an Recitation), same as student/admin,
@@ -137,6 +141,7 @@ const TeacherLayout = () => {
   const [isMobile,      setIsMobile]      = useState(false);
   const [expanded,      setExpanded]      = useState<Record<string, boolean>>({});
   const [gradingBadge,  setGradingBadge]  = useState(0);
+  const [supportBadge,  setSupportBadge]  = useState(0);
   const [unreadNotifs,  setUnreadNotifs]  = useState(0);
   const [showNotifs,    setShowNotifs]    = useState(false);
   const [notifList,     setNotifList]     = useState<any[]>([]);
@@ -200,6 +205,24 @@ const TeacherLayout = () => {
       setGradingBadge(count || 0);
     })();
   }, [user]);
+
+  // ── Unread student-message badge ────────────────────────────────
+  // Counts threads addressed to this teacher (RLS already restricts the
+  // rows to those) where the student's last message hasn't been read yet.
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const { data } = await supabase
+        .from("support_tickets" as any)
+        .select("last_sender_id, last_message_at, last_read_by_admin_at")
+        .eq("teacher_id", user.id);
+      const unread = (data || []).filter((tk: any) =>
+        tk.last_sender_id && tk.last_sender_id !== user.id && tk.last_message_at &&
+        (!tk.last_read_by_admin_at || new Date(tk.last_read_by_admin_at) < new Date(tk.last_message_at))
+      ).length;
+      setSupportBadge(unread);
+    })();
+  }, [user, location.pathname]);
 
   // ── Notifications ───────────────────────────────────────────────
   // A notification is "course-scoped" when its link encodes a subject id
@@ -294,7 +317,7 @@ const TeacherLayout = () => {
     await supabase.from("notifications").delete().eq("user_id", user.id);
   };
 
-  const badges = { grading: gradingBadge };
+  const badges = { grading: gradingBadge, support: supportBadge };
   const navItems = buildNav(t, badges);
   const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
 
