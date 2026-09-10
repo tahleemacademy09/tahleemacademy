@@ -290,9 +290,38 @@ const ExamEditor = () => {
   useEffect(() => {
     // Teachers only ever see (and can only attach exams to) their own
     // subjects. Admins keep seeing every active subject.
-    let query = supabase.from("subjects").select("id, title, title_ar").eq("is_active", true).order("title");
-    if (isTeacherContext && user) query = query.eq("teacher_id", user.id);
-    query.then(({ data }) => setSubjects(data || []));
+    //
+    // A teacher's subjects aren't only the ones they "own" via
+    // subjects.teacher_id — they can also be assigned to a subject purely
+    // through subject_timetable (no ownership row at all). Mirrors the
+    // owned + timetable-assigned union used in TeacherDashboard.tsx /
+    // TeacherSubjects.tsx / TeacherStudents.tsx / TeacherLayout.tsx, so a
+    // timetable-only teacher isn't left with an empty dropdown (forcing
+    // "No subject" and making their exam invisible everywhere else).
+    const fetchSubjects = async () => {
+      if (isTeacherContext && user) {
+        const { data: owned } = await supabase
+          .from("subjects").select("id, title, title_ar")
+          .eq("is_active", true).eq("teacher_id", user.id).order("title");
+        const { data: ttSlots } = await supabase
+          .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+        const ttIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
+        const ownedIds = new Set((owned || []).map((s: any) => s.id));
+        const missingIds = ttIds.filter((id: string) => !ownedIds.has(id));
+        let extra: any[] = [];
+        if (missingIds.length > 0) {
+          const { data: extraSubs } = await supabase
+            .from("subjects").select("id, title, title_ar")
+            .eq("is_active", true).in("id", missingIds).order("title");
+          extra = extraSubs || [];
+        }
+        setSubjects([...(owned || []), ...extra]);
+      } else {
+        const { data } = await supabase.from("subjects").select("id, title, title_ar").eq("is_active", true).order("title");
+        setSubjects(data || []);
+      }
+    };
+    fetchSubjects();
   }, [isTeacherContext, user]);
 
   const [questions,      setQuestions]      = useState<QuestionForm[]>([emptyQuestion()]);
