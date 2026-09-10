@@ -84,13 +84,12 @@ const QText = ({ text, textAr }: { text?: string; textAr?: string }) => {
     fontFamily: "'Scheherazade New','Amiri Quran','Amiri',serif",
     fontSize: 22, fontWeight: 700, lineHeight: 2.3, color: G,
     textAlign: "right", direction: "rtl",
-    padding: "10px 14px", background: "#f8fafb",
-    borderRadius: 10, borderRight: `4px solid ${GOLD}`, marginBottom: 8,
+    padding: "4px 0 4px 12px", borderRight: `3px solid ${GOLD}`, marginBottom: 8,
   };
   const enStyle: React.CSSProperties = {
     fontFamily: "'Cairo',sans-serif", fontSize: 16, fontWeight: 600,
-    lineHeight: 1.9, color: G, padding: "8px 14px",
-    background: "#f0f4f2", borderRadius: 10, borderLeft: `4px solid ${GOLD}`,
+    lineHeight: 1.9, color: G, padding: "4px 0 4px 12px",
+    borderLeft: `3px solid ${GOLD}`,
   };
   if (secondary) return (
     <div>
@@ -957,11 +956,11 @@ const ExamTaking = () => {
         )}
 
         {/* CENTER: QUESTION */}
-        <div ref={qScrollRef} style={{ flex: 1, overflow: "auto", padding: "12px", display: "flex", flexDirection: "column", position: "relative" }}>
+        <div ref={qScrollRef} style={{ flex: 1, overflow: "auto", padding: "10px 6px", display: "flex", flexDirection: "column", position: "relative" }}>
           {q && (
             <div style={{ width: "100%" }}>
               <div style={{ height: naturalH ? naturalH * effectiveScale : undefined, overflow: "hidden", transition: "height .15s ease" }}>
-              <div ref={qCardRef} key={currentIdx} style={{ transform: `scale(${effectiveScale})`, transformOrigin: "top center", transition: "transform .15s ease", animation: "slideIn .2s ease" }}>
+              <div ref={qCardRef} key={currentIdx} style={{ transform: `scale(${effectiveScale})`, transformOrigin: "top left", width: effectiveScale ? `${100 / effectiveScale}%` : "100%", transition: "transform .15s ease, width .15s ease", animation: "slideIn .2s ease" }}>
               <div>
 
                 {/* Question header */}
@@ -986,7 +985,7 @@ const ExamTaking = () => {
                 </div>
 
                 {/* Question body */}
-                <div style={{ padding: "22px 22px 10px" }}>
+                <div style={{ padding: "16px 12px 10px" }}>
                   {/* Reading passage — optional, shown above the question (comprehension type) */}
                   {q.reading_passage && (
                     <div style={{ marginBottom: 16, padding: "16px 20px", background: "#fffbeb", borderRadius: 14, border: `1px solid ${GOLD}44`, borderLeft: `4px solid ${GOLD}` }}>
@@ -994,9 +993,11 @@ const ExamTaking = () => {
                       <div dir="auto" style={{ fontSize: 16, lineHeight: 2, color: G, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
                     </div>
                   )}
-                  {/* Instruction — optional, shown above the question when set */}
+                  {/* Instruction — optional, shown above the question when set.
+                      Flat (no card fill/border) — just a thin accent so it reads
+                      as background text, not a boxed element. */}
                   {(q.instruction_text || q.instruction_text_ar) && (
-                    <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 10, background: "#f8fafb", border: `1px solid ${BORDER}` }}>
+                    <div style={{ marginBottom: 14, padding: "2px 0 2px 12px", borderLeft: `3px solid ${BORDER}` }}>
                       {q.instruction_text_ar && (
                         <p dir="rtl" style={{ fontFamily: "'Amiri',serif", fontSize: 14, color: "#4b5563", margin: 0, fontWeight: 600 }}>{q.instruction_text_ar}</p>
                       )}
