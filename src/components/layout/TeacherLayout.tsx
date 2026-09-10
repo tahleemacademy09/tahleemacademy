@@ -191,10 +191,9 @@ const TeacherLayout = () => {
       ])];
       teacherSubjectIdsRef.current = new Set(subIds);
       if (!subIds.length) return;
-      const { data: courses } = await supabase.from("courses").select("id").in("subject_id", subIds);
-      const cIds = (courses || []).map((c: any) => c.id);
-      if (!cIds.length) return;
-      const { data: exams } = await supabase.from("exams").select("id").in("course_id", cIds);
+      // Exams are attached via exams.subject_id (set by ExamEditor), not the
+      // legacy course_id column which the editor never populates.
+      const { data: exams } = await supabase.from("exams").select("id").in("subject_id", subIds);
       const eIds = (exams || []).map((e: any) => e.id);
       if (!eIds.length) return;
       const { count } = await supabase
