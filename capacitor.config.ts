@@ -27,6 +27,13 @@ const config: CapacitorConfig = {
       style: 'DARK',
       backgroundColor: '#064E3B',
     },
+    PrivacyScreen: {
+      // Off by default app-wide — ExamTaking/EntranceExamTaking enable it
+      // for the duration of an active attempt (blocks screenshots/screen
+      // recording on Android via FLAG_SECURE, hides content in the iOS
+      // app switcher) and disable it again once the exam ends.
+      enable: false,
+    },
   },
   ios: {
     contentInset: 'always',
