@@ -17,7 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useToast } from "@/hooks/use-toast";
-import { LifeBuoy, ChevronLeft, Send, Loader2, MessageSquare, CheckCircle2, Paperclip, X, FileText, Plus, GraduationCap } from "lucide-react";
+import { LifeBuoy, ChevronLeft, Send, Loader2, MessageSquare, CheckCircle2, Paperclip, X, FileText, Plus, GraduationCap, Shield, CheckCheck } from "lucide-react";
 
 const G      = "#064E3B";
 const GOLD   = "#c9a84c";
@@ -31,6 +31,13 @@ const STATUS_CFG: Record<string, { label: string; color: string; bg: string }> =
 const CATEGORY_LABEL: Record<string, string> = {
   technical: "Technical", payment: "Payment", academic: "Academic", account: "Account", other: "Other",
 };
+const CATEGORIES = [
+  { value: "technical", label: "Technical Issue" },
+  { value: "payment",   label: "Payment" },
+  { value: "academic",  label: "Academic" },
+  { value: "account",   label: "Account" },
+  { value: "other",     label: "Other" },
+];
 
 const fmtDT = (d: string) => new Date(d).toLocaleString("en-NG", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 
@@ -79,17 +86,23 @@ const SupportTickets = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // ── Admin → Teacher direct messages ─────────────────────────────────────
-  // Only an admin gets the "New Message" entry point (this component is
-  // also reused as-is at /teacher/support, so this stays gated by role).
-  // A DM is just a support_tickets row with student_id = the admin's own
-  // uid — RLS already allows that (student_insert only checks
-  // student_id = auth.uid(), no role restriction) and the reply-routing
-  // trigger already knows to send an admin-owned ticket's replies back to
+  // ── Admin → Teacher DMs, and Teacher → Admin messages ───────────────────
+  // Both directions are just a support_tickets row with student_id = the
+  // sender's own uid — RLS already allows that (student_insert only checks
+  // student_id = auth.uid(), no role restriction), and the same ownership
+  // clause is what lets a non-admin sender see their own outgoing ticket
+  // afterward (support_tickets.select already needs student_id = auth.uid()
+  // so students can view tickets they open — that isn't role-gated, so it
+  // covers a teacher's own ticket too). The reply-routing trigger already
+  // knows to send an admin-owned ticket's replies back to
   // /admin/support-tickets instead of /student/support.
+  // composeTarget picks which direction: "teacher" (admin only, via the
+  // chooseTeacher step first) or "admin" (teacher only, straight to message).
   const [composeStep, setComposeStep] = useState<null | "chooseTeacher" | "message">(null);
+  const [composeTarget, setComposeTarget] = useState<"teacher" | "admin">("teacher");
   const [selectedTeacher, setSelectedTeacher] = useState<any>(null);
   const [newSubject, setNewSubject] = useState("");
+  const [newCategory, setNewCategory] = useState("other");
   const [newMessage, setNewMessage] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -115,7 +128,7 @@ const SupportTickets = () => {
         .order("updated_at", { ascending: false });
       return (data || []) as any[];
     },
-    refetchInterval: 20000,
+    refetchInterval: 8000,
   });
 
   const { data: thread = [], isLoading: threadLoading } = useQuery({
@@ -140,13 +153,13 @@ const SupportTickets = () => {
     !!tkt.last_sender_id && tkt.last_sender_id !== user?.id && tkt.last_message_at &&
     (!tkt.last_read_by_admin_at || new Date(tkt.last_read_by_admin_at) < new Date(tkt.last_message_at));
 
-  // For a ticket the current admin started themselves (an admin→teacher DM,
-  // where student_id is the admin's own uid), the usual "profiles:student_id"
-  // name would just be the admin's own name — show who it's addressed to
-  // instead.
+  // For a ticket the current viewer started themselves (an admin→teacher DM
+  // or a teacher→admin message, where student_id is the sender's own uid),
+  // the usual "profiles:student_id" name would just be their own name —
+  // show who it's addressed to instead.
   const ownerLabel = (tkt: any) =>
     tkt.student_id === user?.id
-      ? `To: ${tkt.teacher?.full_name || "Teacher"}`
+      ? (tkt.recipient_type === "teacher" ? `To: ${tkt.teacher?.full_name || "Teacher"}` : "To: Admin")
       : (tkt.profiles?.full_name || "Student");
 
   const openTicket = async (tkt: any) => {
@@ -218,18 +231,22 @@ const SupportTickets = () => {
   };
 
   const startConversation = async () => {
-    if (!user || !selectedTeacher || !newSubject.trim() || !newMessage.trim()) return;
+    if (!user || !newSubject.trim() || !newMessage.trim()) return;
+    if (composeTarget === "teacher" && !selectedTeacher) return;
     setCreating(true);
     try {
+      const insertRow: any = composeTarget === "teacher"
+        ? { student_id: user.id, subject: newSubject.trim(), recipient_type: "teacher", teacher_id: selectedTeacher.user_id, status: "open" }
+        : { student_id: user.id, subject: newSubject.trim(), recipient_type: "admin", category: newCategory, status: "open" };
       const { data: ticket, error } = await supabase
         .from("support_tickets" as any)
-        .insert({ student_id: user.id, subject: newSubject.trim(), recipient_type: "teacher", teacher_id: selectedTeacher.user_id, status: "open" })
+        .insert(insertRow)
         .select()
         .single();
       if (error) throw error;
       await supabase.from("support_ticket_messages" as any).insert({ ticket_id: (ticket as any).id, sender_id: user.id, message: newMessage.trim() });
       qc.invalidateQueries({ queryKey: ["admin-support-tickets"] });
-      setComposeStep(null); setSelectedTeacher(null); setNewSubject(""); setNewMessage("");
+      setComposeStep(null); setSelectedTeacher(null); setNewSubject(""); setNewMessage(""); setNewCategory("other");
       setActiveTicket(ticket);
     } catch (e: any) {
       toast({ title: "Could not start conversation", description: e?.message, variant: "destructive" });
@@ -270,20 +287,34 @@ const SupportTickets = () => {
     );
   }
 
-  // ── New DM composer ───────────────────────────────────────────────────
+  // ── New DM / message composer ────────────────────────────────────────────
   if (composeStep === "message") {
+    const toAdmin = composeTarget === "admin";
     return (
       <div style={{ padding: "16px", maxWidth: 700, margin: "0 auto", fontFamily: "'Cairo', sans-serif" }}>
-        <button onClick={() => { setComposeStep("chooseTeacher"); setSelectedTeacher(null); }} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: G, fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
+        <button onClick={() => { if (toAdmin) { setComposeStep(null); } else { setComposeStep("chooseTeacher"); setSelectedTeacher(null); } }} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: G, fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
           <ChevronLeft size={16} /> Back
         </button>
-        <h1 style={{ fontSize: 20, fontWeight: 900, color: G, margin: "0 0 4px" }}>Message {selectedTeacher?.full_name || "Teacher"}</h1>
-        <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 16px" }}>This starts a direct message thread with this teacher.</p>
+        <h1 style={{ fontSize: 20, fontWeight: 900, color: G, margin: "0 0 4px" }}>{toAdmin ? "Message Admin" : `Message ${selectedTeacher?.full_name || "Teacher"}`}</h1>
+        <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 16px" }}>{toAdmin ? "Send a question or issue to the admin team." : "This starts a direct message thread with this teacher."}</p>
         <input
           value={newSubject} onChange={e => setNewSubject(e.target.value)}
           placeholder="Subject"
           style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1px solid ${BORDER}`, fontSize: 13, outline: "none", marginBottom: 10, boxSizing: "border-box" }}
         />
+        {toAdmin && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+            {CATEGORIES.map(c => (
+              <button key={c.value} onClick={() => setNewCategory(c.value)} style={{
+                padding: "6px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                border: `1.5px solid ${newCategory === c.value ? G : BORDER}`,
+                background: newCategory === c.value ? G : "#fff", color: newCategory === c.value ? "#fff" : "#9CA3AF",
+              }}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           value={newMessage} onChange={e => setNewMessage(e.target.value)}
           placeholder="Type a message…" rows={5}
@@ -304,7 +335,7 @@ const SupportTickets = () => {
   if (activeTicket) {
     const cfg = STATUS_CFG[activeTicket.status] || STATUS_CFG.open;
     return (
-      <div style={{ padding: "16px", maxWidth: 700, margin: "0 auto", fontFamily: "'Cairo', sans-serif", display: "flex", flexDirection: "column", height: "calc(100dvh - 32px)" }}>
+      <div style={{ padding: "16px", maxWidth: 700, margin: "0 auto", fontFamily: "'Cairo', sans-serif", display: "flex", flexDirection: "column", height: "100%", boxSizing: "border-box" }}>
         <button onClick={() => setActiveTicket(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, color: G, fontWeight: 700, fontSize: 13, marginBottom: 12 }}>
           <ChevronLeft size={16} /> Back to inbox
         </button>
@@ -334,6 +365,12 @@ const SupportTickets = () => {
             <div style={{ textAlign: "center", padding: 30 }}><Loader2 size={20} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
           ) : thread.map((m: any) => {
             const mine = m.sender_id === user?.id;
+            // The other side's read state lives on the ticket row
+            // (last_read_by_student_at), not per-message. Look it up from
+            // the live `tickets` list (polled every 8s) so the tick updates
+            // without needing to reopen the thread.
+            const liveTicket = tickets.find((tk: any) => tk.id === activeTicket.id) || activeTicket;
+            const seen = mine && liveTicket.last_read_by_student_at && new Date(liveTicket.last_read_by_student_at) >= new Date(m.created_at);
             return (
               <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "80%" }}>
                 {!mine && <p style={{ fontSize: 10, color: "#9CA3AF", margin: "0 4px 2px" }}>{m.profiles?.full_name || "Student"}</p>}
@@ -345,7 +382,10 @@ const SupportTickets = () => {
                   <AttachmentBubble m={m} />
                   {m.message}
                 </div>
-                <p style={{ fontSize: 9, color: "#9CA3AF", margin: "3px 4px 0", textAlign: mine ? "right" : "left" }}>{fmtDT(m.created_at)}</p>
+                <p style={{ fontSize: 9, color: "#9CA3AF", margin: "3px 4px 0", display: "flex", alignItems: "center", gap: 3, justifyContent: mine ? "flex-end" : "flex-start" }}>
+                  {fmtDT(m.created_at)}
+                  {mine && <CheckCheck size={12} style={{ color: seen ? "#53BDEB" : "#9CA3AF", flexShrink: 0 }} />}
+                </p>
               </div>
             );
           })}
@@ -395,12 +435,19 @@ const SupportTickets = () => {
           </h1>
           <p style={{ fontSize: 12, color: "#9CA3AF", margin: "0 0 16px" }}>Student help requests and direct messages from the app</p>
         </div>
-        {hasRole("admin") && (
-          <button onClick={() => setComposeStep("chooseTeacher")} style={{
+        {hasRole("admin") ? (
+          <button onClick={() => { setComposeTarget("teacher"); setComposeStep("chooseTeacher"); }} style={{
             display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, flexShrink: 0,
             border: "none", cursor: "pointer", background: G, color: "#fff", fontWeight: 800, fontSize: 12,
           }}>
             <Plus size={14} /> Message a Teacher
+          </button>
+        ) : (
+          <button onClick={() => { setComposeTarget("admin"); setNewCategory("other"); setComposeStep("message"); }} style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10, flexShrink: 0,
+            border: "none", cursor: "pointer", background: G, color: "#fff", fontWeight: 800, fontSize: 12,
+          }}>
+            <Shield size={14} /> Message Admin
           </button>
         )}
       </div>
