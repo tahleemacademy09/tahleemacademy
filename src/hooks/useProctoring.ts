@@ -795,8 +795,10 @@ export const useProctoring = (
 
     const onVisibility = () => {
       if (document.visibilityState === "hidden") {
-        // Delayed async — if they come back quickly it cancels
-        const t = setTimeout(asyncSubmit, 30000); // 30s away = auto-submit
+        // Delayed async — if they come back quickly it cancels.
+        // Lockdown mode: much shorter grace than before (was 30s) — a
+        // student who leaves the exam window for this long auto-submits.
+        const t = setTimeout(asyncSubmit, 8000); // 8s away = auto-submit
         const cancel = () => { clearTimeout(t); document.removeEventListener("visibilitychange", cancel); };
         document.addEventListener("visibilitychange", cancel, { once: true });
       }
@@ -827,21 +829,34 @@ export const useProctoring = (
     return () => document.removeEventListener("fullscreenchange", h);
   }, [enabled, config.fullscreen_required, logViolation, initCamera]);
 
-  // ── Tab switch ────────────────────────────────────────────────
+  // ── Tab switch (lockdown) ───────────────────────────────────────
+  // Listens to both visibilitychange (tab hidden) and window blur
+  // (e.g. alt-tab to another app, split screen, opening another
+  // window) so leaving the exam is caught either way.
   useEffect(() => {
     if (!enabled) return;
-    const h = () => {
-      if (document.hidden) {
-        tabAwayStart.current = Date.now();
-        logViolation("tab_switch", 2, "Left exam window");
-      } else if (tabAwayStart.current) {
-        const away = Math.round((Date.now() - tabAwayStart.current) / 1000);
-        tabAwayStart.current = null;
-        if (away > 2) logViolation("tab_switch_return", 1, `Away for ${away}s`);
-      }
+    const away = () => {
+      if (tabAwayStart.current) return; // already flagged as away
+      tabAwayStart.current = Date.now();
+      logViolation("tab_switch", 2, "Left exam window");
     };
-    document.addEventListener("visibilitychange", h);
-    return () => document.removeEventListener("visibilitychange", h);
+    const back = () => {
+      if (!tabAwayStart.current) return;
+      const secs = Math.round((Date.now() - tabAwayStart.current) / 1000);
+      tabAwayStart.current = null;
+      if (secs > 1) logViolation("tab_switch_return", 1, `Away for ${secs}s`);
+    };
+    const onVis = () => { document.hidden ? away() : back(); };
+    const onBlur = () => away();
+    const onFocus = () => back();
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [enabled, logViolation]);
 
   // ── Copy/paste/right-click ────────────────────────────────────
