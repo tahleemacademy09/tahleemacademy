@@ -165,6 +165,7 @@ const TeacherTimetable       = lazy(() => import("./pages/teacher/TeacherTimetab
 const TeacherPublicClasses   = lazy(() => import("./pages/teacher/TeacherPublicClasses"));
 const TeacherHifdhReview     = lazy(() => import("./pages/teacher/TeacherHifdhReview"));
 const TeacherMajlis          = lazy(() => import("./pages/teacher/TeacherMajlis"));
+const TeacherSupport         = lazy(() => import("./pages/teacher/TeacherSupport"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -322,6 +323,7 @@ const App = () => (
                     <Route path="/teacher/hifdh"            element={<TeacherHifdhReview />} />
                     <Route path="/teacher/hifdh-tracker"    element={<HifdhRevisionTracker />} />
                     <Route path="/teacher/majlis"           element={<TeacherMajlis />} />
+                    <Route path="/teacher/support"          element={<TeacherSupport />} />
                     <Route path="/teacher/musabaqah"        element={<MusabaqahHub />} />
                     <Route path="/teacher/settings"         element={<TeacherSettings />} />
                   </Route>
