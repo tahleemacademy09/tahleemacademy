@@ -58,6 +58,7 @@ const ProfileSettings     = lazy(() => import("./pages/student/ProfileSettings")
 const ExamResults         = lazy(() => import("./pages/student/ExamResults"));
 const PreExamVerification = lazy(() => import("./pages/student/PreExamVerification"));
 const Transcripts         = lazy(() => import("./pages/student/Transcripts"));
+const ReportCard          = lazy(() => import("./pages/student/ReportCard"));
 const Majlis              = lazy(() => import("./pages/student/Majlis"));
 const RecitationTest      = lazy(() => import("./pages/student/RecitationTest"));
 const LearningHub         = lazy(() => import("./pages/student/LearningHub"));
@@ -267,6 +268,8 @@ const App = () => (
                     <Route path="/student/exams/register"      element={<ExamRegistration />} />
                     <Route path="/student/register-subjects"   element={<SubjectRegistration />} />
                     <Route path="/student/transcripts"         element={<Transcripts />} />
+                    <Route path="/student/report-card"         element={<ReportCard />} />
+                    <Route path="/student/report-card/:userId" element={<ReportCard />} />
                     <Route path="/student/majlis"              element={<Majlis />} />
                     <Route path="/student/live-classes"        element={<LearningHub defaultTab="live" />} />
                     <Route path="/student/revision"            element={<RevisionHub />} />
