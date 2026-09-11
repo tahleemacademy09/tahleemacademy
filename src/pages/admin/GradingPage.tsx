@@ -120,23 +120,8 @@ const GradingPage = () => {
       supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
       supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
     ]);
-    const bank = qRes.data || [];
-    const ans  = aRes.data || [];
-    // Exams that draw a random subset per attempt (question_group "name::pick=N")
-    // store the full bank in exam_questions, but a given attempt only ever sees
-    // the questions that were actually drawn for it — and there's no separate
-    // record of that draw, only the exam_answers rows it produced. For those
-    // exams, showing the whole bank here makes every question that simply
-    // wasn't drawn look like a missed/incorrect answer. So: if the bank uses
-    // grouped picks, only show (a) ungrouped questions (always presented to
-    // everyone) and (b) grouped questions that have an answer row for this
-    // attempt (i.e. were actually drawn). Exams with no grouping are shown
-    // in full, as before, so a genuinely skipped question still surfaces.
-    const usesGroupedPicks = bank.some((q: any) => q.question_group);
-    const answeredIds = new Set(ans.map((a: any) => a.question_id));
-    const qs = usesGroupedPicks
-      ? bank.filter((q: any) => !q.question_group || answeredIds.has(q.id))
-      : bank;
+    const qs  = qRes.data || [];
+    const ans = aRes.data || [];
     setQuestions(qs); setAnswers(ans);
     if (!scoreRefs.current[attempt.id]) {
       const init: Record<number, number> = {};
@@ -410,6 +395,10 @@ const GradingPage = () => {
                   <div style={{ fontSize: 11, color: "#9CA3AF", fontStyle: "italic", marginBottom: 6 }}>
                     {language === "ar" && q.instruction_text_ar ? q.instruction_text_ar : q.instruction_text}
                   </div>
+                )}
+                {q.question_text_ar && (
+                  <div dir="rtl" style={{ fontFamily: "'Amiri',serif", fontSize: 15, fontWeight: 600, color: "#111", marginBottom: q.question_text ? 4 : 8, lineHeight: 1.8 }}
+                    dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.question_text_ar) }} />
                 )}
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#111", marginBottom: 8, lineHeight: 1.6 }}
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(bi ? `${bi.ar}<br/><span style="font-size:12px;color:#6B7280">${bi.en}</span>` : q.question_text || "") }} />
