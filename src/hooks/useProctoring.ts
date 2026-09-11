@@ -130,7 +130,7 @@ export const useProctoring = (
     // skin-tone heuristic (see analyzeFrame's "Method B"). Logging which
     // path is active makes that visible in the console instead of a silent
     // "why didn't this flag" next time face detection looks wrong.
-    logger.info(`[proctor] face detection method: ${fdInstance.current ? "FaceDetector API" : "skin-tone fallback"}`);
+    logger.log(`[proctor] face detection method: ${fdInstance.current ? "FaceDetector API" : "skin-tone fallback"}`);
     return () => {
       try { document.body.removeChild(el); } catch (_) {}
       videoElRef.current = null;
