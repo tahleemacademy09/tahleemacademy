@@ -139,6 +139,14 @@ const ProctoringOverlay = ({
   const [autoCountdown, setAutoCount] = useState<number|null>(null);
   const [pointsLost, setPointsLost]   = useState(0);
   const [borderAlert, setBorderAlert] = useState(false);
+  // Framing reminder shows once at exam start, then gets out of the way —
+  // it was sitting permanently over the question-number strip at the
+  // bottom, which is worse than the problem it was solving.
+  const [showFramingHint, setShowFramingHint] = useState(true);
+  useEffect(() => {
+    const id = setTimeout(() => setShowFramingHint(false), 3000);
+    return () => clearTimeout(id);
+  }, []);
 
   // Screenshot prevention
   useEffect(() => {
@@ -369,17 +377,21 @@ const ProctoringOverlay = ({
           border:"2px solid rgba(0,0,0,.4)",boxShadow:"0 0 0 2px rgba(255,255,255,.15)"}}/>
       )}
 
-      {/* Persistent framing reminder — no live self-view is shown (by
-          design), so this is the only guidance a student gets on distance.
-          Unlike the pills above, it never collapses to a dot. */}
-      <div style={{position:"fixed",bottom:8,left:"50%",transform:"translateX(-50%)",zIndex:290,
-        background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)",borderRadius:20,
-        padding:"4px 12px",fontSize:9,fontWeight:600,color:"rgba(255,255,255,.75)",
-        pointerEvents:"none",whiteSpace:"nowrap",letterSpacing:.2}}>
-        {isAr
-          ? "📏 ابقَ على بُعد ذراع من الكاميرا — لا تقترب منها كثيراً"
-          : "📏 Stay arm's length from the camera — don't lean in close"}
-      </div>
+      {/* Persistent framing reminder — shown once at start (3s), then gone;
+          no live self-view is shown (by design), so this is the only
+          up-front guidance a student gets on distance. Kept brief so it
+          doesn't sit over the question-number strip at the bottom. */}
+      {showFramingHint && (
+        <div style={{position:"fixed",bottom:8,left:"50%",transform:"translateX(-50%)",zIndex:290,
+          background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)",borderRadius:20,
+          padding:"4px 12px",fontSize:9,fontWeight:600,color:"rgba(255,255,255,.75)",
+          pointerEvents:"none",whiteSpace:"nowrap",letterSpacing:.2,
+          animation:"procBannerIn .18s ease"}}>
+          {isAr
+            ? "📏 ابقَ على بُعد ذراع من الكاميرا — لا تقترب منها كثيراً"
+            : "📏 Stay arm's length from the camera — don't lean in close"}
+        </div>
+      )}
 
       <style>{`
         @keyframes procBannerIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
