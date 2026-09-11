@@ -636,18 +636,26 @@ const ExamTaking = () => {
           answer_data: ans.data ? { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 } : null,
           is_flagged: ans.flagged || false,
         }));
-      if (rows.length) {
-        const { error: saveErr } = await supabase.from("exam_answers").upsert(rows, { onConflict: "attempt_id,question_id" });
-        if (saveErr) console.error("Final answer save failed:", saveErr);
+      // Never grade before the answers are safely stored — grading a partially
+      // saved attempt would score the student zero on saved-but-missing answers.
+      let saved = await persistAnswers(rows);
+      if (!saved) saved = await persistAnswers(rows);
+      if (!saved) {
+        toast({ title: t("Could not save your answers", "لم يتم حفظ إجاباتك"), description: t("Your exam was NOT submitted. Check your connection and try again.", "لم يتم تقديم امتحانك. تحقق من اتصالك وحاول مرة أخرى."), variant: "destructive" });
+        submittedRef.current = false; setSubmitting(false); return;
       }
     }
     const { data: gr, error: ge } = await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
-    if (ge) { toast({ title: "❌ Submission failed.", variant: "destructive" }); submittedRef.current = false; setSubmitting(false); return; }
-    const r = gr as any;
-    setSR({ status: r.status, score: r.score, totalPoints: r.total_points, percentage: r.percentage, passed: r.passed });
-    setSubmitted(true); setSubmitting(false); toast({ title: "✅ Exam Submitted!" });
-    if (user) logActivity(user.id, "exam_submitted", "exam_attempt", attemptId!, { score: r.score, percentage: Math.round(r.percentage) });
-  }, [attemptId, user]);
+    if (ge || !gr) {
+      console.error("grade_exam_attempt failed:", ge);
+      toast({ title: t("Submission failed", "فشل التقديم"), description: ge?.message || t("Please try again.", "يرجى المحاولة مرة أخرى."), variant: "destructive" });
+      submittedRef.current = false; setSubmitting(false); return;
+    }
+    const r = (Array.isArray(gr) ? gr[0] : gr) as any;
+    setSR({ status: r?.status || "submitted", score: r?.score, totalPoints: r?.total_points, percentage: r?.percentage, passed: r?.passed });
+    setSubmitted(true); setSubmitting(false); toast({ title: "✅ " + t("Exam Submitted!", "تم تقديم الامتحان!") });
+    if (user) logActivity(user.id, "exam_submitted", "exam_attempt", attemptId!, { score: r?.score, percentage: Math.round(r?.percentage || 0) });
+  }, [attemptId, user, timePerQuestion]);
 
   // Keep saveAnswersRef current so pagehide can call the latest version
   useEffect(() => { saveAnswersRef.current = saveAnswers; });
