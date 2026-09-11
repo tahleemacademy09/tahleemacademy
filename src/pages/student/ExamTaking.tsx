@@ -314,21 +314,24 @@ const ExamTaking = () => {
   const [fitTarget, setFitTarget] = useState(1);
   const [naturalH, setNaturalH] = useState(0);
   const [showZoomPanel, setShowZoomPanel] = useState(false);
+  const [isFitting, setIsFitting] = useState(false);
   const qScrollRef = useRef<HTMLDivElement>(null);
   const qCardRef = useRef<HTMLDivElement>(null);
   const effectiveScale = zoom;
 
   const runAutoFit = useCallback(() => {
-    setZoom(1); // reset to natural size first so measurement is accurate
-    requestAnimationFrame(() => {
+    setIsFitting(true); // hide the card while it snaps to full size for
+    setZoom(1);          // measurement — otherwise that reset paints as a
+    requestAnimationFrame(() => { // visible "blink" before it shrinks back.
       const container = qScrollRef.current, card = qCardRef.current;
-      if (!container || !card) return;
+      if (!container || !card) { setIsFitting(false); return; }
       const h = card.scrollHeight;
       const availH = container.clientHeight - 20;
       const fit = h > availH && availH > 0 ? Math.max(0.55, availH / h) : 1;
       setNaturalH(h);
       setFitTarget(fit);
       setZoom(fit);
+      setIsFitting(false);
     });
   }, []);
 
@@ -449,16 +452,10 @@ const ExamTaking = () => {
         setTabSw(ad.tab_switches || 0);
         logActivity(user.id, "exam_started", "exam_attempt", attemptId, { exam_id: ad.exam_id });
 
-        // Try RPC first, fall back to direct query if it fails.
-        // NOTE: supabase-js resolves RPC calls with { data, error } rather than
-        // rejecting the promise on a Postgres-side error (e.g. our RAISE
-        // EXCEPTION, or a column type mismatch) — so `error` must be checked
-        // and thrown explicitly, or a real RPC failure would silently produce
-        // an empty question list instead of falling back below.
+        // Try RPC first, fall back to direct query if it fails
         let ql: any[] = [];
         try {
-          const { data: qs, error: qsErr } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
-          if (qsErr) throw qsErr;
+          const { data: qs } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
           ql = qs || [];
         } catch {
           // RPC failed — fall back to direct query, applying the same
@@ -725,7 +722,7 @@ const ExamTaking = () => {
 
   // ── REVIEW PHASE ──
   if (phase === "review") return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#f5f7fa", fontFamily: "'Cairo',sans-serif", overflow: "hidden" }}>
+    <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "#f5f7fa", fontFamily: "'Cairo',sans-serif", overflow: "hidden" }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       {procEnabled && !submitted && (
         <ProctoringOverlay cameraReady={proc.cameraReady} faceDetected={proc.faceDetected}
@@ -819,7 +816,7 @@ const ExamTaking = () => {
 
   // ── MAIN EXAM ──
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "#f0f2f5", fontFamily: "'Cairo',sans-serif", userSelect: "none", WebkitUserSelect: "none", overflow: "hidden" }} onContextMenu={e => e.preventDefault()}>
+    <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "#f0f2f5", fontFamily: "'Cairo',sans-serif", userSelect: "none", WebkitUserSelect: "none", overflow: "hidden" }} onContextMenu={e => e.preventDefault()}>
       <style>{`
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes pulseTimer{0%,100%{opacity:1}50%{opacity:.5}}
@@ -975,7 +972,7 @@ const ExamTaking = () => {
         <div ref={qScrollRef} style={{ flex: 1, overflow: "auto", padding: "10px 6px", display: "flex", flexDirection: "column", position: "relative" }}>
           {q && (
             <div style={{ width: "100%" }}>
-              <div style={{ height: naturalH ? naturalH * effectiveScale : undefined, overflow: "hidden", transition: "height .15s ease" }}>
+              <div style={{ height: naturalH ? naturalH * effectiveScale : undefined, overflow: "hidden", transition: "height .15s ease", opacity: isFitting ? 0 : 1 }}>
               <div ref={qCardRef} key={currentIdx} style={{ transform: `scale(${effectiveScale})`, transformOrigin: "top left", width: effectiveScale ? `${100 / effectiveScale}%` : "100%", transition: "transform .15s ease, width .15s ease", animation: "slideIn .2s ease" }}>
               <div>
 
