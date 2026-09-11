@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Download, GraduationCap } from "lucide-react";
 import tahleemStamp from "@/assets/tahleem-stamp.png";
 import tahleemHeaderArt from "@/assets/tahleem-header-art.png";
+import tahleemRoundLogo from "@/assets/tahleem-round-logo.png";
 import { useToast } from "@/hooks/use-toast";
 
 const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
@@ -175,7 +176,7 @@ const ReportCard = () => {
   // download — each page gets its own header/table/summary so it reads as
   // a standalone report, and `.page{page-break-after:always}` below makes
   // each one land on its own sheet when saved as PDF / printed.
-  const buildTermPage = (termKey: string, stampSrc: string, logoSrc: string) => {
+  const buildTermPage = (termKey: string, stampSrc: string, logoSrc: string, roundLogoSrc: string) => {
     const tRows  = buildSubjectRows(exams.filter(e => e.term === termKey));
     const tLabel = TERMS.find(tm => tm.key === termKey)!;
     const tObtained    = tRows.reduce((s, r) => s + r.total, 0);
@@ -190,12 +191,12 @@ const ReportCard = () => {
 <div class="page">
 <div class="watermark">TAHLEEM ACADEMY</div>
 <div class="header-bar">
-  <div class="header-spacer"></div>
-  <img src="${logoSrc}" alt="Tahleem Academy" class="header-logo-center" />
   <div class="header-title">
     <div class="header-ar">كشف الدرجات الفصلي</div>
     <div class="header-en">Term Report Card</div>
   </div>
+  <img src="${roundLogoSrc}" alt="Tahleem Academy" class="header-logo-center" />
+  <img src="${logoSrc}" alt="Tahleem Academy" class="header-logo-right" />
 </div>
 <div class="page-inner">
 <div class="info-box">
@@ -289,16 +290,17 @@ const ReportCard = () => {
       };
       img.src = src;
     });
-    const [stampBase64, logoBase64] = await Promise.all([
+    const [stampBase64, logoBase64, roundLogoBase64] = await Promise.all([
       toBase64(tahleemStamp),
       toBase64(tahleemHeaderArt),
+      toBase64(tahleemRoundLogo),
     ]);
 
     const pw = window.open("", "_blank");
     if (!pw) { toast({ title: t("Allow popups to download PDF", "السماح بالنوافذ المنبثقة"), variant: "destructive" }); return; }
 
     const termKeys = mode === "all" ? populatedTerms.map(tm => tm.key) : [term];
-    const pagesHtml = termKeys.map(k => buildTermPage(k, stampBase64, logoBase64)).join("");
+    const pagesHtml = termKeys.map(k => buildTermPage(k, stampBase64, logoBase64, roundLogoBase64)).join("");
 
     const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head>
 <meta charset="UTF-8"><title>كشف الدرجات — ${profile?.full_name || ""}</title>
@@ -311,9 +313,9 @@ body{font-family:'Amiri',serif;color:#1a1a1a;background:#fdfcf8;font-size:12.5px
 .watermark{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);
   font-size:60px;font-weight:900;color:rgba(15,45,31,.05);z-index:0;white-space:nowrap;font-family:Arial}
 .header-bar{display:grid;grid-template-columns:1fr auto 1fr;direction:ltr;align-items:center;gap:14px;padding:12px 26px;border-bottom:2px solid #0f2d1f;position:relative;z-index:1}
-.header-spacer{}
 .header-logo-center{height:74px;width:auto;justify-self:center}
-.header-title{direction:rtl;text-align:right;justify-self:end}
+.header-logo-right{height:74px;width:auto;justify-self:end}
+.header-title{direction:rtl;text-align:right;justify-self:start}
 .header-title .header-ar{font-family:'Aref Ruqaa',serif;font-weight:700;font-size:20px;color:#0f2d1f;line-height:1.3}
 .header-title .header-en{font-weight:700;font-size:10.5px;color:#8a7434;letter-spacing:2px;text-transform:uppercase;margin-top:2px}
 .page-inner{padding:0 24px;position:relative;z-index:1}
@@ -367,14 +369,14 @@ ${pagesHtml}
 
   return (
     <div dir="rtl" style={{ fontFamily: "'Cairo',sans-serif" }}>
-      {/* Header bar — title on the right, logo centered */}
+      {/* Header bar — title on the left, round logo centered, calligraphy logo on the right */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", direction: "ltr", alignItems: "center", gap: 14, padding: "10px 24px", borderBottom: `2px solid ${G}`, background: "#fdfcf8" }}>
-        <div />
-        <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: 62, width: "auto", justifySelf: "center" }} />
-        <div style={{ direction: "rtl", textAlign: "right", justifySelf: "end" }}>
+        <div style={{ direction: "rtl", textAlign: "right", justifySelf: "start" }}>
           <div style={{ fontFamily: "'Aref Ruqaa',serif", fontWeight: 700, fontSize: 20, color: G }}>كشف الدرجات الفصلي</div>
           <div style={{ fontWeight: 700, fontSize: 10, color: "#8a7434", letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>Term Report Card</div>
         </div>
+        <img src={tahleemRoundLogo} alt="Tahleem Academy" style={{ height: 62, width: "auto", justifySelf: "center" }} />
+        <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: 62, width: "auto", justifySelf: "end" }} />
       </div>
 
       <div className="container mx-auto px-4 py-6 max-w-4xl">
