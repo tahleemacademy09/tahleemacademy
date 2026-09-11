@@ -303,7 +303,7 @@ const ReportCard = () => {
 <meta charset="UTF-8"><title>كشف الدرجات — ${profile?.full_name || ""}</title>
 <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Aref+Ruqaa:wght@400;700&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact;color-adjust:exact}
 body{font-family:'Amiri',serif;color:#1a1a1a;background:#fdfcf8;font-size:12.5px;font-weight:600}
 .page{padding:0 0 18px;position:relative;page-break-after:always;background:#fdfcf8}
 .page:last-child{page-break-after:auto}
