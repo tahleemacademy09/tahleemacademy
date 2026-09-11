@@ -16,6 +16,32 @@ import { useToast } from "@/hooks/use-toast";
 
 const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
 
+// Arabic-Indic digit conversion — used so subject scores read in Arabic numerals.
+const AR_DIGITS = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+const toArabicDigits = (n: number | string) => String(n).replace(/[0-9]/g, (d) => AR_DIGITS[+d]);
+
+// Student level is stored in English (beginner/intermediate/advanced) — shown in Arabic.
+const LEVEL_AR: Record<string, string> = {
+  beginner: "مبتدئ", intermediate: "متوسط", advanced: "متقدم",
+};
+const levelToArabic = (level?: string | null) => {
+  if (!level) return "—";
+  return LEVEL_AR[level.toLowerCase().trim()] || level;
+};
+
+// Simplified Arabic subject names (independent of the specific exam title/level)
+// with a short English gloss shown alongside.
+const SUBJECT_AR: Record<string, { ar: string; en: string }> = {
+  tafsir:  { ar: "التفسير",      en: "Tafsir" },
+  seerah:  { ar: "السيرة",       en: "Seerah" },
+  arabic:  { ar: "اللغة العربية", en: "Arabic Language" },
+};
+const getSubjectDisplay = (row: { course: string; title: string; title_ar: string }) => {
+  const key = `${row.course} ${row.title}`.toLowerCase();
+  for (const k of Object.keys(SUBJECT_AR)) if (key.includes(k)) return SUBJECT_AR[k];
+  return { ar: row.title_ar, en: row.title };
+};
+
 interface GradedExam {
   title: string; title_ar: string | null;
   percentage: number; passed: boolean;
@@ -167,20 +193,19 @@ const ReportCard = () => {
 <div class="page-inner">
 <div class="title-box">
   <span class="calligraphy">كشف الدرجات الفصلي</span>
-  <span class="en-title">${tLabel.en} Report Card</span>
 </div>
 <div class="info-row">
   <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name_ar || profile?.full_name || "—"}</span></div>
   <div class="info-field"><label>العام الدراسي</label><span class="val">${currentYear - 579} هـ / ${currentYear} م</span></div>
 </div>
 <div class="info-row">
-  <div class="info-field"><label>المستوى</label><span class="val">${profile?.level || "—"}</span></div>
+  <div class="info-field"><label>المستوى</label><span class="val">${levelToArabic(profile?.level)}</span></div>
   <div class="info-field"><label>الفترة</label><span class="val">${tLabel.ar}</span></div>
 </div>
 <table class="main">
   <thead><tr>
     <th style="width:5%">#</th>
-    <th style="width:30%;text-align:right">المادة / Subject</th>
+    <th style="width:32%;text-align:right">المادة</th>
     <th>اختبار (30)</th>
     <th>امتحان (70)</th>
     <th>المجموع</th>
@@ -188,33 +213,39 @@ const ReportCard = () => {
     <th>النتيجة</th>
   </tr></thead>
   <tbody>
-    ${tRows.map((r, i) => `
+    ${tRows.map((r, i) => { const subj = getSubjectDisplay(r); return `
       <tr>
-        <td>${i + 1}</td>
-        <td style="text-align:right;font-size:13px">${r.title_ar} / ${r.title}</td>
-        <td>${r.test || "—"}</td>
-        <td>${r.exam || "—"}</td>
-        <td style="font-weight:900">${r.total}</td>
+        <td>${toArabicDigits(i + 1)}</td>
+        <td style="text-align:right">
+          <div class="subject-cell">
+            <span class="subject-ar">${subj.ar}</span>
+            <span class="subject-en">${subj.en}</span>
+          </div>
+        </td>
+        <td>${r.test ? toArabicDigits(r.test) : "—"}</td>
+        <td>${r.exam ? toArabicDigits(r.exam) : "—"}</td>
+        <td style="font-weight:900">${toArabicDigits(r.total)}</td>
         <td style="font-weight:900;color:${r.grade.color}">${r.grade.letter}</td>
-        <td style="color:${r.passed ? "#22c55e" : "#ef4444"};font-weight:800">${r.passed ? "ناجح ✓" : "راسب ✗"}</td>
-      </tr>`).join("")}
+        <td style="color:${r.passed ? "#22c55e" : "#ef4444"};font-weight:800">${r.passed ? "ناجح ✓" : "راسب"}</td>
+      </tr>`; }).join("")}
   </tbody>
 </table>
 <div class="summary-grid">
   <table class="small">
     <thead><tr><th colspan="2">ملخص الأداء / Performance Summary</th></tr></thead>
     <tbody>
-      <tr><td>المجموع المحقق / Total Obtained</td><td>${tObtained}</td></tr>
-      <tr><td>المجموع الكلي / Total Obtainable</td><td>${tObtainable}</td></tr>
-      <tr><td>عدد المواد / Subjects</td><td>${tRows.length}</td></tr>
-      <tr><td>المتوسط / Average</td><td>${tAvg.toFixed(1)}%</td></tr>
+      <tr><td>المجموع المحقق / Total Obtained</td><td>${toArabicDigits(tObtained)}</td></tr>
+      <tr><td>المجموع الكلي / Total Obtainable</td><td>${toArabicDigits(tObtainable)}</td></tr>
+      <tr><td>عدد المواد / Subjects</td><td>${toArabicDigits(tRows.length)}</td></tr>
+      <tr><td>المتوسط / Average</td><td>${toArabicDigits(tAvg.toFixed(1))}%</td></tr>
     </tbody>
   </table>
-  <div class="grade-line-box">
-    <div class="grade-line-title">توزيع الدرجات / Grade Distribution</div>
-    <div class="grade-line">
-      ${tGradeCounts.map(g => `<span>${g.letter} <b>${g.count}</b></span>`).join("<i>·</i>")}
-    </div>
+  <div class="grade-box">
+    <div class="grade-box-title">توزيع الدرجات / Grade Distribution</div>
+    <table class="grade-table">
+      <thead><tr>${["A+", "A", "B", "C", "D", "F"].map(l => `<th>${l}</th>`).join("")}</tr></thead>
+      <tbody><tr>${tGradeCounts.map(g => `<td>${toArabicDigits(g.count)}</td>`).join("")}</tr></tbody>
+    </table>
     <div class="legend">
       90-100 A+ (ممتاز) · 80-89 A (جيد جداً) · 70-79 B (جيد) · 60-69 C (مقبول) · 50-59 D (ناجح) · 0-49 F (راسب)
     </div>
@@ -273,14 +304,11 @@ body{font-family:'Amiri',serif;color:#1a1a1a;background:#fdfcf8;font-size:12.5px
 .page:last-child{page-break-after:auto}
 .watermark{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);
   font-size:60px;font-weight:900;color:rgba(15,45,31,.05);z-index:0;white-space:nowrap;font-family:Arial}
-.header-art{text-align:center;padding:18px 24px 10px;border-bottom:3px double #c9a84c;position:relative;z-index:1}
-.header-art img{max-width:420px;width:80%;height:auto}
+.header-art{text-align:center;padding:10px 24px 8px;position:relative;z-index:1}
+.header-art img{max-width:220px;width:42%;height:auto}
 .page-inner{padding:0 24px;position:relative;z-index:1}
-.title-box{border:2px solid #c9a84c;border-radius:10px;padding:12px 26px;margin:16px auto 12px;
-  width:fit-content;text-align:center;display:flex;flex-direction:column;gap:2px;
-  background:linear-gradient(180deg,#fbf6e8,#fffdf7);box-shadow:0 2px 10px rgba(201,168,76,.25)}
+.title-box{padding:6px 26px 12px;margin:6px auto 12px;width:fit-content;text-align:center}
 .title-box .calligraphy{font-family:'Aref Ruqaa',serif;font-weight:700;font-size:26px;color:#0f2d1f;letter-spacing:.5px}
-.title-box .en-title{font-weight:700;font-size:12px;color:#8a7434;letter-spacing:2px;text-transform:uppercase}
 .info-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:7px}
 .info-field{display:flex;align-items:baseline;gap:6px}
 .info-field label{font-weight:800;font-size:12.5px;white-space:nowrap;color:#0f2d1f;min-width:90px}
@@ -289,21 +317,24 @@ table.main{width:100%;border-collapse:collapse;margin:16px 0 8px;box-shadow:0 1p
 table.main th,table.main td{border:1px solid #d9dfd9;padding:8px 8px;text-align:center;font-size:12.5px;font-weight:700;vertical-align:middle}
 table.main th{background:#0f2d1f;color:#f5e9c8;font-weight:800;border-color:#0f2d1f;font-size:12px}
 table.main tbody tr:nth-child(even){background:#f7faf7}
+.subject-cell{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.subject-cell .subject-ar{font-family:'Amiri',serif;font-weight:800;font-size:14px;color:#0f2d1f;text-align:right}
+.subject-cell .subject-en{font-size:10px;color:#6b7280;font-weight:600;direction:ltr;text-align:left;white-space:nowrap}
 .summary-grid{display:grid;grid-template-columns:1fr 1.3fr;gap:14px;margin-top:14px;align-items:stretch}
 table.small{width:100%;border-collapse:collapse}
 table.small th,table.small td{border:1px solid #d9dfd9;padding:6px 8px;text-align:center;font-size:11.5px;font-weight:700}
-table.small th{background:#c9a84c;color:#0f2d1f;font-weight:800;border-color:#c9a84c}
-.grade-line-box{border:1px solid #d9dfd9;border-radius:8px;padding:10px 14px;background:#fffdf7}
-.grade-line-title{font-weight:800;font-size:11px;color:#0f2d1f;margin-bottom:8px;text-align:center}
-.grade-line{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;font-size:13px;font-weight:800;
-  color:#0f2d1f;border-bottom:2px solid #c9a84c;padding-bottom:8px}
-.grade-line b{color:#0f2d1f;font-size:15px}
-.grade-line i{color:#c9a84c;font-style:normal;margin:0 2px}
-.legend{font-size:9.5px;color:#6b7280;margin-top:8px;line-height:1.7;text-align:center;font-weight:600}
+table.small th{background:#0f2d1f;color:#f5e9c8;font-weight:800;border-color:#0f2d1f}
+.grade-box{border:1px solid #d9dfd9;border-radius:8px;overflow:hidden;background:#fffdf7}
+.grade-box-title{background:#0f2d1f;color:#f5e9c8;font-weight:800;font-size:11px;padding:6px 10px;text-align:center}
+table.grade-table{width:100%;border-collapse:collapse;margin-top:0}
+table.grade-table th,table.grade-table td{border:1px solid #d9dfd9;padding:5px 4px;text-align:center}
+table.grade-table th{background:#0f2d1f;color:#f5e9c8;font-weight:800;font-size:12px;border-color:#0f2d1f}
+table.grade-table td{font-weight:800;font-size:13px;color:#0f2d1f}
+.legend{font-size:9.5px;color:#6b7280;padding:8px 10px 10px;line-height:1.7;text-align:center;font-weight:600}
 .comments-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
-.comment-box{border:1.5px solid #c9a84c;border-radius:10px;padding:12px 14px;background:linear-gradient(180deg,#fffdf7,#fff)}
-.comment-label{font-weight:800;font-size:11.5px;color:#0f2d1f;margin-bottom:6px;border-bottom:1px solid #e8ddb8;padding-bottom:5px}
-.comment-text{font-size:12.5px;font-weight:700;line-height:1.9;color:#2b2b2b}
+.comment-box{border:1.5px solid #c9a84c;border-radius:10px;overflow:hidden;background:linear-gradient(180deg,#fffdf7,#fff)}
+.comment-label{background:#0f2d1f;color:#f5e9c8;font-weight:800;font-size:11.5px;padding:7px 14px;text-align:center}
+.comment-text{font-size:12.5px;font-weight:700;line-height:1.9;color:#2b2b2b;padding:10px 14px}
 .stamp-center{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:22px}
 .stamp-center img{width:130px;height:130px;opacity:.9}
 .stamp-center span{font-size:11px;font-weight:700;color:#6b7280}
@@ -326,8 +357,8 @@ ${pagesHtml}
   return (
     <div dir="rtl" style={{ fontFamily: "'Cairo',sans-serif" }}>
       {/* Header art — the exact logo image, on the plain page background */}
-      <div style={{ textAlign: "center", padding: "16px 20px 10px", borderBottom: `3px double ${GOLD}`, background: "#fdfcf8" }}>
-        <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ maxWidth: 340, width: "70%", height: "auto" }} />
+      <div style={{ textAlign: "center", padding: "10px 20px 8px", background: "#fdfcf8" }}>
+        <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ maxWidth: 180, width: "40%", height: "auto" }} />
       </div>
 
       <div className="container mx-auto px-4 py-6 max-w-4xl">
@@ -373,7 +404,7 @@ ${pagesHtml}
           {/* Student info */}
           <div className="bg-white rounded-2xl shadow-sm border p-4 mb-4 grid grid-cols-2 gap-3 text-sm" style={{ borderColor: "#e8ddb8" }}>
             <div><span className="text-muted-foreground font-semibold">اسم الطالب(ة): </span><strong style={{ color: G }}>{profile?.full_name_ar || profile?.full_name || "—"}</strong></div>
-            <div><span className="text-muted-foreground font-semibold">المستوى: </span><strong style={{ color: G }}>{profile?.level || "—"}</strong></div>
+            <div><span className="text-muted-foreground font-semibold">المستوى: </span><strong style={{ color: G }}>{levelToArabic(profile?.level)}</strong></div>
             <div><span className="text-muted-foreground font-semibold">الفترة: </span><strong style={{ color: G }}>{termLabel.ar}</strong></div>
             <div><span className="text-muted-foreground font-semibold">العام الدراسي: </span><strong style={{ color: G }}>{currentYear - 579} هـ / {currentYear} م</strong></div>
           </div>
@@ -393,19 +424,26 @@ ${pagesHtml}
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, i) => (
+                  {rows.map((row, i) => {
+                    const subj = getSubjectDisplay(row);
+                    return (
                     <tr key={i} style={{ borderBottom: "1px solid #f0f4f8", background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                      <td style={{ padding: "10px", textAlign: "center", fontSize: 12, color: "#9ca3af", fontWeight: 700 }}>{i + 1}</td>
-                      <td style={{ padding: "10px 14px", fontWeight: 700, color: G, fontFamily: "'Amiri',serif", fontSize: 15 }}>{row.title_ar}</td>
-                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{row.test || "—"}</td>
-                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{row.exam || "—"}</td>
-                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 900, fontSize: 16, color: row.grade.color }}>{row.total}</td>
+                      <td style={{ padding: "10px", textAlign: "center", fontSize: 12, color: "#9ca3af", fontWeight: 700 }}>{toArabicDigits(i + 1)}</td>
+                      <td style={{ padding: "10px 14px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                          <span style={{ fontWeight: 800, color: G, fontFamily: "'Amiri',serif", fontSize: 15 }}>{subj.ar}</span>
+                          <span style={{ fontSize: 11, color: "#6b7280", fontWeight: 600, direction: "ltr" }}>{subj.en}</span>
+                        </div>
+                      </td>
+                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{row.test ? toArabicDigits(row.test) : "—"}</td>
+                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{row.exam ? toArabicDigits(row.exam) : "—"}</td>
+                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 900, fontSize: 16, color: row.grade.color }}>{toArabicDigits(row.total)}</td>
                       <td style={{ padding: "10px", textAlign: "center" }}>
                         <span style={{ padding: "3px 10px", borderRadius: 20, background: row.grade.bg, color: row.grade.color, fontWeight: 800, fontSize: 12 }}>{row.grade.letter}</span>
                       </td>
                       <td style={{ padding: "10px", textAlign: "center", fontWeight: 800, color: row.passed ? "#22c55e" : "#ef4444" }}>{row.passed ? "ناجح" : "راسب"}</td>
                     </tr>
-                  ))}
+                  );})}
                 </tbody>
               </table>
             </div>
@@ -413,29 +451,36 @@ ${pagesHtml}
 
           {/* Performance summary + grade distribution */}
           <div className="grid gap-4 md:grid-cols-2 mb-4">
-            <div className="bg-white rounded-2xl shadow-sm border p-4">
-              <div className="font-bold text-sm mb-3" style={{ color: G }}>ملخص الأداء</div>
-              {[
-                ["المجموع المحقق", totalObtained],
-                ["المجموع الكلي", totalObtainable],
-                ["عدد المواد", rows.length],
-                ["المتوسط", `${avgScore.toFixed(1)}%`],
-              ].map(([label, val]) => (
-                <div key={label as string} className="flex justify-between text-sm py-1.5 border-b last:border-0">
-                  <span className="text-muted-foreground font-semibold">{label}</span><strong style={{ color: G }}>{val}</strong>
-                </div>
-              ))}
-            </div>
-            <div className="bg-white rounded-2xl shadow-sm border p-4 flex flex-col justify-center">
-              <div className="font-bold text-xs mb-2 text-center" style={{ color: G }}>توزيع الدرجات</div>
-              <div className="flex justify-center flex-wrap gap-3 pb-2" style={{ borderBottom: `2px solid ${GOLD}` }}>
-                {gradeCounts.map(g => (
-                  <span key={g.letter} className="text-sm font-extrabold" style={{ color: G }}>
-                    {g.letter} <b className="text-base">{g.count}</b>
-                  </span>
+            <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+              <div style={{ background: G, color: "#f5e9c8", padding: "8px 14px", fontWeight: 800, fontSize: 13, textAlign: "center" }}>ملخص الأداء</div>
+              <div className="p-4">
+                {[
+                  ["المجموع المحقق", toArabicDigits(totalObtained)],
+                  ["المجموع الكلي", toArabicDigits(totalObtainable)],
+                  ["عدد المواد", toArabicDigits(rows.length)],
+                  ["المتوسط", `${toArabicDigits(avgScore.toFixed(1))}%`],
+                ].map(([label, val]) => (
+                  <div key={label as string} className="flex justify-between text-sm py-1.5 border-b last:border-0">
+                    <span className="text-muted-foreground font-semibold">{label}</span><strong style={{ color: G }}>{val}</strong>
+                  </div>
                 ))}
               </div>
-              <div className="text-[10px] text-muted-foreground mt-2 leading-relaxed text-center">
+            </div>
+            <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+              <div style={{ background: G, color: "#f5e9c8", padding: "8px 14px", fontWeight: 800, fontSize: 13, textAlign: "center" }}>توزيع الدرجات</div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>{["A+", "A", "B", "C", "D", "F"].map(l => (
+                    <th key={l} style={{ border: "1px solid #e5e7eb", padding: "5px", fontSize: 12, background: "#f7faf7", color: G, fontWeight: 800 }}>{l}</th>
+                  ))}</tr>
+                </thead>
+                <tbody>
+                  <tr>{gradeCounts.map(g => (
+                    <td key={g.letter} style={{ border: "1px solid #e5e7eb", padding: "6px", textAlign: "center", fontWeight: 800, color: G }}>{toArabicDigits(g.count)}</td>
+                  ))}</tr>
+                </tbody>
+              </table>
+              <div className="text-[10px] text-muted-foreground p-3 leading-relaxed text-center">
                 90-100 A+ (ممتاز) · 80-89 A (جيد جداً) · 70-79 B (جيد) · 60-69 C (مقبول) · 50-59 D (ناجح) · 0-49 F (راسب)
               </div>
             </div>
@@ -447,13 +492,13 @@ ${pagesHtml}
               const remarks = generateRemarks(avgScore, rows.filter(r => r.passed).length, rows.length);
               return (
                 <>
-                  <div className="rounded-2xl p-4" style={{ border: `1.5px solid ${GOLD}`, background: "linear-gradient(180deg,#fffdf7,#fff)" }}>
-                    <div className="font-bold text-xs mb-2 pb-1.5" style={{ color: G, borderBottom: "1px solid #e8ddb8" }}>تعليق المعلم(ة)</div>
-                    <p className="text-sm font-semibold leading-relaxed" style={{ color: "#2b2b2b" }}>{remarks.teacher}</p>
+                  <div className="rounded-2xl overflow-hidden" style={{ border: `1.5px solid ${GOLD}`, background: "linear-gradient(180deg,#fffdf7,#fff)" }}>
+                    <div className="font-bold text-xs text-center" style={{ color: "#f5e9c8", background: G, padding: "7px 14px" }}>تعليق المعلم(ة)</div>
+                    <p className="text-sm font-semibold leading-relaxed p-4" style={{ color: "#2b2b2b" }}>{remarks.teacher}</p>
                   </div>
-                  <div className="rounded-2xl p-4" style={{ border: `1.5px solid ${GOLD}`, background: "linear-gradient(180deg,#fffdf7,#fff)" }}>
-                    <div className="font-bold text-xs mb-2 pb-1.5" style={{ color: G, borderBottom: "1px solid #e8ddb8" }}>تعليق المدير</div>
-                    <p className="text-sm font-semibold leading-relaxed" style={{ color: "#2b2b2b" }}>{remarks.director}</p>
+                  <div className="rounded-2xl overflow-hidden" style={{ border: `1.5px solid ${GOLD}`, background: "linear-gradient(180deg,#fffdf7,#fff)" }}>
+                    <div className="font-bold text-xs text-center" style={{ color: "#f5e9c8", background: G, padding: "7px 14px" }}>تعليق المدير</div>
+                    <p className="text-sm font-semibold leading-relaxed p-4" style={{ color: "#2b2b2b" }}>{remarks.director}</p>
                   </div>
                 </>
               );
