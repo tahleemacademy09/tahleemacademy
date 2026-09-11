@@ -248,10 +248,11 @@ const SupportTickets = () => {
   // "teacher_dm" is a pseudo status: it isn't a value of support_tickets.status,
   // it's a dedicated view for admins to see teacher↔student conversations
   // (recipient_type = "teacher") separately from tickets addressed to the
-  // admin team, regardless of open/in-progress/resolved state.
+  // admin team. These never show up under Open/In Progress/Resolved —
+  // they only live in this dedicated tab, regardless of their status value.
   const filtered = statusFilter === "teacher_dm"
     ? tickets.filter(tk => tk.recipient_type === "teacher")
-    : tickets.filter(tk => tk.status === statusFilter);
+    : tickets.filter(tk => tk.status === statusFilter && tk.recipient_type !== "teacher");
   const teacherDmCount = tickets.filter(tk => tk.recipient_type === "teacher").length;
 
   const setStatus = async (ticketId: string, status: string) => {
@@ -551,7 +552,7 @@ const SupportTickets = () => {
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {(["open", "in_progress", "resolved"] as const).map(s => {
-          const count = tickets.filter(tk => tk.status === s).length;
+          const count = tickets.filter(tk => tk.status === s && tk.recipient_type !== "teacher").length;
           return (
             <button key={s} onClick={() => setStatusFilter(s)} style={{
               flex: 1, padding: "9px 4px", borderRadius: 10, fontSize: 12, fontWeight: 800, cursor: "pointer",
@@ -604,7 +605,11 @@ const SupportTickets = () => {
                     <p style={{ fontWeight: unread ? 900 : 700, fontSize: 13, color: "#111", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tkt.subject}</p>
                   </div>
                   <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>
-                    {ownerLabel(tkt)} · {tkt.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[tkt.category] || tkt.category)}
+                    {ownerLabel(tkt)}
+                    {tkt.recipient_type === "teacher" && tkt.student_id !== user?.id && (
+                      <> → {tkt.teacher?.full_name || "Teacher"}</>
+                    )}
+                    {" · "}{tkt.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[tkt.category] || tkt.category)}
                   </p>
                   <p style={{ fontSize: 11, color: unread ? "#111" : "#9CA3AF", fontWeight: unread ? 700 : 400, margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {tkt.last_message_preview || "No messages yet"}
