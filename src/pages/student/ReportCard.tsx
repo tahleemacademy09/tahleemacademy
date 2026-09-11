@@ -119,7 +119,7 @@ const ReportCard = () => {
   // download — each page gets its own header/table/summary so it reads as
   // a standalone report, and `.page{page-break-after:always}` below makes
   // each one land on its own sheet when saved as PDF / printed.
-  const buildTermPage = (termKey: string, stampSrc: string) => {
+  const buildTermPage = (termKey: string, stampSrc: string, logoSrc: string) => {
     const tRows  = buildSubjectRows(exams.filter(e => e.term === termKey));
     const tLabel = TERMS.find(tm => tm.key === termKey)!;
     const tObtained    = tRows.reduce((s, r) => s + r.total, 0);
@@ -130,10 +130,15 @@ const ReportCard = () => {
     }));
     return `
 <div class="page">
-<div class="page-header">
-  <div class="ar">أكاديمية التعليم</div>
-  <div class="en">TAHLEEM ACADEMY</div>
+<div class="watermark">TAHLEEM ACADEMY</div>
+<div class="brand-header">
+  <img src="${logoSrc}" alt="Tahleem Academy" />
+  <div class="brand-text">
+    <div class="ar">أكاديمية التعليم</div>
+    <div class="en">TAHLEEM ACADEMY</div>
+  </div>
 </div>
+<div class="page-inner">
 <div class="title-box">
   <span>كشف الدرجات الفصلي</span>
   <span>${tLabel.en} Report Card</span>
@@ -192,11 +197,12 @@ const ReportCard = () => {
   <img src="${stampSrc}" alt="Stamp" />
 </div>
 <div class="footer">Official Term Report Card — Tahleem Academy — ${new Date().toLocaleDateString("en-GB")} — Confidential</div>
+</div>
 </div>`;
   };
 
   const downloadPDF = async (mode: "current" | "all" = "current") => {
-    const stampBase64 = await new Promise<string>(resolve => {
+    const toBase64 = (src: string) => new Promise<string>(resolve => {
       const img = new Image(); img.crossOrigin = "anonymous";
       img.onload = () => {
         const c = document.createElement("canvas");
@@ -204,46 +210,57 @@ const ReportCard = () => {
         c.getContext("2d")!.drawImage(img, 0, 0);
         resolve(c.toDataURL("image/png"));
       };
-      img.src = tahleemStamp;
+      img.src = src;
     });
+    const [stampBase64, logoBase64] = await Promise.all([
+      toBase64(tahleemStamp),
+      toBase64("/brand-logo.png"),
+    ]);
 
     const pw = window.open("", "_blank");
     if (!pw) { toast({ title: t("Allow popups to download PDF", "السماح بالنوافذ المنبثقة"), variant: "destructive" }); return; }
 
     const termKeys = mode === "all" ? populatedTerms.map(tm => tm.key) : [term];
-    const pagesHtml = termKeys.map(k => buildTermPage(k, stampBase64)).join("");
+    const pagesHtml = termKeys.map(k => buildTermPage(k, stampBase64, logoBase64)).join("");
 
     const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head>
 <meta charset="UTF-8"><title>كشف الدرجات — ${profile?.full_name || ""}</title>
 <link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Amiri',serif;color:#111;background:#fff;font-size:12px}
-.page{padding:18px 24px;position:relative;page-break-after:always}
+body{font-family:'Amiri',serif;color:#111;background:#fdfcf8;font-size:12px}
+.page{padding:0 0 18px;position:relative;page-break-after:always;background:#fdfcf8}
 .page:last-child{page-break-after:auto}
 .watermark{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);
-  font-size:60px;font-weight:900;color:rgba(15,45,31,.06);z-index:-1;white-space:nowrap;font-family:Arial}
-.page-header{text-align:center;border-bottom:3px double #0f2d1f;padding-bottom:10px;margin-bottom:10px}
-.page-header .ar{font-size:22px;font-weight:700;color:#0f2d1f}
-.page-header .en{font-size:14px;color:#1a4731;letter-spacing:2px;margin-top:2px}
-.title-box{border:2.5px solid #0f2d1f;border-radius:8px;padding:8px 20px;margin:10px auto;
-  width:fit-content;font-weight:700;font-size:15px;text-align:center;color:#0f2d1f;display:flex;gap:16px}
+  font-size:60px;font-weight:900;color:rgba(15,45,31,.05);z-index:0;white-space:nowrap;font-family:Arial}
+.brand-header{display:flex;align-items:center;justify-content:center;gap:16px;
+  background:linear-gradient(120deg,#0f2d1f 0%,#1a4731 55%,#0f2d1f 100%);
+  padding:16px 20px;border-bottom:4px solid #c9a84c;position:relative;z-index:1}
+.brand-header img{width:56px;height:56px;object-fit:contain;filter:drop-shadow(0 1px 2px rgba(0,0,0,.3))}
+.brand-header .brand-text{text-align:center}
+.brand-header .ar{font-size:24px;font-weight:700;color:#f5e9c8}
+.brand-header .en{font-size:13px;color:#c9a84c;letter-spacing:3px;margin-top:2px}
+.page-inner{padding:0 24px}
+.title-box{border:2px solid #c9a84c;border-radius:8px;padding:8px 20px;margin:14px auto 10px;
+  width:fit-content;font-weight:700;font-size:15px;text-align:center;color:#0f2d1f;display:flex;gap:16px;
+  background:linear-gradient(180deg,#fbf6e8,#fff)}
 .info-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px}
 .info-field{display:flex;align-items:baseline;gap:6px}
 .info-field label{font-weight:700;font-size:12px;white-space:nowrap;color:#374151;min-width:90px}
 .info-field .val{flex:1;border-bottom:1.5px solid #374151;font-size:12px;text-align:right;padding:0 4px 2px}
 table.main{width:100%;border-collapse:collapse;margin:14px 0 6px}
-table.main th,table.main td{border:1px solid #d1d5db;padding:6px 8px;text-align:center;font-size:12px;vertical-align:middle}
-table.main th{background:#f0f4f0;font-weight:800}
+table.main th,table.main td{border:1px solid #d9dfd9;padding:7px 8px;text-align:center;font-size:12px;vertical-align:middle}
+table.main th{background:#0f2d1f;color:#f5e9c8;font-weight:800;border-color:#0f2d1f}
+table.main tbody tr:nth-child(even){background:#f7faf7}
 .summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
 table.small{width:100%;border-collapse:collapse}
-table.small th,table.small td{border:1px solid #d1d5db;padding:5px 8px;text-align:center;font-size:11px}
-table.small th{background:#f0f4f0;font-weight:800}
+table.small th,table.small td{border:1px solid #d9dfd9;padding:5px 8px;text-align:center;font-size:11px}
+table.small th{background:#c9a84c;color:#0f2d1f;font-weight:800;border-color:#c9a84c}
 .legend{font-size:10px;color:#6b7280;margin-top:10px;line-height:1.7}
 .stamp-row{display:flex;justify-content:space-between;align-items:center;margin-top:18px}
 .stamp-row img{width:70px;height:70px;opacity:.82}
 .footer{text-align:center;margin-top:16px;font-size:10px;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:8px}
-@media print{.page{padding:10px 16px}@page{size:A4;margin:8mm}}
+@media print{.page-inner{padding:0 16px}@page{size:A4;margin:8mm}}
 </style></head><body>
 ${pagesHtml}
 <script>window.onload=function(){setTimeout(function(){window.print();},600);}</script>
@@ -259,7 +276,21 @@ ${pagesHtml}
   );
 
   return (
-    <div dir="rtl" className="container mx-auto px-4 py-6 max-w-4xl" style={{ fontFamily: "'Cairo',sans-serif" }}>
+    <div dir="rtl" style={{ fontFamily: "'Cairo',sans-serif" }}>
+      {/* Brand banner */}
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 14,
+        background: `linear-gradient(120deg, ${G} 0%, ${GM} 55%, ${G} 100%)`,
+        padding: "16px 20px", borderBottom: `4px solid ${GOLD}`,
+      }}>
+        <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 48, height: 48, objectFit: "contain" }} />
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "#f5e9c8", fontFamily: "'Amiri',serif" }}>أكاديمية التعليم</div>
+          <div style={{ fontSize: 11, color: GOLD, letterSpacing: 3, marginTop: 2 }}>TAHLEEM ACADEMY</div>
+        </div>
+      </div>
+
+      <div className="container mx-auto px-4 py-6 max-w-4xl">
       {/* Header */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -372,6 +403,7 @@ ${pagesHtml}
           </div>
         </>
       )}
+      </div>
     </div>
   );
 };
