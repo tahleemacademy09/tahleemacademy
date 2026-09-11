@@ -338,7 +338,17 @@ const ExamTaking = () => {
   useEffect(() => {
     const raf = requestAnimationFrame(runAutoFit);
     window.addEventListener("resize", runAutoFit);
-    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", runAutoFit); };
+    // The initial measurement can land before the Amiri/Cairo webfonts have
+    // swapped in — if that happens the reserved card height is based on
+    // fallback-font (shorter) text, and once the real font loads and the
+    // options reflow taller, overflow:hidden on the reserved box clips the
+    // tail of the card (the Next/Previous footer) right off. Re-fit once
+    // fonts are confirmed ready to catch that.
+    let cancelled = false;
+    if (typeof document !== "undefined" && (document as any).fonts?.ready) {
+      (document as any).fonts.ready.then(() => { if (!cancelled) runAutoFit(); });
+    }
+    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", runAutoFit); cancelled = true; };
   }, [currentIdx, runAutoFit]);
 
   const zoomBy = (delta: number) => setZoom(z => Math.min(1.5, Math.max(0.5, +(z + delta).toFixed(2))));
