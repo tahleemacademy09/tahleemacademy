@@ -85,6 +85,7 @@ interface ExamForm {
   tab_switch_limit: number; max_warnings: number;
   auto_submit_on_violation: boolean;
   screenshot_interval_seconds: number; idle_timeout_seconds: number;
+  screen_capture_interval_seconds: number;
   blur_detection: boolean; face_detection: boolean;
   timezone: string; term: string; session: string; max_review_views: number;
   type: "exam" | "test";
@@ -281,6 +282,7 @@ const ExamEditor = () => {
     tab_switch_limit: 3, max_warnings: 3,
     auto_submit_on_violation: false,
     screenshot_interval_seconds: 0, idle_timeout_seconds: 300,
+    screen_capture_interval_seconds: 5,
     blur_detection: false, face_detection: false,
     timezone: "UTC", term: "first", session: "2026/2027", max_review_views: 1,
     type: "exam", level: "", subject_id: "",
@@ -698,6 +700,7 @@ const ExamEditor = () => {
         tab_switch_limit: examForm.tab_switch_limit, max_warnings: examForm.max_warnings,
         auto_submit_on_violation: examForm.auto_submit_on_violation,
         screenshot_interval_seconds: examForm.screenshot_interval_seconds,
+        screen_capture_interval_seconds: examForm.screen_capture_interval_seconds,
         idle_timeout_seconds: examForm.idle_timeout_seconds,
         blur_detection: examForm.blur_detection, face_detection: examForm.face_detection,
         timezone: examForm.timezone, term: examForm.term, session: examForm.session, max_review_views: examForm.max_review_views,
@@ -783,6 +786,7 @@ const ExamEditor = () => {
           max_warnings: exam.max_warnings || 3,
           auto_submit_on_violation: exam.auto_submit_on_violation || false,
           screenshot_interval_seconds: exam.screenshot_interval_seconds || 0,
+          screen_capture_interval_seconds: exam.screen_capture_interval_seconds ?? 5,
           idle_timeout_seconds: (exam as any).idle_timeout_seconds || 300,
           blur_detection: (exam as any).blur_detection || false,
           face_detection: (exam as any).face_detection || false,
@@ -1381,6 +1385,22 @@ const ExamEditor = () => {
                       <Input type="number" min={0} max={20}
                         value={examForm.tab_switch_limit}
                         onChange={e=>setExamForm({...examForm,tab_switch_limit: Math.max(0, Math.min(20, Number(e.target.value)||0))})}
+                        className="w-16 h-9 rounded-lg text-center" />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-100">
+                      <div><Label className="text-sm font-semibold">{t("Face snapshot interval","فاصل التقاط الوجه")}</Label><p className="text-[10px] text-slate-400 mt-0.5">{t("Roughly how often a webcam photo is captured, in seconds. 0 uses the default (~30s).","تقريبًا كل كم ثانية تُلتقط صورة من الكاميرا. 0 يستخدم الافتراضي (~30 ث).")}</p></div>
+                      <Input type="number" min={0} max={600}
+                        value={examForm.screenshot_interval_seconds}
+                        onChange={e=>setExamForm({...examForm,screenshot_interval_seconds: Math.max(0, Math.min(600, Number(e.target.value)||0))})}
+                        className="w-16 h-9 rounded-lg text-center" />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-100">
+                      <div><Label className="text-sm font-semibold">{t("Screen capture interval","فاصل التقاط الشاشة")}</Label><p className="text-[10px] text-slate-400 mt-0.5">{t("How often the exam screen itself is captured, in seconds. Also captured on every question change. 0 disables the timer.","كل كم ثانية تُلتقط شاشة الامتحان نفسها. تُلتقط أيضًا عند كل تغيير سؤال. 0 لتعطيل المؤقت.")}</p></div>
+                      <Input type="number" min={0} max={600}
+                        value={examForm.screen_capture_interval_seconds}
+                        onChange={e=>setExamForm({...examForm,screen_capture_interval_seconds: Math.max(0, Math.min(600, Number(e.target.value)||0))})}
                         className="w-16 h-9 rounded-lg text-center" />
                     </div>
                   </div>
