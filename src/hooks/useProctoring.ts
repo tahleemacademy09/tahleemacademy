@@ -33,6 +33,9 @@ interface ProctoringState {
   integrityScore: number; suspicionLevel: string; fullscreenActive: boolean;
   shouldAutoSubmit: boolean; cameraReady: boolean; faceDetected: boolean;
   audioMonitoring: boolean; lastWarningType: string | null;
+  /** Face is occupying too much of the frame — student is leaning in too
+   *  close. UI-only signal; never touches integrity score or strikes. */
+  tooClose: boolean;
 }
 
 const rndInterval = (minS: number, maxS: number) =>
@@ -50,6 +53,7 @@ export const useProctoring = (
     fullscreenActive: false, shouldAutoSubmit: false,
     cameraReady: false, faceDetected: true,
     audioMonitoring: false, lastWarningType: null,
+    tooClose: false,
   });
   const [recentViolations, setRecentViolations] = useState<
     Array<{ type: string; time: string; details: string }>
@@ -90,6 +94,12 @@ export const useProctoring = (
   // then log ONCE for that episode (paired with the *Active flags above).
   const lookingAwayStart      = useRef<number | null>(null);
   const eyesNotVisibleStart   = useRef<number | null>(null);
+  // Camera-too-close tracking — a framing reminder, not a violation: no
+  // integrity/strike impact, just drives a UI hint telling the student to
+  // move back so head+shoulders stay in frame. Same sustain/hysteresis
+  // pattern as looking-away above (avoids flicker on a brief lean-in).
+  const tooCloseStart   = useRef<number | null>(null);
+  const tooCloseActive  = useRef(false);
 
   // Hidden video element attached to DOM — prevents Android killing stream
   const videoElRef = useRef<HTMLVideoElement | null>(null);
@@ -304,6 +314,26 @@ export const useProctoring = (
             lookingAwayActive.current = false; // back on-center — next drift is a new episode
           }
 
+          // ── Too close to camera? ─────────────────────────────────────
+          // Face bounding box as a fraction of total frame area. A student
+          // sitting at a normal distance has a face that's a small fraction
+          // of the frame (head+shoulders both visible); leaning in close
+          // fills most of the frame with just the face. Hysteresis (enter
+          // above 0.42, only clear once below 0.32) avoids flicker right at
+          // the boundary; a 1.2s sustain avoids flagging a brief lean-in.
+          const faceAreaRatio = (fw * fh) / (frameW * frameH);
+          if (faceAreaRatio > 0.42) {
+            if (!tooCloseStart.current) tooCloseStart.current = Date.now();
+            if (Date.now() - tooCloseStart.current >= 1200 && !tooCloseActive.current) {
+              tooCloseActive.current = true;
+              setState(prev => ({ ...prev, tooClose: true }));
+            }
+          } else if (faceAreaRatio < 0.32 && tooCloseActive.current) {
+            tooCloseStart.current = null;
+            tooCloseActive.current = false;
+            setState(prev => ({ ...prev, tooClose: false }));
+          }
+
           // Eye region brightness analysis
           // Eyes are roughly in the top 40% of the face bounding box
           const eyeRegionY = Math.round((fy * H / frameH));
@@ -398,6 +428,11 @@ export const useProctoring = (
       eyesNotVisibleStart.current = null;
       lookingAwayActive.current = false;
       eyesNotVisibleActive.current = false;
+      if (tooCloseActive.current) {
+        tooCloseStart.current = null;
+        tooCloseActive.current = false;
+        setState(prev => ({ ...prev, tooClose: false }));
+      }
 
       if (absTime >= 1500 && absTime < 4000 && !faceWarnFired.current) {
         // 1.5s absent → immediate warning (logged once for this absence episode)
