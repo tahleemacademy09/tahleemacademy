@@ -326,6 +326,20 @@ const ExamTaking = () => {
     };
   }, [currentIdx]);
 
+  // Screen capture on question navigation (skip the very first question —
+  // there's no "move" yet, and proc isn't initialized on first render).
+  // Declared before useProctoring() below and kept in sync via the effect
+  // right after it, so this effect (which runs on every currentIdx change)
+  // always calls whatever the latest proc instance's captureScreenshot is.
+  const procRef = useRef<{ captureScreenshot?: (trigger?: string) => void }>({});
+  const prevIdxRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (prevIdxRef.current !== null && prevIdxRef.current !== currentIdx && procRef.current?.captureScreenshot) {
+      procRef.current.captureScreenshot("question_change");
+    }
+    prevIdxRef.current = currentIdx;
+  }, [currentIdx]);
+
   const procEnabled = exam?.proctoring_enabled === true;
   const proc = useProctoring({
     attemptId: attemptId || "", userId: user?.id || "",
@@ -336,9 +350,12 @@ const ExamTaking = () => {
     max_warnings: exam?.max_warnings,
     auto_submit_on_violation: exam?.auto_submit_on_violation,
     screenshot_interval_seconds: exam?.screenshot_interval_seconds,
+    screen_capture_interval_seconds: exam?.screen_capture_interval_seconds ?? 5,
     webcam_required: exam?.webcam_required,
     record_audio: exam?.record_audio,
   }, procEnabled && !submitted && !loading, () => { if (!submittedRef.current) submitRef.current(); });
+
+  useEffect(() => { procRef.current = proc; }, [proc]);
 
   useEffect(() => {
     if (proc.cameraReady && (proc as any).getStream) {
