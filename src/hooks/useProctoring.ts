@@ -433,7 +433,12 @@ export const useProctoring = (
     try {
       if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: isMobile ? 320 : 640 }, height: { ideal: isMobile ? 240 : 480 } },
+        video: {
+          facingMode: "user",
+          width: { ideal: isMobile ? 480 : 640 },
+          height: { ideal: isMobile ? 640 : 480 },
+          aspectRatio: { ideal: isMobile ? 3 / 4 : 4 / 3 },
+        },
       });
       streamRef.current = stream;
       const video = videoElRef.current;
