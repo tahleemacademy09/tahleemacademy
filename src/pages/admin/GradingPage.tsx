@@ -120,8 +120,23 @@ const GradingPage = () => {
       supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
       supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
     ]);
-    const qs  = qRes.data || [];
-    const ans = aRes.data || [];
+    const bank = qRes.data || [];
+    const ans  = aRes.data || [];
+    // Exams that draw a random subset per attempt (question_group "name::pick=N")
+    // store the full bank in exam_questions, but a given attempt only ever sees
+    // the questions that were actually drawn for it — and there's no separate
+    // record of that draw, only the exam_answers rows it produced. For those
+    // exams, showing the whole bank here makes every question that simply
+    // wasn't drawn look like a missed/incorrect answer. So: if the bank uses
+    // grouped picks, only show (a) ungrouped questions (always presented to
+    // everyone) and (b) grouped questions that have an answer row for this
+    // attempt (i.e. were actually drawn). Exams with no grouping are shown
+    // in full, as before, so a genuinely skipped question still surfaces.
+    const usesGroupedPicks = bank.some((q: any) => q.question_group);
+    const answeredIds = new Set(ans.map((a: any) => a.question_id));
+    const qs = usesGroupedPicks
+      ? bank.filter((q: any) => !q.question_group || answeredIds.has(q.id))
+      : bank;
     setQuestions(qs); setAnswers(ans);
     if (!scoreRefs.current[attempt.id]) {
       const init: Record<number, number> = {};
