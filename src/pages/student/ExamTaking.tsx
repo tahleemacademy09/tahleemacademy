@@ -572,6 +572,28 @@ const ExamTaking = () => {
     return () => { disableExamPrivacyScreen(); };
   }, [loading, submitted]);
 
+  /* Persist answer rows. Uses a single upsert, but if the DB has no
+     (attempt_id, question_id) unique index the upsert errors out and every
+     answer would be silently lost — so fall back to a per-row
+     update-then-insert. Returns true when everything saved. */
+  const persistAnswers = async (rows: any[]): Promise<boolean> => {
+    if (!rows.length) return true;
+    const { error } = await supabase.from("exam_answers").upsert(rows, { onConflict: "attempt_id,question_id" });
+    if (!error) return true;
+    console.error("answer upsert failed, falling back to per-row save:", error);
+    let ok = true;
+    for (const row of rows) {
+      const { data: upd, error: ue } = await supabase.from("exam_answers")
+        .update(row).eq("attempt_id", row.attempt_id).eq("question_id", row.question_id).select("id");
+      if (ue) { ok = false; console.error("answer update failed:", ue); continue; }
+      if (!upd || upd.length === 0) {
+        const { error: ie } = await supabase.from("exam_answers").insert(row);
+        if (ie) { ok = false; console.error("answer insert failed:", ie); }
+      }
+    }
+    return ok;
+  };
+
   const saveAnswers = async (silent = false) => {
     if (!attemptId || submittedRef.current) return;
     if (!silent) setSaving(true);
@@ -582,14 +604,10 @@ const ExamTaking = () => {
       answer_data: { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 },
       is_flagged: ans.flagged,
     }));
-    if (rows.length) {
-      // Single upsert instead of a per-question select-then-insert/update loop —
-      // removes both the N+1 round trips and the race window where an overlapping
-      // auto-save/submit could silently drop an edit.
-      const { error } = await supabase.from("exam_answers").upsert(rows, { onConflict: "attempt_id,question_id" });
-      if (error) console.error("saveAnswers upsert failed:", error);
-    }
-    setLastSaved(new Date()); if (!silent) setSaving(false);
+    const ok = await persistAnswers(rows);
+    if (!ok && !silent) toast({ title: t("Could not save answers", "لم يتم حفظ الإجابات"), description: t("Check your connection — we'll keep retrying.", "تحقق من اتصالك — سنحاول مرة أخرى."), variant: "destructive" });
+    if (ok) setLastSaved(new Date());
+    if (!silent) setSaving(false);
   };
 
   const setAnswer = (qId: string, text: string, data?: any) => {
