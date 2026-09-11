@@ -161,6 +161,13 @@ export const useProctoring = (
       const scale = Math.min(1, 480 / Math.max(W, H));
       canvas.width = Math.round(W * scale); canvas.height = Math.round(H * scale);
       const ctx = canvas.getContext("2d"); if (!ctx) return;
+      // Mirror horizontally to match the selfie-style preview the student saw
+      // during PreExamVerification (scaleX(-1)) and every other local camera
+      // view in the app — the raw video frame is unmirrored, so without this
+      // the uploaded snapshot comes out laterally flipped vs. what the
+      // student actually saw of themselves.
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       // Guard against uploading a pitch-black frame from an OS-suspended
       // camera (readyState still "live" but no real frames decoding — see
