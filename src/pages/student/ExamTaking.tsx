@@ -685,7 +685,7 @@ const ExamTaking = () => {
         <ProctoringOverlay cameraReady={proc.cameraReady} faceDetected={proc.faceDetected}
           integrityScore={proc.integrityScore} suspicionLevel={proc.suspicionLevel}
           strikes={proc.strikes} maxStrikes={proc.maxStrikes} violations={proc.violations}
-          lastWarningType={proc.lastWarningType} audioMonitoring={proc.audioMonitoring}
+          lastWarningType={proc.lastWarningType} tooClose={(proc as any).tooClose} audioMonitoring={proc.audioMonitoring}
           recentViolations={(proc as any).recentViolations} getStream={(proc as any).getStream}
           attemptId={attemptId || ""} onPointDeduction={handlePointDeduction} />
       )}
@@ -786,7 +786,7 @@ const ExamTaking = () => {
         <ProctoringOverlay cameraReady={proc.cameraReady} faceDetected={proc.faceDetected}
           integrityScore={proc.integrityScore} suspicionLevel={proc.suspicionLevel}
           strikes={proc.strikes} maxStrikes={proc.maxStrikes} violations={proc.violations}
-          lastWarningType={proc.lastWarningType} audioMonitoring={proc.audioMonitoring}
+          lastWarningType={proc.lastWarningType} tooClose={(proc as any).tooClose} audioMonitoring={proc.audioMonitoring}
           recentViolations={(proc as any).recentViolations} getStream={(proc as any).getStream}
           attemptId={attemptId || ""} onPointDeduction={handlePointDeduction} />
       )}

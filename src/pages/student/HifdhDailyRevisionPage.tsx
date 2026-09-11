@@ -3059,6 +3059,7 @@ function SessionOverlay({ assignment, userId, todayPages, onClose, todayLog }: S
                 maxStrikes={procState.maxStrikes}
                 violations={procState.violations}
                 lastWarningType={procState.lastWarningType}
+                tooClose={procState.tooClose}
                 audioMonitoring={procState.audioMonitoring}
                 recentViolations={procState.recentViolations}
                 getStream={procState.getStream}
