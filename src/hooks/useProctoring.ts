@@ -237,6 +237,27 @@ export const useProctoring = (
       const canvas = await html2canvas(target, {
         useCORS: true, logging: false, backgroundColor: "#ffffff",
         scale: Math.min(1, 1000 / target.clientWidth || 1),
+        onclone: (clonedDoc) => {
+          // html2canvas doesn't support the CSS `zoom` property: it paints
+          // an element's background/box at the zoomed size but measures its
+          // children at their native size, producing a solid color block
+          // with overflowing, overlapping content (exactly what shows up
+          // around the exam question card, which uses zoom:0.8). Convert
+          // any inline zoom on the CLONE only into an equivalent transform,
+          // which html2canvas does handle correctly.
+          clonedDoc.querySelectorAll<HTMLElement>("*").forEach(el => {
+            const style = el.style as any;
+            const z = style.zoom || (getComputedStyle(el) as any).zoom;
+            if (z && z !== "1" && z !== "normal") {
+              const factor = parseFloat(z);
+              if (!isNaN(factor)) {
+                style.zoom = "1";
+                el.style.transform = `scale(${factor})`;
+                el.style.transformOrigin = "top left";
+              }
+            }
+          });
+        },
       });
       const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, "image/jpeg", 0.6));
       if (!blob || blob.size < 500) return;
