@@ -55,8 +55,8 @@ const toArabicNum = (n: number | string) =>
   String(n).replace(/[0-9]/g, d => "٠١٢٣٤٥٦٧٨٩"[parseInt(d)]);
 
 // ── Animated CGPA Ring ─────────────────────────────────────────────
-const CGPARing = ({ cgpa }: { cgpa: number }) => {
-  const r = 54, circ = 2 * Math.PI * r;
+const CGPARing = ({ cgpa, size = 140 }: { cgpa: number; size?: number }) => {
+  const r = size * 0.386, circ = 2 * Math.PI * r;
   const [dash, setDash] = useState(0);
   useEffect(() => {
     const timer = setTimeout(() => setDash((cgpa / 4) * circ), 200);
@@ -64,18 +64,19 @@ const CGPARing = ({ cgpa }: { cgpa: number }) => {
   }, [cgpa, circ]);
   const color = cgpa >= 3.5 ? "#22c55e" : cgpa >= 2.0 ? GOLD : "#ef4444";
   const grade = getLetterGrade((cgpa / 4) * 100);
+  const strokeW = size * 0.086, big = size * 0.2, small = size * 0.071, letter = size * 0.114;
   return (
-    <div style={{ position:"relative", width:140, height:140, margin:"0 auto" }}>
-      <svg width={140} height={140} style={{ transform:"rotate(-90deg)" }}>
-        <circle cx={70} cy={70} r={r} fill="none" stroke="#f0f4f8" strokeWidth={12} />
-        <circle cx={70} cy={70} r={r} fill="none" stroke={color} strokeWidth={12}
+    <div style={{ position:"relative", width:size, height:size, margin:"0 auto", flexShrink: 0 }}>
+      <svg width={size} height={size} style={{ transform:"rotate(-90deg)" }}>
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#f0f4f8" strokeWidth={strokeW} />
+        <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={color} strokeWidth={strokeW}
           strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
           style={{ transition:"stroke-dasharray 1.4s cubic-bezier(.4,0,.2,1)" }} />
       </svg>
       <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
-        <div style={{ fontSize:28, fontWeight:900, color:G, lineHeight:1 }}>{cgpa.toFixed(2)}</div>
-        <div style={{ fontSize:10, color:"#9ca3af", marginTop:2 }}>/ 4.00</div>
-        <div style={{ fontSize:16, fontWeight:900, color, marginTop:2 }}>{grade.letter}</div>
+        <div style={{ fontSize:big, fontWeight:900, color:G, lineHeight:1 }}>{cgpa.toFixed(2)}</div>
+        <div style={{ fontSize:small, color:"#9ca3af", marginTop:2 }}>/ 4.00</div>
+        <div style={{ fontSize:letter, fontWeight:900, color, marginTop:2 }}>{grade.letter}</div>
       </div>
     </div>
   );
@@ -438,32 +439,32 @@ ${term3.length>0 ? buildTermSection(term3,"الفترة الثالثة","Third T
   );
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-5xl">
+    <div className="container mx-auto px-3 py-3 max-w-5xl">
       <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}`}</style>
 
       {/* Header */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="text-3xl font-bold" style={{ color: G }}>{t("Academic Transcript","السجل الأكاديمي")}</h1>
-          <p className="text-sm text-muted-foreground mt-1">
+          <h1 className="text-xl font-bold" style={{ color: G }}>{t("Academic Transcript","السجل الأكاديمي")}</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
             {t("Your complete academic record","سجلك الأكاديمي الكامل")}
             {" · "}{exams.length} {t("exams","امتحانات")}
           </p>
         </div>
-        <Button onClick={downloadPDF} className="gap-2" style={{ background: G }}>
-          <Download className="h-4 w-4" />
+        <Button onClick={downloadPDF} size="sm" className="gap-1.5" style={{ background: G }}>
+          <Download className="h-3.5 w-3.5" />
           {t("Download PDF","تحميل PDF")}
         </Button>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4 mb-6" style={{ animation:"fadeUp .4s ease" }}>
+      <div className="grid gap-2 md:grid-cols-4 mb-3" style={{ animation:"fadeUp .4s ease" }}>
         {/* CGPA Ring */}
-        <div className="bg-white rounded-2xl shadow-sm border p-6 flex flex-col items-center gap-4 md:col-span-1">
-          <CGPARing cgpa={cgpa} />
+        <div className="bg-white rounded-2xl shadow-sm border p-3 flex flex-row md:flex-col items-center gap-3 md:gap-2 md:col-span-1">
+          <CGPARing cgpa={cgpa} size={84} />
           <div className="text-center">
-            <div className="font-bold text-sm" style={{ color: G }}>{t("Cumulative GPA","المعدل التراكمي")}</div>
-            <span className="inline-block mt-2 px-3 py-1 rounded-full text-xs font-bold"
+            <div className="font-bold text-xs" style={{ color: G }}>{t("Cumulative GPA","المعدل التراكمي")}</div>
+            <span className="inline-block mt-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
               style={{ background: cgpaGrade.bg, color: cgpaGrade.color }}>
               {language==="ar" ? statusAr : status}
             </span>
@@ -471,17 +472,17 @@ ${term3.length>0 ? buildTermSection(term3,"الفترة الثالثة","Third T
         </div>
 
         {/* Stats */}
-        <div className="md:col-span-3 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="md:col-span-3 grid grid-cols-4 gap-2">
           {[
-            { icon:<BookOpen className="h-5 w-5"/>,    label:t("Total Exams","الامتحانات"), value:exams.length,                              color:G     },
-            { icon:<CheckCircle className="h-5 w-5"/>, label:t("Passed","ناجح"),            value:exams.filter(e=>e.passed).length,          color:"#22c55e" },
-            { icon:<XCircle className="h-5 w-5"/>,    label:t("Failed","راسب"),             value:exams.filter(e=>!e.passed).length,         color:"#ef4444" },
-            { icon:<Star className="h-5 w-5"/>,        label:t("Average Score","متوسط"),     value:`${avgScore.toFixed(1)}%`,                 color:GOLD  },
+            { icon:<BookOpen className="h-4 w-4"/>,    label:t("Total Exams","الامتحانات"), value:exams.length,                              color:G     },
+            { icon:<CheckCircle className="h-4 w-4"/>, label:t("Passed","ناجح"),            value:exams.filter(e=>e.passed).length,          color:"#22c55e" },
+            { icon:<XCircle className="h-4 w-4"/>,    label:t("Failed","راسب"),             value:exams.filter(e=>!e.passed).length,         color:"#ef4444" },
+            { icon:<Star className="h-4 w-4"/>,        label:t("Average Score","متوسط"),     value:`${avgScore.toFixed(1)}%`,                 color:GOLD  },
           ].map((s,i) => (
-            <div key={i} className="bg-white rounded-2xl shadow-sm border p-5 flex flex-col gap-2">
+            <div key={i} className="bg-white rounded-2xl shadow-sm border p-2 flex flex-col gap-1 items-center text-center">
               <div style={{ color:s.color }}>{s.icon}</div>
-              <div style={{ fontSize:30, fontWeight:900, color:s.color, lineHeight:1 }}>{s.value}</div>
-              <div className="text-xs text-muted-foreground">{s.label}</div>
+              <div style={{ fontSize:18, fontWeight:900, color:s.color, lineHeight:1 }}>{s.value}</div>
+              <div className="text-[9px] text-muted-foreground leading-tight">{s.label}</div>
             </div>
           ))}
         </div>
@@ -489,27 +490,27 @@ ${term3.length>0 ? buildTermSection(term3,"الفترة الثالثة","Third T
 
       {/* Best/Worst Subject Banner */}
       {(bestSubject || worstSubject) && (
-        <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="grid grid-cols-2 gap-2 mb-3">
           {bestSubject && (
-            <div className="bg-white rounded-2xl shadow-sm border p-4" style={{ borderLeft:`4px solid #22c55e` }}>
-              <div className="flex items-center gap-2 mb-2">
-                <Trophy className="h-4 w-4" style={{ color:"#22c55e" }} />
-                <span className="text-xs font-bold" style={{ color:"#22c55e" }}>Best Subject</span>
+            <div className="bg-white rounded-2xl shadow-sm border p-2.5" style={{ borderLeft:`4px solid #22c55e` }}>
+              <div className="flex items-center gap-1.5 mb-1">
+                <Trophy className="h-3.5 w-3.5" style={{ color:"#22c55e" }} />
+                <span className="text-[10px] font-bold" style={{ color:"#22c55e" }}>Best Subject</span>
               </div>
-              <div className="font-bold text-sm" style={{ color:G }}>{bestSubject.title}</div>
-              <div className="text-2xl font-black mt-1" style={{ color:"#22c55e" }}>{bestSubject.total}%</div>
-              <div className="text-xs text-muted-foreground">{bestSubject.grade.label}</div>
+              <div className="font-bold text-xs truncate" style={{ color:G }}>{bestSubject.title}</div>
+              <div className="text-lg font-black mt-0.5" style={{ color:"#22c55e" }}>{bestSubject.total}%</div>
+              <div className="text-[10px] text-muted-foreground">{bestSubject.grade.label}</div>
             </div>
           )}
           {worstSubject && (
-            <div className="bg-white rounded-2xl shadow-sm border p-4" style={{ borderLeft:`4px solid ${worstSubject.passed?"#ea580c":"#ef4444"}` }}>
-              <div className="flex items-center gap-2 mb-2">
-                <TrendingUp className="h-4 w-4" style={{ color:"#ea580c" }} />
-                <span className="text-xs font-bold" style={{ color:"#ea580c" }}>Needs Attention</span>
+            <div className="bg-white rounded-2xl shadow-sm border p-2.5" style={{ borderLeft:`4px solid ${worstSubject.passed?"#ea580c":"#ef4444"}` }}>
+              <div className="flex items-center gap-1.5 mb-1">
+                <TrendingUp className="h-3.5 w-3.5" style={{ color:"#ea580c" }} />
+                <span className="text-[10px] font-bold" style={{ color:"#ea580c" }}>Needs Attention</span>
               </div>
-              <div className="font-bold text-sm" style={{ color:G }}>{worstSubject.title}</div>
-              <div className="text-2xl font-black mt-1" style={{ color: worstSubject.passed ? "#ea580c" : "#ef4444" }}>{worstSubject.total}%</div>
-              <div className="text-xs text-muted-foreground">{worstSubject.grade.label}</div>
+              <div className="font-bold text-xs truncate" style={{ color:G }}>{worstSubject.title}</div>
+              <div className="text-lg font-black mt-0.5" style={{ color: worstSubject.passed ? "#ea580c" : "#ef4444" }}>{worstSubject.total}%</div>
+              <div className="text-[10px] text-muted-foreground">{worstSubject.grade.label}</div>
             </div>
           )}
         </div>
