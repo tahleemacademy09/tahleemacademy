@@ -190,10 +190,11 @@ const ReportCard = () => {
 <div class="page">
 <div class="watermark">TAHLEEM ACADEMY</div>
 <div class="header-bar">
-  <img src="${logoSrc}" alt="Tahleem Academy" class="header-logo" />
+  <div class="header-spacer"></div>
+  <img src="${logoSrc}" alt="Tahleem Academy" class="header-logo-center" />
   <div class="header-title">
     <div class="header-ar">كشف الدرجات الفصلي</div>
-    <div class="header-en">TAHLEEM ACADEMY</div>
+    <div class="header-en">Term Report Card</div>
   </div>
 </div>
 <div class="page-inner">
@@ -309,11 +310,12 @@ body{font-family:'Amiri',serif;color:#1a1a1a;background:#fdfcf8;font-size:12.5px
 .page:last-child{page-break-after:auto}
 .watermark{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);
   font-size:60px;font-weight:900;color:rgba(15,45,31,.05);z-index:0;white-space:nowrap;font-family:Arial}
-.header-bar{display:flex;direction:ltr;align-items:center;justify-content:space-between;gap:16px;padding:14px 26px;border-bottom:2px solid #0f2d1f;position:relative;z-index:1}
-.header-logo{height:64px;width:auto;flex-shrink:0}
-.header-title{direction:rtl;text-align:right}
-.header-title .header-ar{font-family:'Aref Ruqaa',serif;font-weight:700;font-size:22px;color:#0f2d1f;line-height:1.3}
-.header-title .header-en{font-weight:700;font-size:10.5px;color:#8a7434;letter-spacing:2.5px;text-transform:uppercase}
+.header-bar{display:grid;grid-template-columns:1fr auto 1fr;direction:ltr;align-items:center;gap:14px;padding:12px 26px;border-bottom:2px solid #0f2d1f;position:relative;z-index:1}
+.header-spacer{}
+.header-logo-center{height:74px;width:auto;justify-self:center}
+.header-title{direction:rtl;text-align:right;justify-self:end}
+.header-title .header-ar{font-family:'Aref Ruqaa',serif;font-weight:700;font-size:20px;color:#0f2d1f;line-height:1.3}
+.header-title .header-en{font-weight:700;font-size:10.5px;color:#8a7434;letter-spacing:2px;text-transform:uppercase;margin-top:2px}
 .page-inner{padding:0 24px;position:relative;z-index:1}
 .info-box{border:1px solid #d9dfd9;border-radius:8px;padding:8px 20px;margin:14px 0 16px;background:#fffdf7}
 .info-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;padding:7px 0}
@@ -365,12 +367,13 @@ ${pagesHtml}
 
   return (
     <div dir="rtl" style={{ fontFamily: "'Cairo',sans-serif" }}>
-      {/* Header bar — logo pinned left, title block pinned right */}
-      <div style={{ display: "flex", direction: "ltr", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "12px 24px", borderBottom: `2px solid ${G}`, background: "#fdfcf8" }}>
-        <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: 56, width: "auto" }} />
-        <div style={{ direction: "rtl", textAlign: "right" }}>
+      {/* Header bar — title on the right, logo centered */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", direction: "ltr", alignItems: "center", gap: 14, padding: "10px 24px", borderBottom: `2px solid ${G}`, background: "#fdfcf8" }}>
+        <div />
+        <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: 62, width: "auto", justifySelf: "center" }} />
+        <div style={{ direction: "rtl", textAlign: "right", justifySelf: "end" }}>
           <div style={{ fontFamily: "'Aref Ruqaa',serif", fontWeight: 700, fontSize: 20, color: G }}>كشف الدرجات الفصلي</div>
-          <div style={{ fontWeight: 700, fontSize: 10, color: "#8a7434", letterSpacing: 2, textTransform: "uppercase" }}>Tahleem Academy</div>
+          <div style={{ fontWeight: 700, fontSize: 10, color: "#8a7434", letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>Term Report Card</div>
         </div>
       </div>
 
