@@ -409,20 +409,29 @@ const ExamTaking = () => {
         setTabSw(ad.tab_switches || 0);
         logActivity(user.id, "exam_started", "exam_attempt", attemptId, { exam_id: ad.exam_id });
 
-        // Try RPC first, fall back to direct query if it fails
+        // Try RPC first, fall back to a direct query if it errors OR returns
+        // nothing. (supabase.rpc() resolves with { error } instead of throwing,
+        // so the old try/catch fallback never ran and students saw a blank exam.)
         let ql: any[] = [];
+        let rpcFailed = false;
         try {
-          const { data: qs } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
-          ql = qs || [];
-        } catch {
-          // RPC failed — fall back to direct query, applying the same
-          // question_group "name::pick=N" draw logic as the RPC so
-          // students never see the full question bank here either.
-          const { data: qs2 } = await supabase
+          const { data: qs, error: qe } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
+          if (qe) { rpcFailed = true; console.error("get_exam_questions_for_student failed:", qe); }
+          ql = (qs as any[]) || [];
+        } catch (rpcErr) {
+          rpcFailed = true;
+          console.error("get_exam_questions_for_student threw:", rpcErr);
+        }
+        if (rpcFailed || ql.length === 0) {
+          // Fall back to direct query, applying the same question_group
+          // "name::pick=N" draw logic as the RPC so students never see the
+          // full question bank here either.
+          const { data: qs2, error: qe2 } = await supabase
             .from("exam_questions")
             .select("*")
             .eq("exam_id", ad.exam_id)
             .order("sort_order");
+          if (qe2) console.error("exam_questions fallback failed:", qe2);
           const all = qs2 || [];
           const groups: Record<string, { pick: number; items: any[] }> = {};
           const ungrouped: any[] = [];
@@ -436,11 +445,11 @@ const ExamTaking = () => {
           });
           const picked: any[] = [...ungrouped];
           Object.values(groups).forEach(({ pick, items }) => {
-            const shuffled = [...items].sort(() => Math.random() - 0.5);
+            const shuffled = seededShuffle(items, `${user.id}:${ad.exam_id}`);
             picked.push(...shuffled.slice(0, pick));
           });
           picked.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-          ql = picked;
+          if (picked.length) ql = picked;
         }
         // FIX: refresh signed media_url for audio questions (signed URLs expire after 1h)
         ql = await Promise.all(ql.map(async (q: any) => {
