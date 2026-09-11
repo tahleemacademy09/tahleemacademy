@@ -11,6 +11,18 @@ import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../integrations/supabase/storageClient";
 import { logger } from "@/lib/logger";
 
+// Note: this captures the exam page's own rendered content (via html2canvas),
+// not the physical device screen. Mobile web/Capacitor has no API to grab
+// the OS-level screen without the user granting a MediaProjection-style
+// screen-recording permission (a system dialog + persistent notification),
+// which isn't practical to prompt for mid-exam. This is the closest
+// same-tab equivalent and needs no extra permission.
+let html2canvasPromise: Promise<typeof import("html2canvas").default> | null = null;
+const loadHtml2Canvas = () => {
+  if (!html2canvasPromise) html2canvasPromise = import("html2canvas").then(m => m.default);
+  return html2canvasPromise;
+};
+
 interface ProctoringConfig {
   attemptId: string; userId: string;
   proctoring_enabled?: boolean; fullscreen_required?: boolean;
@@ -26,6 +38,12 @@ interface ProctoringConfig {
    *  grid open (via presence), never continuously. Omit to keep snapshot-only
    *  behaviour (e.g. Hifdh sessions, which don't have an admin live grid). */
   examId?: string;
+  /** How often to capture the exam page itself, in seconds. Set 0/undefined
+   *  to disable the periodic timer (manual captureScreenshot() calls, e.g.
+   *  on question navigation, still work either way). Default 5. */
+  screen_capture_interval_seconds?: number;
+  /** CSS selector for the element to capture; defaults to the whole page. */
+  screenCaptureTargetSelector?: string;
 }
 
 interface ProctoringState {
@@ -71,6 +89,9 @@ export const useProctoring = (
   const cameraReadyRef  = useRef(false);
   const enabledRef      = useRef(enabled);
   const snapshotTimer   = useRef<ReturnType<typeof setTimeout>>();
+  const screenTimer     = useRef<ReturnType<typeof setInterval>>();
+  const screenShotCount = useRef(0);
+  const screenCapBusy   = useRef(false);
   const faceDetectIv    = useRef<ReturnType<typeof setInterval>>();
   const tabAwayStart    = useRef<number | null>(null);
   const reconnecting    = useRef(false);
@@ -199,6 +220,53 @@ export const useProctoring = (
       });
     } catch (_) {}
   }, [config.attemptId, config.userId, uploadWithRetry]);
+
+  // ── Page/"screen" capture — snapshots the exam DOM itself, not the
+  // physical device screen (see note near the html2canvas import above).
+  // Called on a timer and manually (e.g. on question navigation).
+  const captureScreenshot = useCallback(async (trigger = "periodic") => {
+    if (!config.attemptId || !config.userId) return;
+    if (screenCapBusy.current) return; // don't overlap captures
+    screenCapBusy.current = true;
+    try {
+      const target = (config.screenCaptureTargetSelector
+        ? document.querySelector(config.screenCaptureTargetSelector)
+        : document.body) as HTMLElement | null;
+      if (!target) return;
+      const html2canvas = await loadHtml2Canvas();
+      const canvas = await html2canvas(target, {
+        useCORS: true, logging: false, backgroundColor: "#ffffff",
+        scale: Math.min(1, 1000 / target.clientWidth || 1),
+      });
+      const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, "image/jpeg", 0.6));
+      if (!blob || blob.size < 500) return;
+      const ts = Date.now();
+      const path = `${config.userId}/${config.attemptId}/screen_${trigger}_${ts}.jpg`;
+      const ok = await uploadWithRetry(path, blob);
+      if (!ok) return;
+      screenShotCount.current++;
+      await supabase.from("proctoring_media").insert({
+        attempt_id: config.attemptId, file_type: "screen_capture",
+        file_url: path, file_name: `screen_${trigger}_${ts}.jpg`,
+        file_size: blob.size,
+        metadata: { timestamp: new Date(ts).toISOString(), type: trigger, seq: screenShotCount.current },
+      });
+    } catch (_) {
+      // html2canvas can fail on cross-origin content, mid-navigation DOM
+      // swaps, etc. — never let a screen capture failure affect the exam.
+    } finally {
+      screenCapBusy.current = false;
+    }
+  }, [config.attemptId, config.userId, config.screenCaptureTargetSelector, uploadWithRetry]);
+
+  // Periodic screen capture — independent of the face-snapshot timer above.
+  useEffect(() => {
+    if (!enabled || !config.attemptId) return;
+    const interval = config.screen_capture_interval_seconds;
+    if (!interval || interval <= 0) return;
+    screenTimer.current = setInterval(() => captureScreenshot("periodic"), interval * 1000);
+    return () => clearInterval(screenTimer.current);
+  }, [enabled, config.attemptId, config.screen_capture_interval_seconds, captureScreenshot]);
 
   const logViolation = useCallback(async (type: string, severity: number, details?: string) => {
     if (!config.attemptId) return;
@@ -944,5 +1012,5 @@ export const useProctoring = (
 
   const getStream = useCallback(() => streamRef.current, []);
 
-  return { ...state, recentViolations, logViolation, sessionId: sessionId.current, getStream };
+  return { ...state, recentViolations, logViolation, sessionId: sessionId.current, getStream, captureScreenshot };
 };
