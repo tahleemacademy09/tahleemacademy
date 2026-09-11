@@ -393,12 +393,16 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     });
   };
 
-  // Small red asterisk/dot rendered inside nav items with unseen items
+  // Gold asterisk rendered inside nav items with unseen items — matches
+  // the "*" unread marker used on the Support Tickets inbox list.
   const UnreadDot = () => (
     <span
       aria-label="unread"
-      className="ms-auto inline-flex h-2 w-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.25)] animate-pulse"
-    />
+      className="ms-auto inline-flex shrink-0 leading-none"
+      style={{ color: "#c9a84c", fontWeight: 900, fontSize: 16, lineHeight: 1 }}
+    >
+      *
+    </span>
   );
 
   // ── Detect whether a string is predominantly Arabic ──────────
