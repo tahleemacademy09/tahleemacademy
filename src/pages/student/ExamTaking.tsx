@@ -409,20 +409,29 @@ const ExamTaking = () => {
         setTabSw(ad.tab_switches || 0);
         logActivity(user.id, "exam_started", "exam_attempt", attemptId, { exam_id: ad.exam_id });
 
-        // Try RPC first, fall back to direct query if it fails
+        // Try RPC first, fall back to a direct query if it errors OR returns
+        // nothing. (supabase.rpc() resolves with { error } instead of throwing,
+        // so the old try/catch fallback never ran and students saw a blank exam.)
         let ql: any[] = [];
+        let rpcFailed = false;
         try {
-          const { data: qs } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
-          ql = qs || [];
-        } catch {
-          // RPC failed — fall back to direct query, applying the same
-          // question_group "name::pick=N" draw logic as the RPC so
-          // students never see the full question bank here either.
-          const { data: qs2 } = await supabase
+          const { data: qs, error: qe } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
+          if (qe) { rpcFailed = true; console.error("get_exam_questions_for_student failed:", qe); }
+          ql = (qs as any[]) || [];
+        } catch (rpcErr) {
+          rpcFailed = true;
+          console.error("get_exam_questions_for_student threw:", rpcErr);
+        }
+        if (rpcFailed || ql.length === 0) {
+          // Fall back to direct query, applying the same question_group
+          // "name::pick=N" draw logic as the RPC so students never see the
+          // full question bank here either.
+          const { data: qs2, error: qe2 } = await supabase
             .from("exam_questions")
             .select("*")
             .eq("exam_id", ad.exam_id)
             .order("sort_order");
+          if (qe2) console.error("exam_questions fallback failed:", qe2);
           const all = qs2 || [];
           const groups: Record<string, { pick: number; items: any[] }> = {};
           const ungrouped: any[] = [];
@@ -436,11 +445,11 @@ const ExamTaking = () => {
           });
           const picked: any[] = [...ungrouped];
           Object.values(groups).forEach(({ pick, items }) => {
-            const shuffled = [...items].sort(() => Math.random() - 0.5);
+            const shuffled = seededShuffle(items, `${user.id}:${ad.exam_id}`);
             picked.push(...shuffled.slice(0, pick));
           });
           picked.sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-          ql = picked;
+          if (picked.length) ql = picked;
         }
         // FIX: refresh signed media_url for audio questions (signed URLs expire after 1h)
         ql = await Promise.all(ql.map(async (q: any) => {
@@ -563,6 +572,28 @@ const ExamTaking = () => {
     return () => { disableExamPrivacyScreen(); };
   }, [loading, submitted]);
 
+  /* Persist answer rows. Uses a single upsert, but if the DB has no
+     (attempt_id, question_id) unique index the upsert errors out and every
+     answer would be silently lost — so fall back to a per-row
+     update-then-insert. Returns true when everything saved. */
+  const persistAnswers = async (rows: any[]): Promise<boolean> => {
+    if (!rows.length) return true;
+    const { error } = await supabase.from("exam_answers").upsert(rows, { onConflict: "attempt_id,question_id" });
+    if (!error) return true;
+    console.error("answer upsert failed, falling back to per-row save:", error);
+    let ok = true;
+    for (const row of rows) {
+      const { data: upd, error: ue } = await supabase.from("exam_answers")
+        .update(row).eq("attempt_id", row.attempt_id).eq("question_id", row.question_id).select("id");
+      if (ue) { ok = false; console.error("answer update failed:", ue); continue; }
+      if (!upd || upd.length === 0) {
+        const { error: ie } = await supabase.from("exam_answers").insert(row);
+        if (ie) { ok = false; console.error("answer insert failed:", ie); }
+      }
+    }
+    return ok;
+  };
+
   const saveAnswers = async (silent = false) => {
     if (!attemptId || submittedRef.current) return;
     if (!silent) setSaving(true);
@@ -573,14 +604,10 @@ const ExamTaking = () => {
       answer_data: { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 },
       is_flagged: ans.flagged,
     }));
-    if (rows.length) {
-      // Single upsert instead of a per-question select-then-insert/update loop —
-      // removes both the N+1 round trips and the race window where an overlapping
-      // auto-save/submit could silently drop an edit.
-      const { error } = await supabase.from("exam_answers").upsert(rows, { onConflict: "attempt_id,question_id" });
-      if (error) console.error("saveAnswers upsert failed:", error);
-    }
-    setLastSaved(new Date()); if (!silent) setSaving(false);
+    const ok = await persistAnswers(rows);
+    if (!ok && !silent) toast({ title: t("Could not save answers", "لم يتم حفظ الإجابات"), description: t("Check your connection — we'll keep retrying.", "تحقق من اتصالك — سنحاول مرة أخرى."), variant: "destructive" });
+    if (ok) setLastSaved(new Date());
+    if (!silent) setSaving(false);
   };
 
   const setAnswer = (qId: string, text: string, data?: any) => {
@@ -609,18 +636,26 @@ const ExamTaking = () => {
           answer_data: ans.data ? { ...ans.data, confidence: ans.confidence, timeSpent: timePerQuestion[qId] || 0 } : null,
           is_flagged: ans.flagged || false,
         }));
-      if (rows.length) {
-        const { error: saveErr } = await supabase.from("exam_answers").upsert(rows, { onConflict: "attempt_id,question_id" });
-        if (saveErr) console.error("Final answer save failed:", saveErr);
+      // Never grade before the answers are safely stored — grading a partially
+      // saved attempt would score the student zero on saved-but-missing answers.
+      let saved = await persistAnswers(rows);
+      if (!saved) saved = await persistAnswers(rows);
+      if (!saved) {
+        toast({ title: t("Could not save your answers", "لم يتم حفظ إجاباتك"), description: t("Your exam was NOT submitted. Check your connection and try again.", "لم يتم تقديم امتحانك. تحقق من اتصالك وحاول مرة أخرى."), variant: "destructive" });
+        submittedRef.current = false; setSubmitting(false); return;
       }
     }
     const { data: gr, error: ge } = await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
-    if (ge) { toast({ title: "❌ Submission failed.", variant: "destructive" }); submittedRef.current = false; setSubmitting(false); return; }
-    const r = gr as any;
-    setSR({ status: r.status, score: r.score, totalPoints: r.total_points, percentage: r.percentage, passed: r.passed });
-    setSubmitted(true); setSubmitting(false); toast({ title: "✅ Exam Submitted!" });
-    if (user) logActivity(user.id, "exam_submitted", "exam_attempt", attemptId!, { score: r.score, percentage: Math.round(r.percentage) });
-  }, [attemptId, user]);
+    if (ge || !gr) {
+      console.error("grade_exam_attempt failed:", ge);
+      toast({ title: t("Submission failed", "فشل التقديم"), description: ge?.message || t("Please try again.", "يرجى المحاولة مرة أخرى."), variant: "destructive" });
+      submittedRef.current = false; setSubmitting(false); return;
+    }
+    const r = (Array.isArray(gr) ? gr[0] : gr) as any;
+    setSR({ status: r?.status || "submitted", score: r?.score, totalPoints: r?.total_points, percentage: r?.percentage, passed: r?.passed });
+    setSubmitted(true); setSubmitting(false); toast({ title: "✅ " + t("Exam Submitted!", "تم تقديم الامتحان!") });
+    if (user) logActivity(user.id, "exam_submitted", "exam_attempt", attemptId!, { score: r?.score, percentage: Math.round(r?.percentage || 0) });
+  }, [attemptId, user, timePerQuestion]);
 
   // Keep saveAnswersRef current so pagehide can call the latest version
   useEffect(() => { saveAnswersRef.current = saveAnswers; });
