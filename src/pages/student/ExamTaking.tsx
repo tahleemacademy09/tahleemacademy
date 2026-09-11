@@ -449,10 +449,16 @@ const ExamTaking = () => {
         setTabSw(ad.tab_switches || 0);
         logActivity(user.id, "exam_started", "exam_attempt", attemptId, { exam_id: ad.exam_id });
 
-        // Try RPC first, fall back to direct query if it fails
+        // Try RPC first, fall back to direct query if it fails.
+        // NOTE: supabase-js resolves RPC calls with { data, error } rather than
+        // rejecting the promise on a Postgres-side error (e.g. our RAISE
+        // EXCEPTION, or a column type mismatch) — so `error` must be checked
+        // and thrown explicitly, or a real RPC failure would silently produce
+        // an empty question list instead of falling back below.
         let ql: any[] = [];
         try {
-          const { data: qs } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
+          const { data: qs, error: qsErr } = await supabase.rpc("get_exam_questions_for_student", { _exam_id: ad.exam_id });
+          if (qsErr) throw qsErr;
           ql = qs || [];
         } catch {
           // RPC failed — fall back to direct query, applying the same
