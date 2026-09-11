@@ -194,7 +194,10 @@ const ReportCard = () => {
     <div class="header-ar">كشف الدرجات الفصلي</div>
     <div class="header-en">Term Report Card</div>
   </div>
-  <img src="${logoSrc}" alt="Tahleem Academy" class="header-logo-right" />
+  <div class="header-logo-wrap">
+    <img src="${logoSrc}" alt="Tahleem Academy" class="header-logo-right" />
+    <div class="header-logo-caption">TAHLEEM ACADEMY</div>
+  </div>
 </div>
 <div class="page-inner">
 <div class="info-box">
@@ -313,7 +316,9 @@ body{font-family:'Amiri',serif;color:#1a1a1a;background:#fdfcf8;font-size:12.5px
 .header-title{direction:rtl;text-align:right}
 .header-title .header-ar{font-family:'Aref Ruqaa',serif;font-weight:700;font-size:26px;color:#0f2d1f;line-height:1.3;white-space:nowrap}
 .header-title .header-en{font-weight:700;font-size:12px;color:#8a7434;letter-spacing:2px;text-transform:uppercase;margin-top:3px;white-space:nowrap}
+.header-logo-wrap{display:flex;flex-direction:column;align-items:center;gap:2px;flex-shrink:0}
 .header-logo-right{height:88px;width:auto;flex-shrink:0}
+.header-logo-caption{font-weight:700;font-size:11px;color:#8a7434;letter-spacing:1.5px;white-space:nowrap}
 .page-inner{padding:0 24px;position:relative;z-index:1}
 .info-box{border:1px solid #d9dfd9;border-radius:8px;padding:8px 20px;margin:14px 0 16px;background:#fffdf7}
 .info-row{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;padding:7px 0}
@@ -371,7 +376,10 @@ ${pagesHtml}
           <div style={{ fontFamily: "'Aref Ruqaa',serif", fontWeight: 700, fontSize: 26, color: G, whiteSpace: "nowrap" }}>كشف الدرجات الفصلي</div>
           <div style={{ fontWeight: 700, fontSize: 12, color: "#8a7434", letterSpacing: 2, textTransform: "uppercase", marginTop: 3, whiteSpace: "nowrap" }}>Term Report Card</div>
         </div>
-        <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: 88, width: "auto", flexShrink: 0 }} />
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
+          <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: 88, width: "auto", flexShrink: 0 }} />
+          <div style={{ fontWeight: 700, fontSize: 11, color: "#8a7434", letterSpacing: 1.5, whiteSpace: "nowrap" }}>TAHLEEM ACADEMY</div>
+        </div>
       </div>
 
       <div className="container mx-auto px-4 py-6 max-w-4xl">
