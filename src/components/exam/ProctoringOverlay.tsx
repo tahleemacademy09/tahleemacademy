@@ -16,6 +16,7 @@ interface Props {
   integrityScore: number; suspicionLevel: string;
   strikes: number; maxStrikes: number;
   violations: number; lastWarningType: string | null;
+  tooClose?: boolean;
   audioMonitoring: boolean; recentViolations: ViolationEntry[];
   getStream: () => MediaStream | null;
   attemptId: string;
@@ -101,6 +102,12 @@ const WARN: Record<string, {
     msg_ar:  "يبدو أنك مشتت أو غير مركز.",
     fix_en:  "Focus on your exam. Repeated distraction is recorded and may affect your score.",
     fix_ar:  "ركز على امتحانك. الإلهاء المتكرر يُسجَّل وقد يؤثر على درجتك." },
+  too_close:         { icon:"📏", sev:"warn", pts:0, autoFix:true,
+    title_en:"Too Close to Camera",          title_ar:"قريب جداً من الكاميرا",
+    msg_en:  "Your face is filling the frame — move back a bit.",
+    msg_ar:  "وجهك يملأ الإطار — ابتعد قليلاً.",
+    fix_en:  "Sit back so your head and shoulders are both visible.",
+    fix_ar:  "اجلس للخلف حتى يظهر رأسك وكتفاك معاً." },
   unusual_audio:     { icon:"🎙️", sev:"warn", pts:0,
     title_en:"Background Noise Detected",    title_ar:"ضوضاء في الخلفية",
     msg_en:  "Sustained background noise was detected.",
@@ -118,7 +125,7 @@ const SEV_THEME = {
 
 const ProctoringOverlay = ({
   cameraReady, faceDetected, integrityScore, suspicionLevel,
-  strikes, maxStrikes, violations, lastWarningType,
+  strikes, maxStrikes, violations, lastWarningType, tooClose,
   audioMonitoring, recentViolations, getStream,
   attemptId, onPointDeduction,
 }: Props) => {
@@ -158,7 +165,7 @@ const ProctoringOverlay = ({
       face_not_detected:2000, eyes_not_visible:3500, looking_away:3500,
       camera_covered:2500, webcam_disabled:2500, multiple_faces:5000,
       tab_switch:3000, dev_tools:3000, copy_paste:4000, right_click:6000,
-      fullscreen_exit:5000, unusual_audio:12000,
+      fullscreen_exit:5000, unusual_audio:12000, too_close:4000,
     };
     const now = Date.now();
     if (warnCooldown.current[type] && now - warnCooldown.current[type] < (COOL[type]||6000)) return;
@@ -180,7 +187,10 @@ const ProctoringOverlay = ({
     if (!cfg.autoFix) setTimeout(() => setBanners(prev => prev.filter(b => b.id !== id)), 5000);
     if (["face_not_detected","eyes_not_visible","looking_away","camera_covered"].includes(type)) setBorderAlert(true);
 
-    if (attemptId) {
+    // too_close is a pure framing reminder, not a proctoring event — it
+    // never touched integrity/strikes above, and shouldn't clutter the
+    // admin-facing logs either.
+    if (attemptId && type !== "too_close") {
       supabase.from("proctoring_logs" as any).insert({
         attempt_id: attemptId, violation_type: type, severity: cfg.sev,
         points_deducted: pts, detected_at: new Date().toISOString(),
@@ -189,6 +199,13 @@ const ProctoringOverlay = ({
   }, [onPointDeduction, attemptId]);
 
   useEffect(() => { if (lastWarningType) showBanner(lastWarningType); }, [lastWarningType, violations]);
+
+  // Too-close banner is driven directly off the tooClose flag (not
+  // lastWarningType/violations, since it never goes through logViolation).
+  useEffect(() => {
+    if (tooClose) showBanner("too_close");
+    else setBanners(p => p.filter(b => b.type !== "too_close"));
+  }, [tooClose, showBanner]);
 
   // Auto-dismiss face banners when face returns
   useEffect(() => {
@@ -351,6 +368,18 @@ const ProctoringOverlay = ({
           width:12,height:12,borderRadius:"50%",background:faceColor,
           border:"2px solid rgba(0,0,0,.4)",boxShadow:"0 0 0 2px rgba(255,255,255,.15)"}}/>
       )}
+
+      {/* Persistent framing reminder — no live self-view is shown (by
+          design), so this is the only guidance a student gets on distance.
+          Unlike the pills above, it never collapses to a dot. */}
+      <div style={{position:"fixed",bottom:8,left:"50%",transform:"translateX(-50%)",zIndex:290,
+        background:"rgba(0,0,0,.55)",backdropFilter:"blur(6px)",borderRadius:20,
+        padding:"4px 12px",fontSize:9,fontWeight:600,color:"rgba(255,255,255,.75)",
+        pointerEvents:"none",whiteSpace:"nowrap",letterSpacing:.2}}>
+        {isAr
+          ? "📏 ابقَ على بُعد ذراع من الكاميرا — لا تقترب منها كثيراً"
+          : "📏 Stay arm's length from the camera — don't lean in close"}
+      </div>
 
       <style>{`
         @keyframes procBannerIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
