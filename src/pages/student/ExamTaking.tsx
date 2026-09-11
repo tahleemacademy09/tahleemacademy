@@ -16,7 +16,7 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import {
   Clock, Flag, AlertTriangle, BookOpen, CheckCircle2,
   Lock, ChevronLeft, ChevronRight, Save, Eye, Grid, Send,
-  Zap, ThumbsUp, ThumbsDown, Minus, RotateCcw, Keyboard, Search
+  Zap, ThumbsUp, ThumbsDown, Minus, RotateCcw, Keyboard
 } from "lucide-react";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
@@ -296,62 +296,9 @@ const ExamTaking = () => {
   const [questionStartTime, setQuestionStartTime] = useState<Record<string, number>>({});
   const [timePerQuestion, setTimePerQuestion] = useState<Record<string, number>>({});
 
-  // ── Fit-to-screen zoom ──────────────────────────────────────────
-  // Default behaviour: shrink the question card so it (question + all
-  // answer options + nav buttons) fits within the visible area without
-  // scrolling. Manual +/- controls (magnifier) let the student zoom in
-  // when they want bigger text; "Fit" re-runs the auto-fit calculation.
-  //
-  // IMPORTANT: this measures the card's natural (unscaled, full-width)
-  // height ONCE per question, then applies a single scale — it does not
-  // keep watching the card with a ResizeObserver after that. An earlier
-  // version re-measured continuously while the card's own width was
-  // simultaneously changing to compensate for the scale, which fed back
-  // on itself (shrink → remeasure → reflow → shrink again) and showed up
-  // as a shaky, constantly-rearranging layout. One measurement per
-  // question avoids that.
-  const [zoom, setZoom] = useState(1);
-  const [fitTarget, setFitTarget] = useState(1);
-  const [naturalH, setNaturalH] = useState(0);
-  const [showZoomPanel, setShowZoomPanel] = useState(false);
-  const [isFitting, setIsFitting] = useState(false);
   const qScrollRef = useRef<HTMLDivElement>(null);
   const qCardRef = useRef<HTMLDivElement>(null);
-  const effectiveScale = zoom;
 
-  const runAutoFit = useCallback(() => {
-    setIsFitting(true); // hide the card while it snaps to full size for
-    setZoom(1);          // measurement — otherwise that reset paints as a
-    requestAnimationFrame(() => { // visible "blink" before it shrinks back.
-      const container = qScrollRef.current, card = qCardRef.current;
-      if (!container || !card) { setIsFitting(false); return; }
-      const h = card.scrollHeight;
-      const availH = container.clientHeight - 20;
-      const fit = h > availH && availH > 0 ? Math.max(0.55, availH / h) : 1;
-      setNaturalH(h);
-      setFitTarget(fit);
-      setZoom(fit);
-      setIsFitting(false);
-    });
-  }, []);
-
-  useEffect(() => {
-    const raf = requestAnimationFrame(runAutoFit);
-    window.addEventListener("resize", runAutoFit);
-    // The initial measurement can land before the Amiri/Cairo webfonts have
-    // swapped in — if that happens the reserved card height is based on
-    // fallback-font (shorter) text, and once the real font loads and the
-    // options reflow taller, overflow:hidden on the reserved box clips the
-    // tail of the card (the Next/Previous footer) right off. Re-fit once
-    // fonts are confirmed ready to catch that.
-    let cancelled = false;
-    if (typeof document !== "undefined" && (document as any).fonts?.ready) {
-      (document as any).fonts.ready.then(() => { if (!cancelled) runAutoFit(); });
-    }
-    return () => { cancelAnimationFrame(raf); window.removeEventListener("resize", runAutoFit); cancelled = true; };
-  }, [currentIdx, runAutoFit]);
-
-  const zoomBy = (delta: number) => setZoom(z => Math.min(1.5, Math.max(0.5, +(z + delta).toFixed(2))));
 
   const submittedRef = useRef(false);
   const answersRef = useRef(answers);
@@ -892,31 +839,11 @@ const ExamTaking = () => {
           <Grid style={{ width: 13, height: 13 }} />
         </button>
 
-        {/* Zoom / magnifier trigger — lives in the header chrome, not
-            floating over the question card, so it never overlaps content */}
-        {q && (
-          <button onClick={() => setShowZoomPanel(v => !v)} title="Zoom"
-            style={{ background: showZoomPanel ? GOLD : "rgba(255,255,255,.12)", border: "none", color: showZoomPanel ? G : "rgba(255,255,255,.8)", borderRadius: 8, padding: "5px 7px", cursor: "pointer", flexShrink: 0 }}>
-            <Search style={{ width: 13, height: 13 }} />
-          </button>
-        )}
         <button onClick={() => { saveAnswers(true); setPhase("review"); }}
           style={{ background: "#dc2626", border: "none", color: "#fff", borderRadius: 9, padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontFamily: "'Cairo',sans-serif", flexShrink: 0 }}>
           <Eye style={{ width: 12, height: 12 }} />{t("Submit", "تقديم")}
         </button>
       </div>
-
-      {/* Zoom panel — drops down from the header onto the page background,
-          above the question card, so it never sits on top of content */}
-      {showZoomPanel && q && (
-        <div style={{ position: "fixed", top: 64, right: 10, zIndex: 100, display: "flex", alignItems: "center", gap: 2, background: "rgba(15,45,31,.95)", backdropFilter: "blur(8px)", borderRadius: 20, padding: 4, boxShadow: "0 8px 32px rgba(0,0,0,.4)" }}>
-          <button onClick={() => zoomBy(-0.1)} title="Zoom out" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>−</button>
-          <button onClick={runAutoFit} title="Fit to screen" style={{ padding: "0 10px", height: 30, borderRadius: 15, border: "none", background: Math.abs(zoom - fitTarget) < 0.01 ? GOLD : "rgba(255,255,255,.12)", color: Math.abs(zoom - fitTarget) < 0.01 ? G : "#fff", fontSize: 10, fontWeight: 800, cursor: "pointer", whiteSpace: "nowrap" }}>
-            {Math.abs(zoom - fitTarget) < 0.01 ? t("Fit", "ملائم") : `${Math.round(effectiveScale * 100)}%`}
-          </button>
-          <button onClick={() => zoomBy(0.1)} title="Zoom in" style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(255,255,255,.12)", color: "#fff", fontSize: 16, fontWeight: 800, cursor: "pointer" }}>+</button>
-        </div>
-      )}
 
       {/* Keyboard help overlay */}
       {showKeyboardHelp && (
@@ -982,8 +909,7 @@ const ExamTaking = () => {
         <div ref={qScrollRef} style={{ flex: 1, overflow: "auto", padding: "10px 6px", display: "flex", flexDirection: "column", position: "relative" }}>
           {q && (
             <div style={{ width: "100%" }}>
-              <div style={{ height: naturalH ? naturalH * effectiveScale : undefined, overflow: "hidden", transition: "height .15s ease", opacity: isFitting ? 0 : 1 }}>
-              <div ref={qCardRef} key={currentIdx} style={{ transform: `scale(${effectiveScale})`, transformOrigin: "top left", width: effectiveScale ? `${100 / effectiveScale}%` : "100%", transition: "transform .15s ease, width .15s ease", animation: "slideIn .2s ease" }}>
+              <div ref={qCardRef} key={currentIdx} style={{ animation: "slideIn .2s ease", zoom: 0.8 } as React.CSSProperties}>
               <div>
 
                 {/* Question header */}
@@ -1194,7 +1120,6 @@ const ExamTaking = () => {
                     </button>
                   )}
                 </div>
-              </div>
               </div>
               </div>
             </div>
