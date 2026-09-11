@@ -11,6 +11,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Download, GraduationCap } from "lucide-react";
 import tahleemStamp from "@/assets/tahleem-stamp.png";
+import tahleemHeaderArt from "@/assets/tahleem-header-art.png";
 import { useToast } from "@/hooks/use-toast";
 
 const G = "#0f2d1f", GM = "#1a4731", GOLD = "#c9a84c";
@@ -36,6 +37,35 @@ const getLetterGrade = (pct: number) => {
   if (pct >= 50) return { letter: "D",  color: "#ea580c", bg: "#fff7ed", label: "Pass",          labelAr: "ناجح"     };
   return                { letter: "F",  color: "#ef4444", bg: "#fff5f5", label: "Fail",          labelAr: "راسب"     };
 };
+
+// Auto-generates Arabic teacher's/director's remarks from the term's actual
+// average and pass rate — no manual data entry needed.
+function generateRemarks(avg: number, passedCount: number, totalCount: number) {
+  if (totalCount === 0) return {
+    teacher: "لا توجد نتائج كافية بعد لتقييم أداء الطالب(ة) لهذه الفترة.",
+    director: "ننتظر استكمال الاختبارات لتقديم تقييم شامل.",
+  };
+  if (avg >= 90) return {
+    teacher: "أداء استثنائي يعكس التزاماً وجهداً متميزاً في جميع المواد. نثني على هذا المستوى الرفيع ونحث الطالب(ة) على المواصلة.",
+    director: "نفخر بهذا التفوق اللافت، ونسأل الله أن يبارك في هذا الجهد ويزيده توفيقاً ورفعة.",
+  };
+  if (avg >= 80) return {
+    teacher: "نتائج جيدة جداً تدل على جهد واضح والتزام بالمذاكرة. نشجع على الاستمرار بنفس الجدية والانتظام.",
+    director: "أداء مشرف يستحق التقدير، والمزيد من العمل يوصل إلى الامتياز بإذن الله.",
+  };
+  if (avg >= 70) return {
+    teacher: "أداء جيد بوجه عام، مع وجود مجال للتحسن في بعض المواد. ننصح بمزيد من المراجعة والمتابعة اليومية.",
+    director: "مستوى مقبول يحتاج إلى دفعة إضافية من الجهد والانتظام للوصول إلى نتائج أفضل.",
+  };
+  if (avg >= 50) return {
+    teacher: "النتائج تشير إلى حاجة الطالب(ة) لمزيد من التركيز والمذاكرة المنتظمة لتحسين المستوى في الفترة القادمة.",
+    director: "نحث الطالب(ة) وولي الأمر على متابعة أقرب للدراسة خلال الفترة القادمة لتحقيق تقدم ملموس.",
+  };
+  return {
+    teacher: "يحتاج الطالب(ة) إلى بذل جهد أكبر بشكل عاجل ومتابعة مكثفة لتدارك الضعف الظاهر في نتائج هذه الفترة.",
+    director: "نأمل تكثيف المتابعة الأسرية والمدرسية لمساعدة الطالب(ة) على تجاوز هذه الفترة وتحقيق مستوى أفضل.",
+  };
+}
 
 function buildSubjectRows(exams: GradedExam[]): SubjectRow[] {
   const map = new Map<string, { title: string; title_ar: string; course: string; tests: number[]; exams: number[] }>();
@@ -125,23 +155,19 @@ const ReportCard = () => {
     const tObtained    = tRows.reduce((s, r) => s + r.total, 0);
     const tObtainable  = tRows.length * 100;
     const tAvg         = tRows.length ? tObtained / tRows.length : 0;
+    const tPassedCount = tRows.filter(r => r.passed).length;
     const tGradeCounts = (["A+", "A", "B", "C", "D", "F"] as const).map(letter => ({
       letter, count: tRows.filter(r => r.grade.letter === letter).length,
     }));
+    const remarks = generateRemarks(tAvg, tPassedCount, tRows.length);
     return `
 <div class="page">
 <div class="watermark">TAHLEEM ACADEMY</div>
-<div class="brand-header">
-  <img src="${logoSrc}" alt="Tahleem Academy" />
-  <div class="brand-text">
-    <div class="ar">أكاديمية التعليم</div>
-    <div class="en">TAHLEEM ACADEMY</div>
-  </div>
-</div>
+<div class="header-art"><img src="${logoSrc}" alt="Tahleem Academy" /></div>
 <div class="page-inner">
 <div class="title-box">
-  <span>كشف الدرجات الفصلي</span>
-  <span>${tLabel.en} Report Card</span>
+  <span class="calligraphy">كشف الدرجات الفصلي</span>
+  <span class="en-title">${tLabel.en} Report Card</span>
 </div>
 <div class="info-row">
   <div class="info-field"><label>اسم الطالب(ة)</label><span class="val">${profile?.full_name_ar || profile?.full_name || "—"}</span></div>
@@ -168,9 +194,9 @@ const ReportCard = () => {
         <td style="text-align:right;font-size:13px">${r.title_ar} / ${r.title}</td>
         <td>${r.test || "—"}</td>
         <td>${r.exam || "—"}</td>
-        <td style="font-weight:800">${r.total}</td>
-        <td style="font-weight:800;color:${r.grade.color}">${r.grade.letter}</td>
-        <td style="color:${r.passed ? "#22c55e" : "#ef4444"};font-weight:700">${r.passed ? "ناجح ✓" : "راسب ✗"}</td>
+        <td style="font-weight:900">${r.total}</td>
+        <td style="font-weight:900;color:${r.grade.color}">${r.grade.letter}</td>
+        <td style="color:${r.passed ? "#22c55e" : "#ef4444"};font-weight:800">${r.passed ? "ناجح ✓" : "راسب ✗"}</td>
       </tr>`).join("")}
   </tbody>
 </table>
@@ -184,17 +210,31 @@ const ReportCard = () => {
       <tr><td>المتوسط / Average</td><td>${tAvg.toFixed(1)}%</td></tr>
     </tbody>
   </table>
-  <table class="small">
-    <thead><tr>${tGradeCounts.map(g => `<th>${g.letter}</th>`).join("")}</tr></thead>
-    <tbody><tr>${tGradeCounts.map(g => `<td>${g.count}</td>`).join("")}</tr></tbody>
-  </table>
+  <div class="grade-line-box">
+    <div class="grade-line-title">توزيع الدرجات / Grade Distribution</div>
+    <div class="grade-line">
+      ${tGradeCounts.map(g => `<span>${g.letter} <b>${g.count}</b></span>`).join("<i>·</i>")}
+    </div>
+    <div class="legend">
+      90-100 A+ (ممتاز) · 80-89 A (جيد جداً) · 70-79 B (جيد) · 60-69 C (مقبول) · 50-59 D (ناجح) · 0-49 F (راسب)
+    </div>
+  </div>
 </div>
-<div class="legend">
-  سلم الدرجات / Grade Scale: 90-100 A+ (ممتاز) · 80-89 A (جيد جداً) · 70-79 B (جيد) · 60-69 C (مقبول) · 50-59 D (ناجح) · 0-49 F (راسب)
+
+<div class="comments-grid">
+  <div class="comment-box">
+    <div class="comment-label">تعليق المعلم(ة) / Teacher's Comment</div>
+    <div class="comment-text">${remarks.teacher}</div>
+  </div>
+  <div class="comment-box">
+    <div class="comment-label">تعليق المدير / Director's Comment</div>
+    <div class="comment-text">${remarks.director}</div>
+  </div>
 </div>
-<div class="stamp-row">
-  <span style="font-size:11px;color:#6b7280">تاريخ الإصدار: ${new Date().toLocaleDateString("ar-SA")}</span>
-  <img src="${stampSrc}" alt="Stamp" />
+
+<div class="stamp-center">
+  <img src="${stampSrc}" alt="Official Stamp" />
+  <span>تاريخ الإصدار: ${new Date().toLocaleDateString("ar-SA")}</span>
 </div>
 <div class="footer">Official Term Report Card — Tahleem Academy — ${new Date().toLocaleDateString("en-GB")} — Confidential</div>
 </div>
@@ -214,7 +254,7 @@ const ReportCard = () => {
     });
     const [stampBase64, logoBase64] = await Promise.all([
       toBase64(tahleemStamp),
-      toBase64("/brand-logo.png"),
+      toBase64(tahleemHeaderArt),
     ]);
 
     const pw = window.open("", "_blank");
@@ -225,41 +265,49 @@ const ReportCard = () => {
 
     const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head>
 <meta charset="UTF-8"><title>كشف الدرجات — ${profile?.full_name || ""}</title>
-<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Aref+Ruqaa:wght@400;700&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Amiri',serif;color:#111;background:#fdfcf8;font-size:12px}
+body{font-family:'Amiri',serif;color:#1a1a1a;background:#fdfcf8;font-size:12.5px;font-weight:600}
 .page{padding:0 0 18px;position:relative;page-break-after:always;background:#fdfcf8}
 .page:last-child{page-break-after:auto}
 .watermark{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%) rotate(-30deg);
   font-size:60px;font-weight:900;color:rgba(15,45,31,.05);z-index:0;white-space:nowrap;font-family:Arial}
-.brand-header{display:flex;align-items:center;justify-content:center;gap:16px;
-  background:linear-gradient(120deg,#0f2d1f 0%,#1a4731 55%,#0f2d1f 100%);
-  padding:16px 20px;border-bottom:4px solid #c9a84c;position:relative;z-index:1}
-.brand-header img{width:56px;height:56px;object-fit:contain;filter:drop-shadow(0 1px 2px rgba(0,0,0,.3))}
-.brand-header .brand-text{text-align:center}
-.brand-header .ar{font-size:24px;font-weight:700;color:#f5e9c8}
-.brand-header .en{font-size:13px;color:#c9a84c;letter-spacing:3px;margin-top:2px}
-.page-inner{padding:0 24px}
-.title-box{border:2px solid #c9a84c;border-radius:8px;padding:8px 20px;margin:14px auto 10px;
-  width:fit-content;font-weight:700;font-size:15px;text-align:center;color:#0f2d1f;display:flex;gap:16px;
-  background:linear-gradient(180deg,#fbf6e8,#fff)}
-.info-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:6px}
+.header-art{text-align:center;padding:18px 24px 10px;border-bottom:3px double #c9a84c;position:relative;z-index:1}
+.header-art img{max-width:420px;width:80%;height:auto}
+.page-inner{padding:0 24px;position:relative;z-index:1}
+.title-box{border:2px solid #c9a84c;border-radius:10px;padding:12px 26px;margin:16px auto 12px;
+  width:fit-content;text-align:center;display:flex;flex-direction:column;gap:2px;
+  background:linear-gradient(180deg,#fbf6e8,#fffdf7);box-shadow:0 2px 10px rgba(201,168,76,.25)}
+.title-box .calligraphy{font-family:'Aref Ruqaa',serif;font-weight:700;font-size:26px;color:#0f2d1f;letter-spacing:.5px}
+.title-box .en-title{font-weight:700;font-size:12px;color:#8a7434;letter-spacing:2px;text-transform:uppercase}
+.info-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:7px}
 .info-field{display:flex;align-items:baseline;gap:6px}
-.info-field label{font-weight:700;font-size:12px;white-space:nowrap;color:#374151;min-width:90px}
-.info-field .val{flex:1;border-bottom:1.5px solid #374151;font-size:12px;text-align:right;padding:0 4px 2px}
-table.main{width:100%;border-collapse:collapse;margin:14px 0 6px}
-table.main th,table.main td{border:1px solid #d9dfd9;padding:7px 8px;text-align:center;font-size:12px;vertical-align:middle}
-table.main th{background:#0f2d1f;color:#f5e9c8;font-weight:800;border-color:#0f2d1f}
+.info-field label{font-weight:800;font-size:12.5px;white-space:nowrap;color:#0f2d1f;min-width:90px}
+.info-field .val{flex:1;border-bottom:1.5px solid #374151;font-size:13px;font-weight:700;text-align:right;padding:0 4px 2px}
+table.main{width:100%;border-collapse:collapse;margin:16px 0 8px;box-shadow:0 1px 6px rgba(0,0,0,.06)}
+table.main th,table.main td{border:1px solid #d9dfd9;padding:8px 8px;text-align:center;font-size:12.5px;font-weight:700;vertical-align:middle}
+table.main th{background:#0f2d1f;color:#f5e9c8;font-weight:800;border-color:#0f2d1f;font-size:12px}
 table.main tbody tr:nth-child(even){background:#f7faf7}
-.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+.summary-grid{display:grid;grid-template-columns:1fr 1.3fr;gap:14px;margin-top:14px;align-items:stretch}
 table.small{width:100%;border-collapse:collapse}
-table.small th,table.small td{border:1px solid #d9dfd9;padding:5px 8px;text-align:center;font-size:11px}
+table.small th,table.small td{border:1px solid #d9dfd9;padding:6px 8px;text-align:center;font-size:11.5px;font-weight:700}
 table.small th{background:#c9a84c;color:#0f2d1f;font-weight:800;border-color:#c9a84c}
-.legend{font-size:10px;color:#6b7280;margin-top:10px;line-height:1.7}
-.stamp-row{display:flex;justify-content:space-between;align-items:center;margin-top:18px}
-.stamp-row img{width:70px;height:70px;opacity:.82}
-.footer{text-align:center;margin-top:16px;font-size:10px;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:8px}
+.grade-line-box{border:1px solid #d9dfd9;border-radius:8px;padding:10px 14px;background:#fffdf7}
+.grade-line-title{font-weight:800;font-size:11px;color:#0f2d1f;margin-bottom:8px;text-align:center}
+.grade-line{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;font-size:13px;font-weight:800;
+  color:#0f2d1f;border-bottom:2px solid #c9a84c;padding-bottom:8px}
+.grade-line b{color:#0f2d1f;font-size:15px}
+.grade-line i{color:#c9a84c;font-style:normal;margin:0 2px}
+.legend{font-size:9.5px;color:#6b7280;margin-top:8px;line-height:1.7;text-align:center;font-weight:600}
+.comments-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.comment-box{border:1.5px solid #c9a84c;border-radius:10px;padding:12px 14px;background:linear-gradient(180deg,#fffdf7,#fff)}
+.comment-label{font-weight:800;font-size:11.5px;color:#0f2d1f;margin-bottom:6px;border-bottom:1px solid #e8ddb8;padding-bottom:5px}
+.comment-text{font-size:12.5px;font-weight:700;line-height:1.9;color:#2b2b2b}
+.stamp-center{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:22px}
+.stamp-center img{width:130px;height:130px;opacity:.9}
+.stamp-center span{font-size:11px;font-weight:700;color:#6b7280}
+.footer{text-align:center;margin-top:14px;font-size:10px;font-weight:600;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:8px}
 @media print{.page-inner{padding:0 16px}@page{size:A4;margin:8mm}}
 </style></head><body>
 ${pagesHtml}
@@ -277,24 +325,16 @@ ${pagesHtml}
 
   return (
     <div dir="rtl" style={{ fontFamily: "'Cairo',sans-serif" }}>
-      {/* Brand banner */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "center", gap: 14,
-        background: `linear-gradient(120deg, ${G} 0%, ${GM} 55%, ${G} 100%)`,
-        padding: "16px 20px", borderBottom: `4px solid ${GOLD}`,
-      }}>
-        <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 48, height: 48, objectFit: "contain" }} />
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "#f5e9c8", fontFamily: "'Amiri',serif" }}>أكاديمية التعليم</div>
-          <div style={{ fontSize: 11, color: GOLD, letterSpacing: 3, marginTop: 2 }}>TAHLEEM ACADEMY</div>
-        </div>
+      {/* Header art — the exact logo image, on the plain page background */}
+      <div style={{ textAlign: "center", padding: "16px 20px 10px", borderBottom: `3px double ${GOLD}`, background: "#fdfcf8" }}>
+        <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ maxWidth: 340, width: "70%", height: "auto" }} />
       </div>
 
       <div className="container mx-auto px-4 py-6 max-w-4xl">
       {/* Header */}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: G, fontFamily: "'Amiri',serif" }}>كشف الدرجات الفصلي</h1>
+          <h1 className="text-3xl font-bold" style={{ color: G, fontFamily: "'Aref Ruqaa',serif" }}>كشف الدرجات الفصلي</h1>
           <p className="text-sm text-muted-foreground mt-1">Term Report Card{profile?.full_name ? ` · ${profile.full_name}` : ""}</p>
         </div>
         <div className="flex gap-2">
@@ -331,39 +371,39 @@ ${pagesHtml}
       ) : (
         <>
           {/* Student info */}
-          <div className="bg-white rounded-2xl shadow-sm border p-4 mb-4 grid grid-cols-2 gap-3 text-sm">
-            <div><span className="text-muted-foreground">اسم الطالب(ة): </span><strong style={{ color: G }}>{profile?.full_name_ar || profile?.full_name || "—"}</strong></div>
-            <div><span className="text-muted-foreground">المستوى: </span><strong style={{ color: G }}>{profile?.level || "—"}</strong></div>
-            <div><span className="text-muted-foreground">الفترة: </span><strong style={{ color: G }}>{termLabel.ar}</strong></div>
-            <div><span className="text-muted-foreground">العام الدراسي: </span><strong style={{ color: G }}>{currentYear - 579} هـ / {currentYear} م</strong></div>
+          <div className="bg-white rounded-2xl shadow-sm border p-4 mb-4 grid grid-cols-2 gap-3 text-sm" style={{ borderColor: "#e8ddb8" }}>
+            <div><span className="text-muted-foreground font-semibold">اسم الطالب(ة): </span><strong style={{ color: G }}>{profile?.full_name_ar || profile?.full_name || "—"}</strong></div>
+            <div><span className="text-muted-foreground font-semibold">المستوى: </span><strong style={{ color: G }}>{profile?.level || "—"}</strong></div>
+            <div><span className="text-muted-foreground font-semibold">الفترة: </span><strong style={{ color: G }}>{termLabel.ar}</strong></div>
+            <div><span className="text-muted-foreground font-semibold">العام الدراسي: </span><strong style={{ color: G }}>{currentYear - 579} هـ / {currentYear} م</strong></div>
           </div>
 
           {/* Subjects table */}
           <div className="bg-white rounded-2xl shadow-sm border overflow-hidden mb-4">
-            <div style={{ background: `linear-gradient(90deg,${G},${GM})`, color: "#fff", padding: "10px 16px", fontWeight: 700, fontSize: 14 }}>
+            <div style={{ background: `linear-gradient(90deg,${G},${GM})`, color: "#fff", padding: "10px 16px", fontWeight: 800, fontSize: 14, letterSpacing: .5 }}>
               المواد الدراسية
             </div>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
-                  <tr style={{ background: "#f8fafb" }}>
+                  <tr style={{ background: G }}>
                     {["#", "المادة", "اختبار (30)", "امتحان (70)", "المجموع", "الدرجة", "النتيجة"].map(h => (
-                      <th key={h} style={{ padding: "9px 10px", textAlign: "center", fontSize: 11, fontWeight: 700, color: "#6b7280", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>{h}</th>
+                      <th key={h} style={{ padding: "9px 10px", textAlign: "center", fontSize: 11, fontWeight: 800, color: "#f5e9c8", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((row, i) => (
                     <tr key={i} style={{ borderBottom: "1px solid #f0f4f8", background: i % 2 === 0 ? "#fff" : "#fafafa" }}>
-                      <td style={{ padding: "10px", textAlign: "center", fontSize: 12, color: "#9ca3af", fontWeight: 600 }}>{i + 1}</td>
-                      <td style={{ padding: "10px 14px", fontWeight: 600, color: G, fontFamily: "'Amiri',serif", fontSize: 15 }}>{row.title_ar}</td>
-                      <td style={{ padding: "10px", textAlign: "center" }}>{row.test || "—"}</td>
-                      <td style={{ padding: "10px", textAlign: "center" }}>{row.exam || "—"}</td>
+                      <td style={{ padding: "10px", textAlign: "center", fontSize: 12, color: "#9ca3af", fontWeight: 700 }}>{i + 1}</td>
+                      <td style={{ padding: "10px 14px", fontWeight: 700, color: G, fontFamily: "'Amiri',serif", fontSize: 15 }}>{row.title_ar}</td>
+                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{row.test || "—"}</td>
+                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 700 }}>{row.exam || "—"}</td>
                       <td style={{ padding: "10px", textAlign: "center", fontWeight: 900, fontSize: 16, color: row.grade.color }}>{row.total}</td>
                       <td style={{ padding: "10px", textAlign: "center" }}>
                         <span style={{ padding: "3px 10px", borderRadius: 20, background: row.grade.bg, color: row.grade.color, fontWeight: 800, fontSize: 12 }}>{row.grade.letter}</span>
                       </td>
-                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 700, color: row.passed ? "#22c55e" : "#ef4444" }}>{row.passed ? "ناجح" : "راسب"}</td>
+                      <td style={{ padding: "10px", textAlign: "center", fontWeight: 800, color: row.passed ? "#22c55e" : "#ef4444" }}>{row.passed ? "ناجح" : "راسب"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -371,7 +411,7 @@ ${pagesHtml}
             </div>
           </div>
 
-          {/* Performance summary + grade analysis */}
+          {/* Performance summary + grade distribution */}
           <div className="grid gap-4 md:grid-cols-2 mb-4">
             <div className="bg-white rounded-2xl shadow-sm border p-4">
               <div className="font-bold text-sm mb-3" style={{ color: G }}>ملخص الأداء</div>
@@ -382,24 +422,42 @@ ${pagesHtml}
                 ["المتوسط", `${avgScore.toFixed(1)}%`],
               ].map(([label, val]) => (
                 <div key={label as string} className="flex justify-between text-sm py-1.5 border-b last:border-0">
-                  <span className="text-muted-foreground">{label}</span><strong style={{ color: G }}>{val}</strong>
+                  <span className="text-muted-foreground font-semibold">{label}</span><strong style={{ color: G }}>{val}</strong>
                 </div>
               ))}
             </div>
-            <div className="bg-white rounded-2xl shadow-sm border p-4">
-              <div className="font-bold text-sm mb-3" style={{ color: G }}>تحليل الدرجات</div>
-              <div className="grid grid-cols-6 gap-1.5 text-center">
+            <div className="bg-white rounded-2xl shadow-sm border p-4 flex flex-col justify-center">
+              <div className="font-bold text-xs mb-2 text-center" style={{ color: G }}>توزيع الدرجات</div>
+              <div className="flex justify-center flex-wrap gap-3 pb-2" style={{ borderBottom: `2px solid ${GOLD}` }}>
                 {gradeCounts.map(g => (
-                  <div key={g.letter}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: getLetterGrade(g.letter === "A+" ? 95 : g.letter === "A" ? 85 : g.letter === "B" ? 75 : g.letter === "C" ? 65 : g.letter === "D" ? 55 : 0).color }}>{g.letter}</div>
-                    <div className="text-lg font-black" style={{ color: G }}>{g.count}</div>
-                  </div>
+                  <span key={g.letter} className="text-sm font-extrabold" style={{ color: G }}>
+                    {g.letter} <b className="text-base">{g.count}</b>
+                  </span>
                 ))}
               </div>
-              <div className="text-[10px] text-muted-foreground mt-3 leading-relaxed">
+              <div className="text-[10px] text-muted-foreground mt-2 leading-relaxed text-center">
                 90-100 A+ (ممتاز) · 80-89 A (جيد جداً) · 70-79 B (جيد) · 60-69 C (مقبول) · 50-59 D (ناجح) · 0-49 F (راسب)
               </div>
             </div>
+          </div>
+
+          {/* Auto-generated teacher / director comments */}
+          <div className="grid gap-4 md:grid-cols-2 mb-4">
+            {(() => {
+              const remarks = generateRemarks(avgScore, rows.filter(r => r.passed).length, rows.length);
+              return (
+                <>
+                  <div className="rounded-2xl p-4" style={{ border: `1.5px solid ${GOLD}`, background: "linear-gradient(180deg,#fffdf7,#fff)" }}>
+                    <div className="font-bold text-xs mb-2 pb-1.5" style={{ color: G, borderBottom: "1px solid #e8ddb8" }}>تعليق المعلم(ة)</div>
+                    <p className="text-sm font-semibold leading-relaxed" style={{ color: "#2b2b2b" }}>{remarks.teacher}</p>
+                  </div>
+                  <div className="rounded-2xl p-4" style={{ border: `1.5px solid ${GOLD}`, background: "linear-gradient(180deg,#fffdf7,#fff)" }}>
+                    <div className="font-bold text-xs mb-2 pb-1.5" style={{ color: G, borderBottom: "1px solid #e8ddb8" }}>تعليق المدير</div>
+                    <p className="text-sm font-semibold leading-relaxed" style={{ color: "#2b2b2b" }}>{remarks.director}</p>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </>
       )}
