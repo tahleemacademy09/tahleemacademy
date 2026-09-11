@@ -125,6 +125,12 @@ export const useProctoring = (
     if ("FaceDetector" in window) {
       try { fdInstance.current = new (window as any).FaceDetector({ maxDetectedFaces: 4, fastMode: false }); } catch (_) {}
     }
+    // Diagnostic only — FaceDetector isn't supported on most mobile
+    // browsers, in which case detection silently falls back to a cruder
+    // skin-tone heuristic (see analyzeFrame's "Method B"). Logging which
+    // path is active makes that visible in the console instead of a silent
+    // "why didn't this flag" next time face detection looks wrong.
+    logger.info(`[proctor] face detection method: ${fdInstance.current ? "FaceDetector API" : "skin-tone fallback"}`);
     return () => {
       try { document.body.removeChild(el); } catch (_) {}
       videoElRef.current = null;
@@ -464,16 +470,18 @@ export const useProctoring = (
   const initCamera = useCallback(async (retry = 0): Promise<boolean> => {
     if (reconnecting.current && retry === 0) return false;
     reconnecting.current = true;
-    const isMobile = /mobile|android|iphone/i.test(navigator.userAgent);
     try {
       if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
+      // Matches PreExamVerification.tsx's constraints exactly — that screen's
+      // capture is what the student saw and approved ("shows down to the
+      // chest"). This used to request a forced portrait 3:4 crop on mobile
+      // (480x640, aspectRatio ideal 3/4), which pushed phone cameras into a
+      // much tighter, closer-in frame than the plain 640x480 request below
+      // produces — same camera, visibly different framing. Keeping both
+      // capture points on the same constraints keeps what the student
+      // verified before the exam consistent with what's captured during it.
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: isMobile ? 480 : 640 },
-          height: { ideal: isMobile ? 640 : 480 },
-          aspectRatio: { ideal: isMobile ? 3 / 4 : 4 / 3 },
-        },
+        video: { width: 640, height: 480, facingMode: "user" },
       });
       streamRef.current = stream;
       const video = videoElRef.current;
