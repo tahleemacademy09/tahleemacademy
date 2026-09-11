@@ -14,7 +14,8 @@ import { useEffect, useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { Bell, Send, Loader2, Search, Users, GraduationCap, User, History } from "lucide-react";
+import { Bell, Send, Loader2, Search, Users, GraduationCap, User, History, Layers } from "lucide-react";
+import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 
 const G = "#064E3B";
 const G2 = "#075E54";
@@ -30,6 +31,7 @@ const AUDIENCES = [
   { value: "all", label: "Everyone", icon: Users },
   { value: "student", label: "All Students", icon: GraduationCap },
   { value: "teacher", label: "All Teachers", icon: User },
+  { value: "level", label: "By Level", icon: Layers },
 ] as const;
 
 const TYPES = [
@@ -53,6 +55,10 @@ function RecipientPicker({ value, onChange }: { value: string; onChange: (v: str
   const [results, setResults] = useState<UserRow[]>([]);
   const [searching, setSearching] = useState(false);
   const [picked, setPicked] = useState<UserRow | null>(null);
+  const { data: academicLevels = [] } = useAcademicLevels();
+
+  const isLevelMode = value === "level" || value.startsWith("level:");
+  const selectedLevelSlug = value.startsWith("level:") ? value.replace("level:", "") : "";
 
   useEffect(() => {
     if (search.trim().length < 2) { setResults([]); return; }
@@ -74,21 +80,39 @@ function RecipientPicker({ value, onChange }: { value: string; onChange: (v: str
   return (
     <div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
-        {AUDIENCES.map((a) => (
-          <button
-            key={a.value}
-            onClick={() => { onChange(a.value); setPicked(null); }}
-            style={{
-              display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 20,
-              fontSize: 12.5, fontWeight: 700, cursor: "pointer",
-              background: value === a.value ? G : "#f2f2f2",
-              color: value === a.value ? "#fff" : "#555", border: "none",
-            }}
-          >
-            <a.icon size={13} /> {a.label}
-          </button>
-        ))}
+        {AUDIENCES.map((a) => {
+          const active = a.value === "level" ? isLevelMode : value === a.value;
+          return (
+            <button
+              key={a.value}
+              onClick={() => { onChange(a.value); setPicked(null); setSearch(""); }}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 20,
+                fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+                background: active ? G : "#f2f2f2",
+                color: active ? "#fff" : "#555", border: "none",
+              }}
+            >
+              <a.icon size={13} /> {a.label}
+            </button>
+          );
+        })}
       </div>
+
+      {isLevelMode && (
+        <div style={{ marginBottom: 10 }}>
+          <select
+            value={selectedLevelSlug}
+            onChange={(e) => onChange(e.target.value ? `level:${e.target.value}` : "level")}
+            style={inp}
+          >
+            <option value="">Select a level…</option>
+            {academicLevels.map((l) => (
+              <option key={l.id} value={l.slug}>{l.name_en}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div style={{ position: "relative" }}>
         <Search size={14} style={{ position: "absolute", left: 10, top: 11, color: "#999" }} />
@@ -195,6 +219,10 @@ export default function NotificationManagement() {
       toast({ title: "Missing fields", description: "Title and message are required.", variant: "destructive" });
       return;
     }
+    if (audience === "level") {
+      toast({ title: "Pick a level", description: "Choose which level to notify.", variant: "destructive" });
+      return;
+    }
     setSending(true);
     try {
       let userIds: string[] = [];
@@ -203,6 +231,10 @@ export default function NotificationManagement() {
         userIds = [audience.replace("user:", "")];
       } else if (audience === "all") {
         const { data } = await supabase.from("profiles").select("user_id");
+        userIds = (data ?? []).map((u: any) => u.user_id);
+      } else if (audience.startsWith("level:")) {
+        const slug = audience.replace("level:", "");
+        const { data } = await supabase.from("profiles").select("user_id").eq("level", slug);
         userIds = (data ?? []).map((u: any) => u.user_id);
       } else {
         const role = audience as "admin" | "student" | "teacher";
