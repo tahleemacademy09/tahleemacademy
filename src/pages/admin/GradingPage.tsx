@@ -403,7 +403,7 @@ const GradingPage = () => {
                 <div style={{ fontSize: 14, fontWeight: 600, color: "#111", marginBottom: 8, lineHeight: 1.6 }}
                   dangerouslySetInnerHTML={{ __html: sanitizeHtml(bi ? `${bi.ar}<br/><span style="font-size:12px;color:#6B7280">${bi.en}</span>` : q.question_text || "") }} />
 
-                <div style={{ background: "#F9FAFB", borderRadius: 10, padding: "10px 12px", marginBottom: isSubjective ? 10 : 0 }}>
+                <div style={{ background: "#F9FAFB", borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
                   <p style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", margin: "0 0 4px" }}>Student Answer:</p>
                   {notAnswered && (
                     <div style={{ padding: "6px 10px", background: "#FFF7ED", borderRadius: 8, border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", fontWeight: 700, marginBottom: 6 }}>
@@ -425,21 +425,48 @@ const GradingPage = () => {
                   })()}
                 </div>
 
+                {/* Full options list — MCQ / true-false. Shows every option
+                    (matching what the student saw), marks which one was
+                    picked and which is correct, so the admin can see the
+                    full context rather than just a correct/incorrect line. */}
+                {!isSubjective && opts.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+                    {opts.map((o: any) => {
+                      const label   = language === "ar" ? o.text_ar || o.text : o.text;
+                      const picked  = o.id === rawAns;
+                      const isRight = !!o.is_correct;
+                      return (
+                        <div key={o.id} style={{
+                          display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8,
+                          border: `1.5px solid ${isRight ? "#86EFAC" : picked ? "#FCA5A5" : "#E5E7EB"}`,
+                          background: isRight ? "#F0FDF4" : picked ? "#FEF2F2" : "#fff",
+                        }}>
+                          <span style={{ fontSize: 13, color: "#111", flex: 1 }} dir="auto">{label}</span>
+                          {picked && <span style={{ fontSize: 10, fontWeight: 800, color: isRight ? "#16A34A" : "#DC2626", padding: "2px 8px", borderRadius: 20, background: isRight ? "#DCFCE7" : "#FEE2E2" }}>Student's answer</span>}
+                          {isRight && <CheckCircle size={15} color="#16A34A" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {/* MCQ auto-grade display */}
                 {!isSubjective && q.correct_answer && (
-                  <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ marginTop: 8, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
                     {(ans as any).is_correct
-                      ? <span style={{ fontSize: 12, color: "#16A34A", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={14} /> Correct</span>
-                      : <span style={{ fontSize: 12, color: "#DC2626", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><XCircle size={14} /> Incorrect · Correct: {correctText}</span>
+                      ? <span style={{ fontSize: 12, color: "#16A34A", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={14} /> Auto-graded: Correct</span>
+                      : <span style={{ fontSize: 12, color: "#DC2626", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><XCircle size={14} /> Auto-graded: Incorrect · Correct: {correctText}</span>
                     }
                   </div>
                 )}
 
-                {/* Manual scoring */}
-                {isSubjective && (
+                {/* Manual scoring — available for every question type, not
+                    just subjective ones, so an admin can overwrite a
+                    wrongly auto-graded MCQ/true-false answer too. */}
+                {(
                   <div style={{ marginTop: 12, background: "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: "1.5px solid #BBDDC8" }}>
                     <p style={{ fontSize: 12, fontWeight: 800, color: G, margin: "0 0 10px" }}>
-                      ✏️ Grade this answer <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280" }}>({q.points || 1} pts max)</span>
+                      ✏️ {isSubjective ? "Grade this answer" : "Override score"} <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280" }}>({q.points || 1} pts max)</span>
                     </p>
                     {(q.points || 1) <= 10 && (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
