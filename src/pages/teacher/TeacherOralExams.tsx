@@ -323,6 +323,14 @@ const TeacherOralExams = () => {
     () => currentSlot?.drawn_set_id ? [...(sets.find(s => s.id === currentSlot.drawn_set_id)?.oral_question_set_stages || [])].sort((a, b) => a.sort_order - b.sort_order) : [],
     [currentSlot, sets]
   );
+  // submit_oral_score() finalizes the WHOLE attempt in one call (creates the
+  // exam_attempts row, grades it, marks the slot completed) using every
+  // question's score accumulated so far in local `scores` state — it is not
+  // meant to be called per-stage. So the Submit button must only appear on
+  // the last stage; earlier stages only get "Next" to move on without
+  // finalizing anything yet.
+  const currentStageIdx = currentSetStages.findIndex(st => st.id === session?.current_stage_id);
+  const isLastOralStage = currentSetStages.length === 0 || currentStageIdx === currentSetStages.length - 1;
 
   const admit = async (slotId: string) => {
     const { error } = await supabase.rpc("admit_oral_student" as any, { p_slot_id: slotId });
@@ -547,10 +555,16 @@ const TeacherOralExams = () => {
                             </div>
                           ))}
                           {(activeStage?.questions || []).length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>No question drawn for this stage.</p>}
-                          <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
-                          <button onClick={submitScore} disabled={submittingScore} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
-                            {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />} Submit Score
-                          </button>
+                          {isLastOralStage ? (
+                            <>
+                              <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                              <button onClick={submitScore} disabled={submittingScore} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+                                {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />} Submit Score{currentSetStages.length > 1 ? " (all stages)" : ""}
+                              </button>
+                            </>
+                          ) : (
+                            <p style={{ fontSize: 11, color: "#9ca3af" }}>Scores are kept as you go — tap <b>Next</b> below to move to the next stage. The final score is submitted once you reach the last stage.</p>
+                          )}
                         </div>
                       );
                     })()}
@@ -558,9 +572,11 @@ const TeacherOralExams = () => {
                 </>
               )}
 
-              <button onClick={() => { goNext(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: GOLD, color: "#fff", border: "none", borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
-                <SkipForward size={15} /> Next
-              </button>
+              {!(currentSlot && isLastOralStage) && (
+                <button onClick={() => { goNext(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: GOLD, color: "#fff", border: "none", borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
+                  <SkipForward size={15} /> Next
+                </button>
+              )}
             </div>
           </div>
         )}
