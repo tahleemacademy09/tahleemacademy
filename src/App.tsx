@@ -51,6 +51,7 @@ const LiveClasses          = lazy(() => import("./pages/public/LiveClasses"));
 const StudentDashboard    = lazy(() => import("./pages/student/StudentDashboard"));
 const StudentDashboardV2  = lazy(() => import("./pages/student/StudentDashboardV2"));
 const StudentExams        = lazy(() => import("./pages/student/StudentExams"));
+const StudentOralExams    = lazy(() => import("./pages/student/StudentOralExams"));
 const ExamRegistration    = lazy(() => import("./pages/student/ExamRegistration"));
 const SubjectRegistration = lazy(() => import("./pages/student/SubjectRegistration"));
 const ExamTaking          = lazy(() => import("./pages/student/ExamTaking"));
@@ -155,6 +156,7 @@ const TeacherClasses         = lazy(() => import("./pages/teacher/TeacherClasses
 const TeacherAnnouncements   = lazy(() => import("./pages/teacher/TeacherAnnouncements"));
 const TeacherAttendance      = lazy(() => import("./pages/teacher/TeacherAttendance"));
 const TeacherExamsPage       = lazy(() => import("./pages/teacher/TeacherExamsPage"));
+const TeacherOralExams       = lazy(() => import("./pages/teacher/TeacherOralExams"));
 const TeacherResults         = lazy(() => import("./pages/teacher/TeacherResults"));
 const TeacherSettings        = lazy(() => import("./pages/teacher/TeacherSettings"));
 const TeacherRecordings      = lazy(() => import("./pages/teacher/TeacherRecordings"));
@@ -265,6 +267,7 @@ const App = () => (
                     <Route path="/student/courses/:courseId"   element={<LearningHub />} />
                     <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
                     <Route path="/student/exams"               element={<StudentExams />} />
+                    <Route path="/student/oral-exams"          element={<StudentOralExams />} />
                     <Route path="/student/exams/register"      element={<ExamRegistration />} />
                     <Route path="/student/register-subjects"   element={<SubjectRegistration />} />
                     <Route path="/student/transcripts"         element={<Transcripts />} />
@@ -317,6 +320,7 @@ const App = () => (
                     <Route path="/teacher/attendance"       element={<TeacherAttendance />} />
                     <Route path="/teacher/announcements"    element={<TeacherAnnouncements />} />
                     <Route path="/teacher/exams"            element={<TeacherExamsPage />} />
+                    <Route path="/teacher/oral-exams"       element={<TeacherOralExams />} />
                     <Route path="/teacher/exams/create"     element={<ExamEditor />} />
                     <Route path="/teacher/exams/:examId/edit" element={<ExamEditor />} />
                     <Route path="/teacher/grading"          element={<TeacherGrading />} />
