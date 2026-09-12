@@ -103,13 +103,21 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
                 <p className="m-0 truncate text-[11px] font-medium text-white/70">{t("Create and manage assessments", "إنشاء وإدارة التقييمات")}</p>
               </div>
             </div>
-            <button
-              onClick={() => navigate("/teacher/exams/create")}
-              className="flex shrink-0 items-center gap-1.5 rounded-xl border-0 px-4 py-2.5 text-xs font-black shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl active:scale-95 sm:gap-2 sm:px-6 sm:text-sm"
-              style={{ background: GOLD, color: "#064E3B" }}
-            >
-              <Plus className="h-4 w-4" /> {t("Create", "إنشاء")} {singularLabel}
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              <button
+                onClick={() => navigate("/teacher/oral-exams")}
+                className="flex items-center gap-1.5 rounded-xl border border-white/30 px-3 py-2.5 text-xs font-black text-white transition-all hover:-translate-y-0.5 sm:gap-2 sm:px-4 sm:text-sm"
+              >
+                {t("Oral Exams", "الامتحانات الشفوية")}
+              </button>
+              <button
+                onClick={() => navigate("/teacher/exams/create")}
+                className="flex items-center gap-1.5 rounded-xl border-0 px-4 py-2.5 text-xs font-black shadow-lg transition-all hover:-translate-y-0.5 hover:shadow-xl active:scale-95 sm:gap-2 sm:px-6 sm:text-sm"
+                style={{ background: GOLD, color: "#064E3B" }}
+              >
+                <Plus className="h-4 w-4" /> {t("Create", "إنشاء")} {singularLabel}
+              </button>
+            </div>
           </div>
         </div>
       </div>
