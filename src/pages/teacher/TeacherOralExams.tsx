@@ -53,11 +53,32 @@ const TeacherOralExams = () => {
 
   const loadExams = useCallback(async () => {
     if (!user) return;
-    const [{ data: subs }, { data: examsData }] = await Promise.all([
+    // subjects.teacher_id is legacy and barely populated — the real source of
+    // truth for "which subjects does this teacher teach" is subject_timetable,
+    // whose `teacher_ids[]` array also carries co-teachers (see TeacherGrading /
+    // TeacherSubjects for the same pattern). Union both so nothing is missed.
+    const [{ data: owned }, { data: ttSlots }, { data: examsData }] = await Promise.all([
       supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id),
+      supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids"),
       supabase.from("exams").select("id, title, title_ar, subject_id, passing_score, exam_mode" as any).eq("exam_mode" as any, "oral").eq("created_by", user.id).order("created_at", { ascending: false }),
     ]);
-    setSubjects(subs || []);
+
+    const mySubjectIds = new Set<string>((owned || []).map((s: any) => s.id));
+    (ttSlots || []).forEach((s: any) => {
+      if (s.subject_id && (s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id)))) {
+        mySubjectIds.add(s.subject_id);
+      }
+    });
+
+    const ownedIds = new Set((owned || []).map((s: any) => s.id));
+    const missingIds = [...mySubjectIds].filter(id => !ownedIds.has(id));
+    let extra: any[] = [];
+    if (missingIds.length > 0) {
+      const { data: extraSubs } = await supabase.from("subjects").select("id, title, title_ar").in("id", missingIds);
+      extra = extraSubs || [];
+    }
+
+    setSubjects([...(owned || []), ...extra]);
     setExams((examsData as any) || []);
     if (!selectedExamId && examsData && examsData.length > 0) setSelectedExamId((examsData as any)[0].id);
   }, [user, selectedExamId]);
