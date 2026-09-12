@@ -416,9 +416,10 @@ const TeacherOralExams = () => {
     { id: "manage", label: "Manage", icon: Settings },
     { id: "live", label: "Live Room", icon: Radio },
   ];
-  // "Manage" is reached per-exam (via the Manage button on an exam card), not
-  // from the top nav bar — only Exams / Live Room are always visible there.
-  const mainNavTabs = tabs.filter(t => t.id !== "manage");
+  // "Manage" and "Live Room" are reached per-exam (via the Manage / Go Live
+  // buttons on an exam card), not from the top nav bar — that would just
+  // duplicate them. Only "Exams" lives in the always-visible nav.
+  const mainNavTabs = tabs.filter(t => t.id === "setup");
 
   // ── Live Room: a true fullscreen takeover ───────────────────────────────
   // Nothing but the video fills the screen — no header, no nav, no scroll.
@@ -523,29 +524,36 @@ const TeacherOralExams = () => {
                       <p style={{ fontSize: 12, color: "#6b7280" }}><Shuffle size={12} style={{ verticalAlign: -2 }} /> Waiting for the student to draw their question set…</p>
                     ) : drawnStages.length === 0 ? (
                       <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                        {drawnStages.map((st: any) => (
-                          <div key={st.stage_id || "general"}>
-                            {st.stage_title && <p style={{ fontSize: 11, fontWeight: 800, color: st.stage_id === session?.current_stage_id ? "#dc2626" : "#9ca3af", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>{st.stage_title}{st.stage_title_ar ? ` · ${st.stage_title_ar}` : ""}</p>}
-                            {(st.questions || []).map((q: any) => (
-                              <div key={q.id} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1px solid #fecaca", marginBottom: 8 }}>
-                                <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
-                                {q.question_text_ar && <p dir="rtl" style={{ fontSize: 14, fontFamily: "'Amiri', serif", color: "#374151", marginBottom: 6 }}>{q.question_text_ar}</p>}
-                                <div style={{ display: "flex", gap: 8 }}>
-                                  <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
-                                  <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
-                                </div>
+                    ) : (() => {
+                      // One round, one question: only the stage currently on-air is
+                      // shown here, not the whole drawn set — advancing the stage
+                      // (above) is what reveals the next round's question.
+                      const activeStage = drawnStages.find((st: any) => st.stage_id === session?.current_stage_id) || drawnStages[0];
+                      const roundIdx = currentSetStages.findIndex((st: any) => st.id === activeStage?.stage_id);
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          {currentSetStages.length > 0 && (
+                            <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af" }}>Round {roundIdx >= 0 ? roundIdx + 1 : 1} of {currentSetStages.length}</p>
+                          )}
+                          {activeStage?.stage_title && <p style={{ fontSize: 11, fontWeight: 800, color: "#dc2626", marginBottom: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>{activeStage.stage_title}{activeStage.stage_title_ar ? ` · ${activeStage.stage_title_ar}` : ""}</p>}
+                          {(activeStage?.questions || []).map((q: any) => (
+                            <div key={q.id} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1px solid #fecaca", marginBottom: 8 }}>
+                              <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
+                              {q.question_text_ar && <p dir="rtl" style={{ fontSize: 14, fontFamily: "'Amiri', serif", color: "#374151", marginBottom: 6 }}>{q.question_text_ar}</p>}
+                              <div style={{ display: "flex", gap: 8 }}>
+                                <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
                               </div>
-                            ))}
-                          </div>
-                        ))}
-                        <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
-                        <button onClick={submitScore} disabled={submittingScore} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
-                          {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />} Submit Score
-                        </button>
-                      </div>
-                    )}
+                            </div>
+                          ))}
+                          {(activeStage?.questions || []).length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>No question drawn for this stage.</p>}
+                          <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                          <button onClick={submitScore} disabled={submittingScore} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+                            {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />} Submit Score
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </>
               )}
@@ -566,7 +574,7 @@ const TeacherOralExams = () => {
       <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>Schedule, question sets, and the live viva room.</p>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto" }}>
-        {mainNavTabs.map(t => (
+        {mainNavTabs.length > 1 && mainNavTabs.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)} disabled={t.id !== "setup" && !selectedExamId} style={{
             display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 20, border: "none",
             background: tab === t.id ? G : "#f3f4f6", color: tab === t.id ? "#fff" : "#374151", fontWeight: 700, fontSize: 13,
