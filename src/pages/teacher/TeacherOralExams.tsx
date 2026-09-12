@@ -3,11 +3,16 @@
 // Live oral / viva exams. Self-contained (like Musabaqah) rather than bolted
 // onto the written-exam flow: teacher creates an oral exam, sets up time
 // slots (allocated to a student, or left open for self-pick), builds one or
-// more question-draw "sets", then runs the live room on exam day — admit
-// waiting students, call one in at a time, and score them. Scores are
-// written via submit_oral_score() straight into exam_attempts/exam_answers,
-// so they show up in TeacherGrading/GradingPage/StudentExamResults with no
-// extra plumbing.
+// more question-draw "sets" — each organised into manually-added STAGES
+// (e.g. Recitation / Tajweed / Meaning), with AI generation (prompt → new
+// bilingual questions, or paste → reorganise existing ones into stages) —
+// then runs the live room on exam day: admit waiting students, call one in
+// at a time, walk them stage by stage, and score them. Everything needed to
+// run the room (time slots, question sets, admitted list, next/advance) is
+// also reachable from a hamburger drawer right inside the Live Room tab, so
+// the teacher never has to leave it mid-session. Scores are written via
+// submit_oral_score() straight into exam_attempts/exam_answers, so they show
+// up in TeacherGrading/GradingPage/StudentExamResults with no extra plumbing.
 // ─────────────────────────────────────────────────────────────────────────
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -18,6 +23,7 @@ import "@livekit/components-styles";
 import {
   Mic, Plus, Trash2, Users, Clock, Radio, CheckCircle2, XCircle,
   Loader2, ChevronRight, ListChecks, PhoneOff, Shuffle, Send,
+  Menu, X, Wand2, ClipboardPaste, Layers, Hash, SkipForward, Settings,
 } from "lucide-react";
 
 const G = "#064E3B";
@@ -95,7 +101,9 @@ const TeacherOralExams = () => {
     if (!selectedExamId) { setSlots([]); setSets([]); setSession(null); return; }
     const [{ data: slotsData }, { data: setsData }, { data: sessionData }] = await Promise.all([
       supabase.from("oral_exam_slots" as any).select("*").eq("exam_id", selectedExamId).order("start_at"),
-      supabase.from("oral_question_sets" as any).select("*, oral_question_set_items(id, question_id, exam_questions(id, question_text, points))").eq("exam_id", selectedExamId).order("created_at"),
+      supabase.from("oral_question_sets" as any)
+        .select("*, oral_question_set_stages(id, title, title_ar, sort_order), oral_question_set_items(id, question_id, stage_id, sort_order, exam_questions(id, question_text, question_text_ar, points))")
+        .eq("exam_id", selectedExamId).order("created_at"),
       supabase.from("oral_exam_sessions" as any).select("*").eq("exam_id", selectedExamId).maybeSingle(),
     ]);
     setSlots((slotsData as any) || []);
@@ -181,7 +189,11 @@ const TeacherOralExams = () => {
 
   // ── Question sets ──────────────────────────────────────────────────────
   const [newSetTitle, setNewSetTitle] = useState("");
-  const [newQuestion, setNewQuestion] = useState<Record<string, { text: string; points: string }>>({});
+  const [newQ, setNewQ] = useState<Record<string, { text: string; text_ar: string; points: string }>>({});
+  const [newStageTitle, setNewStageTitle] = useState<Record<string, string>>({});
+  const [aiMode, setAiMode] = useState<Record<string, "prompt" | "paste">>({});
+  const [aiInput, setAiInput] = useState<Record<string, string>>({});
+  const [aiLoading, setAiLoading] = useState<Record<string, boolean>>({});
 
   const createSet = async () => {
     if (!newSetTitle.trim() || !selectedExamId) return;
@@ -191,34 +203,114 @@ const TeacherOralExams = () => {
     loadExamData();
   };
 
-  const addQuestionToSet = async (setId: string) => {
-    const q = newQuestion[setId];
-    if (!q?.text?.trim()) return;
-    const { data: question, error } = await supabase.from("exam_questions").insert({
-      exam_id: selectedExamId, question_type: "essay", question_text: q.text.trim(), points: Number(q.points) || 1, sort_order: 0,
-    }).select().single();
-    if (error) return toast({ title: "Could not add question", description: error.message, variant: "destructive" });
-    await supabase.from("oral_question_set_items" as any).insert({ set_id: setId, question_id: question.id });
-    setNewQuestion({ ...newQuestion, [setId]: { text: "", points: "1" } });
+  const deleteSet = async (id: string) => {
+    await supabase.from("oral_question_sets" as any).delete().eq("id", id);
     loadExamData();
   };
 
-  const deleteSet = async (id: string) => {
-    await supabase.from("oral_question_sets" as any).delete().eq("id", id);
+  const addStage = async (setId: string) => {
+    const title = newStageTitle[setId]?.trim();
+    if (!title) return;
+    const set = sets.find(s => s.id === setId);
+    const sortOrder = (set?.oral_question_set_stages || []).length;
+    const { error } = await supabase.from("oral_question_set_stages" as any).insert({ set_id: setId, title, sort_order: sortOrder, created_by: user!.id });
+    if (error) return toast({ title: "Could not add stage", description: error.message, variant: "destructive" });
+    setNewStageTitle({ ...newStageTitle, [setId]: "" });
+    loadExamData();
+  };
+
+  const deleteStage = async (stageId: string) => {
+    await supabase.from("oral_question_set_stages" as any).delete().eq("id", stageId);
+    loadExamData();
+  };
+
+  const addQuestion = async (setId: string, stageId: string | null) => {
+    const key = `${setId}::${stageId || "none"}`;
+    const q = newQ[key];
+    if (!q?.text?.trim()) return;
+    const { data: question, error } = await supabase.from("exam_questions").insert({
+      exam_id: selectedExamId, question_type: "essay", question_text: q.text.trim(),
+      question_text_ar: q.text_ar?.trim() || null, points: Number(q.points) || 1, sort_order: 0,
+    } as any).select().single();
+    if (error) return toast({ title: "Could not add question", description: error.message, variant: "destructive" });
+    await supabase.from("oral_question_set_items" as any).insert({ set_id: setId, question_id: question.id, stage_id: stageId });
+    setNewQ({ ...newQ, [key]: { text: "", text_ar: "", points: "1" } });
+    loadExamData();
+  };
+
+  const deleteItem = async (itemId: string) => {
+    await supabase.from("oral_question_set_items" as any).delete().eq("id", itemId);
+    loadExamData();
+  };
+
+  // AI generation: "prompt" = invent bilingual questions from a description;
+  // "paste" = clean up + translate + sort pasted questions into stages.
+  // Either mode returns the same { stages: [{ title, title_ar, questions: [...] }] }
+  // shape from the tahleem-ai edge function, so insertion logic is shared.
+  const generateAIQuestions = async (setId: string) => {
+    const mode = aiMode[setId] || "prompt";
+    const input = aiInput[setId]?.trim();
+    if (!input) return toast({ title: mode === "paste" ? "Paste some questions first" : "Describe what you want first", variant: "destructive" });
+
+    setAiLoading({ ...aiLoading, [setId]: true });
+    const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+      body: { action: "oral_questions", prompt: input, context: { mode } },
+    });
+    setAiLoading({ ...aiLoading, [setId]: false });
+
+    if (error || data?.error) return toast({ title: "AI generation failed", description: error?.message || data?.error, variant: "destructive" });
+    const stages = data?.stages;
+    if (!Array.isArray(stages) || stages.length === 0) return toast({ title: "AI didn't return any questions — try rephrasing", variant: "destructive" });
+
+    const set = sets.find(s => s.id === setId);
+    let stageOrder = (set?.oral_question_set_stages || []).length;
+
+    for (const st of stages) {
+      const { data: stageRow, error: stageErr } = await supabase.from("oral_question_set_stages" as any).insert({
+        set_id: setId, title: st.title || `Stage ${stageOrder + 1}`, title_ar: st.title_ar || null, sort_order: stageOrder, created_by: user!.id,
+      }).select().single();
+      stageOrder++;
+      if (stageErr || !stageRow) continue;
+
+      const questions = Array.isArray(st.questions) ? st.questions : [];
+      for (let qIdx = 0; qIdx < questions.length; qIdx++) {
+        const q = questions[qIdx];
+        if (!q?.question_text && !q?.question_text_ar) continue;
+        const { data: qRow, error: qErr } = await supabase.from("exam_questions").insert({
+          exam_id: selectedExamId, question_type: "essay",
+          question_text: q.question_text || "", question_text_ar: q.question_text_ar || null,
+          points: Number(q.points) || 1, sort_order: qIdx,
+        } as any).select().single();
+        if (qErr || !qRow) continue;
+        await supabase.from("oral_question_set_items" as any).insert({ set_id: setId, question_id: qRow.id, stage_id: stageRow.id, sort_order: qIdx });
+      }
+    }
+
+    toast({ title: "Questions added", description: `${stages.length} stage(s) from AI` });
+    setAiInput({ ...aiInput, [setId]: "" });
     loadExamData();
   };
 
   // ── Live room ────────────────────────────────────────────────────────
   const [joinedLive, setJoinedLive] = useState(false);
   const [lkToken, setLkToken] = useState<{ token: string; url: string } | null>(null);
-  const [drawnQuestions, setDrawnQuestions] = useState<any[]>([]);
+  const [drawnStages, setDrawnStages] = useState<any[]>([]);
   const [scores, setScores] = useState<Record<string, { points: string; feedback: string }>>({});
   const [overallFeedback, setOverallFeedback] = useState("");
   const [submittingScore, setSubmittingScore] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const waitingSlots = slots.filter(s => s.status === "waiting");
-  const admittedSlots = slots.filter(s => s.status === "admitted");
+  const admittedSlots = useMemo(
+    () => slots.filter(s => s.status === "admitted").sort((a, b) => (a.queue_number || 0) - (b.queue_number || 0)),
+    [slots]
+  );
   const currentSlot = slots.find(s => s.id === session?.current_slot_id && s.status === "in_progress");
+  const drawnQuestions = useMemo(() => drawnStages.flatMap((st: any) => st.questions || []), [drawnStages]);
+  const currentSetStages = useMemo(
+    () => currentSlot?.drawn_set_id ? [...(sets.find(s => s.id === currentSlot.drawn_set_id)?.oral_question_set_stages || [])].sort((a, b) => a.sort_order - b.sort_order) : [],
+    [currentSlot, sets]
+  );
 
   const admit = async (slotId: string) => {
     const { error } = await supabase.rpc("admit_oral_student" as any, { p_slot_id: slotId });
@@ -238,6 +330,28 @@ const TeacherOralExams = () => {
     loadExamData();
   };
 
+  const setStage = async (stageId: string | null) => {
+    if (!session) return;
+    const { error } = await supabase.rpc("set_oral_stage" as any, { p_session_id: session.id, p_stage_id: stageId });
+    if (error) return toast({ title: "Could not change stage", description: error.message, variant: "destructive" });
+    loadExamData();
+  };
+
+  // Unified "Next" — call in the next admitted student if no one's on stage
+  // yet, otherwise walk the current student to their next stage.
+  const goNext = async () => {
+    if (!currentSlot) {
+      const next = admittedSlots[0];
+      if (!next) return toast({ title: "No admitted students waiting" });
+      return callIn(next.id);
+    }
+    if (currentSetStages.length === 0) return;
+    const idx = currentSetStages.findIndex(st => st.id === session?.current_stage_id);
+    const nextStage = currentSetStages[idx + 1];
+    if (!nextStage) return toast({ title: "Already on the last stage" });
+    await setStage(nextStage.id);
+  };
+
   const joinLiveRoom = async () => {
     const { data, error } = await supabase.functions.invoke("oral-exam-livekit-token", { body: { exam_id: selectedExamId } });
     if (error || data?.error) return toast({ title: "Could not join room", description: error?.message || data?.error, variant: "destructive" });
@@ -245,20 +359,20 @@ const TeacherOralExams = () => {
     setJoinedLive(true);
   };
 
-  // Fetch the current student's drawn question set once they've drawn.
+  // Fetch the current student's drawn question set (grouped by stage) once they've drawn.
   useEffect(() => {
-    if (!currentSlot?.drawn_set_id) { setDrawnQuestions([]); return; }
-    supabase.rpc("get_my_drawn_oral_questions" as any, { p_slot_id: currentSlot.id }).then(({ data }: any) => {
-      setDrawnQuestions(data || []);
+    if (!currentSlot?.drawn_set_id) { setDrawnStages([]); return; }
+    supabase.rpc("get_my_drawn_oral_stages" as any, { p_slot_id: currentSlot.id }).then(({ data }: any) => {
+      setDrawnStages(data || []);
       const init: Record<string, { points: string; feedback: string }> = {};
-      (data || []).forEach((q: any) => { init[q.id] = { points: "", feedback: "" }; });
+      (data || []).forEach((st: any) => (st.questions || []).forEach((q: any) => { init[q.id] = { points: "", feedback: "" }; }));
       setScores(init);
     });
   }, [currentSlot?.drawn_set_id, currentSlot?.id]);
 
   const submitScore = async () => {
     if (!currentSlot) return;
-    const answers = drawnQuestions.map(q => ({
+    const answers = drawnQuestions.map((q: any) => ({
       question_id: q.id,
       points_awarded: Number(scores[q.id]?.points) || 0,
       feedback: scores[q.id]?.feedback || null,
@@ -269,7 +383,7 @@ const TeacherOralExams = () => {
     if (error) return toast({ title: "Could not save score", description: error.message, variant: "destructive" });
     toast({ title: "Score saved to grading" });
     setOverallFeedback("");
-    setDrawnQuestions([]);
+    setDrawnStages([]);
     loadExamData();
   };
 
@@ -283,7 +397,7 @@ const TeacherOralExams = () => {
   ];
 
   return (
-    <div style={{ maxWidth: 880, margin: "0 auto", padding: 16, paddingBottom: 60 }}>
+    <div style={{ maxWidth: 880, margin: "0 auto", padding: 16, paddingBottom: 60, position: "relative" }}>
       <h1 style={{ fontSize: 20, fontWeight: 800, color: G, marginBottom: 4 }}>Oral Exams</h1>
       <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>Schedule, question sets, and the live viva room.</p>
 
@@ -383,30 +497,110 @@ const TeacherOralExams = () => {
             </div>
           </div>
 
-          {sets.map((set: any) => (
-            <div key={set.id} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                <h4 style={{ fontWeight: 700, fontSize: 14, color: G }}>{set.title}</h4>
-                <button onClick={() => deleteSet(set.id)} style={{ background: "none", border: "none", cursor: "pointer" }}><Trash2 size={15} color="#dc2626" /></button>
-              </div>
-              {(set.oral_question_set_items || []).map((it: any) => (
-                <div key={it.id} style={{ fontSize: 13, padding: "6px 0", borderBottom: "1px solid #f3f4f6" }}>
-                  {it.exam_questions?.question_text} <span style={{ color: "#9ca3af" }}>({it.exam_questions?.points} pts)</span>
+          {sets.map((set: any) => {
+            const stages = [...(set.oral_question_set_stages || [])].sort((a: any, b: any) => a.sort_order - b.sort_order);
+            const itemsByStage: Record<string, any[]> = {};
+            (set.oral_question_set_items || []).forEach((it: any) => {
+              const k = it.stage_id || "none";
+              (itemsByStage[k] = itemsByStage[k] || []).push(it);
+            });
+            const mode = aiMode[set.id] || "prompt";
+
+            return (
+              <div key={set.id} style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <h4 style={{ fontWeight: 700, fontSize: 15, color: G }}>{set.title}</h4>
+                  <button onClick={() => deleteSet(set.id)} style={{ background: "none", border: "none", cursor: "pointer" }}><Trash2 size={15} color="#dc2626" /></button>
                 </div>
-              ))}
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <input placeholder="Add a question…" value={newQuestion[set.id]?.text || ""} onChange={e => setNewQuestion({ ...newQuestion, [set.id]: { text: e.target.value, points: newQuestion[set.id]?.points || "1" } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
-                <input type="number" placeholder="Pts" value={newQuestion[set.id]?.points || "1"} onChange={e => setNewQuestion({ ...newQuestion, [set.id]: { text: newQuestion[set.id]?.text || "", points: e.target.value } })} style={{ width: 60, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
-                <button onClick={() => addQuestionToSet(set.id)} style={{ background: GOLD, color: "#fff", border: "none", borderRadius: 8, padding: "0 12px", fontWeight: 700, cursor: "pointer" }}>+</button>
+
+                {/* AI generation */}
+                <div style={{ background: "#faf8f2", border: `1px solid ${GOLD}55`, borderRadius: 12, padding: 12, marginBottom: 14 }}>
+                  <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                    <button onClick={() => setAiMode({ ...aiMode, [set.id]: "prompt" })} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${mode === "prompt" ? GOLD : "#e5e7eb"}`, background: mode === "prompt" ? "#fff8ea" : "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                      <Wand2 size={12} /> Generate from prompt
+                    </button>
+                    <button onClick={() => setAiMode({ ...aiMode, [set.id]: "paste" })} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${mode === "paste" ? GOLD : "#e5e7eb"}`, background: mode === "paste" ? "#fff8ea" : "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                      <ClipboardPaste size={12} /> Paste & reorganise
+                    </button>
+                  </div>
+                  <textarea
+                    placeholder={mode === "paste"
+                      ? "Paste your existing questions here (English and/or Arabic, any order) — AI will translate the missing language and sort them into stages…"
+                      : "Describe the oral exam (subject, topic, level, how many questions) — AI will write bilingual (Arabic + English) questions and group them into stages…"}
+                    value={aiInput[set.id] || ""}
+                    onChange={e => setAiInput({ ...aiInput, [set.id]: e.target.value })}
+                    rows={3}
+                    style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13, resize: "vertical", marginBottom: 8, fontFamily: "inherit" }}
+                  />
+                  <button onClick={() => generateAIQuestions(set.id)} disabled={aiLoading[set.id]} style={{ display: "flex", alignItems: "center", gap: 6, background: GOLD, color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 12, cursor: aiLoading[set.id] ? "wait" : "pointer" }}>
+                    {aiLoading[set.id] ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} {aiLoading[set.id] ? "Generating…" : "Generate"}
+                  </button>
+                </div>
+
+                {/* Stages */}
+                {stages.map((stage: any) => (
+                  <StageBlock
+                    key={stage.id}
+                    label={stage.title}
+                    labelAr={stage.title_ar}
+                    items={itemsByStage[stage.id] || []}
+                    onDeleteStage={() => deleteStage(stage.id)}
+                    onDeleteItem={deleteItem}
+                    newQ={newQ[`${set.id}::${stage.id}`]}
+                    setNewQ={(v: any) => setNewQ({ ...newQ, [`${set.id}::${stage.id}`]: v })}
+                    onAdd={() => addQuestion(set.id, stage.id)}
+                  />
+                ))}
+                {(itemsByStage["none"] || []).length > 0 && (
+                  <StageBlock
+                    label="General (no stage)"
+                    items={itemsByStage["none"]}
+                    onDeleteItem={deleteItem}
+                    newQ={newQ[`${set.id}::none`]}
+                    setNewQ={(v: any) => setNewQ({ ...newQ, [`${set.id}::none`]: v })}
+                    onAdd={() => addQuestion(set.id, null)}
+                  />
+                )}
+                {stages.length === 0 && (itemsByStage["none"] || []).length === 0 && (
+                  <StageBlock
+                    label="General"
+                    items={[]}
+                    onDeleteItem={deleteItem}
+                    newQ={newQ[`${set.id}::none`]}
+                    setNewQ={(v: any) => setNewQ({ ...newQ, [`${set.id}::none`]: v })}
+                    onAdd={() => addQuestion(set.id, null)}
+                  />
+                )}
+
+                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                  <input placeholder="New stage name (e.g. Tajweed Rules)" value={newStageTitle[set.id] || ""} onChange={e => setNewStageTitle({ ...newStageTitle, [set.id]: e.target.value })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+                  <button onClick={() => addStage(set.id)} style={{ display: "flex", alignItems: "center", gap: 4, background: "#f3f4f6", color: "#374151", border: "1px solid #e5e7eb", borderRadius: 8, padding: "0 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+                    <Layers size={13} /> Add Stage
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {sets.length === 0 && <p style={{ color: "#9ca3af", fontSize: 13, textAlign: "center" }}>No question sets yet.</p>}
         </div>
       )}
 
       {tab === "live" && selectedExamId && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={() => setMenuOpen(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 10, padding: "10px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              <Menu size={16} /> Control Room
+            </button>
+            {currentSlot && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, background: G, color: "#fff", borderRadius: 10, padding: "10px 14px", fontWeight: 800, fontSize: 13 }}>
+                <Hash size={14} /> Now serving #{currentSlot.queue_number ?? "—"} — {currentSlot.student_name}
+              </div>
+            )}
+            <button onClick={goNext} style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, background: GOLD, color: "#fff", border: "none", borderRadius: 10, padding: "10px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+              <SkipForward size={14} /> Next
+            </button>
+          </div>
+
           {!joinedLive ? (
             <button onClick={joinLiveRoom} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 12, padding: "14px 20px", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
               <Radio size={16} style={{ verticalAlign: -3 }} /> Start / Join Live Room
@@ -435,7 +629,7 @@ const TeacherOralExams = () => {
               <h4 style={{ fontSize: 12, fontWeight: 800, color: "#8b5cf6", marginBottom: 8 }}><CheckCircle2 size={13} style={{ verticalAlign: -2 }} /> Admitted ({admittedSlots.length})</h4>
               {admittedSlots.map(s => (
                 <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0" }}>
-                  <span>{s.student_name}</span>
+                  <span><b style={{ color: G }}>#{s.queue_number ?? "—"}</b> {s.student_name}</span>
                   <div style={{ display: "flex", gap: 4 }}>
                     <button onClick={() => callIn(s.id)} disabled={!!currentSlot} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: currentSlot ? "not-allowed" : "pointer", opacity: currentSlot ? 0.5 : 1 }}>Call in</button>
                     <button onClick={() => noShow(s.id)} style={{ background: "none", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer" }}><XCircle size={12} /></button>
@@ -448,20 +642,37 @@ const TeacherOralExams = () => {
 
           {currentSlot && (
             <div style={{ background: "#fff5f5", border: "2px solid #dc2626", borderRadius: 14, padding: 16 }}>
-              <h3 style={{ fontWeight: 800, color: "#dc2626", fontSize: 14, marginBottom: 8 }}><Mic size={15} style={{ verticalAlign: -3 }} /> On stage: {currentSlot.student_name}</h3>
+              <h3 style={{ fontWeight: 800, color: "#dc2626", fontSize: 14, marginBottom: 8 }}><Mic size={15} style={{ verticalAlign: -3 }} /> On stage: #{currentSlot.queue_number ?? "—"} {currentSlot.student_name}</h3>
               {!currentSlot.drawn_set_id ? (
                 <p style={{ fontSize: 13, color: "#6b7280" }}><Shuffle size={13} style={{ verticalAlign: -2 }} /> Waiting for the student to draw their question set…</p>
-              ) : drawnQuestions.length === 0 ? (
+              ) : drawnStages.length === 0 ? (
                 <Loader2 size={16} className="animate-spin" />
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {drawnQuestions.map((q: any) => (
-                    <div key={q.id} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1px solid #fecaca" }}>
-                      <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 6 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 80, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
-                        <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
-                      </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {currentSetStages.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {currentSetStages.map((st: any) => (
+                        <button key={st.id} onClick={() => setStage(st.id)} style={{
+                          padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${session?.current_stage_id === st.id ? "#dc2626" : "#e5e7eb"}`,
+                          background: session?.current_stage_id === st.id ? "#dc2626" : "#fff",
+                          color: session?.current_stage_id === st.id ? "#fff" : "#374151", fontWeight: 700, fontSize: 12, cursor: "pointer",
+                        }}>{st.title}</button>
+                      ))}
+                    </div>
+                  )}
+                  {drawnStages.map((st: any) => (
+                    <div key={st.stage_id || "general"}>
+                      {st.stage_title && <p style={{ fontSize: 12, fontWeight: 800, color: st.stage_id === session?.current_stage_id ? "#dc2626" : "#9ca3af", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>{st.stage_title}{st.stage_title_ar ? ` · ${st.stage_title_ar}` : ""}</p>}
+                      {(st.questions || []).map((q: any) => (
+                        <div key={q.id} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1px solid #fecaca", marginBottom: 8 }}>
+                          <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
+                          {q.question_text_ar && <p dir="rtl" style={{ fontSize: 15, fontFamily: "'Amiri', serif", color: "#374151", marginBottom: 6 }}>{q.question_text_ar}</p>}
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 80, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+                            <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   ))}
                   <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
@@ -474,8 +685,91 @@ const TeacherOralExams = () => {
           )}
         </div>
       )}
+
+      {menuOpen && (
+        <div onClick={() => setMenuOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 300 }}>
+          <div onClick={e => e.stopPropagation()} style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: "min(340px, 88vw)", background: "#fff", boxShadow: "2px 0 16px rgba(0,0,0,0.2)", padding: 18, overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ fontWeight: 800, fontSize: 16, color: G }}><Settings size={16} style={{ verticalAlign: -3 }} /> Control Room</h3>
+              <button onClick={() => setMenuOpen(false)} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={20} /></button>
+            </div>
+
+            <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8 }}>Jump to</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+              {tabs.filter(t => t.id !== "live").map(t => (
+                <button key={t.id} onClick={() => { setTab(t.id); setMenuOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left" }}>
+                  <t.icon size={14} /> {t.label}
+                </button>
+              ))}
+            </div>
+
+            <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8 }}>Admitted students</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+              {admittedSlots.map(s => (
+                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "8px 10px", borderRadius: 8, background: "#f9fafb" }}>
+                  <span><b style={{ color: G }}>#{s.queue_number ?? "—"}</b> {s.student_name}</span>
+                  <button onClick={() => callIn(s.id)} disabled={!!currentSlot} style={{ background: G, color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: currentSlot ? "not-allowed" : "pointer", opacity: currentSlot ? 0.5 : 1 }}>Call in</button>
+                </div>
+              ))}
+              {admittedSlots.length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>None admitted yet.</p>}
+            </div>
+
+            {currentSlot && currentSetStages.length > 0 && (
+              <>
+                <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8 }}>Stage</p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                  {currentSetStages.map((st: any) => (
+                    <button key={st.id} onClick={() => setStage(st.id)} style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8,
+                      border: `1.5px solid ${session?.current_stage_id === st.id ? "#dc2626" : "#e5e7eb"}`,
+                      background: session?.current_stage_id === st.id ? "#fff5f5" : "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left",
+                    }}>
+                      {st.title} {session?.current_stage_id === st.id && <CheckCircle2 size={13} color="#dc2626" />}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <button onClick={() => { goNext(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: GOLD, color: "#fff", border: "none", borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
+              <SkipForward size={15} /> Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+// A single stage's question list + inline "add question" form (English + optional Arabic).
+const StageBlock = ({ label, labelAr, items, onDeleteStage, onDeleteItem, newQ, setNewQ, onAdd }: any) => (
+  <div style={{ border: "1px solid #f0f0f0", borderRadius: 10, padding: 12, marginBottom: 10, background: "#fcfcfc" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <Layers size={13} color={GOLD} />
+        <span style={{ fontWeight: 700, fontSize: 13 }}>{label}</span>
+        {labelAr && <span dir="rtl" style={{ fontSize: 13, color: "#9ca3af", fontFamily: "'Amiri', serif" }}>· {labelAr}</span>}
+      </div>
+      {onDeleteStage && <button onClick={onDeleteStage} style={{ background: "none", border: "none", cursor: "pointer" }}><Trash2 size={13} color="#dc2626" /></button>}
+    </div>
+    {items.map((it: any) => (
+      <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", fontSize: 13, padding: "6px 0", borderBottom: "1px solid #f3f4f6" }}>
+        <div>
+          <div>{it.exam_questions?.question_text} <span style={{ color: "#9ca3af" }}>({it.exam_questions?.points} pts)</span></div>
+          {it.exam_questions?.question_text_ar && <div dir="rtl" style={{ fontFamily: "'Amiri', serif", color: "#6b7280", marginTop: 2 }}>{it.exam_questions.question_text_ar}</div>}
+        </div>
+        <button onClick={() => onDeleteItem(it.id)} style={{ background: "none", border: "none", cursor: "pointer", flexShrink: 0 }}><Trash2 size={13} color="#dc2626" /></button>
+      </div>
+    ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+      <input placeholder="Question (English)" value={newQ?.text || ""} onChange={e => setNewQ({ text: e.target.value, text_ar: newQ?.text_ar || "", points: newQ?.points || "1" })} style={{ padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <input dir="rtl" placeholder="السؤال (عربي) — اختياري" value={newQ?.text_ar || ""} onChange={e => setNewQ({ text: newQ?.text || "", text_ar: e.target.value, points: newQ?.points || "1" })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13, fontFamily: "'Amiri', serif" }} />
+        <input type="number" placeholder="Pts" value={newQ?.points || "1"} onChange={e => setNewQ({ text: newQ?.text || "", text_ar: newQ?.text_ar || "", points: e.target.value })} style={{ width: 60, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+        <button onClick={onAdd} style={{ background: GOLD, color: "#fff", border: "none", borderRadius: 8, padding: "0 14px", fontWeight: 700, cursor: "pointer" }}>+</button>
+      </div>
+    </div>
+  </div>
+);
 
 export default TeacherOralExams;
