@@ -13,10 +13,13 @@ import { cn } from "@/lib/utils";
 const GOLD = "#c9a84c";
 
 interface TeacherExamsPageProps {
-  type: "exam" | "test";
+  // Optional now — the page shows a type filter tab of its own so it can
+  // display exams and tests together (or a caller can still force one type
+  // via this prop if a dedicated route ever needs it).
+  type?: "exam" | "test";
 }
 
-const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
+const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
   const { t } = useLanguage();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -24,10 +27,13 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
   const [exams, setExams] = useState<any[]>([]);
   const [termFilter, setTermFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  // "all" | "exam" | "test" — ignored if a caller pins `type` via props.
+  const [typeFilter, setTypeFilter] = useState<"all" | "exam" | "test">(fixedType || "all");
   const [loading, setLoading] = useState(true);
 
-  const isTest = type === "test";
-  const label = isTest ? t("Tests", "التمرينات") : t("Exams", "الامتحانات");
+  const effectiveType = fixedType || typeFilter;
+  const isTest = effectiveType === "test";
+  const label = effectiveType === "all" ? t("Exams & Tests", "الامتحانات والتمارين") : isTest ? t("Tests", "التمرينات") : t("Exams", "الامتحانات");
   const singularLabel = isTest ? t("Test", "تمرين") : t("Exam", "امتحان");
 
   useEffect(() => {
@@ -50,14 +56,17 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
       // ExamEditor on save), not via the legacy courses→course_id path —
       // exams.course_id is never populated by the editor, so filtering on
       // it here silently hid every exam a teacher just created.
+      // Type filtering (exam vs test) happens client-side below in
+      // `filtered`, not here, so a single fetch covers both types.
       const { data } = await supabase.from("exams").select("*, subjects(title, title_ar)").in("subject_id", subjectIds).order("created_at", { ascending: false });
-      setExams((data || []).filter((e: any) => (e.type || "exam") === type));
+      setExams(data || []);
       setLoading(false);
     };
     fetch();
-  }, [user, type]);
+  }, [user]);
 
   const filtered = exams.filter(e => {
+    if (effectiveType !== "all" && (e.type || "exam") !== effectiveType) return false;
     if (termFilter !== "all" && (e.term || "first") !== termFilter) return false;
     if (statusFilter === "published" && !e.is_published) return false;
     if (statusFilter === "draft" && e.is_published) return false;
@@ -109,6 +118,23 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
       <div className="mx-auto max-w-5xl space-y-5 px-3 pt-6 sm:px-6 sm:pt-8">
         {/* Filters */}
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+          {!fixedType && (
+            <div className="flex items-center gap-1.5 border-e border-slate-200 pe-3">
+              {(["all", "exam", "test"] as const).map(tf => (
+                <button
+                  key={tf}
+                  onClick={() => setTypeFilter(tf)}
+                  className={cn(
+                    "rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors",
+                    typeFilter === tf ? "text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  )}
+                  style={typeFilter === tf ? { background: "#064E3B" } : undefined}
+                >
+                  {tf === "all" ? t("All", "الكل") : tf === "exam" ? t("Exams", "الامتحانات") : t("Tests", "التمرينات")}
+                </button>
+              ))}
+            </div>
+          )}
           {["all", "first", "second", "third"].map(term => (
             <button
               key={term}
@@ -154,7 +180,9 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
                 <div className="min-w-0 flex-1 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-sm font-bold text-slate-800">{e.title}</p>
-                    <Badge variant={isTest ? "secondary" : "default"} className="rounded-full text-xs">{singularLabel}</Badge>
+                    <Badge variant={(e.type || "exam") === "test" ? "secondary" : "default"} className="rounded-full text-xs">
+                      {(e.type || "exam") === "test" ? t("Test", "تمرين") : t("Exam", "امتحان")}
+                    </Badge>
                     <Badge variant="outline" className="rounded-full text-xs capitalize">{e.term || "first"}</Badge>
                   </div>
                   <p className="text-xs text-slate-500">{(e as any).subjects?.title || ""}</p>
@@ -176,7 +204,7 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
             {filtered.length === 0 && (
               <div className="py-10 text-center text-slate-400">
                 <ClipboardList className="mx-auto mb-3 h-10 w-10 opacity-30" />
-                <p className="text-sm">{t(`No ${type}s found`, `لم يتم العثور على ${isTest ? "تمرينات" : "امتحانات"}`)}</p>
+                <p className="text-sm">{t(`No ${effectiveType === "all" ? "exams or tests" : effectiveType + "s"} found`, `لم يتم العثور على ${effectiveType === "all" ? "امتحانات أو تمرينات" : isTest ? "تمرينات" : "امتحانات"}`)}</p>
               </div>
             )}
           </CardContent>
