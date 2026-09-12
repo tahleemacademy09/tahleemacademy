@@ -116,6 +116,100 @@ const TERMS = [
   { key: "third",  ar: "الفترة الثالثة", en: "Third Term"  },
 ];
 
+// ── Print density tiers ──────────────────────────────────────────
+// The printed page is a fixed A4 sheet, but the number of subjects on a
+// term is open-ended (schools can add more at any time). Rather than let
+// an 8th, 9th, 10th... subject overflow onto a second page, every
+// size-sensitive measurement (table padding, font sizes, section
+// margins, stamp size) is driven by how many subject rows are on the
+// page, so the sheet quietly compresses itself to keep everything on
+// one page no matter how many subjects get added.
+const DENSITY_TIERS: { max: number; cls: string; css: string }[] = [
+  { max: 5, cls: "dens-a", css: `
+.page.dens-a table.main{margin:16px 0 8px}
+.page.dens-a table.main th,.page.dens-a table.main td{padding:8px 8px;font-size:12.5px}
+.page.dens-a table.main th{font-size:12px}
+.page.dens-a .subject-cell .subject-ar{font-size:14px}
+.page.dens-a .subject-cell .subject-en{font-size:10px}
+.page.dens-a .summary-grid{margin-top:14px}
+.page.dens-a table.small th,.page.dens-a table.small td{font-size:11.5px;padding:6px 8px}
+.page.dens-a .grade-box-title{font-size:11px;padding:6px 10px}
+.page.dens-a table.grade-table th{font-size:12px}
+.page.dens-a table.grade-table td{font-size:13px}
+.page.dens-a table.grade-table th,.page.dens-a table.grade-table td{padding:5px 4px}
+.page.dens-a .legend{font-size:9.5px;padding:8px 10px 10px}
+.page.dens-a .comments-grid{margin-top:16px}
+.page.dens-a .comment-label{font-size:11.5px;padding:7px 14px}
+.page.dens-a .comment-text{font-size:12.5px;padding:10px 14px;line-height:1.9}
+.page.dens-a .stamp-center{margin-top:26px;gap:10px}
+.page.dens-a .stamp-center img{width:130px}
+.page.dens-a .footer{margin-top:14px;padding-top:8px}
+.page.dens-a .info-box{margin:14px 0 16px;padding:8px 20px}` },
+  { max: 8, cls: "dens-b", css: `
+.page.dens-b table.main{margin:10px 0 6px}
+.page.dens-b table.main th,.page.dens-b table.main td{padding:6px 7px;font-size:11.5px}
+.page.dens-b table.main th{font-size:11px}
+.page.dens-b .subject-cell .subject-ar{font-size:13px}
+.page.dens-b .subject-cell .subject-en{font-size:9.5px}
+.page.dens-b .summary-grid{margin-top:10px}
+.page.dens-b table.small th,.page.dens-b table.small td{font-size:10.5px;padding:5px 7px}
+.page.dens-b .grade-box-title{font-size:10.5px;padding:5px 9px}
+.page.dens-b table.grade-table th{font-size:11px}
+.page.dens-b table.grade-table td{font-size:12px}
+.page.dens-b table.grade-table th,.page.dens-b table.grade-table td{padding:4px 3px}
+.page.dens-b .legend{font-size:9px;padding:6px 9px 8px}
+.page.dens-b .comments-grid{margin-top:10px}
+.page.dens-b .comment-label{font-size:11px;padding:5px 12px}
+.page.dens-b .comment-text{font-size:11.5px;padding:7px 12px;line-height:1.6}
+.page.dens-b .stamp-center{margin-top:14px;gap:8px}
+.page.dens-b .stamp-center img{width:105px}
+.page.dens-b .footer{margin-top:8px;padding-top:6px}
+.page.dens-b .info-box{margin:8px 0 10px;padding:6px 16px}` },
+  { max: 12, cls: "dens-c", css: `
+.page.dens-c table.main{margin:6px 0 4px}
+.page.dens-c table.main th,.page.dens-c table.main td{padding:4px 5px;font-size:10.5px}
+.page.dens-c table.main th{font-size:10px}
+.page.dens-c .subject-cell .subject-ar{font-size:12px}
+.page.dens-c .subject-cell .subject-en{font-size:8.5px}
+.page.dens-c .summary-grid{margin-top:7px}
+.page.dens-c table.small th,.page.dens-c table.small td{font-size:9.5px;padding:4px 6px}
+.page.dens-c .grade-box-title{font-size:9.5px;padding:4px 8px}
+.page.dens-c table.grade-table th{font-size:10px}
+.page.dens-c table.grade-table td{font-size:11px}
+.page.dens-c table.grade-table th,.page.dens-c table.grade-table td{padding:3px 2px}
+.page.dens-c .legend{font-size:8px;padding:5px 8px 6px}
+.page.dens-c .comments-grid{margin-top:7px}
+.page.dens-c .comment-label{font-size:10px;padding:4px 10px}
+.page.dens-c .comment-text{font-size:10.5px;padding:5px 10px;line-height:1.4}
+.page.dens-c .stamp-center{margin-top:8px;gap:5px}
+.page.dens-c .stamp-center img{width:82px}
+.page.dens-c .footer{margin-top:5px;padding-top:4px}
+.page.dens-c .info-box{margin:6px 0 7px;padding:5px 14px}` },
+  { max: Infinity, cls: "dens-d", css: `
+.page.dens-d table.main{margin:4px 0 3px}
+.page.dens-d table.main th,.page.dens-d table.main td{padding:3px 4px;font-size:9.5px}
+.page.dens-d table.main th{font-size:9px}
+.page.dens-d .subject-cell .subject-ar{font-size:11px}
+.page.dens-d .subject-cell .subject-en{font-size:8px}
+.page.dens-d .summary-grid{margin-top:5px}
+.page.dens-d table.small th,.page.dens-d table.small td{font-size:8.5px;padding:3px 5px}
+.page.dens-d .grade-box-title{font-size:8.5px;padding:3px 7px}
+.page.dens-d table.grade-table th{font-size:9px}
+.page.dens-d table.grade-table td{font-size:10px}
+.page.dens-d table.grade-table th,.page.dens-d table.grade-table td{padding:2px 2px}
+.page.dens-d .legend{font-size:7.3px;padding:4px 7px 5px}
+.page.dens-d .comments-grid{margin-top:5px}
+.page.dens-d .comment-label{font-size:9px;padding:3px 8px}
+.page.dens-d .comment-text{font-size:9.5px;padding:4px 8px;line-height:1.25}
+.page.dens-d .stamp-center{margin-top:5px;gap:3px}
+.page.dens-d .stamp-center img{width:66px}
+.page.dens-d .footer{margin-top:4px;padding-top:3px}
+.page.dens-d .info-box{margin:5px 0 6px;padding:4px 12px}` },
+];
+const densityClassFor = (subjectCount: number) =>
+  (DENSITY_TIERS.find(t => subjectCount <= t.max) || DENSITY_TIERS[DENSITY_TIERS.length - 1]).cls;
+const DENSITY_CSS = DENSITY_TIERS.map(t => t.css).join("\n");
+
 const ReportCard = () => {
   const { t } = useLanguage();
   const { user, profile: ownProfile } = useAuth();
@@ -187,7 +281,7 @@ const ReportCard = () => {
     }));
     const remarks = generateRemarks(tAvg, tPassedCount, tRows.length);
     return `
-<div class="page">
+<div class="page ${densityClassFor(tRows.length)}">
 <div class="watermark">TAHLEEM ACADEMY</div>
 <div class="header-bar">
   <div class="header-title">
@@ -354,6 +448,7 @@ table.grade-table td{font-weight:800;font-size:13px;color:#0f2d1f}
 .stamp-center span{font-size:14px;font-weight:800;color:#0f2d1f;background:#f5e9c8;padding:5px 16px;border-radius:20px;letter-spacing:.3px}
 .footer{text-align:center;margin-top:14px;font-size:10px;font-weight:600;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:8px}
 @media print{.page-inner{padding:0 16px}@page{size:A4;margin:8mm}}
+${DENSITY_CSS}
 </style></head><body>
 ${pagesHtml}
 <script>window.onload=function(){setTimeout(function(){window.print();},600);}</script>
