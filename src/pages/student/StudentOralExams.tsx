@@ -149,7 +149,10 @@ const StudentOralExams = () => {
         </Section>
       )}
 
-      {openSlots.length > 0 && (
+      {/* Once the student already has a slot booked (or is waiting/admitted/on
+          for their turn), hide open-slot booking entirely — they can't and
+          shouldn't book a second one. */}
+      {!active && upcoming.length === 0 && openSlots.length > 0 && (
         <Section title="Open slots — pick your time">
           {openSlots.map(s => (
             <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10, padding: 12, marginBottom: 8 }}>
