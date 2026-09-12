@@ -75,15 +75,16 @@ const GradingPage = () => {
         .in("status", ["in_progress", "submitted", "graded", "released"])
         .order("submitted_at", { ascending: false, nullsFirst: false }),
       supabase.from("profiles").select("user_id, full_name, email, avatar_url"),
-      supabase.from("exams").select("id, title, title_ar, passing_score, term, type, session"),
+      supabase.from("exams").select("id, title, title_ar, passing_score, term, type, session, subject_id, subjects(title, title_ar)"),
     ]);
     const profiles = profilesRes.data || [];
     const exams    = examsRes.data    || [];
     setExamsList(exams);
     const merged = (attemptsRes.data || []).map((a: any) => ({
       ...a,
-      profiles: profiles.find(p => p.user_id === a.user_id) || {},
-      exams:    exams.find(e => e.id === a.exam_id) || {},
+      profiles:      profiles.find(p => p.user_id === a.user_id) || {},
+      exams:         exams.find(e => e.id === a.exam_id) || {},
+      graderProfile: a.graded_by ? (profiles.find(p => p.user_id === a.graded_by) || null) : null,
     }));
     setAllAttempts(merged);
   };
@@ -171,6 +172,7 @@ const GradingPage = () => {
       const { error: attemptErr } = await supabase.from("exam_attempts").update({
         status: nextStatus, score: scaledEarned, total_points: scaledTotal,
         percentage: pct, passed: pct >= passing,
+        graded_by: user?.id, graded_by_role: "admin",
       }).eq("id", selectedAttempt.id);
 
       if (attemptErr) {
@@ -628,8 +630,18 @@ const GradingPage = () => {
                     <p style={{ fontWeight: 700, fontSize: 14, color: "#111", margin: 0 }}>{attempt.profiles?.full_name || "Student"}</p>
                     <p style={{ fontSize: 12, color: "#9CA3AF", margin: "2px 0 0" }}>
                       {language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}
+                      {attempt.exams?.subjects?.title && <span> · {language === "ar" ? attempt.exams.subjects.title_ar || attempt.exams.subjects.title : attempt.exams.subjects.title}</span>}
                       {attempt.exams?.session && <span style={{ color: "#0E7490", fontWeight: 600 }}> · 📅 {attempt.exams.session}</span>}
                     </p>
+                    {(attempt.status === "graded" || attempt.status === "released") && (
+                      <p style={{ fontSize: 11, color: attempt.graded_by_role === "teacher" ? "#7C3AED" : "#6B7280", margin: "2px 0 0", fontWeight: 600 }}>
+                        {attempt.graded_by_role === "teacher"
+                          ? `Graded by teacher: ${attempt.graderProfile?.full_name || "Unknown"}`
+                          : attempt.graded_by_role === "admin"
+                          ? "Graded by admin"
+                          : "Graded"}
+                      </p>
+                    )}
                     {attempt.status === "in_progress" && (
                       <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: "#FEF3C7", color: "#92400E", fontWeight: 700 }}>
