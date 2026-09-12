@@ -285,7 +285,7 @@ const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawi
     );
 
     return (
-      <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 1000 }}>
+      <div className="oral-exam-video-room" style={{ position: "fixed", inset: 0, background: "#000", zIndex: 1000 }}>
         <div style={{ position: "absolute", inset: 0 }}>
           <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video={lkToken.can_publish} audio={lkToken.can_publish} onDisconnected={onLeaveLive} style={{ height: "100%" }}>
             <VideoConference />
@@ -318,7 +318,9 @@ const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawi
             </div>
           </DraggablePip>
         ) : (
-          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: 12 }}>{QuestionPanel}</div>
+          // Docked above the live room's own control bar (now visibly styled —
+          // see .oral-exam-video-room in index.css) so the two never overlap.
+          <div style={{ position: "absolute", left: 0, right: 0, bottom: 68, padding: 12 }}>{QuestionPanel}</div>
         )}
       </div>
     );
