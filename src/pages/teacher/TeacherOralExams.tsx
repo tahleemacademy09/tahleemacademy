@@ -30,7 +30,7 @@ const G = "#064E3B";
 const GM = "#075E54";
 const GOLD = "#C9A84C";
 
-type Tab = "setup" | "slots" | "sets" | "live";
+type Tab = "setup" | "manage" | "live";
 
 const STATUS_COLORS: Record<string, string> = {
   open: "#9ca3af", booked: "#3b82f6", waiting: "#f59e0b", admitted: "#8b5cf6",
@@ -193,6 +193,7 @@ const TeacherOralExams = () => {
   const [newStageTitle, setNewStageTitle] = useState<Record<string, string>>({});
   const [aiMode, setAiMode] = useState<Record<string, "prompt" | "paste">>({});
   const [aiInput, setAiInput] = useState<Record<string, string>>({});
+  const [aiCount, setAiCount] = useState<Record<string, string>>({});
   const [aiLoading, setAiLoading] = useState<Record<string, boolean>>({});
 
   const createSet = async () => {
@@ -252,9 +253,11 @@ const TeacherOralExams = () => {
     const input = aiInput[setId]?.trim();
     if (!input) return toast({ title: mode === "paste" ? "Paste some questions first" : "Describe what you want first", variant: "destructive" });
 
+    const count = aiCount[setId]?.trim() ? Number(aiCount[setId]) : undefined;
+
     setAiLoading({ ...aiLoading, [setId]: true });
     const { data, error } = await supabase.functions.invoke("tahleem-ai", {
-      body: { action: "oral_questions", prompt: input, context: { mode } },
+      body: { action: "oral_questions", prompt: input, context: { mode, count } },
     });
     setAiLoading({ ...aiLoading, [setId]: false });
 
@@ -352,11 +355,21 @@ const TeacherOralExams = () => {
     await setStage(nextStage.id);
   };
 
-  const joinLiveRoom = async () => {
-    const { data, error } = await supabase.functions.invoke("oral-exam-livekit-token", { body: { exam_id: selectedExamId } });
+  const joinLiveRoom = async (examIdOverride?: string) => {
+    const examId = examIdOverride || selectedExamId;
+    if (!examId) return;
+    const { data, error } = await supabase.functions.invoke("oral-exam-livekit-token", { body: { exam_id: examId } });
     if (error || data?.error) return toast({ title: "Could not join room", description: error?.message || data?.error, variant: "destructive" });
     setLkToken({ token: data.token, url: data.url });
     setJoinedLive(true);
+  };
+
+  // One tap from the exam list (or Manage screen) straight into the full-screen
+  // live room — no need to pick the exam, switch tabs, then press Join separately.
+  const goLive = (examId: string) => {
+    setSelectedExamId(examId);
+    setTab("live");
+    joinLiveRoom(examId);
   };
 
   // Fetch the current student's drawn question set (grouped by stage) once they've drawn.
@@ -391,10 +404,12 @@ const TeacherOralExams = () => {
 
   const tabs: { id: Tab; label: string; icon: any }[] = [
     { id: "setup", label: "Exams", icon: Mic },
-    { id: "slots", label: "Time Slots", icon: Clock },
-    { id: "sets", label: "Question Sets", icon: ListChecks },
+    { id: "manage", label: "Manage", icon: Settings },
     { id: "live", label: "Live Room", icon: Radio },
   ];
+  // "Manage" is reached per-exam (via the Manage button on an exam card), not
+  // from the top nav bar — only Exams / Live Room are always visible there.
+  const mainNavTabs = tabs.filter(t => t.id !== "manage");
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto", padding: 16, paddingBottom: 60, position: "relative" }}>
@@ -402,26 +417,40 @@ const TeacherOralExams = () => {
       <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>Schedule, question sets, and the live viva room.</p>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto" }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
+        {mainNavTabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} disabled={t.id !== "setup" && !selectedExamId} style={{
             display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 20, border: "none",
-            background: tab === t.id ? G : "#f3f4f6", color: tab === t.id ? "#fff" : "#374151", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap",
+            background: tab === t.id ? G : "#f3f4f6", color: tab === t.id ? "#fff" : "#374151", fontWeight: 700, fontSize: 13,
+            cursor: (t.id !== "setup" && !selectedExamId) ? "not-allowed" : "pointer", opacity: (t.id !== "setup" && !selectedExamId) ? 0.5 : 1, whiteSpace: "nowrap",
           }}>
             <t.icon size={14} /> {t.label}
           </button>
         ))}
       </div>
 
-      {exams.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <select value={selectedExamId} onChange={e => setSelectedExamId(e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 10, border: "1px solid #e5e7eb", fontSize: 14, fontWeight: 600 }}>
-            {exams.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}
-          </select>
-        </div>
-      )}
-
       {tab === "setup" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {exams.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {exams.map(e => (
+                <div key={e.id} style={{ background: "#fff", border: `1px solid ${selectedExamId === e.id ? G : "#e5e7eb"}`, borderRadius: 14, padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 15, color: G }}>{e.title}</div>
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>{subjects.find(s => s.id === e.subject_id)?.title || "No subject"}</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => { setSelectedExamId(e.id); setTab("manage"); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#f3f4f6", color: "#374151", border: "1px solid #e5e7eb", borderRadius: 10, padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+                      <Settings size={14} /> Manage
+                    </button>
+                    <button onClick={() => goLive(e.id)} style={{ display: "flex", alignItems: "center", gap: 6, background: "#dc2626", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+                      <Radio size={14} /> Go Live
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Create a new oral exam</h3>
             <input placeholder="Exam title (e.g. Tajweed Viva — Term 1)" value={newExam.title} onChange={e => setNewExam({ ...newExam, title: e.target.value })}
@@ -441,8 +470,23 @@ const TeacherOralExams = () => {
         </div>
       )}
 
-      {tab === "slots" && selectedExamId && (
+      {tab === "manage" && selectedExamId && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <button onClick={() => setTab("setup")} style={{ background: "none", border: "none", color: G, fontWeight: 700, fontSize: 13, cursor: "pointer", padding: 0 }}>
+              ← Back to Exams
+            </button>
+            <h2 style={{ fontSize: 16, fontWeight: 800, color: G, margin: 0 }}>{selectedExam?.title}</h2>
+            <button onClick={() => goLive(selectedExamId)} style={{ display: "flex", alignItems: "center", gap: 6, background: "#dc2626", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+              <Radio size={14} /> Go Live
+            </button>
+          </div>
+        </div>
+      )}
+
+      {tab === "manage" && selectedExamId && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, margin: 0 }}>Time Slots</h3>
           <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Add time slot(s)</h3>
             <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -486,8 +530,9 @@ const TeacherOralExams = () => {
         </div>
       )}
 
-      {tab === "sets" && selectedExamId && (
+      {tab === "manage" && selectedExamId && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, margin: 0 }}>Question Sets</h3>
           <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>New question set</h3>
             <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>Each student blindly draws ONE set at random when it's their turn — make several so it's a genuine draw.</p>
@@ -532,9 +577,14 @@ const TeacherOralExams = () => {
                     rows={3}
                     style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13, resize: "vertical", marginBottom: 8, fontFamily: "inherit" }}
                   />
-                  <button onClick={() => generateAIQuestions(set.id)} disabled={aiLoading[set.id]} style={{ display: "flex", alignItems: "center", gap: 6, background: GOLD, color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 12, cursor: aiLoading[set.id] ? "wait" : "pointer" }}>
-                    {aiLoading[set.id] ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} {aiLoading[set.id] ? "Generating…" : "Generate"}
-                  </button>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <input type="number" min={1} placeholder="# questions" value={aiCount[set.id] || ""} onChange={e => setAiCount({ ...aiCount, [set.id]: e.target.value })}
+                      title="Leave blank to let the AI decide (it will still generate a full batch, not one at a time)"
+                      style={{ width: 100, padding: "8px 10px", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                    <button onClick={() => generateAIQuestions(set.id)} disabled={aiLoading[set.id]} style={{ display: "flex", alignItems: "center", gap: 6, background: GOLD, color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 12, cursor: aiLoading[set.id] ? "wait" : "pointer" }}>
+                      {aiLoading[set.id] ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} {aiLoading[set.id] ? "Generating…" : "Generate"}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Stages */}
