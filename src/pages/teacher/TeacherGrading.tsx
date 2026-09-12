@@ -56,8 +56,16 @@ const TeacherGrading = () => {
   useEffect(() => {
     if (!user) return;
     const load = async () => {
+      // A subject counts as "theirs" whether they own it directly
+      // (subjects.teacher_id) or the admin assigned them to it via the
+      // timetable (subject_timetable.teacher_id) — grading shouldn't care
+      // who set up the exam's questions, only whose subject it's on.
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const subjectIds = (subs || []).map(s => s.id);
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const subjectIds = [...new Set([
+        ...((subs || []).map((s: any) => s.id)),
+        ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
+      ])];
       if (!subjectIds.length) { setLoading(false); return; }
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
       // legacy course_id column which the editor never populates.

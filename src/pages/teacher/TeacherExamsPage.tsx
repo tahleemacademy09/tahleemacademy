@@ -33,8 +33,17 @@ const TeacherExamsPage = ({ type }: TeacherExamsPageProps) => {
   useEffect(() => {
     if (!user) return;
     const fetch = async () => {
+      // A teacher can be tied to a subject two ways: they own it directly
+      // (subjects.teacher_id), or the admin assigned them to teach it via
+      // the timetable (subject_timetable.teacher_id). Either one means the
+      // subject — and any exam on it, including ones the admin built the
+      // questions for — is theirs to see and grade, so both are merged here.
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const subjectIds = (subs || []).map(s => s.id);
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      const subjectIds = [...new Set([
+        ...((subs || []).map((s: any) => s.id)),
+        ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
+      ])];
       if (subjectIds.length === 0) { setLoading(false); return; }
 
       // NOTE: exams are linked to the teacher via exams.subject_id (set by

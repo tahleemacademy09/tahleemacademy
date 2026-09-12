@@ -21,9 +21,17 @@ const TeacherResults = () => {
   useEffect(() => {
     if (!user) return;
     const fetch = async () => {
+      // Include subjects assigned via the admin timetable (subject_timetable
+      // .teacher_id), not just direct ownership (subjects.teacher_id) — a
+      // teacher should see results for any subject that's theirs to teach,
+      // regardless of who set it up.
       const { data: subs } = await supabase.from("subjects").select("id, title").eq("teacher_id", user.id);
-      setSubjects(subs || []);
-      const subjectIds = (subs || []).map(s => s.id);
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, subjects(id, title)").eq("teacher_id", user.id);
+      const ttSubjects = ((ttSlots || []) as any[]).map(s => s.subjects).filter(Boolean);
+      const subjectsMerged = [...(subs || []), ...ttSubjects];
+      const subjects = [...new Map(subjectsMerged.map((s: any) => [s.id, s])).values()];
+      setSubjects(subjects);
+      const subjectIds = subjects.map((s: any) => s.id);
       if (subjectIds.length === 0) { setLoading(false); return; }
 
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
