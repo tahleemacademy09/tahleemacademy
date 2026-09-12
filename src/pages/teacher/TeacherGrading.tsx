@@ -54,10 +54,18 @@ const TeacherGrading = () => {
       // timetable (subject_timetable.teacher_id) — grading shouldn't care
       // who set up the exam's questions, only whose subject it's on.
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      // subject_timetable stores co-teachers in `teacher_ids[]`; the legacy
+      // singular `teacher_id` column only ever holds the FIRST teacher an
+      // admin picked (see TimetableManagement.tsx), so a second/co-teacher
+      // must be matched via the array too — otherwise their subjects (and
+      // every exam/attempt under them) are invisible on this page.
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids");
+      const myTtSlots = (ttSlots || []).filter((s: any) =>
+        s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
+      );
       const subjectIds = [...new Set([
         ...((subs || []).map((s: any) => s.id)),
-        ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
+        ...(myTtSlots.map((s: any) => s.subject_id).filter(Boolean)),
       ])];
       if (!subjectIds.length) { setLoading(false); return; }
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
