@@ -21,7 +21,7 @@ import { useToast } from "@/hooks/use-toast";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
 import {
-  Mic, Plus, Trash2, Users, Clock, Radio, CheckCircle2, XCircle,
+  Mic, Plus, Trash2, Clock, Radio, CheckCircle2, XCircle,
   Loader2, ChevronRight, ListChecks, PhoneOff, Shuffle, Send,
   Menu, X, Wand2, ClipboardPaste, Layers, Hash, SkipForward, Settings,
 } from "lucide-react";
@@ -303,6 +303,15 @@ const TeacherOralExams = () => {
   const [submittingScore, setSubmittingScore] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
+  // Lock page scroll while the fullscreen live room is up — it's meant to be
+  // static, edge-to-edge, with no scrolling behind it.
+  useEffect(() => {
+    if (tab !== "live" || !selectedExamId) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [tab, selectedExamId]);
+
   const waitingSlots = slots.filter(s => s.status === "waiting");
   const admittedSlots = useMemo(
     () => slots.filter(s => s.status === "admitted").sort((a, b) => (a.queue_number || 0) - (b.queue_number || 0)),
@@ -410,6 +419,146 @@ const TeacherOralExams = () => {
   // "Manage" is reached per-exam (via the Manage button on an exam card), not
   // from the top nav bar — only Exams / Live Room are always visible there.
   const mainNavTabs = tabs.filter(t => t.id !== "manage");
+
+  // ── Live Room: a true fullscreen takeover ───────────────────────────────
+  // Nothing but the video fills the screen — no header, no nav, no scroll.
+  // Everything else (jump-to, waiting/admitted lists, stage picker, scoring)
+  // lives in the Control Room drawer, reached via the floating hamburger.
+  if (tab === "live" && selectedExamId) {
+    return (
+      <div style={{ position: "fixed", inset: 0, height: "100dvh", width: "100vw", background: "#0a0a0a", overflow: "hidden", zIndex: 40 }}>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 20, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "linear-gradient(rgba(0,0,0,0.65), transparent)", pointerEvents: "none" }}>
+          <button onClick={() => setMenuOpen(true)} style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.16)", border: "none", borderRadius: 20, padding: "8px 14px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", backdropFilter: "blur(6px)" }}>
+            <Menu size={16} /> Control Room
+          </button>
+          {currentSlot && (
+            <div style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 6, background: G, color: "#fff", borderRadius: 20, padding: "8px 14px", fontWeight: 800, fontSize: 12, whiteSpace: "nowrap" }}>
+              <Hash size={13} /> #{currentSlot.queue_number ?? "—"} · {currentSlot.student_name}
+            </div>
+          )}
+          <button onClick={() => { setJoinedLive(false); setTab("setup"); }} style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 6, background: "rgba(220,38,38,0.85)", border: "none", borderRadius: 20, padding: "8px 12px", color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
+            <X size={14} /> Exit
+          </button>
+        </div>
+
+        {!joinedLive ? (
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button onClick={() => joinLiveRoom()} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 14, padding: "16px 24px", fontWeight: 800, fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+              <Radio size={18} /> Start / Join Live Room
+            </button>
+          </div>
+        ) : lkToken && (
+          <div style={{ position: "absolute", inset: 0 }}>
+            <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video={false} audio={false} onDisconnected={() => setJoinedLive(false)} style={{ height: "100%" }}>
+              <VideoConference />
+              <RoomAudioRenderer />
+            </LiveKitRoom>
+          </div>
+        )}
+
+        {menuOpen && (
+          <div onClick={() => setMenuOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 300 }}>
+            <div onClick={e => e.stopPropagation()} style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: "min(340px, 88vw)", background: "#fff", boxShadow: "2px 0 16px rgba(0,0,0,0.2)", padding: 18, overflowY: "auto" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <h3 style={{ fontWeight: 800, fontSize: 16, color: G }}><Settings size={16} style={{ verticalAlign: -3 }} /> Control Room</h3>
+                <button onClick={() => setMenuOpen(false)} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={20} /></button>
+              </div>
+
+              <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8 }}>Jump to</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                {tabs.filter(t => t.id !== "live").map(t => (
+                  <button key={t.id} onClick={() => { setTab(t.id); setMenuOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left" }}>
+                    <t.icon size={14} /> {t.label}
+                  </button>
+                ))}
+              </div>
+
+              <p style={{ fontSize: 11, fontWeight: 800, color: "#f59e0b", textTransform: "uppercase", marginBottom: 8 }}>Waiting ({waitingSlots.length})</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                {waitingSlots.map(s => (
+                  <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "8px 10px", borderRadius: 8, background: "#f9fafb" }}>
+                    <span>{s.student_name}</span>
+                    <button onClick={() => admit(s.id)} style={{ background: G, color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Admit</button>
+                  </div>
+                ))}
+                {waitingSlots.length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>No one waiting.</p>}
+              </div>
+
+              <p style={{ fontSize: 11, fontWeight: 800, color: "#8b5cf6", textTransform: "uppercase", marginBottom: 8 }}>Admitted ({admittedSlots.length})</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                {admittedSlots.map(s => (
+                  <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "8px 10px", borderRadius: 8, background: "#f9fafb" }}>
+                    <span><b style={{ color: G }}>#{s.queue_number ?? "—"}</b> {s.student_name}</span>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button onClick={() => callIn(s.id)} disabled={!!currentSlot} style={{ background: G, color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: currentSlot ? "not-allowed" : "pointer", opacity: currentSlot ? 0.5 : 1 }}>Call in</button>
+                      <button onClick={() => noShow(s.id)} style={{ background: "none", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer" }}><XCircle size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+                {admittedSlots.length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>None admitted yet.</p>}
+              </div>
+
+              {currentSlot && currentSetStages.length > 0 && (
+                <>
+                  <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8 }}>Stage</p>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
+                    {currentSetStages.map((st: any) => (
+                      <button key={st.id} onClick={() => setStage(st.id)} style={{
+                        display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8,
+                        border: `1.5px solid ${session?.current_stage_id === st.id ? "#dc2626" : "#e5e7eb"}`,
+                        background: session?.current_stage_id === st.id ? "#fff5f5" : "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left",
+                      }}>
+                        {st.title} {session?.current_stage_id === st.id && <CheckCircle2 size={13} color="#dc2626" />}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {currentSlot && (
+                <>
+                  <p style={{ fontSize: 11, fontWeight: 800, color: "#dc2626", textTransform: "uppercase", marginBottom: 8 }}>On stage: #{currentSlot.queue_number ?? "—"} {currentSlot.student_name}</p>
+                  <div style={{ background: "#fff5f5", border: "1.5px solid #fecaca", borderRadius: 10, padding: 10, marginBottom: 20 }}>
+                    {!currentSlot.drawn_set_id ? (
+                      <p style={{ fontSize: 12, color: "#6b7280" }}><Shuffle size={12} style={{ verticalAlign: -2 }} /> Waiting for the student to draw their question set…</p>
+                    ) : drawnStages.length === 0 ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {drawnStages.map((st: any) => (
+                          <div key={st.stage_id || "general"}>
+                            {st.stage_title && <p style={{ fontSize: 11, fontWeight: 800, color: st.stage_id === session?.current_stage_id ? "#dc2626" : "#9ca3af", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>{st.stage_title}{st.stage_title_ar ? ` · ${st.stage_title_ar}` : ""}</p>}
+                            {(st.questions || []).map((q: any) => (
+                              <div key={q.id} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1px solid #fecaca", marginBottom: 8 }}>
+                                <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
+                                {q.question_text_ar && <p dir="rtl" style={{ fontSize: 14, fontFamily: "'Amiri', serif", color: "#374151", marginBottom: 6 }}>{q.question_text_ar}</p>}
+                                <div style={{ display: "flex", gap: 8 }}>
+                                  <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                  <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                        <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                        <button onClick={submitScore} disabled={submittingScore} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+                          {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />} Submit Score
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              <button onClick={() => { goNext(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: GOLD, color: "#fff", border: "none", borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
+                <SkipForward size={15} /> Next
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto", padding: 16, paddingBottom: 60, position: "relative" }}>
@@ -635,158 +784,6 @@ const TeacherOralExams = () => {
         </div>
       )}
 
-      {tab === "live" && selectedExamId && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={() => setMenuOpen(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: 10, padding: "10px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-              <Menu size={16} /> Control Room
-            </button>
-            {currentSlot && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, background: G, color: "#fff", borderRadius: 10, padding: "10px 14px", fontWeight: 800, fontSize: 13 }}>
-                <Hash size={14} /> Now serving #{currentSlot.queue_number ?? "—"} — {currentSlot.student_name}
-              </div>
-            )}
-            <button onClick={goNext} style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, background: GOLD, color: "#fff", border: "none", borderRadius: 10, padding: "10px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
-              <SkipForward size={14} /> Next
-            </button>
-          </div>
-
-          {!joinedLive ? (
-            <button onClick={joinLiveRoom} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 12, padding: "14px 20px", fontWeight: 800, fontSize: 15, cursor: "pointer" }}>
-              <Radio size={16} style={{ verticalAlign: -3 }} /> Start / Join Live Room
-            </button>
-          ) : lkToken && (
-            <div className="oral-exam-video-room" style={{ position: "relative", borderRadius: 14, overflow: "hidden", height: "75vh", minHeight: 480, background: "#111" }}>
-              <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video={false} audio={false} onDisconnected={() => setJoinedLive(false)} style={{ height: "100%" }}>
-                <VideoConference />
-                <RoomAudioRenderer />
-              </LiveKitRoom>
-            </div>
-          )}
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-              <h4 style={{ fontSize: 12, fontWeight: 800, color: "#f59e0b", marginBottom: 8 }}><Users size={13} style={{ verticalAlign: -2 }} /> Waiting ({waitingSlots.length})</h4>
-              {waitingSlots.map(s => (
-                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0" }}>
-                  <span>{s.student_name}</span>
-                  <button onClick={() => admit(s.id)} style={{ background: G, color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Admit</button>
-                </div>
-              ))}
-              {waitingSlots.length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>No one waiting.</p>}
-            </div>
-            <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 12, padding: 12 }}>
-              <h4 style={{ fontSize: 12, fontWeight: 800, color: "#8b5cf6", marginBottom: 8 }}><CheckCircle2 size={13} style={{ verticalAlign: -2 }} /> Admitted ({admittedSlots.length})</h4>
-              {admittedSlots.map(s => (
-                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0" }}>
-                  <span><b style={{ color: G }}>#{s.queue_number ?? "—"}</b> {s.student_name}</span>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    <button onClick={() => callIn(s.id)} disabled={!!currentSlot} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: currentSlot ? "not-allowed" : "pointer", opacity: currentSlot ? 0.5 : 1 }}>Call in</button>
-                    <button onClick={() => noShow(s.id)} style={{ background: "none", border: "1px solid #e5e7eb", borderRadius: 6, padding: "4px 8px", fontSize: 11, cursor: "pointer" }}><XCircle size={12} /></button>
-                  </div>
-                </div>
-              ))}
-              {admittedSlots.length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>None admitted yet.</p>}
-            </div>
-          </div>
-
-          {currentSlot && (
-            <div style={{ background: "#fff5f5", border: "2px solid #dc2626", borderRadius: 14, padding: 16 }}>
-              <h3 style={{ fontWeight: 800, color: "#dc2626", fontSize: 14, marginBottom: 8 }}><Mic size={15} style={{ verticalAlign: -3 }} /> On stage: #{currentSlot.queue_number ?? "—"} {currentSlot.student_name}</h3>
-              {!currentSlot.drawn_set_id ? (
-                <p style={{ fontSize: 13, color: "#6b7280" }}><Shuffle size={13} style={{ verticalAlign: -2 }} /> Waiting for the student to draw their question set…</p>
-              ) : drawnStages.length === 0 ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                  {currentSetStages.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {currentSetStages.map((st: any) => (
-                        <button key={st.id} onClick={() => setStage(st.id)} style={{
-                          padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${session?.current_stage_id === st.id ? "#dc2626" : "#e5e7eb"}`,
-                          background: session?.current_stage_id === st.id ? "#dc2626" : "#fff",
-                          color: session?.current_stage_id === st.id ? "#fff" : "#374151", fontWeight: 700, fontSize: 12, cursor: "pointer",
-                        }}>{st.title}</button>
-                      ))}
-                    </div>
-                  )}
-                  {drawnStages.map((st: any) => (
-                    <div key={st.stage_id || "general"}>
-                      {st.stage_title && <p style={{ fontSize: 12, fontWeight: 800, color: st.stage_id === session?.current_stage_id ? "#dc2626" : "#9ca3af", marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.5 }}>{st.stage_title}{st.stage_title_ar ? ` · ${st.stage_title_ar}` : ""}</p>}
-                      {(st.questions || []).map((q: any) => (
-                        <div key={q.id} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1px solid #fecaca", marginBottom: 8 }}>
-                          <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
-                          {q.question_text_ar && <p dir="rtl" style={{ fontSize: 15, fontFamily: "'Amiri', serif", color: "#374151", marginBottom: 6 }}>{q.question_text_ar}</p>}
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 80, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
-                            <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                  <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
-                  <button onClick={submitScore} disabled={submittingScore} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
-                    {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />} Submit Score
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {menuOpen && (
-        <div onClick={() => setMenuOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 300 }}>
-          <div onClick={e => e.stopPropagation()} style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: "min(340px, 88vw)", background: "#fff", boxShadow: "2px 0 16px rgba(0,0,0,0.2)", padding: 18, overflowY: "auto" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <h3 style={{ fontWeight: 800, fontSize: 16, color: G }}><Settings size={16} style={{ verticalAlign: -3 }} /> Control Room</h3>
-              <button onClick={() => setMenuOpen(false)} style={{ background: "none", border: "none", cursor: "pointer" }}><X size={20} /></button>
-            </div>
-
-            <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8 }}>Jump to</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
-              {tabs.filter(t => t.id !== "live").map(t => (
-                <button key={t.id} onClick={() => { setTab(t.id); setMenuOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left" }}>
-                  <t.icon size={14} /> {t.label}
-                </button>
-              ))}
-            </div>
-
-            <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8 }}>Admitted students</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
-              {admittedSlots.map(s => (
-                <div key={s.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "8px 10px", borderRadius: 8, background: "#f9fafb" }}>
-                  <span><b style={{ color: G }}>#{s.queue_number ?? "—"}</b> {s.student_name}</span>
-                  <button onClick={() => callIn(s.id)} disabled={!!currentSlot} style={{ background: G, color: "#fff", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: currentSlot ? "not-allowed" : "pointer", opacity: currentSlot ? 0.5 : 1 }}>Call in</button>
-                </div>
-              ))}
-              {admittedSlots.length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>None admitted yet.</p>}
-            </div>
-
-            {currentSlot && currentSetStages.length > 0 && (
-              <>
-                <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 8 }}>Stage</p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 }}>
-                  {currentSetStages.map((st: any) => (
-                    <button key={st.id} onClick={() => setStage(st.id)} style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", borderRadius: 8,
-                      border: `1.5px solid ${session?.current_stage_id === st.id ? "#dc2626" : "#e5e7eb"}`,
-                      background: session?.current_stage_id === st.id ? "#fff5f5" : "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", textAlign: "left",
-                    }}>
-                      {st.title} {session?.current_stage_id === st.id && <CheckCircle2 size={13} color="#dc2626" />}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            <button onClick={() => { goNext(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: GOLD, color: "#fff", border: "none", borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
-              <SkipForward size={15} /> Next
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
