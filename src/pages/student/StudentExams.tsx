@@ -517,9 +517,15 @@ const StudentExams = () => {
             <p style={{ fontSize:11,color:"rgba(255,255,255,.6)",fontWeight:700,letterSpacing:1,textTransform:"uppercase" as const,margin:"0 0 6px" }}>
               {t("My Learning","تعلمي")}
             </p>
-            <h1 style={{ fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:700,color:"#fff",margin:"0 0 18px",lineHeight:1.3 }}>
+            <h1 style={{ fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:700,color:"#fff",margin:"0 0 10px",lineHeight:1.3 }}>
               {t("Exams & Tests","الامتحانات والتمرينات")}
             </h1>
+            <button onClick={() => navigate("/student/oral-exams")} style={{
+              background:"rgba(255,255,255,.12)", border:"1px solid rgba(255,255,255,.3)", color:"#fff",
+              borderRadius:20, padding:"6px 14px", fontSize:12, fontWeight:700, cursor:"pointer", marginBottom:14,
+            }}>
+              {t("Live Oral Exams →","الامتحانات الشفوية المباشرة ←")}
+            </button>
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
               {[
                 [<BookOpen style={{width:13,height:13}}/>, String(assignedExams.length), t("Total","إجمالي")],
