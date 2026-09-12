@@ -448,7 +448,7 @@ const TeacherOralExams = () => {
             </button>
           </div>
         ) : lkToken && (
-          <div style={{ position: "absolute", inset: 0 }}>
+          <div className="oral-exam-video-room" style={{ position: "absolute", inset: 0 }}>
             <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video={false} audio={false} onDisconnected={() => setJoinedLive(false)} style={{ height: "100%" }}>
               <VideoConference />
               <RoomAudioRenderer />
