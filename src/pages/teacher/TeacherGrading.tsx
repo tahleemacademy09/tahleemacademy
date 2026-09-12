@@ -8,7 +8,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { sanitizeHtml } from "@/lib/sanitize";
 import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   CheckCircle, XCircle, Search, FileText, Download,
   Send, Unlock, Loader2, Eye, BarChart2, AlertTriangle,
@@ -39,12 +38,6 @@ const TeacherGrading = () => {
   const [typeFilter,     setTypeFilter]     = useState<"all"|"exam"|"test">("all");
   const [loading,        setLoading]        = useState(true);
   const [examsList,      setExamsList]      = useState<any[]>([]);
-
-  // Batch release
-  const [batchExamId,      setBatchExamId]      = useState("");
-  const [batchReleaseOpen, setBatchReleaseOpen]  = useState(false);
-  const [batchReleasing,   setBatchReleasing]    = useState(false);
-  const [batchAttempts,    setBatchAttempts]     = useState<any[]>([]);
 
   const tabCounts = {
     pending:  allAttempts.filter(a => a.status === "submitted").length,
@@ -137,16 +130,19 @@ const TeacherGrading = () => {
       const scaledTotal = 30;
       const scaledEarned = totalPossible > 0 ? Number(((totalEarned / totalPossible) * 30).toFixed(2)) : 0;
       const passing = selectedAttempt.exams?.passing_score || 50;
-      // Keep it released if it already was — don't hide an edited result from
-      // the student by silently pulling it back to "graded".
-      const nextStatus = selectedAttempt.status === "released" ? "released" : "graded";
+      // Releasing is admin-only — a teacher's grading always lands as
+      // "graded" and waits for an admin to release it to the student.
+      // (Released attempts aren't editable here — see the read-only guard
+      // in the detail view.)
       await supabase.from("exam_attempts").update({
-        status: nextStatus,
+        status: "graded",
         score: scaledEarned,
         total_points: scaledTotal,
         percentage: pct,
         passed: pct >= passing,
         feedback: examFeedback || null,
+        graded_by: user?.id,
+        graded_by_role: "teacher",
       }).eq("id", selectedAttempt.id);
       toast({ title: t("✅ Graded successfully", "✅ تم التصحيح بنجاح") });
       setSelectedAttempt(null);
@@ -157,70 +153,9 @@ const TeacherGrading = () => {
     setSubmitting(false);
   };
 
-  const releaseResult = async (attemptId: string, studentId: string, examTitle: string) => {
-    const { error } = await supabase.from("exam_attempts")
-      .update({ status: "released", results_released_at: new Date().toISOString() })
-      .eq("id", attemptId);
-    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
-    await (supabase as any).from("notifications").insert({
-      user_id: studentId, title: "Exam results available",
-      message: `Your results for "${examTitle}" are now available.`,
-      type: "result_released", link: `/student/results/${attemptId}`,
-    });
-    toast({ title: t("Result released to student", "تم إرسال النتيجة للطالب") });
-    loadAttempts();
-  };
-
-  // ── Batch release: release + notify every graded student for one exam ────
-  const openBatchRelease = (examId: string) => {
-    setBatchExamId(examId);
-    setBatchAttempts(allAttempts.filter(a => a.exam_id === examId && a.status === "graded"));
-    setBatchReleaseOpen(true);
-  };
-
-  const executeBatchRelease = async () => {
-    if (!batchAttempts.length) return;
-    setBatchReleasing(true);
-    try {
-      const ids  = batchAttempts.map(a => a.id);
-      const exam = examsList.find(e => e.id === batchExamId);
-      const examTitle = (language === "ar" ? exam?.title_ar || exam?.title : exam?.title) || "exam";
-
-      const { error } = await supabase.from("exam_attempts")
-        .update({ status: "released", results_released_at: new Date().toISOString() })
-        .in("id", ids);
-      if (error) throw error;
-
-      const { error: notifErr } = await (supabase as any).from("notifications").insert(
-        batchAttempts.map(a => ({
-          user_id: a.user_id,
-          title: t("Exam results available", "نتائج الامتحان متاحة الآن"),
-          message: t(
-            `Your results for "${examTitle}" are now available. Check them out!`,
-            `نتيجتك في "${examTitle}" أصبحت متاحة الآن. يمكنك الاطلاع عليها.`
-          ),
-          type: "result_released",
-          link: `/student/results/${a.id}`,
-        }))
-      );
-      if (notifErr) throw notifErr;
-
-      toast({ title: `✅ ${t("Released", "تم الإرسال")} ${ids.length} ${t("results & notified students!", "نتيجة وتم إشعار الطلاب!")}` });
-      setBatchReleaseOpen(false);
-      setBatchExamId("");
-      setBatchAttempts([]);
-      loadAttempts();
-    } catch (e: any) {
-      toast({ title: "Batch release failed", description: e.message, variant: "destructive" });
-    } finally {
-      setBatchReleasing(false);
-    }
-  };
-
-  // Distinct exams that currently have at least one graded (unreleased) attempt
-  const gradedExamOptions = examsList.filter(e =>
-    allAttempts.some(a => a.exam_id === e.id && a.status === "graded")
-  );
+  // Releasing results to students is admin-only (see GradingPage.tsx). A
+  // teacher's job stops at grading — the attempt then sits in "Graded"
+  // waiting for an admin to release it.
 
   const filtered = allAttempts.filter(a => {
     if (gradingTab === "pending"  && a.status !== "submitted") return false;
@@ -247,7 +182,11 @@ const TeacherGrading = () => {
 
   // ── Attempt detail view ───────────────────────────────────────
   if (selectedAttempt) {
-    const isAlreadyGraded = selectedAttempt.status === "graded";
+    // Released results are admin's territory from here on — a teacher can
+    // still open one to review it, but the form is read-only so they can't
+    // accidentally flip it back to "graded" and hide it from the student.
+    const isAlreadyGraded = selectedAttempt.status === "graded" || selectedAttempt.status === "released";
+    const isReleased = selectedAttempt.status === "released";
     const totalPossible = answers.reduce((s, a) => s + (a.exam_questions?.points || 1), 0);
     const totalEntered  = answers.reduce((s, a) => s + (parseFloat(scores[a.question_id] || "0") || 0), 0);
 
@@ -281,12 +220,15 @@ const TeacherGrading = () => {
           {isAlreadyGraded && (
             <div style={{
               padding: "12px 16px", borderRadius: 12, marginBottom: 16,
-              background: "#F0FDF4", border: "1px solid #BBF7D0",
+              background: isReleased ? "#EFF6FF" : "#F0FDF4",
+              border: `1px solid ${isReleased ? "#BFDBFE" : "#BBF7D0"}`,
               display: "flex", alignItems: "center", gap: 10,
             }}>
-              <CheckCircle size={16} color="#16A34A" />
-              <span style={{ fontSize: 13, color: "#16A34A", fontWeight: 700 }}>
-                {t("Already graded", "تم التصحيح مسبقاً")} • {Math.round(selectedAttempt.percentage || 0)}% •{" "}
+              <CheckCircle size={16} color={isReleased ? "#2563EB" : "#16A34A"} />
+              <span style={{ fontSize: 13, color: isReleased ? "#2563EB" : "#16A34A", fontWeight: 700 }}>
+                {isReleased
+                  ? t("Released to student — view only", "تم إرسالها للطالب — للعرض فقط")
+                  : t("Already graded", "تم التصحيح مسبقاً")} • {Math.round(selectedAttempt.percentage || 0)}% •{" "}
                 {selectedAttempt.passed ? t("Passed", "ناجح") : t("Failed", "راسب")}
               </span>
             </div>
@@ -522,16 +464,10 @@ const TeacherGrading = () => {
           ))}
         </div>
 
-        {/* Batch release — visible on the Graded tab when there's something to release */}
-        {gradingTab === "graded" && gradedExamOptions.length > 0 && (
-          <div style={{ marginTop: 10 }}>
-            <button onClick={() => openBatchRelease(gradedExamOptions[0].id)} style={{
-              padding: "8px 14px", borderRadius: 10, border: "none",
-              background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer",
-              display: "flex", alignItems: "center", gap: 6,
-            }}>
-              <Bell size={13} /> {t("Batch Release & Notify", "إرسال جماعي وإشعار الطلاب")}
-            </button>
+        {/* Graded results wait here for an admin to release them to students */}
+        {gradingTab === "graded" && tabCounts.graded > 0 && (
+          <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, fontWeight: 600, color: "#92400E", display: "flex", alignItems: "center", gap: 6, width: "fit-content" }}>
+            <Bell size={13} /> {t("Waiting for an admin to release these to students", "بانتظار أن يقوم المسؤول بإرسال هذه النتائج للطلاب")}
           </div>
         )}
       </div>
@@ -575,6 +511,11 @@ const TeacherGrading = () => {
                   {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : "—"}
                   {attempt.status === "graded" && ` • ${Math.round(attempt.percentage || 0)}% — ${attempt.passed ? t("Pass", "ناجح") : t("Fail", "راسب")}`}
                 </div>
+                {(attempt.status === "graded" || attempt.status === "released") && attempt.graded_by_role === "admin" && (
+                  <div style={{ fontSize: 11, color: "#7C3AED", marginTop: 2, fontWeight: 700 }}>
+                    {t("Graded by admin", "صححها المسؤول")}
+                  </div>
+                )}
               </div>
 
               {/* Badge */}
@@ -612,13 +553,13 @@ const TeacherGrading = () => {
                   {gradingTab === "pending" ? <><Send size={12} /> {t("Grade", "صحّح")}</> : <><Eye size={12} /> {t("View", "عرض")}</>}
                 </button>
                 {gradingTab === "graded" && (
-                  <button onClick={() => releaseResult(attempt.id, attempt.user_id, (attempt.exams?.title || "exam"))} style={{
+                  <span style={{
                     padding: "8px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB",
-                    background: "#fff", color: G, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    background: "#FAFAFA", color: "#9CA3AF", fontSize: 12, fontWeight: 700,
                     display: "flex", alignItems: "center", gap: 6,
                   }}>
-                    <Unlock size={12} /> {t("Release", "إرسال")}
-                  </button>
+                    <Unlock size={12} /> {t("Awaiting release", "بانتظار الإرسال")}
+                  </span>
                 )}
               </div>
             </div>
@@ -626,62 +567,6 @@ const TeacherGrading = () => {
         })}
       </div>
 
-      {/* Batch Release Dialog */}
-      <Dialog open={batchReleaseOpen} onOpenChange={v => { if (!v) { setBatchReleaseOpen(false); setBatchAttempts([]); setBatchExamId(""); } }}>
-        <DialogContent style={{ maxWidth: 460, borderRadius: 20, padding: 0 }}>
-          <div style={{ background: "#16A34A", padding: "18px 20px", borderRadius: "20px 20px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
-            <Bell size={20} color="#fff" />
-            <h2 style={{ fontWeight: 800, fontSize: 16, color: "#fff", margin: 0 }}>
-              {t("Batch Release Results", "إرسال النتائج جماعياً")}
-            </h2>
-          </div>
-          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 8 }}>
-                {t("Select Exam", "اختر الامتحان")}
-              </label>
-              <select value={batchExamId} onChange={e => openBatchRelease(e.target.value)} style={inp}>
-                <option value="">{t("Select an exam…", "اختر امتحاناً…")}</option>
-                {gradedExamOptions.map(e => (
-                  <option key={e.id} value={e.id}>{language === "ar" ? e.title_ar || e.title : e.title}</option>
-                ))}
-              </select>
-            </div>
-
-            {batchAttempts.length > 0 && (
-              <div>
-                <p style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 8 }}>
-                  {batchAttempts.length} {t("graded student(s) will be notified:", "طالب سيتم إشعارهم:")}
-                </p>
-                <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid #E5E7EB", borderRadius: 10 }}>
-                  {batchAttempts.map((a, i) => (
-                    <div key={a.id} style={{ padding: "8px 12px", borderBottom: i < batchAttempts.length - 1 ? "1px solid #F3F4F6" : "none", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>{a.profiles?.full_name || "Student"}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: a.passed ? "#16A34A" : "#DC2626" }}>{Math.round(a.percentage || 0)}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {batchExamId && batchAttempts.length === 0 && (
-              <p style={{ fontSize: 13, color: "#9CA3AF", textAlign: "center" }}>
-                {t("No graded attempts for this exam", "لا توجد نتائج مصححة لهذا الامتحان")}
-              </p>
-            )}
-
-            <button onClick={executeBatchRelease} disabled={batchReleasing || !batchAttempts.length} style={{
-              padding: "13px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff",
-              cursor: "pointer", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center",
-              justifyContent: "center", gap: 8, opacity: (batchReleasing || !batchAttempts.length) ? .5 : 1,
-            }}>
-              {batchReleasing
-                ? <><Loader2 size={16} style={{ animation: "spin .8s linear infinite" }} /> {t("Releasing…", "جاري الإرسال…")}</>
-                : <><Send size={16} /> {t("Release All & Notify", "إرسال الكل وإشعار الطلاب")}</>}
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
