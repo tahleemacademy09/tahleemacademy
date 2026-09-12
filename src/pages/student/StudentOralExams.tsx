@@ -264,23 +264,33 @@ const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawi
           </button>
         ) : drawnStages.length === 0 ? (
           <Loader2 size={16} className="animate-spin" color="#fff" />
-        ) : (
-          drawnStages.map((st: any) => (
-            <div key={st.stage_id || "general"} style={{ marginBottom: 10, borderRadius: 10, padding: 8, border: st.stage_id === currentStageId ? `1.5px solid ${GOLD}` : "1px solid rgba(255,255,255,0.15)" }}>
-              {st.stage_title && (
-                <p style={{ fontSize: 11, fontWeight: 800, color: st.stage_id === currentStageId ? GOLD : "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
-                  {st.stage_id === currentStageId && "▶ "}{st.stage_title}{st.stage_title_ar ? ` · ${st.stage_title_ar}` : ""}
+        ) : (() => {
+          // One round, one question: show only the stage currently live —
+          // the teacher advancing the stage is what reveals the next round.
+          const activeStage = drawnStages.find((st: any) => st.stage_id === currentStageId) || drawnStages[0];
+          const roundIdx = drawnStages.findIndex((st: any) => st.stage_id === activeStage?.stage_id);
+          return (
+            <div style={{ borderRadius: 10, padding: 8, border: `1.5px solid ${GOLD}` }}>
+              {drawnStages.length > 1 && (
+                <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af", marginBottom: 4 }}>Round {roundIdx >= 0 ? roundIdx + 1 : 1} of {drawnStages.length}</p>
+              )}
+              {activeStage?.stage_title && (
+                <p style={{ fontSize: 11, fontWeight: 800, color: GOLD, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+                  ▶ {activeStage.stage_title}{activeStage.stage_title_ar ? ` · ${activeStage.stage_title_ar}` : ""}
                 </p>
               )}
-              {(st.questions || []).map((q: any) => (
+              {(activeStage?.questions || []).map((q: any) => (
                 <div key={q.id} style={{ marginBottom: 8 }}>
                   <p style={{ fontSize: 13, color: "#fff", fontWeight: 600 }}>{q.question_text}</p>
                   {q.question_text_ar && <p dir="rtl" style={{ fontSize: 15, color: "#e5e7eb", fontFamily: "'Amiri', serif", marginTop: 2 }}>{q.question_text_ar}</p>}
                 </div>
               ))}
+              {(activeStage?.questions || []).length === 0 && (
+                <p style={{ fontSize: 12, color: "#9ca3af" }}>Waiting for the examiner to move to this round…</p>
+              )}
             </div>
-          ))
-        )}
+          );
+        })()}
       </div>
     );
 
