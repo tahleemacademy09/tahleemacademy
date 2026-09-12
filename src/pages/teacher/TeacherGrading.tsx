@@ -85,15 +85,48 @@ const TeacherGrading = () => {
 
   const loadAttempts = async () => {
     if (!examIds.length) return;
-    const { data } = await supabase.from("exam_attempts")
+    // NOTE: exam_attempts has no foreign key directly to `profiles` (both
+    // exam_attempts.user_id and profiles.user_id point separately at
+    // auth.users), so `profiles!exam_attempts_user_id_fkey(...)` is not a
+    // resolvable embed — PostgREST rejects it and the whole query used to
+    // fail silently (data ended up undefined, tab always showed "0 pending"
+    // even for attempts that were correctly scoped to this teacher's
+    // subjects). Fetch attempts and profiles separately and merge in JS,
+    // same approach the admin GradingPage already uses.
+    const { data: attempts, error: attemptsErr } = await supabase.from("exam_attempts")
       .select(`*,
-        profiles!exam_attempts_user_id_fkey(full_name, email, student_id),
         exams(id, title, title_ar, type, passing_score, allow_review, term,
               subject_id, subjects(title))`)
       .in("exam_id", examIds)
       .in("status", ["submitted", "graded", "released"])
       .order("submitted_at", { ascending: false });
-    setAllAttempts(data || []);
+
+    if (attemptsErr) {
+      console.error("loadAttempts: exam_attempts fetch failed", attemptsErr);
+      toast({ title: "Error loading attempts", description: attemptsErr.message, variant: "destructive" });
+      setAllAttempts([]);
+      return;
+    }
+
+    const userIds = [...new Set((attempts || []).map((a: any) => a.user_id).filter(Boolean))];
+    let profilesById: Record<string, any> = {};
+    if (userIds.length) {
+      const { data: profiles, error: profilesErr } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, email, student_id")
+        .in("user_id", userIds);
+      if (profilesErr) {
+        console.error("loadAttempts: profiles fetch failed", profilesErr);
+      } else {
+        profilesById = Object.fromEntries((profiles || []).map((p: any) => [p.user_id, p]));
+      }
+    }
+
+    const merged = (attempts || []).map((a: any) => ({
+      ...a,
+      profiles: profilesById[a.user_id] || {},
+    }));
+    setAllAttempts(merged);
   };
 
   const openAttempt = async (attempt: any) => {

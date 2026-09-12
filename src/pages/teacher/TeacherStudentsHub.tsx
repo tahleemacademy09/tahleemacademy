@@ -232,10 +232,19 @@ function PrivateStudents({ user, t }: any) {
     setStudents(pvt || []);
     const { data: subs } = await supabase.from("subjects").select("id, title").eq("teacher_id", user.id);
     setSubjects(subs || []);
-    const { data: sess } = await supabase.from("private_sessions")
-      .select("*, profiles!private_sessions_student_id_fkey(full_name), subjects(title)")
+    // NOTE: private_sessions has no FK to profiles (only subject_id -> subjects),
+    // so `profiles!private_sessions_student_id_fkey` isn't a resolvable embed
+    // and silently failed this query. Fetch profiles separately and merge.
+    const { data: sessRaw } = await supabase.from("private_sessions")
+      .select("*, subjects(title)")
       .eq("teacher_id", user.id).order("session_date", { ascending: false });
-    setSessions(sess || []);
+    const sessStudentIds = [...new Set((sessRaw || []).map((s: any) => s.student_id).filter(Boolean))];
+    let sessProfilesById: Record<string, any> = {};
+    if (sessStudentIds.length) {
+      const { data: sessProfiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", sessStudentIds);
+      sessProfilesById = Object.fromEntries((sessProfiles || []).map((p: any) => [p.user_id, p]));
+    }
+    setSessions((sessRaw || []).map((s: any) => ({ ...s, profiles: sessProfilesById[s.student_id] || {} })));
     setLoading(false);
   }, [user]);
 

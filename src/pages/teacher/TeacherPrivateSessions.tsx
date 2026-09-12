@@ -33,8 +33,17 @@ const TeacherPrivateSessions = () => {
     setSubjects(subs || []);
     const { data: pvtStudents } = await supabase.from("profiles").select("user_id, full_name").eq("assigned_teacher_id", user.id).eq("student_type", "private");
     setStudents(pvtStudents || []);
-    const { data } = await supabase.from("private_sessions").select("*, profiles!private_sessions_student_id_fkey(full_name), subjects(title)").eq("teacher_id", user.id).order("session_date", { ascending: false });
-    setSessions(data || []);
+    // NOTE: private_sessions has no FK to profiles (only subject_id -> subjects),
+    // so `profiles!private_sessions_student_id_fkey` isn't a resolvable embed
+    // and silently failed this query. Fetch profiles separately and merge.
+    const { data: sessionsRaw } = await supabase.from("private_sessions").select("*, subjects(title)").eq("teacher_id", user.id).order("session_date", { ascending: false });
+    const sessionStudentIds = [...new Set((sessionsRaw || []).map((s: any) => s.student_id).filter(Boolean))];
+    let sessionProfilesById: Record<string, any> = {};
+    if (sessionStudentIds.length) {
+      const { data: sessionProfiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", sessionStudentIds);
+      sessionProfilesById = Object.fromEntries((sessionProfiles || []).map((p: any) => [p.user_id, p]));
+    }
+    setSessions((sessionsRaw || []).map((s: any) => ({ ...s, profiles: sessionProfilesById[s.student_id] || {} })));
     setLoading(false);
   };
 

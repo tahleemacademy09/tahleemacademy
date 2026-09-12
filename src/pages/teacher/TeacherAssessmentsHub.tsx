@@ -210,10 +210,22 @@ function ResultsTab({ user, t }: any) {
       const { data: examList } = await supabase.from("exams").select("id").in("subject_id", subjectIds);
       const examIds = (examList || []).map((e: any) => e.id);
       if (!examIds.length) { setLoading(false); return; }
-      const { data } = await supabase.from("exam_attempts")
-        .select("*, profiles!exam_attempts_user_id_fkey(full_name), exams(title, type, term, subject_id, subjects(title))")
+      // NOTE: no FK exists directly between exam_attempts and profiles (both
+      // point separately at auth.users), so `profiles!exam_attempts_user_id_fkey`
+      // is not a resolvable embed — it silently failed this query. Fetch
+      // profiles separately and merge, like the admin GradingPage does.
+      const { data: attempts, error } = await supabase.from("exam_attempts")
+        .select("*, exams(title, type, term, subject_id, subjects(title))")
         .in("exam_id", examIds).in("status", ["graded", "submitted"])
         .order("submitted_at", { ascending: false }).limit(100);
+      if (error) console.error("TeacherAssessmentsHub: exam_attempts fetch failed", error);
+      const userIds = [...new Set((attempts || []).map((a: any) => a.user_id).filter(Boolean))];
+      let profilesById: Record<string, any> = {};
+      if (userIds.length) {
+        const { data: profiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", userIds);
+        profilesById = Object.fromEntries((profiles || []).map((p: any) => [p.user_id, p]));
+      }
+      const data = (attempts || []).map((a: any) => ({ ...a, profiles: profilesById[a.user_id] || {} }));
       setResults(data || []);
       setLoading(false);
     };
