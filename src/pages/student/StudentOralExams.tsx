@@ -210,7 +210,7 @@ const ActiveSlotCard = ({ slot, joinedLive, lkToken, drawnQuestions, drawing, on
           {!joinedLive ? (
             <button onClick={onJoinLive} style={{ background: "#dc2626", color: "#fff", border: "none", borderRadius: 10, padding: "12px 16px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>Join the Live Room</button>
           ) : lkToken && (
-            <div style={{ borderRadius: 12, overflow: "hidden", height: "75vh", minHeight: 480, background: "#111" }}>
+            <div className="oral-exam-video-room" style={{ position: "relative", borderRadius: 12, overflow: "hidden", height: "75vh", minHeight: 480, background: "#111" }}>
               <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video={lkToken.can_publish} audio={lkToken.can_publish} onDisconnected={onLeaveLive} style={{ height: "100%" }}>
                 <VideoConference />
                 <RoomAudioRenderer />
