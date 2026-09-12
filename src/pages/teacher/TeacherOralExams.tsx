@@ -412,7 +412,7 @@ const TeacherOralExams = () => {
               <Radio size={16} style={{ verticalAlign: -3 }} /> Start / Join Live Room
             </button>
           ) : lkToken && (
-            <div style={{ borderRadius: 14, overflow: "hidden", height: 360 }}>
+            <div style={{ borderRadius: 14, overflow: "hidden", height: "75vh", minHeight: 480, background: "#111" }}>
               <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video={false} audio={false} onDisconnected={() => setJoinedLive(false)} style={{ height: "100%" }}>
                 <VideoConference />
                 <RoomAudioRenderer />
