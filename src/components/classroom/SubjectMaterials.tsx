@@ -26,7 +26,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import MaterialsViewer from "./MaterialsViewer";
 import {
   FileText, Video, Music, Image as ImageIcon, File as FileIcon,
-  Upload, Plus, X, Trash2, Pencil,
+  Upload, Plus, X, Trash2, Pencil, Download,
   Loader2, FolderOpen, Search, Lock, LockOpen,
 } from "lucide-react";
 
@@ -63,6 +63,26 @@ const fmtSize = (bytes?: number | null) => {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
+
+// Resolve a stored `file_url` (bucket path or already-absolute URL) into a
+// URL the browser can actually download from — same approach as
+// MaterialsViewer.tsx's resolveUrl(), duplicated locally to avoid a cross
+// import into a non-exported helper.
+async function resolveDownloadUrl(fileUrl: string): Promise<string> {
+  if (!fileUrl) return "";
+  if (fileUrl.startsWith("http")) return fileUrl;
+  const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(fileUrl);
+  if (pub?.publicUrl) {
+    try {
+      const res = await fetch(pub.publicUrl, { method: "HEAD" });
+      if (res.ok || res.status === 304) return pub.publicUrl;
+    } catch { /* fall through to signed URL */ }
+  }
+  const { data: signed, error } = await supabase.storage
+    .from(BUCKET).createSignedUrl(fileUrl, 3600);
+  if (error) return pub?.publicUrl || "";
+  return signed?.signedUrl || pub?.publicUrl || "";
+}
 
 function detectType(file: File): MaterialType {
   const mime = file.type.toLowerCase();
@@ -111,7 +131,27 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
   const [feedback, setFeedback]   = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
   const [form, setForm]           = useState({ ...emptyForm });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDownload = async (m: any) => {
+    if (!m.file_url || downloadingId) return;
+    setDownloadingId(m.id);
+    try {
+      const url = await resolveDownloadUrl(m.file_url);
+      if (!url) { setFeedback({ type: "error", message: t("Couldn't resolve file link.", "تعذر الوصول إلى رابط الملف.") }); return; }
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = m.title || "";
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   const load = useCallback(async () => {
     if (!subjectId) { setLoading(false); return; }
@@ -364,6 +404,13 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                {m.file_url && m.is_downloadable !== false && (
+                  <IconBtn onClick={() => handleDownload(m)} title={t("Download", "تحميل")}>
+                    {downloadingId === m.id
+                      ? <Loader2 size={15} color={TMID} className="animate-spin" />
+                      : <Download size={15} color={TMID} />}
+                  </IconBtn>
+                )}
                 <IconBtn onClick={() => openEdit(m)} title={t("Edit", "تعديل")}>
                   <Pencil size={15} color={TMID} />
                 </IconBtn>
