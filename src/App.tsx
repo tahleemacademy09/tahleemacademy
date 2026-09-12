@@ -316,7 +316,7 @@ const App = () => (
                     <Route path="/teacher/private-sessions" element={<TeacherPrivateSessions />} />
                     <Route path="/teacher/attendance"       element={<TeacherAttendance />} />
                     <Route path="/teacher/announcements"    element={<TeacherAnnouncements />} />
-                    <Route path="/teacher/exams"            element={<TeacherExamsPage type="exam" />} />
+                    <Route path="/teacher/exams"            element={<TeacherExamsPage />} />
                     <Route path="/teacher/exams/create"     element={<ExamEditor />} />
                     <Route path="/teacher/exams/:examId/edit" element={<ExamEditor />} />
                     <Route path="/teacher/grading"          element={<TeacherGrading />} />
