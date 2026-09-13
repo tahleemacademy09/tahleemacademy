@@ -81,7 +81,7 @@ interface ExamForm {
   guidelines: string; guidelines_ar: string;
   start_date: string; end_date: string;
   proctoring_enabled: boolean; fullscreen_required: boolean;
-  webcam_required: boolean; mic_required: boolean;
+  webcam_required: boolean; mic_required: boolean; record_audio: boolean;
   tab_switch_limit: number; max_warnings: number;
   auto_submit_on_violation: boolean;
   screenshot_interval_seconds: number; idle_timeout_seconds: number;
@@ -278,7 +278,7 @@ const ExamEditor = () => {
     guidelines: "", guidelines_ar: "",
     start_date: "", end_date: "",
     proctoring_enabled: false, fullscreen_required: false,
-    webcam_required: false, mic_required: false,
+    webcam_required: false, mic_required: false, record_audio: false,
     tab_switch_limit: 3, max_warnings: 3,
     auto_submit_on_violation: false,
     screenshot_interval_seconds: 0, idle_timeout_seconds: 300,
@@ -771,6 +771,7 @@ const ExamEditor = () => {
         fullscreen_required: examForm.fullscreen_required,
         webcam_required: examForm.webcam_required,
         mic_required: examForm.mic_required,
+        record_audio: examForm.record_audio,
         tab_switch_limit: examForm.tab_switch_limit, max_warnings: examForm.max_warnings,
         auto_submit_on_violation: examForm.auto_submit_on_violation,
         screenshot_interval_seconds: examForm.screenshot_interval_seconds,
@@ -856,6 +857,7 @@ const ExamEditor = () => {
           fullscreen_required: exam.fullscreen_required || false,
           webcam_required: exam.webcam_required || false,
           mic_required: (exam as any).mic_required || false,
+          record_audio: (exam as any).record_audio || false,
           tab_switch_limit: exam.tab_switch_limit || 3,
           max_warnings: exam.max_warnings || 3,
           auto_submit_on_violation: exam.auto_submit_on_violation || false,
@@ -1436,6 +1438,7 @@ const ExamEditor = () => {
                       { key: "auto_submit_on_violation", label: t("Auto-submit on violation","إرسال تلقائي عند الانتهاك"), desc: t("End exam after max warnings","إنهاء الامتحان بعد التحذيرات القصوى") },
                       { key: "blur_detection", label: t("Blur Detection","كشف ضبابية الكاميرا"), desc: t("Alert if camera is covered","تنبيه إذا تم تغطية الكاميرا") },
                       { key: "face_detection", label: t("Face Detection","كشف الوجه"), desc: t("Require face in frame","تطلب وجود وجه في الإطار") },
+                      { key: "record_audio", label: t("Audio Monitoring","مراقبة الصوت"), desc: t("Let admins listen in live and flag unusual noise","السماح للمشرفين بالاستماع مباشرة ورصد الضوضاء غير المعتادة") },
                     ].map(a => (
                       <div key={a.key} className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-100">
                         <div><Label className="text-sm font-semibold">{a.label}</Label><p className="text-[10px] text-slate-400 mt-0.5">{a.desc}</p></div>
