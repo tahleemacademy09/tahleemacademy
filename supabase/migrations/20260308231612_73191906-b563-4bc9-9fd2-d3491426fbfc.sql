@@ -1,1 +1,0 @@
-ALTER TABLE public.exams ADD COLUMN level text DEFAULT NULL;
