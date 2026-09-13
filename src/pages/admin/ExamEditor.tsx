@@ -1280,7 +1280,16 @@ const ExamEditor = () => {
                 {/* Subject */}
                 <div className="space-y-2">
                   <Label className="text-sm font-bold text-slate-700">{t("Subject","المادة")} <span className="text-red-500">*</span></Label>
-                  <Select value={examForm.subject_id||undefined} onValueChange={v => setExamForm({ ...examForm, subject_id: v })}>
+                  <Select value={examForm.subject_id||undefined} onValueChange={v => {
+                    const chosen = subjects.find(s => s.id === v);
+                    setExamForm({ ...examForm, subject_id: v,
+                      // Title always follows the subject — this is what keeps every
+                      // exam/test for the same subject sharing one name, so the
+                      // report card can actually combine them into a single row.
+                      title: chosen?.title || examForm.title,
+                      title_ar: chosen?.title_ar || examForm.title_ar,
+                    });
+                  }}>
                     <SelectTrigger className="h-11 rounded-lg"><SelectValue placeholder={t("Select subject","اختر المادة")} /></SelectTrigger>
                     <SelectContent>
                       {subjects.map(s => (
@@ -1321,11 +1330,15 @@ const ExamEditor = () => {
                       className="rounded-lg bg-slate-50/50 h-11" placeholder="2026/2027" />
                   </div>
                 </div>
-                {/* Titles */}
+                {/* Titles — locked to the selected subject. Free-text titles were
+                    the root cause of subjects drifting apart (e.g. "Seerah Test -
+                    Beginner" vs "Seerah" vs "السيرة النبوية" all meaning the same
+                    subject) so the report card couldn't combine a subject's test
+                    and exam scores into one row. Pick the subject above instead. */}
                 <div className="space-y-4">
                   <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
-                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (Arabic)","العنوان (عربي)")}</Label><Input value={examForm.title_ar} onChange={e=>setExamForm({...examForm,title_ar:e.target.value})} dir="rtl" className="rounded-lg bg-slate-50/50 h-10" placeholder="أدخل عنوان الامتحان" /></div>
-                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (English)","العنوان (إنجليزي)")}</Label><Input value={examForm.title} onChange={e=>setExamForm({...examForm,title:e.target.value})} dir="ltr" className="rounded-lg bg-slate-50/50 h-10" placeholder="Enter exam title" /></div>
+                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (Arabic)","العنوان (عربي)")}</Label><Input value={examForm.title_ar} readOnly disabled dir="rtl" className="rounded-lg bg-slate-100 h-10 text-slate-500" placeholder={t("Select a subject above","اختر مادة أعلاه")} /></div>
+                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (English)","العنوان (إنجليزي)")}</Label><Input value={examForm.title} readOnly disabled dir="ltr" className="rounded-lg bg-slate-100 h-10 text-slate-500" placeholder={t("Select a subject above","اختر مادة أعلاه")} /></div>
                   </div>
                   <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
                     <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Description (Arabic)","الوصف (عربي)")}</Label><Textarea value={examForm.description_ar} onChange={e=>setExamForm({...examForm,description_ar:e.target.value})} dir="rtl" className="rounded-lg bg-slate-50/50 min-h-[80px]" placeholder="وصف مختصر..." /></div>
