@@ -749,6 +749,9 @@ const ExamEditor = () => {
     if (!examForm.title.trim()) {
       toast({ title: "Title required", variant: "destructive" }); return;
     }
+    if (!examForm.subject_id) {
+      toast({ title: "Subject required", description: "Pick a subject so teachers can see this exam.", variant: "destructive" }); return;
+    }
     if (examForm.start_date && examForm.end_date && !validateSchedule()) {
       toast({ title: "Invalid schedule", description: "Check date settings", variant: "destructive" }); return;
     }
@@ -1274,17 +1277,16 @@ const ExamEditor = () => {
                 </div>
                 {/* Subject */}
                 <div className="space-y-2">
-                  <Label className="text-sm font-bold text-slate-700">{t("Subject","المادة")}</Label>
-                  <Select value={examForm.subject_id||"none"} onValueChange={v => setExamForm({ ...examForm, subject_id: v==="none" ? "" : v })}>
+                  <Label className="text-sm font-bold text-slate-700">{t("Subject","المادة")} <span className="text-red-500">*</span></Label>
+                  <Select value={examForm.subject_id||undefined} onValueChange={v => setExamForm({ ...examForm, subject_id: v })}>
                     <SelectTrigger className="h-11 rounded-lg"><SelectValue placeholder={t("Select subject","اختر المادة")} /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">{t("No subject (visible to all)","بدون مادة (يظهر للجميع)")}</SelectItem>
                       {subjects.map(s => (
                         <SelectItem key={s.id} value={s.id}>{t(s.title, s.title_ar || s.title)}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-[11px] text-slate-400">{t("Only students registered for this subject will see this exam/test.","لن يرى هذا الامتحان/التمرين إلا الطلاب المسجلون في هذه المادة.")}</p>
+                  <p className="text-[11px] text-slate-400">{t("Required — teachers only see exams linked to a subject they teach, and students only see exams for subjects they're registered in.","مطلوب — لا يرى المعلمون سوى الامتحانات المرتبطة بمادة يدرّسونها، ولا يرى الطلاب سوى الامتحانات الخاصة بالمواد المسجلين فيها.")}</p>
                 </div>
                 {/* Level & Term */}
                 <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-3")}>
