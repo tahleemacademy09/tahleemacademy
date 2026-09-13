@@ -67,7 +67,7 @@ const TeacherOralExams = () => {
     const [{ data: owned }, { data: ttSlots }, { data: examsData }] = await Promise.all([
       supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id),
       supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids"),
-      supabase.from("exams").select("id, title, title_ar, subject_id, passing_score, exam_mode" as any).eq("exam_mode" as any, "oral").eq("created_by", user.id).order("created_at", { ascending: false }),
+      supabase.from("exams").select("id, title, title_ar, subject_id, passing_score, exam_mode, type" as any).eq("exam_mode" as any, "oral").eq("created_by", user.id).order("created_at", { ascending: false }),
     ]);
 
     const mySubjectIds = new Set<string>((owned || []).map((s: any) => s.id));
@@ -136,19 +136,24 @@ const TeacherOralExams = () => {
   }, [tab, selectedExamId, loadExamData]);
 
   // ── Setup: create a new oral exam ─────────────────────────────────────
-  const [newExam, setNewExam] = useState({ title: "", subject_id: "", passing_score: "50" });
+  // "type" follows the same CA (continuous-assessment) convention used
+  // elsewhere in the platform: a "test" is scored out of 30, a full "exam"
+  // out of 70 — see submit_oral_score() in Supabase. This used to be
+  // hardcoded to "exam" here, which is why oral tests didn't exist as an
+  // option at all.
+  const [newExam, setNewExam] = useState<{ title: string; subject_id: string; passing_score: string; type: "test" | "exam" }>({ title: "", subject_id: "", passing_score: "50", type: "exam" });
   const createExam = async () => {
     if (!newExam.title.trim()) return toast({ title: "Enter a title", variant: "destructive" });
     const { data, error } = await supabase.from("exams").insert({
       title: newExam.title.trim(),
       subject_id: newExam.subject_id || null,
       passing_score: Number(newExam.passing_score) || 50,
-      exam_mode: "oral", type: "exam", is_published: true, created_by: user!.id,
+      exam_mode: "oral", type: newExam.type, is_published: true, created_by: user!.id,
     } as any).select().single();
     if (error) return toast({ title: "Could not create exam", description: error.message, variant: "destructive" });
     await supabase.from("oral_exam_sessions" as any).insert({ exam_id: data.id, created_by: user!.id });
     toast({ title: "Oral exam created" });
-    setNewExam({ title: "", subject_id: "", passing_score: "50" });
+    setNewExam({ title: "", subject_id: "", passing_score: "50", type: "exam" });
     await loadExams();
     setSelectedExamId(data.id);
   };
@@ -418,6 +423,23 @@ const TeacherOralExams = () => {
   const currentStageIdx = currentSetStages.findIndex(st => st.id === session?.current_stage_id);
   const isLastOralStage = currentSetStages.length === 0 || currentStageIdx === currentSetStages.length - 1;
 
+  // The stage actually on-air right now (not the "no stage picked yet" state
+  // right after calling a student in — session.current_stage_id is null then,
+  // and there's nothing to score yet). Used to gate leaving a stage without
+  // a mark entered.
+  const activeOralStage = (currentSlot?.drawn_set_id && session?.current_stage_id)
+    ? drawnStages.find((st: any) => st.stage_id === session.current_stage_id)
+    : null;
+  const activeStageScored = !activeOralStage || (activeOralStage.questions || []).length === 0 ||
+    (activeOralStage.questions as any[]).every(q => {
+      const v = scores[q.id]?.points;
+      return v !== undefined && v !== "" && !isNaN(Number(v));
+    });
+  const allQuestionsScored = drawnQuestions.every((q: any) => {
+    const v = scores[q.id]?.points;
+    return v !== undefined && v !== "" && !isNaN(Number(v));
+  });
+
   const admit = async (slotId: string) => {
     const { error } = await supabase.rpc("admit_oral_student" as any, { p_slot_id: slotId });
     if (error) toast({ title: "Could not admit", description: error.message, variant: "destructive" });
@@ -438,6 +460,13 @@ const TeacherOralExams = () => {
 
   const setStage = async (stageId: string | null) => {
     if (!session) return;
+    // Block leaving the stage currently on-air until it's been marked —
+    // this covers both the "Next" button and the manual stage-jump list,
+    // since both funnel through here. Jumping back to the stage you're
+    // already on (or moving on once it's scored) is unaffected.
+    if (currentSlot && stageId !== session.current_stage_id && !activeStageScored) {
+      return toast({ title: "Award a mark first", description: "Enter points for this stage's question before moving on.", variant: "destructive" });
+    }
     const { error } = await supabase.rpc("set_oral_stage" as any, { p_session_id: session.id, p_stage_id: stageId });
     if (error) return toast({ title: "Could not change stage", description: error.message, variant: "destructive" });
     loadExamData();
@@ -488,6 +517,11 @@ const TeacherOralExams = () => {
 
   const submitScore = async () => {
     if (!currentSlot) return;
+    const unmarked = drawnQuestions.some((q: any) => {
+      const v = scores[q.id]?.points;
+      return v === undefined || v === "" || isNaN(Number(v));
+    });
+    if (unmarked) return toast({ title: "Award a mark first", description: "Enter points for every question before submitting.", variant: "destructive" });
     const answers = drawnQuestions.map((q: any) => ({
       question_id: q.id,
       points_awarded: Number(scores[q.id]?.points) || 0,
@@ -612,7 +646,11 @@ const TeacherOralExams = () => {
 
               {currentSlot && (
                 <>
-                  <p style={{ fontSize: 11, fontWeight: 800, color: "#dc2626", textTransform: "uppercase", marginBottom: 8 }}>On stage: #{currentSlot.queue_number ?? "—"} {currentSlot.student_name}</p>
+                  <p style={{ fontSize: 11, fontWeight: 800, color: "#dc2626", textTransform: "uppercase", marginBottom: 8 }}>
+                    On stage: #{currentSlot.queue_number ?? "—"} {currentSlot.student_name}
+                    {selectedExam?.type === "test" && <span style={{ marginLeft: 6, color: "#9ca3af", fontWeight: 700 }}>· scored /30</span>}
+                    {selectedExam?.type === "exam" && <span style={{ marginLeft: 6, color: "#9ca3af", fontWeight: 700 }}>· scored /70</span>}
+                  </p>
                   <div style={{ background: "#fff5f5", border: "1.5px solid #fecaca", borderRadius: 10, padding: 10, marginBottom: 20 }}>
                     {!currentSlot.drawn_set_id ? (
                       <p style={{ fontSize: 12, color: "#6b7280" }}><Shuffle size={12} style={{ verticalAlign: -2 }} /> Waiting for the student to draw their question set…</p>
@@ -647,8 +685,12 @@ const TeacherOralExams = () => {
                           {isLastOralStage ? (
                             <>
                               <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
-                              <button onClick={submitScore} disabled={submittingScore} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
-                                {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />} Submit Score{currentSetStages.length > 1 ? " (all stages)" : ""}
+                              <button onClick={submitScore} disabled={submittingScore || !allQuestionsScored} style={{
+                                color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13,
+                                background: !allQuestionsScored ? "#d1d5db" : G, cursor: !allQuestionsScored ? "not-allowed" : "pointer",
+                              }}>
+                                {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />}{" "}
+                                {!allQuestionsScored ? "Award marks to submit" : `Submit Score${currentSetStages.length > 1 ? " (all stages)" : ""}`}
                               </button>
                             </>
                           ) : (
@@ -662,8 +704,13 @@ const TeacherOralExams = () => {
               )}
 
               {!(currentSlot && isLastOralStage) && (
-                <button onClick={() => { goNext(); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: GOLD, color: "#fff", border: "none", borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}>
-                  <SkipForward size={15} /> Next
+                <button onClick={() => { goNext(); }} disabled={!!currentSlot && !activeStageScored} style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: "#fff", border: "none",
+                  borderRadius: 10, padding: "12px 14px", fontWeight: 800, fontSize: 14,
+                  background: (currentSlot && !activeStageScored) ? "#d1d5db" : GOLD,
+                  cursor: (currentSlot && !activeStageScored) ? "not-allowed" : "pointer",
+                }}>
+                  <SkipForward size={15} /> {currentSlot && !activeStageScored ? "Award a mark to continue" : "Next"}
                 </button>
               )}
             </div>
@@ -697,7 +744,12 @@ const TeacherOralExams = () => {
               {exams.map(e => (
                 <div key={e.id} style={{ background: "#fff", border: `1px solid ${selectedExamId === e.id ? G : "#e5e7eb"}`, borderRadius: 14, padding: 14, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <div>
-                    <div style={{ fontWeight: 800, fontSize: 15, color: G }}>{e.title}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontWeight: 800, fontSize: 15, color: G }}>{e.title}</span>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 20, padding: "1px 8px", textTransform: "uppercase" }}>
+                        {e.type === "test" ? "Test · /30" : e.type === "exam" ? "Exam · /70" : e.type || "Exam"}
+                      </span>
+                    </div>
                     <div style={{ fontSize: 12, color: "#6b7280" }}>{subjects.find(s => s.id === e.subject_id)?.title || "No subject"}</div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
@@ -721,6 +773,17 @@ const TeacherOralExams = () => {
               <option value="">No subject</option>
               {subjects.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
             </select>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              {(["test", "exam"] as const).map(t => (
+                <button key={t} type="button" onClick={() => setNewExam({ ...newExam, type: t })} style={{
+                  flex: 1, padding: "10px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 13,
+                  border: `1.5px solid ${newExam.type === t ? G : "#e5e7eb"}`,
+                  background: newExam.type === t ? "#ecfdf5" : "#fff", color: newExam.type === t ? G : "#374151",
+                }}>
+                  {t === "test" ? "Test (out of 30)" : "Exam (out of 70)"}
+                </button>
+              ))}
+            </div>
             <input placeholder="Passing score %" type="number" value={newExam.passing_score} onChange={e => setNewExam({ ...newExam, passing_score: e.target.value })}
               style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", marginBottom: 12, fontSize: 14 }} />
             <button onClick={createExam} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>

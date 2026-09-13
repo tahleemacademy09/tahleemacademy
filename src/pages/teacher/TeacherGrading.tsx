@@ -166,10 +166,14 @@ const TeacherGrading = () => {
         }).eq("id", ans.id);
       }
       const pct = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
-      // Exam is always scored out of 30, regardless of how many raw points the
-      // questions add up to — scale the earned total proportionally.
-      const scaledTotal = 30;
-      const scaledEarned = totalPossible > 0 ? Number(((totalEarned / totalPossible) * 30).toFixed(2)) : 0;
+      // Continuous-assessment convention: a "test" is always scored out of 30
+      // and a full "exam" out of 70, regardless of how many raw points the
+      // questions add up to — scale the earned total proportionally. Any
+      // other exam type (e.g. entrance) isn't part of that CA scheme and
+      // keeps its raw point total unscaled.
+      const examType    = selectedAttempt.exams?.type;
+      const scaledTotal = examType === "test" ? 30 : examType === "exam" ? 70 : totalPossible;
+      const scaledEarned = totalPossible > 0 ? Number(((totalEarned / totalPossible) * scaledTotal).toFixed(2)) : 0;
       const passing = selectedAttempt.exams?.passing_score || 50;
       // Releasing is admin-only — a teacher's grading always lands as
       // "graded" and waits for an admin to release it to the student.
