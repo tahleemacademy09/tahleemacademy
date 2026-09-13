@@ -820,6 +820,8 @@ export default function ExamLiveMonitor() {
                         Track={LKTrack}
                         onExpand={() => openFullscreen(row.profile.user_id)}
                         style={{ width: 52, height: 68, borderRadius: 10 }}
+                        listening={listeningId === row.profile.user_id}
+                        onToggleListen={() => toggleListen(row.profile.user_id)}
                       />
                     </div>
                   )}
