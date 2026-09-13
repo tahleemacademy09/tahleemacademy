@@ -117,12 +117,23 @@ const GradingPage = () => {
   // ── Open attempt for grading ─────────────────────────────────────────────
   const openAttempt = async (attempt: any) => {
     setSelectedAttempt(attempt);
+    // Use the same pooled subset the student was actually shown (respects
+    // "section::pick=N" question-pool tags) instead of the full question
+    // bank — otherwise an exam with pools shows every question in the bank
+    // during grading, not just the ones the student answered.
     const [qRes, aRes] = await Promise.all([
-      supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
+      supabase.rpc("get_exam_questions_for_attempt", { _attempt_id: attempt.id }),
       supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
     ]);
-    const qs  = qRes.data || [];
+    let qs  = qRes.data || [];
     const ans = aRes.data || [];
+    if (qRes.error) {
+      console.error("get_exam_questions_for_attempt failed, falling back to full bank:", qRes.error);
+      const { data: fallbackQs } = await supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order");
+      qs = fallbackQs || [];
+    } else {
+      qs = [...qs].sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    }
     setQuestions(qs); setAnswers(ans);
     if (!scoreRefs.current[attempt.id]) {
       const init: Record<number, number> = {};
