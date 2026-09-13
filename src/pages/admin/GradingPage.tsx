@@ -157,10 +157,14 @@ const GradingPage = () => {
 
       const pct     = totalPoints > 0 ? Math.round((earned / totalPoints) * 100) : 0;
       const passing = selectedAttempt.exams?.passing_score || 60;
-      // Exam is always scored out of 30, regardless of how many raw points the
-      // questions add up to — scale the earned total proportionally.
-      const scaledTotal = 30;
-      const scaledEarned = totalPoints > 0 ? Number(((earned / totalPoints) * 30).toFixed(2)) : 0;
+      // Continuous-assessment convention: a "test" is always scored out of 30
+      // and a full "exam" out of 70, regardless of how many raw points the
+      // questions add up to — scale the earned total proportionally. Any
+      // other exam type (e.g. entrance) isn't part of that CA scheme and
+      // keeps its raw point total unscaled.
+      const examType    = selectedAttempt.exams?.type;
+      const scaledTotal = examType === "test" ? 30 : examType === "exam" ? 70 : totalPoints;
+      const scaledEarned = totalPoints > 0 ? Number(((earned / totalPoints) * scaledTotal).toFixed(2)) : 0;
 
       // If this attempt was already released, keep it released after an admin
       // edit — don't silently pull it back to "graded" and hide it from the
