@@ -18,6 +18,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
 import {
@@ -377,6 +378,15 @@ const TeacherOralExams = () => {
   const [scores, setScores] = useState<Record<string, { points: string; feedback: string }>>({});
   const [overallFeedback, setOverallFeedback] = useState("");
   const [submittingScore, setSubmittingScore] = useState(false);
+
+  // Same reload guard used on the student side — a service-worker update
+  // reload landing on the examiner mid-session would kick them out of the
+  // call and silently drop whatever score entry hadn't been submitted yet.
+  useEffect(() => {
+    if (!joinedLive) return;
+    lockReload("oral-exam-teacher");
+    return () => unlockReload("oral-exam-teacher");
+  }, [joinedLive]);
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Lock page scroll while the fullscreen live room is up — it's meant to be
