@@ -27,6 +27,34 @@ const GOLD = "#C9A84C";
 const fmtTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
+// Ticking countdown for the current stage, mirrored on the teacher's Control
+// Room from the same shared start timestamp + per-stage limit. Per design:
+// it never auto-advances — just flashes red at 0; the teacher moves things
+// along manually.
+const StageCountdown = ({ startedAt, limitSeconds }: { startedAt: string | null | undefined; limitSeconds: number | null | undefined }) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!startedAt || !limitSeconds) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startedAt, limitSeconds]);
+  if (!startedAt || !limitSeconds) return null;
+  const elapsed = Math.floor((now - new Date(startedAt).getTime()) / 1000);
+  const remaining = Math.max(0, limitSeconds - elapsed);
+  const m = Math.floor(remaining / 60), s = remaining % 60;
+  const expired = remaining === 0;
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 900, fontSize: 12,
+      color: expired ? "#fff" : remaining <= 10 ? "#f87171" : "#e5e7eb",
+      background: expired ? "#dc2626" : "transparent",
+      padding: expired ? "3px 10px" : 0, borderRadius: 20,
+    }}>
+      <Clock size={12} /> {m}:{String(s).padStart(2, "0")}
+    </span>
+  );
+};
+
 function useCountdown(target: string | null) {
   const [remaining, setRemaining] = useState<number>(target ? new Date(target).getTime() - Date.now() : 0);
   useEffect(() => {
@@ -271,8 +299,11 @@ const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawi
           const roundIdx = drawnStages.findIndex((st: any) => st.stage_id === activeStage?.stage_id);
           return (
             <div style={{ borderRadius: 10, padding: 8, border: `1.5px solid ${GOLD}` }}>
-              {drawnStages.length > 1 && (
-                <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af", marginBottom: 4 }}>Round {roundIdx >= 0 ? roundIdx + 1 : 1} of {drawnStages.length}</p>
+              {(drawnStages.length > 1 || activeStage?.time_limit_seconds) && (
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  {drawnStages.length > 1 && <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af" }}>Round {roundIdx >= 0 ? roundIdx + 1 : 1} of {drawnStages.length}</p>}
+                  <StageCountdown startedAt={session?.current_stage_started_at} limitSeconds={activeStage?.time_limit_seconds} />
+                </div>
               )}
               {activeStage?.stage_title && (
                 <p style={{ fontSize: 11, fontWeight: 800, color: GOLD, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
