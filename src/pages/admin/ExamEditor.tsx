@@ -30,7 +30,7 @@ import {
   Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2,
   Upload, Download, Image as ImageIcon, Loader2, Eye, Library, Clock,
   AlertCircle, CheckCircle, XCircle, HelpCircle, Monitor,
-  ChevronDown, ChevronUp, FolderPlus, Shuffle,
+  ChevronDown, ChevronUp, FolderPlus, Shuffle, Sparkles,
 } from "lucide-react";
 import RichTextEditor from "@/components/exam/RichTextEditor";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -341,6 +341,11 @@ const ExamEditor = () => {
   const [bankSearch,     setBankSearch]     = useState("");
   const [bankLoading,    setBankLoading]    = useState(false);
 
+  // ── AI Reorganize (paste raw questions → structured rows) ──────────────
+  const [aiReorgOpen,   setAiReorgOpen]   = useState(false);
+  const [aiRawText,     setAiRawText]     = useState("");
+  const [aiParsing,     setAiParsing]     = useState(false);
+
   const [activeTab,        setActiveTab]        = useState("settings");
   const [scheduleErrors,   setScheduleErrors]   = useState<{start?: string; end?: string}>({});
   const [proctoringPreview,setProctoringPreview] = useState(false);
@@ -592,6 +597,72 @@ const ExamEditor = () => {
       toast({ title: "❌ Import Failed", description: error.message || "Check file format", variant: "destructive" });
     }
     if (bulkFileInputRef.current) bulkFileInputRef.current.value = "";
+  };
+
+  // ── AI Reorganize: paste raw questions → structured question rows ──────
+  // Sends whatever the teacher pastes (any format, EN/AR, marked answers or
+  // not) to the tahleem-ai edge function, which returns a structured JSON
+  // array of questions with options and the correct answer already chosen
+  // (using the model's own subject knowledge if the source didn't mark one).
+  const handleAIReorganize = async () => {
+    if (!aiRawText.trim()) {
+      toast({ title: t("Paste some questions first","الصق بعض الأسئلة أولاً"), variant: "destructive" });
+      return;
+    }
+    setAiParsing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+        body: { action: "parse_questions", prompt: aiRawText },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const raw: any[] = Array.isArray(data?.questions) ? data.questions : [];
+      if (!raw.length) throw new Error("No questions recognized in the pasted text");
+
+      const parsedQuestions: QuestionForm[] = raw.map((q: any, index: number) => {
+        const options = Array.isArray(q.options)
+          ? q.options.map((o: any, oi: number) => ({
+              id: o.id || String.fromCharCode(97 + oi),
+              text: o.text || "",
+              text_ar: o.text_ar || "",
+              is_correct: !!o.is_correct,
+              image_url: "",
+            }))
+          : [];
+
+        // Derive correct_answer letter/value if the model didn't set it explicitly.
+        const derivedCorrect = q.correct_answer || options.find((o: any) => o.is_correct)?.id || "";
+
+        return {
+          ...emptyQuestion(),
+          question_type: q.question_type || "mcq",
+          question_text: q.question_text || "",
+          question_text_ar: q.question_text_ar || "",
+          options: options.length ? options : emptyQuestion().options,
+          correct_answer: derivedCorrect,
+          points: Number(q.points) || 1,
+          difficulty: q.difficulty || "medium",
+          explanation: q.explanation || "",
+          sort_order: questions.length + index,
+        };
+      });
+
+      setQuestions(prev => [...prev, ...parsedQuestions]);
+      const autoSelected = raw.filter((q: any) => (q.options || []).some((o: any) => o.is_correct)).length;
+      toast({
+        title: `✅ ${t("Reorganized","تمت إعادة التنظيم")} ${parsedQuestions.length} ${t("questions","سؤال")}`,
+        description: t(
+          `Correct answers were auto-selected for ${autoSelected} of them. Review before publishing.`,
+          `تم اختيار الإجابات الصحيحة تلقائيًا لـ ${autoSelected} منها. راجعها قبل النشر.`
+        ),
+      });
+      setAiRawText("");
+      setAiReorgOpen(false);
+    } catch (err: any) {
+      toast({ title: t("❌ AI Reorganize failed","❌ فشلت إعادة التنظيم بالذكاء الاصطناعي"), description: err.message, variant: "destructive" });
+    }
+    setAiParsing(false);
   };
 
   // ── FIX 3: Question Bank ──────────────────────────────────────────────────
@@ -1483,6 +1554,45 @@ const ExamEditor = () => {
                             QuestionType, Question, Answer1…Answer8, correctanswer, Noofanswers, Explanation, Marks, …
                           </code>
                           <p className="mt-2"><strong>{t("Also supported","مدعوم أيضًا")}:</strong> Legacy format with question_text / option_a / correct_answer columns</p>
+                        </div>
+                      </div>
+                    </DialogContent>
+                  </Dialog>
+
+                  {/* AI Reorganize — paste raw questions, get structured rows + auto-picked answers */}
+                  <Dialog open={aiReorgOpen} onOpenChange={setAiReorgOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm" className="gap-1.5 sm:gap-2 rounded-xl text-emerald-800 border-emerald-300 bg-emerald-50 font-bold text-xs sm:text-sm h-9">
+                        <Sparkles className="h-4 w-4"/><span className="hidden sm:inline">{t("AI Reorganize","إعادة تنظيم بالذكاء الاصطناعي")}</span><span className="sm:hidden">AI</span>
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className={cn("max-w-[95vw] sm:max-w-2xl", isMobile ? "p-4" : "p-6")}>
+                      <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-emerald-700"/>{t("AI Reorganize Questions","إعادة تنظيم الأسئلة بالذكاء الاصطناعي")}</DialogTitle>
+                        <DialogDescription>
+                          {t(
+                            "Paste your questions in any format — Word, WhatsApp, a textbook, English or Arabic. The AI will split them into rows, fill in the options, and select the correct answer for each (using its own knowledge if you didn't mark one).",
+                            "الصق أسئلتك بأي صيغة — من Word أو واتساب أو كتاب مدرسي، عربي أو إنجليزي. سيقوم الذكاء الاصطناعي بتقسيمها إلى صفوف، وملء الخيارات، واختيار الإجابة الصحيحة لكل سؤال (باستخدام معرفته الخاصة إن لم تحدد إجابة)."
+                          )}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-3 py-2">
+                        <Textarea
+                          value={aiRawText}
+                          onChange={e => setAiRawText(e.target.value)}
+                          placeholder={t(
+                            "Paste questions here...\n\ne.g.\n1. What is the plural of كِتَاب?\nA) كُتُب\nB) كِتَابَان\nC) كَاتِب\nD) مَكْتَبَة\n\n2. The Prophet ﷺ was born in the Year of the Elephant. True or False?",
+                            "الصق الأسئلة هنا..."
+                          )}
+                          className="min-h-[220px] rounded-xl font-mono text-sm"
+                          dir="auto"
+                        />
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-slate-500">{t("Questions are appended to the list below — nothing existing is overwritten.","تُضاف الأسئلة إلى القائمة أدناه — لا يتم استبدال أي شيء موجود.")}</p>
+                          <Button onClick={handleAIReorganize} disabled={aiParsing || !aiRawText.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
+                            {aiParsing ? <Loader2 className="h-4 w-4 animate-spin"/> : <Sparkles className="h-4 w-4"/>}
+                            {aiParsing ? t("Reorganizing…","جارٍ إعادة التنظيم…") : t("Reorganize with AI","إعادة التنظيم بالذكاء الاصطناعي")}
+                          </Button>
                         </div>
                       </div>
                     </DialogContent>
