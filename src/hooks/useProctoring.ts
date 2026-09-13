@@ -926,17 +926,6 @@ export const useProctoring = (
       );
     };
 
-    // Async submit for cases where we have time (visibility hidden)
-    const asyncSubmit = async () => {
-      try {
-        await supabase.from("exam_attempts").update({
-          status: "submitted",
-          submitted_at: new Date().toISOString(),
-          notes: "Auto-submitted: exam window closed",
-        }).eq("id", config.attemptId).eq("status", "in_progress"); // only if still in progress
-      } catch (_) {}
-    };
-
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "Your exam will be auto-submitted if you leave!";
@@ -947,25 +936,21 @@ export const useProctoring = (
       if (!e.persisted) beaconSubmit(); // only if not entering bfcache
     };
 
-    const onVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        // Delayed async — if they come back quickly it cancels.
-        // Lockdown mode: much shorter grace than before (was 30s) — a
-        // student who leaves the exam window for this long auto-submits.
-        const t = setTimeout(asyncSubmit, 8000); // 8s away = auto-submit
-        const cancel = () => { clearTimeout(t); document.removeEventListener("visibilitychange", cancel); };
-        document.addEventListener("visibilitychange", cancel, { once: true });
-      }
-    };
+    // Note: there is deliberately no visibilitychange-based auto-submit here
+    // anymore. It used to fire after just 8s of the tab/app being hidden —
+    // a phone call, notification, or app switch was enough to trigger it on
+    // mobile — and it flipped exam_attempts.status straight to "submitted"
+    // without ever saving the student's answers first. Once status left
+    // in_progress, RLS then blocked every subsequent answer save, so
+    // whatever the student had picked was silently lost. Closing the
+    // tab/page for real is still covered by beforeunload/pagehide above.
 
     window.addEventListener("beforeunload", onBeforeUnload);
     window.addEventListener("pagehide", onPageHide);
-    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
       window.removeEventListener("pagehide", onPageHide);
-      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [enabled, config.attemptId]);
 
