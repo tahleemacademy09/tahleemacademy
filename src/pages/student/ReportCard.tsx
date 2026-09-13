@@ -45,7 +45,7 @@ const getSubjectDisplay = (row: { course: string; title: string; title_ar: strin
 interface GradedExam {
   title: string; title_ar: string | null;
   percentage: number; passed: boolean;
-  term: string; type: string; course_title?: string;
+  term: string; session: string; type: string; course_title?: string;
 }
 
 interface SubjectRow {
@@ -220,6 +220,7 @@ const ReportCard = () => {
   const [exams, setExams]     = useState<GradedExam[]>([]);
   const [loading, setLoading] = useState(true);
   const [term, setTerm]       = useState("first");
+  const [session, setSession] = useState("");
 
   const targetId = userId || user?.id;
   const isAdminView = !!userId;
@@ -232,7 +233,7 @@ const ReportCard = () => {
           ? supabase.from("profiles").select("*").eq("user_id", targetId).maybeSingle()
           : Promise.resolve({ data: ownProfile }),
         supabase.from("exam_attempts")
-          .select("score, percentage, passed, exams(title, title_ar, type, term, subject_id, subjects(title))")
+          .select("score, percentage, passed, exams(title, title_ar, type, term, session, subject_id, subjects(title))")
           .eq("user_id", targetId).eq("status", "released")
           .order("submitted_at", { ascending: true }),
       ]);
@@ -241,17 +242,25 @@ const ReportCard = () => {
         title: a.exams?.title || "Exam", title_ar: a.exams?.title_ar,
         percentage: Number(a.percentage) || 0, passed: a.passed,
         course_title: a.exams?.subjects?.title,
-        term: a.exams?.term || "first", type: a.exams?.type || "exam",
+        term: a.exams?.term || "first", session: a.exams?.session || "",
+        type: a.exams?.type || "exam",
       }));
       setExams(rows);
       // default to the most recent term that actually has results
       const populated = TERMS.map(tm => tm.key).filter(k => rows.some((r: any) => r.term === k));
       if (populated.length) setTerm(populated[populated.length - 1]);
+      // Default to the most recent session — released exams are ordered
+      // oldest-first above, so the last distinct session to appear is the
+      // current one. Without this, a previous session's "first term"
+      // results (same term label, different academic session/year) would
+      // otherwise get mixed into the current term's report card.
+      const seenSessions = Array.from(new Set(rows.map((r: any) => r.session).filter(Boolean)));
+      if (seenSessions.length) setSession(seenSessions[seenSessions.length - 1] as string);
       setLoading(false);
     })();
   }, [targetId, isAdminView]);
 
-  const termExams = exams.filter(e => e.term === term);
+  const termExams = exams.filter(e => e.term === term && (!session || e.session === session));
   const rows       = buildSubjectRows(termExams);
   const totalObtainable = rows.length * 100;
   const totalObtained   = rows.reduce((s, r) => s + r.total, 0);
@@ -261,7 +270,8 @@ const ReportCard = () => {
   }));
   const termLabel = TERMS.find(tm => tm.key === term)!;
   const currentYear = new Date().getFullYear();
-  const populatedTerms = TERMS.filter(tm => exams.some(e => e.term === tm.key));
+  const populatedTerms = TERMS.filter(tm => exams.some(e => e.term === tm.key && (!session || e.session === session)));
+  const sessions = Array.from(new Set(exams.map(e => e.session).filter(Boolean)));
 
   // ── Print / PDF ──────────────────────────────────────────────
   // Builds one printed page's inner HTML for a given term. Used both for
@@ -270,7 +280,7 @@ const ReportCard = () => {
   // a standalone report, and `.page{page-break-after:always}` below makes
   // each one land on its own sheet when saved as PDF / printed.
   const buildTermPage = (termKey: string, stampSrc: string, logoSrc: string) => {
-    const tRows  = buildSubjectRows(exams.filter(e => e.term === termKey));
+    const tRows  = buildSubjectRows(exams.filter(e => e.term === termKey && (!session || e.session === session)));
     const tLabel = TERMS.find(tm => tm.key === termKey)!;
     const tObtained    = tRows.reduce((s, r) => s + r.total, 0);
     const tObtainable  = tRows.length * 100;
@@ -491,6 +501,24 @@ ${pagesHtml}
           )}
         </div>
       </div>
+
+      {/* Session selector — only shown when this student has released
+          results spanning more than one academic session, so an old
+          session's results don't silently blend into the current one. */}
+      {sessions.length > 1 && (
+        <div className="flex gap-2 mb-2">
+          {sessions.map(s => (
+            <button key={s} onClick={() => setSession(s)}
+              style={{
+                padding: "6px 14px", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                border: `1.5px solid ${session === s ? GOLD : "#e5e7eb"}`,
+                background: session === s ? GOLD : "#fff", color: session === s ? "#fff" : "#6b7280",
+              }}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Term selector */}
       <div className="flex gap-2 mb-4">
