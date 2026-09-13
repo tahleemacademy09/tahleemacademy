@@ -14,6 +14,7 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
 import {
@@ -145,13 +146,35 @@ const StudentOralExams = () => {
 
   useEffect(() => {
     if (!active?.exam_id) { setSession(null); return; }
-    supabase.from("oral_exam_sessions" as any).select("*").eq("exam_id", active.exam_id).maybeSingle().then(({ data }: any) => setSession(data));
+    const loadSession = () =>
+      supabase.from("oral_exam_sessions" as any).select("*").eq("exam_id", active.exam_id).maybeSingle().then(({ data }: any) => setSession(data));
+    loadSession();
     const channel = supabase.channel(`my-oral-session-${active.exam_id}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "oral_exam_sessions", filter: `exam_id=eq.${active.exam_id}` },
         (payload: any) => setSession(payload.new))
       .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    // Realtime should carry every stage advance, but it depends on the
+    // socket staying connected (and on the table being in the realtime
+    // publication at all — that's what was actually broken here). Poll as a
+    // backstop so a dropped/missed event can't leave a student stuck on a
+    // question the teacher already moved past, mirroring the same fallback
+    // already used for `mySlots`/`openSlots` above.
+    const interval = setInterval(loadSession, 5000);
+    return () => { supabase.removeChannel(channel); clearInterval(interval); };
   }, [active?.exam_id]);
+
+  // Lock out the "apply update & reload" flow (see src/lib/reloadGuard.ts)
+  // for as long as the student is actually in the live room. Without this,
+  // minimizing the tab mid-exam and coming back can trigger the pending
+  // service-worker reload the moment the page becomes visible again — which
+  // is exactly what looked like "the oral exam page refreshes when I
+  // minimize and go back". ExamTaking/EntranceExamTaking/LiveClassContext
+  // already do this; the oral exam room never did.
+  useEffect(() => {
+    if (!joinedLive) return;
+    lockReload("oral-exam");
+    return () => unlockReload("oral-exam");
+  }, [joinedLive]);
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Loader2 className="animate-spin" style={{ color: G }} /></div>;
 
