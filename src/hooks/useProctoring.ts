@@ -109,6 +109,7 @@ export const useProctoring = (
   const lookingAwayActive     = useRef(false);
   const eyesNotVisibleActive  = useRef(false);
   const cameraCoveredActive   = useRef(false);
+  const cameraCoveredStart    = useRef<number | null>(null);
   const multipleFacesActive   = useRef(false);
   // Sustained-duration tracking — "looking away" / "eyes not visible" only
   // count once they've held for 3s straight (avoids flagging a quick glance),
@@ -367,14 +368,23 @@ export const useProctoring = (
     for (let i = 0; i < data.length; i += 4) totalBrightness += (data[i] + data[i+1] + data[i+2]) / 3;
     const avgBrightness = totalBrightness / (data.length / 4);
     if (avgBrightness < 15) {
-      setState(prev => ({ ...prev, faceDetected: false }));
-      if (!cameraCoveredActive.current) {
-        cameraCoveredActive.current = true;
-        logViolation("camera_covered", 3, `Frame too dark: avg brightness ${avgBrightness.toFixed(1)}`);
+      // A single dark frame is often just a transient camera-pipeline hiccup
+      // (mobile cameras briefly drop/freeze a frame under load — not an
+      // actual covered lens), so this only logs once darkness has been
+      // sustained for 2s straight, same debounce pattern as looking_away /
+      // eyes_not_visible below. A one-off dip now just resets silently.
+      if (!cameraCoveredStart.current) cameraCoveredStart.current = Date.now();
+      if (Date.now() - cameraCoveredStart.current >= 2000) {
+        setState(prev => ({ ...prev, faceDetected: false }));
+        if (!cameraCoveredActive.current) {
+          cameraCoveredActive.current = true;
+          logViolation("camera_covered", 3, `Frame too dark for 2s+: avg brightness ${avgBrightness.toFixed(1)}`);
+        }
+        faceAbsStart.current = null;
       }
-      faceAbsStart.current = null;
       return;
     }
+    cameraCoveredStart.current = null;
     cameraCoveredActive.current = false; // recovered — next cover is a new episode
 
     // ── 2. Face detection ────────────────────────────────────────────
