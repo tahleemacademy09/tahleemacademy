@@ -197,6 +197,14 @@ const TeacherOralExams = () => {
   const [aiInput, setAiInput] = useState<Record<string, string>>({});
   const [aiCount, setAiCount] = useState<Record<string, string>>({});
   const [aiLoading, setAiLoading] = useState<Record<string, boolean>>({});
+  // Same idea as above, but for generating INTO an existing stage (e.g. one
+  // just created via "Add Stage") instead of always spinning up a new one.
+  // Keyed by stage_id.
+  const [stageAiOpen, setStageAiOpen] = useState<Record<string, boolean>>({});
+  const [stageAiMode, setStageAiMode] = useState<Record<string, "prompt" | "paste">>({});
+  const [stageAiInput, setStageAiInput] = useState<Record<string, string>>({});
+  const [stageAiCount, setStageAiCount] = useState<Record<string, string>>({});
+  const [stageAiLoading, setStageAiLoading] = useState<Record<string, boolean>>({});
 
   const createSet = async () => {
     if (!newSetTitle.trim() || !selectedExamId) return;
@@ -316,6 +324,49 @@ const TeacherOralExams = () => {
 
     toast({ title: "Questions added", description: `${stages.length} stage(s) from AI` });
     setAiInput({ ...aiInput, [setId]: "" });
+    loadExamData();
+  };
+
+  // Generate into an EXISTING stage (e.g. one added manually via "Add Stage")
+  // instead of always creating a brand new one. The oral_questions system
+  // prompt always returns exactly one stage — we just take its questions and
+  // append them to the stage the teacher already picked, ignoring the AI's
+  // own (unused) title for it.
+  const generateAIQuestionsForStage = async (setId: string, stageId: string, existingCount: number) => {
+    const mode = stageAiMode[stageId] || "prompt";
+    const input = stageAiInput[stageId]?.trim();
+    if (!input) return toast({ title: mode === "paste" ? "Paste some questions first" : "Describe what you want first", variant: "destructive" });
+
+    const count = stageAiCount[stageId]?.trim() ? Number(stageAiCount[stageId]) : undefined;
+
+    setStageAiLoading({ ...stageAiLoading, [stageId]: true });
+    const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+      body: { action: "oral_questions", prompt: input, context: { mode, count } },
+    });
+    setStageAiLoading({ ...stageAiLoading, [stageId]: false });
+
+    if (error || data?.error) return toast({ title: "AI generation failed", description: error?.message || data?.error, variant: "destructive" });
+    const questions = data?.stages?.[0]?.questions;
+    if (!Array.isArray(questions) || questions.length === 0) return toast({ title: "AI didn't return any questions — try rephrasing", variant: "destructive" });
+
+    let sortOrder = existingCount;
+    let added = 0;
+    for (const q of questions) {
+      if (!q?.question_text && !q?.question_text_ar) continue;
+      const { data: qRow, error: qErr } = await supabase.from("exam_questions").insert({
+        exam_id: selectedExamId, question_type: "essay",
+        question_text: q.question_text || "", question_text_ar: q.question_text_ar || null,
+        points: Number(q.points) || 1, sort_order: sortOrder,
+      } as any).select().single();
+      if (qErr || !qRow) continue;
+      await supabase.from("oral_question_set_items" as any).insert({ set_id: setId, question_id: qRow.id, stage_id: stageId, sort_order: sortOrder });
+      sortOrder++;
+      added++;
+    }
+
+    toast({ title: added > 0 ? `${added} question(s) added` : "Nothing was added", variant: added > 0 ? undefined : "destructive" });
+    setStageAiInput({ ...stageAiInput, [stageId]: "" });
+    setStageAiOpen({ ...stageAiOpen, [stageId]: false });
     loadExamData();
   };
 
@@ -841,6 +892,16 @@ const TeacherOralExams = () => {
                     newQ={newQ[`${set.id}::${stage.id}`]}
                     setNewQ={(v: any) => setNewQ({ ...newQ, [`${set.id}::${stage.id}`]: v })}
                     onAdd={() => addQuestion(set.id, stage.id)}
+                    aiOpen={!!stageAiOpen[stage.id]}
+                    onToggleAi={() => setStageAiOpen({ ...stageAiOpen, [stage.id]: !stageAiOpen[stage.id] })}
+                    aiMode={stageAiMode[stage.id] || "prompt"}
+                    onAiModeChange={(m: "prompt" | "paste") => setStageAiMode({ ...stageAiMode, [stage.id]: m })}
+                    aiInput={stageAiInput[stage.id] || ""}
+                    onAiInputChange={(v: string) => setStageAiInput({ ...stageAiInput, [stage.id]: v })}
+                    aiCount={stageAiCount[stage.id] || ""}
+                    onAiCountChange={(v: string) => setStageAiCount({ ...stageAiCount, [stage.id]: v })}
+                    aiLoading={!!stageAiLoading[stage.id]}
+                    onAiGenerate={() => generateAIQuestionsForStage(set.id, stage.id, (itemsByStage[stage.id] || []).length)}
                   />
                 ))}
                 {(itemsByStage["none"] || []).length > 0 && (
@@ -912,7 +973,10 @@ const StageCountdown = ({ startedAt, limitSeconds }: { startedAt: string | null 
 };
 
 // A single stage's question list + inline "add question" form (English + optional Arabic).
-const StageBlock = ({ label, labelAr, items, timeLimitSeconds, onDeleteStage, onSetTimeLimit, onDeleteItem, newQ, setNewQ, onAdd }: any) => (
+const StageBlock = ({
+  label, labelAr, items, timeLimitSeconds, onDeleteStage, onSetTimeLimit, onDeleteItem, newQ, setNewQ, onAdd,
+  aiOpen, onToggleAi, aiMode, onAiModeChange, aiInput, onAiInputChange, aiCount, onAiCountChange, aiLoading, onAiGenerate,
+}: any) => (
   <div style={{ border: "1px solid #f0f0f0", borderRadius: 10, padding: 12, marginBottom: 10, background: "#fcfcfc" }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -945,7 +1009,45 @@ const StageBlock = ({ label, labelAr, items, timeLimitSeconds, onDeleteStage, on
         <button onClick={() => onDeleteItem(it.id)} style={{ background: "none", border: "none", cursor: "pointer", flexShrink: 0 }}><Trash2 size={13} color="#dc2626" /></button>
       </div>
     ))}
-    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+
+    {onToggleAi && (
+      <div style={{ marginTop: 10 }}>
+        <button onClick={onToggleAi} style={{ display: "flex", alignItems: "center", gap: 6, background: aiOpen ? "#fff8ea" : "#f3f4f6", color: "#92702c", border: `1px solid ${aiOpen ? GOLD : "#e5e7eb"}`, borderRadius: 8, padding: "6px 10px", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>
+          <Wand2 size={12} /> {aiOpen ? "Hide AI generator" : "Generate with AI"}
+        </button>
+        {aiOpen && (
+          <div style={{ background: "#faf8f2", border: `1px solid ${GOLD}55`, borderRadius: 10, padding: 10, marginTop: 8 }}>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+              <button onClick={() => onAiModeChange("prompt")} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${aiMode === "prompt" ? GOLD : "#e5e7eb"}`, background: aiMode === "prompt" ? "#fff8ea" : "#fff", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>
+                <Wand2 size={11} /> Generate from prompt
+              </button>
+              <button onClick={() => onAiModeChange("paste")} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "6px 8px", borderRadius: 8, border: `1.5px solid ${aiMode === "paste" ? GOLD : "#e5e7eb"}`, background: aiMode === "paste" ? "#fff8ea" : "#fff", fontWeight: 700, fontSize: 11, cursor: "pointer" }}>
+                <ClipboardPaste size={11} /> Paste & reorganise
+              </button>
+            </div>
+            <textarea
+              placeholder={aiMode === "paste"
+                ? "Paste existing questions (English and/or Arabic) — AI will translate the missing language and add them to THIS stage…"
+                : `Describe what to add to "${label}" — AI will write bilingual questions and add them to THIS stage…`}
+              value={aiInput}
+              onChange={e => onAiInputChange(e.target.value)}
+              rows={3}
+              style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13, resize: "vertical", marginBottom: 8, fontFamily: "inherit" }}
+            />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input type="number" min={1} placeholder="# questions" value={aiCount} onChange={e => onAiCountChange(e.target.value)}
+                title="Leave blank to let the AI decide (it will still generate a full batch, not one at a time)"
+                style={{ width: 100, padding: "8px 10px", borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+              <button onClick={onAiGenerate} disabled={aiLoading} style={{ display: "flex", alignItems: "center", gap: 6, background: GOLD, color: "#fff", border: "none", borderRadius: 8, padding: "8px 14px", fontWeight: 700, fontSize: 12, cursor: aiLoading ? "wait" : "pointer" }}>
+                {aiLoading ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />} {aiLoading ? "Generating…" : "Generate"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
       <input placeholder="Question (English)" value={newQ?.text || ""} onChange={e => setNewQ({ text: e.target.value, text_ar: newQ?.text_ar || "", points: newQ?.points || "1" })} style={{ padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
       <div style={{ display: "flex", gap: 8 }}>
         <input dir="rtl" placeholder="السؤال (عربي) — اختياري" value={newQ?.text_ar || ""} onChange={e => setNewQ({ text: newQ?.text || "", text_ar: e.target.value, points: newQ?.points || "1" })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13, fontFamily: "'Amiri', serif" }} />
