@@ -129,6 +129,7 @@ export const useProctoring = (
   // ── Live grid publishing (LiveKit) — gated by admin presence ───────
   const lkRoomRef        = useRef<any>(null);
   const lkTrackRef       = useRef<any>(null);
+  const lkAudioTrackRef  = useRef<any>(null);
   const lkConnectingRef  = useRef(false);
   const presenceChanRef  = useRef<any>(null);
   const adminWatchingRef = useRef(false);
@@ -812,9 +813,11 @@ export const useProctoring = (
     const teardownLive = () => {
       if (retryTimer) clearTimeout(retryTimer);
       try { lkTrackRef.current?.stop(); } catch (_) {}
+      try { lkAudioTrackRef.current?.stop(); } catch (_) {}
       try { lkRoomRef.current?.disconnect(); } catch (_) {}
       lkRoomRef.current = null;
       lkTrackRef.current = null;
+      lkAudioTrackRef.current = null;
       lkConnectingRef.current = false;
     };
 
@@ -831,7 +834,7 @@ export const useProctoring = (
           import("livekit-client"),
         ]);
         if (cancelled || !adminWatchingRef.current || !data?.token || !data?.url) { lkConnectingRef.current = false; return; }
-        const { Room, LocalVideoTrack, Track, RoomEvent } = lk;
+        const { Room, LocalVideoTrack, LocalAudioTrack, Track, RoomEvent } = lk;
         const room = new Room({ adaptiveStream: false, dynacast: false });
         // A refreshed admin page (or any server-side kick/network blip) fires
         // this even after a previously-successful publish. Previously nothing
@@ -840,6 +843,7 @@ export const useProctoring = (
         room.on(RoomEvent.Disconnected, () => {
           lkRoomRef.current = null;
           lkTrackRef.current = null;
+          lkAudioTrackRef.current = null;
           lkConnectingRef.current = false;
           if (!cancelled && adminWatchingRef.current) retryTimer = setTimeout(publishLive, 2000);
         });
@@ -856,6 +860,35 @@ export const useProctoring = (
         });
         lkRoomRef.current = room;
         lkTrackRef.current = localTrack;
+
+        // Mic audio — only when the exam has audio monitoring turned on
+        // (config.record_audio) and only while an admin is actually watching,
+        // same consent-gated pattern as the video track above. Reuses the
+        // MediaStream already captured for local noise-level analysis if
+        // present; otherwise requests one fresh so admins can still listen
+        // even if that analysis loop wasn't running for some reason.
+        if (config.record_audio) {
+          try {
+            let audioStream = audioStreamRef.current;
+            if (!audioStream || audioStream.getAudioTracks().every(t => t.readyState === "ended")) {
+              audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              audioStreamRef.current = audioStream;
+            }
+            const audioTrack = audioStream.getAudioTracks()[0];
+            if (audioTrack && !cancelled && adminWatchingRef.current) {
+              const localAudioTrack = new LocalAudioTrack(audioTrack);
+              await room.localParticipant.publishTrack(localAudioTrack, {
+                name: "proctor-mic",
+                source: Track.Source.Microphone,
+              });
+              lkAudioTrackRef.current = localAudioTrack;
+            }
+          } catch (audioErr) {
+            // Mic permission denied or unavailable — video-only monitoring
+            // still works fine, so don't tear down the connection for this.
+            logger.warn("[proctor] mic publish failed", audioErr);
+          }
+        }
       } catch (err) {
         // Used to be a silent no-op — any transient failure (token race,
         // room not fully torn down yet, brief network hiccup) meant the
