@@ -11,6 +11,7 @@ import {
   Clock, CheckCircle, XCircle, PlayCircle,
   BookOpen, History, Star,
   Shield, Zap, Trophy, RotateCcw, Eye, ChevronRight, ClipboardList,
+  Mic, Hourglass, CalendarClock, Users,
 } from "lucide-react";
 
 /* ── Brand tokens ────────────────────────────────────── */
@@ -60,18 +61,24 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
     const done    = attemptCounts[exam.id] || 0;
     const max     = exam.max_attempts || 1;
     const isTest  = (exam.type || "exam") === "test";
+    const isOral  = exam.exam_mode === "oral";
+    const oralSlot  = exam._oralSlot || null;
+    const oralPhase = oralSlot?.status || "bookable"; // bookable | booked | waiting | admitted | in_progress | completed
     const latest  = pastAttempts.find(a => a.exam_id === exam.id && a.status !== "in_progress");
     const title   = language === "ar" ? exam.title_ar || exam.title : exam.title;
 
-    /* Live countdown for locked/upcoming exams — ticks every second while
-       the card is on screen so "Opens in..." counts down in real time
-       instead of showing a static date. */
+    /* Live countdown for locked/upcoming exams, and for a booked oral slot —
+       ticks every second while the card is on screen so "Opens in..." /
+       "Starts in..." counts down in real time instead of a static date. */
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => {
-      if (status !== "not_started" || !exam.start_date) return;
+      const wantsTicking =
+        (status === "not_started" && !!exam.start_date) ||
+        (status === "oral_pending" && oralPhase === "booked" && !!oralSlot?.start_at);
+      if (!wantsTicking) return;
       const iv = setInterval(() => setNow(Date.now()), 1000);
       return () => clearInterval(iv);
-    }, [status, exam.start_date]);
+    }, [status, exam.start_date, oralPhase, oralSlot?.start_at]);
 
     const formatCountdown = (ms: number): string => {
       if (ms <= 0) return t("Starting…","يبدأ الآن…");
@@ -84,7 +91,9 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
       if (days > 0) return `${days}${t("d","ي")} ${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
       return `${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
     };
-    const msUntilStart = exam.start_date ? new Date(exam.start_date).getTime() - now : 0;
+    const msUntilStart     = exam.start_date ? new Date(exam.start_date).getTime() - now : 0;
+    const msUntilOralStart = oralSlot?.start_at ? new Date(oralSlot.start_at).getTime() - now : 0;
+    const canJoinOralWaitingRoom = oralSlot?.start_at ? msUntilOralStart <= 15 * 60 * 1000 : false;
 
     const SM: Record<string,{icon:string;color:string;bg:string;label:string}> = {
       available:   { icon:"▶",  color:"#22c55e", bg:"#f0fff4", label:t("Available","متاح") },
@@ -93,7 +102,17 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
       not_started: { icon:"🔒", color:"#9ca3af", bg:"#f9fafb", label:t("Upcoming","قادم") },
       expired:     { icon:"✗",  color:"#ef4444", bg:"#fff5f5", label:t("Expired","منتهي") },
     };
-    const sm = SM[status] || SM.available;
+    // Oral exams don't have a written open/close window before completion —
+    // their pre-completion state comes from the student's oral_exam_slots
+    // row instead (booking → scheduled → waiting/admitted → live).
+    const ORAL_SM: Record<string,{icon:string;color:string;bg:string;label:string}> = {
+      bookable:    { icon:"🎙", color:"#c9a84c", bg:"#fffbea", label:t("Book a Session","احجز موعدًا") },
+      booked:      { icon:"📅", color:"#3b82f6", bg:"#eff6ff", label:t("Scheduled","مجدول") },
+      waiting:     { icon:"⏳", color:"#f59e0b", bg:"#fffbeb", label:t("Waiting","بالانتظار") },
+      admitted:    { icon:"👤", color:"#8b5cf6", bg:"#f5f3ff", label:t("Admitted","تم القبول") },
+      in_progress: { icon:"🔴", color:"#dc2626", bg:"#fef2f2", label:t("Live Now","مباشر الآن") },
+    };
+    const sm = (isOral && status === "oral_pending") ? (ORAL_SM[oralPhase] || ORAL_SM.bookable) : (SM[status] || SM.available);
 
     return (
       <div style={{
@@ -116,6 +135,15 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
                 }}>
                   {isTest ? t("TEST","تمرين") : t("EXAM","امتحان")}
                 </span>
+                {isOral && (
+                  <span style={{
+                    fontSize:10, fontWeight:800, letterSpacing:.8, padding:"3px 9px", borderRadius:10,
+                    background:"#fdf6e3", color:"#92400e", border:"1px solid #f5d78e",
+                    display:"flex", alignItems:"center", gap:3,
+                  }}>
+                    <Mic style={{width:9,height:9}}/> {t("ORAL","شفوي")}
+                  </span>
+                )}
                 {exam.term && (
                   <span style={{ fontSize:10, color:TL, fontWeight:600 }}>
                     {exam.term === "first" ? t("Term 1","ف١") : exam.term === "second" ? t("Term 2","ف٢") : t("Term 3","ف٣")}
@@ -133,14 +161,19 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
             </div>
           </div>
 
-          {/* Meta */}
+          {/* Meta — oral exams are scored live per session rather than by a
+              fixed time limit / attempt count, so their meta row only shows
+              what's actually meaningful (pass mark, plus the live format). */}
           <div style={{ display:"flex", gap:14, flexWrap:"wrap" as const, marginBottom:12 }}>
-            {[
+            {(isOral ? [
+              [<Shield style={{width:11,height:11}}/>, `${t("Pass","نجاح")} ${exam.passing_score}%`],
+              [<Users style={{width:11,height:11}}/>, t("Live viva session","جلسة شفوية مباشرة")],
+            ] : [
               [<Clock style={{width:11,height:11}}/>,  `${exam.time_limit_minutes} ${t("min","دق")}`],
               [<Shield style={{width:11,height:11}}/>, `${t("Pass","نجاح")} ${exam.passing_score}%`],
               [<RotateCcw style={{width:11,height:11}}/>, `${done}/${max} ${t("attempts","محاولات")}`],
               ...(exam.question_count ? [[<BookOpen style={{width:11,height:11}}/>, `${exam.question_count} ${t("Qs","سؤال")}`]] : []),
-            ].map(([icon, text], i) => (
+            ]).map(([icon, text], i) => (
               <div key={i} style={{ display:"flex", alignItems:"center", gap:4, fontSize:12, color:TL }}>
                 {icon as React.ReactNode}<span>{text as string}</span>
               </div>
@@ -195,6 +228,60 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
           )}
 
           {/* CTA */}
+          {status === "oral_pending" && oralPhase === "bookable" && (
+            <button onClick={() => navigate("/student/oral-exams")} style={{
+              width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+              cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+              background:`linear-gradient(135deg,${GOLD}, #b8923f)`, boxShadow:"0 4px 14px rgba(201,168,76,.35)",
+            }}>
+              <Mic style={{width:16,height:16}}/> {t("Book a Session","احجز موعدًا")}
+            </button>
+          )}
+          {status === "oral_pending" && oralPhase === "booked" && (
+            canJoinOralWaitingRoom ? (
+              <button onClick={() => navigate("/student/oral-exams")} style={{
+                width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+                cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+                background:"linear-gradient(135deg,#f59e0b,#d97706)",
+              }}>
+                <Hourglass style={{width:16,height:16}}/> {t("Join Waiting Room","انضم لغرفة الانتظار")}
+              </button>
+            ) : (
+              <div style={{ padding:"11px 14px", borderRadius:12, background:"#eff6ff", border:"1px solid #bfdbfe", textAlign:"center" }}>
+                <div style={{ fontSize:12, color:"#3b82f6", fontWeight:700, marginBottom: oralSlot?.start_at ? 4 : 0 }}>
+                  <CalendarClock style={{width:12,height:12,verticalAlign:-2,marginRight:4}}/>{t("Scheduled — starts in","مجدول — يبدأ خلال")}
+                </div>
+                {oralSlot?.start_at && (
+                  <>
+                    <div style={{ fontSize:18, fontWeight:900, color:G, fontVariantNumeric:"tabular-nums", letterSpacing:.5 }}>
+                      {formatCountdown(msUntilOralStart)}
+                    </div>
+                    <div style={{ fontSize:10, color:TL, marginTop:2 }}>
+                      {new Date(oralSlot.start_at).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{weekday:"short",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
+                    </div>
+                  </>
+                )}
+              </div>
+            )
+          )}
+          {status === "oral_pending" && (oralPhase === "waiting" || oralPhase === "admitted") && (
+            <button onClick={() => navigate("/student/oral-exams")} style={{
+              width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+              cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+              background:"linear-gradient(135deg,#f59e0b,#d97706)",
+            }}>
+              <Hourglass style={{width:16,height:16}}/> {oralPhase === "admitted" ? t(`You're #${oralSlot?.queue_number ?? "—"} — waiting to be called`,"بانتظار دورك") : t("Join Waiting Room","انضم لغرفة الانتظار")}
+            </button>
+          )}
+          {status === "oral_pending" && oralPhase === "in_progress" && (
+            <button onClick={() => navigate("/student/oral-exams")} style={{
+              width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
+              cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:8,
+              background:"linear-gradient(135deg,#dc2626,#b91c1c)",
+            }}>
+              <Mic style={{width:16,height:16}}/> {t("It's your turn — Join Live Room","حان دورك — انضم الآن")}
+            </button>
+          )}
           {status === "available" && (
             <button onClick={() => handleStart(exam)} style={{
               width:"100%", padding:"13px", borderRadius:13, border:"none", color:"#fff", fontSize:14, fontWeight:800,
@@ -399,7 +486,47 @@ const StudentExams = () => {
         })
       );
       const countMap = Object.fromEntries(countEntries);
-      setAssignedExams(list.map((e: any) => ({ ...e, question_count: countMap[e.id] ?? 0 })));
+
+      // Oral exams are a separate assignment path from exam_assignments —
+      // they live in their own table with their own audience rule
+      // (oral_assignment_mode): "individual" only ever shows once a slot is
+      // actually allocated to this student, "level" matches the student's
+      // level, "all" is open to everyone. Once an exam clears that check it
+      // shows up right alongside written exams/tests, carrying whichever of
+      // the student's own oral_exam_slots rows is most relevant (in
+      // progress/waiting/admitted first, then a scheduled booking, then a
+      // completed one) so the card can render its live booking/countdown/
+      // join state.
+      const { data: oralExamRows } = await supabase
+        .from("exams").select("*")
+        .eq("exam_mode" as any, "oral").eq("is_published", true);
+      const { data: myOralSlots } = await supabase
+        .from("oral_exam_slots" as any).select("*")
+        .eq("student_id", user!.id).neq("status", "cancelled");
+
+      const slotsByExam: Record<string, any[]> = {};
+      (myOralSlots || []).forEach((s: any) => { (slotsByExam[s.exam_id] ||= []).push(s); });
+      const oralSlotPriority: Record<string, number> = { in_progress: 0, waiting: 1, admitted: 2, booked: 3, completed: 4 };
+
+      const oralList = (oralExamRows || [])
+        .filter((e: any) => {
+          const mySlots = slotsByExam[e.id] || [];
+          if (mySlots.length > 0) return true; // a slot already exists for me — always show, regardless of mode
+          if (e.oral_assignment_mode === "individual") return false; // no slot has been allocated to me
+          if (e.oral_assignment_mode === "level") return !e.level || !myLevel || e.level === myLevel;
+          return true; // "all" — open to every student to pick an open slot
+        })
+        .map((e: any) => {
+          const mySlots = [...(slotsByExam[e.id] || [])].sort(
+            (a, b) => (oralSlotPriority[a.status] ?? 9) - (oralSlotPriority[b.status] ?? 9)
+          );
+          return { ...e, exam_mode: "oral", _oralSlot: mySlots[0] || null };
+        });
+
+      setAssignedExams([
+        ...list.map((e: any) => ({ ...e, question_count: countMap[e.id] ?? 0 })),
+        ...oralList,
+      ]);
 
       const { data: att } = await supabase
         .from("exam_attempts").select("*, exams(title,title_ar,max_attempts,type)")
@@ -419,6 +546,12 @@ const StudentExams = () => {
     const done = attemptCounts[exam.id] || 0;
     if (pastAttempts.some(a => a.exam_id === exam.id && a.status === "in_progress")) return "in_progress";
     if (done >= max) return "exhausted";
+    // Oral exams are scored via submit_oral_score() straight into
+    // exam_attempts once the session is graded — so until that attempt row
+    // shows up above, an oral exam's pre-completion state (booking →
+    // scheduled → waiting/admitted → live) is driven entirely by the
+    // student's oral_exam_slots row, not by a written open/close window.
+    if (exam.exam_mode === "oral") return "oral_pending";
     const now = Date.now();
     if (exam.start_date && new Date(exam.start_date).getTime() > now) return "not_started";
     if (exam.end_date   && new Date(exam.end_date).getTime()   < now) return "expired";
@@ -520,12 +653,17 @@ const StudentExams = () => {
             <h1 style={{ fontFamily:"'Playfair Display',serif",fontSize:26,fontWeight:700,color:"#fff",margin:"0 0 10px",lineHeight:1.3 }}>
               {t("Exams & Tests","الامتحانات والتمرينات")}
             </h1>
-            <button onClick={() => navigate("/student/oral-exams")} style={{
-              background:"rgba(255,255,255,.12)", border:"1px solid rgba(255,255,255,.3)", color:"#fff",
-              borderRadius:20, padding:"6px 14px", fontSize:12, fontWeight:700, cursor:"pointer", marginBottom:14,
-            }}>
-              {t("Live Oral Exams →","الامتحانات الشفوية المباشرة ←")}
-            </button>
+            {/* Only shown once the student actually has an oral exam assigned/
+                available to them below — no point linking to an empty oral
+                exams page. */}
+            {assignedExams.some(e => e.exam_mode === "oral") && (
+              <button onClick={() => navigate("/student/oral-exams")} style={{
+                background:"rgba(255,255,255,.12)", border:"1px solid rgba(255,255,255,.3)", color:"#fff",
+                borderRadius:20, padding:"6px 14px", fontSize:12, fontWeight:700, cursor:"pointer", marginBottom:14,
+              }}>
+                {t("Live Oral Exams →","الامتحانات الشفوية المباشرة ←")}
+              </button>
+            )}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8 }}>
               {[
                 [<BookOpen style={{width:13,height:13}}/>, String(assignedExams.length), t("Total","إجمالي")],
