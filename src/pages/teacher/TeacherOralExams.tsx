@@ -102,7 +102,7 @@ const TeacherOralExams = () => {
     const [{ data: slotsData }, { data: setsData }, { data: sessionData }] = await Promise.all([
       supabase.from("oral_exam_slots" as any).select("*").eq("exam_id", selectedExamId).order("start_at"),
       supabase.from("oral_question_sets" as any)
-        .select("*, oral_question_set_stages(id, title, title_ar, sort_order), oral_question_set_items(id, question_id, stage_id, sort_order, exam_questions(id, question_text, question_text_ar, points))")
+        .select("*, oral_question_set_stages(id, title, title_ar, sort_order, time_limit_seconds), oral_question_set_items(id, question_id, stage_id, sort_order, exam_questions(id, question_text, question_text_ar, points))")
         .eq("exam_id", selectedExamId).order("created_at"),
       supabase.from("oral_exam_sessions" as any).select("*").eq("exam_id", selectedExamId).maybeSingle(),
     ]);
@@ -222,6 +222,15 @@ const TeacherOralExams = () => {
 
   const deleteStage = async (stageId: string) => {
     await supabase.from("oral_question_set_stages" as any).delete().eq("id", stageId);
+    loadExamData();
+  };
+
+  // Debounced-by-blur update of a stage's per-student time limit. Empty/0 clears it (no timer).
+  const setStageTimeLimit = async (stageId: string, minutes: string) => {
+    const mins = parseFloat(minutes);
+    const seconds = !minutes || isNaN(mins) || mins <= 0 ? null : Math.round(mins * 60);
+    const { error } = await supabase.from("oral_question_set_stages" as any).update({ time_limit_seconds: seconds }).eq("id", stageId);
+    if (error) toast({ title: "Could not set time limit", description: error.message, variant: "destructive" });
     loadExamData();
   };
 
@@ -540,8 +549,11 @@ const TeacherOralExams = () => {
                       const roundIdx = currentSetStages.findIndex((st: any) => st.id === activeStage?.stage_id);
                       return (
                         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                          {currentSetStages.length > 0 && (
-                            <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af" }}>Round {roundIdx >= 0 ? roundIdx + 1 : 1} of {currentSetStages.length}</p>
+                          {(currentSetStages.length > 0 || activeStage?.time_limit_seconds) && (
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              {currentSetStages.length > 0 && <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af" }}>Round {roundIdx >= 0 ? roundIdx + 1 : 1} of {currentSetStages.length}</p>}
+                              <StageCountdown startedAt={session?.current_stage_started_at} limitSeconds={activeStage?.time_limit_seconds} />
+                            </div>
                           )}
                           {activeStage?.stage_title && <p style={{ fontSize: 11, fontWeight: 800, color: "#dc2626", marginBottom: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>{activeStage.stage_title}{activeStage.stage_title_ar ? ` · ${activeStage.stage_title_ar}` : ""}</p>}
                           {(activeStage?.questions || []).map((q: any) => (
@@ -767,7 +779,9 @@ const TeacherOralExams = () => {
                     label={stage.title}
                     labelAr={stage.title_ar}
                     items={itemsByStage[stage.id] || []}
+                    timeLimitSeconds={stage.time_limit_seconds}
                     onDeleteStage={() => deleteStage(stage.id)}
+                    onSetTimeLimit={(minutes: string) => setStageTimeLimit(stage.id, minutes)}
                     onDeleteItem={deleteItem}
                     newQ={newQ[`${set.id}::${stage.id}`]}
                     setNewQ={(v: any) => setNewQ({ ...newQ, [`${set.id}::${stage.id}`]: v })}
@@ -812,8 +826,38 @@ const TeacherOralExams = () => {
   );
 };
 
+// Ticking countdown, shared by the teacher's Control Room and the student's
+// live view. Computed from a shared start timestamp + a per-stage limit so
+// both sides always agree on the remaining time without any extra syncing.
+// Per the product decision: it never auto-advances — just flashes red at 0
+// and leaves the teacher to hit Next when ready.
+const StageCountdown = ({ startedAt, limitSeconds }: { startedAt: string | null | undefined; limitSeconds: number | null | undefined }) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!startedAt || !limitSeconds) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [startedAt, limitSeconds]);
+  if (!startedAt || !limitSeconds) return null;
+  const elapsed = Math.floor((now - new Date(startedAt).getTime()) / 1000);
+  const remaining = Math.max(0, limitSeconds - elapsed);
+  const m = Math.floor(remaining / 60), s = remaining % 60;
+  const expired = remaining === 0;
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 900, fontSize: 13,
+      color: expired ? "#fff" : remaining <= 10 ? "#dc2626" : "#374151",
+      background: expired ? "#dc2626" : "transparent",
+      padding: expired ? "3px 10px" : 0, borderRadius: 20,
+      animation: expired ? "pulse 1s infinite" : undefined,
+    }}>
+      <Clock size={13} /> {m}:{String(s).padStart(2, "0")}
+    </span>
+  );
+};
+
 // A single stage's question list + inline "add question" form (English + optional Arabic).
-const StageBlock = ({ label, labelAr, items, onDeleteStage, onDeleteItem, newQ, setNewQ, onAdd }: any) => (
+const StageBlock = ({ label, labelAr, items, timeLimitSeconds, onDeleteStage, onSetTimeLimit, onDeleteItem, newQ, setNewQ, onAdd }: any) => (
   <div style={{ border: "1px solid #f0f0f0", borderRadius: 10, padding: 12, marginBottom: 10, background: "#fcfcfc" }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -821,7 +865,21 @@ const StageBlock = ({ label, labelAr, items, onDeleteStage, onDeleteItem, newQ, 
         <span style={{ fontWeight: 700, fontSize: 13 }}>{label}</span>
         {labelAr && <span dir="rtl" style={{ fontSize: 13, color: "#9ca3af", fontFamily: "'Amiri', serif" }}>· {labelAr}</span>}
       </div>
-      {onDeleteStage && <button onClick={onDeleteStage} style={{ background: "none", border: "none", cursor: "pointer" }}><Trash2 size={13} color="#dc2626" /></button>}
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {onSetTimeLimit && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }} title="Time limit for this stage, per student">
+            <Clock size={12} color="#9ca3af" />
+            <input
+              type="number" min={0} step={0.5} placeholder="off"
+              defaultValue={timeLimitSeconds ? timeLimitSeconds / 60 : ""}
+              onBlur={e => onSetTimeLimit(e.target.value)}
+              style={{ width: 44, padding: "3px 4px", borderRadius: 6, border: "1px solid #e5e7eb", fontSize: 11, textAlign: "center" }}
+            />
+            <span style={{ fontSize: 10, color: "#9ca3af" }}>min</span>
+          </div>
+        )}
+        {onDeleteStage && <button onClick={onDeleteStage} style={{ background: "none", border: "none", cursor: "pointer" }}><Trash2 size={13} color="#dc2626" /></button>}
+      </div>
     </div>
     {items.map((it: any) => (
       <div key={it.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", fontSize: 13, padding: "6px 0", borderBottom: "1px solid #f3f4f6" }}>
