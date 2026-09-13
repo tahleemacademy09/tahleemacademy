@@ -159,11 +159,17 @@ const GradingPage = () => {
         const ans = answers.find((a: any) => a.question_id === q.id);
         const pts = scores[i] ?? ans?.points_awarded ?? 0;
         earned += Number(pts);
-        if (ans?.id) {
-          await supabase.from("exam_answers")
-            .update({ points_awarded: pts, is_correct: pts > 0 })
-            .eq("id", ans.id);
-        }
+        // Upsert via RPC — a plain client-side insert/update is blocked by
+        // RLS here: exam_answers only allows admins/teachers to UPDATE an
+        // existing row, not INSERT one. Imported attempts (whose original
+        // selections weren't migrated) have no row at all for most
+        // questions, so a direct insert() would silently fail RLS and the
+        // override would be lost the moment you moved to the next question.
+        const { error: upsertErr } = await supabase.rpc("admin_upsert_exam_answer" as any, {
+          _attempt_id: selectedAttempt.id, _question_id: q.id,
+          _points: pts, _is_correct: pts > 0,
+        });
+        if (upsertErr) throw new Error(`Failed to save grade for question ${i + 1}: ${upsertErr.message}`);
       }
 
       const pct     = totalPoints > 0 ? Math.round((earned / totalPoints) * 100) : 0;
