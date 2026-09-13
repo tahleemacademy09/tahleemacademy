@@ -665,6 +665,19 @@ const ExamTaking = () => {
     const { data: gr, error: ge } = await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
     if (ge || !gr) {
       console.error("grade_exam_attempt failed:", ge);
+      // The RPC only succeeds while status is still 'in_progress'. If it's
+      // already submitted/graded — e.g. a prior call actually succeeded
+      // server-side but the response never made it back over a flaky
+      // connection, or an auto-submit fired in the background — retrying
+      // hits this same guard forever with no way out for the student.
+      // Check the attempt's real status before treating this as a failure.
+      const { data: recheck } = await supabase.from("exam_attempts")
+        .select("status,score,total_points,percentage,passed").eq("id", attemptId!).single();
+      if (recheck && recheck.status !== "in_progress") {
+        setSR({ status: recheck.status, score: recheck.score, totalPoints: recheck.total_points, percentage: recheck.percentage, passed: recheck.passed });
+        setSubmitted(true); setSubmitting(false); toast({ title: "✅ " + t("Exam Submitted!", "تم تقديم الامتحان!") });
+        return;
+      }
       toast({ title: t("Submission failed", "فشل التقديم"), description: ge?.message || t("Please try again.", "يرجى المحاولة مرة أخرى."), variant: "destructive" });
       submittedRef.current = false; setSubmitting(false); return;
     }
