@@ -191,6 +191,8 @@ const TeacherOralExams = () => {
   const [newSetTitle, setNewSetTitle] = useState("");
   const [newQ, setNewQ] = useState<Record<string, { text: string; text_ar: string; points: string }>>({});
   const [newStageTitle, setNewStageTitle] = useState<Record<string, string>>({});
+  const [topStageSetId, setTopStageSetId] = useState<string | null>(null);
+  const [showSeparateSet, setShowSeparateSet] = useState(false);
   const [aiMode, setAiMode] = useState<Record<string, "prompt" | "paste">>({});
   const [aiInput, setAiInput] = useState<Record<string, string>>({});
   const [aiCount, setAiCount] = useState<Record<string, string>>({});
@@ -198,6 +200,20 @@ const TeacherOralExams = () => {
 
   const createSet = async () => {
     if (!newSetTitle.trim() || !selectedExamId) return;
+    // A "Set" is a full alternate version of the whole exam — every student
+    // draws exactly ONE set at random, never more than one. Adding a new
+    // topic/round to the SAME exam almost always means "Add Stage" inside
+    // the existing set instead. This has bitten this exact workflow twice,
+    // so confirm loudly before letting a second set slip in by accident.
+    if (sets.length > 0) {
+      const ok = window.confirm(
+        `You already have ${sets.length} question set${sets.length > 1 ? "s" : ""} for this exam.\n\n` +
+        `A SET is a full alternate version of the whole exam — each student only ever gets ONE set, picked at random. ` +
+        `If you're adding a new topic or round (e.g. "Recitation" after "Memorization") to the SAME exam, use "Add Stage" inside the existing set instead — otherwise students will only ever see one or the other, never both.\n\n` +
+        `Continue creating a separate set "${newSetTitle.trim()}" anyway?`
+      );
+      if (!ok) return;
+    }
     const { error } = await supabase.from("oral_question_sets" as any).insert({ exam_id: selectedExamId, title: newSetTitle.trim(), created_by: user!.id });
     if (error) return toast({ title: "Could not create set", description: error.message, variant: "destructive" });
     setNewSetTitle("");
@@ -719,12 +735,51 @@ const TeacherOralExams = () => {
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <h3 style={{ fontSize: 13, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, margin: 0 }}>Question Sets</h3>
           <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>New question set</h3>
-            <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>Each student blindly draws ONE set at random when it's their turn — make several so it's a genuine draw.</p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input placeholder="Set title (e.g. Set A)" value={newSetTitle} onChange={e => setNewSetTitle(e.target.value)} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }} />
-              <button onClick={createSet} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "0 16px", fontWeight: 700, cursor: "pointer" }}>Add</button>
-            </div>
+            {sets.length === 0 ? (
+              <>
+                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>New question set</h3>
+                <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>This becomes the exam's question bank. Add stages/rounds inside it (e.g. Memorization, then Recitation) — every student walks through all of them in order, scored together.</p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input placeholder="Set title (e.g. Tajweed Oral Exam)" value={newSetTitle} onChange={e => setNewSetTitle(e.target.value)} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }} />
+                  <button onClick={createSet} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "0 16px", fontWeight: 700, cursor: "pointer" }}>Create</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 4 }}>Add a stage / round</h3>
+                <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
+                  A new topic (e.g. Recitation after Memorization) belongs here, as a stage — it's linked to the set automatically, nothing to fix afterwards.
+                </p>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {sets.length > 1 && (
+                    <select value={topStageSetId || sets[0].id} onChange={e => setTopStageSetId(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }}>
+                      {sets.map((s: any) => <option key={s.id} value={s.id}>{s.title}</option>)}
+                    </select>
+                  )}
+                  <input
+                    placeholder="Stage name (e.g. Recitation)"
+                    value={newStageTitle[topStageSetId || sets[0].id] || ""}
+                    onChange={e => setNewStageTitle({ ...newStageTitle, [topStageSetId || sets[0].id]: e.target.value })}
+                    style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }}
+                  />
+                  <button onClick={() => addStage(topStageSetId || sets[0].id)} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "0 16px", fontWeight: 700, cursor: "pointer" }}>
+                    <Layers size={14} style={{ verticalAlign: -2 }} /> Add Stage
+                  </button>
+                </div>
+                <button onClick={() => setShowSeparateSet(v => !v)} style={{ background: "none", border: "none", color: "#9ca3af", fontSize: 11, marginTop: 10, cursor: "pointer", textDecoration: "underline", padding: 0 }}>
+                  {showSeparateSet ? "Cancel" : "Advanced: create a separate randomized set instead"}
+                </button>
+                {showSeparateSet && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #e5e7eb" }}>
+                    <p style={{ fontSize: 11, color: "#9ca3af", marginBottom: 6 }}>Only for a genuine alternate version of the WHOLE exam — students get one set or the other, at random, never both.</p>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input placeholder="Set title (e.g. Set B)" value={newSetTitle} onChange={e => setNewSetTitle(e.target.value)} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }} />
+                      <button onClick={createSet} style={{ background: "#f3f4f6", color: "#374151", border: "1px solid #e5e7eb", borderRadius: 10, padding: "0 16px", fontWeight: 700, cursor: "pointer" }}>Create separate set</button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {sets.map((set: any) => {
