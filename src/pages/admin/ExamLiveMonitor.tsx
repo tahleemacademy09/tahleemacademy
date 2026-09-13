@@ -1016,7 +1016,7 @@ export default function ExamLiveMonitor() {
                           <div style={{ fontSize: 11, fontWeight: 800, color: TL, marginBottom: 6 }}>
                             {t("Snapshots", "لقطات")} ({detailMedia.length})
                           </div>
-                          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                             {detailMedia.map((m: any) => <Thumb key={m.id} media={m} onClick={() => setPreview(m)} />)}
                           </div>
                         </div>
