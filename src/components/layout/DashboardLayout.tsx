@@ -378,30 +378,34 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     setUnreadNotifs(0);
   };
 
-  // ── Unread-per-route helper (asterisk badges) ─────────────────
-  // Returns true if any unread notification's `link` starts with the given route
-  // (or matches any of the extra keywords in its type/link — used for cross-cutting
-  // categories like "new-registration" that live at /admin/students).
-  const hasUnreadFor = (route: string, extraTypes: string[] = []): boolean => {
-    if (!notifList?.length) return false;
-    return notifList.some((n: any) => {
-      if (n.is_read) return false;
+  // ── Unread-per-route helper (numbered badges) ─────────────────
+  // Returns how many unread notifications have a `link` starting with the
+  // given route (or match any of the extra keywords in its type — used for
+  // cross-cutting categories like "new-registration" that live at
+  // /admin/students).
+  const unreadCountFor = (route: string, extraTypes: string[] = []): number => {
+    if (!notifList?.length) return 0;
+    return notifList.reduce((count: number, n: any) => {
+      if (n.is_read) return count;
       const link = String(n.link || "");
-      if (link.startsWith(route)) return true;
-      if (extraTypes.length && extraTypes.includes(n.type)) return true;
-      return false;
-    });
+      if (link.startsWith(route)) return count + 1;
+      if (extraTypes.length && extraTypes.includes(n.type)) return count + 1;
+      return count;
+    }, 0);
   };
 
-  // Gold asterisk rendered inside nav items with unseen items — matches
-  // the "*" unread marker used on the Support Tickets inbox list.
-  const UnreadDot = () => (
+  // Gold numbered pill rendered inside nav items with unseen items — shows
+  // exactly how many things are waiting rather than just a generic marker.
+  const UnreadBadge = ({ count }: { count: number }) => (
     <span
-      aria-label="unread"
-      className="ms-auto inline-flex shrink-0 leading-none"
-      style={{ color: "#c9a84c", fontWeight: 900, fontSize: 16, lineHeight: 1 }}
+      aria-label={`${count} unread`}
+      className="ms-auto inline-flex shrink-0 items-center justify-center rounded-full"
+      style={{
+        background: "#c9a84c", color: "#14251b", fontWeight: 800,
+        fontSize: 10, lineHeight: 1, minWidth: 16, height: 16, padding: "0 4px",
+      }}
     >
-      *
+      {count > 99 ? "99+" : count}
     </span>
   );
 
@@ -483,13 +487,14 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="truncate">{item.label}</span>
-                  {hasUnreadFor(item.to) && <UnreadDot />}
+                  {unreadCountFor(item.to) > 0 && <UnreadBadge count={unreadCountFor(item.to)} />}
                 </Link>
               );
             }
             const isActive = groupActive(item.children.map((c: any) => c.to));
             const isOpen   = expanded[item.key] ?? isActive; // auto-expand if a child is active
             const groupLocked = levelPending && item.children.every((c: any) => LOCKED_ROUTES.has(c.to));
+            const groupUnreadCount = item.children.reduce((sum: number, c: any) => sum + unreadCountFor(c.to), 0);
             return (
               <div key={item.key}>
                 <button onClick={() => !groupLocked && toggle(item.key)}
@@ -503,7 +508,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="flex-1 text-left truncate">{item.label}</span>
-                  {item.children.some((c: any) => hasUnreadFor(c.to)) && <UnreadDot />}
+                  {groupUnreadCount > 0 && <UnreadBadge count={groupUnreadCount} />}
                   {isOpen
                     ? <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0"/>
                     : <ChevronRight className="h-3.5 w-3.5 opacity-50 shrink-0"/>}
@@ -521,7 +526,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                           )}>
                           <child.icon className="h-3.5 w-3.5 shrink-0"/>
                           <span className="truncate">{child.label}</span>
-                          {hasUnreadFor(child.to) && <UnreadDot />}
+                          {unreadCountFor(child.to) > 0 && <UnreadBadge count={unreadCountFor(child.to)} />}
                         </Link>
                       );
                     })}
