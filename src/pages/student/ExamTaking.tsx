@@ -961,7 +961,7 @@ const ExamTaking = () => {
         <div ref={qScrollRef} style={{ flex: 1, overflow: "auto", padding: "10px 6px", display: "flex", flexDirection: "column", position: "relative" }}>
           {q && (
             <div style={{ width: "100%" }}>
-              <div ref={qCardRef} key={currentIdx} style={{ animation: "slideIn .2s ease", zoom: 0.8 } as React.CSSProperties}>
+              <div ref={qCardRef} key={currentIdx} style={{ animation: "slideIn .2s ease", transform: "scale(0.8)", transformOrigin: "top left", width: "125%" } as React.CSSProperties}>
               <div>
 
                 {/* Question header */}
