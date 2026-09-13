@@ -19,12 +19,14 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { lockReload, unlockReload } from "@/lib/reloadGuard";
+import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
 import {
   Mic, Plus, Trash2, Clock, Radio, CheckCircle2, XCircle,
   Loader2, ChevronRight, ListChecks, PhoneOff, Shuffle, Send,
   Menu, X, Wand2, ClipboardPaste, Layers, Hash, SkipForward, Settings,
+  Eye, EyeOff, Users, GraduationCap, UserCheck,
 } from "lucide-react";
 
 const G = "#064E3B";
@@ -44,6 +46,7 @@ const fmtTime = (iso: string) =>
 const TeacherOralExams = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { data: academicLevels = [] } = useAcademicLevels();
 
   const [tab, setTab] = useState<Tab>("setup");
   const [loading, setLoading] = useState(true);
@@ -67,7 +70,7 @@ const TeacherOralExams = () => {
     const [{ data: owned }, { data: ttSlots }, { data: examsData }] = await Promise.all([
       supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id),
       supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids"),
-      supabase.from("exams").select("id, title, title_ar, subject_id, passing_score, exam_mode, type" as any).eq("exam_mode" as any, "oral").eq("created_by", user.id).order("created_at", { ascending: false }),
+      supabase.from("exams").select("id, title, title_ar, subject_id, passing_score, exam_mode, type, is_published, oral_assignment_mode, level" as any).eq("exam_mode" as any, "oral").eq("created_by", user.id).order("created_at", { ascending: false }),
     ]);
 
     const mySubjectIds = new Set<string>((owned || []).map((s: any) => s.id));
@@ -144,22 +147,59 @@ const TeacherOralExams = () => {
   const [newExam, setNewExam] = useState<{ title: string; subject_id: string; passing_score: string; type: "test" | "exam" }>({ title: "", subject_id: "", passing_score: "50", type: "exam" });
   const createExam = async () => {
     if (!newExam.title.trim()) return toast({ title: "Enter a title", variant: "destructive" });
+    // Created as a draft (is_published: false) — students can't see or book
+    // any slots until the teacher explicitly publishes it from Manage, once
+    // time slots and question sets are actually ready.
     const { data, error } = await supabase.from("exams").insert({
       title: newExam.title.trim(),
       subject_id: newExam.subject_id || null,
       passing_score: Number(newExam.passing_score) || 50,
-      exam_mode: "oral", type: newExam.type, is_published: true, created_by: user!.id,
+      exam_mode: "oral", type: newExam.type, is_published: false, created_by: user!.id,
     } as any).select().single();
     if (error) return toast({ title: "Could not create exam", description: error.message, variant: "destructive" });
     await supabase.from("oral_exam_sessions" as any).insert({ exam_id: data.id, created_by: user!.id });
-    toast({ title: "Oral exam created" });
+    toast({ title: "Oral exam created as a draft — publish it from Manage when ready" });
     setNewExam({ title: "", subject_id: "", passing_score: "50", type: "exam" });
     await loadExams();
     setSelectedExamId(data.id);
   };
 
+  // Draft ⇄ published toggle. Publishing is what actually makes the exam's
+  // open slots visible/bookable to students at all (see book_oral_slot() and
+  // the oral_exam_slots RLS policy) — this is the one control for that.
+  const togglePublish = async () => {
+    if (!selectedExam) return;
+    const next = !selectedExam.is_published;
+    const { error } = await supabase.from("exams").update({ is_published: next }).eq("id", selectedExam.id);
+    if (error) return toast({ title: "Could not update", description: error.message, variant: "destructive" });
+    toast({ title: next ? "Exam published — students can now see it" : "Exam moved back to draft" });
+    await loadExams();
+  };
+
+  // Who can see/book this exam's open slots — reused by both the Setup list
+  // and the Manage screen. 'individual' doesn't touch `level` at all (every
+  // slot must be hand-allocated instead); 'level' also writes `level`.
+  const setAssignmentMode = async (mode: "all" | "level" | "individual", level?: string) => {
+    if (!selectedExam) return;
+    const patch: any = { oral_assignment_mode: mode };
+    if (mode === "level") patch.level = level || null;
+    if (mode !== "level") patch.level = null;
+    const { error } = await supabase.from("exams").update(patch).eq("id", selectedExam.id);
+    if (error) return toast({ title: "Could not update audience", description: error.message, variant: "destructive" });
+    await loadExams();
+  };
+
   // ── Slots ──────────────────────────────────────────────────────────────
   const [slotForm, setSlotForm] = useState({ date: "", time: "", duration: "15", mode: "open", student_id: "", count: "1" });
+  // Belt-and-suspenders alongside hiding the "Leave open" button above: if the
+  // exam switches to "Individual only" while "open" was already selected,
+  // snap the form back so createSlots can never insert an open slot nobody
+  // could ever see or book.
+  useEffect(() => {
+    if (selectedExam?.oral_assignment_mode === "individual" && slotForm.mode === "open") {
+      setSlotForm(f => ({ ...f, mode: "allocated" }));
+    }
+  }, [selectedExam?.oral_assignment_mode, slotForm.mode]);
   const createSlots = async () => {
     if (!selectedExamId) return toast({ title: "Pick or create an exam first", variant: "destructive" });
     if (!slotForm.date || !slotForm.time) return toast({ title: "Pick a date and time", variant: "destructive" });
@@ -440,6 +480,15 @@ const TeacherOralExams = () => {
     return v !== undefined && v !== "" && !isNaN(Number(v));
   });
 
+  // Live-recomputed summation for the final review panel — unscored questions
+  // count as 0 toward the running total (submit stays blocked by
+  // allQuestionsScored until every one actually has a number in it).
+  const reviewMaxTotal = drawnQuestions.reduce((sum: number, q: any) => sum + (Number(q.points) || 0), 0);
+  const reviewAwardedTotal = drawnQuestions.reduce((sum: number, q: any) => {
+    const v = scores[q.id]?.points;
+    return sum + (v !== undefined && v !== "" && !isNaN(Number(v)) ? Number(v) : 0);
+  }, 0);
+
   const admit = async (slotId: string) => {
     const { error } = await supabase.rpc("admit_oral_student" as any, { p_slot_id: slotId });
     if (error) toast({ title: "Could not admit", description: error.message, variant: "destructive" });
@@ -670,29 +719,66 @@ const TeacherOralExams = () => {
                               <StageCountdown startedAt={session?.current_stage_started_at} limitSeconds={activeStage?.time_limit_seconds} />
                             </div>
                           )}
-                          {activeStage?.stage_title && <p style={{ fontSize: 11, fontWeight: 800, color: "#dc2626", marginBottom: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>{activeStage.stage_title}{activeStage.stage_title_ar ? ` · ${activeStage.stage_title_ar}` : ""}</p>}
-                          {(activeStage?.questions || []).map((q: any) => (
-                            <div key={q.id} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1px solid #fecaca", marginBottom: 8 }}>
-                              <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
-                              {q.question_text_ar && <p dir="rtl" style={{ fontSize: 14, fontFamily: "'Amiri', serif", color: "#374151", marginBottom: 6 }}>{q.question_text_ar}</p>}
-                              <div style={{ display: "flex", gap: 8 }}>
-                                <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
-                                <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
-                              </div>
-                            </div>
-                          ))}
-                          {(activeStage?.questions || []).length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>No question drawn for this stage.</p>}
-                          {isLastOralStage ? (
+                          {/* Once the last stage has itself been marked, swap this box over to
+                              the full review panel below instead of repeating its single
+                              question here a second time — the review panel already re-renders
+                              every stage's question (including this one) with an editable field. */}
+                          {!(isLastOralStage && activeStageScored) && (
                             <>
-                              <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
-                              <button onClick={submitScore} disabled={submittingScore || !allQuestionsScored} style={{
-                                color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13,
-                                background: !allQuestionsScored ? "#d1d5db" : G, cursor: !allQuestionsScored ? "not-allowed" : "pointer",
-                              }}>
-                                {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />}{" "}
-                                {!allQuestionsScored ? "Award marks to submit" : `Submit Score${currentSetStages.length > 1 ? " (all stages)" : ""}`}
-                              </button>
+                              {activeStage?.stage_title && <p style={{ fontSize: 11, fontWeight: 800, color: "#dc2626", marginBottom: 2, textTransform: "uppercase", letterSpacing: 0.5 }}>{activeStage.stage_title}{activeStage.stage_title_ar ? ` · ${activeStage.stage_title_ar}` : ""}</p>}
+                              {(activeStage?.questions || []).map((q: any) => (
+                                <div key={q.id} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1px solid #fecaca", marginBottom: 8 }}>
+                                  <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
+                                  {q.question_text_ar && <p dir="rtl" style={{ fontSize: 14, fontFamily: "'Amiri', serif", color: "#374151", marginBottom: 6 }}>{q.question_text_ar}</p>}
+                                  <div style={{ display: "flex", gap: 8 }}>
+                                    <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                    <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                  </div>
+                                </div>
+                              ))}
+                              {(activeStage?.questions || []).length === 0 && <p style={{ fontSize: 12, color: "#9ca3af" }}>No question drawn for this stage.</p>}
                             </>
+                          )}
+                          {isLastOralStage ? (
+                            activeStageScored ? (
+                              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                <p style={{ fontSize: 11, fontWeight: 800, color: G, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                                  Review scores before submitting
+                                </p>
+                                {drawnStages.map((st: any) => (
+                                  <div key={st.stage_id ?? "general"} style={{ background: "#fff", borderRadius: 10, padding: 10, border: "1px solid #e5e7eb" }}>
+                                    {st.stage_title && (
+                                      <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 6 }}>
+                                        {st.stage_title}{st.stage_title_ar ? ` · ${st.stage_title_ar}` : ""}
+                                      </p>
+                                    )}
+                                    {(st.questions || []).map((q: any) => (
+                                      <div key={q.id} style={{ marginBottom: 8 }}>
+                                        <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
+                                        <div style={{ display: "flex", gap: 8 }}>
+                                          <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                          <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ))}
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", background: "#f9fafb", borderRadius: 8, fontWeight: 800, fontSize: 13, color: G }}>
+                                  <span>Total</span>
+                                  <span>{reviewAwardedTotal} / {reviewMaxTotal}</span>
+                                </div>
+                                <input placeholder="Overall feedback (optional)" value={overallFeedback} onChange={e => setOverallFeedback(e.target.value)} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                <button onClick={submitScore} disabled={submittingScore || !allQuestionsScored} style={{
+                                  color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13,
+                                  background: !allQuestionsScored ? "#d1d5db" : G, cursor: !allQuestionsScored ? "not-allowed" : "pointer",
+                                }}>
+                                  {submittingScore ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} style={{ verticalAlign: -2 }} />}{" "}
+                                  {!allQuestionsScored ? "Award marks to submit" : `Submit Score${currentSetStages.length > 1 ? " (all stages)" : ""}`}
+                                </button>
+                              </div>
+                            ) : (
+                              <p style={{ fontSize: 11, color: "#9ca3af" }}>Award this stage's mark to see the full review before submitting.</p>
+                            )
                           ) : (
                             <p style={{ fontSize: 11, color: "#9ca3af" }}>Scores are kept as you go — tap <b>Next</b> below to move to the next stage. The final score is submitted once you reach the last stage.</p>
                           )}
@@ -749,8 +835,18 @@ const TeacherOralExams = () => {
                       <span style={{ fontSize: 10, fontWeight: 800, color: GOLD, border: `1px solid ${GOLD}`, borderRadius: 20, padding: "1px 8px", textTransform: "uppercase" }}>
                         {e.type === "test" ? "Test · /30" : e.type === "exam" ? "Exam · /70" : e.type || "Exam"}
                       </span>
+                      <span style={{
+                        display: "flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 800, textTransform: "uppercase",
+                        color: e.is_published ? "#16a34a" : "#9ca3af", border: `1px solid ${e.is_published ? "#16a34a" : "#9ca3af"}`, borderRadius: 20, padding: "1px 8px",
+                      }}>
+                        {e.is_published ? <Eye size={10} /> : <EyeOff size={10} />} {e.is_published ? "Published" : "Draft"}
+                      </span>
                     </div>
-                    <div style={{ fontSize: 12, color: "#6b7280" }}>{subjects.find(s => s.id === e.subject_id)?.title || "No subject"}</div>
+                    <div style={{ fontSize: 12, color: "#6b7280" }}>
+                      {subjects.find(s => s.id === e.subject_id)?.title || "No subject"}
+                      {" · "}
+                      {e.oral_assignment_mode === "individual" ? "Individually assigned" : e.oral_assignment_mode === "level" ? `Level: ${academicLevels.find(l => l.slug === e.level)?.name_en || e.level || "—"}` : "Open to all"}
+                    </div>
                   </div>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button onClick={() => { setSelectedExamId(e.id); setTab("manage"); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#f3f4f6", color: "#374151", border: "1px solid #e5e7eb", borderRadius: 10, padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
@@ -806,6 +902,54 @@ const TeacherOralExams = () => {
               <Radio size={14} /> Go Live
             </button>
           </div>
+
+          {/* Draft/publish + audience — this exam is invisible to students
+              (no open slots bookable, individually-allocated slots still
+              notify their student directly regardless) until published. */}
+          <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <h3 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>Visibility</h3>
+                <p style={{ fontSize: 12, color: "#6b7280", margin: "2px 0 0" }}>
+                  {selectedExam?.is_published ? "Students can see this exam and book its open slots." : "Hidden from students — set up slots and question sets, then publish."}
+                </p>
+              </div>
+              <button onClick={togglePublish} style={{
+                display: "flex", alignItems: "center", gap: 6, border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer",
+                background: selectedExam?.is_published ? "#f3f4f6" : G, color: selectedExam?.is_published ? "#374151" : "#fff",
+              }}>
+                {selectedExam?.is_published ? <><EyeOff size={14} /> Move to Draft</> : <><Eye size={14} /> Publish</>}
+              </button>
+            </div>
+
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", marginBottom: 6 }}>Audience — who can see/book open slots</p>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {([
+                  { mode: "all" as const, label: "Everyone", icon: Users },
+                  { mode: "level" as const, label: "By Level", icon: GraduationCap },
+                  { mode: "individual" as const, label: "Individual only", icon: UserCheck },
+                ]).map(opt => (
+                  <button key={opt.mode} onClick={() => setAssignmentMode(opt.mode, selectedExam?.level)} style={{
+                    display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 8, cursor: "pointer", fontWeight: 700, fontSize: 12,
+                    border: `1.5px solid ${selectedExam?.oral_assignment_mode === opt.mode ? G : "#e5e7eb"}`,
+                    background: selectedExam?.oral_assignment_mode === opt.mode ? "#ecfdf5" : "#fff", color: selectedExam?.oral_assignment_mode === opt.mode ? G : "#374151",
+                  }}>
+                    <opt.icon size={13} /> {opt.label}
+                  </button>
+                ))}
+              </div>
+              {selectedExam?.oral_assignment_mode === "level" && (
+                <select value={selectedExam?.level || ""} onChange={e => setAssignmentMode("level", e.target.value)} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", marginTop: 8, fontSize: 13 }}>
+                  <option value="">Select level…</option>
+                  {academicLevels.map(l => <option key={l.slug} value={l.slug}>{l.name_en}</option>)}
+                </select>
+              )}
+              {selectedExam?.oral_assignment_mode === "individual" && (
+                <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 8 }}>Only slots you allocate directly to a student below will exist — no self-pick open slots for this exam.</p>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
@@ -816,7 +960,13 @@ const TeacherOralExams = () => {
             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Add time slot(s)</h3>
             <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
               <button onClick={() => setSlotForm({ ...slotForm, mode: "allocated" })} style={{ flex: 1, padding: 8, borderRadius: 8, border: `2px solid ${slotForm.mode === "allocated" ? G : "#e5e7eb"}`, background: slotForm.mode === "allocated" ? "#ecfdf5" : "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Allocate to a student</button>
-              <button onClick={() => setSlotForm({ ...slotForm, mode: "open" })} style={{ flex: 1, padding: 8, borderRadius: 8, border: `2px solid ${slotForm.mode === "open" ? G : "#e5e7eb"}`, background: slotForm.mode === "open" ? "#ecfdf5" : "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Leave open (self-pick)</button>
+              {/* "Individual only" audience mode means no self-serve booking exists for
+                  this exam at all (enforced server-side in book_oral_slot regardless) —
+                  hiding the option here just keeps the teacher from creating open slots
+                  that no student could ever actually see or book. */}
+              {selectedExam?.oral_assignment_mode !== "individual" && (
+                <button onClick={() => setSlotForm({ ...slotForm, mode: "open" })} style={{ flex: 1, padding: 8, borderRadius: 8, border: `2px solid ${slotForm.mode === "open" ? G : "#e5e7eb"}`, background: slotForm.mode === "open" ? "#ecfdf5" : "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Leave open (self-pick)</button>
+              )}
             </div>
             <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
               <input type="date" value={slotForm.date} onChange={e => setSlotForm({ ...slotForm, date: e.target.value })} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }} />
