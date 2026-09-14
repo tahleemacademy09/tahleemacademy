@@ -439,19 +439,38 @@ const TeacherGrading = () => {
 
                 {/* Grading — every question type, not just subjective ones,
                     so a teacher can overwrite a wrongly auto-graded MCQ or
-                    true/false answer too, not only score essays/audio. */}
+                    true/false answer too, not only score essays/audio.
+                    Quick-select buttons mirror the admin grading screen so
+                    scoring is a tap instead of typing a number by hand. */}
                 {!isAlreadyGraded && (
-                  <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10 }}>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 4 }}>
-                        {isSubjective ? t("Score", "الدرجة") : t("Override score", "تعديل الدرجة")} (/{q.points || 1})
-                      </label>
+                  <div style={{ marginTop: 4, background: "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: "1.5px solid #BBDDC8" }}>
+                    <p style={{ fontSize: 12, fontWeight: 800, color: G, margin: "0 0 10px" }}>
+                      ✏️ {isSubjective ? t("Grade this answer", "صحّح هذه الإجابة") : t("Override score", "تعديل الدرجة")}{" "}
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280" }}>({q.points || 1} {t("pts max", "نقطة كحد أقصى")})</span>
+                    </p>
+                    {(q.points || 1) <= 10 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                        {Array.from({ length: (q.points || 1) + 1 }, (_, n) => (
+                          <button key={n} onClick={() => setScores(s => ({ ...s, [q.id]: String(n) }))} style={{
+                            width: 40, height: 40, borderRadius: 10,
+                            border: `2px solid ${Number(scores[q.id]) === n ? G : "#D1D5DB"}`,
+                            background: Number(scores[q.id]) === n ? G : "#fff",
+                            cursor: "pointer", fontSize: 14, fontWeight: 800,
+                            color: Number(scores[q.id]) === n ? "#fff" : "#374151",
+                          }}>{n}</button>
+                        ))}
+                        <span style={{ fontSize: 12, color: "#9CA3AF", marginLeft: 4 }}>/ {q.points || 1}</span>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "10px 12px", border: "1.5px solid #BBDDC8", marginBottom: 10 }}>
+                      <span style={{ fontSize: 12, color: "#6B7280", fontWeight: 700, whiteSpace: "nowrap" as const }}>{t("Score", "الدرجة")}:</span>
                       <input
                         type="number" min={0} max={q.points || 1} step={0.5}
                         value={scores[q.id] ?? ""}
                         onChange={e => setScores(s => ({ ...s, [q.id]: e.target.value }))}
-                        style={inp}
+                        style={{ width: 72, padding: "6px 10px", borderRadius: 8, border: "1.5px solid #D1D5DB", fontSize: 16, fontWeight: 800, color: G, textAlign: "center" as const, outline: "none" }}
                       />
+                      <span style={{ fontSize: 13, color: "#6B7280" }}>/ {q.points || 1} pts</span>
                     </div>
                     <div>
                       <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 4 }}>
