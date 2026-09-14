@@ -345,6 +345,10 @@ const ExamEditor = () => {
   const [aiReorgOpen,   setAiReorgOpen]   = useState(false);
   const [aiRawText,     setAiRawText]     = useState("");
   const [aiParsing,     setAiParsing]     = useState(false);
+  // ── AI Generate (describe instructions → brand-new questions) ──────────
+  const [aiMode,         setAiMode]         = useState<"reorganize"|"generate">("reorganize");
+  const [aiInstructions, setAiInstructions] = useState("");
+  const [aiGenerating,   setAiGenerating]   = useState(false);
 
   const [activeTab,        setActiveTab]        = useState("settings");
   const [scheduleErrors,   setScheduleErrors]   = useState<{start?: string; end?: string}>({});
@@ -365,6 +369,8 @@ const ExamEditor = () => {
   const removeQuestion = (idx: number) => setQuestions(q => q.filter((_, i) => i !== idx));
   const updateQuestion = (idx: number, updates: Partial<QuestionForm>) =>
     setQuestions(q => q.map((qq, i) => i === idx ? { ...qq, ...updates } : qq));
+  // Which question cards have "More options" (instructions/media/section) expanded — collapsed by default to keep the card simple.
+  const [advancedOpen, setAdvancedOpen] = useState<Set<number>>(new Set());
 
   // ── Sections (question pools) ───────────────────────────────────────────
   // A "section" is a UI-level shell around a group_name. It lets an admin
@@ -663,6 +669,70 @@ const ExamEditor = () => {
       toast({ title: t("❌ AI Reorganize failed","❌ فشلت إعادة التنظيم بالذكاء الاصطناعي"), description: err.message, variant: "destructive" });
     }
     setAiParsing(false);
+  };
+
+  // ── AI Generate: describe what you want, get brand-new questions ───────
+  // Unlike handleAIReorganize, there's no source text — the model writes
+  // original questions from its own subject knowledge, matching the
+  // teacher's plain-language instructions (topic, count, type, difficulty,
+  // level). Same edge function, same output contract, different action.
+  const handleAIGenerate = async () => {
+    if (!aiInstructions.trim()) {
+      toast({ title: t("Describe what questions you want first","صف الأسئلة التي تريدها أولاً"), variant: "destructive" });
+      return;
+    }
+    setAiGenerating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+        body: { action: "generate_questions", prompt: aiInstructions },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const raw: any[] = Array.isArray(data?.questions) ? data.questions : [];
+      if (!raw.length) throw new Error("The AI didn't return any questions — try rephrasing your instructions");
+
+      const generatedQuestions: QuestionForm[] = raw.map((q: any, index: number) => {
+        const options = Array.isArray(q.options)
+          ? q.options.map((o: any, oi: number) => ({
+              id: o.id || String.fromCharCode(97 + oi),
+              text: o.text || "",
+              text_ar: o.text_ar || "",
+              is_correct: !!o.is_correct,
+              image_url: "",
+            }))
+          : [];
+
+        const derivedCorrect = q.correct_answer || options.find((o: any) => o.is_correct)?.id || "";
+
+        return {
+          ...emptyQuestion(),
+          question_type: q.question_type || "mcq",
+          question_text: q.question_text || "",
+          question_text_ar: q.question_text_ar || "",
+          options: options.length ? options : emptyQuestion().options,
+          correct_answer: derivedCorrect,
+          points: Number(q.points) || 1,
+          difficulty: q.difficulty || "medium",
+          explanation: q.explanation || "",
+          sort_order: questions.length + index,
+        };
+      });
+
+      setQuestions(prev => [...prev, ...generatedQuestions]);
+      toast({
+        title: `✅ ${t("Generated","تم التوليد")} ${generatedQuestions.length} ${t("questions","سؤال")}`,
+        description: t(
+          "Review each question and its correct answer before publishing the exam.",
+          "راجع كل سؤال وإجابته الصحيحة قبل نشر الامتحان."
+        ),
+      });
+      setAiInstructions("");
+      setAiReorgOpen(false);
+    } catch (err: any) {
+      toast({ title: t("❌ AI Generate failed","❌ فشل توليد الأسئلة"), description: err.message, variant: "destructive" });
+    }
+    setAiGenerating(false);
   };
 
   // ── FIX 3: Question Bank ──────────────────────────────────────────────────
@@ -969,6 +1039,21 @@ const ExamEditor = () => {
                     )}
 
                     {/* ── Instruction text (optional, global to all exam/question types) ── */}
+                    {/* ── Instruction / Media / Section — tucked behind one
+                        toggle. These are needed occasionally, not on every
+                        question, and having them always expanded was most of
+                        what made this card feel complicated for a teacher
+                        just trying to type a quick MCQ. ── */}
+                    <button type="button" onClick={() => setAdvancedOpen(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; })}
+                      className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold text-slate-500 hover:text-slate-700 transition-colors">
+                      {advancedOpen.has(idx) ? <ChevronUp className="h-3.5 w-3.5"/> : <ChevronDown className="h-3.5 w-3.5"/>}
+                      {t("More options","خيارات إضافية")}
+                      <span className="text-[10px] font-normal text-slate-400">
+                        {t("(instructions, media, section)","(تعليمات، وسائط، قسم)")}
+                      </span>
+                    </button>
+
+                    {(advancedOpen.has(idx) || q.question_type === "audio") && (<>
                     <div className="space-y-2">
                       <Label className="text-xs sm:text-sm font-black text-slate-600 flex items-center gap-2">
                         {t("Instruction (Arabic)","التعليمات (عربي)")}
@@ -1000,6 +1085,7 @@ const ExamEditor = () => {
                         className="min-h-[50px] sm:min-h-[60px] text-xs sm:text-sm rounded-lg sm:rounded-xl border-slate-200 bg-slate-50/50 focus-visible:ring-slate-400"
                       />
                     </div>
+                    </>)}
 
                     {/* ── FIX 2: Arabic question text ── */}
                     <div className="space-y-2">
@@ -1036,6 +1122,7 @@ const ExamEditor = () => {
                       </div>
                     </div>
 
+                    {(advancedOpen.has(idx) || q.question_type === "audio") && (<>
                     {/* Media */}
                     <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
                       <Label className="flex items-center gap-1.5 mb-2 text-xs font-bold text-slate-700">
@@ -1118,7 +1205,7 @@ const ExamEditor = () => {
                         )}
                       </p>
                     </div>
-
+                    </>)}
 
                     {/* MCQ Options */}
                     {(q.question_type==="mcq" || q.question_type==="image_mcq" || q.question_type==="comprehension") && (
@@ -1577,24 +1664,66 @@ const ExamEditor = () => {
                     </DialogContent>
                   </Dialog>
 
-                  {/* AI Reorganize — paste raw questions, get structured rows + auto-picked answers */}
+                  {/* AI Questions — paste raw questions to reorganize, or describe what you want and let the AI write them from scratch */}
                   <Dialog open={aiReorgOpen} onOpenChange={setAiReorgOpen}>
                     <DialogTrigger asChild>
                       <Button variant="outline" size="sm" className="gap-1.5 sm:gap-2 rounded-xl text-emerald-800 border-emerald-300 bg-emerald-50 font-bold text-xs sm:text-sm h-9">
-                        <Sparkles className="h-4 w-4"/><span className="hidden sm:inline">{t("AI Reorganize","إعادة تنظيم بالذكاء الاصطناعي")}</span><span className="sm:hidden">AI</span>
+                        <Sparkles className="h-4 w-4"/><span className="hidden sm:inline">{t("AI Questions","أسئلة بالذكاء الاصطناعي")}</span><span className="sm:hidden">AI</span>
                       </Button>
                     </DialogTrigger>
                     <DialogContent className={cn("max-w-[95vw] sm:max-w-2xl", isMobile ? "p-4" : "p-6")}>
                       <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-emerald-700"/>{t("AI Reorganize Questions","إعادة تنظيم الأسئلة بالذكاء الاصطناعي")}</DialogTitle>
+                        <DialogTitle className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-emerald-700"/>{t("AI Questions","أسئلة بالذكاء الاصطناعي")}</DialogTitle>
+                      </DialogHeader>
+
+                      {/* Mode toggle */}
+                      <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
+                        <button type="button" onClick={() => setAiMode("generate")}
+                          className={cn("flex-1 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all",
+                            aiMode === "generate" ? "bg-white shadow-sm text-emerald-800" : "text-slate-500")}>
+                          ✨ {t("Generate from description","توليد من وصف")}
+                        </button>
+                        <button type="button" onClick={() => setAiMode("reorganize")}
+                          className={cn("flex-1 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all",
+                            aiMode === "reorganize" ? "bg-white shadow-sm text-emerald-800" : "text-slate-500")}>
+                          📋 {t("Paste existing questions","لصق أسئلة موجودة")}
+                        </button>
+                      </div>
+
+                      {aiMode === "generate" ? (
+                        <div className="space-y-3 py-2">
+                          <DialogDescription>
+                            {t(
+                              "Describe what you want in plain language — topic, how many, question type, difficulty, level. The AI writes brand-new questions (bilingual, with options and the correct answer already selected) from its own subject knowledge.",
+                              "صف ما تريده بلغة بسيطة — الموضوع، العدد، نوع السؤال، الصعوبة، المستوى. سيكتب الذكاء الاصطناعي أسئلة جديدة تمامًا (بالعربية والإنجليزية، مع الخيارات والإجابة الصحيحة) من معرفته الخاصة."
+                            )}
+                          </DialogDescription>
+                          <Textarea
+                            value={aiInstructions}
+                            onChange={e => setAiInstructions(e.target.value)}
+                            placeholder={t(
+                              "e.g.\n\"15 MCQ questions on the pillars of Wudu, intermediate level, medium difficulty\"\n\n\"10 true/false questions on the Seerah of the Prophet ﷺ, beginner level\"\n\n\"8 questions on Noon Sakinah and Tanween rules in Tajweed — mix of MCQ and fill-in-the-blank\"",
+                              "مثال:\n\"15 سؤال اختيار من متعدد عن أركان الوضوء، المستوى المتوسط، صعوبة متوسطة\""
+                            )}
+                            className="min-h-[160px] rounded-xl text-sm"
+                            dir="auto"
+                          />
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs text-slate-500">{t("Questions are appended to the list below — nothing existing is overwritten.","تُضاف الأسئلة إلى القائمة أدناه — لا يتم استبدال أي شيء موجود.")}</p>
+                            <Button onClick={handleAIGenerate} disabled={aiGenerating || !aiInstructions.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
+                              {aiGenerating ? <Loader2 className="h-4 w-4 animate-spin"/> : <Sparkles className="h-4 w-4"/>}
+                              {aiGenerating ? t("Generating…","جارٍ التوليد…") : t("Generate Questions","توليد الأسئلة")}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                      <div className="space-y-3 py-2">
                         <DialogDescription>
                           {t(
                             "Paste your questions in any format — Word, WhatsApp, a textbook, English or Arabic. The AI will split them into rows, fill in the options, and select the correct answer for each (using its own knowledge if you didn't mark one).",
                             "الصق أسئلتك بأي صيغة — من Word أو واتساب أو كتاب مدرسي، عربي أو إنجليزي. سيقوم الذكاء الاصطناعي بتقسيمها إلى صفوف، وملء الخيارات، واختيار الإجابة الصحيحة لكل سؤال (باستخدام معرفته الخاصة إن لم تحدد إجابة)."
                           )}
                         </DialogDescription>
-                      </DialogHeader>
-                      <div className="space-y-3 py-2">
                         <Textarea
                           value={aiRawText}
                           onChange={e => setAiRawText(e.target.value)}
@@ -1613,6 +1742,7 @@ const ExamEditor = () => {
                           </Button>
                         </div>
                       </div>
+                      )}
                     </DialogContent>
                   </Dialog>
 
