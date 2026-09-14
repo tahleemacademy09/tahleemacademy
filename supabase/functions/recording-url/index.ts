@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { path, action, expiresIn } = await req.json();
+    const { path, action, expiresIn, filename } = await req.json();
     if (!path) {
       return new Response(JSON.stringify({ error: "path is required" }), {
         status: 400,
@@ -100,10 +100,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Default action: presign a GET URL for playback.
+    // "download" action: same object, but the presigned URL carries a
+    // response-content-disposition override so the browser saves the file
+    // (with a friendly name) instead of trying to stream/play it inline.
+    // This is what lets students grab the .mp4 once and watch it locally —
+    // no repeat egress against the Supabase/R2 bandwidth quota for rewatches.
     const ttl = Math.min(Math.max(Number(expiresIn) || 7200, 60), 604800); // clamp 1min–7days
+    const params = new URLSearchParams({ "X-Amz-Expires": String(ttl) });
+
+    if (action === "download") {
+      const safeName = (filename || path.split("/").pop() || "recording.mp4").replace(/[^\w.\-]+/g, "_");
+      params.set("response-content-disposition", `attachment; filename="${safeName}"`);
+      params.set("response-content-type", "video/mp4");
+    }
+
     const signed = await client.sign(
-      new Request(`${objectUrl}?X-Amz-Expires=${ttl}`),
+      new Request(`${objectUrl}?${params.toString()}`),
       { aws: { signQuery: true } },
     );
 
