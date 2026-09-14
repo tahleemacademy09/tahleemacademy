@@ -134,6 +134,19 @@ const GradingPage = () => {
     } else {
       qs = [...qs].sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     }
+    // The audioUrl saved in answer_data is a signed URL only valid for 7
+    // days from submission (see ExamTaking.tsx) — grading after that
+    // window sees "Audio file unavailable" for a recording that's still
+    // fine in Storage. Re-sign it from answer_data.storagePath so the
+    // player works regardless of how long ago the student submitted.
+    // (No storagePath means the upload never reached Storage — genuinely
+    // gone, nothing to re-sign.)
+    await Promise.all(ans.map(async (a: any) => {
+      const path = a.answer_data?.storagePath;
+      if (!path) return;
+      const { data: signed } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
+      if (signed?.signedUrl) a.answer_data = { ...a.answer_data, audioUrl: signed.signedUrl };
+    }));
     setQuestions(qs); setAnswers(ans);
     if (!scoreRefs.current[attempt.id]) {
       const init: Record<number, number> = {};
