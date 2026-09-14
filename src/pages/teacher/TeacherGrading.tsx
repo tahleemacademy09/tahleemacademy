@@ -280,6 +280,15 @@ const TeacherGrading = () => {
     const isReleased = selectedAttempt.status === "released";
     const totalPossible = questions.reduce((s, q) => s + (q.points || 1), 0);
     const totalEntered  = questions.reduce((s, q) => s + (parseFloat(scores[q.id] || "0") || 0), 0);
+    // The live preview shown while grading should track what submitGrade
+    // actually saves — a "test" always scores out of 30 and a full "exam"
+    // out of 70 (the CA convention), regardless of how many raw points the
+    // pooled questions happen to sum to. Showing the raw sum here (e.g.
+    // /25) while the saved score is scaled to /30 made the on-screen total
+    // look wrong even though the underlying math was correct.
+    const examTypeForScale = selectedAttempt.exams?.type;
+    const scaledTotalPreview  = examTypeForScale === "test" ? 30 : examTypeForScale === "exam" ? 70 : totalPossible;
+    const scaledEarnedPreview = totalPossible > 0 ? Number(((totalEntered / totalPossible) * scaledTotalPreview).toFixed(2)) : 0;
 
     return (
       <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "system-ui, sans-serif" }}>
@@ -301,7 +310,7 @@ const TeacherGrading = () => {
           </div>
           {!isAlreadyGraded && (
             <div style={{ fontSize: 13, fontWeight: 700, color: G }}>
-              {totalEntered} / {totalPossible}
+              {scaledEarnedPreview} / {scaledTotalPreview}
             </div>
           )}
         </div>
@@ -484,7 +493,7 @@ const TeacherGrading = () => {
               />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: G }}>
-                  {t("Total", "المجموع")}: {totalEntered} / {totalPossible}
+                  {t("Total", "المجموع")}: {scaledEarnedPreview} / {scaledTotalPreview}
                   {" "}({totalPossible > 0 ? Math.round((totalEntered / totalPossible) * 100) : 0}%)
                 </div>
                 <button
