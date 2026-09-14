@@ -345,6 +345,9 @@ const ExamEditor = () => {
   const [aiReorgOpen,   setAiReorgOpen]   = useState(false);
   const [aiRawText,     setAiRawText]     = useState("");
   const [aiParsing,     setAiParsing]     = useState(false);
+  const [aiExtraInstructions, setAiExtraInstructions] = useState(""); // e.g. "2 points each", "translate everything"
+  const [aiPointsOverride, setAiPointsOverride] = useState(""); // client-side guaranteed override, blank = leave AI's value
+  const [aiReplaceExisting, setAiReplaceExisting] = useState(false); // clear the list first so numbering starts at Q1
   // ── AI Generate (describe instructions → brand-new questions) ──────────
   const [aiMode,         setAiMode]         = useState<"reorganize"|"generate">("reorganize");
   const [aiInstructions, setAiInstructions] = useState("");
@@ -618,13 +621,19 @@ const ExamEditor = () => {
     setAiParsing(true);
     try {
       const { data, error } = await supabase.functions.invoke("tahleem-ai", {
-        body: { action: "parse_questions", prompt: aiRawText },
+        body: {
+          action: "parse_questions",
+          prompt: aiRawText,
+          instructions: aiExtraInstructions.trim() || undefined,
+        },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
       const raw: any[] = Array.isArray(data?.questions) ? data.questions : [];
       if (!raw.length) throw new Error("No questions recognized in the pasted text");
+
+      const forcedPoints = aiPointsOverride.trim() ? Number(aiPointsOverride) : null;
 
       const parsedQuestions: QuestionForm[] = raw.map((q: any, index: number) => {
         const options = Array.isArray(q.options)
@@ -647,14 +656,16 @@ const ExamEditor = () => {
           question_text_ar: q.question_text_ar || "",
           options: options.length ? options : emptyQuestion().options,
           correct_answer: derivedCorrect,
-          points: Number(q.points) || 1,
+          // A points override, if the teacher set one, always wins — the AI's
+          // per-question guess is only used when no override was given.
+          points: forcedPoints !== null && !Number.isNaN(forcedPoints) ? forcedPoints : (Number(q.points) || 1),
           difficulty: q.difficulty || "medium",
           explanation: q.explanation || "",
-          sort_order: questions.length + index,
+          sort_order: aiReplaceExisting ? index : questions.length + index,
         };
       });
 
-      setQuestions(prev => [...prev, ...parsedQuestions]);
+      setQuestions(prev => aiReplaceExisting ? parsedQuestions : [...prev, ...parsedQuestions]);
       const autoSelected = raw.filter((q: any) => (q.options || []).some((o: any) => o.is_correct)).length;
       toast({
         title: `✅ ${t("Reorganized","تمت إعادة التنظيم")} ${parsedQuestions.length} ${t("questions","سؤال")}`,
@@ -692,6 +703,8 @@ const ExamEditor = () => {
       const raw: any[] = Array.isArray(data?.questions) ? data.questions : [];
       if (!raw.length) throw new Error("The AI didn't return any questions — try rephrasing your instructions");
 
+      const forcedPoints = aiPointsOverride.trim() ? Number(aiPointsOverride) : null;
+
       const generatedQuestions: QuestionForm[] = raw.map((q: any, index: number) => {
         const options = Array.isArray(q.options)
           ? q.options.map((o: any, oi: number) => ({
@@ -712,14 +725,14 @@ const ExamEditor = () => {
           question_text_ar: q.question_text_ar || "",
           options: options.length ? options : emptyQuestion().options,
           correct_answer: derivedCorrect,
-          points: Number(q.points) || 1,
+          points: forcedPoints !== null && !Number.isNaN(forcedPoints) ? forcedPoints : (Number(q.points) || 1),
           difficulty: q.difficulty || "medium",
           explanation: q.explanation || "",
-          sort_order: questions.length + index,
+          sort_order: aiReplaceExisting ? index : questions.length + index,
         };
       });
 
-      setQuestions(prev => [...prev, ...generatedQuestions]);
+      setQuestions(prev => aiReplaceExisting ? generatedQuestions : [...prev, ...generatedQuestions]);
       toast({
         title: `✅ ${t("Generated","تم التوليد")} ${generatedQuestions.length} ${t("questions","سؤال")}`,
         description: t(
@@ -1690,6 +1703,34 @@ const ExamEditor = () => {
                         </button>
                       </div>
 
+                      {/* Shared controls — always visible, apply to whichever mode runs */}
+                      <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2.5 mt-2">
+                        <label className="text-xs font-bold text-emerald-900 whitespace-nowrap">
+                          {t("Points per question","النقاط لكل سؤال")}
+                        </label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={aiPointsOverride}
+                          onChange={e => setAiPointsOverride(e.target.value)}
+                          placeholder={t("auto","تلقائي")}
+                          className="h-8 w-20 text-xs rounded-lg bg-white"
+                        />
+                        <span className="text-[11px] text-emerald-800/70 leading-tight">
+                          {t(
+                            "Leave blank to let the AI decide per question. Set a number to force every question to that many points.",
+                            "اتركه فارغًا ليقرر الذكاء الاصطناعي لكل سؤال. حدد رقمًا لفرضه على كل الأسئلة."
+                          )}
+                        </span>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs font-semibold text-slate-600 px-1">
+                        <input type="checkbox" checked={aiReplaceExisting} onChange={e => setAiReplaceExisting(e.target.checked)} className="h-3.5 w-3.5 accent-emerald-700" />
+                        {t(
+                          "Replace the current question list (numbering restarts at Q1) instead of adding to the end",
+                          "استبدال قائمة الأسئلة الحالية (يبدأ الترقيم من س1) بدلاً من الإضافة في النهاية"
+                        )}
+                      </label>
+
                       {aiMode === "generate" ? (
                         <div className="space-y-3 py-2">
                           <DialogDescription>
@@ -1720,8 +1761,8 @@ const ExamEditor = () => {
                       <div className="space-y-3 py-2">
                         <DialogDescription>
                           {t(
-                            "Paste your questions in any format — Word, WhatsApp, a textbook, English or Arabic. The AI will split them into rows, fill in the options, and select the correct answer for each (using its own knowledge if you didn't mark one).",
-                            "الصق أسئلتك بأي صيغة — من Word أو واتساب أو كتاب مدرسي، عربي أو إنجليزي. سيقوم الذكاء الاصطناعي بتقسيمها إلى صفوف، وملء الخيارات، واختيار الإجابة الصحيحة لكل سؤال (باستخدام معرفته الخاصة إن لم تحدد إجابة)."
+                            "Paste your questions in any format — Word, WhatsApp, a textbook, English or Arabic. The AI fills in both English and Arabic for every question and option, splits them into rows, fills in the options, and selects the correct answer for each (using its own knowledge if you didn't mark one).",
+                            "الصق أسئلتك بأي صيغة — من Word أو واتساب أو كتاب مدرسي، عربي أو إنجليزي. سيملأ الذكاء الاصطناعي كلا اللغتين لكل سؤال وخيار، ويقسمها إلى صفوف، ويختار الإجابة الصحيحة لكل سؤال (باستخدام معرفته الخاصة إن لم تحدد إجابة)."
                           )}
                         </DialogDescription>
                         <Textarea
@@ -1734,6 +1775,19 @@ const ExamEditor = () => {
                           className="min-h-[220px] rounded-xl font-mono text-sm"
                           dir="auto"
                         />
+                        <div>
+                          <label className="text-xs font-bold text-slate-600">{t("Extra instructions (optional)","تعليمات إضافية (اختياري)")}</label>
+                          <Textarea
+                            value={aiExtraInstructions}
+                            onChange={e => setAiExtraInstructions(e.target.value)}
+                            placeholder={t(
+                              "e.g. \"mark all as hard difficulty\", \"these are all fill-in-the-blank\", \"group by topic\"",
+                              "مثال: \"اجعل الكل صعبًا\"، \"كلها من نوع ملء الفراغ\""
+                            )}
+                            className="min-h-[60px] rounded-xl text-sm mt-1"
+                            dir="auto"
+                          />
+                        </div>
                         <div className="flex items-center justify-between">
                           <p className="text-xs text-slate-500">{t("Questions are appended to the list below — nothing existing is overwritten.","تُضاف الأسئلة إلى القائمة أدناه — لا يتم استبدال أي شيء موجود.")}</p>
                           <Button onClick={handleAIReorganize} disabled={aiParsing || !aiRawText.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
