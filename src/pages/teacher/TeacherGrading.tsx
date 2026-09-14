@@ -153,6 +153,20 @@ const TeacherGrading = () => {
       qs = [...qs].sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     }
     const data = aRes.data || [];
+    // The audioUrl saved in answer_data is a signed URL that was only ever
+    // valid for 7 days from submission (see ExamTaking.tsx) — grading that
+    // happens after that window sees "Audio file unavailable" for a
+    // recording that's actually still sitting fine in Storage. Re-sign it
+    // here from answer_data.storagePath so the player works regardless of
+    // how long ago the student submitted. (Recordings that never made it to
+    // Storage in the first place — no storagePath — have nothing to re-sign;
+    // those are genuinely gone.)
+    await Promise.all(data.map(async (a: any) => {
+      const path = a.answer_data?.storagePath;
+      if (!path) return;
+      const { data: signed } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
+      if (signed?.signedUrl) a.answer_data = { ...a.answer_data, audioUrl: signed.signedUrl };
+    }));
     setQuestions(qs);
     setAnswers(data);
     const sc: Record<string, string> = {};
@@ -404,12 +418,24 @@ const TeacherGrading = () => {
                   </div>
                 )}
 
-                {/* Grading — subjective only if not already graded */}
-                {isSubjective && !isAlreadyGraded && (
+                {/* Auto-grade note for MCQ/true-false, so it's clear what the
+                    score below is overriding rather than setting from scratch. */}
+                {!isSubjective && !isAlreadyGraded && (isMCQ || isTF) && (
+                  <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    {ans?.is_correct
+                      ? <span style={{ fontSize: 12, color: "#16A34A", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={13} /> {t("Auto-graded: Correct", "تصحيح تلقائي: صحيح")}</span>
+                      : <span style={{ fontSize: 12, color: "#DC2626", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><XCircle size={13} /> {t("Auto-graded: Incorrect", "تصحيح تلقائي: خطأ")}</span>}
+                  </div>
+                )}
+
+                {/* Grading — every question type, not just subjective ones,
+                    so a teacher can overwrite a wrongly auto-graded MCQ or
+                    true/false answer too, not only score essays/audio. */}
+                {!isAlreadyGraded && (
                   <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10 }}>
                     <div>
                       <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 4 }}>
-                        {t("Score", "الدرجة")} (/{q.points || 1})
+                        {isSubjective ? t("Score", "الدرجة") : t("Override score", "تعديل الدرجة")} (/{q.points || 1})
                       </label>
                       <input
                         type="number" min={0} max={q.points || 1} step={0.5}
