@@ -28,6 +28,7 @@ const TeacherGrading = () => {
   const [allAttempts,    setAllAttempts]    = useState<any[]>([]);
   const [selectedAttempt,setSelectedAttempt]= useState<any>(null);
   const [answers,        setAnswers]        = useState<any[]>([]);
+  const [questions,      setQuestions]      = useState<any[]>([]);
   const [scores,         setScores]         = useState<Record<string, string>>({});
   const [feedbacks,      setFeedbacks]      = useState<Record<string, string>>({});
   const [examFeedback,   setExamFeedback]   = useState("");
@@ -132,16 +133,34 @@ const TeacherGrading = () => {
   const openAttempt = async (attempt: any) => {
     setSelectedAttempt(attempt);
     setExamFeedback(attempt.feedback || "");
-    const { data } = await supabase.from("exam_answers")
-      .select(`*, exam_questions(id, question_type, question_text, question_text_ar, instruction_text, instruction_text_ar, reading_passage, options, correct_answer, points, media_url, explanation)`)
-      .eq("attempt_id", attempt.id)
-      .order("created_at");
-    setAnswers(data || []);
+    // Use the same pooled subset the student was actually shown (respects
+    // "section::pick=N" question-pool tags) instead of just whichever
+    // questions happen to have an exam_answers row — otherwise a SKIPPED
+    // pool question has no answer row, so it silently disappeared from
+    // this screen entirely: no player, no score, and it didn't even count
+    // against the max points, which unfairly inflated the percentage.
+    // Same fix as the admin GradingPage.tsx.
+    const [qRes, aRes] = await Promise.all([
+      supabase.rpc("get_exam_questions_for_attempt", { _attempt_id: attempt.id }),
+      supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
+    ]);
+    let qs = qRes.data || [];
+    if (qRes.error) {
+      console.error("openAttempt: get_exam_questions_for_attempt failed, falling back to full bank:", qRes.error);
+      const { data: fallbackQs } = await supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order");
+      qs = fallbackQs || [];
+    } else {
+      qs = [...qs].sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    }
+    const data = aRes.data || [];
+    setQuestions(qs);
+    setAnswers(data);
     const sc: Record<string, string> = {};
     const fb: Record<string, string> = {};
-    (data || []).forEach(a => {
-      sc[a.question_id] = String(a.points_awarded ?? "");
-      fb[a.question_id] = a.feedback || "";
+    qs.forEach((q: any) => {
+      const a = data.find((x: any) => x.question_id === q.id);
+      sc[q.id] = String(a?.points_awarded ?? "");
+      fb[q.id] = a?.feedback || "";
     });
     setScores(sc);
     setFeedbacks(fb);
@@ -152,18 +171,31 @@ const TeacherGrading = () => {
     setSubmitting(true);
     try {
       let totalEarned = 0, totalPossible = 0;
-      for (const ans of answers) {
-        const pts = parseFloat(scores[ans.question_id] ?? "0") || 0;
-        const maxPts = ans.exam_questions?.points || 1;
+      for (const q of questions) {
+        const ans = answers.find(a => a.question_id === q.id);
+        const pts = parseFloat(scores[q.id] ?? "0") || 0;
+        const maxPts = q.points || 1;
         totalEarned += pts;
         totalPossible += maxPts;
-        await supabase.from("exam_answers").update({
-          points_awarded: pts,
-          feedback: feedbacks[ans.question_id] || null,
-          is_correct: pts >= maxPts,
-          graded_by: user?.id,
-          graded_at: new Date().toISOString(),
-        }).eq("id", ans.id);
+        if (ans?.id) {
+          await supabase.from("exam_answers").update({
+            points_awarded: pts,
+            feedback: feedbacks[q.id] || null,
+            is_correct: pts >= maxPts,
+            graded_by: user?.id,
+            graded_at: new Date().toISOString(),
+          }).eq("id", ans.id);
+        } else {
+          // Skipped pool question — no exam_answers row exists yet. A
+          // direct insert is blocked by RLS (exam_answers only allows
+          // UPDATE of an existing row), so create/set it via the same
+          // SECURITY DEFINER RPC the admin grading page uses.
+          const { error: upsertErr } = await supabase.rpc("admin_upsert_exam_answer" as any, {
+            _attempt_id: selectedAttempt.id, _question_id: q.id,
+            _points: pts, _is_correct: pts >= maxPts,
+          });
+          if (upsertErr) console.error("submitGrade: upsert failed for skipped question", q.id, upsertErr);
+        }
       }
       const pct = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
       // Continuous-assessment convention: a "test" is always scored out of 30
@@ -232,8 +264,8 @@ const TeacherGrading = () => {
     // accidentally flip it back to "graded" and hide it from the student.
     const isAlreadyGraded = selectedAttempt.status === "graded" || selectedAttempt.status === "released";
     const isReleased = selectedAttempt.status === "released";
-    const totalPossible = answers.reduce((s, a) => s + (a.exam_questions?.points || 1), 0);
-    const totalEntered  = answers.reduce((s, a) => s + (parseFloat(scores[a.question_id] || "0") || 0), 0);
+    const totalPossible = questions.reduce((s, q) => s + (q.points || 1), 0);
+    const totalEntered  = questions.reduce((s, q) => s + (parseFloat(scores[q.id] || "0") || 0), 0);
 
     return (
       <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "system-ui, sans-serif" }}>
@@ -280,21 +312,23 @@ const TeacherGrading = () => {
           )}
 
           {/* Questions */}
-          {answers.map((ans, i) => {
-            const q = ans.exam_questions;
-            if (!q) return null;
+          {questions.map((q, i) => {
+            const ans = answers.find(a => a.question_id === q.id);
             const isMCQ      = q.question_type === "mcq" || q.question_type === "image_mcq";
             const isTF       = q.question_type === "true_false";
             const isSubjective = ["short_answer", "essay", "audio", "dictation"].includes(q.question_type);
             const opts = Array.isArray(q.options) ? q.options : (typeof q.options === "string" ? JSON.parse(q.options) : []);
             const correct = isMCQ ? opts.find((o: any) => o.is_correct)?.text : q.correct_answer;
-            const studentAns = ans.answer_text || "";
-            const autoCorrect = isMCQ
-              ? opts.find((o: any) => o.id === studentAns)?.text
-              : isTF ? studentAns : studentAns;
+            const studentAns = ans?.answer_text || "";
+            // The recorded clip's real URL lives in answer_data.audioUrl
+            // (or the legacy audio_url column) — answer_text for an audio
+            // question only ever holds a "[audio_recorded]" placeholder,
+            // never a playable URL. Same fix as admin GradingPage.tsx.
+            const audioSrc = (ans as any)?.answer_data?.audioUrl || (ans as any)?.audio_url || null;
+            const notAnswered = !studentAns && !audioSrc;
 
             return (
-              <div key={ans.id} style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: 20, marginBottom: 14, boxShadow: "0 1px 4px rgba(0,0,0,.04)" }}>
+              <div key={q.id} style={{ background: "#fff", borderRadius: 16, border: `1px solid ${notAnswered ? "#FDE68A" : "#E5E7EB"}`, padding: 20, marginBottom: 14, boxShadow: "0 1px 4px rgba(0,0,0,.04)" }}>
                 {/* Q header */}
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
                   <div style={{ width: 28, height: 28, borderRadius: 8, background: G, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900, color: "#fff", flexShrink: 0 }}>{i + 1}</div>
@@ -347,14 +381,19 @@ const TeacherGrading = () => {
                 )}
 
                 {/* Text / audio answer */}
-                {!isMCQ && studentAns && (
+                {!isMCQ && (
                   <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F9FAFB", border: "1px solid #E5E7EB", marginBottom: 12 }}>
                     <p style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", margin: "0 0 4px" }}>{t("Student's Answer", "إجابة الطالب")}:</p>
-                    {q.question_type === "audio" && studentAns.startsWith("http") ? (
-                      <AdminAudioPlayer src={studentAns} />
-                    ) : (
-                      <p style={{ fontSize: 13, color: G, margin: 0, lineHeight: 1.6 }}>{studentAns}</p>
+                    {notAnswered && (
+                      <div style={{ padding: "6px 10px", background: "#FFF7ED", borderRadius: 8, border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", fontWeight: 700 }}>
+                        ⚠️ {t("Not answered — skipped", "لم تتم الإجابة — تم التخطي")}
+                      </div>
                     )}
+                    {q.question_type === "audio" && audioSrc ? (
+                      <AdminAudioPlayer src={audioSrc} />
+                    ) : !notAnswered ? (
+                      <p style={{ fontSize: 13, color: G, margin: 0, lineHeight: 1.6 }}>{studentAns}</p>
+                    ) : null}
                   </div>
                 )}
 
@@ -374,8 +413,8 @@ const TeacherGrading = () => {
                       </label>
                       <input
                         type="number" min={0} max={q.points || 1} step={0.5}
-                        value={scores[ans.question_id] ?? ""}
-                        onChange={e => setScores(s => ({ ...s, [ans.question_id]: e.target.value }))}
+                        value={scores[q.id] ?? ""}
+                        onChange={e => setScores(s => ({ ...s, [q.id]: e.target.value }))}
                         style={inp}
                       />
                     </div>
@@ -384,8 +423,8 @@ const TeacherGrading = () => {
                         {t("Feedback", "ملاحظة")}
                       </label>
                       <input
-                        value={feedbacks[ans.question_id] ?? ""}
-                        onChange={e => setFeedbacks(f => ({ ...f, [ans.question_id]: e.target.value }))}
+                        value={feedbacks[q.id] ?? ""}
+                        onChange={e => setFeedbacks(f => ({ ...f, [q.id]: e.target.value }))}
                         placeholder={t("Optional feedback…", "ملاحظة اختيارية…")}
                         style={inp}
                       />
@@ -396,9 +435,9 @@ const TeacherGrading = () => {
                 {/* Already graded score */}
                 {isAlreadyGraded && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
-                    {ans.is_correct ? <CheckCircle size={14} color="#16A34A" /> : <XCircle size={14} color="#DC2626" />}
-                    <span style={{ color: G }}>{ans.points_awarded ?? 0} / {q.points || 1} {t("pts", "نقطة")}</span>
-                    {ans.feedback && <span style={{ fontSize: 12, color: "#9CA3AF", fontWeight: 400 }}>— {ans.feedback}</span>}
+                    {ans?.is_correct ? <CheckCircle size={14} color="#16A34A" /> : <XCircle size={14} color="#DC2626" />}
+                    <span style={{ color: G }}>{ans?.points_awarded ?? 0} / {q.points || 1} {t("pts", "نقطة")}</span>
+                    {ans?.feedback && <span style={{ fontSize: 12, color: "#9CA3AF", fontWeight: 400 }}>— {ans.feedback}</span>}
                   </div>
                 )}
               </div>
