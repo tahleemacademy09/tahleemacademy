@@ -1129,19 +1129,47 @@ const ExamTaking = () => {
                           : blob.type.includes("webm") ? "webm"
                           : "mp4";  // safe fallback for Android
                         const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
-                        const { error } = await supabase.storage
-                          .from("exam-media")
-                          .upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
-                        if (!error) {
+                        // The recording only exists as an in-memory blob: URL
+                        // (`url`) until this upload succeeds — blob: URLs die
+                        // the moment this tab closes, so if we give up after
+                        // one failed attempt and quietly save that URL, the
+                        // recording is gone forever the next time the page
+                        // loads (this is exactly what happened to graders
+                        // seeing "Audio file unavailable or corrupted" for
+                        // otherwise-valid submissions). Retry a few times —
+                        // most failures here are a flaky connection, not a
+                        // permanent one — before falling back.
+                        let uploadError: any = null;
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                          const { error } = await supabase.storage
+                            .from("exam-media")
+                            .upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
+                          uploadError = error;
+                          if (!error) break;
+                          if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+                        }
+                        if (!uploadError) {
                           // Use a 7-day signed URL so admin can always play it
                           const { data: ud } = await storageSupabase.storage.from("exam-media").createSignedUrl(path, 604800);
                           setAnswer(q.id, "[audio_recorded]", { audioUrl: ud?.signedUrl || url, fileType: "audio", storagePath: path });
                         } else {
-                          toast({ title: "Upload failed: " + error.message, variant: "destructive" });
-                          // Store blob URL as fallback so student isn't blocked
-                          setAnswer(q.id, "[audio_recorded]", { audioUrl: url, fileType: "audio" });
+                          toast({ title: "Upload failed: " + uploadError.message, description: "Your recording is only saved on this device right now — please try recording again before submitting.", variant: "destructive" });
+                          // Store the blob URL so the student can still hear
+                          // their own take, and flag it so the warning below
+                          // stays visible (not just a toast that disappears)
+                          // and so this doesn't get mistaken for a real,
+                          // persisted answer.
+                          setAnswer(q.id, "[audio_recorded]", { audioUrl: url, fileType: "audio", uploadFailed: true });
                         }
                       }} existingUrl={answers[q.id]?.data?.audioUrl} />
+                      {answers[q.id]?.data?.uploadFailed && (
+                        <div style={{ padding: "8px 12px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#DC2626", fontWeight: 600 }}>
+                          {t(
+                            "⚠️ This recording didn't upload — it will be lost when you leave this page. Please re-record before submitting.",
+                            "⚠️ لم يتم رفع هذا التسجيل — سيُفقد عند مغادرة هذه الصفحة. يُرجى إعادة التسجيل قبل الإرسال."
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
 
