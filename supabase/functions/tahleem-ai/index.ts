@@ -55,11 +55,11 @@ serve(async (req) => {
 
     if (!action) throw new Error("action is required");
 
-    const LOVABLE_API_KEY  = Deno.env.get("LOVABLE_API_KEY");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
 
-    if (!LOVABLE_API_KEY && !ANTHROPIC_API_KEY) {
-      throw new Error("No AI provider configured. Set ANTHROPIC_API_KEY or LOVABLE_API_KEY in Supabase secrets.");
+    if (!GEMINI_API_KEY && !ANTHROPIC_API_KEY) {
+      throw new Error("No AI provider configured. Set GEMINI_API_KEY (primary) and/or ANTHROPIC_API_KEY (fallback) in Supabase secrets.");
     }
 
     let userId: string | null = null;
@@ -76,7 +76,6 @@ serve(async (req) => {
 
     let systemPrompt = "";
     let userContent: any = prompt || "";
-    let model = "google/gemini-2.5-flash-preview";
 
     switch (action) {
       case "revision": {
@@ -96,10 +95,11 @@ Return ONLY valid JSON when asked for structured output — no markdown fences.`
         if (imageData && imageMimeType) {
           userContent = [
             {
-              type: "image_url",
-              image_url: {
-                url: `data:${imageMimeType};base64,${imageData}`,
-                detail: "high",
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: imageMimeType,
+                data: imageData,
               },
             },
             {
@@ -107,7 +107,6 @@ Return ONLY valid JSON when asked for structured output — no markdown fences.`
               text: prompt || "Analyze this image and generate educational content as requested.",
             },
           ];
-          model = "google/gemini-2.5-flash-preview";
         } else {
           userContent = prompt || context?.prompt || "";
         }
@@ -126,7 +125,6 @@ Your task:
 - Return a JSON object with: { "correct": number, "wrong": number, "total": number, "accuracy": number, "errors": [{"word": "...", "expected": "...", "position": number}], "passed": boolean, "feedback_ar": "...", "feedback_en": "..." }
 - "passed" is true if accuracy >= 80%
 - Always respond with valid JSON only, no markdown`;
-        model = "google/gemini-2.5-flash-preview";
         userContent = JSON.stringify({
           expected_text: context?.expected_text || "",
           student_transcription: context?.transcription || prompt || "",
@@ -298,15 +296,75 @@ ${context?.studentContext || ""}`;
       ];
     }
 
-    // ── Provider selection: Anthropic first, Lovable fallback ─────────
-    let responseText = "";
+    // ── Provider selection: Gemini first, Anthropic fallback ──────────
+    const maxTokens = (action === "parse_questions" || action === "generate_questions" || action === "fix_questions") ? 8192 : 4096;
+    const nonSystemMessages = aiMessages.filter((m: any) => m.role !== "system");
 
-    if (ANTHROPIC_API_KEY) {
-      // Anthropic Messages API
+    const toGeminiParts = (content: any): any[] => {
+      if (typeof content === "string") return [{ text: content }];
+      if (Array.isArray(content)) {
+        return content.map((part: any) => {
+          if (part.type === "text") return { text: part.text };
+          if (part.type === "image") {
+            return { inline_data: { mime_type: part.source.media_type, data: part.source.data } };
+          }
+          return { text: JSON.stringify(part) };
+        });
+      }
+      return [{ text: String(content) }];
+    };
+    const geminiContents = nonSystemMessages.map((m: any) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: toGeminiParts(m.content),
+    }));
+
+    let text = "";
+    let usedProvider = "";
+
+    if (GEMINI_API_KEY) {
+      try {
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              ...(systemPrompt ? { system_instruction: { parts: [{ text: systemPrompt }] } } : {}),
+              contents: geminiContents,
+              generationConfig: {
+                maxOutputTokens: maxTokens,
+                ...(action === "transcribe" || action === "notify" ? { responseMimeType: "application/json" } : {}),
+              },
+            }),
+          }
+        );
+
+        if (!geminiRes.ok) {
+          const errText = await geminiRes.text();
+          console.error("Gemini error:", geminiRes.status, errText);
+          throw new Error(`Gemini API error ${geminiRes.status}`);
+        }
+
+        const geminiData = await geminiRes.json();
+        text = (geminiData.candidates?.[0]?.content?.parts || [])
+          .map((p: any) => p.text || "")
+          .join("");
+        if (!text) throw new Error("Gemini returned empty response");
+        usedProvider = "gemini";
+      } catch (geminiErr) {
+        console.error("Gemini failed, falling back to Anthropic:", geminiErr);
+      }
+    }
+
+    if (!usedProvider) {
+      if (!ANTHROPIC_API_KEY) {
+        throw new Error("Gemini failed and no ANTHROPIC_API_KEY fallback is configured.");
+      }
+
       const anthropicBody: any = {
         model: "claude-haiku-4-5-20251001",
-        max_tokens: (action === "parse_questions" || action === "generate_questions" || action === "fix_questions") ? 8192 : 4096,
-        messages: aiMessages.filter((m: any) => m.role !== "system"),
+        max_tokens: maxTokens,
+        messages: nonSystemMessages,
       };
       if (systemPrompt) anthropicBody.system = systemPrompt;
 
@@ -323,49 +381,18 @@ ${context?.studentContext || ""}`;
       if (!anthropicRes.ok) {
         const errText = await anthropicRes.text();
         console.error("Anthropic error:", anthropicRes.status, errText);
-        throw new Error(`Anthropic API error ${anthropicRes.status}`);
-      }
-
-      const anthropicData = await anthropicRes.json();
-      responseText = anthropicData.content?.[0]?.text || "";
-
-    } else {
-      // Lovable AI gateway (OpenAI-compatible)
-      const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          messages: aiMessages,
-          stream: false,
-          max_tokens: (action === "parse_questions" || action === "generate_questions" || action === "fix_questions") ? 8192 : 4096,
-          ...(action === "transcribe" || action === "notify"
-            ? { response_format: { type: "json_object" } }
-            : {}),
-          // Note: parse_questions returns a JSON *array*, not an object, so it
-          // deliberately does not use response_format (which requires an object)
-        }),
-      });
-
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error("Lovable gateway error:", response.status, errText);
-        if (response.status === 429) {
+        if (anthropicRes.status === 429) {
           return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again shortly." }), {
             status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
-        throw new Error(`AI service error: ${response.status}`);
+        throw new Error(`Anthropic API error ${anthropicRes.status}`);
       }
 
-      const data = await response.json();
-      responseText = data.choices?.[0]?.message?.content || "";
+      const anthropicData = await anthropicRes.json();
+      text = anthropicData.content?.[0]?.text || "";
+      usedProvider = "anthropic";
     }
-
-    const text = responseText;
 
     if (action === "transcribe" || action === "notify") {
       try {
