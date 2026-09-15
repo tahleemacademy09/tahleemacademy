@@ -46,7 +46,7 @@ const safeLevel = (lv: string | undefined | null) =>
 
 export default function TeacherSubjects() {
   const { t, language } = useLanguage();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const { joinClass } = useLiveClass();
@@ -105,11 +105,25 @@ export default function TeacherSubjects() {
         };
       }
       setSubjectCounts(counts);
-      setSubjects(subs);
+      // Overlay each subject with its snapshot for the teacher's current
+      // academic term, so titles/levels shown here match Term 1's old
+      // naming until the teacher switches, and the new naming after.
+      let finalSubs = subs;
+      if (profile?.active_term_id && subs.length > 0) {
+        const { data: snaps } = await supabase
+          .from("subject_term_snapshots")
+          .select("subject_id, title, level, levels, delivery_mode, track")
+          .eq("term_id", profile.active_term_id)
+          .in("subject_id", subs.map((s: any) => s.id));
+        const snapById = Object.fromEntries((snaps || []).map((s: any) => [s.subject_id, s]));
+        finalSubs = subs.map((s: any) => ({ ...s, ...(snapById[s.id] || {}) }));
+      }
+
+      setSubjects(finalSubs);
       setLoading(false);
     };
     fetchSubjects();
-  }, [user]);
+  }, [user, profile?.active_term_id]);
 
   const loadSubjectDetails = async (sub: any) => {
     setSelectedSubject(sub);
