@@ -3,19 +3,36 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 /**
  * Unified AI Edge Function for Tahleem Academy
- * Actions: revision | transcribe | notify | chat | generate
- *
- * FIX: corsHeaders was previously defined at MODULE LEVEL using `req.url`,
- * but `req` only exists inside the serve() callback. This caused a
- * ReferenceError on every invocation → "Failed to send a request to the
- * Edge Function". corsHeaders is now computed inside serve() where req is
- * in scope, using the standard HTTP `Origin` request header.
+ * Actions: revision | transcribe | notify | chat | generate |
+ *          parse_questions | generate_questions | fix_questions
  */
 
 const ALLOWED_ORIGINS = [
   "https://tahleemacademy.vercel.app",
   "http://localhost:5173",
 ];
+
+// Shared question-type reference used by parse_questions, generate_questions,
+// and fix_questions so all three AI actions understand every question type
+// the exam editor supports and emit exactly the fields each type needs.
+const QUESTION_TYPE_GUIDE = `
+QUESTION TYPES the exam editor supports — pick the correct "question_type" for each question and populate ONLY the fields relevant to it:
+
+- "mcq" — single correct option. Fill "options" (4 items, one is_correct: true).
+- "multi_select" — more than one correct option. Fill "options" with 2+ marked is_correct: true.
+- "true_false" — options must be exactly [{"id":"true","text":"True","text_ar":"صح","is_correct":bool},{"id":"false","text":"False","text_ar":"خطأ","is_correct":bool}]; correct_answer is "true" or "false".
+- "image_mcq" — same shape as "mcq" (options with is_correct). Leave each option's image_url out — the teacher adds images after.
+- "comprehension" — same shape as "mcq", and also fill "reading_passage" (EN) and "reading_passage_ar" (AR) with the passage the question refers to.
+- "short_answer" — no options ([]). Put the best one-line answer in "correct_answer". Also fill "accepted_answers" (array of other acceptable phrasings/synonyms) when there's more than one reasonable wording.
+- "fill_blank" — no options ([]). The question_text must contain a blank (___). "correct_answer" is the missing word/phrase; fill "accepted_answers" with acceptable variants if relevant.
+- "essay" — no options ([]). Leave "correct_answer" empty (essays are manually graded); instead use "explanation" to describe what a strong answer should cover. Set "min_words"/"max_words" if a length is implied or requested, else 0.
+- "audio" — a spoken-response or dictation question (e.g. "recite this ayah", "listen and repeat", "read this passage aloud"). No options ([]). Set "audio_response_type" to "audio" (student responds by recording) or "text" (student types what they hear) based on what's being asked. Put any reference text/answer in "correct_answer".
+- "dictation" — same as "audio" but specifically listen-and-write: set "audio_response_type": "text", "correct_answer" is the exact text dictated.
+- "matching" — no options. Fill "matching_pairs": [{"left": string, "right": string}, ...] (at least 3 pairs) with left/right items that correctly correspond in both English and, mirrored, in Arabic when the source/topic is Arabic — put one language's pairs in "matching_pairs" and note the other language only if explicitly asked.
+- "ordering" — no options. Fill "ordering_items": array of strings IN THE CORRECT ORDER (the editor shuffles them for the student).
+- "drawing" — no options, no correct_answer (manually graded). Use "explanation" to describe what should be drawn/labelled.
+
+ALWAYS include every field in the JSON shape below for every question, using empty string / empty array / 0 / false for anything not applicable to that question's type — never omit a key.`;
 
 serve(async (req) => {
   // Compute CORS headers inside serve() — req is in scope here
@@ -135,30 +152,38 @@ You will receive raw, messily-pasted exam questions (from Word, PDF, WhatsApp, t
 
 Your job:
 1. Split the pasted text into individual questions.
-2. For each question, detect its type: "mcq" (single correct option), "multi_select" (more than one correct option), "true_false", "short_answer" (no options given, one-line factual answer), or "fill_blank" (contains a blank like ___ or a missing word).
+2. Detect each question's type using the guide below.
 3. ALWAYS fill in BOTH question_text (English) AND question_text_ar (Arabic) for every question, and do the same for every option's text/text_ar. Whichever language the source is written in, translate it into the other language yourself using your own knowledge — do not leave either field empty just because the source only gave one language. Only leave a field empty if the content is untranslatable (e.g. a proper noun or Qur'anic ayah that should stay in Arabic script — in that case still provide a transliteration or gloss in the other field rather than leaving it blank).
 4. Extract every answer option exactly as given, preserving Arabic script where present, into the options array (id: "a","b","c","d"... in order), translated per rule 3.
 5. Determine the correct option(s):
    - If the source text marks the correct answer (e.g. an asterisk, "Answer: B", bold, underline, "✓"), use that.
    - If no answer is marked, use your own subject-matter knowledge (Qur'an, Hadith, Fiqh, Arabic grammar/morphology, Islamic history, general knowledge as applicable) to determine the single most likely correct answer yourself, and select it.
-   - Never leave an mcq/multi_select/true_false question with no option marked correct — always make your best determination.
-   - For short_answer/fill_blank with no options, put your best-answer text in correct_answer instead.
+   - Never leave a question type that has options with none marked correct — always make your best determination.
 6. Assign difficulty ("easy"|"medium"|"hard") based on how advanced the question content is.
 7. Default points to 1 unless a mark value is given in the source text for that specific question, or the teacher's instructions below set a points rule.
+${QUESTION_TYPE_GUIDE}
 
 Return ONLY a raw JSON array (no markdown fences, no commentary), where each item has exactly this shape:
 {
-  "question_type": "mcq" | "multi_select" | "true_false" | "short_answer" | "fill_blank",
+  "question_type": "mcq" | "multi_select" | "true_false" | "short_answer" | "fill_blank" | "essay" | "image_mcq" | "comprehension" | "audio" | "dictation" | "matching" | "ordering" | "drawing",
   "question_text": string,
   "question_text_ar": string,
+  "instruction_text": string,
+  "instruction_text_ar": string,
+  "reading_passage": string,
+  "reading_passage_ar": string,
   "options": [ { "id": "a", "text": string, "text_ar": string, "is_correct": boolean } ],
   "correct_answer": string,
+  "accepted_answers": string[],
+  "matching_pairs": [ { "left": string, "right": string } ],
+  "ordering_items": string[],
+  "audio_response_type": "text" | "audio",
+  "min_words": number,
+  "max_words": number,
   "points": number,
   "difficulty": "easy" | "medium" | "hard",
   "explanation": string
 }
-For true_false questions, options must be exactly [{"id":"true","text":"True","text_ar":"صح","is_correct":bool},{"id":"false","text":"False","text_ar":"خطأ","is_correct":bool}] and correct_answer must be "true" or "false".
-For short_answer/fill_blank, options must be an empty array [].
 "explanation" should be a one-sentence reason for the correct answer (helpful for the teacher reviewing it) — never leave it blank.${
           instructions ? `\n\nTHE TEACHER ALSO GAVE THESE INSTRUCTIONS — follow them exactly, they override any default above where they conflict:\n"""${instructions}"""` : ""
         }`;
@@ -173,27 +198,75 @@ The teacher will describe, in plain language, what brand-new exam questions they
 Your job:
 1. Follow the teacher's description as closely as possible: exact question count, type(s), topic, difficulty, and level if given. If something isn't specified, use sensible defaults (mcq, medium difficulty).
 2. ALWAYS write BOTH question_text (English) AND question_text_ar (Arabic) for every question, and the same for every option's text/text_ar — never leave either language blank.
-3. For every mcq/multi_select/true_false question, write plausible distractor options and mark the correct one(s) yourself — never leave a question with no correct option marked.
-4. For short_answer/fill_blank, options must be an empty array [] and the answer goes in correct_answer.
-5. Assign difficulty ("easy"|"medium"|"hard") per question, matching what the teacher asked for if given.
-6. Default points to 1 per question unless the teacher's description or instructions below specify otherwise.
+3. Write plausible distractor options and mark the correct one(s) yourself for any type that has options — never leave a question with no correct option marked.
+4. Assign difficulty ("easy"|"medium"|"hard") per question, matching what the teacher asked for if given.
+5. Default points to 1 per question unless the teacher's description or instructions below specify otherwise.
+${QUESTION_TYPE_GUIDE}
 
 Return ONLY a raw JSON array (no markdown fences, no commentary), where each item has exactly this shape:
 {
-  "question_type": "mcq" | "multi_select" | "true_false" | "short_answer" | "fill_blank",
+  "question_type": "mcq" | "multi_select" | "true_false" | "short_answer" | "fill_blank" | "essay" | "image_mcq" | "comprehension" | "audio" | "dictation" | "matching" | "ordering" | "drawing",
   "question_text": string,
   "question_text_ar": string,
+  "instruction_text": string,
+  "instruction_text_ar": string,
+  "reading_passage": string,
+  "reading_passage_ar": string,
   "options": [ { "id": "a", "text": string, "text_ar": string, "is_correct": boolean } ],
   "correct_answer": string,
+  "accepted_answers": string[],
+  "matching_pairs": [ { "left": string, "right": string } ],
+  "ordering_items": string[],
+  "audio_response_type": "text" | "audio",
+  "min_words": number,
+  "max_words": number,
   "points": number,
   "difficulty": "easy" | "medium" | "hard",
   "explanation": string
 }
-For true_false questions, options must be exactly [{"id":"true","text":"True","text_ar":"صح","is_correct":bool},{"id":"false","text":"False","text_ar":"خطأ","is_correct":bool}] and correct_answer must be "true" or "false".
 "explanation" should be a one-sentence reason for the correct answer — never leave it blank.${
           instructions ? `\n\nADDITIONAL INSTRUCTIONS — follow them exactly, they override any default above where they conflict:\n"""${instructions}"""` : ""
         }`;
         userContent = prompt || context?.rawText || "";
+        break;
+      }
+
+      case "fix_questions": {
+        systemPrompt = `You are editing a small batch of already-added exam questions for Tahleem Academy's exam builder, based on the teacher's plain-language instructions.
+
+You will receive a JSON array of existing questions (context.questions) and the teacher's instructions (context.instructions) describing what to change — e.g. "question 3's correct answer should be B", "reword these to be clearer", "make these harder", "convert these to fill-in-the-blank".
+
+Your job:
+1. Return EXACTLY the same number of questions, in the SAME ORDER as they were given — one output item per input item, even if an instruction only applies to some of them (leave the untouched ones as-is, just re-emit them unchanged).
+2. Apply the teacher's instructions precisely. Only change what they asked to change; preserve everything else about each question.
+3. If an instruction changes a question's type (e.g. "make this fill-in-the-blank instead"), reshape ALL of its fields to match that type correctly per the guide below — don't leave stale fields (e.g. old options) from the previous type.
+4. Keep both question_text and question_text_ar in sync — if you edit one language, update the other to match.
+${QUESTION_TYPE_GUIDE}
+
+Return ONLY a raw JSON array (no markdown fences, no commentary) of the edited questions, each with exactly this shape:
+{
+  "question_type": "mcq" | "multi_select" | "true_false" | "short_answer" | "fill_blank" | "essay" | "image_mcq" | "comprehension" | "audio" | "dictation" | "matching" | "ordering" | "drawing",
+  "question_text": string,
+  "question_text_ar": string,
+  "instruction_text": string,
+  "instruction_text_ar": string,
+  "reading_passage": string,
+  "reading_passage_ar": string,
+  "options": [ { "id": "a", "text": string, "text_ar": string, "is_correct": boolean } ],
+  "correct_answer": string,
+  "accepted_answers": string[],
+  "matching_pairs": [ { "left": string, "right": string } ],
+  "ordering_items": string[],
+  "audio_response_type": "text" | "audio",
+  "min_words": number,
+  "max_words": number,
+  "points": number,
+  "difficulty": "easy" | "medium" | "hard",
+  "explanation": string
+}
+THE TEACHER'S INSTRUCTIONS — follow them exactly:
+"""${instructions || prompt || ""}"""`;
+        userContent = JSON.stringify(context?.questions || []);
         break;
       }
 
@@ -232,7 +305,7 @@ ${context?.studentContext || ""}`;
       // Anthropic Messages API
       const anthropicBody: any = {
         model: "claude-haiku-4-5-20251001",
-        max_tokens: (action === "parse_questions" || action === "generate_questions") ? 8192 : 4096,
+        max_tokens: (action === "parse_questions" || action === "generate_questions" || action === "fix_questions") ? 8192 : 4096,
         messages: aiMessages.filter((m: any) => m.role !== "system"),
       };
       if (systemPrompt) anthropicBody.system = systemPrompt;
@@ -268,7 +341,7 @@ ${context?.studentContext || ""}`;
           model,
           messages: aiMessages,
           stream: false,
-          max_tokens: (action === "parse_questions" || action === "generate_questions") ? 8192 : 4096,
+          max_tokens: (action === "parse_questions" || action === "generate_questions" || action === "fix_questions") ? 8192 : 4096,
           ...(action === "transcribe" || action === "notify"
             ? { response_format: { type: "json_object" } }
             : {}),
@@ -307,8 +380,7 @@ ${context?.studentContext || ""}`;
       }
     }
 
-    if (action === "parse_questions" || action === "generate_questions") {
-      // Strip accidental ```json fences and any leading/trailing prose, then parse the array.
+    if (action === "parse_questions" || action === "generate_questions" || action === "fix_questions") {
       const cleaned = text.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
       const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
       try {
@@ -318,7 +390,7 @@ ${context?.studentContext || ""}`;
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       } catch (err) {
-        console.error("parse_questions: could not parse model output as JSON array:", text);
+        console.error(`${action}: could not parse model output as JSON array:`, text);
         return new Response(JSON.stringify({ error: "AI did not return valid question JSON. Try again or simplify the pasted text.", raw: text }), {
           status: 500,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
