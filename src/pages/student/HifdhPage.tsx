@@ -1,23 +1,37 @@
 // src/pages/student/HifdhPage.tsx
 // Tabbed shell — ALL tabs remain mounted (CSS visibility) so state is never lost on tab switch.
 // onSessionSaved callback flows from child tabs → Overview to trigger instant re-fetch.
+//
+// Restructured into the classical three-tier Hifdh system:
+//   Sabaq  — today's NEW memorization portion (HifdhMemorization)
+//   Sabqi  — recent revision, drilled hard for ~3 weeks after memorizing (HifdhRevision, tierFilter="sabqi")
+//   Manzil — old revision, long-cycle rotation so it never fades (HifdhRevision, tierFilter="manzil")
+//   Live   — join the teacher's live Hifdh class queue (HifdhLiveClass)
+//
+// NOTE: HifdhRevision's tierFilter prop is a planned follow-up patch (see
+// project notes) — passing it now is forward-compatible and a no-op until
+// that patch lands, so this file ships safely on its own.
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { LayoutDashboard, BookOpen, ClipboardCheck, Brain } from "lucide-react";
+import { LayoutDashboard, BookOpen, Repeat, Layers, ClipboardCheck, Radio } from "lucide-react";
 import HifdhDashboard    from "@/components/hifdh/HifdhDashboard";
 import HifdhRevision     from "@/pages/student/HifdhRevision";
 import HifdhTest         from "@/components/hifdh/HifdhTest";
 import HifdhMemorization from "@/components/hifdh/HifdhMemorization";
+import HifdhLiveClass    from "@/components/hifdh/HifdhLiveClass";
 import { H_GOLD as GOLD } from "@/components/hifdh/hifdhTokens";
 
-type Tab = "overview" | "revision" | "test" | "memorization";
+type Tab = "overview" | "sabaq" | "sabqi" | "manzil" | "test" | "live";
 const TAB_KEY = "hifdh_active_tab";
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
-  { id: "overview",     label: "Overview", icon: <LayoutDashboard size={12} /> },
-  { id: "revision",     label: "Revision", icon: <BookOpen        size={12} /> },
-  { id: "test",         label: "Test",     icon: <ClipboardCheck  size={12} /> },
-  { id: "memorization", label: "Memorize", icon: <Brain           size={12} /> },
+  { id: "overview", label: "Overview", icon: <LayoutDashboard size={12} /> },
+  { id: "sabaq",    label: "Sabaq",    icon: <BookOpen        size={12} /> },
+  { id: "sabqi",    label: "Sabqi",    icon: <Repeat          size={12} /> },
+  { id: "manzil",   label: "Manzil",   icon: <Layers          size={12} /> },
+  { id: "test",     label: "Test",     icon: <ClipboardCheck  size={12} /> },
+  { id: "live",     label: "Live",     icon: <Radio           size={12} /> },
 ];
+
 export default function HifdhPage() {
   const [tab, setTab] = useState<Tab>(() => {
     const s = localStorage.getItem(TAB_KEY) as Tab | null;
@@ -50,10 +64,14 @@ export default function HifdhPage() {
 
   useEffect(() => { localStorage.setItem(TAB_KEY, tab); }, [tab]);
 
+  // Dashboard "quick action" cards route here — kept for HifdhDashboard's
+  // existing onNavigate contract (recitation → sabqi drill, memorize → sabaq,
+  // test → test, live → live queue).
   const navigate = useCallback((target: string) => {
-    if (target === "recitation") setTab("revision");
+    if (target === "recitation") setTab("sabqi");
     else if (target === "test")  setTab("test");
-    else if (target === "memorize") setTab("memorization");
+    else if (target === "memorize") setTab("sabaq");
+    else if (target === "live") setTab("live");
   }, []);
 
   return (
@@ -90,16 +108,28 @@ export default function HifdhPage() {
           />
         </div>
 
-        <div className="h-full overflow-hidden" style={{ display: tab === "revision" ? "flex" : "none", flexDirection: "column" }}>
-          <HifdhRevision userId={userId} autoStart={true} onSessionSaved={triggerRefresh} />
+        {/* Sabaq — today's new memorization target */}
+        <div className="h-full overflow-y-auto" style={{ display: tab === "sabaq" ? "block" : "none" }}>
+          <HifdhMemorization onSessionSaved={triggerRefresh} />
+        </div>
+
+        {/* Sabqi — recent revision (memorized within the last ~3 weeks) */}
+        <div className="h-full overflow-hidden" style={{ display: tab === "sabqi" ? "flex" : "none", flexDirection: "column" }}>
+          <HifdhRevision userId={userId} autoStart={true} onSessionSaved={triggerRefresh} tierFilter="sabqi" />
+        </div>
+
+        {/* Manzil — old revision, long-cycle rotation */}
+        <div className="h-full overflow-hidden" style={{ display: tab === "manzil" ? "flex" : "none", flexDirection: "column" }}>
+          <HifdhRevision userId={userId} autoStart={true} onSessionSaved={triggerRefresh} tierFilter="manzil" />
         </div>
 
         <div className="h-full overflow-y-auto" style={{ display: tab === "test" ? "block" : "none" }}>
           <HifdhTest onSessionSaved={triggerRefresh} />
         </div>
 
-        <div className="h-full overflow-y-auto" style={{ display: tab === "memorization" ? "block" : "none" }}>
-          <HifdhMemorization onSessionSaved={triggerRefresh} />
+        {/* Live — join the teacher's live Hifdh class (Sabaq/Sabqi/Manzil recitation queue) */}
+        <div className="h-full overflow-hidden" style={{ display: tab === "live" ? "flex" : "none", flexDirection: "column" }}>
+          <HifdhLiveClass userId={userId} studentName={studentName} isTeacher={false} />
         </div>
 
       </div>
