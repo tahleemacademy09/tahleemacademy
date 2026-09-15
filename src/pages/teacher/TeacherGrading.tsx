@@ -356,10 +356,15 @@ const TeacherGrading = () => {
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
                   <div style={{ width: 28, height: 28, borderRadius: 8, background: G, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900, color: "#fff", flexShrink: 0 }}>{i + 1}</div>
                   <div style={{ flex: 1 }}>
-                    {q.reading_passage && (
+                    {(q.reading_passage || q.reading_passage_ar) && (
                       <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", borderLeft: "4px solid #C9A84C" }}>
                         <div style={{ fontSize: 10, fontWeight: 700, color: "#C9A84C", letterSpacing: 1, marginBottom: 4 }}>📖 {t("READING PASSAGE", "نص القراءة")}</div>
-                        <div dir="auto" style={{ fontSize: 13, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
+                        {q.reading_passage && (
+                          <div dir="auto" style={{ fontSize: 13, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
+                        )}
+                        {q.reading_passage_ar && (
+                          <div dir="rtl" style={{ fontSize: 13, lineHeight: 1.8, fontFamily: "'Amiri',serif", marginTop: q.reading_passage ? 6 : 0 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage_ar) }} />
+                        )}
                       </div>
                     )}
                     {(q.instruction_text || q.instruction_text_ar) && (
