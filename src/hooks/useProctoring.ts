@@ -244,16 +244,28 @@ export const useProctoring = (
           // an element's background/box at the zoomed size but measures its
           // children at their native size, producing a solid color block
           // with overflowing, overlapping content (exactly what shows up
-          // around the exam question card, which uses zoom:0.8). Convert
-          // any inline zoom on the CLONE only into an equivalent transform,
-          // which html2canvas does handle correctly.
+          // around the exam question card, which uses zoom:0.8).
+          //
+          // `transform: scale()` renders correctly in html2canvas, but unlike
+          // `zoom` it does NOT shrink the element's layout box — only what's
+          // painted inside it. So swapping zoom for a bare transform leaves
+          // the box at its full pre-zoom footprint, with the now-smaller
+          // content sitting in its top-left corner and the rest of that box
+          // rendering as blank background (the "half blank" screenshots).
+          // Fix: capture the zoomed (already-shrunk) box size FIRST, then
+          // pin the box to that size explicitly before scaling its content,
+          // so layout doesn't leave a gap for the vacated space.
           clonedDoc.querySelectorAll<HTMLElement>("*").forEach(el => {
             const style = el.style as any;
             const z = style.zoom || (getComputedStyle(el) as any).zoom;
             if (z && z !== "1" && z !== "normal") {
               const factor = parseFloat(z);
-              if (!isNaN(factor)) {
+              if (!isNaN(factor) && factor > 0) {
+                const rect = el.getBoundingClientRect(); // size WITH zoom still in effect
                 style.zoom = "1";
+                el.style.width = `${rect.width}px`;
+                el.style.height = `${rect.height}px`;
+                el.style.overflow = "hidden";
                 el.style.transform = `scale(${factor})`;
                 el.style.transformOrigin = "top left";
               }
