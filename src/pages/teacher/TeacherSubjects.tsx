@@ -68,9 +68,15 @@ export default function TeacherSubjects() {
       const { data: owned } = await supabase
         .from("subjects").select("*").eq("teacher_id", user.id).order("title");
 
+      // subject_timetable stores co-teachers in teacher_ids[]; the legacy
+      // teacher_id column is only the primary/first teacher — matches the
+      // same pattern used in TeacherDashboard / TeacherGrading / TeacherOralExams.
       const { data: ttSlots } = await supabase
-        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
-      const ttSubjectIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
+        .from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids");
+      const ttMineSlots = (ttSlots || []).filter((s: any) =>
+        s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
+      );
+      const ttSubjectIds = [...new Set(ttMineSlots.map((s: any) => s.subject_id).filter(Boolean))];
 
       let extra: any[] = [];
       if (ttSubjectIds.length > 0) {
