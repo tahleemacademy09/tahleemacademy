@@ -349,9 +349,13 @@ const ExamEditor = () => {
   const [aiPointsOverride, setAiPointsOverride] = useState(""); // client-side guaranteed override, blank = leave AI's value
   const [aiReplaceExisting, setAiReplaceExisting] = useState(false); // clear the list first so numbering starts at Q1
   // ── AI Generate (describe instructions → brand-new questions) ──────────
-  const [aiMode,         setAiMode]         = useState<"reorganize"|"generate">("reorganize");
+  const [aiMode,         setAiMode]         = useState<"reorganize"|"generate"|"fix">("reorganize");
   const [aiInstructions, setAiInstructions] = useState("");
   const [aiGenerating,   setAiGenerating]   = useState(false);
+  // ── AI Fix (pick already-added questions + free-text instruction → edits in place) ──
+  const [aiFixSelected,     setAiFixSelected]     = useState<Set<number>>(new Set());
+  const [aiFixInstructions, setAiFixInstructions] = useState("");
+  const [aiFixing,          setAiFixing]          = useState(false);
 
   const [activeTab,        setActiveTab]        = useState("settings");
   const [scheduleErrors,   setScheduleErrors]   = useState<{start?: string; end?: string}>({});
@@ -677,7 +681,7 @@ const ExamEditor = () => {
       setAiRawText("");
       setAiReorgOpen(false);
     } catch (err: any) {
-      toast({ title: t("❌ AI Reorganize failed","❌ فشلت إعادة التنظيم بالذكاء الاصطناعي"), description: err.message, variant: "destructive" });
+      toast({ title: t("❌ Tahleem Assistant Reorganize failed","❌ فشلت إعادة التنظيم بمساعد تحليم"), description: err.message, variant: "destructive" });
     }
     setAiParsing(false);
   };
@@ -701,7 +705,7 @@ const ExamEditor = () => {
       if (data?.error) throw new Error(data.error);
 
       const raw: any[] = Array.isArray(data?.questions) ? data.questions : [];
-      if (!raw.length) throw new Error("The AI didn't return any questions — try rephrasing your instructions");
+      if (!raw.length) throw new Error("Tahleem Assistant didn't return any questions — try rephrasing your instructions");
 
       const forcedPoints = aiPointsOverride.trim() ? Number(aiPointsOverride) : null;
 
@@ -743,9 +747,101 @@ const ExamEditor = () => {
       setAiInstructions("");
       setAiReorgOpen(false);
     } catch (err: any) {
-      toast({ title: t("❌ AI Generate failed","❌ فشل توليد الأسئلة"), description: err.message, variant: "destructive" });
+      toast({ title: t("❌ Tahleem Assistant Generate failed","❌ فشل توليد الأسئلة بمساعد تحليم"), description: err.message, variant: "destructive" });
     }
     setAiGenerating(false);
+  };
+
+  // ── AI Fix: pick already-added questions + describe what's wrong ───────
+  // Unlike reorganize/generate, this mode never needs re-pasting — it sends
+  // the teacher's already-selected questions (as structured objects, not
+  // text) plus a free-text instruction to the tahleem-ai edge function,
+  // then splices the edited questions back into place by their original
+  // index, leaving every other question untouched.
+  const handleFixQuestions = async () => {
+    if (aiFixSelected.size === 0) {
+      toast({ title: t("Select at least one question to fix","اختر سؤالاً واحدًا على الأقل لإصلاحه"), variant: "destructive" });
+      return;
+    }
+    if (!aiFixInstructions.trim()) {
+      toast({ title: t("Describe what needs fixing first","صف ما يحتاج إلى إصلاح أولاً"), variant: "destructive" });
+      return;
+    }
+    const indices = Array.from(aiFixSelected).sort((a, b) => a - b);
+    setAiFixing(true);
+    try {
+      const payloadQuestions = indices.map(i => {
+        const q = questions[i];
+        return {
+          question_type: q.question_type,
+          question_text: q.question_text,
+          question_text_ar: q.question_text_ar,
+          options: q.options,
+          correct_answer: q.correct_answer,
+          points: q.points,
+          difficulty: q.difficulty,
+          explanation: q.explanation,
+        };
+      });
+
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+        body: {
+          action: "fix_questions",
+          prompt: aiFixInstructions,
+          context: { questions: payloadQuestions, instructions: aiFixInstructions },
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const raw: any[] = Array.isArray(data?.questions) ? data.questions : [];
+      if (raw.length !== indices.length) {
+        throw new Error(t(
+          "Tahleem Assistant returned a different number of questions than expected — no changes were applied",
+          "أعاد مساعد تحليم عددًا مختلفًا من الأسئلة عمّا هو متوقع — لم يتم تطبيق أي تغييرات"
+        ));
+      }
+
+      setQuestions(prev => {
+        const next = [...prev];
+        indices.forEach((qIndex, i) => {
+          const q = raw[i];
+          const options = Array.isArray(q.options)
+            ? q.options.map((o: any, oi: number) => ({
+                id: o.id || String.fromCharCode(97 + oi),
+                text: o.text || "",
+                text_ar: o.text_ar || "",
+                is_correct: !!o.is_correct,
+                image_url: next[qIndex]?.options?.[oi]?.image_url || "",
+              }))
+            : next[qIndex].options;
+          const derivedCorrect = q.correct_answer || options.find((o: any) => o.is_correct)?.id || "";
+          next[qIndex] = {
+            ...next[qIndex],
+            question_type: q.question_type || next[qIndex].question_type,
+            question_text: q.question_text ?? next[qIndex].question_text,
+            question_text_ar: q.question_text_ar ?? next[qIndex].question_text_ar,
+            options,
+            correct_answer: derivedCorrect,
+            points: Number(q.points) || next[qIndex].points,
+            difficulty: q.difficulty || next[qIndex].difficulty,
+            explanation: q.explanation ?? next[qIndex].explanation,
+          };
+        });
+        return next;
+      });
+
+      toast({
+        title: `✅ ${t("Fixed","تم الإصلاح")} ${indices.length} ${t("questions","سؤال")}`,
+        description: t("Review the changes before publishing the exam.","راجع التغييرات قبل نشر الامتحان."),
+      });
+      setAiFixInstructions("");
+      setAiFixSelected(new Set());
+      setAiReorgOpen(false);
+    } catch (err: any) {
+      toast({ title: t("❌ Tahleem Assistant Fix failed","❌ فشل الإصلاح بمساعد تحليم"), description: err.message, variant: "destructive" });
+    }
+    setAiFixing(false);
   };
 
   // ── FIX 3: Question Bank ──────────────────────────────────────────────────
@@ -1677,16 +1773,16 @@ const ExamEditor = () => {
                     </DialogContent>
                   </Dialog>
 
-                  {/* AI Questions — paste raw questions to reorganize, or describe what you want and let the AI write them from scratch */}
+                  {/* Tahleem Assistant Questions — paste raw questions to reorganize, describe what you want to generate from scratch, or fix already-added questions in place */}
                   <Dialog open={aiReorgOpen} onOpenChange={setAiReorgOpen}>
                     <DialogTrigger asChild>
                       <Button variant="outline" size="sm" className="gap-1.5 sm:gap-2 rounded-xl text-emerald-800 border-emerald-300 bg-emerald-50 font-bold text-xs sm:text-sm h-9">
-                        <Sparkles className="h-4 w-4"/><span className="hidden sm:inline">{t("AI Questions","أسئلة بالذكاء الاصطناعي")}</span><span className="sm:hidden">AI</span>
+                        <Sparkles className="h-4 w-4"/><span className="hidden sm:inline">{t("Tahleem Assistant","مساعد تحليم")}</span><span className="sm:hidden">{t("Assistant","المساعد")}</span>
                       </Button>
                     </DialogTrigger>
                     <DialogContent className={cn("max-w-[95vw] sm:max-w-2xl", isMobile ? "p-4" : "p-6")}>
                       <DialogHeader>
-                        <DialogTitle className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-emerald-700"/>{t("AI Questions","أسئلة بالذكاء الاصطناعي")}</DialogTitle>
+                        <DialogTitle className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-emerald-700"/>{t("Tahleem Assistant","مساعد تحليم")}</DialogTitle>
                       </DialogHeader>
 
                       {/* Mode toggle */}
@@ -1701,9 +1797,16 @@ const ExamEditor = () => {
                             aiMode === "reorganize" ? "bg-white shadow-sm text-emerald-800" : "text-slate-500")}>
                           📋 {t("Paste existing questions","لصق أسئلة موجودة")}
                         </button>
+                        <button type="button" onClick={() => setAiMode("fix")}
+                          className={cn("flex-1 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all",
+                            aiMode === "fix" ? "bg-white shadow-sm text-emerald-800" : "text-slate-500")}>
+                          🛠️ {t("Fix added questions","إصلاح الأسئلة المضافة")}
+                        </button>
                       </div>
 
-                      {/* Shared controls — always visible, apply to whichever mode runs */}
+                      {/* Shared controls — points/replace only apply to generate & reorganize, which produce new rows; fix mode edits existing rows in place so these don't apply */}
+                      {aiMode !== "fix" && (
+                      <>
                       <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2.5 mt-2">
                         <label className="text-xs font-bold text-emerald-900 whitespace-nowrap">
                           {t("Points per question","النقاط لكل سؤال")}
@@ -1718,8 +1821,8 @@ const ExamEditor = () => {
                         />
                         <span className="text-[11px] text-emerald-800/70 leading-tight">
                           {t(
-                            "Leave blank to let the AI decide per question. Set a number to force every question to that many points.",
-                            "اتركه فارغًا ليقرر الذكاء الاصطناعي لكل سؤال. حدد رقمًا لفرضه على كل الأسئلة."
+                            "Leave blank to let Tahleem Assistant decide per question. Set a number to force every question to that many points.",
+                            "اتركه فارغًا ليقرر مساعد تحليم لكل سؤال. حدد رقمًا لفرضه على كل الأسئلة."
                           )}
                         </span>
                       </div>
@@ -1730,13 +1833,71 @@ const ExamEditor = () => {
                           "استبدال قائمة الأسئلة الحالية (يبدأ الترقيم من س1) بدلاً من الإضافة في النهاية"
                         )}
                       </label>
+                      </>
+                      )}
 
-                      {aiMode === "generate" ? (
+                      {aiMode === "fix" ? (
                         <div className="space-y-3 py-2">
                           <DialogDescription>
                             {t(
-                              "Describe what you want in plain language — topic, how many, question type, difficulty, level. The AI writes brand-new questions (bilingual, with options and the correct answer already selected) from its own subject knowledge.",
-                              "صف ما تريده بلغة بسيطة — الموضوع، العدد، نوع السؤال، الصعوبة، المستوى. سيكتب الذكاء الاصطناعي أسئلة جديدة تمامًا (بالعربية والإنجليزية، مع الخيارات والإجابة الصحيحة) من معرفته الخاصة."
+                              "Pick which already-added questions need fixing, then describe the change in plain language — e.g. \"question 3's correct answer should be B\", \"reword these to be clearer\", \"make these harder\". No need to re-paste anything.",
+                              "اختر الأسئلة المضافة التي تحتاج إلى إصلاح، ثم صف التغيير بلغة بسيطة — مثال: \"إجابة السؤال 3 يجب أن تكون B\"، \"أعد صياغة هذه لتكون أوضح\". لا حاجة لإعادة لصق أي شيء."
+                            )}
+                          </DialogDescription>
+                          {questions.length === 0 ? (
+                            <p className="text-xs text-slate-500 italic px-1">{t("No questions added yet — add some first, then come back here to fix them.","لم تتم إضافة أي أسئلة بعد — أضف بعضًا أولاً ثم عد لإصلاحها.")}</p>
+                          ) : (
+                            <div className="max-h-[180px] overflow-y-auto space-y-1.5 rounded-xl border border-slate-200 p-2">
+                              {questions.map((q, i) => (
+                                <label key={i} className="flex items-start gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-slate-50 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    className="h-3.5 w-3.5 mt-0.5 accent-emerald-700 shrink-0"
+                                    checked={aiFixSelected.has(i)}
+                                    onChange={e => {
+                                      setAiFixSelected(prev => {
+                                        const next = new Set(prev);
+                                        if (e.target.checked) next.add(i); else next.delete(i);
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                  <span className="font-bold text-slate-500 shrink-0">Q{i + 1}.</span>
+                                  <span className="text-slate-700 line-clamp-1" dir="auto">
+                                    {q.question_text || q.question_text_ar || t("(empty question)","(سؤال فارغ)")}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                          <Textarea
+                            value={aiFixInstructions}
+                            onChange={e => setAiFixInstructions(e.target.value)}
+                            placeholder={t(
+                              "e.g. \"the correct answer for question 3 should be option B, not C\"",
+                              "مثال: \"يجب أن تكون الإجابة الصحيحة للسؤال 3 هي الخيار B وليس C\""
+                            )}
+                            className="min-h-[100px] rounded-xl text-sm"
+                            dir="auto"
+                          />
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs text-slate-500">
+                              {aiFixSelected.size > 0
+                                ? `${aiFixSelected.size} ${t("question(s) selected","سؤال محدد")}`
+                                : t("Nothing selected yet","لم يتم تحديد شيء بعد")}
+                            </p>
+                            <Button onClick={handleFixQuestions} disabled={aiFixing || aiFixSelected.size === 0 || !aiFixInstructions.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
+                              {aiFixing ? <Loader2 className="h-4 w-4 animate-spin"/> : <Sparkles className="h-4 w-4"/>}
+                              {aiFixing ? t("Fixing…","جارٍ الإصلاح…") : t("Fix with Tahleem Assistant","إصلاح باستخدام مساعد تحليم")}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : aiMode === "generate" ? (
+                        <div className="space-y-3 py-2">
+                          <DialogDescription>
+                            {t(
+                              "Describe what you want in plain language — topic, how many, question type, difficulty, level. Tahleem Assistant writes brand-new questions (bilingual, with options and the correct answer already selected) from its own subject knowledge.",
+                              "صف ما تريده بلغة بسيطة — الموضوع، العدد، نوع السؤال، الصعوبة، المستوى. سيكتب مساعد تحليم أسئلة جديدة تمامًا (بالعربية والإنجليزية، مع الخيارات والإجابة الصحيحة) من معرفته الخاصة."
                             )}
                           </DialogDescription>
                           <Textarea
@@ -1761,8 +1922,8 @@ const ExamEditor = () => {
                       <div className="space-y-3 py-2">
                         <DialogDescription>
                           {t(
-                            "Paste your questions in any format — Word, WhatsApp, a textbook, English or Arabic. The AI fills in both English and Arabic for every question and option, splits them into rows, fills in the options, and selects the correct answer for each (using its own knowledge if you didn't mark one).",
-                            "الصق أسئلتك بأي صيغة — من Word أو واتساب أو كتاب مدرسي، عربي أو إنجليزي. سيملأ الذكاء الاصطناعي كلا اللغتين لكل سؤال وخيار، ويقسمها إلى صفوف، ويختار الإجابة الصحيحة لكل سؤال (باستخدام معرفته الخاصة إن لم تحدد إجابة)."
+                            "Paste your questions in any format — Word, WhatsApp, a textbook, English or Arabic. Tahleem Assistant fills in both English and Arabic for every question and option, splits them into rows, fills in the options, and selects the correct answer for each (using its own knowledge if you didn't mark one).",
+                            "الصق أسئلتك بأي صيغة — من Word أو واتساب أو كتاب مدرسي، عربي أو إنجليزي. سيملأ مساعد تحليم كلا اللغتين لكل سؤال وخيار، ويقسمها إلى صفوف، ويختار الإجابة الصحيحة لكل سؤال (باستخدام معرفته الخاصة إن لم تحدد إجابة)."
                           )}
                         </DialogDescription>
                         <Textarea
@@ -1792,7 +1953,7 @@ const ExamEditor = () => {
                           <p className="text-xs text-slate-500">{t("Questions are appended to the list below — nothing existing is overwritten.","تُضاف الأسئلة إلى القائمة أدناه — لا يتم استبدال أي شيء موجود.")}</p>
                           <Button onClick={handleAIReorganize} disabled={aiParsing || !aiRawText.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
                             {aiParsing ? <Loader2 className="h-4 w-4 animate-spin"/> : <Sparkles className="h-4 w-4"/>}
-                            {aiParsing ? t("Reorganizing…","جارٍ إعادة التنظيم…") : t("Reorganize with AI","إعادة التنظيم بالذكاء الاصطناعي")}
+                            {aiParsing ? t("Reorganizing…","جارٍ إعادة التنظيم…") : t("Reorganize with Tahleem Assistant","إعادة التنظيم بمساعد تحليم")}
                           </Button>
                         </div>
                       </div>
