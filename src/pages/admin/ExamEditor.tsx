@@ -399,6 +399,21 @@ const ExamEditor = () => {
   const removeQuestion = (idx: number) => setQuestions(q => q.filter((_, i) => i !== idx));
   const updateQuestion = (idx: number, updates: Partial<QuestionForm>) =>
     setQuestions(q => q.map((qq, i) => i === idx ? { ...qq, ...updates } : qq));
+
+  // A question with nothing typed into it yet (e.g. one just created via
+  // "+ Add" before the Assistant ran). Used so the Assistant fills these in
+  // instead of leaving them blank and appending after them.
+  const isBlankQuestion = (q: QuestionForm) =>
+    !q.question_text?.trim() && !q.question_text_ar?.trim();
+
+  // Drop blank trailing questions from the end of the current list so
+  // Assistant-generated questions land in their place instead of after them.
+  const dropTrailingBlanks = (list: QuestionForm[]) => {
+    let end = list.length;
+    while (end > 0 && isBlankQuestion(list[end - 1])) end--;
+    return list.slice(0, end);
+  };
+
   // Which question cards have "More options" (instructions/media/section) expanded — collapsed by default to keep the card simple.
   const [advancedOpen, setAdvancedOpen] = useState<Set<number>>(new Set());
 
@@ -677,6 +692,7 @@ const ExamEditor = () => {
       if (!raw.length) throw new Error("No questions recognized in the pasted text");
 
       const forcedPoints = aiPointsOverride.trim() ? Number(aiPointsOverride) : null;
+      const base = dropTrailingBlanks(questions);
 
       const parsedQuestions: QuestionForm[] = raw.map((q: any, index: number) => {
         const options = Array.isArray(q.options)
@@ -697,11 +713,11 @@ const ExamEditor = () => {
           options: options.length ? options : emptyQuestion().options,
           correct_answer: derivedCorrect,
           points: forcedPoints !== null && !Number.isNaN(forcedPoints) ? forcedPoints : (Number(q.points) || 1),
-          sort_order: questions.length + index,
+          sort_order: base.length + index,
         };
       });
 
-      setQuestions(prev => [...prev, ...parsedQuestions]);
+      setQuestions(() => [...base, ...parsedQuestions]);
       const autoSelected = raw.filter((q: any) => (q.options || []).some((o: any) => o.is_correct)).length;
       toast({
         title: `✅ ${t("Reorganized","تمت إعادة التنظيم")} ${parsedQuestions.length} ${t("questions","سؤال")}`,
@@ -735,6 +751,7 @@ const ExamEditor = () => {
       if (!raw.length) throw new Error("Tahleem Assistant didn't return any questions — try rephrasing your instructions");
 
       const forcedPoints = aiPointsOverride.trim() ? Number(aiPointsOverride) : null;
+      const base = dropTrailingBlanks(questions);
 
       const generatedQuestions: QuestionForm[] = raw.map((q: any, index: number) => {
         const options = Array.isArray(q.options)
@@ -755,11 +772,11 @@ const ExamEditor = () => {
           options: options.length ? options : emptyQuestion().options,
           correct_answer: derivedCorrect,
           points: forcedPoints !== null && !Number.isNaN(forcedPoints) ? forcedPoints : (Number(q.points) || 1),
-          sort_order: questions.length + index,
+          sort_order: base.length + index,
         };
       });
 
-      setQuestions(prev => [...prev, ...generatedQuestions]);
+      setQuestions(() => [...base, ...generatedQuestions]);
       toast({
         title: `✅ ${t("Generated","تم التوليد")} ${generatedQuestions.length} ${t("questions","سؤال")}`,
         description: t(
@@ -1923,7 +1940,7 @@ const ExamEditor = () => {
                           />
                           <AiPointsControl value={aiPointsOverride} onChange={setAiPointsOverride} t={t} />
                           <div className="flex items-center justify-between">
-                            <p className="text-xs text-slate-500">{t("Questions are appended to the list below — nothing existing is overwritten.","تُضاف الأسئلة إلى القائمة أدناه — لا يتم استبدال أي شيء موجود.")}</p>
+                            <p className="text-xs text-slate-500">{t("Questions fill any empty question left at the end, then append after that — nothing with content is overwritten.","تملأ الأسئلة أي سؤال فارغ في نهاية القائمة، ثم تُضاف بعده — لا يتم استبدال أي سؤال يحتوي على محتوى.")}</p>
                             <Button onClick={handleAIGenerate} disabled={aiGenerating || !aiInstructions.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
                               {aiGenerating ? <Loader2 className="h-4 w-4 animate-spin"/> : <Sparkles className="h-4 w-4"/>}
                               {aiGenerating ? t("Generating…","جارٍ التوليد…") : t("Generate Questions","توليد الأسئلة")}
@@ -1963,7 +1980,7 @@ const ExamEditor = () => {
                         </div>
                         <AiPointsControl value={aiPointsOverride} onChange={setAiPointsOverride} t={t} />
                         <div className="flex items-center justify-between">
-                          <p className="text-xs text-slate-500">{t("Questions are appended to the list below — nothing existing is overwritten.","تُضاف الأسئلة إلى القائمة أدناه — لا يتم استبدال أي شيء موجود.")}</p>
+                          <p className="text-xs text-slate-500">{t("Questions fill any empty question left at the end, then append after that — nothing with content is overwritten.","تملأ الأسئلة أي سؤال فارغ في نهاية القائمة، ثم تُضاف بعده — لا يتم استبدال أي سؤال يحتوي على محتوى.")}</p>
                           <Button onClick={handleAIReorganize} disabled={aiParsing || !aiRawText.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
                             {aiParsing ? <Loader2 className="h-4 w-4 animate-spin"/> : <Sparkles className="h-4 w-4"/>}
                             {aiParsing ? t("Reorganizing…","جارٍ إعادة التنظيم…") : t("Reorganize with Tahleem Assistant","إعادة التنظيم بمساعد تحليم")}
