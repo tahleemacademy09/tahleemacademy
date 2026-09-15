@@ -26,7 +26,7 @@ QUESTION TYPES the exam editor supports — pick the correct "question_type" for
 - "short_answer" — no options ([]). Put the best one-line answer in "correct_answer". Also fill "accepted_answers" (array of other acceptable phrasings/synonyms) when there's more than one reasonable wording.
 - "fill_blank" — no options ([]). The question_text must contain a blank (___). "correct_answer" is the missing word/phrase; fill "accepted_answers" with acceptable variants if relevant.
 - "essay" — no options ([]). Leave "correct_answer" empty (essays are manually graded); instead use "explanation" to describe what a strong answer should cover. Set "min_words"/"max_words" if a length is implied or requested, else 0.
-- "audio" — a spoken-response or dictation question (e.g. "recite this ayah", "listen and repeat", "read this passage aloud"). No options ([]). Set "audio_response_type" to "audio" (student responds by recording) or "text" (student types what they hear) based on what's being asked. Put any reference text/answer in "correct_answer".
+- "audio" — a spoken-response or dictation question (e.g. "recite this ayah", "listen and repeat", "read this passage aloud", "record their answer", "oral answer", "spoken answer"). No options ([]). Set "audio_response_type" to "audio" (student responds by recording) or "text" (student types what they hear) based on what's being asked. Put any reference text/answer in "correct_answer". IMPORTANT: if the teacher's instructions mention "audio", "recording", "recite", "oral", or "spoken" in any form, use "audio" — NEVER "short_answer", even though both can look like a one-line text response.
 - "dictation" — same as "audio" but specifically listen-and-write: set "audio_response_type": "text", "correct_answer" is the exact text dictated.
 - "matching" — no options. Fill "matching_pairs": [{"left": string, "right": string}, ...] (at least 3 pairs) with left/right items that correctly correspond in both English and, mirrored, in Arabic when the source/topic is Arabic — put one language's pairs in "matching_pairs" and note the other language only if explicitly asked.
 - "ordering" — no options. Fill "ordering_items": array of strings IN THE CORRECT ORDER (the editor shuffles them for the student).
@@ -323,6 +323,11 @@ ${context?.studentContext || ""}`;
 
     if (GEMINI_API_KEY) {
       try {
+        // Hard timeout so an unreachable/slow Gemini endpoint can't hang the
+        // request — falls through to Anthropic instead of stalling the UI.
+        const geminiController = new AbortController();
+        const geminiTimeout = setTimeout(() => geminiController.abort(), 15000);
+
         const geminiRes = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
           {
@@ -336,8 +341,9 @@ ${context?.studentContext || ""}`;
                 ...(action === "transcribe" || action === "notify" ? { responseMimeType: "application/json" } : {}),
               },
             }),
+            signal: geminiController.signal,
           }
-        );
+        ).finally(() => clearTimeout(geminiTimeout));
 
         if (!geminiRes.ok) {
           const errText = await geminiRes.text();
