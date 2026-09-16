@@ -193,8 +193,22 @@
 
   <body>
     <div id="root"></div>
-    <!-- Paystack: defer keeps it non-blocking but still executes before app JS -->
-    <script defer src="https://js.paystack.co/v1/inline.js"></script>
+    <!-- Paystack: injected only once the browser is idle, so it never competes
+         with the app's own first load. Payment pages also load it on demand. -->
+    <script>
+      (function () {
+        function loadPaystack() {
+          if (document.getElementById("paystack-script")) return;
+          var s = document.createElement("script");
+          s.id = "paystack-script";
+          s.src = "https://js.paystack.co/v1/inline.js";
+          s.async = true;
+          document.body.appendChild(s);
+        }
+        if ("requestIdleCallback" in window) requestIdleCallback(loadPaystack, { timeout: 6000 });
+        else setTimeout(loadPaystack, 4000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
 
     <!--
