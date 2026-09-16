@@ -27,6 +27,7 @@ import {
   Eye, EyeOff, Loader2, AlertTriangle, Moon, Sun,
 } from "lucide-react";
 import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
+import TermSwitcher from "@/components/settings/TermSwitcher";
 
 // ─── Save resilience helpers ──────────────────────────────────────────────────
 // "AbortError: signal is aborted without reason" is not a real server/validation
@@ -890,6 +891,7 @@ export default function ProfileSettings() {
             </PFld>
           </PSec>
           <PSaveBtn fn={savePrefs} saving={saving} />
+          <TermSwitcher />
         </>}
 
         {/* ── SECURITY TAB ────────────────────────────────────────── */}

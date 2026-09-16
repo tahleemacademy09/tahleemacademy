@@ -17,7 +17,7 @@ import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import { enableExamPrivacyScreen, disableExamPrivacyScreen } from "@/lib/examPrivacyScreen";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
-import { uploadExamAudioToR2 } from "@/lib/examAudioUpload";
+import { storageSupabase } from "@/integrations/supabase/storageClient";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import { useRegistrationSettings } from "@/hooks/useRegistrationSettings";
 import {
@@ -879,11 +879,12 @@ const EntranceExamTaking = () => {
                         if (!blob.size) { toast({ title: "Recording empty.", variant: "destructive" }); return; }
                         const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : blob.type.includes("webm") ? "webm" : "mp4";
                         const path = `entrance-exam/${user!.id}/${attemptId}_${q.id}.${ext}`;
-                        const result = await uploadExamAudioToR2(path, blob);
-                        if (!("error" in result)) {
-                          saveAnswer(q.id, "[audio_recorded]", { audioUrl: result.url, storagePath: result.storagePath });
+                        const { error } = await storageSupabase.storage.from("exam-media").upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
+                        if (!error) {
+                          const { data: ud } = await storageSupabase.storage.from("exam-media").createSignedUrl(path, 604800);
+                          saveAnswer(q.id, "[audio_recorded]", { audioUrl: ud?.signedUrl || url, storagePath: path });
                         } else {
-                          toast({ title: "Upload failed: " + result.error, variant: "destructive" });
+                          toast({ title: "Upload failed: " + error.message, variant: "destructive" });
                           saveAnswer(q.id, "[audio_recorded]", { audioUrl: url });
                         }
                       }}

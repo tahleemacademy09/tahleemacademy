@@ -306,6 +306,32 @@ function buildPages(mode: SelectMode, selected: number[]): number[] {
   return Array.from(ps).sort((a, b) => a - b);
 }
 
+// Sabqi = memorized within the last 21 days (or never logged yet — treated
+// as "still needs drilling" rather than excluded). Manzil = older than 21
+// days. Order is preserved from the input (already ascending page order),
+// so filtering never breaks the "strictly in order" requirement.
+const SABQI_WINDOW_DAYS = 21;
+async function filterPagesByTier(
+  userId: string, pages: number[], tierFilter?: "sabqi" | "manzil"
+): Promise<number[]> {
+  if (!tierFilter || pages.length === 0) return pages;
+  const { data } = await (supabase as any)
+    .from("hifdh_revision_progress")
+    .select("page_number, first_memorized_at")
+    .eq("user_id", userId)
+    .in("page_number", pages);
+  const memorizedAt = new Map<number, string | null>();
+  (data || []).forEach((r: any) => memorizedAt.set(r.page_number, r.first_memorized_at));
+  const now = Date.now();
+  const isSabqi = (p: number) => {
+    const ts = memorizedAt.get(p);
+    if (!ts) return true; // never logged as memorized yet → treat as needing drilling, not "old"
+    const days = (now - new Date(ts).getTime()) / 86400000;
+    return days <= SABQI_WINDOW_DAYS;
+  };
+  return pages.filter(p => (tierFilter === "sabqi" ? isSabqi(p) : !isSabqi(p)));
+}
+
 function scoreColor(score: number) {
   if (score >= 85) return { bg: "#dcfce7", border: "#16a34a", text: "#166534" };
   if (score >= 70) return { bg: "#fef9c3", border: "#ca8a04", text: "#854d0e" };
@@ -350,9 +376,21 @@ function makeExercise(currentAyahs: any[], prevAyahs: any[]): ExerciseQ[] {
 //  COMPONENT
 // ═══════════════════════════════════════════════════════════════════════
 
-interface Props { userId: string | null; autoStart?: boolean; onSessionSaved?: () => void; }
+interface Props {
+  userId: string | null; autoStart?: boolean; onSessionSaved?: () => void;
+  // "sabqi" = pages memorized within the last 21 days (drilled hard).
+  // "manzil" = everything memorized earlier (long-cycle rotation).
+  // Leave undefined for the old, unfiltered "whole assigned scope" behaviour.
+  tierFilter?: "sabqi" | "manzil";
+}
 
-export default function QuranRevisionHub({ userId, autoStart = false, onSessionSaved }: Props) {
+export default function QuranRevisionHub({ userId, autoStart = false, onSessionSaved, tierFilter }: Props) {
+
+  // Sabqi and Manzil tabs mount this component AT THE SAME TIME (HifdhPage
+  // keeps all tabs alive under display:none) — every per-user cache key
+  // below MUST be namespaced by tier, or the two tabs stomp on each other's
+  // saved plan / session state.
+  const keySuffix = tierFilter ? `_${tierFilter}` : "";
 
   const [stage, setStage]         = useState<Stage>("setup");
 
@@ -455,21 +493,21 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
   // ═══ Load saved plan (data only — resume handled below after fetchPage is defined) ═
   useEffect(() => {
     if (!userId) return;
-    const saved = localStorage.getItem(`revision_plan_${userId}`);
+    const saved = localStorage.getItem(`revision_plan_${userId}${keySuffix}`);
     if (saved) {
       try {
         const p: RevisionPlan = JSON.parse(saved);
         setPlan(p); setSelectMode(p.mode); setSelected(p.selected); setDailyPages(p.dailyPages);
       } catch { /* ignore */ }
     }
-    const done = localStorage.getItem(`revision_done_${userId}`);
+    const done = localStorage.getItem(`revision_done_${userId}${keySuffix}`);
     if (done) { try { setCompletedPages(new Set(JSON.parse(done))); } catch { /* ignore */ } }
   }, [userId]);
 
   // ═══ Persist session to sessionStorage on every stage/page change ═══════
   useEffect(() => {
     if (!userId || !plan || stage === "setup") return;
-    const key = `qrh_stage_${userId}`;
+    const key = `qrh_stage_${userId}${keySuffix}`;
     const payload: any = { stage, pageIdx: plan.currentIdx };
     // Persist exercise state so refresh can resume mid-exercise
     if (stage === "exercise" && exercises.length > 0) {
@@ -484,7 +522,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
   // Also persist on visibility change (tab backgrounded on Android)
   useEffect(() => {
     if (!userId) return;
-    const key = `qrh_stage_${userId}`;
+    const key = `qrh_stage_${userId}${keySuffix}`;
     const handleVisibility = () => {
       if (document.hidden && plan && stage !== "setup") {
         const payload: any = { stage, pageIdx: plan.currentIdx };
@@ -554,14 +592,14 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
     };
 
     // ── Refresh / reload restore: check sessionStorage for in-progress session ──
-    const ssKey = `qrh_stage_${userId}`;
+    const ssKey = `qrh_stage_${userId}${keySuffix}`;
     const savedSS = sessionStorage.getItem(ssKey);
     if (savedSS) {
       try {
         const ss = JSON.parse(savedSS);
         // Only restore if they were mid-session (not setup or complete)
         if (ss.stage && ss.stage !== "setup" && ss.stage !== "complete") {
-          const lsSaved = localStorage.getItem(`revision_plan_${userId}`);
+          const lsSaved = localStorage.getItem(`revision_plan_${userId}${keySuffix}`);
           if (lsSaved) {
             const p: RevisionPlan = JSON.parse(lsSaved);
             const resumeIdx = ss.pageIdx != null ? ss.pageIdx : p.currentIdx;
@@ -593,7 +631,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
       : (supabase as any).from("hifdh_daily_assignments").select("*").eq("student_id", userId).eq("active", true).order("created_at", {ascending: true}).limit(1).then(({data, error}: any) => ({data: data?.[0] ?? null, error}));
 
     assignmentQuery
-      .then(({ data, error }: any) => {
+      .then(async ({ data, error }: any) => {
         console.log("[Hifdh] Assignment fetch →", { data, error });
 
         if (error) {
@@ -613,7 +651,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
           setReciter(data.reciter_id || "Alafasy_128kbps");
 
           // Check existing saved plan
-          const saved = localStorage.getItem(`revision_plan_${userId}`);
+          const saved = localStorage.getItem(`revision_plan_${userId}${keySuffix}`);
           let existingPlan: RevisionPlan | null = null;
           if (saved) { try { existingPlan = JSON.parse(saved); } catch { /* ignore */ } }
 
@@ -625,13 +663,14 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
           if (sameContent && existingPlan) {
             planToUse = existingPlan;
           } else {
-            const pages = buildPages(mode, selectedItems);
+            const rawPages = buildPages(mode, selectedItems);
+            const pages = await filterPagesByTier(userId, rawPages, tierFilter);
             planToUse = {
               mode, selected: selectedItems,
               dailyPages: Number(data.daily_pages) || 1,
               allPages: pages, currentIdx: 0,
             };
-            localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(planToUse));
+            localStorage.setItem(`revision_plan_${userId}${keySuffix}`, JSON.stringify(planToUse));
           }
 
           // If autoStart (navigated from dashboard), jump straight to reciting.
@@ -645,7 +684,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
           }
         } else {
           // No assignment — fall back to localStorage or show setup
-          const saved = localStorage.getItem(`revision_plan_${userId}`);
+          const saved = localStorage.getItem(`revision_plan_${userId}${keySuffix}`);
           if (!saved) { setAssignmentLoaded(true); return; }
           try {
             const p: RevisionPlan = JSON.parse(saved);
@@ -1341,7 +1380,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
       newDone.add(curPage);
       setCompletedPages(newDone);
       if (userId) {
-        localStorage.setItem(`revision_done_${userId}`, JSON.stringify(Array.from(newDone)));
+        localStorage.setItem(`revision_done_${userId}${keySuffix}`, JSON.stringify(Array.from(newDone)));
         (supabase as any).from("hifdh_revision_progress").upsert({
           user_id: userId, page_number: curPage, completed: true,
           best_score: evalResult?.score ?? 0, exercise_score: score,
@@ -1362,7 +1401,7 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
     if (nextIdx >= plan.allPages.length) { setStage("complete"); return; }
     const updated: RevisionPlan = { ...plan, currentIdx: nextIdx };
     setPlan(updated);
-    if (userId) localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(updated));
+    if (userId) localStorage.setItem(`revision_plan_${userId}${keySuffix}`, JSON.stringify(updated));
     setStage("reciting");
     setEvalResult(null); setAyahErrors([]); setRecitationAttempts(0);
     setSessionStart(Date.now()); setPageVisible(true);
@@ -1690,11 +1729,12 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
 
           {/* Start */}
           <button className="rv-btn"
-            onClick={() => {
-              const pages = buildPages(selectMode, selected);
+            onClick={async () => {
+              const rawPages = buildPages(selectMode, selected);
+              const pages = userId ? await filterPagesByTier(userId, rawPages, tierFilter) : rawPages;
               const newPlan: RevisionPlan = { mode: selectMode, selected, dailyPages, allPages: pages, currentIdx: 0 };
               setPlan(newPlan);
-              if (userId) localStorage.setItem(`revision_plan_${userId}`, JSON.stringify(newPlan));
+              if (userId) localStorage.setItem(`revision_plan_${userId}${keySuffix}`, JSON.stringify(newPlan));
               setSessionStart(Date.now()); setPageVisible(true);
               fetchPage(pages[0]); fetchPrevPage(pages[0]);
               setStage("reciting");
@@ -2669,8 +2709,8 @@ export default function QuranRevisionHub({ userId, autoStart = false, onSessionS
             <button onClick={() => {
               setPlan(null); setSelected([]); setCompletedPages(new Set());
               if (userId) {
-                localStorage.removeItem(`revision_plan_${userId}`);
-                localStorage.removeItem(`revision_done_${userId}`);
+                localStorage.removeItem(`revision_plan_${userId}${keySuffix}`);
+                localStorage.removeItem(`revision_done_${userId}${keySuffix}`);
               }
               setStage("setup");
             }}

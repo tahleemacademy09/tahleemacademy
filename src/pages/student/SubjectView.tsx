@@ -56,10 +56,25 @@ const SubjectView = () => {
 
   // ─── Data Queries ───
   const { data: subject, isLoading } = useQuery({
-    queryKey: ["subject", subjectId],
+    // active_term_id is included so switching terms (see TermSwitcher in
+    // Settings) automatically refetches with the right snapshot.
+    queryKey: ["subject", subjectId, profile?.active_term_id],
     queryFn: async () => {
       const { data, error } = await supabase.from("subjects").select("*").eq("id", subjectId!).single();
       if (error) throw error;
+      // Overlay the term-scoped snapshot (title/level/levels/delivery_mode/track)
+      // on top of the base row, so the same student sees Term 1's old naming
+      // until they switch, and the new naming once they do. Every other field
+      // (image, description, course_id, etc.) still comes from the live row.
+      if (profile?.active_term_id) {
+        const { data: snap } = await supabase
+          .from("subject_term_snapshots")
+          .select("title, level, levels, delivery_mode, track")
+          .eq("subject_id", subjectId!)
+          .eq("term_id", profile.active_term_id)
+          .maybeSingle();
+        if (snap) return { ...data, ...snap };
+      }
       return data;
     },
   });
