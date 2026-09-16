@@ -101,6 +101,8 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
       children: [
         { to: "/teacher/recitation", icon: Mic,    label: t("My Recitations", "تسجيلات التلاوة") },
         { to: "/teacher/hifdh",      icon: BookOpen,label: t("Ḥifẓ Review",   "مراجعة الحفظ") },
+        { to: "/teacher/hifdh-plan", icon: BookMarked,label: t("Ḥifẓ Plans",  "خطط الحفظ") },
+        { to: "/teacher/hifdh-live", icon: Radio,   label: t("Ḥifẓ Live Class","حصة الحفظ المباشرة") },
       ],
     },
   },
@@ -167,7 +169,7 @@ const TeacherLayout = () => {
       teaching:    ["/teacher/classes","/teacher/timetable","/teacher/subjects","/teacher/recordings","/teacher/public-classes"],
       students:    ["/teacher/students","/teacher/private-students","/teacher/private-sessions","/teacher/attendance","/teacher/announcements"],
       assessments: ["/teacher/exams","/teacher/grading","/teacher/results","/teacher/transcripts"],
-      recitation:  ["/teacher/recitation","/teacher/hifdh"],
+      recitation:  ["/teacher/recitation","/teacher/hifdh","/teacher/hifdh-plan","/teacher/hifdh-live"],
     };
     setExpanded(prev => {
       const next = { ...prev };
