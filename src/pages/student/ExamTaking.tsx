@@ -10,6 +10,7 @@ import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
+import { uploadExamAudioToR2 } from "@/lib/examAudioUpload";
 import { useToast } from "@/hooks/use-toast";
 import { logger } from "@/lib/logger";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -1099,15 +1100,11 @@ const ExamTaking = () => {
                           : blob.type.includes("webm") ? "webm"
                           : "mp4";  // safe fallback for Android
                         const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
-                        const { error } = await supabase.storage
-                          .from("exam-media")
-                          .upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
-                        if (!error) {
-                          // Use a 7-day signed URL so admin can always play it
-                          const { data: ud } = await storageSupabase.storage.from("exam-media").createSignedUrl(path, 604800);
-                          setAnswer(q.id, "[audio_recorded]", { audioUrl: ud?.signedUrl || url, fileType: "audio", storagePath: path });
+                        const result = await uploadExamAudioToR2(path, blob);
+                        if (!("error" in result)) {
+                          setAnswer(q.id, "[audio_recorded]", { audioUrl: result.url, fileType: "audio", storagePath: result.storagePath });
                         } else {
-                          toast({ title: "Upload failed: " + error.message, variant: "destructive" });
+                          toast({ title: "Upload failed: " + result.error, variant: "destructive" });
                           // Store blob URL as fallback so student isn't blocked
                           setAnswer(q.id, "[audio_recorded]", { audioUrl: url, fileType: "audio" });
                         }
