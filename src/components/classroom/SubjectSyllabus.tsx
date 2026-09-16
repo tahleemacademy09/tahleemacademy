@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useStudentEffectiveTerm, termOrEvergreenFilter } from "@/hooks/useEffectiveTerm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -17,6 +18,7 @@ const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
   const { hasRole } = useAuth();
   const qc = useQueryClient();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
+  const { termId: effectiveTermId, term: effectiveTerm } = useStudentEffectiveTerm();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [form, setForm] = useState({ week_number: 1, title: "", description: "", objectives: "" });
@@ -25,10 +27,13 @@ const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const { data: syllabus = [], isLoading } = useQuery({
-    queryKey: ["syllabus", subjectId],
+    queryKey: ["syllabus", subjectId, effectiveTermId],
+    enabled: !!subjectId && !!effectiveTermId,
     queryFn: async () => {
       const { data, error } = await supabase.from("subject_syllabus")
-        .select("*").eq("subject_id", subjectId).order("week_number");
+        .select("*").eq("subject_id", subjectId)
+        .or(termOrEvergreenFilter(effectiveTermId))
+        .order("week_number");
       if (error) throw error;
       return data as any[];
     },
@@ -42,6 +47,7 @@ const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
         title: form.title,
         description: form.description || null,
         objectives: form.objectives ? form.objectives.split("\n").filter(Boolean) : null,
+        term_id: effectiveTermId,
       });
       if (error) throw error;
     },
@@ -121,7 +127,12 @@ const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
   return (
     <div className="space-y-4">
       {isPrivileged && (
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between">
+          {effectiveTerm && (
+            <span className="text-xs font-semibold text-muted-foreground">
+              {t("Adding to", "الإضافة إلى")}: {effectiveTerm.name}
+            </span>
+          )}
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button size="sm" className="gap-2 rounded-xl">
@@ -187,7 +198,14 @@ const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
                       onClick={() => hasDetail && toggleExpand(s.id)}
                     >
                       <div className="flex-1 min-w-0">
-                        <p className="font-bold text-sm leading-snug" style={{ color: color.text }}>{s.title}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-bold text-sm leading-snug" style={{ color: color.text }}>{s.title}</p>
+                          {!s.term_id && (
+                            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-white/70" style={{ color: color.text }}>
+                              {t("Evergreen", "دائم")}
+                            </span>
+                          )}
+                        </div>
                         <p className="text-xs mt-0.5" style={{ color: color.text, opacity: 0.65 }}>
                           Week {s.week_number}
                           {s.objectives ? ` · ${(s.objectives as string[]).length} objective${(s.objectives as string[]).length !== 1 ? "s" : ""}` : ""}
