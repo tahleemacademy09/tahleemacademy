@@ -20,7 +20,7 @@ import UpdateAvailableBanner from "@/components/UpdateAvailableBanner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import DiagnosticsPanel from "@/components/dev/DiagnosticsPanel";
 import TasjeelGuard from "@/components/TasjeelGuard";
-import { LiveClassProvider } from "@/contexts/LiveClassContext";
+import { LiveClassProvider, useLiveClass } from "@/contexts/LiveClassContext";
 import RecordingPlayerProvider from "@/contexts/RecordingPlayerContext";
 const GlobalClassroomOverlay = lazy(() => import("./components/classroom/GlobalClassroomOverlay"));
 import AppNotifications from "@/components/AppNotifications";
