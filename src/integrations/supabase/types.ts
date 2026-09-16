@@ -1580,6 +1580,7 @@ export type Database = {
           registration_deadline: string | null
           registration_open: boolean
           rtl_mode: boolean | null
+          screen_capture_interval_seconds: number | null
           screenshot_interval_seconds: number | null
           show_marks_per_question: boolean | null
           show_question_numbers: boolean | null
@@ -1643,6 +1644,7 @@ export type Database = {
           registration_deadline?: string | null
           registration_open?: boolean
           rtl_mode?: boolean | null
+          screen_capture_interval_seconds?: number | null
           screenshot_interval_seconds?: number | null
           show_marks_per_question?: boolean | null
           show_question_numbers?: boolean | null
@@ -1706,6 +1708,7 @@ export type Database = {
           registration_deadline?: string | null
           registration_open?: boolean
           rtl_mode?: boolean | null
+          screen_capture_interval_seconds?: number | null
           screenshot_interval_seconds?: number | null
           show_marks_per_question?: boolean | null
           show_question_numbers?: boolean | null
