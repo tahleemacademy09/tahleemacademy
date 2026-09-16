@@ -168,6 +168,7 @@ const TeacherTimetable       = lazy(() => import("./pages/teacher/TeacherTimetab
 const TeacherPublicClasses   = lazy(() => import("./pages/teacher/TeacherPublicClasses"));
 const TeacherHifdhReview     = lazy(() => import("./pages/teacher/TeacherHifdhReview"));
 const TeacherHifdhLive       = lazy(() => import("./pages/teacher/TeacherHifdhLive"));
+const TeacherHifdhPlanBuilder = lazy(() => import("./pages/teacher/TeacherHifdhPlanBuilder"));
 const TeacherMajlis          = lazy(() => import("./pages/teacher/TeacherMajlis"));
 const TeacherSupport         = lazy(() => import("./pages/teacher/TeacherSupport"));
 
@@ -330,6 +331,7 @@ const App = () => (
                     <Route path="/teacher/recitation"       element={<TeacherRecitation />} />
                     <Route path="/teacher/hifdh"            element={<TeacherHifdhReview />} />
                     <Route path="/teacher/hifdh-live"       element={<TeacherHifdhLive />} />
+                    <Route path="/teacher/hifdh-plan"       element={<TeacherHifdhPlanBuilder />} />
                     <Route path="/teacher/hifdh-tracker"    element={<HifdhRevisionTracker />} />
                     <Route path="/teacher/majlis"           element={<TeacherMajlis />} />
                     <Route path="/teacher/support"          element={<TeacherSupport />} />
