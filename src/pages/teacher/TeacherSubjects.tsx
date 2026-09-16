@@ -46,7 +46,7 @@ const safeLevel = (lv: string | undefined | null) =>
 
 export default function TeacherSubjects() {
   const { t, language } = useLanguage();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const { joinClass } = useLiveClass();
@@ -68,9 +68,15 @@ export default function TeacherSubjects() {
       const { data: owned } = await supabase
         .from("subjects").select("*").eq("teacher_id", user.id).order("title");
 
+      // subject_timetable stores co-teachers in teacher_ids[]; the legacy
+      // teacher_id column is only the primary/first teacher — matches the
+      // same pattern used in TeacherDashboard / TeacherGrading / TeacherOralExams.
       const { data: ttSlots } = await supabase
-        .from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
-      const ttSubjectIds = [...new Set((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean))];
+        .from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids");
+      const ttMineSlots = (ttSlots || []).filter((s: any) =>
+        s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
+      );
+      const ttSubjectIds = [...new Set(ttMineSlots.map((s: any) => s.subject_id).filter(Boolean))];
 
       let extra: any[] = [];
       if (ttSubjectIds.length > 0) {
@@ -105,11 +111,25 @@ export default function TeacherSubjects() {
         };
       }
       setSubjectCounts(counts);
-      setSubjects(subs);
+      // Overlay each subject with its snapshot for the teacher's current
+      // academic term, so titles/levels shown here match Term 1's old
+      // naming until the teacher switches, and the new naming after.
+      let finalSubs = subs;
+      if (profile?.active_term_id && subs.length > 0) {
+        const { data: snaps } = await supabase
+          .from("subject_term_snapshots")
+          .select("subject_id, title, level, levels, delivery_mode, track")
+          .eq("term_id", profile.active_term_id)
+          .in("subject_id", subs.map((s: any) => s.id));
+        const snapById = Object.fromEntries((snaps || []).map((s: any) => [s.subject_id, s]));
+        finalSubs = subs.map((s: any) => ({ ...s, ...(snapById[s.id] || {}) }));
+      }
+
+      setSubjects(finalSubs);
       setLoading(false);
     };
     fetchSubjects();
-  }, [user]);
+  }, [user, profile?.active_term_id]);
 
   const loadSubjectDetails = async (sub: any) => {
     setSelectedSubject(sub);

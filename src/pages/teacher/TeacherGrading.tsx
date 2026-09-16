@@ -8,7 +8,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { sanitizeHtml } from "@/lib/sanitize";
 import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   CheckCircle, XCircle, Search, FileText, Download,
   Send, Unlock, Loader2, Eye, BarChart2, AlertTriangle,
@@ -29,6 +28,7 @@ const TeacherGrading = () => {
   const [allAttempts,    setAllAttempts]    = useState<any[]>([]);
   const [selectedAttempt,setSelectedAttempt]= useState<any>(null);
   const [answers,        setAnswers]        = useState<any[]>([]);
+  const [questions,      setQuestions]      = useState<any[]>([]);
   const [scores,         setScores]         = useState<Record<string, string>>({});
   const [feedbacks,      setFeedbacks]      = useState<Record<string, string>>({});
   const [examFeedback,   setExamFeedback]   = useState("");
@@ -40,12 +40,6 @@ const TeacherGrading = () => {
   const [loading,        setLoading]        = useState(true);
   const [examsList,      setExamsList]      = useState<any[]>([]);
 
-  // Batch release
-  const [batchExamId,      setBatchExamId]      = useState("");
-  const [batchReleaseOpen, setBatchReleaseOpen]  = useState(false);
-  const [batchReleasing,   setBatchReleasing]    = useState(false);
-  const [batchAttempts,    setBatchAttempts]     = useState<any[]>([]);
-
   const tabCounts = {
     pending:  allAttempts.filter(a => a.status === "submitted").length,
     graded:   allAttempts.filter(a => a.status === "graded").length,
@@ -56,8 +50,24 @@ const TeacherGrading = () => {
   useEffect(() => {
     if (!user) return;
     const load = async () => {
+      // A subject counts as "theirs" whether they own it directly
+      // (subjects.teacher_id) or the admin assigned them to it via the
+      // timetable (subject_timetable.teacher_id) — grading shouldn't care
+      // who set up the exam's questions, only whose subject it's on.
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const subjectIds = (subs || []).map(s => s.id);
+      // subject_timetable stores co-teachers in `teacher_ids[]`; the legacy
+      // singular `teacher_id` column only ever holds the FIRST teacher an
+      // admin picked (see TimetableManagement.tsx), so a second/co-teacher
+      // must be matched via the array too — otherwise their subjects (and
+      // every exam/attempt under them) are invisible on this page.
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids");
+      const myTtSlots = (ttSlots || []).filter((s: any) =>
+        s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
+      );
+      const subjectIds = [...new Set([
+        ...((subs || []).map((s: any) => s.id)),
+        ...(myTtSlots.map((s: any) => s.subject_id).filter(Boolean)),
+      ])];
       if (!subjectIds.length) { setLoading(false); return; }
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
       // legacy course_id column which the editor never populates.
@@ -76,30 +86,95 @@ const TeacherGrading = () => {
 
   const loadAttempts = async () => {
     if (!examIds.length) return;
-    const { data } = await supabase.from("exam_attempts")
+    // NOTE: exam_attempts has no foreign key directly to `profiles` (both
+    // exam_attempts.user_id and profiles.user_id point separately at
+    // auth.users), so `profiles!exam_attempts_user_id_fkey(...)` is not a
+    // resolvable embed — PostgREST rejects it and the whole query used to
+    // fail silently (data ended up undefined, tab always showed "0 pending"
+    // even for attempts that were correctly scoped to this teacher's
+    // subjects). Fetch attempts and profiles separately and merge in JS,
+    // same approach the admin GradingPage already uses.
+    const { data: attempts, error: attemptsErr } = await supabase.from("exam_attempts")
       .select(`*,
-        profiles!exam_attempts_user_id_fkey(full_name, email, student_id),
         exams(id, title, title_ar, type, passing_score, allow_review, term,
               subject_id, subjects(title))`)
       .in("exam_id", examIds)
       .in("status", ["submitted", "graded", "released"])
       .order("submitted_at", { ascending: false });
-    setAllAttempts(data || []);
+
+    if (attemptsErr) {
+      console.error("loadAttempts: exam_attempts fetch failed", attemptsErr);
+      toast({ title: "Error loading attempts", description: attemptsErr.message, variant: "destructive" });
+      setAllAttempts([]);
+      return;
+    }
+
+    const userIds = [...new Set((attempts || []).map((a: any) => a.user_id).filter(Boolean))];
+    let profilesById: Record<string, any> = {};
+    if (userIds.length) {
+      const { data: profiles, error: profilesErr } = await supabase
+        .from("profiles")
+        .select("user_id, full_name, email, student_id")
+        .in("user_id", userIds);
+      if (profilesErr) {
+        console.error("loadAttempts: profiles fetch failed", profilesErr);
+      } else {
+        profilesById = Object.fromEntries((profiles || []).map((p: any) => [p.user_id, p]));
+      }
+    }
+
+    const merged = (attempts || []).map((a: any) => ({
+      ...a,
+      profiles: profilesById[a.user_id] || {},
+    }));
+    setAllAttempts(merged);
   };
 
   const openAttempt = async (attempt: any) => {
     setSelectedAttempt(attempt);
     setExamFeedback(attempt.feedback || "");
-    const { data } = await supabase.from("exam_answers")
-      .select(`*, exam_questions(id, question_type, question_text, question_text_ar, instruction_text, instruction_text_ar, reading_passage, options, correct_answer, points, media_url, explanation)`)
-      .eq("attempt_id", attempt.id)
-      .order("created_at");
-    setAnswers(data || []);
+    // Use the same pooled subset the student was actually shown (respects
+    // "section::pick=N" question-pool tags) instead of just whichever
+    // questions happen to have an exam_answers row — otherwise a SKIPPED
+    // pool question has no answer row, so it silently disappeared from
+    // this screen entirely: no player, no score, and it didn't even count
+    // against the max points, which unfairly inflated the percentage.
+    // Same fix as the admin GradingPage.tsx.
+    const [qRes, aRes] = await Promise.all([
+      supabase.rpc("get_exam_questions_for_attempt", { _attempt_id: attempt.id }),
+      supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
+    ]);
+    let qs = qRes.data || [];
+    if (qRes.error) {
+      console.error("openAttempt: get_exam_questions_for_attempt failed, falling back to full bank:", qRes.error);
+      const { data: fallbackQs } = await supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order");
+      qs = fallbackQs || [];
+    } else {
+      qs = [...qs].sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+    }
+    const data = aRes.data || [];
+    // The audioUrl saved in answer_data is a signed URL that was only ever
+    // valid for 7 days from submission (see ExamTaking.tsx) — grading that
+    // happens after that window sees "Audio file unavailable" for a
+    // recording that's actually still sitting fine in Storage. Re-sign it
+    // here from answer_data.storagePath so the player works regardless of
+    // how long ago the student submitted. (Recordings that never made it to
+    // Storage in the first place — no storagePath — have nothing to re-sign;
+    // those are genuinely gone.)
+    await Promise.all(data.map(async (a: any) => {
+      const path = a.answer_data?.storagePath;
+      if (!path) return;
+      const { data: signed } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
+      if (signed?.signedUrl) a.answer_data = { ...a.answer_data, audioUrl: signed.signedUrl };
+    }));
+    setQuestions(qs);
+    setAnswers(data);
     const sc: Record<string, string> = {};
     const fb: Record<string, string> = {};
-    (data || []).forEach(a => {
-      sc[a.question_id] = String(a.points_awarded ?? "");
-      fb[a.question_id] = a.feedback || "";
+    qs.forEach((q: any) => {
+      const a = data.find((x: any) => x.question_id === q.id);
+      sc[q.id] = String(a?.points_awarded ?? "");
+      fb[q.id] = a?.feedback || "";
     });
     setScores(sc);
     setFeedbacks(fb);
@@ -110,35 +185,55 @@ const TeacherGrading = () => {
     setSubmitting(true);
     try {
       let totalEarned = 0, totalPossible = 0;
-      for (const ans of answers) {
-        const pts = parseFloat(scores[ans.question_id] ?? "0") || 0;
-        const maxPts = ans.exam_questions?.points || 1;
+      for (const q of questions) {
+        const ans = answers.find(a => a.question_id === q.id);
+        const pts = parseFloat(scores[q.id] ?? "0") || 0;
+        const maxPts = q.points || 1;
         totalEarned += pts;
         totalPossible += maxPts;
-        await supabase.from("exam_answers").update({
-          points_awarded: pts,
-          feedback: feedbacks[ans.question_id] || null,
-          is_correct: pts >= maxPts,
-          graded_by: user?.id,
-          graded_at: new Date().toISOString(),
-        }).eq("id", ans.id);
+        if (ans?.id) {
+          await supabase.from("exam_answers").update({
+            points_awarded: pts,
+            feedback: feedbacks[q.id] || null,
+            is_correct: pts >= maxPts,
+            graded_by: user?.id,
+            graded_at: new Date().toISOString(),
+          }).eq("id", ans.id);
+        } else {
+          // Skipped pool question — no exam_answers row exists yet. A
+          // direct insert is blocked by RLS (exam_answers only allows
+          // UPDATE of an existing row), so create/set it via the same
+          // SECURITY DEFINER RPC the admin grading page uses.
+          const { error: upsertErr } = await supabase.rpc("admin_upsert_exam_answer" as any, {
+            _attempt_id: selectedAttempt.id, _question_id: q.id,
+            _points: pts, _is_correct: pts >= maxPts,
+          });
+          if (upsertErr) console.error("submitGrade: upsert failed for skipped question", q.id, upsertErr);
+        }
       }
       const pct = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
-      // Exam is always scored out of 30, regardless of how many raw points the
-      // questions add up to — scale the earned total proportionally.
-      const scaledTotal = 30;
-      const scaledEarned = totalPossible > 0 ? Number(((totalEarned / totalPossible) * 30).toFixed(2)) : 0;
+      // Continuous-assessment convention: a "test" is always scored out of 30
+      // and a full "exam" out of 70, regardless of how many raw points the
+      // questions add up to — scale the earned total proportionally. Any
+      // other exam type (e.g. entrance) isn't part of that CA scheme and
+      // keeps its raw point total unscaled.
+      const examType    = selectedAttempt.exams?.type;
+      const scaledTotal = examType === "test" ? 30 : examType === "exam" ? 70 : totalPossible;
+      const scaledEarned = totalPossible > 0 ? Number(((totalEarned / totalPossible) * scaledTotal).toFixed(2)) : 0;
       const passing = selectedAttempt.exams?.passing_score || 50;
-      // Keep it released if it already was — don't hide an edited result from
-      // the student by silently pulling it back to "graded".
-      const nextStatus = selectedAttempt.status === "released" ? "released" : "graded";
+      // Releasing is admin-only — a teacher's grading always lands as
+      // "graded" and waits for an admin to release it to the student.
+      // (Released attempts aren't editable here — see the read-only guard
+      // in the detail view.)
       await supabase.from("exam_attempts").update({
-        status: nextStatus,
+        status: "graded",
         score: scaledEarned,
         total_points: scaledTotal,
         percentage: pct,
         passed: pct >= passing,
         feedback: examFeedback || null,
+        graded_by: user?.id,
+        graded_by_role: "teacher",
       }).eq("id", selectedAttempt.id);
       toast({ title: t("✅ Graded successfully", "✅ تم التصحيح بنجاح") });
       setSelectedAttempt(null);
@@ -149,70 +244,9 @@ const TeacherGrading = () => {
     setSubmitting(false);
   };
 
-  const releaseResult = async (attemptId: string, studentId: string, examTitle: string) => {
-    const { error } = await supabase.from("exam_attempts")
-      .update({ status: "released", results_released_at: new Date().toISOString() })
-      .eq("id", attemptId);
-    if (error) { toast({ title: "Error", description: error.message, variant: "destructive" }); return; }
-    await (supabase as any).from("notifications").insert({
-      user_id: studentId, title: "Exam results available",
-      message: `Your results for "${examTitle}" are now available.`,
-      type: "result_released", link: `/student/results/${attemptId}`,
-    });
-    toast({ title: t("Result released to student", "تم إرسال النتيجة للطالب") });
-    loadAttempts();
-  };
-
-  // ── Batch release: release + notify every graded student for one exam ────
-  const openBatchRelease = (examId: string) => {
-    setBatchExamId(examId);
-    setBatchAttempts(allAttempts.filter(a => a.exam_id === examId && a.status === "graded"));
-    setBatchReleaseOpen(true);
-  };
-
-  const executeBatchRelease = async () => {
-    if (!batchAttempts.length) return;
-    setBatchReleasing(true);
-    try {
-      const ids  = batchAttempts.map(a => a.id);
-      const exam = examsList.find(e => e.id === batchExamId);
-      const examTitle = (language === "ar" ? exam?.title_ar || exam?.title : exam?.title) || "exam";
-
-      const { error } = await supabase.from("exam_attempts")
-        .update({ status: "released", results_released_at: new Date().toISOString() })
-        .in("id", ids);
-      if (error) throw error;
-
-      const { error: notifErr } = await (supabase as any).from("notifications").insert(
-        batchAttempts.map(a => ({
-          user_id: a.user_id,
-          title: t("Exam results available", "نتائج الامتحان متاحة الآن"),
-          message: t(
-            `Your results for "${examTitle}" are now available. Check them out!`,
-            `نتيجتك في "${examTitle}" أصبحت متاحة الآن. يمكنك الاطلاع عليها.`
-          ),
-          type: "result_released",
-          link: `/student/results/${a.id}`,
-        }))
-      );
-      if (notifErr) throw notifErr;
-
-      toast({ title: `✅ ${t("Released", "تم الإرسال")} ${ids.length} ${t("results & notified students!", "نتيجة وتم إشعار الطلاب!")}` });
-      setBatchReleaseOpen(false);
-      setBatchExamId("");
-      setBatchAttempts([]);
-      loadAttempts();
-    } catch (e: any) {
-      toast({ title: "Batch release failed", description: e.message, variant: "destructive" });
-    } finally {
-      setBatchReleasing(false);
-    }
-  };
-
-  // Distinct exams that currently have at least one graded (unreleased) attempt
-  const gradedExamOptions = examsList.filter(e =>
-    allAttempts.some(a => a.exam_id === e.id && a.status === "graded")
-  );
+  // Releasing results to students is admin-only (see GradingPage.tsx). A
+  // teacher's job stops at grading — the attempt then sits in "Graded"
+  // waiting for an admin to release it.
 
   const filtered = allAttempts.filter(a => {
     if (gradingTab === "pending"  && a.status !== "submitted") return false;
@@ -239,9 +273,22 @@ const TeacherGrading = () => {
 
   // ── Attempt detail view ───────────────────────────────────────
   if (selectedAttempt) {
-    const isAlreadyGraded = selectedAttempt.status === "graded";
-    const totalPossible = answers.reduce((s, a) => s + (a.exam_questions?.points || 1), 0);
-    const totalEntered  = answers.reduce((s, a) => s + (parseFloat(scores[a.question_id] || "0") || 0), 0);
+    // Released results are admin's territory from here on — a teacher can
+    // still open one to review it, but the form is read-only so they can't
+    // accidentally flip it back to "graded" and hide it from the student.
+    const isAlreadyGraded = selectedAttempt.status === "graded" || selectedAttempt.status === "released";
+    const isReleased = selectedAttempt.status === "released";
+    const totalPossible = questions.reduce((s, q) => s + (q.points || 1), 0);
+    const totalEntered  = questions.reduce((s, q) => s + (parseFloat(scores[q.id] || "0") || 0), 0);
+    // The live preview shown while grading should track what submitGrade
+    // actually saves — a "test" always scores out of 30 and a full "exam"
+    // out of 70 (the CA convention), regardless of how many raw points the
+    // pooled questions happen to sum to. Showing the raw sum here (e.g.
+    // /25) while the saved score is scaled to /30 made the on-screen total
+    // look wrong even though the underlying math was correct.
+    const examTypeForScale = selectedAttempt.exams?.type;
+    const scaledTotalPreview  = examTypeForScale === "test" ? 30 : examTypeForScale === "exam" ? 70 : totalPossible;
+    const scaledEarnedPreview = totalPossible > 0 ? Number(((totalEntered / totalPossible) * scaledTotalPreview).toFixed(2)) : 0;
 
     return (
       <div style={{ minHeight: "100vh", background: "#F3F4F6", fontFamily: "system-ui, sans-serif" }}>
@@ -263,7 +310,7 @@ const TeacherGrading = () => {
           </div>
           {!isAlreadyGraded && (
             <div style={{ fontSize: 13, fontWeight: 700, color: G }}>
-              {totalEntered} / {totalPossible}
+              {scaledEarnedPreview} / {scaledTotalPreview}
             </div>
           )}
         </div>
@@ -273,41 +320,51 @@ const TeacherGrading = () => {
           {isAlreadyGraded && (
             <div style={{
               padding: "12px 16px", borderRadius: 12, marginBottom: 16,
-              background: "#F0FDF4", border: "1px solid #BBF7D0",
+              background: isReleased ? "#EFF6FF" : "#F0FDF4",
+              border: `1px solid ${isReleased ? "#BFDBFE" : "#BBF7D0"}`,
               display: "flex", alignItems: "center", gap: 10,
             }}>
-              <CheckCircle size={16} color="#16A34A" />
-              <span style={{ fontSize: 13, color: "#16A34A", fontWeight: 700 }}>
-                {t("Already graded", "تم التصحيح مسبقاً")} • {Math.round(selectedAttempt.percentage || 0)}% •{" "}
+              <CheckCircle size={16} color={isReleased ? "#2563EB" : "#16A34A"} />
+              <span style={{ fontSize: 13, color: isReleased ? "#2563EB" : "#16A34A", fontWeight: 700 }}>
+                {isReleased
+                  ? t("Released to student — view only", "تم إرسالها للطالب — للعرض فقط")
+                  : t("Already graded", "تم التصحيح مسبقاً")} • {Math.round(selectedAttempt.percentage || 0)}% •{" "}
                 {selectedAttempt.passed ? t("Passed", "ناجح") : t("Failed", "راسب")}
               </span>
             </div>
           )}
 
           {/* Questions */}
-          {answers.map((ans, i) => {
-            const q = ans.exam_questions;
-            if (!q) return null;
+          {questions.map((q, i) => {
+            const ans = answers.find(a => a.question_id === q.id);
             const isMCQ      = q.question_type === "mcq" || q.question_type === "image_mcq";
             const isTF       = q.question_type === "true_false";
             const isSubjective = ["short_answer", "essay", "audio", "dictation"].includes(q.question_type);
             const opts = Array.isArray(q.options) ? q.options : (typeof q.options === "string" ? JSON.parse(q.options) : []);
             const correct = isMCQ ? opts.find((o: any) => o.is_correct)?.text : q.correct_answer;
-            const studentAns = ans.answer_text || "";
-            const autoCorrect = isMCQ
-              ? opts.find((o: any) => o.id === studentAns)?.text
-              : isTF ? studentAns : studentAns;
+            const studentAns = ans?.answer_text || "";
+            // The recorded clip's real URL lives in answer_data.audioUrl
+            // (or the legacy audio_url column) — answer_text for an audio
+            // question only ever holds a "[audio_recorded]" placeholder,
+            // never a playable URL. Same fix as admin GradingPage.tsx.
+            const audioSrc = (ans as any)?.answer_data?.audioUrl || (ans as any)?.audio_url || null;
+            const notAnswered = !studentAns && !audioSrc;
 
             return (
-              <div key={ans.id} style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: 20, marginBottom: 14, boxShadow: "0 1px 4px rgba(0,0,0,.04)" }}>
+              <div key={q.id} style={{ background: "#fff", borderRadius: 16, border: `1px solid ${notAnswered ? "#FDE68A" : "#E5E7EB"}`, padding: 20, marginBottom: 14, boxShadow: "0 1px 4px rgba(0,0,0,.04)" }}>
                 {/* Q header */}
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
                   <div style={{ width: 28, height: 28, borderRadius: 8, background: G, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 900, color: "#fff", flexShrink: 0 }}>{i + 1}</div>
                   <div style={{ flex: 1 }}>
-                    {q.reading_passage && (
+                    {(q.reading_passage || q.reading_passage_ar) && (
                       <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", borderLeft: "4px solid #C9A84C" }}>
                         <div style={{ fontSize: 10, fontWeight: 700, color: "#C9A84C", letterSpacing: 1, marginBottom: 4 }}>📖 {t("READING PASSAGE", "نص القراءة")}</div>
-                        <div dir="auto" style={{ fontSize: 13, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
+                        {q.reading_passage && (
+                          <div dir="auto" style={{ fontSize: 13, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
+                        )}
+                        {q.reading_passage_ar && (
+                          <div dir="rtl" style={{ fontSize: 13, lineHeight: 1.8, fontFamily: "'Amiri',serif", marginTop: q.reading_passage ? 6 : 0 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage_ar) }} />
+                        )}
                       </div>
                     )}
                     {(q.instruction_text || q.instruction_text_ar) && (
@@ -352,14 +409,19 @@ const TeacherGrading = () => {
                 )}
 
                 {/* Text / audio answer */}
-                {!isMCQ && studentAns && (
+                {!isMCQ && (
                   <div style={{ padding: "10px 14px", borderRadius: 10, background: "#F9FAFB", border: "1px solid #E5E7EB", marginBottom: 12 }}>
                     <p style={{ fontSize: 11, fontWeight: 700, color: "#9CA3AF", margin: "0 0 4px" }}>{t("Student's Answer", "إجابة الطالب")}:</p>
-                    {q.question_type === "audio" && studentAns.startsWith("http") ? (
-                      <AdminAudioPlayer src={studentAns} />
-                    ) : (
-                      <p style={{ fontSize: 13, color: G, margin: 0, lineHeight: 1.6 }}>{studentAns}</p>
+                    {notAnswered && (
+                      <div style={{ padding: "6px 10px", background: "#FFF7ED", borderRadius: 8, border: "1px solid #FDE68A", fontSize: 11, color: "#92400E", fontWeight: 700 }}>
+                        ⚠️ {t("Not answered — skipped", "لم تتم الإجابة — تم التخطي")}
+                      </div>
                     )}
+                    {q.question_type === "audio" && audioSrc ? (
+                      <AdminAudioPlayer src={audioSrc} />
+                    ) : !notAnswered ? (
+                      <p style={{ fontSize: 13, color: G, margin: 0, lineHeight: 1.6 }}>{studentAns}</p>
+                    ) : null}
                   </div>
                 )}
 
@@ -370,27 +432,58 @@ const TeacherGrading = () => {
                   </div>
                 )}
 
-                {/* Grading — subjective only if not already graded */}
-                {isSubjective && !isAlreadyGraded && (
-                  <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 10 }}>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 4 }}>
-                        {t("Score", "الدرجة")} (/{q.points || 1})
-                      </label>
+                {/* Auto-grade note for MCQ/true-false, so it's clear what the
+                    score below is overriding rather than setting from scratch. */}
+                {!isSubjective && !isAlreadyGraded && (isMCQ || isTF) && (
+                  <div style={{ marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    {ans?.is_correct
+                      ? <span style={{ fontSize: 12, color: "#16A34A", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><CheckCircle size={13} /> {t("Auto-graded: Correct", "تصحيح تلقائي: صحيح")}</span>
+                      : <span style={{ fontSize: 12, color: "#DC2626", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}><XCircle size={13} /> {t("Auto-graded: Incorrect", "تصحيح تلقائي: خطأ")}</span>}
+                  </div>
+                )}
+
+                {/* Grading — every question type, not just subjective ones,
+                    so a teacher can overwrite a wrongly auto-graded MCQ or
+                    true/false answer too, not only score essays/audio.
+                    Quick-select buttons mirror the admin grading screen so
+                    scoring is a tap instead of typing a number by hand. */}
+                {!isAlreadyGraded && (
+                  <div style={{ marginTop: 4, background: "#F0FDF4", borderRadius: 12, padding: "14px 16px", border: "1.5px solid #BBDDC8" }}>
+                    <p style={{ fontSize: 12, fontWeight: 800, color: G, margin: "0 0 10px" }}>
+                      ✏️ {isSubjective ? t("Grade this answer", "صحّح هذه الإجابة") : t("Override score", "تعديل الدرجة")}{" "}
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "#6B7280" }}>({q.points || 1} {t("pts max", "نقطة كحد أقصى")})</span>
+                    </p>
+                    {(q.points || 1) <= 10 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                        {Array.from({ length: (q.points || 1) + 1 }, (_, n) => (
+                          <button key={n} onClick={() => setScores(s => ({ ...s, [q.id]: String(n) }))} style={{
+                            width: 40, height: 40, borderRadius: 10,
+                            border: `2px solid ${Number(scores[q.id]) === n ? G : "#D1D5DB"}`,
+                            background: Number(scores[q.id]) === n ? G : "#fff",
+                            cursor: "pointer", fontSize: 14, fontWeight: 800,
+                            color: Number(scores[q.id]) === n ? "#fff" : "#374151",
+                          }}>{n}</button>
+                        ))}
+                        <span style={{ fontSize: 12, color: "#9CA3AF", marginLeft: 4 }}>/ {q.points || 1}</span>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fff", borderRadius: 10, padding: "10px 12px", border: "1.5px solid #BBDDC8", marginBottom: 10 }}>
+                      <span style={{ fontSize: 12, color: "#6B7280", fontWeight: 700, whiteSpace: "nowrap" as const }}>{t("Score", "الدرجة")}:</span>
                       <input
                         type="number" min={0} max={q.points || 1} step={0.5}
-                        value={scores[ans.question_id] ?? ""}
-                        onChange={e => setScores(s => ({ ...s, [ans.question_id]: e.target.value }))}
-                        style={inp}
+                        value={scores[q.id] ?? ""}
+                        onChange={e => setScores(s => ({ ...s, [q.id]: e.target.value }))}
+                        style={{ width: 72, padding: "6px 10px", borderRadius: 8, border: "1.5px solid #D1D5DB", fontSize: 16, fontWeight: 800, color: G, textAlign: "center" as const, outline: "none" }}
                       />
+                      <span style={{ fontSize: 13, color: "#6B7280" }}>/ {q.points || 1} pts</span>
                     </div>
                     <div>
                       <label style={{ fontSize: 11, fontWeight: 700, color: "#374151", display: "block", marginBottom: 4 }}>
                         {t("Feedback", "ملاحظة")}
                       </label>
                       <input
-                        value={feedbacks[ans.question_id] ?? ""}
-                        onChange={e => setFeedbacks(f => ({ ...f, [ans.question_id]: e.target.value }))}
+                        value={feedbacks[q.id] ?? ""}
+                        onChange={e => setFeedbacks(f => ({ ...f, [q.id]: e.target.value }))}
                         placeholder={t("Optional feedback…", "ملاحظة اختيارية…")}
                         style={inp}
                       />
@@ -401,9 +494,9 @@ const TeacherGrading = () => {
                 {/* Already graded score */}
                 {isAlreadyGraded && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700 }}>
-                    {ans.is_correct ? <CheckCircle size={14} color="#16A34A" /> : <XCircle size={14} color="#DC2626" />}
-                    <span style={{ color: G }}>{ans.points_awarded ?? 0} / {q.points || 1} {t("pts", "نقطة")}</span>
-                    {ans.feedback && <span style={{ fontSize: 12, color: "#9CA3AF", fontWeight: 400 }}>— {ans.feedback}</span>}
+                    {ans?.is_correct ? <CheckCircle size={14} color="#16A34A" /> : <XCircle size={14} color="#DC2626" />}
+                    <span style={{ color: G }}>{ans?.points_awarded ?? 0} / {q.points || 1} {t("pts", "نقطة")}</span>
+                    {ans?.feedback && <span style={{ fontSize: 12, color: "#9CA3AF", fontWeight: 400 }}>— {ans.feedback}</span>}
                   </div>
                 )}
               </div>
@@ -424,7 +517,7 @@ const TeacherGrading = () => {
               />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: G }}>
-                  {t("Total", "المجموع")}: {totalEntered} / {totalPossible}
+                  {t("Total", "المجموع")}: {scaledEarnedPreview} / {scaledTotalPreview}
                   {" "}({totalPossible > 0 ? Math.round((totalEntered / totalPossible) * 100) : 0}%)
                 </div>
                 <button
@@ -514,16 +607,10 @@ const TeacherGrading = () => {
           ))}
         </div>
 
-        {/* Batch release — visible on the Graded tab when there's something to release */}
-        {gradingTab === "graded" && gradedExamOptions.length > 0 && (
-          <div style={{ marginTop: 10 }}>
-            <button onClick={() => openBatchRelease(gradedExamOptions[0].id)} style={{
-              padding: "8px 14px", borderRadius: 10, border: "none",
-              background: "#16A34A", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer",
-              display: "flex", alignItems: "center", gap: 6,
-            }}>
-              <Bell size={13} /> {t("Batch Release & Notify", "إرسال جماعي وإشعار الطلاب")}
-            </button>
+        {/* Graded results wait here for an admin to release them to students */}
+        {gradingTab === "graded" && tabCounts.graded > 0 && (
+          <div style={{ marginTop: 10, padding: "8px 14px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", fontSize: 12, fontWeight: 600, color: "#92400E", display: "flex", alignItems: "center", gap: 6, width: "fit-content" }}>
+            <Bell size={13} /> {t("Waiting for an admin to release these to students", "بانتظار أن يقوم المسؤول بإرسال هذه النتائج للطلاب")}
           </div>
         )}
       </div>
@@ -567,6 +654,11 @@ const TeacherGrading = () => {
                   {attempt.submitted_at ? new Date(attempt.submitted_at).toLocaleDateString() : "—"}
                   {attempt.status === "graded" && ` • ${Math.round(attempt.percentage || 0)}% — ${attempt.passed ? t("Pass", "ناجح") : t("Fail", "راسب")}`}
                 </div>
+                {(attempt.status === "graded" || attempt.status === "released") && attempt.graded_by_role === "admin" && (
+                  <div style={{ fontSize: 11, color: "#7C3AED", marginTop: 2, fontWeight: 700 }}>
+                    {t("Graded by admin", "صححها المسؤول")}
+                  </div>
+                )}
               </div>
 
               {/* Badge */}
@@ -604,13 +696,13 @@ const TeacherGrading = () => {
                   {gradingTab === "pending" ? <><Send size={12} /> {t("Grade", "صحّح")}</> : <><Eye size={12} /> {t("View", "عرض")}</>}
                 </button>
                 {gradingTab === "graded" && (
-                  <button onClick={() => releaseResult(attempt.id, attempt.user_id, (attempt.exams?.title || "exam"))} style={{
+                  <span style={{
                     padding: "8px 14px", borderRadius: 10, border: "1.5px solid #E5E7EB",
-                    background: "#fff", color: G, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    background: "#FAFAFA", color: "#9CA3AF", fontSize: 12, fontWeight: 700,
                     display: "flex", alignItems: "center", gap: 6,
                   }}>
-                    <Unlock size={12} /> {t("Release", "إرسال")}
-                  </button>
+                    <Unlock size={12} /> {t("Awaiting release", "بانتظار الإرسال")}
+                  </span>
                 )}
               </div>
             </div>
@@ -618,62 +710,6 @@ const TeacherGrading = () => {
         })}
       </div>
 
-      {/* Batch Release Dialog */}
-      <Dialog open={batchReleaseOpen} onOpenChange={v => { if (!v) { setBatchReleaseOpen(false); setBatchAttempts([]); setBatchExamId(""); } }}>
-        <DialogContent style={{ maxWidth: 460, borderRadius: 20, padding: 0 }}>
-          <div style={{ background: "#16A34A", padding: "18px 20px", borderRadius: "20px 20px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
-            <Bell size={20} color="#fff" />
-            <h2 style={{ fontWeight: 800, fontSize: 16, color: "#fff", margin: 0 }}>
-              {t("Batch Release Results", "إرسال النتائج جماعياً")}
-            </h2>
-          </div>
-          <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#6B7280", display: "block", marginBottom: 8 }}>
-                {t("Select Exam", "اختر الامتحان")}
-              </label>
-              <select value={batchExamId} onChange={e => openBatchRelease(e.target.value)} style={inp}>
-                <option value="">{t("Select an exam…", "اختر امتحاناً…")}</option>
-                {gradedExamOptions.map(e => (
-                  <option key={e.id} value={e.id}>{language === "ar" ? e.title_ar || e.title : e.title}</option>
-                ))}
-              </select>
-            </div>
-
-            {batchAttempts.length > 0 && (
-              <div>
-                <p style={{ fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 8 }}>
-                  {batchAttempts.length} {t("graded student(s) will be notified:", "طالب سيتم إشعارهم:")}
-                </p>
-                <div style={{ maxHeight: 180, overflowY: "auto", border: "1px solid #E5E7EB", borderRadius: 10 }}>
-                  {batchAttempts.map((a, i) => (
-                    <div key={a.id} style={{ padding: "8px 12px", borderBottom: i < batchAttempts.length - 1 ? "1px solid #F3F4F6" : "none", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>{a.profiles?.full_name || "Student"}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: a.passed ? "#16A34A" : "#DC2626" }}>{Math.round(a.percentage || 0)}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {batchExamId && batchAttempts.length === 0 && (
-              <p style={{ fontSize: 13, color: "#9CA3AF", textAlign: "center" }}>
-                {t("No graded attempts for this exam", "لا توجد نتائج مصححة لهذا الامتحان")}
-              </p>
-            )}
-
-            <button onClick={executeBatchRelease} disabled={batchReleasing || !batchAttempts.length} style={{
-              padding: "13px", borderRadius: 12, border: "none", background: "#16A34A", color: "#fff",
-              cursor: "pointer", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center",
-              justifyContent: "center", gap: 8, opacity: (batchReleasing || !batchAttempts.length) ? .5 : 1,
-            }}>
-              {batchReleasing
-                ? <><Loader2 size={16} style={{ animation: "spin .8s linear infinite" }} /> {t("Releasing…", "جاري الإرسال…")}</>
-                : <><Send size={16} /> {t("Release All & Notify", "إرسال الكل وإشعار الطلاب")}</>}
-            </button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };

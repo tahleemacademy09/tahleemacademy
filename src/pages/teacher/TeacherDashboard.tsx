@@ -124,13 +124,20 @@ const TeacherDashboard = () => {
   useEffect(() => {
     if (!user) return;
     (async () => {
-      const { data: ttAll } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id).eq("is_active", true);
+      // A subject counts as "theirs" whether they're the primary timetable
+      // teacher_id or listed as a co-teacher in teacher_ids[] — matches the
+      // scoping used in TeacherGrading.tsx so a co-teacher's stats/pending/
+      // graded counts here aren't silently missing subjects they do teach.
+      const { data: ttAll } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids").eq("is_active", true);
+      const myTtSlots = (ttAll || []).filter((s: any) =>
+        s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
+      );
       // Also include subjects the teacher owns directly (subjects.teacher_id) —
       // a subject with no active timetable slot yet was previously invisible
       // here even though the teacher owns it and it may already have students.
       const { data: ownedSubs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
       const subjectIds = [...new Set([
-        ...((ttAll || []).map((s: any) => s.subject_id).filter(Boolean)),
+        ...myTtSlots.map((s: any) => s.subject_id).filter(Boolean),
         ...((ownedSubs || []).map((s: any) => s.id)),
       ])];
 
@@ -199,9 +206,20 @@ const TeacherDashboard = () => {
         return ta - tb;
       });
 
-      const { data: pvtSessions } = await supabase.from("private_sessions").select("*,profiles!private_sessions_student_id_fkey(full_name),subjects(title)").eq("teacher_id", user.id).eq("session_date", todayStr);
+      // NOTE: private_sessions has no FK to profiles (only subject_id -> subjects),
+      // so `profiles!private_sessions_student_id_fkey` isn't a resolvable embed
+      // and silently failed this query. Fetch profiles separately and merge.
+      const { data: pvtSessionsRaw } = await supabase.from("private_sessions").select("*,subjects(title)").eq("teacher_id", user.id).eq("session_date", todayStr);
+      const pvtStudentIds = [...new Set((pvtSessionsRaw || []).map((s: any) => s.student_id).filter(Boolean))];
+      let pvtProfilesById: Record<string, any> = {};
+      if (pvtStudentIds.length) {
+        const { data: pvtProfiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", pvtStudentIds);
+        pvtProfilesById = Object.fromEntries((pvtProfiles || []).map((p: any) => [p.user_id, p]));
+      }
+      const pvtSessions = (pvtSessionsRaw || []).map((s: any) => ({ ...s, profiles: pvtProfilesById[s.student_id] || {} }));
 
       let pendingTests = 0, pendingExams = 0, pendingList: any[] = [];
+      let recent: any[] = [];
       if (subjectIds.length) {
         // Exams are attached via exams.subject_id (set by ExamEditor), not
         // the legacy course_id column which the editor never populates.
@@ -212,12 +230,31 @@ const TeacherDashboard = () => {
         if (testIds.length)  { const { count } = await supabase.from("exam_attempts").select("id", { count: "exact", head: true }).in("exam_id", testIds).eq("status", "submitted");  pendingTests  = count || 0; }
         const allExamIds = [...examIds, ...testIds];
         if (allExamIds.length) {
-          const { data: p } = await supabase.from("exam_attempts").select("*,profiles!exam_attempts_user_id_fkey(full_name),exams(title,type)").in("exam_id", allExamIds).eq("status", "submitted").order("submitted_at", { ascending: false }).limit(5);
-          pendingList = p || [];
+          // NOTE: no FK exists directly between exam_attempts and profiles —
+          // `profiles!exam_attempts_user_id_fkey` isn't resolvable and silently
+          // failed. Fetch profiles separately and merge.
+          const { data: pRaw } = await supabase.from("exam_attempts").select("*,exams(title,type)").in("exam_id", allExamIds).eq("status", "submitted").order("submitted_at", { ascending: false }).limit(5);
+          const pUserIds = [...new Set((pRaw || []).map((a: any) => a.user_id).filter(Boolean))];
+          let pProfilesById: Record<string, any> = {};
+          if (pUserIds.length) {
+            const { data: pProfiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", pUserIds);
+            pProfilesById = Object.fromEntries((pProfiles || []).map((p: any) => [p.user_id, p]));
+          }
+          pendingList = (pRaw || []).map((a: any) => ({ ...a, profiles: pProfilesById[a.user_id] || {} }));
+
+          // Recently graded — scoped to this teacher's own exams only. This
+          // used to have no exam_id filter at all and showed the most
+          // recently graded attempts platform-wide, not just this teacher's.
+          const { data: recentRaw } = await supabase.from("exam_attempts").select("*,exams(title,type)").in("exam_id", allExamIds).eq("status", "graded").order("submitted_at", { ascending: false }).limit(6);
+          const recentUserIds = [...new Set((recentRaw || []).map((a: any) => a.user_id).filter(Boolean))];
+          let recentProfilesById: Record<string, any> = {};
+          if (recentUserIds.length) {
+            const { data: recentProfiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", recentUserIds);
+            recentProfilesById = Object.fromEntries((recentProfiles || []).map((p: any) => [p.user_id, p]));
+          }
+          recent = (recentRaw || []).map((a: any) => ({ ...a, profiles: recentProfilesById[a.user_id] || {} }));
         }
       }
-
-      const { data: recent } = await supabase.from("exam_attempts").select("*,profiles!exam_attempts_user_id_fkey(full_name),exams(title,type)").eq("status", "graded").order("submitted_at", { ascending: false }).limit(6);
 
       setStats({ students: studentCount, privateStudents: pvtCount || 0, subjects: subjectIds.length, todayClasses: allToday.length, pendingExams, pendingTests });
       setTodaySessions(allToday);
