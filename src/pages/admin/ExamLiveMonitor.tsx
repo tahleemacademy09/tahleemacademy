@@ -10,6 +10,7 @@
      30s poll as a fallback if the socket drops.
 */
 import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -20,7 +21,7 @@ import {
   ArrowLeft, RefreshCw, Clock, Plus, Send, ShieldAlert,
   Camera, Mic, Maximize, X, StickyNote, RotateCcw, CheckCircle2,
   AlertTriangle, Wifi, WifiOff, Users, Circle, Video, VideoOff,
-  Volume2, VolumeX,
+  Volume2, VolumeX, ChevronLeft, ChevronRight,
 } from "lucide-react";
 
 /* ── Live video tile — subscribes to one participant's video AND
@@ -442,6 +443,7 @@ export default function ExamLiveMonitor() {
   const [savingNote, setSavingNote] = useState(false);
   const [busyId, setBusyId]         = useState<string | null>(null);
   const [preview, setPreview]       = useState<any>(null);
+  const [previewList, setPreviewList] = useState<any[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [expandedId, setExpandedId]   = useState<string | null>(null);
   const [showLiveGrid, setShowLiveGrid] = useState(false);
@@ -1042,7 +1044,7 @@ export default function ExamLiveMonitor() {
                                   {t("Face captures", "لقطات الوجه")} ({faceItems.length})
                                 </div>
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                                  {faceItems.map((m: any) => <Thumb key={m.id} media={m} onClick={() => setPreview(m)} />)}
+                                  {faceItems.map((m: any) => <Thumb key={m.id} media={m} onClick={() => { setPreviewList(faceItems); setPreview(m); }} />)}
                                 </div>
                               </div>
                             )}
@@ -1052,7 +1054,7 @@ export default function ExamLiveMonitor() {
                                   {t("Screen captures", "لقطات الشاشة")} ({screenItems.length})
                                 </div>
                                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                                  {screenItems.map((m: any) => <Thumb key={m.id} media={m} onClick={() => setPreview(m)} />)}
+                                  {screenItems.map((m: any) => <Thumb key={m.id} media={m} onClick={() => { setPreviewList(screenItems); setPreview(m); }} />)}
                                 </div>
                               </div>
                             )}
@@ -1095,17 +1097,56 @@ export default function ExamLiveMonitor() {
         />
       )}
 
-      {/* Snapshot lightbox — zIndex above every other fixed overlay in this
-          page (LiveFullscreen is 110, LiveGridModal is 100) so the close
-          button is never swallowed by one of those sitting on top of it
-          when both happen to be mounted at once. */}
-      {preview && (
-        <div onClick={() => setPreview(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.9)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <button onClick={(e) => { e.stopPropagation(); setPreview(null); }} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
-            <X size={18} color="#fff" />
-          </button>
-          {previewUrl ? <img src={previewUrl} style={{ maxWidth: "100%", maxHeight: "85vh", borderRadius: 8 }} /> : <div style={{ width: 40, height: 40, border: "4px solid #fff", borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite" }} />}
-        </div>
+      {/* Snapshot lightbox — rendered via a portal straight into document.body.
+          This page's Dialog (and other overlays) can end up as descendants
+          of an ancestor with a CSS transform, which silently turns any
+          `position: fixed` INSIDE it into "fixed relative to that ancestor"
+          instead of the true viewport — the close button then renders
+          somewhere off in the constrained box instead of the screen's
+          actual top-right corner, and the backdrop doesn't cover the full
+          screen either (exactly what was reported: the dialog's own header
+          content and the thumbnail grid below both stayed visible around
+          the "fixed" overlay). A portal to document.body sidesteps that
+          entirely — nothing above body can be applying a transform.
+          Also added: left/right navigation between images in the same
+          section (face captures or screen captures) the student clicked
+          into, with arrow-key support. */}
+      {preview && createPortal(
+        (() => {
+          const idx = previewList.findIndex((m: any) => m.id === preview.id);
+          const goPrev = () => { if (idx > 0) setPreview(previewList[idx - 1]); };
+          const goNext = () => { if (idx >= 0 && idx < previewList.length - 1) setPreview(previewList[idx + 1]); };
+          return (
+            <div
+              onClick={() => setPreview(null)}
+              onKeyDown={(e) => { if (e.key === "ArrowLeft") goPrev(); if (e.key === "ArrowRight") goNext(); if (e.key === "Escape") setPreview(null); }}
+              tabIndex={-1}
+              ref={(el) => el?.focus()}
+              style={{ position: "fixed", inset: 0, width: "100vw", height: "100dvh", background: "rgba(0,0,0,.9)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+            >
+              <button onClick={(e) => { e.stopPropagation(); setPreview(null); }} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer", zIndex: 1 }}>
+                <X size={18} color="#fff" />
+              </button>
+              {idx > 0 && (
+                <button onClick={(e) => { e.stopPropagation(); goPrev(); }} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 10, cursor: "pointer", zIndex: 1 }}>
+                  <ChevronLeft size={22} color="#fff" />
+                </button>
+              )}
+              {idx >= 0 && idx < previewList.length - 1 && (
+                <button onClick={(e) => { e.stopPropagation(); goNext(); }} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 10, cursor: "pointer", zIndex: 1 }}>
+                  <ChevronRight size={22} color="#fff" />
+                </button>
+              )}
+              {previewUrl ? <img src={previewUrl} style={{ maxWidth: "100%", maxHeight: "85vh", borderRadius: 8 }} /> : <div style={{ width: 40, height: 40, border: "4px solid #fff", borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite" }} />}
+              {previewList.length > 1 && (
+                <div style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", color: "rgba(255,255,255,.7)", fontSize: 12, fontWeight: 600 }}>
+                  {idx + 1} / {previewList.length}
+                </div>
+              )}
+            </div>
+          );
+        })(),
+        document.body
       )}
     </div>
   );
