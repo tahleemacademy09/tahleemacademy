@@ -21,42 +21,20 @@ const TeacherResults = () => {
   useEffect(() => {
     if (!user) return;
     const fetch = async () => {
-      // Include subjects assigned via the admin timetable (subject_timetable
-      // .teacher_id), not just direct ownership (subjects.teacher_id) — a
-      // teacher should see results for any subject that's theirs to teach,
-      // regardless of who set it up.
       const { data: subs } = await supabase.from("subjects").select("id, title").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, subjects(id, title)").eq("teacher_id", user.id);
-      const ttSubjects = ((ttSlots || []) as any[]).map(s => s.subjects).filter(Boolean);
-      const subjectsMerged = [...(subs || []), ...ttSubjects];
-      const subjects = [...new Map(subjectsMerged.map((s: any) => [s.id, s])).values()];
-      setSubjects(subjects);
-      const subjectIds = subjects.map((s: any) => s.id);
+      setSubjects(subs || []);
+      const subjectIds = (subs || []).map(s => s.id);
       if (subjectIds.length === 0) { setLoading(false); return; }
 
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
       // legacy course_id column which the editor never populates.
-      // NOTE: no FK exists directly between exam_attempts and profiles (both
-      // point separately at auth.users), so `profiles!exam_attempts_user_id_fkey`
-      // is not a resolvable embed — it silently failed the whole query.
-      // Fetch profiles separately and merge, like the admin GradingPage does.
-      const { data: attempts, error } = await supabase.from("exam_attempts")
-        .select("*, exams(title, type, term, subject_id, subjects(title))")
+      const { data } = await supabase.from("exam_attempts")
+        .select("*, profiles!exam_attempts_user_id_fkey(full_name), exams(title, type, term, subject_id, subjects(title))")
         .in("exam_id", (await supabase.from("exams").select("id").in("subject_id", subjectIds)).data?.map((e: any) => e.id) || [])
         .in("status", ["graded", "submitted"])
         .order("submitted_at", { ascending: false });
 
-      if (error) console.error("TeacherResults: exam_attempts fetch failed", error);
-
-      const userIds = [...new Set((attempts || []).map((a: any) => a.user_id).filter(Boolean))];
-      let profilesById: Record<string, any> = {};
-      if (userIds.length) {
-        const { data: profiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", userIds);
-        profilesById = Object.fromEntries((profiles || []).map((p: any) => [p.user_id, p]));
-      }
-      const merged = (attempts || []).map((a: any) => ({ ...a, profiles: profilesById[a.user_id] || {} }));
-
-      setResults(merged);
+      setResults(data || []);
       setLoading(false);
     };
     fetch();

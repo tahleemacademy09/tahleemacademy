@@ -385,15 +385,10 @@ const ExamResults = () => {
                       </div>
 
                       <div style={{ padding: "16px 18px" }}>
-                        {(q.reading_passage || q.reading_passage_ar) && (
+                        {q.reading_passage && (
                           <div style={{ marginBottom: 12, padding: "14px 16px", background: "#fffbeb", borderRadius: 12, border: `1px solid ${GOLD}44`, borderLeft: `4px solid ${GOLD}` }}>
                             <div style={{ fontSize: 10, fontWeight: 700, color: GOLD, letterSpacing: 1, marginBottom: 6 }}>📖 {t("READING PASSAGE", "نص القراءة")}</div>
-                            {q.reading_passage && (
-                              <div dir="auto" style={{ fontSize: 14, lineHeight: 1.9, color: G, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
-                            )}
-                            {q.reading_passage_ar && (
-                              <div dir="rtl" style={{ fontSize: 14, lineHeight: 1.9, color: G, fontFamily: "'Amiri',serif", marginTop: q.reading_passage ? 8 : 0 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage_ar) }} />
-                            )}
+                            <div dir="auto" style={{ fontSize: 14, lineHeight: 1.9, color: G, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
                           </div>
                         )}
                         {(q.instruction_text || q.instruction_text_ar) && (

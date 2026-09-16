@@ -23,11 +23,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useStudentEffectiveTerm, termOrEvergreenFilter } from "@/hooks/useEffectiveTerm";
 import MaterialsViewer from "./MaterialsViewer";
 import {
   FileText, Video, Music, Image as ImageIcon, File as FileIcon,
-  Upload, Plus, X, Trash2, Pencil, Download,
+  Upload, Plus, X, Trash2, Pencil,
   Loader2, FolderOpen, Search, Lock, LockOpen,
 } from "lucide-react";
 
@@ -65,26 +64,6 @@ const fmtSize = (bytes?: number | null) => {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
 
-// Resolve a stored `file_url` (bucket path or already-absolute URL) into a
-// URL the browser can actually download from — same approach as
-// MaterialsViewer.tsx's resolveUrl(), duplicated locally to avoid a cross
-// import into a non-exported helper.
-async function resolveDownloadUrl(fileUrl: string): Promise<string> {
-  if (!fileUrl) return "";
-  if (fileUrl.startsWith("http")) return fileUrl;
-  const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(fileUrl);
-  if (pub?.publicUrl) {
-    try {
-      const res = await fetch(pub.publicUrl, { method: "HEAD" });
-      if (res.ok || res.status === 304) return pub.publicUrl;
-    } catch { /* fall through to signed URL */ }
-  }
-  const { data: signed, error } = await supabase.storage
-    .from(BUCKET).createSignedUrl(fileUrl, 3600);
-  if (error) return pub?.publicUrl || "";
-  return signed?.signedUrl || pub?.publicUrl || "";
-}
-
 function detectType(file: File): MaterialType {
   const mime = file.type.toLowerCase();
   const ext  = file.name.split(".").pop()?.toLowerCase() || "";
@@ -118,7 +97,6 @@ const emptyForm = {
 function MaterialManager({ subjectId }: { subjectId?: string }) {
   const { user } = useAuth();
   const { t } = useLanguage();
-  const { termId: effectiveTermId, term: effectiveTerm } = useStudentEffectiveTerm();
 
   const [materials, setMaterials] = useState<any[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -133,36 +111,15 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
   const [feedback, setFeedback]   = useState<{ type: "success" | "error" | ""; message: string }>({ type: "", message: "" });
   const [form, setForm]           = useState({ ...emptyForm });
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleDownload = async (m: any) => {
-    if (!m.file_url || downloadingId) return;
-    setDownloadingId(m.id);
-    try {
-      const url = await resolveDownloadUrl(m.file_url);
-      if (!url) { setFeedback({ type: "error", message: t("Couldn't resolve file link.", "تعذر الوصول إلى رابط الملف.") }); return; }
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = m.title || "";
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    } finally {
-      setDownloadingId(null);
-    }
-  };
-
   const load = useCallback(async () => {
-    if (!subjectId || !effectiveTermId) { setLoading(false); return; }
+    if (!subjectId) { setLoading(false); return; }
     setLoading(true);
     const [{ data }, { data: subj }] = await Promise.all([
       supabase
         .from("subject_materials").select("*")
         .eq("subject_id", subjectId)
-        .or(termOrEvergreenFilter(effectiveTermId))
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: false }),
       supabase.from("subjects").select("materials_locked").eq("id", subjectId).single(),
@@ -170,7 +127,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
     setMaterials(data || []);
     setMaterialsLocked(!!subj?.materials_locked);
     setLoading(false);
-  }, [subjectId, effectiveTermId]);
+  }, [subjectId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -249,7 +206,6 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
             is_downloadable: form.is_downloadable,
             uploaded_by: user.id,
             sort_order: materials.length + ok,
-            term_id: effectiveTermId,
           };
           const { error } = await supabase.from("subject_materials").insert([payload]);
           if (!error) ok++;
@@ -283,7 +239,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
 
       if (!file_url && !editing) throw new Error(t("Please choose a file to upload", "الرجاء اختيار ملف"));
 
-      const payload: any = {
+      const payload = {
         subject_id: subjectId,
         title: form.title.trim(),
         title_ar: form.title_ar.trim() || null,
@@ -295,9 +251,6 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
         uploaded_by: user.id,
         sort_order: editing?.sort_order ?? materials.length,
       };
-      // Only stamp term_id on brand-new uploads — editing an existing
-      // (possibly evergreen) material shouldn't silently re-scope it.
-      if (!editing) payload.term_id = effectiveTermId;
 
       const { error } = editing
         ? await supabase.from("subject_materials").update(payload).eq("id", editing.id)
@@ -374,12 +327,6 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
         </button>
       </div>
 
-      {effectiveTerm && (
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: TMID }}>
-          {t("Adding to", "الإضافة إلى")}: {effectiveTerm.name}
-        </span>
-      )}
-
       {/* Lock status banner — reminds staff the tab is currently hidden from students */}
       {materialsLocked && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 12, background: "#FEF2F2", border: "1px solid rgba(220,38,38,.2)" }}>
@@ -414,21 +361,9 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 3 }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: cfg.color, background: cfg.bg, borderRadius: 20, padding: "1px 8px" }}>{m.material_type}</span>
                   {m.file_size && <span style={{ fontSize: 10, color: TLIT }}>· {fmtSize(m.file_size)}</span>}
-                  {!m.term_id && (
-                    <span style={{ fontSize: 10, fontWeight: 700, color: TMID, background: "#F3F4F6", borderRadius: 20, padding: "1px 8px" }} title={t("Shown in every term", "يظهر في كل فصل")}>
-                      {t("Evergreen", "دائم")}
-                    </span>
-                  )}
                 </div>
               </div>
               <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                {m.file_url && m.is_downloadable !== false && (
-                  <IconBtn onClick={() => handleDownload(m)} title={t("Download", "تحميل")}>
-                    {downloadingId === m.id
-                      ? <Loader2 size={15} color={TMID} className="animate-spin" />
-                      : <Download size={15} color={TMID} />}
-                  </IconBtn>
-                )}
                 <IconBtn onClick={() => openEdit(m)} title={t("Edit", "تعديل")}>
                   <Pencil size={15} color={TMID} />
                 </IconBtn>

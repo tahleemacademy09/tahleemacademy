@@ -159,14 +159,6 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   const [isListening,     setIsListening]     = useState(false);
   const [transcribing,    setTranscribing]    = useState(false);
 
-  // ── Sabaq plan (teacher-assigned, ordered curriculum) ───────────────────
-  // hifdh_daily_assignments already had this shape; nothing read it before.
-  const [plan,        setPlan]        = useState<any>(null);   // the active hifdh_daily_assignments row, or null = fully manual (legacy behaviour)
-  const [planLoaded,  setPlanLoaded]  = useState(false);
-  const [restToday,   setRestToday]   = useState(false);
-  const planRef = useRef<any>(null);
-  useEffect(() => { planRef.current = plan; }, [plan]);
-
   const sessionAyahsRef    = useRef<Ayah[]>([]);
   const audioRef           = useRef<HTMLAudioElement | null>(null);
   const playingRef         = useRef(false);
@@ -421,41 +413,6 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* ── Load teacher-assigned Sabaq plan (mode: "surah_sequence") ──────────
-     If one exists and there's no in-progress resumed session, it drives
-     today's surah/verse target instead of the old hardcoded default
-     (114:1-6). Fully backward-compatible: no active plan → unchanged
-     manual behaviour. */
-  useEffect(() => {
-    supabase.auth.getUser().then(async ({ data }) => {
-      if (!data?.user) { setPlanLoaded(true); return; }
-      const { data: row } = await (supabase as any)
-        .from("hifdh_daily_assignments")
-        .select("*").eq("student_id", data.user.id).eq("active", true)
-        .eq("mode", "surah_sequence").maybeSingle();
-      if (row) {
-        setPlan(row);
-        const items: number[] = (row.selected_items || []).map(Number);
-        const pos = row.current_position || { item_index: 0, page_offset: 0 };
-        const idx = Math.min(pos.item_index ?? 0, Math.max(items.length - 1, 0));
-        const curSurahNum = items[idx] || 114;
-        const curSurah = SURAHS[curSurahNum - 1];
-        const ayahOffset = pos.page_offset ?? 0; // reinterpreted as "ayah_offset" for this mode
-        const s = Math.min(ayahOffset + 1, curSurah?.verses ?? 1);
-        const e = Math.min(ayahOffset + (row.daily_target_ayahs || 5), curSurah?.verses ?? 1);
-
-        const todayDow = new Date().getDay();
-        const isRest = Array.isArray(row.rest_days) && row.rest_days.includes(todayDow);
-        setRestToday(isRest);
-
-        if (!pendingRestoreRef.current && !isRest) {
-          setSurahNum(curSurahNum); setStartVerse(s); setEndVerse(e);
-        }
-      }
-      setPlanLoaded(true);
-    });
-  }, []);
-
   /* ── Fetch ayahs ── */
   const fetchAyahs = useCallback(async (num: number) => {
     setLoading(true); setFetchError("");
@@ -553,25 +510,6 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
           duration_seconds: 0,
           completed_at:   new Date().toISOString(),
         }).then(() => { onSessionSaved?.(); }).catch(() => {});
-
-        // ── Advance the teacher-assigned plan, if one is active ──────────
-        const activePlan = planRef.current;
-        if (activePlan) {
-          const items: number[] = (activePlan.selected_items || []).map(Number);
-          let idx = activePlan.current_position?.item_index ?? 0;
-          let ayahOffset = (activePlan.current_position?.page_offset ?? 0) + versesCount;
-          let curSurah = SURAHS[(items[idx] || 114) - 1];
-          while (curSurah && ayahOffset >= curSurah.verses && idx < items.length - 1) {
-            ayahOffset -= curSurah.verses;
-            idx += 1;
-            curSurah = SURAHS[(items[idx] || 114) - 1];
-          }
-          (supabase as any).from("hifdh_daily_assignments").update({
-            current_position: { item_index: idx, page_offset: ayahOffset },
-            last_advance_date: new Date().toISOString().slice(0, 10),
-            days_completed: (activePlan.days_completed || 0) + 1,
-          }).eq("id", activePlan.id).then(() => {});
-        }
       });
       setCompleted(true);
     }
@@ -666,7 +604,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
   /* ── SETUP ── */
   if (!started) {
     const verseCount = Math.max(0, endVerse - startVerse + 1);
-    const canStart   = !loading && ayahs.length > 0 && endVerse >= startVerse && !(plan?.teacher_locked && restToday);
+    const canStart   = !loading && ayahs.length > 0 && endVerse >= startVerse;
     const W = "#ffffff", WARM = "#faf8f4", B = "#e8ddd0", GL = "#b7791f", TXT = "#374151", MUT = "#9aab94";
     const sCard = (ex?: React.CSSProperties): React.CSSProperties => ({
       background:W, border:`1px solid ${B}`, borderRadius:16, boxShadow:"0 1px 8px rgba(26,61,36,.06)", ...ex });
@@ -696,24 +634,15 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
         </div>
 
         <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 100px", display:"flex", flexDirection:"column", gap:12 }}>
-          {plan?.teacher_locked && (
-            <div style={{ padding:"10px 12px", borderRadius:10, background:`${GOLD}15`, border:`1px solid ${GOLD}40`,
-              fontSize:11, color:G, fontWeight:700 }}>
-              {restToday
-                ? "📅 Rest day — no new Sabaq today. Use Sabqi/Manzil to revise instead."
-                : `📌 Today's Sabaq — assigned by your teacher (Day ${(plan.days_completed || 0) + 1})`}
-            </div>
-          )}
           <div style={sCard({ padding:"14px" })}>
             <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:10 }}>
               <div style={{ width:3, height:14, borderRadius:2, background:GL }} />
               <span style={{ fontSize:10, fontWeight:800, color:GL, letterSpacing:1, textTransform:"uppercase" }}>Surah & Verse</span>
             </div>
-            <select value={surahNum} className="mem-select" disabled={!!plan?.teacher_locked}
+            <select value={surahNum} className="mem-select"
               onChange={e => { setSurahNum(Number(e.target.value)); setStartVerse(1); setEndVerse(1); }}
               style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`1.5px solid ${B}`,
-                fontSize:13, color:G, background:WARM, marginBottom:10, fontWeight:600, appearance:"none",
-                cursor: plan?.teacher_locked ? "not-allowed" : "pointer", opacity: plan?.teacher_locked ? 0.7 : 1 }}>
+                fontSize:13, color:G, background:WARM, marginBottom:10, fontWeight:600, appearance:"none", cursor:"pointer" }}>
               {SURAHS.map(s => <option key={s.num} value={s.num}>{s.num}. {s.name} ({s.verses}v)</option>)}
             </select>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
@@ -723,11 +652,9 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
                 <div key={i}>
                   <div style={{ fontSize:10, color:MUT, fontWeight:700, marginBottom:4, letterSpacing:.5 }}>{label}</div>
                   <input type="number" min={min as number} max={max as number} value={val as number} className="mem-input"
-                    disabled={!!plan?.teacher_locked}
                     onChange={e => (setter as Function)(Number(e.target.value))}
                     style={{ width:"100%", padding:"9px 12px", borderRadius:10, border:`1.5px solid ${B}`,
-                      fontSize:15, color:G, background:WARM, fontWeight:800, textAlign:"center",
-                      opacity: plan?.teacher_locked ? 0.7 : 1 }} />
+                      fontSize:15, color:G, background:WARM, fontWeight:800, textAlign:"center" }} />
                 </div>
               ))}
             </div>
@@ -777,7 +704,7 @@ export default function HifdhMemorization({ reciter: reciterProp, onSessionSaved
               background:canStart?`linear-gradient(135deg,${G} 0%,${GM} 100%)`:"#f0f0ee",
               color:canStart?"#fff":MUT, fontSize:16, fontWeight:800,
               boxShadow:canStart?`0 4px 16px ${G}40`:"none", letterSpacing:.3 }}>
-            {loading?"Loading…":(plan?.teacher_locked && restToday)?"Rest day":!canStart?"Adjust range":"🧠 Begin Memorization · ابدأ"}
+            {loading?"Loading…":!canStart?"Adjust range":"🧠 Begin Memorization · ابدأ"}
           </button>
 
           {fetchError && (

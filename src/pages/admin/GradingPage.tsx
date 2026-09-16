@@ -75,16 +75,15 @@ const GradingPage = () => {
         .in("status", ["in_progress", "submitted", "graded", "released"])
         .order("submitted_at", { ascending: false, nullsFirst: false }),
       supabase.from("profiles").select("user_id, full_name, email, avatar_url"),
-      supabase.from("exams").select("id, title, title_ar, passing_score, term, type, session, subject_id, subjects(title, title_ar)"),
+      supabase.from("exams").select("id, title, title_ar, passing_score, term, type, session"),
     ]);
     const profiles = profilesRes.data || [];
     const exams    = examsRes.data    || [];
     setExamsList(exams);
     const merged = (attemptsRes.data || []).map((a: any) => ({
       ...a,
-      profiles:      profiles.find(p => p.user_id === a.user_id) || {},
-      exams:         exams.find(e => e.id === a.exam_id) || {},
-      graderProfile: a.graded_by ? (profiles.find(p => p.user_id === a.graded_by) || null) : null,
+      profiles: profiles.find(p => p.user_id === a.user_id) || {},
+      exams:    exams.find(e => e.id === a.exam_id) || {},
     }));
     setAllAttempts(merged);
   };
@@ -117,36 +116,12 @@ const GradingPage = () => {
   // ── Open attempt for grading ─────────────────────────────────────────────
   const openAttempt = async (attempt: any) => {
     setSelectedAttempt(attempt);
-    // Use the same pooled subset the student was actually shown (respects
-    // "section::pick=N" question-pool tags) instead of the full question
-    // bank — otherwise an exam with pools shows every question in the bank
-    // during grading, not just the ones the student answered.
     const [qRes, aRes] = await Promise.all([
-      supabase.rpc("get_exam_questions_for_attempt", { _attempt_id: attempt.id }),
+      supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order"),
       supabase.from("exam_answers").select("*").eq("attempt_id", attempt.id),
     ]);
-    let qs  = qRes.data || [];
+    const qs  = qRes.data || [];
     const ans = aRes.data || [];
-    if (qRes.error) {
-      console.error("get_exam_questions_for_attempt failed, falling back to full bank:", qRes.error);
-      const { data: fallbackQs } = await supabase.from("exam_questions").select("*").eq("exam_id", attempt.exam_id).order("sort_order");
-      qs = fallbackQs || [];
-    } else {
-      qs = [...qs].sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-    }
-    // The audioUrl saved in answer_data is a signed URL only valid for 7
-    // days from submission (see ExamTaking.tsx) — grading after that
-    // window sees "Audio file unavailable" for a recording that's still
-    // fine in Storage. Re-sign it from answer_data.storagePath so the
-    // player works regardless of how long ago the student submitted.
-    // (No storagePath means the upload never reached Storage — genuinely
-    // gone, nothing to re-sign.)
-    await Promise.all(ans.map(async (a: any) => {
-      const path = a.answer_data?.storagePath;
-      if (!path) return;
-      const { data: signed } = await supabase.storage.from("exam-media").createSignedUrl(path, 3600);
-      if (signed?.signedUrl) a.answer_data = { ...a.answer_data, audioUrl: signed.signedUrl };
-    }));
     setQuestions(qs); setAnswers(ans);
     if (!scoreRefs.current[attempt.id]) {
       const init: Record<number, number> = {};
@@ -172,29 +147,19 @@ const GradingPage = () => {
         const ans = answers.find((a: any) => a.question_id === q.id);
         const pts = scores[i] ?? ans?.points_awarded ?? 0;
         earned += Number(pts);
-        // Upsert via RPC — a plain client-side insert/update is blocked by
-        // RLS here: exam_answers only allows admins/teachers to UPDATE an
-        // existing row, not INSERT one. Imported attempts (whose original
-        // selections weren't migrated) have no row at all for most
-        // questions, so a direct insert() would silently fail RLS and the
-        // override would be lost the moment you moved to the next question.
-        const { error: upsertErr } = await supabase.rpc("admin_upsert_exam_answer" as any, {
-          _attempt_id: selectedAttempt.id, _question_id: q.id,
-          _points: pts, _is_correct: pts > 0,
-        });
-        if (upsertErr) throw new Error(`Failed to save grade for question ${i + 1}: ${upsertErr.message}`);
+        if (ans?.id) {
+          await supabase.from("exam_answers")
+            .update({ points_awarded: pts, is_correct: pts > 0 })
+            .eq("id", ans.id);
+        }
       }
 
       const pct     = totalPoints > 0 ? Math.round((earned / totalPoints) * 100) : 0;
       const passing = selectedAttempt.exams?.passing_score || 60;
-      // Continuous-assessment convention: a "test" is always scored out of 30
-      // and a full "exam" out of 70, regardless of how many raw points the
-      // questions add up to — scale the earned total proportionally. Any
-      // other exam type (e.g. entrance) isn't part of that CA scheme and
-      // keeps its raw point total unscaled.
-      const examType    = selectedAttempt.exams?.type;
-      const scaledTotal = examType === "test" ? 30 : examType === "exam" ? 70 : totalPoints;
-      const scaledEarned = totalPoints > 0 ? Number(((earned / totalPoints) * scaledTotal).toFixed(2)) : 0;
+      // Exam is always scored out of 30, regardless of how many raw points the
+      // questions add up to — scale the earned total proportionally.
+      const scaledTotal = 30;
+      const scaledEarned = totalPoints > 0 ? Number(((earned / totalPoints) * 30).toFixed(2)) : 0;
 
       // If this attempt was already released, keep it released after an admin
       // edit — don't silently pull it back to "graded" and hide it from the
@@ -206,7 +171,6 @@ const GradingPage = () => {
       const { error: attemptErr } = await supabase.from("exam_attempts").update({
         status: nextStatus, score: scaledEarned, total_points: scaledTotal,
         percentage: pct, passed: pct >= passing,
-        graded_by: user?.id, graded_by_role: "admin",
       }).eq("id", selectedAttempt.id);
 
       if (attemptErr) {
@@ -421,15 +385,10 @@ const GradingPage = () => {
                   </span>
                 </div>
 
-                {(q.reading_passage || q.reading_passage_ar) && (
+                {q.reading_passage && (
                   <div style={{ marginBottom: 8, padding: "10px 12px", borderRadius: 10, background: "#FFFBEB", border: "1px solid #FDE68A", borderLeft: "4px solid #C9A84C" }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: "#C9A84C", letterSpacing: 1, marginBottom: 4 }}>📖 READING PASSAGE</div>
-                    {q.reading_passage && (
-                      <div dir="auto" style={{ fontSize: 12, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
-                    )}
-                    {q.reading_passage_ar && (
-                      <div dir="rtl" style={{ fontSize: 12, lineHeight: 1.8, fontFamily: "'Amiri',serif", marginTop: q.reading_passage ? 6 : 0 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage_ar) }} />
-                    )}
+                    <div dir="auto" style={{ fontSize: 12, lineHeight: 1.8, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
                   </div>
                 )}
                 {(q.instruction_text || q.instruction_text_ar) && (
@@ -669,18 +628,8 @@ const GradingPage = () => {
                     <p style={{ fontWeight: 700, fontSize: 14, color: "#111", margin: 0 }}>{attempt.profiles?.full_name || "Student"}</p>
                     <p style={{ fontSize: 12, color: "#9CA3AF", margin: "2px 0 0" }}>
                       {language === "ar" ? attempt.exams?.title_ar || attempt.exams?.title : attempt.exams?.title}
-                      {attempt.exams?.subjects?.title && <span> · {language === "ar" ? attempt.exams.subjects.title_ar || attempt.exams.subjects.title : attempt.exams.subjects.title}</span>}
                       {attempt.exams?.session && <span style={{ color: "#0E7490", fontWeight: 600 }}> · 📅 {attempt.exams.session}</span>}
                     </p>
-                    {(attempt.status === "graded" || attempt.status === "released") && (
-                      <p style={{ fontSize: 11, color: attempt.graded_by_role === "teacher" ? "#7C3AED" : "#6B7280", margin: "2px 0 0", fontWeight: 600 }}>
-                        {attempt.graded_by_role === "teacher"
-                          ? `Graded by teacher: ${attempt.graderProfile?.full_name || "Unknown"}`
-                          : attempt.graded_by_role === "admin"
-                          ? "Graded by admin"
-                          : "Graded"}
-                      </p>
-                    )}
                     {attempt.status === "in_progress" && (
                       <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: "#FEF3C7", color: "#92400E", fontWeight: 700 }}>

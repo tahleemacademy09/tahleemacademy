@@ -5,7 +5,6 @@ import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
-import { useManagedTerm, termOrEvergreenFilter } from "@/hooks/useEffectiveTerm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -66,7 +65,6 @@ const SyllabusManager = () => {
   const { user } = useAuth();
   const qc = useQueryClient();
   const { data: academicLevels = [] } = useAcademicLevels();
-  const { term: managedTerm, termId: managedTermId, terms: allTerms, setManagedTermId } = useManagedTerm();
   const LEVELS = academicLevels.map(l => l.slug);
   const levelColors = Object.fromEntries(academicLevels.map(l => {
     const cfg = getLevelConfig(l.slug, academicLevels);
@@ -107,26 +105,22 @@ const SyllabusManager = () => {
   });
 
   const { data: syllabusItems = [], isLoading: syllLoading } = useQuery({
-    queryKey: ["admin-syllabus", selectedSubject, levelFilter, managedTermId],
-    enabled: !!selectedSubject && !!managedTermId,
+    queryKey: ["admin-syllabus", selectedSubject, levelFilter],
+    enabled: !!selectedSubject,
     queryFn: async () => {
       const { data, error } = await supabase.from("subject_syllabus")
-        .select("*").eq("subject_id", selectedSubject!)
-        .or(termOrEvergreenFilter(managedTermId))
-        .order("week_number");
+        .select("*").eq("subject_id", selectedSubject!).order("week_number");
       if (error) throw error;
       return data as any[];
     },
   });
 
   const { data: materialItems = [], isLoading: matLoading } = useQuery({
-    queryKey: ["admin-materials", selectedSubject, managedTermId],
-    enabled: !!selectedSubject && !!managedTermId,
+    queryKey: ["admin-materials", selectedSubject],
+    enabled: !!selectedSubject,
     queryFn: async () => {
       const { data, error } = await supabase.from("subject_materials")
-        .select("*").eq("subject_id", selectedSubject!)
-        .or(termOrEvergreenFilter(managedTermId))
-        .order("sort_order").order("created_at", { ascending: false });
+        .select("*").eq("subject_id", selectedSubject!).order("sort_order").order("created_at", { ascending: false });
       if (error) throw error;
       return data as any[];
     },
@@ -137,7 +131,7 @@ const SyllabusManager = () => {
   // ── Syllabus mutations ───────────────────────────────
   const saveSyllabus = useMutation({
     mutationFn: async () => {
-      const payload: any = {
+      const payload = {
         subject_id: selectedSubject!,
         week_number: syllForm.week_number,
         title: syllForm.title,
@@ -145,9 +139,6 @@ const SyllabusManager = () => {
         level: levelFilter,
         objectives: syllForm.objectives ? syllForm.objectives.split("\n").filter(Boolean) : null,
       };
-      // Only stamp term_id on brand-new weeks — editing an existing week
-      // (including an evergreen one) shouldn't silently re-scope it.
-      if (!editSyllId) payload.term_id = managedTermId;
       if (editSyllId) {
         const { error } = await supabase.from("subject_syllabus").update(payload).eq("id", editSyllId);
         if (error) throw error;
@@ -218,7 +209,6 @@ const SyllabusManager = () => {
         if (error) throw error;
       } else {
         payload.uploaded_by = user.id;
-        payload.term_id = managedTermId; // scope new uploads to the term being managed
         const { error } = await supabase.from("subject_materials").insert(payload);
         if (error) throw error;
       }
@@ -276,9 +266,9 @@ const SyllabusManager = () => {
 
       <div className="p-6 space-y-5 max-w-5xl mx-auto">
 
-        {/* ── Subject + Level + Term selectors ────────── */}
+        {/* ── Subject + Level selectors ─────────────── */}
         <div className="bg-white rounded-2xl border p-5 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-3">Select Subject, Level & Term</p>
+          <p className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-3">Select Subject & Level</p>
           <div className="flex flex-wrap gap-4">
             <div className="flex-1 min-w-[200px]">
               <Label className="text-xs font-semibold text-gray-600 mb-1.5 block">
@@ -317,33 +307,7 @@ const SyllabusManager = () => {
                 </SelectContent>
               </Select>
             </div>
-            <div className="w-56">
-              <Label className="text-xs font-semibold text-gray-600 mb-1.5 block">
-                <Calendar className="h-3.5 w-3.5 inline mr-1" />Managing Term
-              </Label>
-              <Select value={managedTermId || ""} onValueChange={v => setManagedTermId(v)}>
-                <SelectTrigger className="rounded-xl h-11">
-                  <SelectValue placeholder="Choose a term…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {allTerms.map(term => (
-                    <SelectItem key={term.id} value={term.id}>
-                      <div className="flex items-center gap-2">
-                        {term.name}
-                        {term.is_current && <Badge className="ml-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">Current</Badge>}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
           </div>
-          {managedTerm && !managedTerm.is_current && (
-            <p className="text-xs text-amber-600 mt-3 flex items-center gap-1.5">
-              <AlertCircle className="h-3.5 w-3.5" />
-              You're building content for <strong>{managedTerm.name}</strong> — students won't see it until they switch to this term (or it becomes current).
-            </p>
-          )}
         </div>
 
         {!selectedSubject ? (
@@ -431,12 +395,7 @@ const SyllabusManager = () => {
                                   style={{ background: wc.bg, borderColor: wc.border }}>
                                   <div className="flex items-center gap-2 p-3.5">
                                     <div className="flex-1 min-w-0 cursor-pointer" onClick={() => hasDetail && setExpanded(prev => { const n=new Set(prev); n.has(s.id)?n.delete(s.id):n.add(s.id); return n; })}>
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <p className="font-bold text-sm" style={{ color: wc.badge }}>{s.title}</p>
-                                        {!s.term_id && (
-                                          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500" title="Shown in every term">Evergreen</span>
-                                        )}
-                                      </div>
+                                      <p className="font-bold text-sm" style={{ color: wc.badge }}>{s.title}</p>
                                       {!isEx && s.description && (
                                         <p className="text-xs mt-0.5 truncate" style={{ color: wc.badge, opacity: 0.65 }}>{s.description}</p>
                                       )}
@@ -523,9 +482,6 @@ const SyllabusManager = () => {
                                   <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={{ background: `${cfg.text}18`, color: cfg.text }}>{type}</span>
                                   {mat.file_size && <span className="text-xs text-gray-400">{formatSize(mat.file_size)}</span>}
                                   {mat.is_downloadable && <span className="text-xs text-gray-400">• Downloadable</span>}
-                                  {!mat.term_id && (
-                                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500" title="Shown in every term">Evergreen</span>
-                                  )}
                                   <span className="text-xs text-gray-300">{new Date(mat.created_at).toLocaleDateString()}</span>
                                 </div>
                               </div>

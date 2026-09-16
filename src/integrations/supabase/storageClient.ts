@@ -49,33 +49,6 @@ async function resolveInBucket(bucket: string, fileUrl: string, expiresInSeconds
   return null;
 }
 
-// Returns a signed URL that forces a browser download (Content-Disposition:
-// attachment) instead of inline playback. Only meaningful for recording
-// paths — everything else falls back to the normal signed/public URL.
-export async function getDownloadUrl(
-  fileUrl: string,
-  filename?: string,
-  expiresInSeconds = 3600
-): Promise<string | null> {
-  if (!fileUrl) return null;
-  if (fileUrl.startsWith("http://") || fileUrl.startsWith("https://")) return fileUrl;
-
-  if (isRecordingPath(fileUrl)) {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return null;
-    const { data, error } = await supabase.functions.invoke("recording-url", {
-      body: { path: fileUrl, action: "download", expiresIn: expiresInSeconds, filename },
-    });
-    if (error || !data?.url) {
-      console.error("[StorageClient] R2 download sign failed:", error || data);
-      return null;
-    }
-    return data.url as string;
-  }
-
-  return getSignedUrl(fileUrl, expiresInSeconds);
-}
-
 export async function getSignedUrl(
   fileUrl: string,
   expiresInSeconds = 7200

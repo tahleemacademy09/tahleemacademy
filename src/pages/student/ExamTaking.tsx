@@ -326,20 +326,6 @@ const ExamTaking = () => {
     };
   }, [currentIdx]);
 
-  // Screen capture on question navigation (skip the very first question —
-  // there's no "move" yet, and proc isn't initialized on first render).
-  // Declared before useProctoring() below and kept in sync via the effect
-  // right after it, so this effect (which runs on every currentIdx change)
-  // always calls whatever the latest proc instance's captureScreenshot is.
-  const procRef = useRef<{ captureScreenshot?: (trigger?: string) => void }>({});
-  const prevIdxRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (prevIdxRef.current !== null && prevIdxRef.current !== currentIdx && procRef.current?.captureScreenshot) {
-      procRef.current.captureScreenshot("question_change");
-    }
-    prevIdxRef.current = currentIdx;
-  }, [currentIdx]);
-
   const procEnabled = exam?.proctoring_enabled === true;
   const proc = useProctoring({
     attemptId: attemptId || "", userId: user?.id || "",
@@ -350,12 +336,9 @@ const ExamTaking = () => {
     max_warnings: exam?.max_warnings,
     auto_submit_on_violation: exam?.auto_submit_on_violation,
     screenshot_interval_seconds: exam?.screenshot_interval_seconds,
-    screen_capture_interval_seconds: exam?.screen_capture_interval_seconds ?? 5,
     webcam_required: exam?.webcam_required,
     record_audio: exam?.record_audio,
   }, procEnabled && !submitted && !loading, () => { if (!submittedRef.current) submitRef.current(); });
-
-  useEffect(() => { procRef.current = proc; }, [proc]);
 
   useEffect(() => {
     if (proc.cameraReady && (proc as any).getStream) {
@@ -665,19 +648,6 @@ const ExamTaking = () => {
     const { data: gr, error: ge } = await supabase.rpc("grade_exam_attempt", { _attempt_id: attemptId! });
     if (ge || !gr) {
       console.error("grade_exam_attempt failed:", ge);
-      // The RPC only succeeds while status is still 'in_progress'. If it's
-      // already submitted/graded — e.g. a prior call actually succeeded
-      // server-side but the response never made it back over a flaky
-      // connection, or an auto-submit fired in the background — retrying
-      // hits this same guard forever with no way out for the student.
-      // Check the attempt's real status before treating this as a failure.
-      const { data: recheck } = await supabase.from("exam_attempts")
-        .select("status,score,total_points,percentage,passed").eq("id", attemptId!).single();
-      if (recheck && recheck.status !== "in_progress") {
-        setSR({ status: recheck.status, score: recheck.score, totalPoints: recheck.total_points, percentage: recheck.percentage, passed: recheck.passed });
-        setSubmitted(true); setSubmitting(false); toast({ title: "✅ " + t("Exam Submitted!", "تم تقديم الامتحان!") });
-        return;
-      }
       toast({ title: t("Submission failed", "فشل التقديم"), description: ge?.message || t("Please try again.", "يرجى المحاولة مرة أخرى."), variant: "destructive" });
       submittedRef.current = false; setSubmitting(false); return;
     }
@@ -974,7 +944,7 @@ const ExamTaking = () => {
         <div ref={qScrollRef} style={{ flex: 1, overflow: "auto", padding: "10px 6px", display: "flex", flexDirection: "column", position: "relative" }}>
           {q && (
             <div style={{ width: "100%" }}>
-              <div ref={qCardRef} key={currentIdx} style={{ animation: "slideIn .2s ease", transform: "scale(0.8)", transformOrigin: "top left", width: "125%" } as React.CSSProperties}>
+              <div ref={qCardRef} key={currentIdx} style={{ animation: "slideIn .2s ease", zoom: 0.8 } as React.CSSProperties}>
               <div>
 
                 {/* Question header */}
@@ -1001,15 +971,10 @@ const ExamTaking = () => {
                 {/* Question body */}
                 <div style={{ padding: "16px 12px 10px" }}>
                   {/* Reading passage — optional, shown above the question (comprehension type) */}
-                  {(q.reading_passage || q.reading_passage_ar) && (
+                  {q.reading_passage && (
                     <div style={{ marginBottom: 16, padding: "16px 20px", background: "#fffbeb", borderRadius: 14, border: `1px solid ${GOLD}44`, borderLeft: `4px solid ${GOLD}` }}>
                       <div style={{ fontSize: 11, fontWeight: 700, color: GOLD, letterSpacing: 1, marginBottom: 8 }}>📖 {t("READING PASSAGE", "نص القراءة")}</div>
-                      {q.reading_passage && (
-                        <div dir="auto" style={{ fontSize: 16, lineHeight: 2, color: G, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
-                      )}
-                      {q.reading_passage_ar && (
-                        <div dir="rtl" style={{ fontSize: 16, lineHeight: 2, color: G, fontFamily: "'Amiri',serif", marginTop: q.reading_passage ? 10 : 0 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage_ar) }} />
-                      )}
+                      <div dir="auto" style={{ fontSize: 16, lineHeight: 2, color: G, fontFamily: "'Amiri',serif" }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(q.reading_passage) }} />
                     </div>
                   )}
                   {/* Instruction — optional, shown above the question when set.
@@ -1134,47 +1099,19 @@ const ExamTaking = () => {
                           : blob.type.includes("webm") ? "webm"
                           : "mp4";  // safe fallback for Android
                         const path = `student-answers/${user!.id}/${attemptId}_${q.id}.${ext}`;
-                        // The recording only exists as an in-memory blob: URL
-                        // (`url`) until this upload succeeds — blob: URLs die
-                        // the moment this tab closes, so if we give up after
-                        // one failed attempt and quietly save that URL, the
-                        // recording is gone forever the next time the page
-                        // loads (this is exactly what happened to graders
-                        // seeing "Audio file unavailable or corrupted" for
-                        // otherwise-valid submissions). Retry a few times —
-                        // most failures here are a flaky connection, not a
-                        // permanent one — before falling back.
-                        let uploadError: any = null;
-                        for (let attempt = 1; attempt <= 3; attempt++) {
-                          const { error } = await supabase.storage
-                            .from("exam-media")
-                            .upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
-                          uploadError = error;
-                          if (!error) break;
-                          if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
-                        }
-                        if (!uploadError) {
+                        const { error } = await supabase.storage
+                          .from("exam-media")
+                          .upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
+                        if (!error) {
                           // Use a 7-day signed URL so admin can always play it
                           const { data: ud } = await storageSupabase.storage.from("exam-media").createSignedUrl(path, 604800);
                           setAnswer(q.id, "[audio_recorded]", { audioUrl: ud?.signedUrl || url, fileType: "audio", storagePath: path });
                         } else {
-                          toast({ title: "Upload failed: " + uploadError.message, description: "Your recording is only saved on this device right now — please try recording again before submitting.", variant: "destructive" });
-                          // Store the blob URL so the student can still hear
-                          // their own take, and flag it so the warning below
-                          // stays visible (not just a toast that disappears)
-                          // and so this doesn't get mistaken for a real,
-                          // persisted answer.
-                          setAnswer(q.id, "[audio_recorded]", { audioUrl: url, fileType: "audio", uploadFailed: true });
+                          toast({ title: "Upload failed: " + error.message, variant: "destructive" });
+                          // Store blob URL as fallback so student isn't blocked
+                          setAnswer(q.id, "[audio_recorded]", { audioUrl: url, fileType: "audio" });
                         }
                       }} existingUrl={answers[q.id]?.data?.audioUrl} />
-                      {answers[q.id]?.data?.uploadFailed && (
-                        <div style={{ padding: "8px 12px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#DC2626", fontWeight: 600 }}>
-                          {t(
-                            "⚠️ This recording didn't upload — it will be lost when you leave this page. Please re-record before submitting.",
-                            "⚠️ لم يتم رفع هذا التسجيل — سيُفقد عند مغادرة هذه الصفحة. يُرجى إعادة التسجيل قبل الإرسال."
-                          )}
-                        </div>
-                      )}
                     </div>
                   )}
 

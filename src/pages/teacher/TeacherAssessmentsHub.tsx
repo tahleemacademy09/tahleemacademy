@@ -74,15 +74,8 @@ function ExamsList({ user, t, type }: { user: any; t: any; type: "exam" | "test"
   useEffect(() => {
     if (!user) return;
     const fetch = async () => {
-      // A subject is theirs whether they own it directly (subjects.teacher_id)
-      // or the admin assigned them to it via the timetable
-      // (subject_timetable.teacher_id) — either way its exams are theirs too.
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
-      const subjectIds = [...new Set([
-        ...((subs || []).map((s: any) => s.id)),
-        ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
-      ])];
+      const subjectIds = (subs || []).map((s: any) => s.id);
       if (!subjectIds.length) { setLoading(false); return; }
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
       // legacy course_id column which the editor never populates.
@@ -201,31 +194,16 @@ function ResultsTab({ user, t }: any) {
     if (!user) return;
     const fetch = async () => {
       const { data: subs } = await supabase.from("subjects").select("id, title").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, subjects(id, title)").eq("teacher_id", user.id);
-      const ttSubjects = ((ttSlots || []) as any[]).map(s => s.subjects).filter(Boolean);
-      const subjects = [...new Map([...(subs || []), ...ttSubjects].map((s: any) => [s.id, s])).values()];
-      setSubjects(subjects);
-      const subjectIds = subjects.map((s: any) => s.id);
+      setSubjects(subs || []);
+      const subjectIds = (subs || []).map((s: any) => s.id);
       if (!subjectIds.length) { setLoading(false); return; }
       const { data: examList } = await supabase.from("exams").select("id").in("subject_id", subjectIds);
       const examIds = (examList || []).map((e: any) => e.id);
       if (!examIds.length) { setLoading(false); return; }
-      // NOTE: no FK exists directly between exam_attempts and profiles (both
-      // point separately at auth.users), so `profiles!exam_attempts_user_id_fkey`
-      // is not a resolvable embed — it silently failed this query. Fetch
-      // profiles separately and merge, like the admin GradingPage does.
-      const { data: attempts, error } = await supabase.from("exam_attempts")
-        .select("*, exams(title, type, term, subject_id, subjects(title))")
+      const { data } = await supabase.from("exam_attempts")
+        .select("*, profiles!exam_attempts_user_id_fkey(full_name), exams(title, type, term, subject_id, subjects(title))")
         .in("exam_id", examIds).in("status", ["graded", "submitted"])
         .order("submitted_at", { ascending: false }).limit(100);
-      if (error) console.error("TeacherAssessmentsHub: exam_attempts fetch failed", error);
-      const userIds = [...new Set((attempts || []).map((a: any) => a.user_id).filter(Boolean))];
-      let profilesById: Record<string, any> = {};
-      if (userIds.length) {
-        const { data: profiles } = await supabase.from("profiles").select("user_id, full_name").in("user_id", userIds);
-        profilesById = Object.fromEntries((profiles || []).map((p: any) => [p.user_id, p]));
-      }
-      const data = (attempts || []).map((a: any) => ({ ...a, profiles: profilesById[a.user_id] || {} }));
       setResults(data || []);
       setLoading(false);
     };
@@ -344,11 +322,7 @@ export default function TeacherAssessmentsHub() {
     if (!user) return;
     (async () => {
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
-      const subIds = [...new Set([
-        ...((subs || []).map((s: any) => s.id)),
-        ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
-      ])];
+      const subIds = (subs || []).map((s: any) => s.id);
       if (!subIds.length) return;
       const { data: exams } = await supabase.from("exams").select("id").in("subject_id", subIds);
       const eIds = (exams || []).map((e: any) => e.id);

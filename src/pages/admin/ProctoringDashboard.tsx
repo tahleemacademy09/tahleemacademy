@@ -115,8 +115,6 @@ const ProctoringDashboard = () => {
   const [previewList, setPreviewList]     = useState<any[]>([]); // stable list for lightbox
   const [urlCache, setUrlCache]           = useState<Record<string,string>>({});
   const [touchStartX, setTouchStartX]     = useState<number|null>(null);
-  const [imgErr, setImgErr]               = useState<Record<string,boolean>>({});
-  const [retried, setRetried]             = useState<Record<string,boolean>>({});
 
   // Computed from stable previewList — never empty when lightbox is open
   const previewMedia = previewIdx >= 0 && previewIdx < previewList.length ? previewList[previewIdx] : null;
@@ -158,27 +156,14 @@ const ProctoringDashboard = () => {
     setViolations(vRes.data||[]); setDeviceLogs(dRes.data||[]); setMedia(mRes.data||[]);
   };
 
-  const resolveUrl = async (fileUrl: string, force = false): Promise<string|null> => {
-    if (!force && urlCache[fileUrl]) return urlCache[fileUrl];
+  const resolveUrl = async (fileUrl: string): Promise<string|null> => {
+    if (urlCache[fileUrl]) return urlCache[fileUrl];
     const { data } = await storageSupabase.storage.from("proctoring-media").createSignedUrl(fileUrl, 3600);
     if (data?.signedUrl) {
       setUrlCache(prev => ({ ...prev, [fileUrl]: data.signedUrl! }));
       return data.signedUrl;
     }
-    setImgErr(prev => ({ ...prev, [fileUrl]: true }));
     return null;
-  };
-
-  // Called when the lightbox <img> fails to actually load (expired/broken signed URL).
-  // Retries once with a fresh signed URL before giving up and showing a fallback.
-  const handleLightboxImgError = (fileUrl: string) => {
-    if (retried[fileUrl]) {
-      setImgErr(prev => ({ ...prev, [fileUrl]: true }));
-      return;
-    }
-    setRetried(prev => ({ ...prev, [fileUrl]: true }));
-    setUrlCache(prev => { const n = { ...prev }; delete n[fileUrl]; return n; });
-    resolveUrl(fileUrl, true);
   };
 
   const openPreview = async (idx: number, mediaList: any[]) => {
@@ -433,29 +418,8 @@ const ProctoringDashboard = () => {
                 </button>
               )}
 
-              {previewMedia && imgErr[previewMedia.file_url]
-                ? <div style={{ display:"flex", flexDirection:"column" as const, alignItems:"center", gap:10 }}>
-                    <User style={{width:32,height:32,opacity:.3,color:"#fff"}}/>
-                    <span style={{ color:"rgba(255,255,255,.4)", fontSize:12 }}>{t("Couldn't load this image","تعذّر تحميل هذه الصورة")}</span>
-                    <button
-                      onClick={() => {
-                        setImgErr(prev => ({ ...prev, [previewMedia.file_url]: false }));
-                        setRetried(prev => ({ ...prev, [previewMedia.file_url]: false }));
-                        setUrlCache(prev => { const n = { ...prev }; delete n[previewMedia.file_url]; return n; });
-                        resolveUrl(previewMedia.file_url, true);
-                      }}
-                      style={{ marginTop:4, background:"rgba(255,255,255,.15)", border:"none", borderRadius:8, padding:"6px 14px", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer" }}
-                    >
-                      {t("Retry","إعادة المحاولة")}
-                    </button>
-                  </div>
-                : previewUrl
-                ? <img
-                    src={previewUrl}
-                    style={{ maxWidth:"100%", maxHeight:"100%", objectFit:"contain", borderRadius:8 }}
-                    alt="capture"
-                    onError={() => previewMedia && handleLightboxImgError(previewMedia.file_url)}
-                  />
+              {previewUrl
+                ? <img src={previewUrl} style={{ maxWidth:"100%", maxHeight:"100%", objectFit:"contain", borderRadius:8 }} alt="capture"/>
                 : <div style={{ display:"flex", flexDirection:"column" as const, alignItems:"center", gap:12 }}>
                     <div style={{ width:40,height:40,borderRadius:"50%",border:`4px solid ${GOLD}`,borderTopColor:"transparent",animation:"spin .8s linear infinite" }}/>
                     <span style={{ color:"rgba(255,255,255,.4)", fontSize:12 }}>Loading…</span>
@@ -479,7 +443,7 @@ const ProctoringDashboard = () => {
             </div>
 
             {/* Download bar */}
-            {previewUrl && previewMedia && !imgErr[previewMedia.file_url] && (
+            {previewUrl && previewMedia && (
               <div style={{ padding:"0 16px 20px", flexShrink:0 }}>
                 <a href={previewUrl} download={previewMedia.file_name||"capture.jpg"} target="_blank" rel="noopener noreferrer"
                   style={{ display:"flex", alignItems:"center", gap:8, padding:"13px", borderRadius:14, background:G, color:"#fff", fontSize:14, fontWeight:700, textDecoration:"none", justifyContent:"center" }}>

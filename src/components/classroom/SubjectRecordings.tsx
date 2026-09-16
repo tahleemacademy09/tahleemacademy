@@ -1,12 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { removeStorageFile, getSignedUrl, getDownloadUrl } from "@/integrations/supabase/storageClient";
+import { removeStorageFile, getSignedUrl } from "@/integrations/supabase/storageClient";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Video, Play, Search, Clock, User, CheckCircle, Trash2, Edit, Save, Pause, Download, DownloadCloud } from "lucide-react";
+import { Video, Play, Search, Clock, User, CheckCircle, Trash2, Edit, Save, Pause } from "lucide-react";
 import { useState } from "react";
 import { toast } from "@/hooks/use-toast";
 import { useRecordingPlayer } from "@/contexts/RecordingPlayerContext";
@@ -39,32 +39,6 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm]   = useState({ teacher_name: "", duration_seconds: 0 });
   const [deleteId, setDeleteId]   = useState<string | null>(null);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-
-  const handleDownload = async (rec: any, dateStr: string) => {
-    if (downloadingId) return;
-    setDownloadingId(rec.id);
-    try {
-      const filename = `${(rec.teacher_name || "Recording").replace(/\s+/g, "_")}_${dateStr.replace(/\s+/g, "_")}.mp4`;
-      const url = await getDownloadUrl(rec.file_url, filename);
-      if (!url) {
-        toast({ title: t("Download failed", "\u0641\u0634\u0644 \u0627\u0644\u062a\u062d\u0645\u064a\u0644"), description: t("Couldn't prepare the file. Please try again.", "\u062a\u0639\u0630\u0631 \u062a\u062c\u0647\u064a\u0632 \u0627\u0644\u0645\u0644\u0641. \u062d\u0627\u0648\u0644 \u0645\u062c\u062f\u062f\u0627\u064b."), variant: "destructive" });
-        return;
-      }
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.rel = "noopener";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      toast({ title: t("Download started", "\u0628\u062f\u0623 \u0627\u0644\u062a\u062d\u0645\u064a\u0644") });
-    } catch (e: any) {
-      toast({ title: "Error", description: e.message, variant: "destructive" });
-    } finally {
-      setDownloadingId(null);
-    }
-  };
 
   const isPrivileged = hasRole("admin") || hasRole("teacher");
   const { isPrivateStudent } = usePrivateStudent();
@@ -189,33 +163,6 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   return (
     <div style={{ padding: "16px", display: "flex", flexDirection: "column", gap: 14, fontFamily: "'Cairo',sans-serif" }}>
 
-      {/* Header row */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: G }}>{t("Class Recordings", "\u062a\u0633\u062c\u064a\u0644\u0627\u062a \u0627\u0644\u062d\u0635\u0629")}</div>
-          <div style={{ fontSize: 12, color: "#7a9e88", marginTop: 2 }}>
-            {recordings?.length
-              ? t(`${recordings.length} recording${recordings.length === 1 ? "" : "s"} available`, `\u062a\u062a\u0648\u0641\u0631 ${recordings.length} \u062a\u0633\u062c\u064a\u0644`)
-              : t("Recorded classes for this subject", "\u0627\u0644\u062d\u0635\u0635 \u0627\u0644\u0645\u0633\u062c\u0644\u0629 \u0644\u0647\u0630\u0647 \u0627\u0644\u0645\u0627\u062f\u0629")}
-          </div>
-        </div>
-        <div style={{ width: 42, height: 42, borderRadius: 12, background: `linear-gradient(135deg,${G},${GM})`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Video style={{ width: 20, height: 20, color: GOLD }} />
-        </div>
-      </div>
-
-      {/* Download tip banner — playback can buffer on slow connections/egress
-          limits, so nudge people toward downloading and watching locally */}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "11px 13px", borderRadius: 12, background: "#fdf8ec", border: "1px solid #f3e3b8" }}>
-        <DownloadCloud style={{ width: 16, height: 16, color: "#b45309", flexShrink: 0, marginTop: 1 }} />
-        <div style={{ fontSize: 11.5, color: "#8a6d1f", lineHeight: 1.5 }}>
-          {t(
-            "Video not playing smoothly? Tap Download to save the recording and watch it anytime, even offline.",
-            "\u0647\u0644 \u0627\u0644\u0641\u064a\u062f\u064a\u0648 \u0644\u0627 \u064a\u0639\u0645\u0644 \u0628\u0633\u0644\u0627\u0633\u0629\u061f \u0627\u0636\u063a\u0637 \u0639\u0644\u0649 \u062a\u062d\u0645\u064a\u0644 \u0644\u062d\u0641\u0638 \u0627\u0644\u062a\u0633\u062c\u064a\u0644 \u0648\u0645\u0634\u0627\u0647\u062f\u062a\u0647 \u0641\u064a \u0623\u064a \u0648\u0642\u062a\u060c \u062d\u062a\u0649 \u0628\u062f\u0648\u0646 \u0627\u062a\u0635\u0627\u0644."
-          )}
-        </div>
-      </div>
-
       {/* Search */}
       <div style={{ position: "relative" }}>
         <Search style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", width: 15, height: 15, color: "#7a9e88" }} />
@@ -225,10 +172,8 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
       </div>
 
       {!filtered?.length && (
-        <div style={{ textAlign: "center", padding: "44px 20px", background: "#fff", borderRadius: 16, border: `1px dashed ${BORDER}` }}>
-          <div style={{ width: 64, height: 64, borderRadius: "50%", background: "#f0f4f0", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
-            <Video style={{ width: 28, height: 28, color: "#a9c2b4" }} />
-          </div>
+        <div style={{ textAlign: "center", padding: "40px 20px", background: "#fff", borderRadius: 16, border: `1px solid ${BORDER}` }}>
+          <Video style={{ width: 40, height: 40, color: "#cbd5e0", margin: "0 auto 12px" }} />
           <div style={{ fontSize: 15, fontWeight: 700, color: G, marginBottom: 4 }}>{t("No recordings yet", "\u0644\u0627 \u062a\u0648\u062c\u062f \u062a\u0633\u062c\u064a\u0644\u0627\u062a \u0628\u0639\u062f")}</div>
           <div style={{ fontSize: 12, color: "#7a9e88" }}>{t("Recordings will appear here after class", "\u0633\u062a\u0638\u0647\u0631 \u0627\u0644\u062a\u0633\u062c\u064a\u0644\u0627\u062a \u0647\u0646\u0627 \u0628\u0639\u062f \u0627\u0644\u062d\u0635\u0629")}</div>
         </div>
@@ -328,19 +273,6 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
                     : isPlaying ? <Pause style={{ width: 13, height: 13 }} /> : <Play style={{ width: 13, height: 13 }} />}
                   {isLoadingRec ? "Loading\u2026" : isPlaying ? "Pause" : completed ? t("Rewatch", "\u0625\u0639\u0627\u062f\u0629") : hasSaved ? t("Continue", "\u0645\u062a\u0627\u0628\u0639\u0629") : t("Play", "\u062a\u0634\u063a\u064a\u0644")}
                 </button>
-
-                {(!r.status || r.status === "completed") && (
-                  <button
-                    onClick={() => handleDownload(r, dateStr)}
-                    disabled={downloadingId === r.id}
-                    title={t("Download to watch offline", "\u062a\u062d\u0645\u064a\u0644 \u0644\u0644\u0645\u0634\u0627\u0647\u062f\u0629 \u0628\u062f\u0648\u0646 \u0627\u062a\u0635\u0627\u0644")}
-                    style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, background: "#fff", border: `1.5px solid ${GOLD}`, color: GOLD, fontSize: 12, fontWeight: 700, cursor: downloadingId === r.id ? "default" : "pointer", fontFamily: "'Cairo',sans-serif", minWidth: 90, justifyContent: "center", opacity: downloadingId === r.id ? 0.7 : 1 }}>
-                    {downloadingId === r.id
-                      ? <div style={{ width: 13, height: 13, borderRadius: "50%", border: "2px solid currentColor", borderTopColor: "transparent", animation: "spin .7s linear infinite" }} />
-                      : <Download style={{ width: 13, height: 13 }} />}
-                    {downloadingId === r.id ? t("Preparing\u2026", "\u062c\u0627\u0631\u064d \u0627\u0644\u062a\u062c\u0647\u064a\u0632\u2026") : t("Download", "\u062a\u062d\u0645\u064a\u0644")}
-                  </button>
-                )}
 
                 {isPrivileged && (
                   <div style={{ display: "flex", gap: 4 }}>

@@ -132,153 +132,46 @@ serve(async (req) => {
       intent_type: action === "cgpa" || action === "grades" ? "grades" : action === "schedule" || action === "next_exam" ? "schedule" : "generic",
     });
 
-    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
-    if (!GEMINI_API_KEY && !ANTHROPIC_API_KEY) {
-      throw new Error("No AI provider configured. Set GEMINI_API_KEY (primary) and/or ANTHROPIC_API_KEY (fallback) in Supabase secrets.");
-    }
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
     const aiMessages = [
       { role: "system", content: SYSTEM_PROMPT + studentContext },
       ...(messages || []),
     ];
 
-    // Re-emit every provider's stream as OpenAI-style SSE chunks
-    // ({"choices":[{"delta":{"content":"..."}}]}) since the frontend
-    // (MuallimOverlay.tsx) parses that shape regardless of provider.
-    const openAiChunk = (content: string) =>
-      `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n`;
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: aiMessages,
+        stream: true,
+      }),
+    });
 
-    const streamFromGemini = async (): Promise<ReadableStream<Uint8Array> | null> => {
-      const nonSystem = aiMessages.filter((m: any) => m.role !== "system");
-      const geminiContents = nonSystem.map((m: any) => ({
-        role: m.role === "assistant" ? "model" : "user",
-        parts: [{ text: typeof m.content === "string" ? m.content : JSON.stringify(m.content) }],
-      }));
-
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: SYSTEM_PROMPT + studentContext }] },
-            contents: geminiContents,
-          }),
-        }
-      );
-
-      if (!geminiRes.ok || !geminiRes.body) {
-        console.error("Gemini stream error:", geminiRes.status, await geminiRes.text().catch(() => ""));
-        return null;
+    if (!response.ok) {
+      if (response.status === 429) {
+        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again shortly." }), {
+          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
-
-      const reader = geminiRes.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      return new ReadableStream<Uint8Array>({
-        async pull(controller) {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
-            controller.close();
-            return;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const jsonStr = line.slice(6).trim();
-            if (!jsonStr) continue;
-            try {
-              const parsed = JSON.parse(jsonStr);
-              const chunkText = (parsed.candidates?.[0]?.content?.parts || [])
-                .map((p: any) => p.text || "")
-                .join("");
-              if (chunkText) controller.enqueue(new TextEncoder().encode(openAiChunk(chunkText)));
-            } catch {
-              // ignore malformed partial chunk
-            }
-          }
-        },
-      });
-    };
-
-    const streamFromAnthropic = async (): Promise<ReadableStream<Uint8Array> | null> => {
-      if (!ANTHROPIC_API_KEY) return null;
-      const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": ANTHROPIC_API_KEY,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "claude-haiku-4-5-20251001",
-          max_tokens: 4096,
-          system: SYSTEM_PROMPT + studentContext,
-          messages: aiMessages.filter((m: any) => m.role !== "system"),
-          stream: true,
-        }),
-      });
-
-      if (!anthropicRes.ok || !anthropicRes.body) {
-        console.error("Anthropic stream error:", anthropicRes.status, await anthropicRes.text().catch(() => ""));
-        return null;
+      if (response.status === 402) {
+        return new Response(JSON.stringify({ error: "AI credits exhausted. Please contact administration." }), {
+          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
-
-      const reader = anthropicRes.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      return new ReadableStream<Uint8Array>({
-        async pull(controller) {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.enqueue(new TextEncoder().encode("data: [DONE]\n\n"));
-            controller.close();
-            return;
-          }
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const jsonStr = line.slice(6).trim();
-            if (!jsonStr) continue;
-            try {
-              const parsed = JSON.parse(jsonStr);
-              if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
-                controller.enqueue(new TextEncoder().encode(openAiChunk(parsed.delta.text)));
-              }
-            } catch {
-              // ignore malformed partial chunk
-            }
-          }
-        },
-      });
-    };
-
-    let outStream: ReadableStream<Uint8Array> | null = null;
-    if (GEMINI_API_KEY) {
-      try {
-        outStream = await streamFromGemini();
-      } catch (e) {
-        console.error("Gemini stream threw, falling back to Anthropic:", e);
-      }
-    }
-    if (!outStream) {
-      outStream = await streamFromAnthropic();
-    }
-    if (!outStream) {
+      const t = await response.text();
+      console.error("AI gateway error:", response.status, t);
       return new Response(JSON.stringify({ error: "AI service error" }), {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    return new Response(outStream, {
+    return new Response(response.body, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (e) {

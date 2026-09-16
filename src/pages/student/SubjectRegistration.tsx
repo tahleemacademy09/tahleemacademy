@@ -71,18 +71,7 @@ const SubjectRegistration = () => {
         if (!lv || lv === "all") return true;
         return lv.split(",").map((l: string) => l.trim()).includes(myLevel);
       });
-
-      // Don't offer subjects the student is already compulsorily enrolled
-      // in via their level — those are automatic, self-registering here
-      // would be redundant.
-      const { data: compulsory } = await supabase
-        .from("student_subject_enrollments")
-        .select("subject_id")
-        .eq("student_id", user!.id)
-        .eq("is_compulsory", true)
-        .eq("status", "active");
-      const compulsoryIds = new Set((compulsory || []).map((r: any) => r.subject_id));
-      setSubjects(list.filter((s: any) => !compulsoryIds.has(s.id)));
+      setSubjects(list);
 
       const { data: existing } = await supabase
         .from("subject_registrations").select("subject_id").eq("user_id", user!.id);
@@ -100,29 +89,6 @@ const SubjectRegistration = () => {
         toast({ title: t("Registration failed", "فشل التسجيل"), description: error.message, variant: "destructive" });
         return;
       }
-
-      // Create the actual enrollment (this is what makes the subject show
-      // up in materials/timetable/classroom, not just exam visibility).
-      const { data: currentTerm } = await supabase
-        .from("academic_terms").select("id").eq("is_current", true).maybeSingle();
-
-      const { error: enrollError } = await supabase
-        .from("student_subject_enrollments")
-        .upsert(
-          {
-            student_id: user!.id,
-            subject_id: subject.id,
-            level: studentLevel,
-            is_compulsory: false,
-            status: "active",
-            term_id: currentTerm?.id ?? null,
-          } as any,
-          { onConflict: "student_id,subject_id" }
-        );
-      if (enrollError) {
-        toast({ title: t("Partial registration", "تسجيل جزئي"), description: enrollError.message, variant: "destructive" });
-      }
-
       setRegisteredIds(prev => new Set(prev).add(subject.id));
       toast({ title: `✅ ${t("Registered!", "تم التسجيل!")}`, description: t("You'll now see tests and exams for this subject.", "ستظهر لك الآن اختبارات وامتحانات هذه المادة.") });
     } finally {

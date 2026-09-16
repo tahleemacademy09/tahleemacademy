@@ -20,7 +20,7 @@ import UpdateAvailableBanner from "@/components/UpdateAvailableBanner";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import DiagnosticsPanel from "@/components/dev/DiagnosticsPanel";
 import TasjeelGuard from "@/components/TasjeelGuard";
-import { LiveClassProvider } from "@/contexts/LiveClassContext";
+import { LiveClassProvider, useLiveClass } from "@/contexts/LiveClassContext";
 import RecordingPlayerProvider from "@/contexts/RecordingPlayerContext";
 const GlobalClassroomOverlay = lazy(() => import("./components/classroom/GlobalClassroomOverlay"));
 import AppNotifications from "@/components/AppNotifications";
@@ -51,7 +51,6 @@ const LiveClasses          = lazy(() => import("./pages/public/LiveClasses"));
 const StudentDashboard    = lazy(() => import("./pages/student/StudentDashboard"));
 const StudentDashboardV2  = lazy(() => import("./pages/student/StudentDashboardV2"));
 const StudentExams        = lazy(() => import("./pages/student/StudentExams"));
-const StudentOralExams    = lazy(() => import("./pages/student/StudentOralExams"));
 const ExamRegistration    = lazy(() => import("./pages/student/ExamRegistration"));
 const SubjectRegistration = lazy(() => import("./pages/student/SubjectRegistration"));
 const ExamTaking          = lazy(() => import("./pages/student/ExamTaking"));
@@ -59,7 +58,6 @@ const ProfileSettings     = lazy(() => import("./pages/student/ProfileSettings")
 const ExamResults         = lazy(() => import("./pages/student/ExamResults"));
 const PreExamVerification = lazy(() => import("./pages/student/PreExamVerification"));
 const Transcripts         = lazy(() => import("./pages/student/Transcripts"));
-const ReportCard          = lazy(() => import("./pages/student/ReportCard"));
 const Majlis              = lazy(() => import("./pages/student/Majlis"));
 const RecitationTest      = lazy(() => import("./pages/student/RecitationTest"));
 const LearningHub         = lazy(() => import("./pages/student/LearningHub"));
@@ -156,7 +154,6 @@ const TeacherClasses         = lazy(() => import("./pages/teacher/TeacherClasses
 const TeacherAnnouncements   = lazy(() => import("./pages/teacher/TeacherAnnouncements"));
 const TeacherAttendance      = lazy(() => import("./pages/teacher/TeacherAttendance"));
 const TeacherExamsPage       = lazy(() => import("./pages/teacher/TeacherExamsPage"));
-const TeacherOralExams       = lazy(() => import("./pages/teacher/TeacherOralExams"));
 const TeacherResults         = lazy(() => import("./pages/teacher/TeacherResults"));
 const TeacherSettings        = lazy(() => import("./pages/teacher/TeacherSettings"));
 const TeacherRecordings      = lazy(() => import("./pages/teacher/TeacherRecordings"));
@@ -167,10 +164,25 @@ const TeacherGrading         = lazy(() => import("./pages/teacher/TeacherGrading
 const TeacherTimetable       = lazy(() => import("./pages/teacher/TeacherTimetable"));
 const TeacherPublicClasses   = lazy(() => import("./pages/teacher/TeacherPublicClasses"));
 const TeacherHifdhReview     = lazy(() => import("./pages/teacher/TeacherHifdhReview"));
-const TeacherHifdhLive       = lazy(() => import("./pages/teacher/TeacherHifdhLive"));
-const TeacherHifdhPlanBuilder = lazy(() => import("./pages/teacher/TeacherHifdhPlanBuilder"));
 const TeacherMajlis          = lazy(() => import("./pages/teacher/TeacherMajlis"));
 const TeacherSupport         = lazy(() => import("./pages/teacher/TeacherSupport"));
+
+/* ── Classroom overlay gate ────────────────────────────────────────────────
+   PERF: GlobalClassroomOverlay was mounted unconditionally, so its whole
+   dependency graph — LiveKit (~590 KB), the classroom UI, the live-quiz
+   overlay — was downloaded on EVERY first page load, including the public
+   homepage for visitors who never join a class. It's now only mounted once
+   a class is actually active (or being restored after a reload), which is
+   the only time it renders anything. */
+const ClassroomOverlayGate = () => {
+  const { inCall, activeSubject } = useLiveClass();
+  if (!inCall && !activeSubject) return null;
+  return (
+    <Suspense fallback={null}>
+      <GlobalClassroomOverlay />
+    </Suspense>
+  );
+};
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -269,12 +281,9 @@ const App = () => (
                     <Route path="/student/courses/:courseId"   element={<LearningHub />} />
                     <Route path="/student/subjects/:subjectId" element={<SubjectView />} />
                     <Route path="/student/exams"               element={<StudentExams />} />
-                    <Route path="/student/oral-exams"          element={<StudentOralExams />} />
                     <Route path="/student/exams/register"      element={<ExamRegistration />} />
                     <Route path="/student/register-subjects"   element={<SubjectRegistration />} />
                     <Route path="/student/transcripts"         element={<Transcripts />} />
-                    <Route path="/student/report-card"         element={<ReportCard />} />
-                    <Route path="/student/report-card/:userId" element={<ReportCard />} />
                     <Route path="/student/majlis"              element={<Majlis />} />
                     <Route path="/student/live-classes"        element={<LearningHub defaultTab="live" />} />
                     <Route path="/student/revision"            element={<RevisionHub />} />
@@ -322,7 +331,6 @@ const App = () => (
                     <Route path="/teacher/attendance"       element={<TeacherAttendance />} />
                     <Route path="/teacher/announcements"    element={<TeacherAnnouncements />} />
                     <Route path="/teacher/exams"            element={<TeacherExamsPage />} />
-                    <Route path="/teacher/oral-exams"       element={<TeacherOralExams />} />
                     <Route path="/teacher/exams/create"     element={<ExamEditor />} />
                     <Route path="/teacher/exams/:examId/edit" element={<ExamEditor />} />
                     <Route path="/teacher/grading"          element={<TeacherGrading />} />
@@ -330,8 +338,6 @@ const App = () => (
                     <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />
                     <Route path="/teacher/recitation"       element={<TeacherRecitation />} />
                     <Route path="/teacher/hifdh"            element={<TeacherHifdhReview />} />
-                    <Route path="/teacher/hifdh-live"       element={<TeacherHifdhLive />} />
-                    <Route path="/teacher/hifdh-plan"       element={<TeacherHifdhPlanBuilder />} />
                     <Route path="/teacher/hifdh-tracker"    element={<HifdhRevisionTracker />} />
                     <Route path="/teacher/majlis"           element={<TeacherMajlis />} />
                     <Route path="/teacher/support"          element={<TeacherSupport />} />
@@ -403,9 +409,7 @@ const App = () => (
               </Suspense>
             </ErrorBoundary>
             <ErrorBoundary fallback={null}>
-            <Suspense fallback={null}>
-              <GlobalClassroomOverlay />
-            </Suspense>
+              <ClassroomOverlayGate />
             </ErrorBoundary>
             </LiveClassProvider>
             </RecordingPlayerProvider>
