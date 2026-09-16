@@ -26,15 +26,10 @@
     <meta name="msapplication-TileColor" content="#1a3a2a" />
     <meta name="msapplication-TileImage" content="/icons/icon-144x144.png" />
 
-    <!-- ✅ Google Fonts — single consolidated request, loaded non-blocking.
-         The stylesheet used to block first paint on every page; it now loads
-         in parallel and applies as soon as it arrives (font-display: swap). -->
+    <!-- ✅ Google Fonts — single consolidated request, no duplicates -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Cairo:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap" />
-    <noscript>
-      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Cairo:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap" />
-    </noscript>
+    <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Aref+Ruqaa:wght@400;700&family=Cairo:wght@400;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400;1,500&display=swap" rel="stylesheet" />
 
     <!-- Open Graph / Facebook / WhatsApp -->
     <meta property="og:type" content="website" />
@@ -193,22 +188,8 @@
 
   <body>
     <div id="root"></div>
-    <!-- Paystack: injected only once the browser is idle, so it never competes
-         with the app's own first load. Payment pages also load it on demand. -->
-    <script>
-      (function () {
-        function loadPaystack() {
-          if (document.getElementById("paystack-script")) return;
-          var s = document.createElement("script");
-          s.id = "paystack-script";
-          s.src = "https://js.paystack.co/v1/inline.js";
-          s.async = true;
-          document.body.appendChild(s);
-        }
-        if ("requestIdleCallback" in window) requestIdleCallback(loadPaystack, { timeout: 6000 });
-        else setTimeout(loadPaystack, 4000);
-      })();
-    </script>
+    <!-- Paystack: defer keeps it non-blocking but still executes before app JS -->
+    <script defer src="https://js.paystack.co/v1/inline.js"></script>
     <script type="module" src="/src/main.tsx"></script>
 
     <!--

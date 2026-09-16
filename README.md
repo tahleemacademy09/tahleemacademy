@@ -1,6 +1,12 @@
 
 # Welcome to your Lovable project
 
+## ⚠️ Supabase Edge Functions
+
+The code under `supabase/functions/` in this repo is **not the source of truth** — it can be, and often is, out of date. Edge functions (e.g. `tahleem-ai`) are edited and deployed **directly on Supabase**, not synced back into this zip/repo.
+
+**Before touching any edge function:** always pull the live version from the Supabase project (`zqniborlnbpkjdmyssnl`) first — don't assume the copy in this repo reflects what's deployed. Deploy changes back to Supabase directly rather than committing them here and hoping they sync.
+
 ## Project info
 
 **URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
