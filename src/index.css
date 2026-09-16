@@ -200,3 +200,53 @@ html {
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* ── ORAL EXAM LIVE ROOM (LiveKit VideoConference) ──────────────────────────
+   Tailwind's base reset (button { color: inherit; background: none; ... })
+   collides with @livekit/components-styles' own control-bar theming, so the
+   bar can end up sized/colored into invisibility on top of a black video
+   feed. Pin it explicitly to the bottom with its own solid background so it
+   always renders on top of the video and is never dependent on whichever
+   stylesheet wins the cascade. */
+.oral-exam-video-room .lk-video-conference,
+.oral-exam-video-room .lk-video-conference-inner {
+  height: 100% !important;
+}
+
+.oral-exam-video-room .lk-control-bar {
+  position: absolute !important;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: flex !important;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(6px);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.oral-exam-video-room .lk-control-bar .lk-button,
+.oral-exam-video-room .lk-control-bar button {
+  color: #fff !important;
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-radius: 10px;
+}
+
+.oral-exam-video-room .lk-control-bar .lk-button:hover,
+.oral-exam-video-room .lk-control-bar button:hover {
+  background: rgba(255, 255, 255, 0.22) !important;
+}
+
+.oral-exam-video-room .lk-control-bar .lk-button svg,
+.oral-exam-video-room .lk-control-bar button svg {
+  color: #fff !important;
+  fill: #fff !important;
+}
+
+.oral-exam-video-room .lk-disconnect-button {
+  background: #dc2626 !important;
+}
