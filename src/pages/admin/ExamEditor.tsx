@@ -30,7 +30,7 @@ import {
   Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2,
   Upload, Download, Image as ImageIcon, Loader2, Eye, Library, Clock,
   AlertCircle, CheckCircle, XCircle, HelpCircle, Monitor,
-  ChevronDown, ChevronUp, FolderPlus, Shuffle,
+  ChevronDown, ChevronUp, FolderPlus, Shuffle, Sparkles,
 } from "lucide-react";
 import RichTextEditor from "@/components/exam/RichTextEditor";
 import { sanitizeHtml } from "@/lib/sanitize";
@@ -45,7 +45,8 @@ interface QuestionForm {
   question_text_ar: string;          // ← Arabic question text
   instruction_text: string;          // ← optional instruction shown above the question (English)
   instruction_text_ar: string;       // ← optional instruction shown above the question (Arabic)
-  reading_passage: string;           // ← optional passage shown above the question (comprehension/reading types)
+  reading_passage: string;           // ← optional passage shown above the question (comprehension/reading types), English
+  reading_passage_ar: string;        // ← Arabic version of the reading passage
   options: Array<{
     id: string; text: string; text_ar: string; is_correct: boolean; image_url: string;
   }>;
@@ -81,10 +82,11 @@ interface ExamForm {
   guidelines: string; guidelines_ar: string;
   start_date: string; end_date: string;
   proctoring_enabled: boolean; fullscreen_required: boolean;
-  webcam_required: boolean; mic_required: boolean;
+  webcam_required: boolean; mic_required: boolean; record_audio: boolean;
   tab_switch_limit: number; max_warnings: number;
   auto_submit_on_violation: boolean;
   screenshot_interval_seconds: number; idle_timeout_seconds: number;
+  screen_capture_interval_seconds: number;
   blur_detection: boolean; face_detection: boolean;
   timezone: string; term: string; session: string; max_review_views: number;
   type: "exam" | "test";
@@ -97,6 +99,7 @@ const emptyQuestion = (): QuestionForm => ({
   question_type: "mcq", question_text: "", question_text_ar: "",
   instruction_text: "", instruction_text_ar: "",
   reading_passage: "",
+  reading_passage_ar: "",
   options: [
     { id: "a", text: "", text_ar: "", is_correct: false, image_url: "" },
     { id: "b", text: "", text_ar: "", is_correct: false, image_url: "" },
@@ -129,6 +132,28 @@ const questionTypes = [
   { value: "ordering",     label: "Ordering / Sequence",     label_ar: "ترتيب / تسلسل",          icon: "📋", cat: "Interactive" },
   { value: "comprehension",label: "Comprehension (MCQ)",     label_ar: "استيعاب (اختيار من متعدد)", icon: "📖", cat: "Standard" },
 ];
+
+const AiPointsControl = ({ value, onChange, t }: { value: string; onChange: (v: string) => void; t: (en: string, ar: string) => string }) => (
+  <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-2.5">
+    <label className="text-xs font-bold text-emerald-900 whitespace-nowrap">
+      {t("Points per question","النقاط لكل سؤال")}
+    </label>
+    <Input
+      type="number"
+      min={0}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={t("auto","تلقائي")}
+      className="h-8 w-20 text-xs rounded-lg bg-white"
+    />
+    <span className="text-[11px] text-emerald-800/70 leading-tight">
+      {t(
+        "Leave blank to let Tahleem Assistant decide per question. Set a number to force every question to that many points.",
+        "اتركه فارغًا ليقرر مساعد تحليم لكل سؤال. حدد رقمًا لفرضه على كل الأسئلة."
+      )}
+    </span>
+  </div>
+);
 
 const toLocalDatetimeString = (date: Date): string => {
   const y = date.getFullYear();
@@ -277,10 +302,11 @@ const ExamEditor = () => {
     guidelines: "", guidelines_ar: "",
     start_date: "", end_date: "",
     proctoring_enabled: false, fullscreen_required: false,
-    webcam_required: false, mic_required: false,
+    webcam_required: false, mic_required: false, record_audio: false,
     tab_switch_limit: 3, max_warnings: 3,
     auto_submit_on_violation: false,
     screenshot_interval_seconds: 0, idle_timeout_seconds: 300,
+    screen_capture_interval_seconds: 5,
     blur_detection: false, face_detection: false,
     timezone: "UTC", term: "first", session: "2026/2027", max_review_views: 1,
     type: "exam", level: "", subject_id: "",
@@ -339,6 +365,21 @@ const ExamEditor = () => {
   const [bankSearch,     setBankSearch]     = useState("");
   const [bankLoading,    setBankLoading]    = useState(false);
 
+  // ── AI Reorganize (paste raw questions → structured rows) ──────────────
+  const [aiReorgOpen,   setAiReorgOpen]   = useState(false);
+  const [aiRawText,     setAiRawText]     = useState("");
+  const [aiParsing,     setAiParsing]     = useState(false);
+  const [aiExtraInstructions, setAiExtraInstructions] = useState(""); // e.g. "2 points each", "translate everything"
+  const [aiPointsOverride, setAiPointsOverride] = useState("");
+  // ── AI Generate (describe instructions → brand-new questions) ──────────
+  const [aiMode,         setAiMode]         = useState<"reorganize"|"generate"|"fix">("reorganize");
+  const [aiInstructions, setAiInstructions] = useState("");
+  const [aiGenerating,   setAiGenerating]   = useState(false);
+  // ── AI Fix (pick already-added questions + free-text instruction → edits in place) ──
+  const [aiFixSelected,     setAiFixSelected]     = useState<Set<number>>(new Set());
+  const [aiFixInstructions, setAiFixInstructions] = useState("");
+  const [aiFixing,          setAiFixing]          = useState(false);
+
   const [activeTab,        setActiveTab]        = useState("settings");
   const [scheduleErrors,   setScheduleErrors]   = useState<{start?: string; end?: string}>({});
   const [proctoringPreview,setProctoringPreview] = useState(false);
@@ -358,6 +399,23 @@ const ExamEditor = () => {
   const removeQuestion = (idx: number) => setQuestions(q => q.filter((_, i) => i !== idx));
   const updateQuestion = (idx: number, updates: Partial<QuestionForm>) =>
     setQuestions(q => q.map((qq, i) => i === idx ? { ...qq, ...updates } : qq));
+
+  // A question with nothing typed into it yet (e.g. one just created via
+  // "+ Add" before the Assistant ran). Used so the Assistant fills these in
+  // instead of leaving them blank and appending after them.
+  const isBlankQuestion = (q: QuestionForm) =>
+    !q.question_text?.trim() && !q.question_text_ar?.trim();
+
+  // Drop blank trailing questions from the end of the current list so
+  // Assistant-generated questions land in their place instead of after them.
+  const dropTrailingBlanks = (list: QuestionForm[]) => {
+    let end = list.length;
+    while (end > 0 && isBlankQuestion(list[end - 1])) end--;
+    return list.slice(0, end);
+  };
+
+  // Which question cards have "More options" (instructions/media/section) expanded — collapsed by default to keep the card simple.
+  const [advancedOpen, setAdvancedOpen] = useState<Set<number>>(new Set());
 
   // ── Sections (question pools) ───────────────────────────────────────────
   // A "section" is a UI-level shell around a group_name. It lets an admin
@@ -592,6 +650,240 @@ const ExamEditor = () => {
     if (bulkFileInputRef.current) bulkFileInputRef.current.value = "";
   };
 
+  // Maps the fields Tahleem Assistant can return for any question type
+  // (matching pairs, ordering items, audio response mode, word limits, etc.)
+  // onto a QuestionForm — used by reorganize, generate, and fix alike.
+  const mapAiQuestionFields = (q: any): Partial<QuestionForm> => ({
+    question_type: q.question_type || "mcq",
+    question_text: q.question_text || "",
+    question_text_ar: q.question_text_ar || "",
+    instruction_text: q.instruction_text || "",
+    instruction_text_ar: q.instruction_text_ar || "",
+    reading_passage: q.reading_passage || "",
+    reading_passage_ar: q.reading_passage_ar || "",
+    accepted_answers: Array.isArray(q.accepted_answers) && q.accepted_answers.length ? q.accepted_answers : [""],
+    matching_pairs: Array.isArray(q.matching_pairs) && q.matching_pairs.length ? q.matching_pairs : emptyQuestion().matching_pairs,
+    ordering_items: Array.isArray(q.ordering_items) && q.ordering_items.length ? q.ordering_items : emptyQuestion().ordering_items,
+    audio_response_type: q.audio_response_type === "audio" ? "audio" : "text",
+    min_words: Number(q.min_words) || 0,
+    max_words: Number(q.max_words) || 0,
+    difficulty: q.difficulty || "medium",
+    explanation: q.explanation || "",
+  });
+
+  const handleAIReorganize = async () => {
+    if (!aiRawText.trim()) {
+      toast({ title: t("Paste some questions first","الصق بعض الأسئلة أولاً"), variant: "destructive" });
+      return;
+    }
+    setAiParsing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+        body: {
+          action: "parse_questions",
+          prompt: aiRawText,
+          instructions: aiExtraInstructions.trim() || undefined,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const raw: any[] = Array.isArray(data?.questions) ? data.questions : [];
+      if (!raw.length) throw new Error("No questions recognized in the pasted text");
+
+      const forcedPoints = aiPointsOverride.trim() ? Number(aiPointsOverride) : null;
+      const base = dropTrailingBlanks(questions);
+
+      const parsedQuestions: QuestionForm[] = raw.map((q: any, index: number) => {
+        const options = Array.isArray(q.options)
+          ? q.options.map((o: any, oi: number) => ({
+              id: o.id || String.fromCharCode(97 + oi),
+              text: o.text || "",
+              text_ar: o.text_ar || "",
+              is_correct: !!o.is_correct,
+              image_url: "",
+            }))
+          : [];
+
+        const derivedCorrect = q.correct_answer || options.find((o: any) => o.is_correct)?.id || "";
+
+        return {
+          ...emptyQuestion(),
+          ...mapAiQuestionFields(q),
+          options: options.length ? options : emptyQuestion().options,
+          correct_answer: derivedCorrect,
+          points: forcedPoints !== null && !Number.isNaN(forcedPoints) ? forcedPoints : (Number(q.points) || 1),
+          sort_order: base.length + index,
+        };
+      });
+
+      setQuestions(() => [...base, ...parsedQuestions]);
+      const autoSelected = raw.filter((q: any) => (q.options || []).some((o: any) => o.is_correct)).length;
+      toast({
+        title: `✅ ${t("Reorganized","تمت إعادة التنظيم")} ${parsedQuestions.length} ${t("questions","سؤال")}`,
+        description: t(
+          `Correct answers were auto-selected for ${autoSelected} of them. Review before publishing.`,
+          `تم اختيار الإجابات الصحيحة تلقائيًا لـ ${autoSelected} منها. راجعها قبل النشر.`
+        ),
+      });
+      setAiRawText("");
+      setAiReorgOpen(false);
+    } catch (err: any) {
+      toast({ title: t("❌ Tahleem Assistant Reorganize failed","❌ فشلت إعادة التنظيم بمساعد تحليم"), description: err.message, variant: "destructive" });
+    }
+    setAiParsing(false);
+  };
+
+  const handleAIGenerate = async () => {
+    if (!aiInstructions.trim()) {
+      toast({ title: t("Describe what questions you want first","صف الأسئلة التي تريدها أولاً"), variant: "destructive" });
+      return;
+    }
+    setAiGenerating(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+        body: { action: "generate_questions", prompt: aiInstructions },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const raw: any[] = Array.isArray(data?.questions) ? data.questions : [];
+      if (!raw.length) throw new Error("Tahleem Assistant didn't return any questions — try rephrasing your instructions");
+
+      const forcedPoints = aiPointsOverride.trim() ? Number(aiPointsOverride) : null;
+      const base = dropTrailingBlanks(questions);
+
+      const generatedQuestions: QuestionForm[] = raw.map((q: any, index: number) => {
+        const options = Array.isArray(q.options)
+          ? q.options.map((o: any, oi: number) => ({
+              id: o.id || String.fromCharCode(97 + oi),
+              text: o.text || "",
+              text_ar: o.text_ar || "",
+              is_correct: !!o.is_correct,
+              image_url: "",
+            }))
+          : [];
+
+        const derivedCorrect = q.correct_answer || options.find((o: any) => o.is_correct)?.id || "";
+
+        return {
+          ...emptyQuestion(),
+          ...mapAiQuestionFields(q),
+          options: options.length ? options : emptyQuestion().options,
+          correct_answer: derivedCorrect,
+          points: forcedPoints !== null && !Number.isNaN(forcedPoints) ? forcedPoints : (Number(q.points) || 1),
+          sort_order: base.length + index,
+        };
+      });
+
+      setQuestions(() => [...base, ...generatedQuestions]);
+      toast({
+        title: `✅ ${t("Generated","تم التوليد")} ${generatedQuestions.length} ${t("questions","سؤال")}`,
+        description: t(
+          "Review each question and its correct answer before publishing the exam.",
+          "راجع كل سؤال وإجابته الصحيحة قبل نشر الامتحان."
+        ),
+      });
+      setAiInstructions("");
+      setAiReorgOpen(false);
+    } catch (err: any) {
+      toast({ title: t("❌ Tahleem Assistant Generate failed","❌ فشل توليد الأسئلة بمساعد تحليم"), description: err.message, variant: "destructive" });
+    }
+    setAiGenerating(false);
+  };
+
+  const handleFixQuestions = async () => {
+    if (aiFixSelected.size === 0) {
+      toast({ title: t("Select at least one question to fix","اختر سؤالاً واحدًا على الأقل لإصلاحه"), variant: "destructive" });
+      return;
+    }
+    if (!aiFixInstructions.trim()) {
+      toast({ title: t("Describe what needs fixing first","صف ما يحتاج إلى إصلاح أولاً"), variant: "destructive" });
+      return;
+    }
+    const indices = Array.from(aiFixSelected).sort((a, b) => a - b);
+    setAiFixing(true);
+    try {
+      const payloadQuestions = indices.map(i => {
+        const q = questions[i];
+        return {
+          question_type: q.question_type,
+          question_text: q.question_text,
+          question_text_ar: q.question_text_ar,
+          instruction_text: q.instruction_text,
+          instruction_text_ar: q.instruction_text_ar,
+          reading_passage: q.reading_passage,
+          reading_passage_ar: q.reading_passage_ar,
+          options: q.options,
+          correct_answer: q.correct_answer,
+          accepted_answers: q.accepted_answers,
+          matching_pairs: q.matching_pairs,
+          ordering_items: q.ordering_items,
+          audio_response_type: q.audio_response_type,
+          min_words: q.min_words,
+          max_words: q.max_words,
+          points: q.points,
+          difficulty: q.difficulty,
+          explanation: q.explanation,
+        };
+      });
+
+      const { data, error } = await supabase.functions.invoke("tahleem-ai", {
+        body: {
+          action: "fix_questions",
+          prompt: aiFixInstructions,
+          context: { questions: payloadQuestions, instructions: aiFixInstructions },
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const raw: any[] = Array.isArray(data?.questions) ? data.questions : [];
+      if (raw.length !== indices.length) {
+        throw new Error(t(
+          "Tahleem Assistant returned a different number of questions than expected — no changes were applied",
+          "أعاد مساعد تحليم عددًا مختلفًا من الأسئلة عمّا هو متوقع — لم يتم تطبيق أي تغييرات"
+        ));
+      }
+
+      setQuestions(prev => {
+        const next = [...prev];
+        indices.forEach((qIndex, i) => {
+          const q = raw[i];
+          const options = Array.isArray(q.options)
+            ? q.options.map((o: any, oi: number) => ({
+                id: o.id || String.fromCharCode(97 + oi),
+                text: o.text || "",
+                text_ar: o.text_ar || "",
+                is_correct: !!o.is_correct,
+                image_url: next[qIndex]?.options?.[oi]?.image_url || "",
+              }))
+            : next[qIndex].options;
+          const derivedCorrect = q.correct_answer || options.find((o: any) => o.is_correct)?.id || "";
+          next[qIndex] = {
+            ...next[qIndex],
+            ...mapAiQuestionFields(q),
+            options,
+            correct_answer: derivedCorrect,
+            points: Number(q.points) || next[qIndex].points,
+          };
+        });
+        return next;
+      });
+
+      toast({
+        title: `✅ ${t("Fixed","تم الإصلاح")} ${indices.length} ${t("questions","سؤال")}`,
+        description: t("Review the changes before publishing the exam.","راجع التغييرات قبل نشر الامتحان."),
+      });
+      setAiFixInstructions("");
+      setAiFixSelected(new Set());
+      setAiReorgOpen(false);
+    } catch (err: any) {
+      toast({ title: t("❌ Tahleem Assistant Fix failed","❌ فشل الإصلاح بمساعد تحليم"), description: err.message, variant: "destructive" });
+    }
+    setAiFixing(false);
+  };
+
   // ── FIX 3: Question Bank ──────────────────────────────────────────────────
   const openQuestionBank = async () => {
     setBankOpen(true);
@@ -624,6 +916,7 @@ const ExamEditor = () => {
         instruction_text:    q.instruction_text || "",
         instruction_text_ar: q.instruction_text_ar || "",
         reading_passage:     q.reading_passage || "",
+        reading_passage_ar:  q.reading_passage_ar || "",
         options:          (q.options as any[]) || emptyQuestion().options,
         correct_answer:   q.correct_answer || "",
         points:           q.points || 1,
@@ -676,6 +969,9 @@ const ExamEditor = () => {
     if (!examForm.title.trim()) {
       toast({ title: "Title required", variant: "destructive" }); return;
     }
+    if (!examForm.subject_id) {
+      toast({ title: "Subject required", description: "Pick a subject so teachers can see this exam.", variant: "destructive" }); return;
+    }
     if (examForm.start_date && examForm.end_date && !validateSchedule()) {
       toast({ title: "Invalid schedule", description: "Check date settings", variant: "destructive" }); return;
     }
@@ -695,9 +991,11 @@ const ExamEditor = () => {
         fullscreen_required: examForm.fullscreen_required,
         webcam_required: examForm.webcam_required,
         mic_required: examForm.mic_required,
+        record_audio: examForm.record_audio,
         tab_switch_limit: examForm.tab_switch_limit, max_warnings: examForm.max_warnings,
         auto_submit_on_violation: examForm.auto_submit_on_violation,
         screenshot_interval_seconds: examForm.screenshot_interval_seconds,
+        screen_capture_interval_seconds: examForm.screen_capture_interval_seconds,
         idle_timeout_seconds: examForm.idle_timeout_seconds,
         blur_detection: examForm.blur_detection, face_detection: examForm.face_detection,
         timezone: examForm.timezone, term: examForm.term, session: examForm.session, max_review_views: examForm.max_review_views,
@@ -727,6 +1025,7 @@ const ExamEditor = () => {
         instruction_text:    q.instruction_text ? sanitizeHtml(q.instruction_text) : null,
         instruction_text_ar: q.instruction_text_ar ? sanitizeHtml(q.instruction_text_ar) : null,
         reading_passage:     q.reading_passage ? sanitizeHtml(q.reading_passage) : null,
+        reading_passage_ar:  q.reading_passage_ar ? sanitizeHtml(q.reading_passage_ar) : null,
         options:          q.options?.length ? q.options : null,
         correct_answer:   q.correct_answer || null,
         points: q.points || 1, difficulty: q.difficulty || "medium", sort_order: i,
@@ -779,10 +1078,12 @@ const ExamEditor = () => {
           fullscreen_required: exam.fullscreen_required || false,
           webcam_required: exam.webcam_required || false,
           mic_required: (exam as any).mic_required || false,
+          record_audio: (exam as any).record_audio || false,
           tab_switch_limit: exam.tab_switch_limit || 3,
           max_warnings: exam.max_warnings || 3,
           auto_submit_on_violation: exam.auto_submit_on_violation || false,
           screenshot_interval_seconds: exam.screenshot_interval_seconds || 0,
+          screen_capture_interval_seconds: exam.screen_capture_interval_seconds ?? 5,
           idle_timeout_seconds: (exam as any).idle_timeout_seconds || 300,
           blur_detection: (exam as any).blur_detection || false,
           face_detection: (exam as any).face_detection || false,
@@ -800,6 +1101,7 @@ const ExamEditor = () => {
           question_text: q.question_text || "", question_text_ar: q.question_text_ar || "",
           instruction_text: (q as any).instruction_text || "", instruction_text_ar: (q as any).instruction_text_ar || "",
           reading_passage: (q as any).reading_passage || "",
+          reading_passage_ar: (q as any).reading_passage_ar || "",
           options: (q.options as any[]) || emptyQuestion().options,
           correct_answer: q.correct_answer || "", accepted_answers: (q.accepted_answers as string[]) || [""],
           points: q.points || 1, difficulty: q.difficulty || "medium", sort_order: q.sort_order || 0,
@@ -869,26 +1171,60 @@ const ExamEditor = () => {
 
                     {/* ── Reading passage (optional, shown above the question — comprehension type) ── */}
                     {q.question_type === "comprehension" && (
-                      <div className="space-y-2">
-                        <Label className="text-xs sm:text-sm font-black text-amber-700 flex items-center gap-2">
-                          📖 {t("Reading Passage","نص القراءة")}
-                          <span className="text-[10px] font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
-                            {t("optional","اختياري")}
-                          </span>
-                        </Label>
-                        <div className="rounded-lg sm:rounded-xl border border-amber-300 shadow-sm overflow-hidden focus-within:border-amber-500 focus-within:ring-1 focus-within:ring-amber-500 transition-all bg-amber-50/40">
-                          <RichTextEditor
-                            placeholder={t("Paste the passage / dialogue students should read before answering…","الصق النص أو الحوار الذي يجب أن يقرأه الطلاب قبل الإجابة…")}
-                            value={q.reading_passage}
-                            onChange={val => updateQuestion(idx, { reading_passage: val })}
-                            dir="rtl"
-                            className="min-h-[90px] sm:min-h-[120px]"
-                          />
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label className="text-xs sm:text-sm font-black text-amber-700 flex items-center gap-2">
+                            📖 {t("Reading Passage (English)","نص القراءة (إنجليزي)")}
+                            <span className="text-[10px] font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                              {t("optional","اختياري")}
+                            </span>
+                          </Label>
+                          <div className="rounded-lg sm:rounded-xl border border-amber-300 shadow-sm overflow-hidden focus-within:border-amber-500 focus-within:ring-1 focus-within:ring-amber-500 transition-all bg-amber-50/40">
+                            <RichTextEditor
+                              placeholder={t("Paste the passage / dialogue students should read before answering…","الصق النص أو الحوار الذي يجب أن يقرأه الطلاب قبل الإجابة…")}
+                              value={q.reading_passage}
+                              onChange={val => updateQuestion(idx, { reading_passage: val })}
+                              dir="auto"
+                              className="min-h-[90px] sm:min-h-[120px]"
+                            />
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          <Label className="text-xs sm:text-sm font-black text-amber-700 flex items-center gap-2">
+                            📖 {t("Reading Passage (Arabic)","نص القراءة (عربي)")}
+                            <span className="text-[10px] font-normal text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                              {t("optional","اختياري")}
+                            </span>
+                          </Label>
+                          <div className="rounded-lg sm:rounded-xl border border-amber-300 shadow-sm overflow-hidden focus-within:border-amber-500 focus-within:ring-1 focus-within:ring-amber-500 transition-all bg-amber-50/40">
+                            <RichTextEditor
+                              placeholder={t("النص أو الحوار بالعربية الذي يجب أن يقرأه الطلاب قبل الإجابة…","النص أو الحوار بالعربية الذي يجب أن يقرأه الطلاب قبل الإجابة…")}
+                              value={q.reading_passage_ar}
+                              onChange={val => updateQuestion(idx, { reading_passage_ar: val })}
+                              dir="rtl"
+                              className="min-h-[90px] sm:min-h-[120px]"
+                            />
+                          </div>
                         </div>
                       </div>
                     )}
 
                     {/* ── Instruction text (optional, global to all exam/question types) ── */}
+                    {/* ── Instruction / Media / Section — tucked behind one
+                        toggle. These are needed occasionally, not on every
+                        question, and having them always expanded was most of
+                        what made this card feel complicated for a teacher
+                        just trying to type a quick MCQ. ── */}
+                    <button type="button" onClick={() => setAdvancedOpen(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; })}
+                      className="flex items-center gap-1.5 text-[11px] sm:text-xs font-bold text-slate-500 hover:text-slate-700 transition-colors">
+                      {advancedOpen.has(idx) ? <ChevronUp className="h-3.5 w-3.5"/> : <ChevronDown className="h-3.5 w-3.5"/>}
+                      {t("More options","خيارات إضافية")}
+                      <span className="text-[10px] font-normal text-slate-400">
+                        {t("(instructions, media, section)","(تعليمات، وسائط، قسم)")}
+                      </span>
+                    </button>
+
+                    {(advancedOpen.has(idx) || q.question_type === "audio") && (<>
                     <div className="space-y-2">
                       <Label className="text-xs sm:text-sm font-black text-slate-600 flex items-center gap-2">
                         {t("Instruction (Arabic)","التعليمات (عربي)")}
@@ -920,6 +1256,7 @@ const ExamEditor = () => {
                         className="min-h-[50px] sm:min-h-[60px] text-xs sm:text-sm rounded-lg sm:rounded-xl border-slate-200 bg-slate-50/50 focus-visible:ring-slate-400"
                       />
                     </div>
+                    </>)}
 
                     {/* ── FIX 2: Arabic question text ── */}
                     <div className="space-y-2">
@@ -956,6 +1293,7 @@ const ExamEditor = () => {
                       </div>
                     </div>
 
+                    {(advancedOpen.has(idx) || q.question_type === "audio") && (<>
                     {/* Media */}
                     <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
                       <Label className="flex items-center gap-1.5 mb-2 text-xs font-bold text-slate-700">
@@ -1038,7 +1376,7 @@ const ExamEditor = () => {
                         )}
                       </p>
                     </div>
-
+                    </>)}
 
                     {/* MCQ Options */}
                     {(q.question_type==="mcq" || q.question_type==="image_mcq" || q.question_type==="comprehension") && (
@@ -1199,17 +1537,25 @@ const ExamEditor = () => {
                 </div>
                 {/* Subject */}
                 <div className="space-y-2">
-                  <Label className="text-sm font-bold text-slate-700">{t("Subject","المادة")}</Label>
-                  <Select value={examForm.subject_id||"none"} onValueChange={v => setExamForm({ ...examForm, subject_id: v==="none" ? "" : v })}>
+                  <Label className="text-sm font-bold text-slate-700">{t("Subject","المادة")} <span className="text-red-500">*</span></Label>
+                  <Select value={examForm.subject_id||undefined} onValueChange={v => {
+                    const chosen = subjects.find(s => s.id === v);
+                    setExamForm({ ...examForm, subject_id: v,
+                      // Title always follows the subject — this is what keeps every
+                      // exam/test for the same subject sharing one name, so the
+                      // report card can actually combine them into a single row.
+                      title: chosen?.title || examForm.title,
+                      title_ar: chosen?.title_ar || examForm.title_ar,
+                    });
+                  }}>
                     <SelectTrigger className="h-11 rounded-lg"><SelectValue placeholder={t("Select subject","اختر المادة")} /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">{t("No subject (visible to all)","بدون مادة (يظهر للجميع)")}</SelectItem>
                       {subjects.map(s => (
                         <SelectItem key={s.id} value={s.id}>{t(s.title, s.title_ar || s.title)}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-[11px] text-slate-400">{t("Only students registered for this subject will see this exam/test.","لن يرى هذا الامتحان/التمرين إلا الطلاب المسجلون في هذه المادة.")}</p>
+                  <p className="text-[11px] text-slate-400">{t("Required — teachers only see exams linked to a subject they teach, and students only see exams for subjects they're registered in.","مطلوب — لا يرى المعلمون سوى الامتحانات المرتبطة بمادة يدرّسونها، ولا يرى الطلاب سوى الامتحانات الخاصة بالمواد المسجلين فيها.")}</p>
                 </div>
                 {/* Level & Term */}
                 <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-3")}>
@@ -1242,11 +1588,15 @@ const ExamEditor = () => {
                       className="rounded-lg bg-slate-50/50 h-11" placeholder="2026/2027" />
                   </div>
                 </div>
-                {/* Titles */}
+                {/* Titles — locked to the selected subject. Free-text titles were
+                    the root cause of subjects drifting apart (e.g. "Seerah Test -
+                    Beginner" vs "Seerah" vs "السيرة النبوية" all meaning the same
+                    subject) so the report card couldn't combine a subject's test
+                    and exam scores into one row. Pick the subject above instead. */}
                 <div className="space-y-4">
                   <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
-                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (Arabic)","العنوان (عربي)")}</Label><Input value={examForm.title_ar} onChange={e=>setExamForm({...examForm,title_ar:e.target.value})} dir="rtl" className="rounded-lg bg-slate-50/50 h-10" placeholder="أدخل عنوان الامتحان" /></div>
-                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (English)","العنوان (إنجليزي)")}</Label><Input value={examForm.title} onChange={e=>setExamForm({...examForm,title:e.target.value})} dir="ltr" className="rounded-lg bg-slate-50/50 h-10" placeholder="Enter exam title" /></div>
+                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (Arabic)","العنوان (عربي)")}</Label><Input value={examForm.title_ar} readOnly disabled dir="rtl" className="rounded-lg bg-slate-100 h-10 text-slate-500" placeholder={t("Select a subject above","اختر مادة أعلاه")} /></div>
+                    <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Title (English)","العنوان (إنجليزي)")}</Label><Input value={examForm.title} readOnly disabled dir="ltr" className="rounded-lg bg-slate-100 h-10 text-slate-500" placeholder={t("Select a subject above","اختر مادة أعلاه")} /></div>
                   </div>
                   <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-2")}>
                     <div className="space-y-2"><Label className="font-semibold text-slate-700 text-sm">{t("Description (Arabic)","الوصف (عربي)")}</Label><Textarea value={examForm.description_ar} onChange={e=>setExamForm({...examForm,description_ar:e.target.value})} dir="rtl" className="rounded-lg bg-slate-50/50 min-h-[80px]" placeholder="وصف مختصر..." /></div>
@@ -1359,6 +1709,7 @@ const ExamEditor = () => {
                       { key: "auto_submit_on_violation", label: t("Auto-submit on violation","إرسال تلقائي عند الانتهاك"), desc: t("End exam after max warnings","إنهاء الامتحان بعد التحذيرات القصوى") },
                       { key: "blur_detection", label: t("Blur Detection","كشف ضبابية الكاميرا"), desc: t("Alert if camera is covered","تنبيه إذا تم تغطية الكاميرا") },
                       { key: "face_detection", label: t("Face Detection","كشف الوجه"), desc: t("Require face in frame","تطلب وجود وجه في الإطار") },
+                      { key: "record_audio", label: t("Audio Monitoring","مراقبة الصوت"), desc: t("Let admins listen in live and flag unusual noise","السماح للمشرفين بالاستماع مباشرة ورصد الضوضاء غير المعتادة") },
                     ].map(a => (
                       <div key={a.key} className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-100">
                         <div><Label className="text-sm font-semibold">{a.label}</Label><p className="text-[10px] text-slate-400 mt-0.5">{a.desc}</p></div>
@@ -1381,6 +1732,22 @@ const ExamEditor = () => {
                       <Input type="number" min={0} max={20}
                         value={examForm.tab_switch_limit}
                         onChange={e=>setExamForm({...examForm,tab_switch_limit: Math.max(0, Math.min(20, Number(e.target.value)||0))})}
+                        className="w-16 h-9 rounded-lg text-center" />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-100">
+                      <div><Label className="text-sm font-semibold">{t("Face snapshot interval","فاصل التقاط الوجه")}</Label><p className="text-[10px] text-slate-400 mt-0.5">{t("Roughly how often a webcam photo is captured, in seconds. 0 uses the default (~30s).","تقريبًا كل كم ثانية تُلتقط صورة من الكاميرا. 0 يستخدم الافتراضي (~30 ث).")}</p></div>
+                      <Input type="number" min={0} max={600}
+                        value={examForm.screenshot_interval_seconds}
+                        onChange={e=>setExamForm({...examForm,screenshot_interval_seconds: Math.max(0, Math.min(600, Number(e.target.value)||0))})}
+                        className="w-16 h-9 rounded-lg text-center" />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 p-3 bg-white rounded-xl border border-slate-100">
+                      <div><Label className="text-sm font-semibold">{t("Screen capture interval","فاصل التقاط الشاشة")}</Label><p className="text-[10px] text-slate-400 mt-0.5">{t("How often the exam screen itself is captured, in seconds. Also captured on every question change. 0 disables the timer.","كل كم ثانية تُلتقط شاشة الامتحان نفسها. تُلتقط أيضًا عند كل تغيير سؤال. 0 لتعطيل المؤقت.")}</p></div>
+                      <Input type="number" min={0} max={600}
+                        value={examForm.screen_capture_interval_seconds}
+                        onChange={e=>setExamForm({...examForm,screen_capture_interval_seconds: Math.max(0, Math.min(600, Number(e.target.value)||0))})}
                         className="w-16 h-9 rounded-lg text-center" />
                     </div>
                   </div>
@@ -1465,6 +1832,162 @@ const ExamEditor = () => {
                           <p className="mt-2"><strong>{t("Also supported","مدعوم أيضًا")}:</strong> Legacy format with question_text / option_a / correct_answer columns</p>
                         </div>
                       </div>
+                    </DialogContent>
+                  </Dialog>
+
+                  <Dialog open={aiReorgOpen} onOpenChange={setAiReorgOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm" className="gap-1.5 sm:gap-2 rounded-xl text-emerald-800 border-emerald-300 bg-emerald-50 font-bold text-xs sm:text-sm h-9">
+                        <Sparkles className="h-4 w-4"/><span className="hidden sm:inline">{t("Tahleem Assistant","مساعد تحليم")}</span><span className="sm:hidden">{t("Assistant","المساعد")}</span>
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className={cn("max-w-[95vw] sm:max-w-2xl", isMobile ? "p-4" : "p-6")}>
+                      <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-emerald-700"/>{t("Tahleem Assistant","مساعد تحليم")}</DialogTitle>
+                      </DialogHeader>
+
+                      <div className="flex gap-2 p-1 bg-slate-100 rounded-xl">
+                        <button type="button" onClick={() => setAiMode("generate")}
+                          className={cn("flex-1 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all",
+                            aiMode === "generate" ? "bg-white shadow-sm text-emerald-800" : "text-slate-500")}>
+                          ✨ {t("Generate from description","توليد من وصف")}
+                        </button>
+                        <button type="button" onClick={() => setAiMode("reorganize")}
+                          className={cn("flex-1 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all",
+                            aiMode === "reorganize" ? "bg-white shadow-sm text-emerald-800" : "text-slate-500")}>
+                          📋 {t("Paste existing questions","لصق أسئلة موجودة")}
+                        </button>
+                        <button type="button" onClick={() => setAiMode("fix")}
+                          className={cn("flex-1 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all",
+                            aiMode === "fix" ? "bg-white shadow-sm text-emerald-800" : "text-slate-500")}>
+                          🛠️ {t("Fix added questions","إصلاح الأسئلة المضافة")}
+                        </button>
+                      </div>
+
+                      {aiMode === "fix" ? (
+                        <div className="space-y-3 py-2">
+                          <DialogDescription>
+                            {t(
+                              "Pick which already-added questions need fixing, then describe the change in plain language — e.g. \"question 3's correct answer should be B\", \"reword these to be clearer\", \"make these harder\". No need to re-paste anything.",
+                              "اختر الأسئلة المضافة التي تحتاج إلى إصلاح، ثم صف التغيير بلغة بسيطة — مثال: \"إجابة السؤال 3 يجب أن تكون B\"، \"أعد صياغة هذه لتكون أوضح\". لا حاجة لإعادة لصق أي شيء."
+                            )}
+                          </DialogDescription>
+                          {questions.length === 0 ? (
+                            <p className="text-xs text-slate-500 italic px-1">{t("No questions added yet — add some first, then come back here to fix them.","لم تتم إضافة أي أسئلة بعد — أضف بعضًا أولاً ثم عد لإصلاحها.")}</p>
+                          ) : (
+                            <div className="max-h-[180px] overflow-y-auto space-y-1.5 rounded-xl border border-slate-200 p-2">
+                              {questions.map((q, i) => (
+                                <label key={i} className="flex items-start gap-2 text-xs rounded-lg px-2 py-1.5 hover:bg-slate-50 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    className="h-3.5 w-3.5 mt-0.5 accent-emerald-700 shrink-0"
+                                    checked={aiFixSelected.has(i)}
+                                    onChange={e => {
+                                      setAiFixSelected(prev => {
+                                        const next = new Set(prev);
+                                        if (e.target.checked) next.add(i); else next.delete(i);
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                  <span className="font-bold text-slate-500 shrink-0">Q{i + 1}.</span>
+                                  <span className="text-slate-700 line-clamp-1" dir="auto">
+                                    {q.question_text || q.question_text_ar || t("(empty question)","(سؤال فارغ)")}
+                                  </span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                          <Textarea
+                            value={aiFixInstructions}
+                            onChange={e => setAiFixInstructions(e.target.value)}
+                            placeholder={t(
+                              "e.g. \"the correct answer for question 3 should be option B, not C\"",
+                              "مثال: \"يجب أن تكون الإجابة الصحيحة للسؤال 3 هي الخيار B وليس C\""
+                            )}
+                            className="min-h-[100px] rounded-xl text-sm"
+                            dir="auto"
+                          />
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs text-slate-500">
+                              {aiFixSelected.size > 0
+                                ? `${aiFixSelected.size} ${t("question(s) selected","سؤال محدد")}`
+                                : t("Nothing selected yet","لم يتم تحديد شيء بعد")}
+                            </p>
+                            <Button onClick={handleFixQuestions} disabled={aiFixing || aiFixSelected.size === 0 || !aiFixInstructions.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
+                              {aiFixing ? <Loader2 className="h-4 w-4 animate-spin"/> : <Sparkles className="h-4 w-4"/>}
+                              {aiFixing ? t("Fixing…","جارٍ الإصلاح…") : t("Fix with Tahleem Assistant","إصلاح باستخدام مساعد تحليم")}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : aiMode === "generate" ? (
+                        <div className="space-y-3 py-2">
+                          <DialogDescription>
+                            {t(
+                              "Describe what you want in plain language — topic, how many, question type (MCQ, true/false, short answer, fill-in-the-blank, essay, audio/dictation, matching, ordering, etc.), difficulty, level. Tahleem Assistant writes brand-new questions from its own subject knowledge, fully set up for whichever type you ask for.",
+                              "صف ما تريده بلغة بسيطة — الموضوع، العدد، نوع السؤال (اختيار من متعدد، صح/خطأ، إجابة قصيرة، ملء الفراغ، مقال، صوت/إملاء، مطابقة، ترتيب، إلخ)، الصعوبة، المستوى. سيكتب مساعد تحليم أسئلة جديدة تمامًا من معرفته الخاصة، معدة بالكامل لأي نوع تطلبه."
+                            )}
+                          </DialogDescription>
+                          <Textarea
+                            value={aiInstructions}
+                            onChange={e => setAiInstructions(e.target.value)}
+                            placeholder={t(
+                              "e.g.\n\"15 MCQ questions on the pillars of Wudu, intermediate level, medium difficulty\"\n\n\"5 matching questions pairing Prophets with their nations\"\n\n\"8 questions on Noon Sakinah and Tanween rules in Tajweed — mix of MCQ and fill-in-the-blank\"",
+                              "مثال:\n\"15 سؤال اختيار من متعدد عن أركان الوضوء، المستوى المتوسط، صعوبة متوسطة\""
+                            )}
+                            className="min-h-[160px] rounded-xl text-sm"
+                            dir="auto"
+                          />
+                          <AiPointsControl value={aiPointsOverride} onChange={setAiPointsOverride} t={t} />
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs text-slate-500">{t("Questions fill any empty question left at the end, then append after that — nothing with content is overwritten.","تملأ الأسئلة أي سؤال فارغ في نهاية القائمة، ثم تُضاف بعده — لا يتم استبدال أي سؤال يحتوي على محتوى.")}</p>
+                            <Button onClick={handleAIGenerate} disabled={aiGenerating || !aiInstructions.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
+                              {aiGenerating ? <Loader2 className="h-4 w-4 animate-spin"/> : <Sparkles className="h-4 w-4"/>}
+                              {aiGenerating ? t("Generating…","جارٍ التوليد…") : t("Generate Questions","توليد الأسئلة")}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                      <div className="space-y-3 py-2">
+                        <DialogDescription>
+                          {t(
+                            "Paste your questions in any format — Word, WhatsApp, a textbook, English or Arabic. Tahleem Assistant recognizes every question type the editor supports (MCQ, true/false, short answer, fill-in-the-blank, essay, audio/dictation, matching, ordering, etc.), fills in both English and Arabic, and selects the correct answer for each (using its own knowledge if you didn't mark one).",
+                            "الصق أسئلتك بأي صيغة — من Word أو واتساب أو كتاب مدرسي، عربي أو إنجليزي. يتعرف مساعد تحليم على كل أنواع الأسئلة التي يدعمها المحرر، ويملأ العربية والإنجليزية، ويختار الإجابة الصحيحة لكل سؤال (باستخدام معرفته الخاصة إن لم تحدد إجابة)."
+                          )}
+                        </DialogDescription>
+                        <Textarea
+                          value={aiRawText}
+                          onChange={e => setAiRawText(e.target.value)}
+                          placeholder={t(
+                            "Paste questions here...\n\ne.g.\n1. What is the plural of كِتَاب?\nA) كُتُب\nB) كِتَابَان\nC) كَاتِب\nD) مَكْتَبَة\n\n2. The Prophet ﷺ was born in the Year of the Elephant. True or False?",
+                            "الصق الأسئلة هنا..."
+                          )}
+                          className="min-h-[220px] rounded-xl font-mono text-sm"
+                          dir="auto"
+                        />
+                        <div>
+                          <label className="text-xs font-bold text-slate-600">{t("Extra instructions (optional)","تعليمات إضافية (اختياري)")}</label>
+                          <Textarea
+                            value={aiExtraInstructions}
+                            onChange={e => setAiExtraInstructions(e.target.value)}
+                            placeholder={t(
+                              "e.g. \"mark all as hard difficulty\", \"these are all fill-in-the-blank\", \"group by topic\"",
+                              "مثال: \"اجعل الكل صعبًا\"، \"كلها من نوع ملء الفراغ\""
+                            )}
+                            className="min-h-[60px] rounded-xl text-sm mt-1"
+                            dir="auto"
+                          />
+                        </div>
+                        <AiPointsControl value={aiPointsOverride} onChange={setAiPointsOverride} t={t} />
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-slate-500">{t("Questions fill any empty question left at the end, then append after that — nothing with content is overwritten.","تملأ الأسئلة أي سؤال فارغ في نهاية القائمة، ثم تُضاف بعده — لا يتم استبدال أي سؤال يحتوي على محتوى.")}</p>
+                          <Button onClick={handleAIReorganize} disabled={aiParsing || !aiRawText.trim()} className="gap-2 shrink-0" style={{ background: "#064E3B", color: GOLD }}>
+                            {aiParsing ? <Loader2 className="h-4 w-4 animate-spin"/> : <Sparkles className="h-4 w-4"/>}
+                            {aiParsing ? t("Reorganizing…","جارٍ إعادة التنظيم…") : t("Reorganize with Tahleem Assistant","إعادة التنظيم بمساعد تحليم")}
+                          </Button>
+                        </div>
+                      </div>
+                      )}
                     </DialogContent>
                   </Dialog>
 

@@ -10,6 +10,7 @@
      30s poll as a fallback if the socket drops.
 */
 import { useEffect, useState, useRef, useCallback, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { useParams, useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
@@ -20,7 +21,7 @@ import {
   ArrowLeft, RefreshCw, Clock, Plus, Send, ShieldAlert,
   Camera, Mic, Maximize, X, StickyNote, RotateCcw, CheckCircle2,
   AlertTriangle, Wifi, WifiOff, Users, Circle, Video, VideoOff,
-  Volume2, VolumeX,
+  Volume2, VolumeX, ChevronLeft, ChevronRight,
 } from "lucide-react";
 
 /* ── Live video tile — subscribes to one participant's video AND
@@ -200,7 +201,18 @@ const useLiveKitViewer = (examId: string | undefined) => {
           return;
         }
 
-        const room = new Room({ adaptiveStream: true, dynacast: true });
+        // adaptiveStream pauses a track's actual data delivery based on the
+        // <video> element's on-screen visibility (via IntersectionObserver) —
+        // this saves bandwidth normally, but that visibility signal is
+        // unreliable across app backgrounding on mobile: the element can
+        // come back "visible" and even resume playback locally while the
+        // SFU is still paused sending it data, leaving the tile stuck on a
+        // frozen/black last frame that none of the reconnect logic below
+        // catches (the room itself never disconnects — this is silent).
+        // The admin is always actively watching when this page is open, so
+        // there's no bandwidth case where pausing invisible tracks helps;
+        // disabling it removes this whole failure class.
+        const room = new Room({ adaptiveStream: false, dynacast: true });
         room.on(RoomEvent.ParticipantConnected, () => setParticipants([...room.remoteParticipants.values()]));
         room.on(RoomEvent.ParticipantDisconnected, () => setParticipants([...room.remoteParticipants.values()]));
         room.on(RoomEvent.TrackSubscribed, () => setParticipants([...room.remoteParticipants.values()]));
@@ -431,6 +443,7 @@ export default function ExamLiveMonitor() {
   const [savingNote, setSavingNote] = useState(false);
   const [busyId, setBusyId]         = useState<string | null>(null);
   const [preview, setPreview]       = useState<any>(null);
+  const [previewList, setPreviewList] = useState<any[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [expandedId, setExpandedId]   = useState<string | null>(null);
   const [showLiveGrid, setShowLiveGrid] = useState(false);
@@ -572,12 +585,20 @@ export default function ExamLiveMonitor() {
     setNoteDraft(row.attempt?.admin_note || "");
     if (!row.attempt) { setDV([]); setDS(null); setDM([]); return; }
     setDL(true);
-    const [{ data: viols }, { data: sess }, { data: media }] = await Promise.all([
+    // Face snapshots and screen captures are fetched separately, each with
+    // their own limit — previously one combined query ordered by recency
+    // meant whichever type fires more often (usually screen_capture, on a
+    // shorter interval) crowded the other out of the most-recent-24 window,
+    // so a student with a real camera issue could show a "Snapshots" grid
+    // that was almost entirely screen captures (or vice versa).
+    const [{ data: viols }, { data: sess }, { data: faceMedia }, { data: screenMedia }] = await Promise.all([
       supabase.from("violations").select("*").eq("attempt_id", row.attempt.id).order("timestamp", { ascending: false }),
       supabase.from("proctoring_sessions").select("*").eq("attempt_id", row.attempt.id).order("started_at", { ascending: false }).limit(1).maybeSingle(),
-      supabase.from("proctoring_media").select("*").eq("attempt_id", row.attempt.id).order("created_at", { ascending: false }).limit(24),
+      supabase.from("proctoring_media").select("*").eq("attempt_id", row.attempt.id).in("file_type", ["face_snapshot", "verification_snapshot"]).order("created_at", { ascending: false }).limit(24),
+      supabase.from("proctoring_media").select("*").eq("attempt_id", row.attempt.id).eq("file_type", "screen_capture").order("created_at", { ascending: false }).limit(24),
     ]);
-    setDV(viols || []); setDS(sess || null); setDM(media || []);
+    setDV(viols || []); setDS(sess || null);
+    setDM([...(faceMedia || []), ...(screenMedia || [])]);
     setDL(false);
   };
 
@@ -820,6 +841,8 @@ export default function ExamLiveMonitor() {
                         Track={LKTrack}
                         onExpand={() => openFullscreen(row.profile.user_id)}
                         style={{ width: 52, height: 68, borderRadius: 10 }}
+                        listening={listeningId === row.profile.user_id}
+                        onToggleListen={() => toggleListen(row.profile.user_id)}
                       />
                     </div>
                   )}
@@ -1008,17 +1031,36 @@ export default function ExamLiveMonitor() {
                         )}
                       </div>
 
-                      {/* Media snapshots */}
-                      {detailMedia.length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 11, fontWeight: 800, color: TL, marginBottom: 6 }}>
-                            {t("Snapshots", "لقطات")} ({detailMedia.length})
-                          </div>
-                          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-                            {detailMedia.map((m: any) => <Thumb key={m.id} media={m} onClick={() => setPreview(m)} />)}
-                          </div>
-                        </div>
-                      )}
+                      {/* Media snapshots — face and screen shown as separate
+                          sections so one type never gets buried by the other. */}
+                      {detailMedia.length > 0 && (() => {
+                        const faceItems   = detailMedia.filter((m: any) => m.file_type === "face_snapshot" || m.file_type === "verification_snapshot");
+                        const screenItems = detailMedia.filter((m: any) => m.file_type === "screen_capture");
+                        return (
+                          <>
+                            {faceItems.length > 0 && (
+                              <div style={{ marginBottom: 16 }}>
+                                <div style={{ fontSize: 11, fontWeight: 800, color: TL, marginBottom: 6 }}>
+                                  {t("Face captures", "لقطات الوجه")} ({faceItems.length})
+                                </div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                  {faceItems.map((m: any) => <Thumb key={m.id} media={m} onClick={() => { setPreviewList(faceItems); setPreview(m); }} />)}
+                                </div>
+                              </div>
+                            )}
+                            {screenItems.length > 0 && (
+                              <div>
+                                <div style={{ fontSize: 11, fontWeight: 800, color: TL, marginBottom: 6 }}>
+                                  {t("Screen captures", "لقطات الشاشة")} ({screenItems.length})
+                                </div>
+                                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                  {screenItems.map((m: any) => <Thumb key={m.id} media={m} onClick={() => { setPreviewList(screenItems); setPreview(m); }} />)}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </>
                   )}
                 </div>
@@ -1055,14 +1097,56 @@ export default function ExamLiveMonitor() {
         />
       )}
 
-      {/* Snapshot lightbox */}
-      {preview && (
-        <div onClick={() => setPreview(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.9)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <button onClick={() => setPreview(null)} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
-            <X size={18} color="#fff" />
-          </button>
-          {previewUrl ? <img src={previewUrl} style={{ maxWidth: "100%", maxHeight: "85vh", borderRadius: 8 }} /> : <div style={{ width: 40, height: 40, border: "4px solid #fff", borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite" }} />}
-        </div>
+      {/* Snapshot lightbox — rendered via a portal straight into document.body.
+          This page's Dialog (and other overlays) can end up as descendants
+          of an ancestor with a CSS transform, which silently turns any
+          `position: fixed` INSIDE it into "fixed relative to that ancestor"
+          instead of the true viewport — the close button then renders
+          somewhere off in the constrained box instead of the screen's
+          actual top-right corner, and the backdrop doesn't cover the full
+          screen either (exactly what was reported: the dialog's own header
+          content and the thumbnail grid below both stayed visible around
+          the "fixed" overlay). A portal to document.body sidesteps that
+          entirely — nothing above body can be applying a transform.
+          Also added: left/right navigation between images in the same
+          section (face captures or screen captures) the student clicked
+          into, with arrow-key support. */}
+      {preview && createPortal(
+        (() => {
+          const idx = previewList.findIndex((m: any) => m.id === preview.id);
+          const goPrev = () => { if (idx > 0) setPreview(previewList[idx - 1]); };
+          const goNext = () => { if (idx >= 0 && idx < previewList.length - 1) setPreview(previewList[idx + 1]); };
+          return (
+            <div
+              onClick={() => setPreview(null)}
+              onKeyDown={(e) => { if (e.key === "ArrowLeft") goPrev(); if (e.key === "ArrowRight") goNext(); if (e.key === "Escape") setPreview(null); }}
+              tabIndex={-1}
+              ref={(el) => el?.focus()}
+              style={{ position: "fixed", inset: 0, width: "100vw", height: "100dvh", background: "rgba(0,0,0,.9)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+            >
+              <button onClick={(e) => { e.stopPropagation(); setPreview(null); }} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer", zIndex: 1 }}>
+                <X size={18} color="#fff" />
+              </button>
+              {idx > 0 && (
+                <button onClick={(e) => { e.stopPropagation(); goPrev(); }} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 10, cursor: "pointer", zIndex: 1 }}>
+                  <ChevronLeft size={22} color="#fff" />
+                </button>
+              )}
+              {idx >= 0 && idx < previewList.length - 1 && (
+                <button onClick={(e) => { e.stopPropagation(); goNext(); }} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 10, cursor: "pointer", zIndex: 1 }}>
+                  <ChevronRight size={22} color="#fff" />
+                </button>
+              )}
+              {previewUrl ? <img src={previewUrl} style={{ maxWidth: "100%", maxHeight: "85vh", borderRadius: 8 }} /> : <div style={{ width: 40, height: 40, border: "4px solid #fff", borderTopColor: "transparent", borderRadius: "50%", animation: "spin .8s linear infinite" }} />}
+              {previewList.length > 1 && (
+                <div style={{ position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", color: "rgba(255,255,255,.7)", fontSize: 12, fontWeight: 600 }}>
+                  {idx + 1} / {previewList.length}
+                </div>
+              )}
+            </div>
+          );
+        })(),
+        document.body
       )}
     </div>
   );

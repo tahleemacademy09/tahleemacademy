@@ -29,6 +29,7 @@ const STATUS_CFG: Record<string, { label: string; bg: string; color: string; ico
   unpaid:  { label: "Unpaid",  bg: "#fff5f5", color: "#ef4444", icon: XCircle },
   grace:   { label: "Grace",   bg: "#fffbeb", color: "#f59e0b", icon: Clock },
   exempt:  { label: "Exempt",  bg: "#f0f9ff", color: "#3b82f6", icon: GraduationCap },
+  expired: { label: "Expired", bg: "#fff5f5", color: "#ef4444", icon: XCircle },
 };
 
 const fmtAmt = (amt: number, currency = "NGN") => {
@@ -53,8 +54,18 @@ const StatCard = ({ icon: Icon, label, value, sub, color, bg }: any) => (
 );
 
 // ── Status Pill ───────────────────────────────────────────────
-const StatusPill = ({ status, exempt }: { status: string; exempt?: boolean }) => {
-  const key = exempt ? "exempt" : (status || "unpaid");
+// `payment_status` is a static field that only ever gets written by an
+// admin action (manual payment, webhook, grace grant) — nothing flips it
+// back to unpaid/expired when subscription_end_date simply passes. That's
+// how a student can sit at payment_status="paid" for weeks after their
+// term actually lapsed: the pill kept saying "Paid" right next to (and
+// contradicting) the separate "⚠️ Expired" date badge, and the big green
+// pill is what people actually notice. Derive "expired" here from the
+// same date check usePaymentAccess.ts uses for real access control, so
+// the badge a teacher glances at matches what the student can actually do.
+const StatusPill = ({ status, exempt, subscriptionEndDate }: { status: string; exempt?: boolean; subscriptionEndDate?: string | null }) => {
+  const isExpired = !exempt && status === "paid" && !!subscriptionEndDate && new Date(subscriptionEndDate) < new Date();
+  const key = exempt ? "exempt" : isExpired ? "expired" : (status || "unpaid");
   const cfg = STATUS_CFG[key] || STATUS_CFG.unpaid;
   const Icon = cfg.icon;
   return (
@@ -137,7 +148,12 @@ const PaymentManagement = () => {
       totalMonth: thisMonth.filter((p:any)=>getPayCurrency(p)==="NGN").reduce((s:number,p:any)=>s+(p.amount||0),0),
       totalAll:   success.filter((p:any)=>getPayCurrency(p)==="NGN").reduce((s:number,p:any)=>s+(p.amount||0),0),
       active:     sub.filter((s:any) => s.status==="active").length,
-      unpaid:     stu.filter((s:any) => !s.payment_status||s.payment_status==="unpaid").length,
+      // A student sitting at payment_status="paid" whose subscription_end_date
+      // has already passed is effectively unpaid — nothing ever flips that
+      // field back automatically — so count them here too, or this card
+      // quietly undercounts exactly the students who most need chasing up.
+      unpaid:     stu.filter((s:any) => !s.is_payment_exempt && (!s.payment_status || s.payment_status==="unpaid" ||
+                    (s.payment_status==="paid" && s.subscription_end_date && new Date(s.subscription_end_date) < now))).length,
       expiring:   sub.filter((s:any) => s.end_date && new Date(s.end_date)<=week7 && s.status==="active").length,
       failed:     pay.filter((p:any) => p.status==="failed").length,
       totalUSD:   usdPay.reduce((s:number,p:any)=>s+(p.amount||0),0),
@@ -547,6 +563,10 @@ const PaymentManagement = () => {
                 </div>
               ) : filtered.map((s:any) => {
                 const sub = subscriptions.find((x:any) => x.student_id===s.user_id);
+                // payment_status="paid" never auto-reverts when subscription_end_date
+                // passes — treat that combination as unpaid everywhere on this card
+                // (badge, Grace button, Remind button), not just in the stat count above.
+                const isExpiredPaid = !s.is_payment_exempt && s.payment_status==="paid" && s.subscription_end_date && new Date(s.subscription_end_date) < new Date();
                 return (
                   <div key={s.user_id} style={{ background:"#fff", border:`1px solid ${BORDER}`, borderRadius:14, padding:"14px 16px", display:"flex", flexDirection:"column", gap:10, boxShadow:"0 1px 4px rgba(0,0,0,.04)" }}>
                     {/* Top row */}
@@ -556,7 +576,7 @@ const PaymentManagement = () => {
                         <div style={{ fontSize:11, color:"#7a9e88", marginTop:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.email}</div>
                       </div>
                       <div style={{ display:"flex", alignItems:"center", gap:6, flexShrink:0 }}>
-                        <StatusPill status={s.payment_status} exempt={s.is_payment_exempt} />
+                        <StatusPill status={s.payment_status} exempt={s.is_payment_exempt} subscriptionEndDate={s.subscription_end_date} />
                       </div>
                     </div>
                     {/* Middle row */}
@@ -583,13 +603,13 @@ const PaymentManagement = () => {
                         style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:12, fontWeight:700, cursor:"pointer", flex:1, justifyContent:"center" }}>
                         <DollarSign style={{ width:13, height:13 }} />{t("Record Payment","تسجيل دفعة")}
                       </button>
-                      {(!s.is_payment_exempt && (s.payment_status==="unpaid"||!s.payment_status||s.payment_status==="grace")) && (
+                      {(!s.is_payment_exempt && (s.payment_status==="unpaid"||!s.payment_status||s.payment_status==="grace"||isExpiredPaid)) && (
                         <button onClick={()=>{ setGraceStudent(s); setGraceForm({ days:7, notes:"" }); setGraceOpen(true); }}
                           style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:"#f0fff4", border:`1px solid #86efac`, color:"#15803d", fontSize:12, fontWeight:700, cursor:"pointer" }}>
                           <Clock style={{ width:12, height:12 }} />{t("Grace","سماح")}
                         </button>
                       )}
-                      {(!s.is_payment_exempt && (s.payment_status==="unpaid"||!s.payment_status)) && (
+                      {(!s.is_payment_exempt && (s.payment_status==="unpaid"||!s.payment_status||isExpiredPaid)) && (
                         <button onClick={()=>sendReminder(s)}
                           style={{ display:"flex", alignItems:"center", gap:5, padding:"8px 14px", borderRadius:10, background:"#fffbeb", border:`1px solid ${GOLD}`, color:"#92400e", fontSize:12, fontWeight:700, cursor:"pointer" }}>
                           <Bell style={{ width:12, height:12 }} />{t("Remind","تذكير")}
