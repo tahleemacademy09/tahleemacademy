@@ -420,9 +420,7 @@ const App = () => (
               </Suspense>
             </ErrorBoundary>
             <ErrorBoundary fallback={null}>
-            <Suspense fallback={null}>
-              <GlobalClassroomOverlay />
-            </Suspense>
+              <ClassroomOverlayGate />
             </ErrorBoundary>
             </LiveClassProvider>
             </RecordingPlayerProvider>
