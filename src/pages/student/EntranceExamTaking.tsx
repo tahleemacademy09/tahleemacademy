@@ -18,6 +18,7 @@ import { enableExamPrivacyScreen, disableExamPrivacyScreen } from "@/lib/examPri
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
 import { storageSupabase } from "@/integrations/supabase/storageClient";
+import { uploadExamAudioToR2 } from "@/lib/examAudioUpload";
 import { useTasjeel, TASJEEL_ROUTES } from "@/hooks/useTasjeel";
 import { useRegistrationSettings } from "@/hooks/useRegistrationSettings";
 import {
@@ -879,19 +880,32 @@ const EntranceExamTaking = () => {
                         if (!blob.size) { toast({ title: "Recording empty.", variant: "destructive" }); return; }
                         const ext = blob.type.includes("mp4") ? "mp4" : blob.type.includes("ogg") ? "ogg" : blob.type.includes("webm") ? "webm" : "mp4";
                         const path = `entrance-exam/${user!.id}/${attemptId}_${q.id}.${ext}`;
-                        const { error } = await storageSupabase.storage.from("exam-media").upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
-                        if (!error) {
-                          const { data: ud } = await storageSupabase.storage.from("exam-media").createSignedUrl(path, 604800);
-                          saveAnswer(q.id, "[audio_recorded]", { audioUrl: ud?.signedUrl || url, storagePath: path });
+                        // Upload to Cloudflare R2 (via exam-audio-url), retrying a
+                        // few times before falling back to the local blob: URL —
+                        // a blob: URL dies the moment this tab closes, so a
+                        // single failed attempt would silently lose the recitation.
+                        let result: Awaited<ReturnType<typeof uploadExamAudioToR2>> | null = null;
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                          result = await uploadExamAudioToR2(path, blob);
+                          if (!("error" in result)) break;
+                          if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
+                        }
+                        if (result && !("error" in result)) {
+                          saveAnswer(q.id, "[audio_recorded]", { audioUrl: result.url, storagePath: result.storagePath });
                         } else {
-                          toast({ title: "Upload failed: " + error.message, variant: "destructive" });
-                          saveAnswer(q.id, "[audio_recorded]", { audioUrl: url });
+                          toast({ title: "Upload failed: " + (result?.error || "Unknown error"), description: "Your recording is only saved on this device right now — please try recording again before submitting.", variant: "destructive" });
+                          saveAnswer(q.id, "[audio_recorded]", { audioUrl: url, uploadFailed: true });
                         }
                       }}
                     />
                     <p style={{ fontSize: 11, color: "#9CA3AF", textAlign: "center" }}>
                       This will be reviewed by an instructor — recite at your normal pace.
                     </p>
+                    {answerData[q.id]?.uploadFailed && (
+                      <div style={{ padding: "8px 12px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA", fontSize: 12, color: "#DC2626", fontWeight: 600 }}>
+                        ⚠️ This recording didn't upload — it will be lost when you leave this page. Please re-record before submitting.
+                      </div>
+                    )}
                   </div>
                 ) : (
                   // ── Listen & Type: student listens to the audio and types what they heard ──
@@ -1058,11 +1072,24 @@ const EntranceExamTaking = () => {
                 </p>
               </div>
             )}
+            {Object.values(answerData).some((a: any) => a?.uploadFailed) && (
+              <div style={{ background: "rgba(220,38,38,.1)", borderRadius: 12, padding: "10px 14px", marginBottom: 16, border: "1px solid rgba(220,38,38,.3)", textAlign: "left" }}>
+                <p style={{ fontSize: 12, color: RED, fontWeight: 700, margin: 0 }}>
+                  ⚠️ One of your audio recordings didn't upload — go back and re-record it, or it will be lost.
+                </p>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 10 }}>
               <button onClick={() => setShowConfirm(false)} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "1.5px solid rgba(255,255,255,.2)", background: "transparent", color: "#fff", fontWeight: 700, cursor: "pointer", minHeight: 48 }}>
                 Go Back
               </button>
-              <button onClick={handleSubmit} disabled={submitting} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: `linear-gradient(135deg,${GOLD},#b8902a)`, color: "#fff", fontWeight: 800, cursor: submitting ? "not-allowed" : "pointer", opacity: submitting ? .7 : 1, minHeight: 48 }}>
+              <button onClick={() => {
+                if (Object.values(answerDataRef.current).some((a: any) => a?.uploadFailed)) {
+                  toast({ title: "Fix your recording first", description: "Go back and re-record the failed audio answer before submitting.", variant: "destructive" });
+                  return;
+                }
+                handleSubmit();
+              }} disabled={submitting} style={{ flex: 1, padding: "12px", borderRadius: 12, border: "none", background: `linear-gradient(135deg,${GOLD},#b8902a)`, color: "#fff", fontWeight: 800, cursor: submitting ? "not-allowed" : "pointer", opacity: submitting ? .7 : 1, minHeight: 48 }}>
                 {submitting ? "Submitting…" : "Confirm Submit"}
               </button>
             </div>

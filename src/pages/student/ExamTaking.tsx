@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import AudioPlayer from "@/components/exam/AudioPlayer";
 import AudioRecorder from "@/components/exam/AudioRecorder";
+import { uploadExamAudioToR2 } from "@/lib/examAudioUpload";
 import ProctoringOverlay from "@/components/exam/ProctoringOverlay";
 import ExamFocusGuard from "@/components/exam/ExamFocusGuard";
 import { enableExamPrivacyScreen, disableExamPrivacyScreen } from "@/lib/examPrivacyScreen";
@@ -824,10 +825,23 @@ const ExamTaking = () => {
             <span style={{ fontSize: 13, fontWeight: 700, color: "#ef4444" }}>−{deductedPoints} {t("points deducted for violations", "نقاط خُصمت بسبب المخالفات")}</span>
           </div>
         )}
+        {Object.values(answers).some((a: any) => a?.data?.uploadFailed) && (
+          <div style={{ background: "#fff5f5", borderRadius: 12, padding: "12px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10, border: "1px solid #fca5a5" }}>
+            <AlertTriangle style={{ width: 17, height: 17, color: "#ef4444", flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: "#ef4444" }}>{t("One or more audio recordings didn't upload — go back and re-record before submitting, or it will be lost.", "لم يتم رفع تسجيل صوتي واحد أو أكثر — يرجى الرجوع وإعادة التسجيل قبل التقديم، وإلا سيُفقد.")}</span>
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 10 }}>
           <button onClick={() => setPhase("exam")} style={{ flex: 1, padding: "14px 0", borderRadius: 12, background: "#f8fafb", border: `1.5px solid ${BORDER}`, color: G, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" }}>← {t("Continue Exam", "متابعة الامتحان")}</button>
-          <button onClick={handleSubmit} disabled={submitting}
+          <button onClick={() => {
+            const hasFailedAudio = Object.values(answersRef.current).some((a: any) => a?.data?.uploadFailed);
+            if (hasFailedAudio) {
+              toast({ title: t("Fix your recording first", "أصلح تسجيلك أولاً"), description: t("Go back and re-record the failed audio answer before submitting.", "يرجى الرجوع وإعادة تسجيل الإجابة الصوتية الفاشلة قبل التقديم."), variant: "destructive" });
+              return;
+            }
+            handleSubmit();
+          }} disabled={submitting}
             style={{ flex: 1, padding: "14px 0", borderRadius: 12, background: submitting ? "#9ca3af" : "#dc2626", border: "none", color: "#fff", fontSize: 14, fontWeight: 700, cursor: submitting ? "not-allowed" : "pointer", fontFamily: "'Cairo',sans-serif" }}>
             {submitting ? t("Submitting…", "جارٍ التقديم…") : t("Submit Exam ✓", "تقديم الامتحان ✓")}
           </button>
@@ -1143,22 +1157,19 @@ const ExamTaking = () => {
                         // seeing "Audio file unavailable or corrupted" for
                         // otherwise-valid submissions). Retry a few times —
                         // most failures here are a flaky connection, not a
-                        // permanent one — before falling back.
-                        let uploadError: any = null;
+                        // permanent one — before falling back. Uploads go to
+                        // Cloudflare R2 (via the exam-audio-url edge function)
+                        // instead of Supabase's exam-media bucket.
+                        let result: Awaited<ReturnType<typeof uploadExamAudioToR2>> | null = null;
                         for (let attempt = 1; attempt <= 3; attempt++) {
-                          const { error } = await supabase.storage
-                            .from("exam-media")
-                            .upload(path, blob, { upsert: true, contentType: blob.type || "audio/mp4" });
-                          uploadError = error;
-                          if (!error) break;
+                          result = await uploadExamAudioToR2(path, blob);
+                          if (!("error" in result)) break;
                           if (attempt < 3) await new Promise(r => setTimeout(r, 1000 * attempt));
                         }
-                        if (!uploadError) {
-                          // Use a 7-day signed URL so admin can always play it
-                          const { data: ud } = await storageSupabase.storage.from("exam-media").createSignedUrl(path, 604800);
-                          setAnswer(q.id, "[audio_recorded]", { audioUrl: ud?.signedUrl || url, fileType: "audio", storagePath: path });
+                        if (result && !("error" in result)) {
+                          setAnswer(q.id, "[audio_recorded]", { audioUrl: result.url, fileType: "audio", storagePath: result.storagePath });
                         } else {
-                          toast({ title: "Upload failed: " + uploadError.message, description: "Your recording is only saved on this device right now — please try recording again before submitting.", variant: "destructive" });
+                          toast({ title: "Upload failed: " + (result?.error || "Unknown error"), description: "Your recording is only saved on this device right now — please try recording again before submitting.", variant: "destructive" });
                           // Store the blob URL so the student can still hear
                           // their own take, and flag it so the warning below
                           // stays visible (not just a toast that disappears)
