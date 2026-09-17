@@ -470,9 +470,10 @@ const StudentExams = () => {
           if (!e?.id || seenExamIds.has(e.id)) return false; // de-dupe repeated assignment rows
           if (!e?.is_published) return false;
           if (e.subject_id && privateSubjectIds.has(e.subject_id) && !registeredSubjectIds.has(e.subject_id)) return false; // private subject, not registered
-          if (!e.level || e.level === "") { seenExamIds.add(e.id); return true; }      // exam is for all levels
+          const examLevels = (e.level || "").split(",").map((l: string) => l.trim()).filter(Boolean);
+          if (examLevels.length === 0) { seenExamIds.add(e.id); return true; }          // exam is for all levels
           if (!myLevel) { seenExamIds.add(e.id); return true; }                         // student has no level, show all
-          if (e.level === myLevel) { seenExamIds.add(e.id); return true; }              // match
+          if (examLevels.includes(myLevel)) { seenExamIds.add(e.id); return true; }     // match (exam may target multiple levels)
           return false;
         });
       setAssignedExams(list);
