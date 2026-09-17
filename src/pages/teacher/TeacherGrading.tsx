@@ -11,7 +11,7 @@ import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
 import {
   CheckCircle, XCircle, Search, FileText, Download,
   Send, Unlock, Loader2, Eye, BarChart2, AlertTriangle,
-  ArrowRight, RefreshCw, ClipboardList, Users, ChevronLeft, Bell,
+  ArrowRight, RefreshCw, ClipboardList, Users, ChevronLeft, Bell, RotateCcw,
 } from "lucide-react";
 
 const G    = "#064E3B";
@@ -39,6 +39,7 @@ const TeacherGrading = () => {
   const [typeFilter,     setTypeFilter]     = useState<"all"|"exam"|"test">("all");
   const [loading,        setLoading]        = useState(true);
   const [examsList,      setExamsList]      = useState<any[]>([]);
+  const [resetting,      setResetting]      = useState<string | null>(null);
 
   const tabCounts = {
     pending:  allAttempts.filter(a => a.status === "submitted").length,
@@ -247,6 +248,34 @@ const TeacherGrading = () => {
   // Releasing results to students is admin-only (see GradingPage.tsx). A
   // teacher's job stops at grading — the attempt then sits in "Graded"
   // waiting for an admin to release it.
+
+  // ── Reset an attempt so the student can retake the exam ────────────────
+  // Mirrors the admin GradingPage.resetAttempt. RLS ("Teachers can reset
+  // attempts for their subjects") already restricts this to attempts on
+  // exams whose subject this teacher teaches, excludes 'released' attempts,
+  // and respects the private-student assignment check — so no extra
+  // client-side scoping is needed beyond what loadAttempts already fetches.
+  const resetAttempt = async (attempt: any) => {
+    const name = attempt.profiles?.full_name || t("this student", "هذا الطالب");
+    if (!confirm(
+      t(
+        `Reset ${name}'s attempt for "${attempt.exams?.title || "this exam"}"? Their score and answers will be permanently deleted and they'll be able to retake it.`,
+        `إعادة تعيين محاولة ${name} في "${attempt.exams?.title_ar || attempt.exams?.title || "هذا الامتحان"}"؟ سيتم حذف درجتهم وإجاباتهم نهائيًا وسيتمكنون من إعادة المحاولة.`
+      )
+    )) return;
+    setResetting(attempt.id);
+    try {
+      const { error } = await supabase.from("exam_attempts").delete().eq("id", attempt.id);
+      if (error) throw new Error(error.message);
+      toast({ title: t(`✅ Attempt reset — ${name} can retake the exam`, `✅ تمت إعادة التعيين — يمكن لـ ${name} إعادة المحاولة`) });
+      if (selectedAttempt?.id === attempt.id) setSelectedAttempt(null);
+      loadAttempts();
+    } catch (e: any) {
+      toast({ title: t("Reset failed", "فشلت إعادة التعيين"), description: e.message, variant: "destructive" });
+    } finally {
+      setResetting(null);
+    }
+  };
 
   const filtered = allAttempts.filter(a => {
     if (gradingTab === "pending"  && a.status !== "submitted") return false;
@@ -703,6 +732,20 @@ const TeacherGrading = () => {
                   }}>
                     <Unlock size={12} /> {t("Awaiting release", "بانتظار الإرسال")}
                   </span>
+                )}
+                {gradingTab !== "released" && (
+                  <button onClick={() => resetAttempt(attempt)} disabled={resetting === attempt.id}
+                    title={t("Reset attempt — deletes this attempt so the student can retake the exam", "إعادة تعيين المحاولة — يحذف هذه المحاولة ليتمكن الطالب من إعادة المحاولة")}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      padding: "7px 10px", borderRadius: 9, border: "1.5px solid #FECACA",
+                      background: "#FEF2F2", cursor: resetting === attempt.id ? "not-allowed" : "pointer",
+                      opacity: resetting === attempt.id ? .6 : 1,
+                    }}>
+                    {resetting === attempt.id
+                      ? <Loader2 size={13} color="#DC2626" style={{ animation: "spin .8s linear infinite" }} />
+                      : <RotateCcw size={13} color="#DC2626" />}
+                  </button>
                 )}
               </div>
             </div>
