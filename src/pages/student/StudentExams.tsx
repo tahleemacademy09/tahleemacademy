@@ -192,7 +192,7 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
               {(exam._extendedUntil || exam.end_date) && (
                 <div style={{ fontSize:11, color:TL }}>
                   <span style={{ fontWeight:700, color:"#ef4444" }}>{t("Due","آخر")}: </span>
-                  {new Date(exam._extendedUntil || exam.end_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric"})}
+                  {new Date(exam._extendedUntil || exam.end_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
                   {exam._extendedUntil && <span style={{ color:"#16A34A", fontWeight:700 }}> ({t("extended","تمديد")})</span>}
                 </div>
               )}
