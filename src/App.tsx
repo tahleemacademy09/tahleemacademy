@@ -322,7 +322,7 @@ const App = () => (
                     <Route path="/teacher/attendance"       element={<TeacherAttendance />} />
                     <Route path="/teacher/announcements"    element={<TeacherAnnouncements />} />
                     <Route path="/teacher/exams"            element={<TeacherExamsPage />} />
-                    <Route path="/teacher/exams/:examId/live" element={<ExamLiveMonitor />} />
+                    {/* Live monitor is admin-only now — teachers no longer get the button or the route. */}
                     <Route path="/teacher/oral-exams"       element={<TeacherOralExams />} />
                     <Route path="/teacher/exams/create"     element={<ExamEditor />} />
                     <Route path="/teacher/exams/:examId/edit" element={<ExamEditor />} />
