@@ -102,7 +102,7 @@ const PaymentLockScreen = () => {
 
 const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const { t, language, setLanguage, dir } = useLanguage();
-  const { signOut, profile } = useAuth();
+  const { signOut, profile, user } = useAuth();
   const { isEffectivelyOpen: subjectRegistrationOpen } = useSubjectRegistrationSettings();
   // Admin/teacher-controlled on/off switches for the Exams and Timetable
   // sections — meant to be flipped on only for the current test/exam
@@ -120,6 +120,28 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   // here used to repeat role/progress queries on every layout mount and could
   // repaint the whole student shell after an Android resume.
   const levelPending = false;
+
+  // ── Grading badge (admin) ────────────────────────────────────
+  // Same "someone submitted" indicator as the teacher sidebar, but
+  // school-wide since admins see every exam, not just their own subjects.
+  // Refetched on every route change (not just once on mount) so the count
+  // actually drops once the admin has been into Grading and cleared
+  // submissions, instead of staying frozen at whatever it was on login.
+  // NOTE: this must be declared before `adminNav` below, which reads it —
+  // declaring it after (as a later `const`) throws a ReferenceError /
+  // "Cannot access before initialization" on every render, for every role,
+  // since adminNav's array literal evaluates immediately, top-to-bottom.
+  const [gradingBadge, setGradingBadge] = useState(0);
+  useEffect(() => {
+    if (!user || role !== "admin") return;
+    (async () => {
+      const { count } = await supabase
+        .from("exam_attempts")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "submitted");
+      setGradingBadge(count || 0);
+    })();
+  }, [user, role, location.pathname]);
 
   // ── Payment-locking: block features when student subscription is locked ──
   const { accessStatus: paymentStatus, isLoading: paymentLoading } = usePaymentAccess();
@@ -286,7 +308,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   ];
 
   // ── Notification badge count for top bar ────────────────────
-  const { user } = useAuth();
   const [unreadNotifs, setUnreadNotifs] = useState(0);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [notifList, setNotifList] = useState<any[]>([]);
@@ -383,24 +404,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   // given route (or match any of the extra keywords in its type — used for
   // cross-cutting categories like "new-registration" that live at
   // /admin/students).
-  // ── Grading badge (admin) ────────────────────────────────────
-  // Same "someone submitted" indicator as the teacher sidebar, but
-  // school-wide since admins see every exam, not just their own subjects.
-  // Refetched on every route change (not just once on mount) so the count
-  // actually drops once the admin has been into Grading and cleared
-  // submissions, instead of staying frozen at whatever it was on login.
-  const [gradingBadge, setGradingBadge] = useState(0);
-  useEffect(() => {
-    if (!user || role !== "admin") return;
-    (async () => {
-      const { count } = await supabase
-        .from("exam_attempts")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "submitted");
-      setGradingBadge(count || 0);
-    })();
-  }, [user, role, location.pathname]);
-
   const unreadCountFor = (route: string, extraTypes: string[] = []): number => {
     if (!notifList?.length) return 0;
     return notifList.reduce((count: number, n: any) => {
