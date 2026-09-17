@@ -6,11 +6,12 @@ import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Plus, Edit, Trash2, Copy, Search, Send, Eye, EyeOff,
-  BarChart2, Loader2, CheckCircle2, UserCheck, ClipboardList,
+  BarChart2, Loader2, CheckCircle2, ClipboardList,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { publishExam, splitLevels } from "@/lib/examPublish";
 
 const G    = "#064E3B";
 const GOLD = "#c9a84c";
@@ -243,17 +244,28 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
   };
 
   const togglePublish = async (id: string, current: boolean) => {
-    await supabase.from("exams").update({ is_published: !current }).eq("id", id);
+    const exam = exams.find(e => e.id === id);
+    const { newlyAssignedCount } = await publishExam(
+      { id, title: exam?.title || "", type: exam?.type, level: exam?.level },
+      !current,
+      user?.id
+    );
     setExams(exams.map(e => e.id === id ? { ...e, is_published: !current } : e));
+    if (!current && newlyAssignedCount > 0) {
+      toast({
+        title: t("✅ Published", "✅ تم النشر"),
+        description: t(
+          `Assigned to ${newlyAssignedCount} student${newlyAssignedCount !== 1 ? "s" : ""} and notified them + admins.`,
+          `تم التعيين لـ ${newlyAssignedCount} طالب وإشعارهم مع الإدارة.`
+        ),
+      });
+    }
   };
 
-  // Self-registration: students can only self-register when this is on.
-  // Teacher-push assignment (openAssign/doAssign above) always works regardless.
-  const toggleRegistration = async (id: string, current: boolean) => {
-    await supabase.from("exams" as any).update({ registration_open: !current } as any).eq("id", id);
-    setExams(exams.map(e => e.id === id ? { ...e, registration_open: !current } : e));
-    toast({ title: !current ? t("✅ Self-registration opened", "✅ تم فتح التسجيل الذاتي") : t("🔒 Self-registration closed", "🔒 تم إغلاق التسجيل الذاتي") });
-  };
+  // Self-registration and the live monitor are admin-only controls now —
+  // teachers no longer get the toggle/button for either (openAssign/doAssign
+  // above remains their way to reach students; publishing now also
+  // auto-assigns by level, see publishExam).
 
   const qCount = (e: any) => e.exam_questions?.length ?? 0;
 
@@ -264,7 +276,7 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
     if (termFilter !== "all" && (e.term || "first") !== termFilter) return false;
     if (statusFilter === "published" && !e.is_published) return false;
     if (statusFilter === "draft" && e.is_published) return false;
-    if (levelFilter !== "all" && (e.level || "") !== levelFilter) return false;
+    if (levelFilter !== "all" && !splitLevels(e.level).includes(levelFilter)) return false;
     return true;
   });
 
@@ -277,7 +289,6 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white pb-24">
-      <style>{"@keyframes teacherExamLivePulse{0%,100%{opacity:1}50%{opacity:.35}}"}</style>
 
       {/* ── Sticky Header ── */}
       <div className="sticky top-0 z-40 border-b border-white/10 shadow-lg backdrop-blur-md" style={{ background: "linear-gradient(135deg, #064E3B 0%, #083320 100%)" }}>
@@ -408,13 +419,10 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
                         <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: exam.is_published ? "#DCFCE7" : "#F3F4F6", color: exam.is_published ? "#166534" : "#6B7280" }}>
                           {exam.is_published ? "✓ " + t("Published", "منشور") : t("Draft", "مسودة")}
                         </span>
-                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: exam.registration_open ? "#EFF6FF" : "#F3F4F6", color: exam.registration_open ? "#1D4ED8" : "#6B7280" }}>
-                          {exam.registration_open ? "📝 " + t("Self-reg open", "التسجيل الذاتي مفتوح") : "📝 " + t("Self-reg closed", "التسجيل الذاتي مغلق")}
-                        </span>
                         <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#EFF6FF", color: "#1D4ED8", fontWeight: 600 }}>{(exam.type || "exam") === "test" ? t("Test", "تمرين") : t("Exam", "امتحان")}</span>
                         {exam.session && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#ECFEFF", color: "#0E7490", fontWeight: 700 }}>📅 {exam.session}</span>}
                         {exam.term && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#F5F3FF", color: "#6D28D9", fontWeight: 600, textTransform: "capitalize" }}>{exam.term}</span>}
-                        {exam.level && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 600, textTransform: "capitalize" }}>📚 {exam.level}</span>}
+                        {exam.level && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 600, textTransform: "capitalize" }}>📚 {splitLevels(exam.level).join(" + ")}</span>}
                       </div>
                       {exam.title_ar && <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 6px", fontFamily: "'Amiri',serif", direction: "rtl" }}>{exam.title_ar}</p>}
                       <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 6px" }}>{(exam as any).subjects?.title || ""}</p>
@@ -438,10 +446,6 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
                         style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 13px", borderRadius: 9, border: "none", background: G, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                         <Send size={12} /> {t("Assign", "تعيين")}
                       </button>
-                      <button onClick={() => navigate("/teacher/exams/" + exam.id + "/live")} title={t("Live monitor — track students taking this exam right now", "مراقبة مباشرة")}
-                        style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 13px", borderRadius: 9, border: "none", background: "#dc2626", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
-                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#fff", display: "inline-block", animation: "teacherExamLivePulse 1.4s ease-in-out infinite" }} /> {t("Live", "مباشر")}
-                      </button>
                       <button onClick={() => navigate("/teacher/exams/" + exam.id + "/edit")} title={t("Edit exam", "تعديل")}
                         style={{ display: "flex", alignItems: "center", gap: 5, padding: "8px 11px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#374151" }}>
                         <Edit size={13} color="#6B7280" /> {t("Edit", "تعديل")}
@@ -449,10 +453,6 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
                       <button onClick={() => togglePublish(exam.id, exam.is_published)} title={exam.is_published ? t("Unpublish", "إلغاء النشر") : t("Publish", "نشر")}
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: exam.is_published ? "#FFF7ED" : "#F0FDF4", cursor: "pointer" }}>
                         {exam.is_published ? <EyeOff size={13} color="#C2410C" /> : <Eye size={13} color="#16A34A" />}
-                      </button>
-                      <button onClick={() => toggleRegistration(exam.id, exam.registration_open)} title={exam.registration_open ? t("Close self-registration", "إغلاق التسجيل") : t("Open self-registration", "فتح التسجيل")}
-                        style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: exam.registration_open ? "#EFF6FF" : "#F3F4F6", cursor: "pointer" }}>
-                        <UserCheck size={13} color={exam.registration_open ? "#1D4ED8" : "#6B7280"} />
                       </button>
                       <button onClick={() => duplicateExam(exam)} title={t("Duplicate", "نسخ")}
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer" }}>
