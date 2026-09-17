@@ -302,13 +302,16 @@ const ExamEditor = () => {
     display_mode: "one_at_a_time",
     guidelines: "", guidelines_ar: "",
     start_date: "", end_date: "",
-    proctoring_enabled: false, fullscreen_required: false,
-    webcam_required: false, mic_required: false, record_audio: false,
-    tab_switch_limit: 3, max_warnings: 3,
-    auto_submit_on_violation: false,
-    screenshot_interval_seconds: 0, idle_timeout_seconds: 300,
-    screen_capture_interval_seconds: 5,
-    blur_detection: false, face_detection: false,
+    // Proctoring defaults — matches the standard Arabiyyah Intermediate
+    // exam config so every new exam starts fully proctored out of the box
+    // instead of needing this set up by hand each time.
+    proctoring_enabled: true, fullscreen_required: false,
+    webcam_required: false, mic_required: false, record_audio: true,
+    tab_switch_limit: 5, max_warnings: 5,
+    auto_submit_on_violation: true,
+    screenshot_interval_seconds: 30, idle_timeout_seconds: 300,
+    screen_capture_interval_seconds: 30,
+    blur_detection: true, face_detection: true,
     timezone: "UTC", term: "first", session: "2026/2027", max_review_views: 1,
     type: "exam", level: "", subject_id: "",
   });
