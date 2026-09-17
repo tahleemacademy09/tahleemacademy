@@ -141,29 +141,41 @@ export default function ExamManager() {
     setExtendInputs({});
     setManageLoading(true);
     try {
-      const [asnRes, attRes] = await Promise.all([
-        supabase.from("exam_assignments" as any).select("user_id, extended_until").eq("exam_id", exam.id),
+      const asnRes = await supabase.from("exam_assignments" as any).select("user_id, extended_until").eq("exam_id", exam.id);
+      if (asnRes.error) throw new Error(`Loading assigned students failed: ${asnRes.error.message}`);
+      const assignments = asnRes.data || [];
+      const userIds = assignments.map((a: any) => a.user_id);
+
+      const [attRes, profRes] = await Promise.all([
         supabase.from("exam_attempts").select("id, user_id, status, score, percentage, passed, created_at")
           .eq("exam_id", exam.id).order("created_at", { ascending: false }),
+        userIds.length
+          ? supabase.from("profiles").select("user_id, full_name").in("user_id", userIds)
+          : Promise.resolve({ data: [] as any[], error: null }),
       ]);
-      const assignments = asnRes.data || [];
-      const attempts     = attRes.data || [];
-      const userIds = assignments.map((a: any) => a.user_id);
-      const { data: profiles } = userIds.length
-        ? await supabase.from("profiles").select("user_id, full_name").in("user_id", userIds)
-        : { data: [] as any[] };
+      if (attRes.error)  console.warn("Loading attempts failed:", attRes.error.message);
+      if (profRes.error) console.warn("Loading student names failed:", profRes.error.message);
+
+      const attempts = attRes.data || [];
+      const profiles = (profRes as any).data || [];
 
       const rows = assignments.map((a: any) => {
         const myAttempts = attempts.filter((at: any) => at.user_id === a.user_id);
+        const profile = profiles.find((p: any) => p.user_id === a.user_id);
         return {
           user_id: a.user_id,
-          full_name: (profiles || []).find((p: any) => p.user_id === a.user_id)?.full_name || "Unknown",
+          full_name: profile?.full_name || `Unknown (${String(a.user_id).slice(0, 8)})`,
           extended_until: a.extended_until,
           attempts: myAttempts,
         };
       });
       rows.sort((a, b) => a.full_name.localeCompare(b.full_name));
       setManageStudents(rows);
+      if ((profRes as any).error) {
+        toast({ title: "Some student names failed to load", description: (profRes as any).error.message, variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Failed to load students", description: e.message, variant: "destructive" });
     } finally {
       setManageLoading(false);
     }
