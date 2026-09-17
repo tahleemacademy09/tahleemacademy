@@ -664,7 +664,7 @@ const TeacherGrading = () => {
             <div key={attempt.id} style={{
               background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB",
               padding: 18, display: "flex", alignItems: "center", gap: 14,
-              boxShadow: "0 1px 4px rgba(0,0,0,.04)",
+              boxShadow: "0 1px 4px rgba(0,0,0,.04)", flexWrap: "wrap",
             }}>
               {/* Avatar */}
               <div style={{ width: 44, height: 44, borderRadius: "50%", background: G, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "#fff", flexShrink: 0 }}>
@@ -672,7 +672,7 @@ const TeacherGrading = () => {
               </div>
 
               {/* Info */}
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: 1, minWidth: 160 }}>
                 <div style={{ fontWeight: 800, fontSize: 14, color: G, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {attempt.profiles?.full_name || "Student"}
                 </div>
@@ -691,7 +691,7 @@ const TeacherGrading = () => {
               </div>
 
               {/* Badge */}
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
                 <span style={{
                   padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700,
                   background: isTest ? "#EFF6FF" : "#FEF2F2",

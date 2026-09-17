@@ -6,7 +6,7 @@ import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Plus, Edit, Trash2, Copy, Search, Send, Eye, EyeOff,
-  BarChart2, Loader2, CheckCircle2, ClipboardList,
+  BarChart2, Loader2, CheckCircle2, ClipboardList, CalendarClock, RotateCcw,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
@@ -19,6 +19,16 @@ const GOLD = "#c9a84c";
 const inp: React.CSSProperties = {
   padding: "8px 12px", borderRadius: 10, border: "1.5px solid #E5E7EB",
   fontSize: 13, outline: "none", background: "#fff",
+};
+
+const toLocalDatetimeInput = (iso: string): string => {
+  const date = new Date(iso);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d}T${h}:${min}`;
 };
 
 interface TeacherExamsPageProps {
@@ -57,6 +67,18 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
   const [studentsLoading, setStudentsLoading] = useState(false);
   const [studentSearch, setStudentSearch] = useState("");
   const [assigning, setAssigning] = useState(false);
+
+  // Manage-students dialog — per-assigned-student view for a single exam:
+  // see who has/hasn't attempted, extend an individual student's deadline
+  // past the exam's own end_date, or reset an attempt so they can retake.
+  // Mirrors the admin ExamManager's dialog, scoped naturally to this
+  // teacher's own exams since `exams` here is already filtered to them.
+  const [manageExam, setManageExam] = useState<any | null>(null);
+  const [manageStudents, setManageStudents] = useState<any[]>([]);
+  const [manageLoading, setManageLoading] = useState(false);
+  const [extendInputs, setExtendInputs] = useState<Record<string, string>>({});
+  const [savingExtend, setSavingExtend] = useState<string | null>(null);
+  const [resettingAttempt, setResettingAttempt] = useState<string | null>(null);
 
   const effectiveType = fixedType || typeFilter;
   const isTest = effectiveType === "test";
@@ -241,6 +263,90 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
     await supabase.from("exams").delete().eq("id", id);
     setExams(exams.filter(e => e.id !== id));
     toast({ title: t("Deleted", "تم الحذف") });
+  };
+
+  // Manage-students dialog: every assigned student for this exam, with
+  // their attempt status and any per-student deadline extension.
+  const openManage = async (exam: any) => {
+    setManageExam(exam);
+    setManageStudents([]);
+    setExtendInputs({});
+    setManageLoading(true);
+    try {
+      const asnRes = await supabase.from("exam_assignments" as any).select("user_id, extended_until").eq("exam_id", exam.id);
+      if (asnRes.error) throw new Error(`Loading assigned students failed: ${asnRes.error.message}`);
+      const assignments = asnRes.data || [];
+      const userIds = assignments.map((a: any) => a.user_id);
+
+      const [attRes, profRes] = await Promise.all([
+        supabase.from("exam_attempts").select("id, user_id, status, score, percentage, passed, created_at")
+          .eq("exam_id", exam.id).order("created_at", { ascending: false }),
+        userIds.length
+          ? supabase.from("profiles").select("user_id, full_name").in("user_id", userIds)
+          : Promise.resolve({ data: [] as any[], error: null }),
+      ]);
+      if (attRes.error)  console.warn("Loading attempts failed:", attRes.error.message);
+      if (profRes.error) console.warn("Loading student names failed:", profRes.error.message);
+
+      const attempts = attRes.data || [];
+      const profiles = (profRes as any).data || [];
+
+      const rows = assignments.map((a: any) => {
+        const myAttempts = attempts.filter((at: any) => at.user_id === a.user_id);
+        const profile = profiles.find((p: any) => p.user_id === a.user_id);
+        return {
+          user_id: a.user_id,
+          full_name: profile?.full_name || `Unknown (${String(a.user_id).slice(0, 8)})`,
+          extended_until: a.extended_until,
+          attempts: myAttempts,
+        };
+      });
+      rows.sort((a, b) => a.full_name.localeCompare(b.full_name));
+      setManageStudents(rows);
+      if ((profRes as any).error) {
+        toast({ title: t("Some student names failed to load", "فشل تحميل بعض أسماء الطلاب"), description: (profRes as any).error.message, variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: t("Failed to load students", "فشل تحميل الطلاب"), description: e.message, variant: "destructive" });
+    } finally {
+      setManageLoading(false);
+    }
+  };
+
+  const saveExtend = async (userId: string) => {
+    if (!manageExam) return;
+    setSavingExtend(userId);
+    try {
+      const raw = extendInputs[userId];
+      const value = raw ? new Date(raw).toISOString() : null;
+      const { error } = await supabase.from("exam_assignments" as any)
+        .update({ extended_until: value } as any)
+        .eq("exam_id", manageExam.id).eq("user_id", userId);
+      if (error) throw new Error(error.message);
+      setManageStudents(rows => rows.map(r => r.user_id === userId ? { ...r, extended_until: value } : r));
+      toast({ title: value ? t("✅ Deadline extended for this student", "✅ تم تمديد الموعد لهذا الطالب") : t("✅ Extension cleared", "✅ تم إلغاء التمديد") });
+    } catch (e: any) {
+      toast({ title: t("Failed to save extension", "فشل حفظ التمديد"), description: e.message, variant: "destructive" });
+    } finally {
+      setSavingExtend(null);
+    }
+  };
+
+  // Same effect as the reset icon in Grading: deletes the attempt (and its
+  // answers, via cascade) so it no longer counts against max_attempts.
+  const resetStudentAttempt = async (attemptId: string, studentName: string) => {
+    if (!confirm(t(`Reset ${studentName}'s attempt? Their score and answers will be permanently deleted and they'll be able to retake it.`, `إعادة تعيين محاولة ${studentName}؟ سيتم حذف درجتهم وإجاباتهم نهائيًا وسيتمكنون من إعادة المحاولة.`))) return;
+    setResettingAttempt(attemptId);
+    try {
+      const { error } = await supabase.from("exam_attempts").delete().eq("id", attemptId);
+      if (error) throw new Error(error.message);
+      setManageStudents(rows => rows.map(r => ({ ...r, attempts: r.attempts.filter((a: any) => a.id !== attemptId) })));
+      toast({ title: t(`✅ Attempt reset — ${studentName} can retake the exam`, `✅ تمت إعادة التعيين — يمكن لـ ${studentName} إعادة المحاولة`) });
+    } catch (e: any) {
+      toast({ title: t("Reset failed", "فشلت إعادة التعيين"), description: e.message, variant: "destructive" });
+    } finally {
+      setResettingAttempt(null);
+    }
   };
 
   const togglePublish = async (id: string, current: boolean) => {
@@ -462,6 +568,10 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#EFF6FF", cursor: "pointer" }}>
                         <BarChart2 size={13} color="#1D4ED8" />
                       </button>
+                      <button onClick={() => openManage(exam)} title={t("Extend deadline / manage students — extend a missed deadline or reset an attempt", "تمديد الموعد / إدارة الطلاب — تمديد موعد فائت أو إعادة تعيين محاولة")}
+                        style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#F5F3FF", cursor: "pointer" }}>
+                        <CalendarClock size={13} color="#6D28D9" />
+                      </button>
                       <button onClick={() => deleteExam(exam.id)} title={t("Delete exam", "حذف")}
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #FECACA", background: "#FEF2F2", cursor: "pointer" }}>
                         <Trash2 size={13} color="#DC2626" />
@@ -583,6 +693,92 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
               {assigning
                 ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> {t("Assigning…", "جارٍ التعيين…")}</>
                 : <><Send size={14} /> {t("Assign & Notify Students", "تعيين وإشعار الطلاب")}</>}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Manage Students Dialog (extend deadline / reset attempt) ── */}
+      <Dialog open={!!manageExam} onOpenChange={v => !v && setManageExam(null)}>
+        <DialogContent style={{ maxWidth: 560, borderRadius: 20, padding: 0, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+          <div style={{ background: "#6D28D9", padding: "16px 20px", borderRadius: "20px 20px 0 0", flexShrink: 0 }}>
+            <h2 style={{ fontWeight: 800, fontSize: 15, color: "#fff", margin: 0 }}>
+              🗓️ {t("Students", "الطلاب")}: {manageExam?.title}
+            </h2>
+            <p style={{ fontSize: 11, color: "rgba(255,255,255,.7)", margin: "4px 0 0" }}>
+              {t("Extend a missed deadline for one student, or reset an attempt so they can retake.", "تمديد موعد فائت لطالب واحد، أو إعادة تعيين محاولة ليتمكن من إعادة المحاولة.")}
+            </p>
+          </div>
+
+          <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
+            {manageLoading ? (
+              <div style={{ textAlign: "center", padding: 24 }}><Loader2 size={24} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
+            ) : manageStudents.length === 0 ? (
+              <p style={{ textAlign: "center", color: "#9CA3AF", fontSize: 13, padding: 24 }}>{t("No students assigned to this exam yet.", "لا يوجد طلاب معينون لهذا الامتحان بعد.")}</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {manageStudents.map(s => {
+                  const latest = s.attempts[0];
+                  const max = manageExam?.max_attempts || 1;
+                  const done = s.attempts.filter((a: any) => a.status !== "in_progress").length;
+                  let statusLabel = t("Not started", "لم يبدأ");
+                  let statusColor = "#6B7280";
+                  if (latest) {
+                    if (latest.status === "in_progress")      { statusLabel = t("In progress", "جارٍ"); statusColor = "#D97706"; }
+                    else if (latest.status === "submitted")   { statusLabel = t("Pending grading", "بانتظار التصحيح"); statusColor = "#1D4ED8"; }
+                    else if (latest.status === "graded")      { statusLabel = `${t("Graded", "تم التصحيح")} — ${Math.round(latest.percentage || 0)}%`; statusColor = latest.passed ? "#16A34A" : "#DC2626"; }
+                    else if (latest.status === "released")    { statusLabel = `${t("Released", "تم الإرسال")} — ${Math.round(latest.percentage || 0)}%`; statusColor = latest.passed ? "#16A34A" : "#DC2626"; }
+                  }
+                  const missedDeadline = done === 0 && manageExam?.end_date && new Date(manageExam.end_date).getTime() < Date.now() && !s.extended_until;
+                  return (
+                    <div key={s.user_id} style={{ padding: 12, borderRadius: 12, border: "1.5px solid #E5E7EB", background: "#fff" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                        <div>
+                          <p style={{ fontWeight: 700, fontSize: 13, color: "#111", margin: 0 }}>{s.full_name}</p>
+                          <p style={{ fontSize: 11, margin: "2px 0 0" }}>
+                            <span style={{ color: statusColor, fontWeight: 700 }}>{statusLabel}</span>
+                            <span style={{ color: "#9CA3AF" }}> · {done}/{max} {t("attempts", "محاولات")}</span>
+                            {missedDeadline && <span style={{ color: "#DC2626", fontWeight: 700 }}> · {t("missed deadline", "فات الموعد")}</span>}
+                          </p>
+                        </div>
+                        {latest && latest.status !== "in_progress" && (
+                          <button onClick={() => resetStudentAttempt(latest.id, s.full_name)} disabled={resettingAttempt === latest.id}
+                            title={t("Reset this attempt so they can retake", "إعادة تعيين هذه المحاولة ليتمكن من إعادة المحاولة")}
+                            style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: "1.5px solid #FECACA", background: "#FEF2F2", cursor: resettingAttempt === latest.id ? "not-allowed" : "pointer", fontSize: 11, fontWeight: 700, color: "#DC2626", opacity: resettingAttempt === latest.id ? .6 : 1 }}>
+                            {resettingAttempt === latest.id ? <Loader2 size={11} style={{ animation: "spin .8s linear infinite" }} /> : <RotateCcw size={11} />} {t("Reset", "إعادة تعيين")}
+                          </button>
+                        )}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <input type="datetime-local"
+                          value={extendInputs[s.user_id] ?? (s.extended_until ? toLocalDatetimeInput(s.extended_until) : "")}
+                          onChange={e => setExtendInputs(inpVal => ({ ...inpVal, [s.user_id]: e.target.value }))}
+                          style={{ ...inp, flex: 1, fontSize: 12, padding: "6px 8px" }} />
+                        <button onClick={() => saveExtend(s.user_id)} disabled={savingExtend === s.user_id}
+                          style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, border: "none", background: G, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", opacity: savingExtend === s.user_id ? .6 : 1 }}>
+                          {savingExtend === s.user_id
+                            ? <Loader2 size={11} style={{ animation: "spin .8s linear infinite" }} />
+                            : <CalendarClock size={11} />}
+                          {savingExtend === s.user_id ? "…" : s.extended_until ? t("Update", "تحديث") : t("Extend", "تمديد")}
+                        </button>
+                      </div>
+                      {s.extended_until && (
+                        <p style={{ fontSize: 10, color: "#16A34A", margin: "6px 0 0" }}>
+                          ✓ {t("Extended until", "تم التمديد حتى")} {new Date(s.extended_until).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} — {t("clear the field and press Update to remove.", "امسح الحقل واضغط تحديث للإزالة.")}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div style={{ padding: "14px 16px", borderTop: "1px solid #E5E7EB", flexShrink: 0 }}>
+            <button onClick={() => setManageExam(null)}
+              style={{ width: "100%", padding: 12, borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+              {t("Close", "إغلاق")}
             </button>
           </div>
         </DialogContent>
