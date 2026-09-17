@@ -17,7 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useToast } from "@/hooks/use-toast";
-import { LifeBuoy, ChevronLeft, Send, Loader2, MessageSquare, CheckCircle2, Paperclip, X, FileText, Plus, GraduationCap, Shield, CheckCheck, Trash2, Copy, Users } from "lucide-react";
+import { LifeBuoy, ChevronLeft, Send, Loader2, MessageSquare, CheckCircle2, Paperclip, X, FileText, Plus, GraduationCap, Shield, CheckCheck, Trash2, Copy, Users, Reply, Pencil, Check } from "lucide-react";
 
 const G      = "#064E3B";
 const GOLD   = "#c9a84c";
@@ -86,6 +86,46 @@ const SupportTickets = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // ── Reply-to-a-message (quote) and edit-in-place ────────────────────────
+  const [replyingTo, setReplyingTo] = useState<any>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+
+  // Auto-grow the composer textarea as the user types (WhatsApp-style),
+  // capped so a long message scrolls internally instead of pushing the
+  // page around.
+  const autoGrow = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  };
+
+  // Keep the composer visible when the on-screen keyboard opens. Mobile
+  // browsers resize the *visual* viewport (not the layout viewport) when
+  // the keyboard shows, so a bottom-anchored composer inside a tall,
+  // scrollable page can end up rendered behind the keyboard until the
+  // page itself is scrolled — this keeps it in view automatically instead.
+  useEffect(() => {
+    if (!activeTicket) return;
+    const scrollComposerIntoView = () => {
+      composerRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    };
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", scrollComposerIntoView);
+    return () => vv?.removeEventListener("resize", scrollComposerIntoView);
+  }, [activeTicket?.id]);
+
+  const scrollToMessage = (id: string) => {
+    messageRefs.current[id]?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setHighlightId(id);
+    setTimeout(() => setHighlightId(cur => (cur === id ? null : cur)), 1200);
+  };
+
   // ── Swipe-left-to-act on a message bubble (copy / delete) ───────────────
   // openSwipeId: which message is currently pinned open (revealing its
   // action buttons). dragOffset: the live position of whichever bubble is
@@ -100,23 +140,25 @@ const SupportTickets = () => {
 
   const closeSwipe = () => { setOpenSwipeId(null); setDragOffset(null); };
 
-  const swipeWidthFor = (canDelete: boolean) => SWIPE_ACTION_W * (canDelete ? 2 : 1);
+  // Reply is always available; Edit only for the sender's own message;
+  // Delete for the sender or an admin; Copy is always last.
+  const swipeWidthFor = (actionCount: number) => SWIPE_ACTION_W * actionCount;
 
-  const beginDrag = (id: string, clientX: number, canDelete: boolean) => {
+  const beginDrag = (id: string, clientX: number, actionCount: number) => {
     dragStartX.current = clientX;
     dragActive.current = true;
-    dragStartOpen.current = openSwipeId === id ? -swipeWidthFor(canDelete) : 0;
+    dragStartOpen.current = openSwipeId === id ? -swipeWidthFor(actionCount) : 0;
   };
-  const moveDrag = (id: string, clientX: number, canDelete: boolean) => {
+  const moveDrag = (id: string, clientX: number, actionCount: number) => {
     if (dragStartX.current == null || !dragActive.current) return;
     const delta = clientX - dragStartX.current;
-    const max = swipeWidthFor(canDelete);
+    const max = swipeWidthFor(actionCount);
     const next = Math.max(-max, Math.min(0, dragStartOpen.current + delta));
     setDragOffset({ id, dx: next });
   };
-  const endDrag = (id: string, canDelete: boolean) => {
+  const endDrag = (id: string, actionCount: number) => {
     if (dragStartX.current == null) return;
-    const max = swipeWidthFor(canDelete);
+    const max = swipeWidthFor(actionCount);
     const finalDx = dragOffset?.id === id ? dragOffset.dx : dragStartOpen.current;
     dragStartX.current = null;
     dragActive.current = false;
@@ -143,6 +185,28 @@ const SupportTickets = () => {
     toast({ title: "Copied to clipboard" });
     closeSwipe();
   };
+
+  const startEdit = (m: any) => {
+    setEditingId(m.id);
+    setEditText(m.message || "");
+    closeSwipe();
+    setTimeout(() => { editTextareaRef.current?.focus(); autoGrow(editTextareaRef.current); }, 0);
+  };
+  const cancelEdit = () => { setEditingId(null); setEditText(""); };
+  const saveEdit = async (id: string) => {
+    if (!activeTicket) return;
+    const trimmed = editText.trim();
+    if (!trimmed) return;
+    try {
+      await supabase.from("support_ticket_messages" as any).update({ message: trimmed }).eq("id", id);
+      qc.invalidateQueries({ queryKey: ["admin-support-thread", activeTicket.id] });
+      cancelEdit();
+    } catch (e: any) {
+      toast({ title: "Could not save edit", description: e?.message, variant: "destructive" });
+    }
+  };
+
+  const startReply = (m: any) => { setReplyingTo(m); closeSwipe(); textareaRef.current?.focus(); };
 
   // ── Admin → Teacher DMs, and Teacher → Admin messages ───────────────────
   // Both directions are just a support_tickets row with student_id = the
@@ -288,10 +352,12 @@ const SupportTickets = () => {
         setUploading(false);
       }
       await supabase.from("support_ticket_messages" as any).insert({
-        ticket_id: activeTicket.id, sender_id: user.id, message: reply.trim(), ...attachment,
+        ticket_id: activeTicket.id, sender_id: user.id, message: reply.trim(),
+        reply_to_id: replyingTo?.id ?? null, ...attachment,
       });
       // Notifying the student is handled by the notify_on_support_ticket_message_insert DB trigger.
-      setReply(""); setPendingFile(null);
+      setReply(""); setPendingFile(null); setReplyingTo(null);
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
       qc.invalidateQueries({ queryKey: ["admin-support-thread", activeTicket.id] });
       qc.invalidateQueries({ queryKey: ["admin-support-tickets"] });
     } catch (e: any) {
@@ -444,50 +510,131 @@ const SupportTickets = () => {
             const liveTicket = tickets.find((tk: any) => tk.id === activeTicket.id) || activeTicket;
             const seen = mine && liveTicket.last_read_by_student_at && new Date(liveTicket.last_read_by_student_at) >= new Date(m.created_at);
             // Admins can moderate any message; everyone else can only
-            // remove what they themselves sent.
+            // remove what they themselves sent. Only the sender can edit.
             const canDelete = mine || hasRole("admin");
-            const maxOffset = swipeWidthFor(canDelete);
+            const canEdit = mine;
+            const actionCount = 1 /* reply */ + (canEdit ? 1 : 0) + 1 /* copy */ + (canDelete ? 1 : 0);
+            const maxOffset = swipeWidthFor(actionCount);
             const offset = dragOffset?.id === m.id ? dragOffset.dx : (openSwipeId === m.id ? -maxOffset : 0);
+            const quoted = m.reply_to_id ? thread.find((t: any) => t.id === m.reply_to_id) : null;
+            const isEditing = editingId === m.id;
+            const isHighlighted = highlightId === m.id;
             return (
-              <div key={m.id} style={{ alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "80%", width: "100%" }}>
+              <div
+                key={m.id}
+                ref={el => { messageRefs.current[m.id] = el; }}
+                style={{
+                  alignSelf: mine ? "flex-end" : "flex-start", maxWidth: "80%", width: "100%",
+                  transition: "background-color 0.3s ease", borderRadius: 14,
+                  background: isHighlighted ? "rgba(201,168,76,0.25)" : "transparent",
+                }}
+              >
                 {!mine && <p style={{ fontSize: 10, color: "#9CA3AF", margin: "0 4px 2px" }}>{m.profiles?.full_name || "Student"}</p>}
-                <div style={{ position: "relative", overflow: "hidden", borderRadius: 14 }}>
-                  <div style={{ position: "absolute", top: 0, bottom: 0, right: 0, display: "flex" }}>
-                    <button onClick={() => copyMessage(m.message)} style={{
-                      width: SWIPE_ACTION_W, border: "none", cursor: "pointer", background: "#6B7280", color: "#fff",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      <Copy size={15} />
-                    </button>
-                    {canDelete && (
-                      <button onClick={() => deleteMessage(m.id)} style={{
-                        width: SWIPE_ACTION_W, border: "none", cursor: "pointer", background: "#DC2626", color: "#fff",
+                {isEditing ? (
+                  <div style={{ padding: "9px 13px", borderRadius: 14, background: "#fff", border: `1.5px solid ${G}` }}>
+                    <textarea
+                      ref={editTextareaRef}
+                      value={editText}
+                      onChange={e => { setEditText(e.target.value); autoGrow(e.target as HTMLTextAreaElement); }}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); saveEdit(m.id); }
+                        if (e.key === "Escape") cancelEdit();
+                      }}
+                      rows={1}
+                      style={{
+                        width: "100%", boxSizing: "border-box", border: "none", outline: "none", resize: "none",
+                        fontSize: 13, fontFamily: "inherit", color: "#111", maxHeight: 120, overflowY: "auto",
+                      }}
+                    />
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 6 }}>
+                      <button onClick={cancelEdit} style={{
+                        padding: "5px 10px", borderRadius: 8, border: `1px solid ${BORDER}`, background: "#fff",
+                        color: "#6B7280", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
+                      }}>
+                        <X size={12} /> Cancel
+                      </button>
+                      <button onClick={() => saveEdit(m.id)} disabled={!editText.trim()} style={{
+                        padding: "5px 10px", borderRadius: 8, border: "none", background: G,
+                        color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
+                      }}>
+                        <Check size={12} /> Save
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ position: "relative", overflow: "hidden", borderRadius: 14 }}>
+                    <div style={{ position: "absolute", top: 0, bottom: 0, right: 0, display: "flex" }}>
+                      <button onClick={() => startReply(m)} style={{
+                        width: SWIPE_ACTION_W, border: "none", cursor: "pointer", background: "#2563EB", color: "#fff",
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
-                        <Trash2 size={15} />
+                        <Reply size={15} />
                       </button>
-                    )}
+                      {canEdit && (
+                        <button onClick={() => startEdit(m)} style={{
+                          width: SWIPE_ACTION_W, border: "none", cursor: "pointer", background: "#D97706", color: "#fff",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          <Pencil size={15} />
+                        </button>
+                      )}
+                      <button onClick={() => copyMessage(m.message)} style={{
+                        width: SWIPE_ACTION_W, border: "none", cursor: "pointer", background: "#6B7280", color: "#fff",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        <Copy size={15} />
+                      </button>
+                      {canDelete && (
+                        <button onClick={() => deleteMessage(m.id)} style={{
+                          width: SWIPE_ACTION_W, border: "none", cursor: "pointer", background: "#DC2626", color: "#fff",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                        }}>
+                          <Trash2 size={15} />
+                        </button>
+                      )}
+                    </div>
+                    <div
+                      onPointerDown={e => beginDrag(m.id, e.clientX, actionCount)}
+                      onPointerMove={e => moveDrag(m.id, e.clientX, actionCount)}
+                      onPointerUp={() => endDrag(m.id, actionCount)}
+                      onPointerCancel={() => endDrag(m.id, actionCount)}
+                      onClick={() => { if (openSwipeId === m.id) closeSwipe(); }}
+                      style={{
+                        padding: "9px 13px", borderRadius: 14, position: "relative", touchAction: "pan-y",
+                        background: mine ? G : "#fff", color: mine ? "#fff" : "#111",
+                        border: mine ? "none" : `1px solid ${BORDER}`, fontSize: 13,
+                        transform: `translateX(${offset}px)`,
+                        transition: dragOffset?.id === m.id ? "none" : "transform 0.2s ease",
+                        whiteSpace: "pre-wrap", wordBreak: "break-word",
+                      }}
+                    >
+                      {quoted && (
+                        <div
+                          onClick={e => { e.stopPropagation(); scrollToMessage(quoted.id); }}
+                          style={{
+                            borderLeft: `3px solid ${mine ? "rgba(255,255,255,0.6)" : GOLD}`, paddingLeft: 8,
+                            marginBottom: 6, cursor: "pointer", opacity: 0.85,
+                          }}
+                        >
+                          <p style={{ margin: 0, fontSize: 11, fontWeight: 800 }}>
+                            {quoted.sender_id === user?.id ? "You" : (quoted.profiles?.full_name || "Student")}
+                          </p>
+                          <p style={{
+                            margin: 0, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis",
+                            whiteSpace: "nowrap", maxWidth: 220,
+                          }}>
+                            {quoted.message || (quoted.attachment_name ? `📎 ${quoted.attachment_name}` : "Attachment")}
+                          </p>
+                        </div>
+                      )}
+                      <AttachmentBubble m={m} />
+                      {m.message}
+                    </div>
                   </div>
-                  <div
-                    onPointerDown={e => beginDrag(m.id, e.clientX, canDelete)}
-                    onPointerMove={e => moveDrag(m.id, e.clientX, canDelete)}
-                    onPointerUp={() => endDrag(m.id, canDelete)}
-                    onPointerCancel={() => endDrag(m.id, canDelete)}
-                    onClick={() => { if (openSwipeId === m.id) closeSwipe(); }}
-                    style={{
-                      padding: "9px 13px", borderRadius: 14, position: "relative", touchAction: "pan-y",
-                      background: mine ? G : "#fff", color: mine ? "#fff" : "#111",
-                      border: mine ? "none" : `1px solid ${BORDER}`, fontSize: 13,
-                      transform: `translateX(${offset}px)`,
-                      transition: dragOffset?.id === m.id ? "none" : "transform 0.2s ease",
-                    }}
-                  >
-                    <AttachmentBubble m={m} />
-                    {m.message}
-                  </div>
-                </div>
+                )}
                 <p style={{ fontSize: 9, color: "#9CA3AF", margin: "3px 4px 0", display: "flex", alignItems: "center", gap: 3, justifyContent: mine ? "flex-end" : "flex-start" }}>
                   {fmtDT(m.created_at)}
+                  {m.edited_at && <span style={{ fontStyle: "italic" }}>· edited</span>}
                   {mine && <CheckCheck size={12} style={{ color: seen ? "#53BDEB" : "#9CA3AF", flexShrink: 0 }} />}
                 </p>
               </div>
@@ -496,33 +643,62 @@ const SupportTickets = () => {
           <div ref={bottomRef} />
         </div>
 
-        {pendingFile && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", marginBottom: 6, background: "#F3F4F6", borderRadius: 10, fontSize: 12 }}>
-            <Paperclip size={13} /> <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pendingFile.name}</span>
-            <button onClick={() => setPendingFile(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={14} /></button>
+        <div ref={composerRef}>
+          {replyingTo && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", marginBottom: 6,
+              background: "#F3F4F6", borderRadius: 10, borderLeft: `3px solid ${G}`,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ margin: 0, fontSize: 11, fontWeight: 800, color: G }}>
+                  Replying to {replyingTo.sender_id === user?.id ? "yourself" : (replyingTo.profiles?.full_name || "Student")}
+                </p>
+                <p style={{ margin: 0, fontSize: 11, color: "#6B7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {replyingTo.message || (replyingTo.attachment_name ? `📎 ${replyingTo.attachment_name}` : "Attachment")}
+                </p>
+              </div>
+              <button onClick={() => setReplyingTo(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexShrink: 0 }}><X size={14} /></button>
+            </div>
+          )}
+          {pendingFile && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", marginBottom: 6, background: "#F3F4F6", borderRadius: 10, fontSize: 12 }}>
+              <Paperclip size={13} /> <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{pendingFile.name}</span>
+              <button onClick={() => setPendingFile(null)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex" }}><X size={14} /></button>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, paddingTop: 8, borderTop: `1px solid ${BORDER}`, alignItems: "flex-end" }}>
+            <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*" style={{ display: "none" }}
+              onChange={e => setPendingFile(e.target.files?.[0] || null)} />
+            <button onClick={() => fileInputRef.current?.click()} style={{
+              width: 40, height: 40, borderRadius: "50%", border: `1px solid ${BORDER}`, cursor: "pointer",
+              background: "#fff", color: G, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            }}>
+              <Paperclip size={16} />
+            </button>
+            <textarea
+              ref={textareaRef}
+              value={reply}
+              onChange={e => { setReply(e.target.value); autoGrow(e.target as HTMLTextAreaElement); }}
+              onFocus={() => setTimeout(() => composerRef.current?.scrollIntoView({ block: "end", behavior: "smooth" }), 300)}
+              onKeyDown={e => {
+                // Enter alone inserts a newline (like WhatsApp's mobile keyboard);
+                // Cmd/Ctrl+Enter sends, for people typing on a physical keyboard.
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendReply(); }
+              }}
+              placeholder="Type a reply…"
+              rows={1}
+              style={{
+                flex: 1, padding: "10px 14px", borderRadius: 20, border: `1px solid ${BORDER}`, fontSize: 13,
+                outline: "none", resize: "none", fontFamily: "inherit", maxHeight: 120, overflowY: "auto", lineHeight: 1.4,
+              }}
+            />
+            <button onClick={sendReply} disabled={sending || (!reply.trim() && !pendingFile)} style={{
+              width: 40, height: 40, borderRadius: "50%", border: "none", cursor: "pointer",
+              background: G, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+            }}>
+              {uploading ? <Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> : <Send size={16} />}
+            </button>
           </div>
-        )}
-        <div style={{ display: "flex", gap: 8, paddingTop: 8, borderTop: `1px solid ${BORDER}` }}>
-          <input ref={fileInputRef} type="file" accept="image/*,video/*,audio/*" style={{ display: "none" }}
-            onChange={e => setPendingFile(e.target.files?.[0] || null)} />
-          <button onClick={() => fileInputRef.current?.click()} style={{
-            width: 40, height: 40, borderRadius: "50%", border: `1px solid ${BORDER}`, cursor: "pointer",
-            background: "#fff", color: G, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-          }}>
-            <Paperclip size={16} />
-          </button>
-          <input
-            value={reply} onChange={e => setReply(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && sendReply()}
-            placeholder="Type a reply…"
-            style={{ flex: 1, padding: "10px 14px", borderRadius: 20, border: `1px solid ${BORDER}`, fontSize: 13, outline: "none" }}
-          />
-          <button onClick={sendReply} disabled={sending || (!reply.trim() && !pendingFile)} style={{
-            width: 40, height: 40, borderRadius: "50%", border: "none", cursor: "pointer",
-            background: G, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-          }}>
-            {uploading ? <Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> : <Send size={16} />}
-          </button>
         </div>
       </div>
     );
