@@ -189,10 +189,11 @@ const ExamCard = ({ exam, attemptCounts, pastAttempts, language, t, navigate, ha
                   {new Date(exam.start_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}
                 </div>
               )}
-              {exam.end_date && (
+              {(exam._extendedUntil || exam.end_date) && (
                 <div style={{ fontSize:11, color:TL }}>
                   <span style={{ fontWeight:700, color:"#ef4444" }}>{t("Due","آخر")}: </span>
-                  {new Date(exam.end_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric"})}
+                  {new Date(exam._extendedUntil || exam.end_date).toLocaleDateString(language==="ar"?"ar-SA":"en-US",{month:"short",day:"numeric"})}
+                  {exam._extendedUntil && <span style={{ color:"#16A34A", fontWeight:700 }}> ({t("extended","تمديد")})</span>}
                 </div>
               )}
             </div>
@@ -438,7 +439,7 @@ const StudentExams = () => {
       setStudentLevel(myLevel);
 
       const { data: asn } = await supabase
-        .from("exam_assignments").select("exam_id, exams(*)")
+        .from("exam_assignments").select("exam_id, extended_until, exams(*)")
         .eq("user_id", user!.id);
 
       // Subject registration gate: only applies to subjects marked "private"
@@ -465,7 +466,7 @@ const StudentExams = () => {
       // AND (subject isn't private, OR student is registered for that private subject)
       const seenExamIds = new Set<string>();
       const list = (asn || [])
-        .map((a: any) => a.exams)
+        .map((a: any) => a.exams ? { ...a.exams, _extendedUntil: a.extended_until } : a.exams)
         .filter((e: any) => {
           if (!e?.id || seenExamIds.has(e.id)) return false; // de-dupe repeated assignment rows
           if (!e?.is_published) return false;
@@ -555,7 +556,12 @@ const StudentExams = () => {
     if (exam.exam_mode === "oral") return "oral_pending";
     const now = Date.now();
     if (exam.start_date && new Date(exam.start_date).getTime() > now) return "not_started";
-    if (exam.end_date   && new Date(exam.end_date).getTime()   < now) return "expired";
+    // An admin-set per-student extension (exam_assignments.extended_until)
+    // overrides the exam's own end_date for this student only — lets one
+    // student who missed the general deadline still take it, without
+    // reopening the window for everyone else.
+    const effectiveEnd = exam._extendedUntil || exam.end_date;
+    if (effectiveEnd && new Date(effectiveEnd).getTime() < now) return "expired";
     return "available";
   };
 
@@ -564,8 +570,9 @@ const StudentExams = () => {
     const done = attemptCounts[exam.id] || 0;
     if (done >= max) { toast({ title: t("No attempts left","لا محاولات متبقية"), variant:"destructive" }); return; }
     const now = new Date();
+    const effectiveEnd = exam._extendedUntil || exam.end_date;
     if (exam.start_date && new Date(exam.start_date) > now) { toast({ title: t("Not started yet","لم يبدأ بعد"), variant:"destructive" }); return; }
-    if (exam.end_date   && new Date(exam.end_date)   < now) { toast({ title: t("Expired","منتهي"), variant:"destructive" }); return; }
+    if (effectiveEnd     && new Date(effectiveEnd)   < now) { toast({ title: t("Expired","منتهي"), variant:"destructive" }); return; }
     const { data: existing } = await supabase.from("exam_attempts").select("id")
       .eq("exam_id", exam.id).eq("user_id", user!.id).eq("status","in_progress").maybeSingle();
     if (existing) { navigate(`/student/exam/${existing.id}`); return; }
