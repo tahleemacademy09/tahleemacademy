@@ -699,7 +699,7 @@ export default function ExamLiveMonitor() {
       {/* Header */}
       <div style={{ background: `linear-gradient(135deg,${G},${GM})`, padding: "18px 16px 22px", position: "sticky", top: 0, zIndex: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-          <button onClick={() => navigate("/admin/exams")} style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
+          <button onClick={() => navigate(window.location.pathname.startsWith("/teacher") ? "/teacher/exams" : "/admin/exams")} style={{ background: "rgba(255,255,255,.12)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer" }}>
             <ArrowLeft size={16} color="#fff" />
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
