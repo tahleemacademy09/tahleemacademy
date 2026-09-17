@@ -1232,6 +1232,7 @@ export type Database = {
           assigned_by: string | null
           assigned_round: number | null
           exam_id: string
+          extended_until: string | null
           id: string
           user_id: string
         }
@@ -1241,6 +1242,7 @@ export type Database = {
           assigned_by?: string | null
           assigned_round?: number | null
           exam_id: string
+          extended_until?: string | null
           id?: string
           user_id: string
         }
@@ -1250,6 +1252,7 @@ export type Database = {
           assigned_by?: string | null
           assigned_round?: number | null
           exam_id?: string
+          extended_until?: string | null
           id?: string
           user_id?: string
         }
