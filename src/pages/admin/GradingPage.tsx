@@ -17,7 +17,7 @@ import { sanitizeHtml } from "@/lib/sanitize";
 import {
   CheckCircle, XCircle, Search, FileText, Download,
   Send, Unlock, Loader2, Eye, BarChart2, AlertTriangle,
-  ArrowRight, RefreshCw, Wrench,
+  ArrowRight, RefreshCw, Wrench, RotateCcw,
 } from "lucide-react";
 import AdminAudioPlayer from "@/components/exam/AdminAudioPlayer";
 
@@ -56,6 +56,7 @@ const GradingPage = () => {
   const [examsList,      setExamsList]      = useState<any[]>([]);
   const [saving,         setSaving]         = useState(false);
   const [fixing,         setFixing]         = useState<string | null>(null);
+  const [resetting,      setResetting]      = useState<string | null>(null);
 
   // Batch release
   const [batchExamId,     setBatchExamId]     = useState("");
@@ -300,6 +301,29 @@ const GradingPage = () => {
       toast({ title: "Fix all failed", description: e.message, variant: "destructive" });
     } finally {
       setFixing(null);
+    }
+  };
+
+  // ── Reset an attempt so the student can retake the exam ────────────────────
+  // Exams allow max_attempts (default 1), counted from exam_attempts rows
+  // that aren't in_progress. Deleting this attempt row (exam_answers cascade
+  // with it) frees up a slot — the student's existing exam_assignments row
+  // is untouched, so the exam simply reappears as available/not-yet-taken
+  // for them, as long as the exam's own start/end window is still open.
+  const resetAttempt = async (attempt: any) => {
+    const name = attempt.profiles?.full_name || "this student";
+    if (!confirm(`Reset ${name}'s attempt for "${attempt.exams?.title || "this exam"}"? Their score and answers will be permanently deleted and they'll be able to retake it.`)) return;
+    setResetting(attempt.id);
+    try {
+      const { error } = await supabase.from("exam_attempts").delete().eq("id", attempt.id);
+      if (error) throw new Error(error.message);
+      toast({ title: `✅ Attempt reset — ${name} can retake the exam` });
+      if (selectedAttempt?.id === attempt.id) setSelectedAttempt(null);
+      fetchAttempts();
+    } catch (e: any) {
+      toast({ title: "Reset failed", description: e.message, variant: "destructive" });
+    } finally {
+      setResetting(null);
     }
   };
 
@@ -752,6 +776,13 @@ const GradingPage = () => {
                         </button>
                       </>
                     )}
+
+                    {/* Reset: let the student retake, regardless of tab/status */}
+                    <button onClick={() => resetAttempt(attempt)} disabled={resetting === attempt.id}
+                      title="Reset attempt — deletes this attempt so the student can retake the exam"
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "7px 10px", borderRadius: 9, border: "1.5px solid #FECACA", background: "#FEF2F2", cursor: resetting === attempt.id ? "not-allowed" : "pointer", opacity: resetting === attempt.id ? .6 : 1 }}>
+                      {resetting === attempt.id ? <Loader2 size={13} color="#DC2626" style={{ animation: "spin .8s linear infinite" }} /> : <RotateCcw size={13} color="#DC2626" />}
+                    </button>
                   </div>
                 </div>
               );
