@@ -26,6 +26,7 @@ import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Plus, Trash2, Save, GripVertical, Music, FileText, Calendar, Settings2,
   Upload, Download, Image as ImageIcon, Loader2, Eye, Library, Clock,
@@ -1561,15 +1562,51 @@ const ExamEditor = () => {
                 <div className={cn("grid gap-4", isMobile ? "grid-cols-1" : "grid-cols-3")}>
                   <div className="space-y-2">
                     <Label className="text-sm font-bold text-slate-700">{t("Target Level","المستوى المستهدف")}</Label>
-                    <Select value={examForm.level||"none"} onValueChange={v => setExamForm({ ...examForm, level: v==="none" ? "" : v })}>
-                      <SelectTrigger className="h-11 rounded-lg"><SelectValue placeholder={t("Select level","اختر المستوى")} /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">{t("All Levels","جميع المستويات")}</SelectItem>
-                        {academicLevels.map(l => (
-                          <SelectItem key={l.slug} value={l.slug}>{t(l.name_en, l.name_ar)}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {/* Multi-select — an exam can target more than one level at once
+                        (same comma-separated convention as subjects.level). Leaving
+                        every box unchecked means "all levels", same as before. */}
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button type="button" variant="outline" className="h-11 w-full justify-between rounded-lg font-normal">
+                          <span className="truncate">
+                            {examForm.level
+                              ? examForm.level.split(",").map(slug => {
+                                  const lvl = academicLevels.find(l => l.slug === slug.trim());
+                                  return lvl ? t(lvl.name_en, lvl.name_ar) : slug;
+                                }).join(" + ")
+                              : t("All Levels","جميع المستويات")}
+                          </span>
+                          <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-64 p-2" align="start">
+                        <div className="flex flex-col gap-1">
+                          {academicLevels.map(l => {
+                            const selected = examForm.level ? examForm.level.split(",").map(s => s.trim()) : [];
+                            const checked = selected.includes(l.slug);
+                            return (
+                              <label key={l.slug} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-slate-50 cursor-pointer">
+                                <Checkbox
+                                  checked={checked}
+                                  onCheckedChange={(v) => {
+                                    const next = v ? [...selected, l.slug] : selected.filter(s => s !== l.slug);
+                                    setExamForm({ ...examForm, level: next.join(",") });
+                                  }}
+                                />
+                                {t(l.name_en, l.name_ar)}
+                              </label>
+                            );
+                          })}
+                          {examForm.level && (
+                            <Button type="button" variant="ghost" size="sm" className="mt-1 justify-start text-slate-500"
+                              onClick={() => setExamForm({ ...examForm, level: "" })}>
+                              {t("Clear — all levels","مسح — جميع المستويات")}
+                            </Button>
+                          )}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    <p className="text-[11px] text-slate-400">{t("Pick one or more levels — leave empty for all levels. Publishing the exam immediately assigns and notifies every matching student.","اختر مستوى واحدًا أو أكثر — اتركه فارغًا لجميع المستويات. سيؤدي نشر الامتحان إلى تعيينه للطلاب المطابقين وإشعارهم فورًا.")}</p>
                   </div>
                   <div className="space-y-2">
                     <Label className="text-sm font-bold text-slate-700">{t("Term","الفصل")}</Label>

@@ -14,6 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
+import { publishExam, splitLevels } from "@/lib/examPublish";
 import {
   Plus, Edit, Trash2, Copy, Clock, Search, Send,
   Eye, EyeOff, BarChart2, Loader2, CheckCircle2,
@@ -124,9 +125,19 @@ export default function ExamManager() {
   };
 
   const togglePublish = async (id: string, current: boolean) => {
-    await supabase.from("exams").update({ is_published: !current }).eq("id", id);
+    const exam = exams.find(e => e.id === id);
+    const { newlyAssignedCount } = await publishExam(
+      { id, title: exam?.title || "", type: exam?.type, level: exam?.level },
+      !current,
+      user?.id
+    );
     setExams(es => es.map(e => e.id === id ? { ...e, is_published: !current } : e));
-    toast({ title: !current ? "✅ Exam published" : "✅ Exam unpublished" });
+    toast({
+      title: !current ? "✅ Exam published" : "✅ Exam unpublished",
+      description: !current && newlyAssignedCount > 0
+        ? `Assigned to ${newlyAssignedCount} student${newlyAssignedCount !== 1 ? "s" : ""} and notified them + admins.`
+        : undefined,
+    });
   };
 
   // Self-registration: students can only self-register when this is on.
@@ -270,7 +281,7 @@ export default function ExamManager() {
     if (termFilter !== "all" && e.term !== termFilter) return false;
     if (sessionFilter !== "all" && (e.session || "") !== sessionFilter) return false;
     if (typeFilter !== "all" && e.type !== typeFilter) return false;
-    if (levelFilter !== "all" && (e.level || "") !== levelFilter) return false;
+    if (levelFilter !== "all" && !splitLevels(e.level).includes(levelFilter)) return false;
     return true;
   });
 
@@ -405,7 +416,7 @@ export default function ExamManager() {
                         {exam.type && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#EFF6FF", color: "#1D4ED8", fontWeight: 600 }}>{exam.type}</span>}
                         {exam.session && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#ECFEFF", color: "#0E7490", fontWeight: 700 }}>📅 {exam.session}</span>}
                         {exam.term && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#F5F3FF", color: "#6D28D9", fontWeight: 600 }}>{exam.term}</span>}
-                        {exam.level && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 600, textTransform: "capitalize" }}>📚 {exam.level}</span>}
+                        {exam.level && <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, background: "#FFF7ED", color: "#C2410C", fontWeight: 600, textTransform: "capitalize" }}>📚 {splitLevels(exam.level).join(" + ")}</span>}
                       </div>
                       {exam.title_ar && language !== "ar" && <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 6px", fontFamily: "'Amiri',serif", direction: "rtl" }}>{exam.title_ar}</p>}
                       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6 }}>
