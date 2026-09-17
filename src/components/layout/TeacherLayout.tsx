@@ -181,23 +181,35 @@ const TeacherLayout = () => {
   }, [location.pathname]);
 
   // ── Grading badge ───────────────────────────────────────────────
+  // Refetched whenever the route changes (not just once on mount) so the
+  // count actually drops once a teacher opens Grading and clears
+  // submissions — previously this only ran once per session and never
+  // reflected work done since.
   const teacherSubjectIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!user) return;
     (async () => {
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
+      // subject_timetable stores co-teachers in `teacher_ids[]`; the legacy
+      // singular `teacher_id` column only ever holds the FIRST teacher an
+      // admin picked, so a second/co-teacher's subjects (and every exam
+      // under them) were silently missing from the count before — matches
+      // the fix already applied in TeacherGrading.tsx's own subject lookup.
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids");
+      const myTtSlots = (ttSlots || []).filter((s: any) =>
+        s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
+      );
       const subIds = [...new Set([
         ...((subs || []).map((s: any) => s.id)),
-        ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
+        ...(myTtSlots.map((s: any) => s.subject_id).filter(Boolean)),
       ])];
       teacherSubjectIdsRef.current = new Set(subIds);
-      if (!subIds.length) return;
+      if (!subIds.length) { setGradingBadge(0); return; }
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
       // legacy course_id column which the editor never populates.
       const { data: exams } = await supabase.from("exams").select("id").in("subject_id", subIds);
       const eIds = (exams || []).map((e: any) => e.id);
-      if (!eIds.length) return;
+      if (!eIds.length) { setGradingBadge(0); return; }
       const { count } = await supabase
         .from("exam_attempts")
         .select("id", { count: "exact", head: true })
@@ -205,7 +217,7 @@ const TeacherLayout = () => {
         .eq("status", "submitted");
       setGradingBadge(count || 0);
     })();
-  }, [user]);
+  }, [user, location.pathname]);
 
   // ── Unread student-message badge ────────────────────────────────
   // Counts threads addressed to this teacher (RLS already restricts the

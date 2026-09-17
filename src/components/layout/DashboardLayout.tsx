@@ -206,8 +206,8 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   // ── Admin nav — fully organized, every page linked ──────────
   type AdminNavItem =
-    | { type:"link";  to:string; icon:any; label:string }
-    | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string}[] };
+    | { type:"link";  to:string; icon:any; label:string; badge?: number }
+    | { type:"group"; key:string; icon:any; label:string; children:{to:string;icon:any;label:string;badge?:number}[] };
 
   const adminNav: AdminNavItem[] = [
     { type:"link", to:"/admin", icon:LayoutDashboard, label:t("Dashboard","لوحة التحكم") },
@@ -251,7 +251,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/exams",         icon:ClipboardList, label:t("Exams","الامتحانات") },
       { to:"/admin/exam-timetable", icon:Clock,         label:t("Exam & Test Timetable","جدول الامتحانات والاختبارات") },
       { to:"/admin/question-bank", icon:Library,       label:t("Question Bank","بنك الأسئلة") },
-      { to:"/admin/grading",       icon:CheckSquare,   label:t("Grading","التصحيح") },
+      { to:"/admin/grading",       icon:CheckSquare,   label:t("Grading","التصحيح"),   badge: gradingBadge },
       { to:"/admin/entrance-exam", icon:GraduationCap, label:t("Entrance Exam","اختبار القبول") },
       { to:"/admin/proctoring",    icon:BarChart,      label:t("Proctoring","المراقبة") },
     ]},
@@ -383,6 +383,24 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   // given route (or match any of the extra keywords in its type — used for
   // cross-cutting categories like "new-registration" that live at
   // /admin/students).
+  // ── Grading badge (admin) ────────────────────────────────────
+  // Same "someone submitted" indicator as the teacher sidebar, but
+  // school-wide since admins see every exam, not just their own subjects.
+  // Refetched on every route change (not just once on mount) so the count
+  // actually drops once the admin has been into Grading and cleared
+  // submissions, instead of staying frozen at whatever it was on login.
+  const [gradingBadge, setGradingBadge] = useState(0);
+  useEffect(() => {
+    if (!user || role !== "admin") return;
+    (async () => {
+      const { count } = await supabase
+        .from("exam_attempts")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "submitted");
+      setGradingBadge(count || 0);
+    })();
+  }, [user, role, location.pathname]);
+
   const unreadCountFor = (route: string, extraTypes: string[] = []): number => {
     if (!notifList?.length) return 0;
     return notifList.reduce((count: number, n: any) => {
@@ -487,14 +505,14 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   )}>
                   <item.icon className="h-4 w-4 shrink-0"/>
                   <span className="truncate">{item.label}</span>
-                  {unreadCountFor(item.to) > 0 && <UnreadBadge count={unreadCountFor(item.to)} />}
+                  {(item.badge ?? unreadCountFor(item.to)) > 0 && <UnreadBadge count={item.badge ?? unreadCountFor(item.to)} />}
                 </Link>
               );
             }
             const isActive = groupActive(item.children.map((c: any) => c.to));
             const isOpen   = expanded[item.key] ?? isActive; // auto-expand if a child is active
             const groupLocked = levelPending && item.children.every((c: any) => LOCKED_ROUTES.has(c.to));
-            const groupUnreadCount = item.children.reduce((sum: number, c: any) => sum + unreadCountFor(c.to), 0);
+            const groupUnreadCount = item.children.reduce((sum: number, c: any) => sum + (c.badge ?? unreadCountFor(c.to)), 0);
             return (
               <div key={item.key}>
                 <button onClick={() => !groupLocked && toggle(item.key)}
@@ -517,6 +535,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                   <div className="ms-5 mt-0.5 mb-1 space-y-0.5 border-l border-sidebar-border/40 ps-3">
                     {item.children.map((child: any) => {
                       const ca = location.pathname.startsWith(child.to);
+                      const cBadge = child.badge ?? unreadCountFor(child.to);
                       return (                        <Link key={child.to} to={child.to} onClick={onNavigate}
                           className={cn(
                             "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
@@ -526,7 +545,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                           )}>
                           <child.icon className="h-3.5 w-3.5 shrink-0"/>
                           <span className="truncate">{child.label}</span>
-                          {unreadCountFor(child.to) > 0 && <UnreadBadge count={unreadCountFor(child.to)} />}
+                          {cBadge > 0 && <UnreadBadge count={cBadge} />}
                         </Link>
                       );
                     })}
