@@ -18,10 +18,20 @@ import { publishExam, splitLevels } from "@/lib/examPublish";
 import {
   Plus, Edit, Trash2, Copy, Clock, Search, Send,
   Eye, EyeOff, BarChart2, Loader2, CheckCircle2,
-  XCircle, Users, BookOpen, Filter
+  XCircle, Users, BookOpen, Filter, RotateCcw
 } from "lucide-react";
 
 const G = "#064E3B";
+
+const toLocalDatetimeInput = (iso: string): string => {
+  const date = new Date(iso);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const h = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d}T${h}:${min}`;
+};
 
 
 export default function ExamManager() {
@@ -52,6 +62,16 @@ export default function ExamManager() {
 
   // Counts per exam
   const [counts, setCounts]             = useState<Record<string, { assigned: number; attempts: number }>>({});
+
+  // Manage-students dialog — per-assigned-student view for a single exam:
+  // see who has/hasn't attempted, extend an individual student's deadline
+  // past the exam's own end_date, or reset an attempt so they can retake.
+  const [manageExam, setManageExam]     = useState<any | null>(null);
+  const [manageStudents, setManageStudents] = useState<any[]>([]);
+  const [manageLoading, setManageLoading] = useState(false);
+  const [extendInputs, setExtendInputs] = useState<Record<string, string>>({});
+  const [savingExtend, setSavingExtend] = useState<string | null>(null);
+  const [resettingAttempt, setResettingAttempt] = useState<string | null>(null);
 
   const fetchExams = async () => {
     setLoading(true);
@@ -111,6 +131,78 @@ export default function ExamManager() {
 
     setAllStudents(students);
     setStudentsLoading(false);
+  };
+
+  // Manage-students dialog: every assigned student for this exam, with
+  // their attempt status and any per-student deadline extension.
+  const openManage = async (exam: any) => {
+    setManageExam(exam);
+    setManageStudents([]);
+    setExtendInputs({});
+    setManageLoading(true);
+    try {
+      const [asnRes, attRes] = await Promise.all([
+        supabase.from("exam_assignments" as any).select("user_id, extended_until").eq("exam_id", exam.id),
+        supabase.from("exam_attempts").select("id, user_id, status, score, percentage, passed, created_at")
+          .eq("exam_id", exam.id).order("created_at", { ascending: false }),
+      ]);
+      const assignments = asnRes.data || [];
+      const attempts     = attRes.data || [];
+      const userIds = assignments.map((a: any) => a.user_id);
+      const { data: profiles } = userIds.length
+        ? await supabase.from("profiles").select("user_id, full_name").in("user_id", userIds)
+        : { data: [] as any[] };
+
+      const rows = assignments.map((a: any) => {
+        const myAttempts = attempts.filter((at: any) => at.user_id === a.user_id);
+        return {
+          user_id: a.user_id,
+          full_name: (profiles || []).find((p: any) => p.user_id === a.user_id)?.full_name || "Unknown",
+          extended_until: a.extended_until,
+          attempts: myAttempts,
+        };
+      });
+      rows.sort((a, b) => a.full_name.localeCompare(b.full_name));
+      setManageStudents(rows);
+    } finally {
+      setManageLoading(false);
+    }
+  };
+
+  const saveExtend = async (userId: string) => {
+    if (!manageExam) return;
+    setSavingExtend(userId);
+    try {
+      const raw = extendInputs[userId];
+      const value = raw ? new Date(raw).toISOString() : null;
+      const { error } = await supabase.from("exam_assignments" as any)
+        .update({ extended_until: value } as any)
+        .eq("exam_id", manageExam.id).eq("user_id", userId);
+      if (error) throw new Error(error.message);
+      setManageStudents(rows => rows.map(r => r.user_id === userId ? { ...r, extended_until: value } : r));
+      toast({ title: value ? "✅ Deadline extended for this student" : "✅ Extension cleared" });
+    } catch (e: any) {
+      toast({ title: "Failed to save extension", description: e.message, variant: "destructive" });
+    } finally {
+      setSavingExtend(null);
+    }
+  };
+
+  // Same effect as the reset icon in Grading: deletes the attempt (and its
+  // answers, via cascade) so it no longer counts against max_attempts.
+  const resetStudentAttempt = async (attemptId: string, studentName: string) => {
+    if (!confirm(`Reset ${studentName}'s attempt? Their score and answers will be permanently deleted and they'll be able to retake it.`)) return;
+    setResettingAttempt(attemptId);
+    try {
+      const { error } = await supabase.from("exam_attempts").delete().eq("id", attemptId);
+      if (error) throw new Error(error.message);
+      setManageStudents(rows => rows.map(r => ({ ...r, attempts: r.attempts.filter((a: any) => a.id !== attemptId) })));
+      toast({ title: `✅ Attempt reset — ${studentName} can retake the exam` });
+    } catch (e: any) {
+      toast({ title: "Reset failed", description: e.message, variant: "destructive" });
+    } finally {
+      setResettingAttempt(null);
+    }
   };
 
   const togglePublish = async (id: string, current: boolean) => {
@@ -421,6 +513,10 @@ export default function ExamManager() {
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#EFF6FF", cursor: "pointer" }}>
                         <BarChart2 size={13} color="#1D4ED8" />
                       </button>
+                      <button onClick={() => openManage(exam)} title="Manage assigned students — extend a missed deadline or reset an attempt"
+                        style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#F5F3FF", cursor: "pointer" }}>
+                        <Users size={13} color="#6D28D9" />
+                      </button>
                       <button onClick={() => deleteExam(exam.id)} title="Delete exam"
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #FECACA", background: "#FEF2F2", cursor: "pointer" }}>
                         <Trash2 size={13} color="#DC2626" />
@@ -543,6 +639,89 @@ export default function ExamManager() {
               {assigning
                 ? <><Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> Assigning…</>
                 : <><Send size={14} /> Assign & Notify Students</>}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Manage Students Dialog ── */}
+      <Dialog open={!!manageExam} onOpenChange={v => !v && setManageExam(null)}>
+        <DialogContent style={{ maxWidth: 560, borderRadius: 20, padding: 0, maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+          <div style={{ background: "#6D28D9", padding: "16px 20px", borderRadius: "20px 20px 0 0", flexShrink: 0 }}>
+            <h2 style={{ fontWeight: 800, fontSize: 15, color: "#fff", margin: 0 }}>
+              👥 Students: {manageExam?.title}
+            </h2>
+            <p style={{ fontSize: 11, color: "rgba(255,255,255,.7)", margin: "4px 0 0" }}>
+              Extend a missed deadline for one student, or reset an attempt so they can retake.
+            </p>
+          </div>
+
+          <div style={{ padding: 16, overflow: "auto", flex: 1 }}>
+            {manageLoading ? (
+              <div style={{ textAlign: "center", padding: 24 }}><Loader2 size={24} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
+            ) : manageStudents.length === 0 ? (
+              <p style={{ textAlign: "center", color: "#9CA3AF", fontSize: 13, padding: 24 }}>No students assigned to this exam yet.</p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {manageStudents.map(s => {
+                  const latest = s.attempts[0];
+                  const max = manageExam?.max_attempts || 1;
+                  const done = s.attempts.filter((a: any) => a.status !== "in_progress").length;
+                  let statusLabel = "Not started";
+                  let statusColor = "#6B7280";
+                  if (latest) {
+                    if (latest.status === "in_progress")      { statusLabel = "In progress"; statusColor = "#D97706"; }
+                    else if (latest.status === "submitted")   { statusLabel = "Pending grading"; statusColor = "#1D4ED8"; }
+                    else if (latest.status === "graded")      { statusLabel = `Graded — ${Math.round(latest.percentage || 0)}%`; statusColor = latest.passed ? "#16A34A" : "#DC2626"; }
+                    else if (latest.status === "released")    { statusLabel = `Released — ${Math.round(latest.percentage || 0)}%`; statusColor = latest.passed ? "#16A34A" : "#DC2626"; }
+                  }
+                  const missedDeadline = done === 0 && manageExam?.end_date && new Date(manageExam.end_date).getTime() < Date.now() && !s.extended_until;
+                  return (
+                    <div key={s.user_id} style={{ padding: 12, borderRadius: 12, border: "1.5px solid #E5E7EB", background: "#fff" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                        <div>
+                          <p style={{ fontWeight: 700, fontSize: 13, color: "#111", margin: 0 }}>{s.full_name}</p>
+                          <p style={{ fontSize: 11, margin: "2px 0 0" }}>
+                            <span style={{ color: statusColor, fontWeight: 700 }}>{statusLabel}</span>
+                            <span style={{ color: "#9CA3AF" }}> · {done}/{max} attempts</span>
+                            {missedDeadline && <span style={{ color: "#DC2626", fontWeight: 700 }}> · missed deadline</span>}
+                          </p>
+                        </div>
+                        {latest && latest.status !== "in_progress" && (
+                          <button onClick={() => resetStudentAttempt(latest.id, s.full_name)} disabled={resettingAttempt === latest.id}
+                            title="Reset this attempt so they can retake"
+                            style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: "1.5px solid #FECACA", background: "#FEF2F2", cursor: resettingAttempt === latest.id ? "not-allowed" : "pointer", fontSize: 11, fontWeight: 700, color: "#DC2626", opacity: resettingAttempt === latest.id ? .6 : 1 }}>
+                            {resettingAttempt === latest.id ? <Loader2 size={11} style={{ animation: "spin .8s linear infinite" }} /> : <RotateCcw size={11} />} Reset
+                          </button>
+                        )}
+                      </div>
+
+                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                        <input type="datetime-local"
+                          value={extendInputs[s.user_id] ?? (s.extended_until ? toLocalDatetimeInput(s.extended_until) : "")}
+                          onChange={e => setExtendInputs(inp => ({ ...inp, [s.user_id]: e.target.value }))}
+                          style={{ ...inp, flex: 1, fontSize: 12, padding: "6px 8px" }} />
+                        <button onClick={() => saveExtend(s.user_id)} disabled={savingExtend === s.user_id}
+                          style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: G, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", opacity: savingExtend === s.user_id ? .6 : 1 }}>
+                          {savingExtend === s.user_id ? "…" : s.extended_until ? "Update" : "Extend"}
+                        </button>
+                      </div>
+                      {s.extended_until && (
+                        <p style={{ fontSize: 10, color: "#16A34A", margin: "6px 0 0" }}>
+                          ✓ Extended until {new Date(s.extended_until).toLocaleString(language === "ar" ? "ar-SA" : "en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} — clear the field and press Update to remove.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div style={{ padding: "14px 16px", borderTop: "1px solid #E5E7EB", flexShrink: 0 }}>
+            <button onClick={() => setManageExam(null)}
+              style={{ width: "100%", padding: 12, borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>
+              Close
             </button>
           </div>
         </DialogContent>
