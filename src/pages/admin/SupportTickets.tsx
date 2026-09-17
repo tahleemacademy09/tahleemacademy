@@ -320,10 +320,47 @@ const SupportTickets = () => {
   // their own rows, so a teacher must see all of them under the normal
   // status tabs, or they'd never see anything sent to them at all.
   const isAdmin = hasRole("admin");
+  const isTeacher = hasRole("teacher");
   const filtered = statusFilter === "teacher_dm"
     ? tickets.filter(tk => tk.recipient_type === "teacher")
     : tickets.filter(tk => tk.status === statusFilter && (!isAdmin || tk.recipient_type !== "teacher"));
   const teacherDmCount = tickets.filter(tk => tk.recipient_type === "teacher").length;
+
+  // ── Group the inbox by student (WhatsApp-style) ─────────────────────────
+  // Only meaningful for an admin/teacher inbox, where several different
+  // students' tickets show up side by side. A student's own inbox is just
+  // their own outgoing tickets, so it stays a flat list.
+  const groupByStudent = isAdmin || isTeacher;
+  const [expandedGroupKey, setExpandedGroupKey] = useState<string | null>(null);
+
+  const groupKeyFor = (tkt: any) =>
+    tkt.student_id !== user?.id
+      ? `student:${tkt.student_id}`
+      : (tkt.recipient_type === "teacher" ? `teacher:${tkt.teacher_id}` : "admin");
+  const groupLabelFor = (tkt: any) =>
+    tkt.student_id !== user?.id
+      ? (tkt.profiles?.full_name || "Student")
+      : (tkt.recipient_type === "teacher" ? `To: ${tkt.teacher?.full_name || "Teacher"}` : "To: Admin");
+  const groupInitials = (label: string) =>
+    label.replace(/^To:\s*/, "").trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || "").join("") || "?";
+
+  const groups = !groupByStudent ? [] : Object.values(
+    filtered.reduce((acc: Record<string, any>, tkt: any) => {
+      const key = groupKeyFor(tkt);
+      if (!acc[key]) acc[key] = { key, label: groupLabelFor(tkt), tickets: [] as any[] };
+      acc[key].tickets.push(tkt);
+      return acc;
+    }, {} as Record<string, any>)
+  ).map((g: any) => {
+    const sorted = [...g.tickets].sort((a: any, b: any) =>
+      new Date(b.last_message_at || b.updated_at).getTime() - new Date(a.last_message_at || a.updated_at).getTime());
+    return { ...g, tickets: sorted, unreadCount: sorted.filter((t: any) => isUnread(t)).length, latest: sorted[0] };
+  }).sort((a: any, b: any) =>
+    new Date(b.latest.last_message_at || b.latest.updated_at).getTime() - new Date(a.latest.last_message_at || a.latest.updated_at).getTime());
+
+  const expandedGroup = groups.find((g: any) => g.key === expandedGroupKey) || null;
+
+  const switchStatusFilter = (s: string) => { setStatusFilter(s); setExpandedGroupKey(null); };
 
   const setStatus = async (ticketId: string, status: string) => {
     await supabase.from("support_tickets" as any).update({ status }).eq("id", ticketId);
@@ -736,7 +773,7 @@ const SupportTickets = () => {
         {(["open", "in_progress", "resolved"] as const).map(s => {
           const count = tickets.filter(tk => tk.status === s && (!isAdmin || tk.recipient_type !== "teacher")).length;
           return (
-            <button key={s} onClick={() => setStatusFilter(s)} style={{
+            <button key={s} onClick={() => switchStatusFilter(s)} style={{
               flex: 1, padding: "9px 4px", borderRadius: 10, fontSize: 12, fontWeight: 800, cursor: "pointer",
               border: `1.5px solid ${statusFilter === s ? STATUS_CFG[s].color : BORDER}`,
               background: statusFilter === s ? STATUS_CFG[s].bg : "#fff",
@@ -750,7 +787,7 @@ const SupportTickets = () => {
             above so admin can monitor them as their own section regardless
             of a thread's open/in-progress/resolved state. */}
         {hasRole("admin") && (
-          <button onClick={() => setStatusFilter("teacher_dm")} style={{
+          <button onClick={() => switchStatusFilter("teacher_dm")} style={{
             flex: 1, padding: "9px 4px", borderRadius: 10, fontSize: 12, fontWeight: 800, cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
             border: `1.5px solid ${statusFilter === "teacher_dm" ? "#7C3AED" : BORDER}`,
@@ -764,6 +801,85 @@ const SupportTickets = () => {
 
       {isLoading ? (
         <div style={{ textAlign: "center", padding: 40 }}><Loader2 size={22} style={{ animation: "spin .8s linear infinite", color: G }} /></div>
+      ) : groupByStudent ? (
+        // ── Grouped-by-student view (admin/teacher inbox) ──────────────────
+        expandedGroup ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <button onClick={() => setExpandedGroupKey(null)} style={{
+              background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4,
+              color: G, fontWeight: 700, fontSize: 13, marginBottom: 4, padding: 0,
+            }}>
+              <ChevronLeft size={16} /> {expandedGroup.label}
+            </button>
+            {expandedGroup.tickets.map((tkt: any) => {
+              const unread = isUnread(tkt);
+              return (
+                <button key={tkt.id} onClick={() => openTicket(tkt)} style={{
+                  textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "13px 14px",
+                  background: "#fff", borderRadius: 14, border: `1.5px solid ${unread ? GOLD : BORDER}`, cursor: "pointer",
+                }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: "#F3F4F6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <MessageSquare size={16} color={G} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      {unread && <span style={{ color: GOLD, fontWeight: 900, fontSize: 14, lineHeight: 1 }}>*</span>}
+                      <p style={{ fontWeight: unread ? 900 : 700, fontSize: 13, color: "#111", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tkt.subject}</p>
+                    </div>
+                    <p style={{ fontSize: 11, color: "#9CA3AF", margin: "2px 0 0" }}>
+                      {tkt.recipient_type === "teacher" ? "Direct message" : (CATEGORY_LABEL[tkt.category] || tkt.category)}
+                    </p>
+                    <p style={{ fontSize: 11, color: unread ? "#111" : "#9CA3AF", fontWeight: unread ? 700 : 400, margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {tkt.last_message_preview || "No messages yet"}
+                    </p>
+                  </div>
+                  <p style={{ fontSize: 9, color: "#9CA3AF", margin: 0, flexShrink: 0 }}>{fmtDT(tkt.last_message_at || tkt.updated_at)}</p>
+                </button>
+              );
+            })}
+          </div>
+        ) : groups.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "48px 20px", background: "#fff", borderRadius: 18, border: `1px dashed ${BORDER}` }}>
+            <CheckCircle2 size={36} style={{ margin: "0 auto 10px", display: "block", opacity: 0.3, color: G }} />
+            <p style={{ fontSize: 14, color: "#9CA3AF", margin: 0 }}>Nothing here</p>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {groups.map((g: any) => (
+              <button key={g.key} onClick={() => setExpandedGroupKey(g.key)} style={{
+                textAlign: "left", display: "flex", alignItems: "center", gap: 12, padding: "13px 14px",
+                background: "#fff", borderRadius: 14, border: `1.5px solid ${g.unreadCount > 0 ? GOLD : BORDER}`, cursor: "pointer",
+              }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: "50%", background: G, color: "#fff",
+                  display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 13, fontWeight: 800,
+                }}>
+                  {groupInitials(g.label)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontWeight: g.unreadCount > 0 ? 900 : 700, fontSize: 13, color: "#111", margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {g.label}
+                    {g.tickets.length > 1 && <span style={{ fontWeight: 400, color: "#9CA3AF" }}> · {g.tickets.length} chats</span>}
+                  </p>
+                  <p style={{ fontSize: 11, color: g.unreadCount > 0 ? "#111" : "#9CA3AF", fontWeight: g.unreadCount > 0 ? 700 : 400, margin: "2px 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {g.latest.subject}{g.latest.last_message_preview ? ` — ${g.latest.last_message_preview}` : ""}
+                  </p>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                  <p style={{ fontSize: 9, color: "#9CA3AF", margin: 0 }}>{fmtDT(g.latest.last_message_at || g.latest.updated_at)}</p>
+                  {g.unreadCount > 0 && (
+                    <span style={{
+                      minWidth: 20, height: 20, padding: "0 5px", borderRadius: 10, background: "#DC2626", color: "#fff",
+                      fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {g.unreadCount}
+                    </span>
+                  )}
+                </div>
+              </button>
+            ))}
+          </div>
+        )
       ) : filtered.length === 0 ? (
         <div style={{ textAlign: "center", padding: "48px 20px", background: "#fff", borderRadius: 18, border: `1px dashed ${BORDER}` }}>
           <CheckCircle2 size={36} style={{ margin: "0 auto 10px", display: "block", opacity: 0.3, color: G }} />
