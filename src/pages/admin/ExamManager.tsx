@@ -18,7 +18,7 @@ import { publishExam, splitLevels } from "@/lib/examPublish";
 import {
   Plus, Edit, Trash2, Copy, Clock, Search, Send,
   Eye, EyeOff, BarChart2, Loader2, CheckCircle2,
-  XCircle, Users, BookOpen, Filter, RotateCcw
+  XCircle, Users, BookOpen, Filter, RotateCcw, CalendarClock
 } from "lucide-react";
 
 const G = "#064E3B";
@@ -525,9 +525,9 @@ export default function ExamManager() {
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#EFF6FF", cursor: "pointer" }}>
                         <BarChart2 size={13} color="#1D4ED8" />
                       </button>
-                      <button onClick={() => openManage(exam)} title="Manage assigned students — extend a missed deadline or reset an attempt"
+                      <button onClick={() => openManage(exam)} title="Extend deadline / manage students — extend a missed deadline or reset an attempt"
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #E5E7EB", background: "#F5F3FF", cursor: "pointer" }}>
-                        <Users size={13} color="#6D28D9" />
+                        <CalendarClock size={13} color="#6D28D9" />
                       </button>
                       <button onClick={() => deleteExam(exam.id)} title="Delete exam"
                         style={{ padding: "8px 10px", borderRadius: 9, border: "1.5px solid #FECACA", background: "#FEF2F2", cursor: "pointer" }}>
@@ -714,7 +714,10 @@ export default function ExamManager() {
                           onChange={e => setExtendInputs(inp => ({ ...inp, [s.user_id]: e.target.value }))}
                           style={{ ...inp, flex: 1, fontSize: 12, padding: "6px 8px" }} />
                         <button onClick={() => saveExtend(s.user_id)} disabled={savingExtend === s.user_id}
-                          style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: G, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", opacity: savingExtend === s.user_id ? .6 : 1 }}>
+                          style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, border: "none", background: G, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", opacity: savingExtend === s.user_id ? .6 : 1 }}>
+                          {savingExtend === s.user_id
+                            ? <Loader2 size={11} style={{ animation: "spin .8s linear infinite" }} />
+                            : <CalendarClock size={11} />}
                           {savingExtend === s.user_id ? "…" : s.extended_until ? "Update" : "Extend"}
                         </button>
                       </div>
