@@ -248,11 +248,17 @@ const SupportTickets = () => {
   // "teacher_dm" is a pseudo status: it isn't a value of support_tickets.status,
   // it's a dedicated view for admins to see teacher↔student conversations
   // (recipient_type = "teacher") separately from tickets addressed to the
-  // admin team. These never show up under Open/In Progress/Resolved —
-  // they only live in this dedicated tab, regardless of their status value.
+  // admin team. These never show up under an admin's Open/In Progress/
+  // Resolved tabs — they only live in this dedicated tab, regardless of
+  // status. That exclusion is admin-only, though: for a teacher, tickets
+  // with recipient_type "teacher" ARE their own inbox (messages a student
+  // or admin sent straight to them) — RLS already scopes `tickets` to just
+  // their own rows, so a teacher must see all of them under the normal
+  // status tabs, or they'd never see anything sent to them at all.
+  const isAdmin = hasRole("admin");
   const filtered = statusFilter === "teacher_dm"
     ? tickets.filter(tk => tk.recipient_type === "teacher")
-    : tickets.filter(tk => tk.status === statusFilter && tk.recipient_type !== "teacher");
+    : tickets.filter(tk => tk.status === statusFilter && (!isAdmin || tk.recipient_type !== "teacher"));
   const teacherDmCount = tickets.filter(tk => tk.recipient_type === "teacher").length;
 
   const setStatus = async (ticketId: string, status: string) => {
@@ -552,7 +558,7 @@ const SupportTickets = () => {
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {(["open", "in_progress", "resolved"] as const).map(s => {
-          const count = tickets.filter(tk => tk.status === s && tk.recipient_type !== "teacher").length;
+          const count = tickets.filter(tk => tk.status === s && (!isAdmin || tk.recipient_type !== "teacher")).length;
           return (
             <button key={s} onClick={() => setStatusFilter(s)} style={{
               flex: 1, padding: "9px 4px", borderRadius: 10, fontSize: 12, fontWeight: 800, cursor: "pointer",
