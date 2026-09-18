@@ -1155,6 +1155,68 @@ export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) =
   return null;
 };
 
+/* ══ ORAL EXAM SIGNALS ══
+   A teacher's "Error" tap during a student's oral-exam turn needs to reach
+   the student's screen as close to instantly as possible — noticeably
+   faster than round-tripping through a DB write + postgres_changes
+   subscription. Both sides are already connected to the same LiveKit room
+   for that turn, so this reuses the exact data-channel pattern above
+   (force_mute etc.) instead: publishData() on the teacher's tap, a
+   DataReceived listener on the student's side, nothing persisted. Timer
+   start/stop, which DOES need to survive a refresh/reconnect, still goes
+   through the RPCs (oral_exam_sessions + its existing realtime
+   subscription) — this is only for the ephemeral "flash it now" signal. */
+export const sendOralSignal = (room: any, type: string, payload?: Record<string, any>) => {
+  try {
+    room?.localParticipant?.publishData(
+      new TextEncoder().encode(JSON.stringify({ type, ...payload })),
+      { reliable: true },
+    );
+  } catch {}
+};
+
+// Mounted on the student's side only (inside their oral-exam <LiveKitRoom>).
+// Shows a full-screen red flash the instant the teacher's "Error" tap
+// arrives, then clears itself on its own a beat later — the teacher never
+// has to send a second signal to turn it off.
+export const OralErrorFlashListener = () => {
+  const room = useRoomContext();
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (!room) return;
+    const timeoutRef = { current: null as number | null };
+    const h = (payload: Uint8Array) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(payload));
+        if (msg.type === "oral_error") {
+          if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
+          setShow(true);
+          timeoutRef.current = window.setTimeout(() => setShow(false), 1000);
+        }
+      } catch {}
+    };
+    room.on(RoomEvent.DataReceived, h);
+    return () => {
+      room.off(RoomEvent.DataReceived, h);
+      if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
+    };
+  }, [room]);
+
+  if (!show) return null;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 2000, pointerEvents: "none",
+      background: "rgba(220,38,38,0.9)", display: "flex", alignItems: "center", justifyContent: "center",
+      animation: "oral-error-flash-in 0.1s ease-out",
+    }}>
+      <style>{`@keyframes oral-error-flash-in { from { opacity: 0; } to { opacity: 1; } }`}</style>
+      <span style={{ color: "#fff", fontWeight: 900, fontSize: "min(11vw, 60px)", textAlign: "center", padding: "0 24px", textShadow: "0 2px 10px rgba(0,0,0,0.45)", letterSpacing: 0.5 }}>
+        ✕ Correction needed
+      </span>
+    </div>
+  );
+};
+
 // ── Waiting-room banner (host side) ──────────────────────────────────────
 // A blocked student trying to rejoin no longer gets a flat rejection —
 // livekit-token now flags their class_participants row (join_request_status
