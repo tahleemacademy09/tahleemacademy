@@ -69,13 +69,22 @@ const TeacherGrading = () => {
         ...((subs || []).map((s: any) => s.id)),
         ...(myTtSlots.map((s: any) => s.subject_id).filter(Boolean)),
       ])];
-      if (!subjectIds.length) { setLoading(false); return; }
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
       // legacy course_id column which the editor never populates.
-      const { data: exams } = await supabase.from("exams").select("id, title, title_ar, session").in("subject_id", subjectIds);
-      const ids = (exams || []).map(e => e.id);
+      // Some oral exams (e.g. Musabaqah-style ones) are created with no
+      // subject_id at all, so they can never match the subjectIds filter for
+      // ANY teacher — pull those in separately for whoever created/graded
+      // them (exams.created_by), same fallback as TeacherResults/TeacherOralExams.
+      const examQueries = [];
+      if (subjectIds.length > 0) {
+        examQueries.push(supabase.from("exams").select("id, title, title_ar, session").in("subject_id", subjectIds));
+      }
+      examQueries.push(supabase.from("exams").select("id, title, title_ar, session").is("subject_id", null).eq("created_by", user.id));
+      const examResults = await Promise.all(examQueries);
+      const exams = [...new Map(examResults.flatMap(r => r.data || []).map((e: any) => [e.id, e])).values()];
+      const ids = exams.map((e: any) => e.id);
       setExamIds(ids);
-      setExamsList(exams || []);
+      setExamsList(exams);
       setLoading(false);
     };
     load();

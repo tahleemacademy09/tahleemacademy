@@ -25,24 +25,43 @@ const TeacherResults = () => {
       // .teacher_id), not just direct ownership (subjects.teacher_id) — a
       // teacher should see results for any subject that's theirs to teach,
       // regardless of who set it up.
+      // subject_timetable.teacher_id only ever holds the *first* teacher on a
+      // slot — co-teachers live in teacher_ids[]. Fetch every slot and union
+      // both, same pattern as TeacherGrading / TeacherOralExams.
       const { data: subs } = await supabase.from("subjects").select("id, title").eq("teacher_id", user.id);
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, subjects(id, title)").eq("teacher_id", user.id);
-      const ttSubjects = ((ttSlots || []) as any[]).map(s => s.subjects).filter(Boolean);
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids, subjects(id, title)");
+      const ttSubjects = ((ttSlots || []) as any[])
+        .filter(s => s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id)))
+        .map(s => s.subjects)
+        .filter(Boolean);
       const subjectsMerged = [...(subs || []), ...ttSubjects];
       const subjects = [...new Map(subjectsMerged.map((s: any) => [s.id, s])).values()];
       setSubjects(subjects);
       const subjectIds = subjects.map((s: any) => s.id);
-      if (subjectIds.length === 0) { setLoading(false); return; }
 
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
       // legacy course_id column which the editor never populates.
+      // Some oral exams (e.g. Musabaqah-style ones) are created with no
+      // subject_id at all — those can never match the subjectIds filter for
+      // ANY teacher, so pull them in separately for whoever created/graded
+      // them (exams.created_by) or the pattern breaks scores are invisible.
+      const examIdQueries = [];
+      if (subjectIds.length > 0) {
+        examIdQueries.push(supabase.from("exams").select("id").in("subject_id", subjectIds));
+      }
+      examIdQueries.push(supabase.from("exams").select("id").is("subject_id", null).eq("created_by", user.id));
+      const examIdResults = await Promise.all(examIdQueries);
+      const examIds = [...new Set(examIdResults.flatMap(r => (r.data || []).map((e: any) => e.id)))];
+
+      if (examIds.length === 0) { setLoading(false); return; }
+
       // NOTE: no FK exists directly between exam_attempts and profiles (both
       // point separately at auth.users), so `profiles!exam_attempts_user_id_fkey`
       // is not a resolvable embed — it silently failed the whole query.
       // Fetch profiles separately and merge, like the admin GradingPage does.
       const { data: attempts, error } = await supabase.from("exam_attempts")
         .select("*, exams(title, type, term, subject_id, subjects(title))")
-        .in("exam_id", (await supabase.from("exams").select("id").in("subject_id", subjectIds)).data?.map((e: any) => e.id) || [])
+        .in("exam_id", examIds)
         .in("status", ["graded", "submitted"])
         .order("submitted_at", { ascending: false });
 
