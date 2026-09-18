@@ -17,7 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { CameraUnmirrorEngine, RoomSettingsModal, OralErrorFlashListener } from "@/components/classroom/classroomComponents";
+import { CameraUnmirrorEngine, RoomSettingsModal, OralSignalListener } from "@/components/classroom/classroomComponents";
 import {
   Mic, Clock, Loader2, CheckCircle2, Shuffle, Hourglass, CalendarClock,
   Hash, Minimize2, Maximize2, X, LogOut, Settings, Pause,
@@ -419,7 +419,7 @@ const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawi
             <VideoConference />
             <RoomAudioRenderer />
             <OralRoomSettings />
-            <OralErrorFlashListener />
+            <OralSignalListener />
           </LiveKitRoom>
         </div>
 
