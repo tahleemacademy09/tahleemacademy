@@ -355,6 +355,9 @@ const App = () => (
                     <Route path="/admin/exams/:examId/live"          element={<ExamLiveMonitor />} />
                     <Route path="/admin/exams/create"                element={<ExamEditor />} />
                     <Route path="/admin/exams/:examId/edit"          element={<ExamEditor />} />
+                    {/* Same component as /teacher/oral-exams — admin sees and
+                        controls every teacher's oral exams from here too. */}
+                    <Route path="/admin/oral-exams"                  element={<TeacherOralExams />} />
                     <Route path="/admin/grading"                     element={<GradingPage />} />
                     <Route path="/admin/question-bank"               element={<QuestionBank />} />
                     <Route path="/admin/proctoring"                  element={<ProctoringDashboard />} />
