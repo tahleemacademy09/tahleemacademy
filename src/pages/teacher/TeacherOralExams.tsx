@@ -14,7 +14,7 @@
 // submit_oral_score() straight into exam_attempts/exam_answers, so they show
 // up in TeacherGrading/GradingPage/StudentExamResults with no extra plumbing.
 // ─────────────────────────────────────────────────────────────────────────
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -23,12 +23,13 @@ import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { CameraUnmirrorEngine, RoomSettingsModal } from "@/components/classroom/classroomComponents";
+import { CameraUnmirrorEngine, RoomSettingsModal, sendOralSignal } from "@/components/classroom/classroomComponents";
 import {
   Mic, Plus, Trash2, Clock, Radio, CheckCircle2, XCircle,
   Loader2, ChevronRight, ListChecks, PhoneOff, Shuffle, Send,
   Menu, X, Wand2, ClipboardPaste, Layers, Hash, SkipForward, Settings,
   Eye, EyeOff, Users, GraduationCap, UserCheck, ShieldCheck, Star,
+  Play, Pause, Square, AlertTriangle,
 } from "lucide-react";
 
 // Same reused fix as the student side (see StudentOralExams.tsx) — a
@@ -47,6 +48,17 @@ const OralRoomSettingsButton = () => {
       {open && <RoomSettingsModal onClose={() => setOpen(false)} room={room} />}
     </>
   );
+};
+
+// Headless — mounted inside <LiveKitRoom> purely to hand the connected
+// room instance out to liveRoomRef. The Control Room drawer (Start/Stop/
+// Error buttons) renders as a SIBLING of <LiveKitRoom>, not a child of it,
+// so it can't call useRoomContext() itself; this ref is how its buttons
+// reach room.localParticipant.publishData() for the instant "Error" flash.
+const OralRoomRefBridge = ({ liveRoomRef }: { liveRoomRef: { current: any } }) => {
+  const room = useRoomContext();
+  useEffect(() => { liveRoomRef.current = room; return () => { liveRoomRef.current = null; }; }, [room, liveRoomRef]);
+  return null;
 };
 
 const G = "#064E3B";
@@ -610,6 +622,34 @@ const TeacherOralExams = () => {
     loadExamData();
   };
 
+  // Handle to the connected oral-exam LiveKitRoom, filled in by
+  // OralRoomRefBridge (mounted inside <LiveKitRoom>) — see its comment.
+  // Only used to send the instant, unpersisted "Error" flash; Start/Stop
+  // go through the RPCs below since that state needs to survive a refresh.
+  const liveRoomRef = useRef<any>(null);
+
+  const startStageTimer = async () => {
+    if (!session) return;
+    const { data, error } = await supabase.rpc("start_oral_stage_timer" as any, { p_session_id: session.id });
+    if (error) return toast({ title: "Could not start timer", description: error.message, variant: "destructive" });
+    setSession(data);
+  };
+
+  const stopStageTimer = async () => {
+    if (!session) return;
+    const { data, error } = await supabase.rpc("stop_oral_stage_timer" as any, { p_session_id: session.id });
+    if (error) return toast({ title: "Could not stop timer", description: error.message, variant: "destructive" });
+    setSession(data);
+  };
+
+  // Fires instantly over the live room's data channel (see
+  // OralErrorFlashListener) — nothing written to the database, so there's
+  // no round trip to wait on before the student's screen flashes.
+  const flashError = () => {
+    if (!currentSlot) return;
+    sendOralSignal(liveRoomRef.current, "oral_error");
+  };
+
   const setStage = async (stageId: string | null) => {
     if (!session) return;
     // Block leaving the stage currently on-air until it's been marked —
@@ -772,10 +812,18 @@ const TeacherOralExams = () => {
           </div>
         ) : lkToken && (
           <div className="oral-exam-video-room" style={{ position: "absolute", inset: 0 }}>
-            <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video={false} audio={false} onDisconnected={() => setJoinedLive(false)} style={{ height: "100%" }}>
+            {/* BUG FIX ("only one video tile showing"): this used to connect with
+                video={false} audio={false}, so the teacher's own camera/mic never
+                auto-published on join — they'd have to find LiveKit's own tiny
+                control-bar icons and tap them manually. The token issued to a
+                privileged user (oral-exam-livekit-token) always grants
+                canPublish: true, so there's nothing gating this except these two
+                props; the student's room already auto-publishes the same way. */}
+            <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video audio onDisconnected={() => setJoinedLive(false)} style={{ height: "100%" }}>
               <VideoConference />
               <RoomAudioRenderer />
               <OralRoomSettingsButton />
+              <OralRoomRefBridge liveRoomRef={liveRoomRef} />
             </LiveKitRoom>
           </div>
         )}
@@ -862,9 +910,27 @@ const TeacherOralExams = () => {
                           {(currentSetStages.length > 0 || activeStage?.time_limit_seconds) && (
                             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                               {currentSetStages.length > 0 && <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af" }}>Round {roundIdx >= 0 ? roundIdx + 1 : 1} of {currentSetStages.length}</p>}
-                              <StageCountdown startedAt={session?.current_stage_started_at} limitSeconds={activeStage?.time_limit_seconds} />
+                              <StageCountdown startedAt={session?.current_stage_started_at} limitSeconds={activeStage?.time_limit_seconds} elapsedSeconds={session?.stage_elapsed_seconds} running={!!session?.stage_timer_running} />
                             </div>
                           )}
+                          {/* Start/Stop the stage's own countdown, and flash an
+                              instant full-screen "Correction needed" alert on
+                              the student's screen — all three work whether or
+                              not this stage even has a time limit set. */}
+                          <div style={{ display: "flex", gap: 6 }}>
+                            {session?.stage_timer_running ? (
+                              <button onClick={stopStageTimer} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, background: "#fff", color: "#b45309", border: "1.5px solid #fcd34d", borderRadius: 8, padding: "7px 8px", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>
+                                <Pause size={12} /> Stop
+                              </button>
+                            ) : (
+                              <button onClick={startStageTimer} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, background: "#fff", color: G, border: `1.5px solid ${G}`, borderRadius: 8, padding: "7px 8px", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>
+                                <Play size={12} /> {session?.stage_elapsed_seconds ? "Resume" : "Start"}
+                              </button>
+                            )}
+                            <button onClick={flashError} title="Flash a full-screen correction alert on the student's screen" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, background: "#dc2626", color: "#fff", border: "none", borderRadius: 8, padding: "7px 8px", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>
+                              <AlertTriangle size={12} /> Error
+                            </button>
+                          </div>
                           {/* Once the last stage has itself been marked, swap this box over to
                               the full review panel below instead of repeating its single
                               question here a second time — the review panel already re-renders
@@ -1435,27 +1501,39 @@ const TeacherOralExams = () => {
 // both sides always agree on the remaining time without any extra syncing.
 // Per the product decision: it never auto-advances — just flashes red at 0
 // and leaves the teacher to hit Next when ready.
-const StageCountdown = ({ startedAt, limitSeconds }: { startedAt: string | null | undefined; limitSeconds: number | null | undefined }) => {
+// Manual start/stop: the countdown no longer starts itself the instant a
+// stage opens — it sits at the full limit, stopped, until the teacher taps
+// Start (startedAt set, running true). Stop freezes it wherever it is
+// (elapsedSeconds banks what's run so far) even if time hasn't run out;
+// a later Start resumes from that banked amount instead of restarting.
+const StageCountdown = ({ startedAt, limitSeconds, elapsedSeconds, running }: {
+  startedAt: string | null | undefined; limitSeconds: number | null | undefined;
+  elapsedSeconds?: number | null; running?: boolean;
+}) => {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!startedAt || !limitSeconds) return;
+    if (!running || !startedAt || !limitSeconds) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [startedAt, limitSeconds]);
-  if (!startedAt || !limitSeconds) return null;
-  const elapsed = Math.floor((now - new Date(startedAt).getTime()) / 1000);
-  const remaining = Math.max(0, limitSeconds - elapsed);
+  }, [running, startedAt, limitSeconds]);
+  if (!limitSeconds) return null;
+  const banked = elapsedSeconds || 0;
+  const elapsed = running && startedAt ? banked + (now - new Date(startedAt).getTime()) / 1000 : banked;
+  const remaining = Math.max(0, Math.ceil(limitSeconds - elapsed));
   const m = Math.floor(remaining / 60), s = remaining % 60;
   const expired = remaining === 0;
+  const notStarted = !running && banked === 0;
+  const stopped = !running && banked > 0 && !expired;
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 900, fontSize: 13,
-      color: expired ? "#fff" : remaining <= 10 ? "#dc2626" : "#374151",
-      background: expired ? "#dc2626" : "transparent",
-      padding: expired ? "3px 10px" : 0, borderRadius: 20,
+      color: expired ? "#fff" : notStarted ? "#9ca3af" : stopped ? "#b45309" : remaining <= 10 ? "#dc2626" : "#374151",
+      background: expired ? "#dc2626" : stopped ? "#fffbeb" : "transparent",
+      padding: expired ? "3px 10px" : stopped ? "3px 8px" : 0, borderRadius: 20,
       animation: expired ? "pulse 1s infinite" : undefined,
     }}>
-      <Clock size={13} /> {m}:{String(s).padStart(2, "0")}
+      {stopped ? <Pause size={13} /> : <Clock size={13} />} {m}:{String(s).padStart(2, "0")}
+      {notStarted && <span style={{ fontWeight: 700, fontSize: 10, textTransform: "uppercase" }}>· not started</span>}
     </span>
   );
 };
