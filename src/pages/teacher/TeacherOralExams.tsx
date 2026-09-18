@@ -1011,50 +1011,54 @@ const TeacherOralExams = () => {
           { id: "questions", label: "Questions", icon: ListChecks },
         ];
         return (
-        <div style={{ display: "flex", flexDirection: "column", gap: 20, margin: "-16px -16px 0", paddingTop: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 20, margin: "-16px -16px 0", paddingTop: 0, maxWidth: "100vw", overflowX: "hidden" }}>
           {/* ── Sticky header — same pattern as the written-exam editor: dark
-              green gradient, back button, title, stat pills, primary action ── */}
-          <div style={{ position: "sticky", top: 0, zIndex: 20, background: `linear-gradient(135deg, ${G} 0%, #083320 100%)`, padding: "14px 16px 0", boxShadow: "0 4px 14px rgba(0,0,0,0.15)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                <button onClick={() => setTab("setup")} style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10, padding: "8px 12px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
-                  ←
-                </button>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <Mic size={15} color={GOLD} style={{ flexShrink: 0 }} />
-                    <h1 style={{ fontSize: 16, fontWeight: 900, color: "#fff", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Edit Oral Exam</h1>
-                    {isAdminContext && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, color: "#064E3B", background: GOLD, borderRadius: 20, padding: "2px 8px", flexShrink: 0, textTransform: "uppercase" }}>
-                        <ShieldCheck size={10} /> Admin
-                      </span>
-                    )}
-                  </div>
-                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", margin: "2px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {selectedExam?.title}{isAdminContext && selectedExam?.created_by && selectedExam.created_by !== user?.id ? ` · by ${creatorNames[selectedExam.created_by] || "teacher"}` : ""}
-                  </p>
+              green gradient, back button, title, stat pills, primary action.
+              Title sits on its own full-width row so it never has to fight
+              the stats/button for space; only the stats row scrolls
+              horizontally if it's tight, and it never drags the whole page
+              with it (page-level overflowX above is clipped). ── */}
+          <div style={{ position: "sticky", top: 0, zIndex: 20, background: `linear-gradient(135deg, ${G} 0%, #083320 100%)`, padding: "14px 16px 0", boxShadow: "0 4px 14px rgba(0,0,0,0.15)", maxWidth: "100%", boxSizing: "border-box" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, minWidth: 0 }}>
+              <button onClick={() => setTab("setup")} style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10, padding: "8px 12px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
+                ←
+              </button>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                  <Mic size={15} color={GOLD} style={{ flexShrink: 0 }} />
+                  <h1 style={{ fontSize: 16, fontWeight: 900, color: "#fff", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>Edit Oral Exam</h1>
+                  {isAdminContext && (
+                    <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, color: "#064E3B", background: GOLD, borderRadius: 20, padding: "2px 8px", flexShrink: 0, textTransform: "uppercase" }}>
+                      <ShieldCheck size={10} /> Admin
+                    </span>
+                  )}
                 </div>
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", margin: "2px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {selectedExam?.title}{isAdminContext && selectedExam?.created_by && selectedExam.created_by !== user?.id ? ` · by ${creatorNames[selectedExam.created_by] || "teacher"}` : ""}
+                </p>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, overflowX: "auto" }}>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, overflowX: "auto", flex: 1, minWidth: 0 }}>
                 {[
                   { label: "Slots", value: activeSlotsCount, color: GOLD },
                   { label: "Stages", value: totalStages, color: "#93c5fd" },
                   { label: "Q's", value: totalQuestions, color: "#86efac" },
                 ].map((stat, i) => (
-                  <div key={i} style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "6px 12px", textAlign: "center", minWidth: 50 }}>
+                  <div key={i} style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "6px 10px", textAlign: "center", minWidth: 44, flexShrink: 0 }}>
                     <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1, color: stat.color }}>{stat.value}</div>
                     <div style={{ fontSize: 9, color: "rgba(255,255,255,0.6)", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 2 }}>{stat.label}</div>
                   </div>
                 ))}
-                <button
-                  onClick={() => examReadyForLive && goLive(selectedExamId)}
-                  disabled={!examReadyForLive}
-                  title={examNotReadyReason}
-                  style={{ display: "flex", alignItems: "center", gap: 6, background: examReadyForLive ? "#dc2626" : "rgba(255,255,255,0.15)", color: examReadyForLive ? "#fff" : "rgba(255,255,255,0.5)", border: "none", borderRadius: 10, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: examReadyForLive ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}
-                >
-                  <Radio size={14} /> Go Live
-                </button>
               </div>
+              <button
+                onClick={() => examReadyForLive && goLive(selectedExamId)}
+                disabled={!examReadyForLive}
+                title={examNotReadyReason}
+                style={{ display: "flex", alignItems: "center", gap: 6, background: examReadyForLive ? "#dc2626" : "rgba(255,255,255,0.15)", color: examReadyForLive ? "#fff" : "rgba(255,255,255,0.5)", border: "none", borderRadius: 10, padding: "9px 12px", fontWeight: 800, fontSize: 12, cursor: examReadyForLive ? "pointer" : "not-allowed", whiteSpace: "nowrap", flexShrink: 0 }}
+              >
+                <Radio size={14} /> Go Live
+              </button>
             </div>
 
             {/* Sub-tab bar */}
