@@ -15,12 +15,33 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { lockReload, unlockReload } from "@/lib/reloadGuard";
-import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
+import { LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext } from "@livekit/components-react";
 import "@livekit/components-styles";
+import { CameraUnmirrorEngine, RoomSettingsModal } from "@/components/classroom/classroomComponents";
 import {
   Mic, Clock, Loader2, CheckCircle2, Shuffle, Hourglass, CalendarClock,
-  Hash, Minimize2, Maximize2, X, LogOut,
+  Hash, Minimize2, Maximize2, X, LogOut, Settings,
 } from "lucide-react";
+
+// Same fix already used in the general live classroom (ClassroomView) for
+// "my camera looks fine to me but backwards to everyone else" — a raw
+// camera-driver mirroring quirk that CSS can never fix since it only
+// changes how a video element is rendered locally, not what's actually
+// captured and published. Reusing the existing opt-in engine + settings
+// modal here instead of duplicating that fix for oral exams specifically.
+const OralRoomSettings = () => {
+  const room = useRoomContext();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <CameraUnmirrorEngine />
+      <button onClick={() => setOpen(true)} style={{ position: "absolute", top: 56, right: 14, zIndex: 1100, pointerEvents: "auto", background: "rgba(255,255,255,0.16)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", cursor: "pointer", backdropFilter: "blur(6px)" }} title="Settings — camera looks backwards?">
+        <Settings size={15} />
+      </button>
+      {open && <RoomSettingsModal onClose={() => setOpen(false)} room={room} />}
+    </>
+  );
+};
 
 const G = "#064E3B";
 const GOLD = "#C9A84C";
@@ -387,10 +408,11 @@ const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawi
           <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video={lkToken.can_publish} audio={lkToken.can_publish} onDisconnected={onLeaveLive} style={{ height: "100%" }}>
             <VideoConference />
             <RoomAudioRenderer />
+            <OralRoomSettings />
           </LiveKitRoom>
         </div>
 
-        {/* Top bar: exam name, queue number, leave */}
+        {/* Top bar: exam name, queue number, settings, leave */}
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: "linear-gradient(rgba(0,0,0,0.6), transparent)", zIndex: 1100, pointerEvents: "none" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, pointerEvents: "auto" }}>
             <span style={{ background: G, color: "#fff", borderRadius: 20, padding: "5px 12px", fontWeight: 800, fontSize: 12 }}>
