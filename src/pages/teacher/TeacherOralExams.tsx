@@ -280,10 +280,12 @@ const TeacherOralExams = () => {
   };
 
   const addStage = async (setId: string) => {
-    const title = newStageTitle[setId]?.trim();
-    if (!title) return;
     const set = sets.find(s => s.id === setId);
     const sortOrder = (set?.oral_question_set_stages || []).length;
+    // Blank name defaults to "Stage N" (next in line) rather than blocking
+    // the add — the teacher can always rename it afterwards, same as any
+    // other stage.
+    const title = newStageTitle[setId]?.trim() || `Stage ${sortOrder + 1}`;
     const { error } = await supabase.from("oral_question_set_stages" as any).insert({ set_id: setId, title, sort_order: sortOrder, created_by: user!.id });
     if (error) return toast({ title: "Could not add stage", description: error.message, variant: "destructive" });
     setNewStageTitle({ ...newStageTitle, [setId]: "" });
@@ -301,6 +303,28 @@ const TeacherOralExams = () => {
     const seconds = !minutes || isNaN(mins) || mins <= 0 ? null : Math.round(mins * 60);
     const { error } = await supabase.from("oral_question_set_stages" as any).update({ time_limit_seconds: seconds }).eq("id", stageId);
     if (error) toast({ title: "Could not set time limit", description: error.message, variant: "destructive" });
+    loadExamData();
+  };
+
+  // Rename a stage in place (blur-to-save) — stages are created with a
+  // default "Stage N" title, editable at any time afterwards.
+  const renameStage = async (stageId: string, title: string) => {
+    const clean = title.trim();
+    if (!clean) return;
+    const { error } = await supabase.from("oral_question_set_stages" as any).update({ title: clean }).eq("id", stageId);
+    if (error) toast({ title: "Could not rename stage", description: error.message, variant: "destructive" });
+    loadExamData();
+  };
+
+  // How many of the exam's overall /30 (test) or /70 (exam) this stage is
+  // worth. Blank clears it — submit_oral_score then falls back to scoring
+  // proportionally off raw question points instead, the same as before any
+  // stage had a weight set.
+  const setStageMaxPoints = async (stageId: string, value: string) => {
+    const n = parseFloat(value);
+    const maxPoints = !value || isNaN(n) || n < 0 ? null : n;
+    const { error } = await supabase.from("oral_question_set_stages" as any).update({ max_points: maxPoints }).eq("id", stageId);
+    if (error) toast({ title: "Could not set marks", description: error.message, variant: "destructive" });
     loadExamData();
   };
 
@@ -424,14 +448,17 @@ const TeacherOralExams = () => {
   const [overallFeedback, setOverallFeedback] = useState("");
   const [submittingScore, setSubmittingScore] = useState(false);
 
-  // Same reload guard used on the student side — a service-worker update
-  // reload landing on the examiner mid-session would kick them out of the
-  // call and silently drop whatever score entry hadn't been submitted yet.
+  // Lock out the "apply update & reload" flow for as long as the teacher is
+  // anywhere in Oral Exams — not just once live. A service-worker update
+  // landing the moment this tab regains focus after being minimized was
+  // silently reloading the page and dropping whatever slots/questions/scores
+  // hadn't been saved yet, on Setup and Manage just as much as in the live
+  // room. Locked for the whole time the component is mounted; released the
+  // instant it unmounts (e.g. navigating to a different page).
   useEffect(() => {
-    if (!joinedLive) return;
     lockReload("oral-exam-teacher");
     return () => unlockReload("oral-exam-teacher");
-  }, [joinedLive]);
+  }, []);
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Lock page scroll while the fullscreen live room is up — it's meant to be
@@ -442,6 +469,22 @@ const TeacherOralExams = () => {
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = prev; };
   }, [tab, selectedExamId]);
+
+  // Gate for "Go Live": published, with at least one time slot and at least
+  // one question actually added to a set — otherwise there's a live room
+  // with nobody able to book/be called and nothing to draw. This only
+  // checks readiness, it never auto-publishes anything.
+  const hasAnyQuestion = sets.some((s: any) =>
+    (s.oral_question_set_items || []).length > 0
+  );
+  const examReadyForLive = !!selectedExam?.is_published && slots.length > 0 && hasAnyQuestion;
+  const examNotReadyReason = !selectedExam?.is_published
+    ? "Publish this exam first"
+    : slots.length === 0
+    ? "Add at least one time slot first"
+    : !hasAnyQuestion
+    ? "Add at least one question to a question set first"
+    : undefined;
 
   const waitingSlots = slots.filter(s => s.status === "waiting");
   const admittedSlots = useMemo(
@@ -553,16 +596,32 @@ const TeacherOralExams = () => {
     joinLiveRoom(examId);
   };
 
-  // Fetch the current student's drawn question set (grouped by stage) once they've drawn.
+  // Clear the score sheet the moment a *different* student is on stage —
+  // the merge-in effect below only ever adds entries, so without this a new
+  // student would inherit leftover (unsubmitted) score keys from whoever
+  // was on stage before them.
+  useEffect(() => { setScores({}); }, [currentSlot?.id]);
+
+  // Fetch the current student's drawn questions (grouped by stage), and
+  // re-fetch whenever the live stage changes — each stage's question is now
+  // only drawn once the student actually draws it there (see the student
+  // page), so refreshing on every stage advance is what picks up stage 2's
+  // question once it exists. Score entries are merged in, never replaced
+  // wholesale, so advancing to a new stage can never wipe out marks the
+  // teacher already entered for an earlier one.
   useEffect(() => {
     if (!currentSlot?.drawn_set_id) { setDrawnStages([]); return; }
     supabase.rpc("get_my_drawn_oral_stages" as any, { p_slot_id: currentSlot.id }).then(({ data }: any) => {
       setDrawnStages(data || []);
-      const init: Record<string, { points: string; feedback: string }> = {};
-      (data || []).forEach((st: any) => (st.questions || []).forEach((q: any) => { init[q.id] = { points: "", feedback: "" }; }));
-      setScores(init);
+      setScores(prev => {
+        const next = { ...prev };
+        (data || []).forEach((st: any) => (st.questions || []).forEach((q: any) => {
+          if (!next[q.id]) next[q.id] = { points: "", feedback: "" };
+        }));
+        return next;
+      });
     });
-  }, [currentSlot?.drawn_set_id, currentSlot?.id]);
+  }, [currentSlot?.drawn_set_id, currentSlot?.id, session?.current_stage_id]);
 
   const submitScore = async () => {
     if (!currentSlot) return;
@@ -852,7 +911,12 @@ const TeacherOralExams = () => {
                     <button onClick={() => { setSelectedExamId(e.id); setTab("manage"); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "#f3f4f6", color: "#374151", border: "1px solid #e5e7eb", borderRadius: 10, padding: "8px 14px", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
                       <Settings size={14} /> Manage
                     </button>
-                    <button onClick={() => goLive(e.id)} style={{ display: "flex", alignItems: "center", gap: 6, background: "#dc2626", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+                    <button
+                      onClick={() => e.is_published && goLive(e.id)}
+                      disabled={!e.is_published}
+                      title={e.is_published ? undefined : "Publish this exam from Manage (after its slots and questions are set up) before going live"}
+                      style={{ display: "flex", alignItems: "center", gap: 6, background: e.is_published ? "#dc2626" : "#e5e7eb", color: e.is_published ? "#fff" : "#9ca3af", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 800, fontSize: 13, cursor: e.is_published ? "pointer" : "not-allowed" }}
+                    >
                       <Radio size={14} /> Go Live
                     </button>
                   </div>
@@ -898,10 +962,20 @@ const TeacherOralExams = () => {
               ← Back to Exams
             </button>
             <h2 style={{ fontSize: 16, fontWeight: 800, color: G, margin: 0 }}>{selectedExam?.title}</h2>
-            <button onClick={() => goLive(selectedExamId)} style={{ display: "flex", alignItems: "center", gap: 6, background: "#dc2626", color: "#fff", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+            <button
+              onClick={() => examReadyForLive && goLive(selectedExamId)}
+              disabled={!examReadyForLive}
+              title={examNotReadyReason}
+              style={{ display: "flex", alignItems: "center", gap: 6, background: examReadyForLive ? "#dc2626" : "#e5e7eb", color: examReadyForLive ? "#fff" : "#9ca3af", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 800, fontSize: 13, cursor: examReadyForLive ? "pointer" : "not-allowed" }}
+            >
               <Radio size={14} /> Go Live
             </button>
           </div>
+          {!examReadyForLive && (
+            <p style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 10px", margin: "-12px 0 0" }}>
+              Not ready to go live yet — {examNotReadyReason?.toLowerCase()}.
+            </p>
+          )}
 
           {/* Draft/publish + audience — this exam is invisible to students
               (no open slots bookable, individually-allocated slots still
@@ -968,23 +1042,41 @@ const TeacherOralExams = () => {
                 <button onClick={() => setSlotForm({ ...slotForm, mode: "open" })} style={{ flex: 1, padding: 8, borderRadius: 8, border: `2px solid ${slotForm.mode === "open" ? G : "#e5e7eb"}`, background: slotForm.mode === "open" ? "#ecfdf5" : "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Leave open (self-pick)</button>
               )}
             </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-              <input type="date" value={slotForm.date} onChange={e => setSlotForm({ ...slotForm, date: e.target.value })} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }} />
-              <input type="time" value={slotForm.time} onChange={e => setSlotForm({ ...slotForm, time: e.target.value })} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }} />
+            {/* All the actual slot settings laid out as one wrapping horizontal
+                row of small labeled fields — date, time, duration, count/student
+                — instead of a separate stacked row per field. */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "flex-end", marginBottom: 10 }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase" }}>
+                Date
+                <input type="date" value={slotForm.date} onChange={e => setSlotForm({ ...slotForm, date: e.target.value })} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase" }}>
+                Time
+                <input type="time" value={slotForm.time} onChange={e => setSlotForm({ ...slotForm, time: e.target.value })} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase" }}>
+                Duration (min)
+                <input type="number" placeholder="15" value={slotForm.duration} onChange={e => setSlotForm({ ...slotForm, duration: e.target.value })} style={{ width: 90, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+              </label>
+              {slotForm.mode === "open" && (
+                <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase" }}>
+                  How many slots
+                  <input type="number" placeholder="1" value={slotForm.count} onChange={e => setSlotForm({ ...slotForm, count: e.target.value })} style={{ width: 90, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+                </label>
+              )}
+              {slotForm.mode === "allocated" && (
+                <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", flex: "1 1 180px" }}>
+                  Student
+                  <select value={slotForm.student_id} onChange={e => setSlotForm({ ...slotForm, student_id: e.target.value })} style={{ padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }}>
+                    <option value="">Select student…</option>
+                    {students.map(s => <option key={s.user_id} value={s.user_id}>{s.full_name || s.email}</option>)}
+                  </select>
+                </label>
+              )}
+              <button onClick={createSlots} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 700, fontSize: 14, cursor: "pointer", height: 38 }}>
+                <Plus size={14} style={{ verticalAlign: -2 }} /> Add
+              </button>
             </div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-              <input type="number" placeholder="Duration (min)" value={slotForm.duration} onChange={e => setSlotForm({ ...slotForm, duration: e.target.value })} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }} />
-              {slotForm.mode === "open" && <input type="number" placeholder="How many slots" value={slotForm.count} onChange={e => setSlotForm({ ...slotForm, count: e.target.value })} style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }} />}
-            </div>
-            {slotForm.mode === "allocated" && (
-              <select value={slotForm.student_id} onChange={e => setSlotForm({ ...slotForm, student_id: e.target.value })} style={{ width: "100%", padding: 10, borderRadius: 8, border: "1px solid #e5e7eb", marginBottom: 8 }}>
-                <option value="">Select student…</option>
-                {students.map(s => <option key={s.user_id} value={s.user_id}>{s.full_name || s.email}</option>)}
-              </select>
-            )}
-            <button onClick={createSlots} style={{ background: G, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-              <Plus size={14} style={{ verticalAlign: -2 }} /> Add
-            </button>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1031,7 +1123,7 @@ const TeacherOralExams = () => {
                     </select>
                   )}
                   <input
-                    placeholder="Stage name (e.g. Recitation)"
+                    placeholder={`Stage name — defaults to "Stage ${((sets.find((s: any) => s.id === (topStageSetId || sets[0].id))?.oral_question_set_stages || []).length) + 1}"`}
                     value={newStageTitle[topStageSetId || sets[0].id] || ""}
                     onChange={e => setNewStageTitle({ ...newStageTitle, [topStageSetId || sets[0].id]: e.target.value })}
                     style={{ flex: 1, padding: 10, borderRadius: 8, border: "1px solid #e5e7eb" }}
@@ -1101,6 +1193,24 @@ const TeacherOralExams = () => {
                   </div>
                 </div>
 
+                {/* Marks allocated across this set's stages, against the exam's
+                    overall total (test = /30, exam = /70). Purely a running
+                    guide for the teacher — nothing blocks submission if it
+                    doesn't add up, stages left blank just fall back to
+                    proportional scoring off raw question points. */}
+                {stages.length > 0 && (() => {
+                  const target = selectedExam?.type === "test" ? 30 : 70;
+                  const allocated = stages.reduce((s: number, st: any) => s + (Number(st.max_points) || 0), 0);
+                  const allSet = stages.every((st: any) => st.max_points !== null && st.max_points !== undefined);
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 700, padding: "6px 10px", borderRadius: 8, marginBottom: 10, background: allSet && allocated === target ? "#f0fdf4" : "#fffbeb", color: allSet && allocated === target ? "#16a34a" : "#92702c" }}>
+                      <Hash size={12} /> Stage marks: {allocated} / {target}
+                      {allSet && allocated !== target && " — doesn't add up to the exam total yet"}
+                      {!allSet && " (unset stages default to proportional scoring)"}
+                    </div>
+                  );
+                })()}
+
                 {/* Stages */}
                 {stages.map((stage: any) => (
                   <StageBlock
@@ -1109,8 +1219,11 @@ const TeacherOralExams = () => {
                     labelAr={stage.title_ar}
                     items={itemsByStage[stage.id] || []}
                     timeLimitSeconds={stage.time_limit_seconds}
+                    maxPoints={stage.max_points}
                     onDeleteStage={() => deleteStage(stage.id)}
                     onSetTimeLimit={(minutes: string) => setStageTimeLimit(stage.id, minutes)}
+                    onRename={(title: string) => renameStage(stage.id, title)}
+                    onSetMaxPoints={(v: string) => setStageMaxPoints(stage.id, v)}
                     onDeleteItem={deleteItem}
                     newQ={newQ[`${set.id}::${stage.id}`]}
                     setNewQ={(v: any) => setNewQ({ ...newQ, [`${set.id}::${stage.id}`]: v })}
@@ -1149,7 +1262,7 @@ const TeacherOralExams = () => {
                 )}
 
                 <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                  <input placeholder="New stage name (e.g. Tajweed Rules)" value={newStageTitle[set.id] || ""} onChange={e => setNewStageTitle({ ...newStageTitle, [set.id]: e.target.value })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+                  <input placeholder={`New stage name — defaults to "Stage ${(set.oral_question_set_stages || []).length + 1}"`} value={newStageTitle[set.id] || ""} onChange={e => setNewStageTitle({ ...newStageTitle, [set.id]: e.target.value })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
                   <button onClick={() => addStage(set.id)} style={{ display: "flex", alignItems: "center", gap: 4, background: "#f3f4f6", color: "#374151", border: "1px solid #e5e7eb", borderRadius: 8, padding: "0 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>
                     <Layers size={13} /> Add Stage
                   </button>
@@ -1197,17 +1310,39 @@ const StageCountdown = ({ startedAt, limitSeconds }: { startedAt: string | null 
 
 // A single stage's question list + inline "add question" form (English + optional Arabic).
 const StageBlock = ({
-  label, labelAr, items, timeLimitSeconds, onDeleteStage, onSetTimeLimit, onDeleteItem, newQ, setNewQ, onAdd,
+  label, labelAr, items, timeLimitSeconds, maxPoints, onDeleteStage, onSetTimeLimit, onRename, onSetMaxPoints, onDeleteItem, newQ, setNewQ, onAdd,
   aiOpen, onToggleAi, aiMode, onAiModeChange, aiInput, onAiInputChange, aiCount, onAiCountChange, aiLoading, onAiGenerate,
 }: any) => (
   <div style={{ border: "1px solid #f0f0f0", borderRadius: 10, padding: 12, marginBottom: 10, background: "#fcfcfc" }}>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <Layers size={13} color={GOLD} />
-        <span style={{ fontWeight: 700, fontSize: 13 }}>{label}</span>
+    {/* Settings row — name, time limit, marks, delete all laid out
+        horizontally on one line, same pattern as the written-exam editor,
+        instead of stacked. Wraps on narrow screens. */}
+    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flex: "1 1 160px", minWidth: 0 }}>
+        <Layers size={13} color={GOLD} style={{ flexShrink: 0 }} />
+        {onRename ? (
+          <input
+            defaultValue={label}
+            onBlur={e => onRename(e.target.value)}
+            style={{ fontWeight: 700, fontSize: 13, border: "1px solid transparent", borderBottom: "1px dashed #d1d5db", padding: "2px 0", background: "transparent", minWidth: 0, flex: 1 }}
+          />
+        ) : (
+          <span style={{ fontWeight: 700, fontSize: 13 }}>{label}</span>
+        )}
         {labelAr && <span dir="rtl" style={{ fontSize: 13, color: "#9ca3af", fontFamily: "'Amiri', serif" }}>· {labelAr}</span>}
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        {onSetMaxPoints && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }} title="How many of the exam's overall /30 or /70 this stage is worth. Leave blank to score it proportionally instead.">
+            <span style={{ fontSize: 10, color: "#9ca3af" }}>Marks</span>
+            <input
+              type="number" min={0} step={0.5} placeholder="—"
+              defaultValue={maxPoints ?? ""}
+              onBlur={e => onSetMaxPoints(e.target.value)}
+              style={{ width: 44, padding: "3px 4px", borderRadius: 6, border: "1px solid #e5e7eb", fontSize: 11, textAlign: "center" }}
+            />
+          </div>
+        )}
         {onSetTimeLimit && (
           <div style={{ display: "flex", alignItems: "center", gap: 4 }} title="Time limit for this stage, per student">
             <Clock size={12} color="#9ca3af" />
