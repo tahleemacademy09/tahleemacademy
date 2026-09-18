@@ -233,7 +233,18 @@ const PaymentManagement = () => {
 
   // ── Toggle exempt ───────────────────────────────────────────
   const toggleExempt = async (studentId: string, exempt: boolean) => {
-    await supabase.from("profiles").update({ is_payment_exempt:exempt, payment_status:exempt?"exempt":"unpaid" } as any).eq("user_id",studentId);
+    // On un-exempt, don't blindly stamp "unpaid" — subscription_end_date was
+    // never touched while exempt was on, so it still reflects the student's
+    // real paid/unpaid state. Recompute from it instead of overwriting it.
+    let restoredStatus = "unpaid";
+    if (!exempt) {
+      const student = students.find((s: any) => s.user_id === studentId);
+      const endDate = student?.subscription_end_date;
+      if (endDate && new Date(endDate) >= new Date()) {
+        restoredStatus = "paid";
+      }
+    }
+    await supabase.from("profiles").update({ is_payment_exempt:exempt, payment_status:exempt?"exempt":restoredStatus } as any).eq("user_id",studentId);
     toast({ title: exempt ? t("Marked as exempt 🎓","تم وضع علامة كمعفى 🎓") : t("Exemption removed","تمت إزالة الإعفاء") });
     loadData(true);
   };
