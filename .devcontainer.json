@@ -1,0 +1,8 @@
+{
+  "name": "tahleem-android",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/java:1": { "version": "17" },
+    "ghcr.io/devcontainers/features/android-sdk:1": {}
+  }
+}
