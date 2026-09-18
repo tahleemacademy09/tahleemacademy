@@ -58,6 +58,10 @@ const TeacherOralExams = () => {
   const [slots, setSlots] = useState<any[]>([]);
   const [sets, setSets] = useState<any[]>([]);
   const [session, setSession] = useState<any>(null);
+  // Sub-tab within "Manage" — mirrors the written-exam editor's
+  // Settings/Proctoring/Schedule/Questions layout so oral exams feel like
+  // the same product instead of one long stacked page.
+  const [manageSubTab, setManageSubTab] = useState<"settings" | "slots" | "questions">("settings");
 
   const selectedExam = exams.find(e => e.id === selectedExamId);
 
@@ -955,28 +959,80 @@ const TeacherOralExams = () => {
         </div>
       )}
 
-      {tab === "manage" && selectedExamId && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-            <button onClick={() => setTab("setup")} style={{ background: "none", border: "none", color: G, fontWeight: 700, fontSize: 13, cursor: "pointer", padding: 0 }}>
-              ← Back to Exams
-            </button>
-            <h2 style={{ fontSize: 16, fontWeight: 800, color: G, margin: 0 }}>{selectedExam?.title}</h2>
-            <button
-              onClick={() => examReadyForLive && goLive(selectedExamId)}
-              disabled={!examReadyForLive}
-              title={examNotReadyReason}
-              style={{ display: "flex", alignItems: "center", gap: 6, background: examReadyForLive ? "#dc2626" : "#e5e7eb", color: examReadyForLive ? "#fff" : "#9ca3af", border: "none", borderRadius: 10, padding: "8px 14px", fontWeight: 800, fontSize: 13, cursor: examReadyForLive ? "pointer" : "not-allowed" }}
-            >
-              <Radio size={14} /> Go Live
-            </button>
+      {tab === "manage" && selectedExamId && (() => {
+        const activeSlotsCount = slots.filter(s => s.status !== "cancelled").length;
+        const totalStages = sets.reduce((s: number, set: any) => s + (set.oral_question_set_stages?.length || 0), 0);
+        const totalQuestions = sets.reduce((s: number, set: any) => s + (set.oral_question_set_items?.length || 0), 0);
+        const manageTabs: { id: "settings" | "slots" | "questions"; label: string; icon: any }[] = [
+          { id: "settings", label: "Settings", icon: Settings },
+          { id: "slots", label: "Slots", icon: Clock },
+          { id: "questions", label: "Questions", icon: ListChecks },
+        ];
+        return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20, margin: "-16px -16px 0", paddingTop: 0 }}>
+          {/* ── Sticky header — same pattern as the written-exam editor: dark
+              green gradient, back button, title, stat pills, primary action ── */}
+          <div style={{ position: "sticky", top: 0, zIndex: 20, background: `linear-gradient(135deg, ${G} 0%, #083320 100%)`, padding: "14px 16px 0", boxShadow: "0 4px 14px rgba(0,0,0,0.15)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                <button onClick={() => setTab("setup")} style={{ background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10, padding: "8px 12px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", flexShrink: 0 }}>
+                  ←
+                </button>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Mic size={15} color={GOLD} style={{ flexShrink: 0 }} />
+                    <h1 style={{ fontSize: 16, fontWeight: 900, color: "#fff", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Edit Oral Exam</h1>
+                  </div>
+                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", margin: "2px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selectedExam?.title}</p>
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, overflowX: "auto" }}>
+                {[
+                  { label: "Slots", value: activeSlotsCount, color: GOLD },
+                  { label: "Stages", value: totalStages, color: "#93c5fd" },
+                  { label: "Q's", value: totalQuestions, color: "#86efac" },
+                ].map((stat, i) => (
+                  <div key={i} style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "6px 12px", textAlign: "center", minWidth: 50 }}>
+                    <div style={{ fontSize: 15, fontWeight: 900, lineHeight: 1, color: stat.color }}>{stat.value}</div>
+                    <div style={{ fontSize: 9, color: "rgba(255,255,255,0.6)", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, marginTop: 2 }}>{stat.label}</div>
+                  </div>
+                ))}
+                <button
+                  onClick={() => examReadyForLive && goLive(selectedExamId)}
+                  disabled={!examReadyForLive}
+                  title={examNotReadyReason}
+                  style={{ display: "flex", alignItems: "center", gap: 6, background: examReadyForLive ? "#dc2626" : "rgba(255,255,255,0.15)", color: examReadyForLive ? "#fff" : "rgba(255,255,255,0.5)", border: "none", borderRadius: 10, padding: "9px 14px", fontWeight: 800, fontSize: 13, cursor: examReadyForLive ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}
+                >
+                  <Radio size={14} /> Go Live
+                </button>
+              </div>
+            </div>
+
+            {/* Sub-tab bar */}
+            <div style={{ display: "flex", gap: 2 }}>
+              {manageTabs.map(mt => (
+                <button key={mt.id} onClick={() => setManageSubTab(mt.id)} style={{
+                  flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                  padding: "10px 8px", border: "none", borderRadius: "10px 10px 0 0", cursor: "pointer",
+                  fontWeight: 700, fontSize: 12, position: "relative",
+                  background: manageSubTab === mt.id ? "#fafafa" : "transparent",
+                  color: manageSubTab === mt.id ? G : "rgba(255,255,255,0.7)",
+                }}>
+                  <mt.icon size={13} /> {mt.label}
+                  {manageSubTab === mt.id && <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 3, background: GOLD }} />}
+                </button>
+              ))}
+            </div>
           </div>
+
+          <div style={{ padding: "0 16px 20px", display: "flex", flexDirection: "column", gap: 20 }}>
           {!examReadyForLive && (
-            <p style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 10px", margin: "-12px 0 0" }}>
+            <p style={{ fontSize: 12, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "6px 10px", margin: 0 }}>
               Not ready to go live yet — {examNotReadyReason?.toLowerCase()}.
             </p>
           )}
 
+          {manageSubTab === "settings" && (<>
           {/* Draft/publish + audience — this exam is invisible to students
               (no open slots bookable, individually-allocated slots still
               notify their student directly regardless) until published. */}
@@ -1024,12 +1080,9 @@ const TeacherOralExams = () => {
               )}
             </div>
           </div>
-        </div>
-      )}
+          </>)}
 
-      {tab === "manage" && selectedExamId && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <h3 style={{ fontSize: 13, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, margin: 0 }}>Time Slots</h3>
+          {manageSubTab === "slots" && (<>
           <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>
             <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Add time slot(s)</h3>
             <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -1094,12 +1147,9 @@ const TeacherOralExams = () => {
             ))}
             {slots.length === 0 && <p style={{ color: "#9ca3af", fontSize: 13, textAlign: "center" }}>No slots yet.</p>}
           </div>
-        </div>
-      )}
+          </>)}
 
-      {tab === "manage" && selectedExamId && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <h3 style={{ fontSize: 13, fontWeight: 800, color: "#9ca3af", textTransform: "uppercase", letterSpacing: 0.5, margin: 0 }}>Question Sets</h3>
+          {manageSubTab === "questions" && (<>
           <div style={{ background: "#fff", border: "1px solid #e5e7eb", borderRadius: 14, padding: 16 }}>
             {sets.length === 0 ? (
               <>
@@ -1271,8 +1321,11 @@ const TeacherOralExams = () => {
             );
           })}
           {sets.length === 0 && <p style={{ color: "#9ca3af", fontSize: 13, textAlign: "center" }}>No question sets yet.</p>}
+          </>)}
+          </div>
         </div>
-      )}
+        );
+      })()}
 
     </div>
   );
