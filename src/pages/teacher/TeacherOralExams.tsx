@@ -29,7 +29,7 @@ import {
   Loader2, ChevronRight, ListChecks, PhoneOff, Shuffle, Send,
   Menu, X, Wand2, ClipboardPaste, Layers, Hash, SkipForward, Settings,
   Eye, EyeOff, Users, GraduationCap, UserCheck, ShieldCheck, Star,
-  Play, Pause, Square, AlertTriangle,
+  Play, Pause, Square, AlertTriangle, Save,
 } from "lucide-react";
 
 // Same reused fix as the student side (see StudentOralExams.tsx) — a
@@ -323,6 +323,91 @@ const TeacherOralExams = () => {
   const [stageAiInput, setStageAiInput] = useState<Record<string, string>>({});
   const [stageAiCount, setStageAiCount] = useState<Record<string, string>>({});
   const [stageAiLoading, setStageAiLoading] = useState<Record<string, boolean>>({});
+
+  // ── Save all drafts ────────────────────────────────────────────────────
+  // Questions typed into a stage's form only exist in local state until the
+  // little "+" is tapped — leave the page first and they were gone, and the
+  // room (which reads straight from the database) never saw them. "Save"
+  // commits every pending draft in one go and reports exactly what landed.
+  const [savingSet, setSavingSet] = useState<Record<string, boolean>>({});
+  const hasDraftText = (q?: { text?: string; text_ar?: string }) => !!(q?.text?.trim() || q?.text_ar?.trim());
+  const pendingDraftsFor = (setId: string) =>
+    Object.entries(newQ).filter(([k, q]) => k.startsWith(`${setId}::`) && hasDraftText(q));
+  const totalPendingDrafts = Object.values(newQ).filter(hasDraftText).length;
+
+  // Browser/tab-close guard while anything typed is still unsaved.
+  useEffect(() => {
+    if (!totalPendingDrafts) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [totalPendingDrafts]);
+
+  const saveSetQuestions = async (setId: string) => {
+    if (savingSet[setId]) return;
+    setSavingSet(prev => ({ ...prev, [setId]: true }));
+    try {
+      // Commit whichever Marks / time / stage-name field is still focused
+      // (those save on blur) before reading anything.
+      (document.activeElement as HTMLElement | null)?.blur?.();
+      await new Promise(r => setTimeout(r, 250));
+
+      const drafts = pendingDraftsFor(setId);
+      const set = sets.find(s => s.id === setId);
+      const countByStage: Record<string, number> = {};
+      (set?.oral_question_set_items || []).forEach((it: any) => {
+        const k = it.stage_id || "none";
+        countByStage[k] = (countByStage[k] || 0) + 1;
+      });
+
+      const savedKeys: string[] = [];
+      let failed = 0;
+      let lastError = "";
+      for (const [key, q] of drafts) {
+        const stageKey = key.split("::")[1] || "none";
+        const stageId = stageKey === "none" ? null : stageKey;
+        const sortOrder = countByStage[stageKey] || 0;
+        const { data: question, error } = await supabase.from("exam_questions").insert({
+          exam_id: selectedExamId, question_type: "essay", question_text: q.text?.trim() || "",
+          question_text_ar: q.text_ar?.trim() || null, points: Number(q.points) || 1, sort_order: sortOrder,
+        } as any).select().single();
+        if (error || !question) { failed++; lastError = error?.message || "Insert failed"; continue; }
+        const { error: itemErr } = await supabase.from("oral_question_set_items" as any).insert({
+          set_id: setId, question_id: question.id, stage_id: stageId, sort_order: sortOrder,
+        });
+        if (itemErr) {
+          // Don't leave an orphan question behind that no set points to.
+          await supabase.from("exam_questions").delete().eq("id", question.id);
+          failed++; lastError = itemErr.message; continue;
+        }
+        countByStage[stageKey] = sortOrder + 1;
+        savedKeys.push(key);
+      }
+
+      // Only clear what actually saved — anything that failed stays typed.
+      if (savedKeys.length) {
+        setNewQ(prev => { const next = { ...prev }; savedKeys.forEach(k => delete next[k]); return next; });
+      }
+      await loadExamData();
+
+      if (failed > 0) {
+        toast({
+          title: `Saved ${savedKeys.length}, but ${failed} failed`,
+          description: `${lastError} — the failed question${failed > 1 ? "s are" : " is"} still in the form, tap Save again.`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Saved",
+          description: savedKeys.length
+            ? `${savedKeys.length} new question${savedKeys.length > 1 ? "s" : ""} saved — they're in the exam room now.`
+            : "Everything is saved — nothing pending.",
+        });
+      }
+    } finally {
+      setSavingSet(prev => ({ ...prev, [setId]: false }));
+    }
+  };
 
   const createSet = async () => {
     if (!newSetTitle.trim() || !selectedExamId) return;
@@ -1510,6 +1595,30 @@ const TeacherOralExams = () => {
                     <Layers size={13} /> Add Stage
                   </button>
                 </div>
+
+                {/* Save — commits every typed-but-not-yet-added question in
+                    this set so nothing is lost and it all shows in the room. */}
+                {(() => {
+                  const pending = pendingDraftsFor(set.id).length;
+                  const saving = !!savingSet[set.id];
+                  return (
+                    <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px dashed #e5e7eb" }}>
+                      {pending > 0 && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: "#92702c", background: "#fffbeb", borderRadius: 8, padding: "6px 10px", marginBottom: 8 }}>
+                          <AlertTriangle size={13} /> {pending} unsaved question{pending > 1 ? "s" : ""} — not in the room until you save
+                        </div>
+                      )}
+                      <button
+                        onClick={() => saveSetQuestions(set.id)}
+                        disabled={saving}
+                        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: G, color: "#fff", border: "none", borderRadius: 10, padding: "12px 16px", fontWeight: 800, fontSize: 14, cursor: saving ? "wait" : "pointer", opacity: saving ? 0.7 : 1 }}
+                      >
+                        {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                        {saving ? "Saving…" : pending > 0 ? `Save (${pending} unsaved)` : "Save"}
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
@@ -1665,10 +1774,10 @@ const StageBlock = ({
 
     <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
       <input placeholder="Question (English)" value={newQ?.text || ""} onChange={e => setNewQ({ text: e.target.value, text_ar: newQ?.text_ar || "", points: newQ?.points || "1" })} style={{ padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
-      <div style={{ display: "flex", gap: 8 }}>
-        <input dir="rtl" placeholder="السؤال (عربي) — اختياري" value={newQ?.text_ar || ""} onChange={e => setNewQ({ text: newQ?.text || "", text_ar: e.target.value, points: newQ?.points || "1" })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13, fontFamily: "'Amiri', serif" }} />
-        <input type="number" placeholder="Pts" value={newQ?.points || "1"} onChange={e => setNewQ({ text: newQ?.text || "", text_ar: newQ?.text_ar || "", points: e.target.value })} style={{ width: 60, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
-        <button onClick={onAdd} style={{ background: GOLD, color: "#fff", border: "none", borderRadius: 8, padding: "0 14px", fontWeight: 700, cursor: "pointer" }}>+</button>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <input dir="rtl" placeholder="السؤال (عربي) — اختياري" value={newQ?.text_ar || ""} onChange={e => setNewQ({ text: newQ?.text || "", text_ar: e.target.value, points: newQ?.points || "1" })} style={{ flex: "1 1 220px", minWidth: 0, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13, fontFamily: "'Amiri', serif" }} />
+        <input type="number" placeholder="Pts" value={newQ?.points || "1"} onChange={e => setNewQ({ text: newQ?.text || "", text_ar: newQ?.text_ar || "", points: e.target.value })} style={{ width: 60, flexShrink: 0, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 13 }} />
+        <button onClick={onAdd} style={{ flexShrink: 0, background: GOLD, color: "#fff", border: "none", borderRadius: 8, padding: "0 14px", minHeight: 36, fontWeight: 700, cursor: "pointer" }}>+</button>
       </div>
     </div>
   </div>
