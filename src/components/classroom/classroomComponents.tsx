@@ -1156,16 +1156,16 @@ export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) =
 };
 
 /* ══ ORAL EXAM SIGNALS ══
-   A teacher's "Error" tap during a student's oral-exam turn needs to reach
-   the student's screen as close to instantly as possible — noticeably
+   A teacher's Error/Stop tap during a student's oral-exam turn needs to
+   reach the student's screen as close to instantly as possible — noticeably
    faster than round-tripping through a DB write + postgres_changes
    subscription. Both sides are already connected to the same LiveKit room
    for that turn, so this reuses the exact data-channel pattern above
    (force_mute etc.) instead: publishData() on the teacher's tap, a
-   DataReceived listener on the student's side, nothing persisted. Timer
-   start/stop, which DOES need to survive a refresh/reconnect, still goes
-   through the RPCs (oral_exam_sessions + its existing realtime
-   subscription) — this is only for the ephemeral "flash it now" signal. */
+   DataReceived listener on the student's side, nothing persisted. Neither
+   button touches the stage timer — Stop is a signal like Error, not a
+   pause; only the separate Start/Resume control (via RPC, since that DOES
+   need to survive a refresh) actually starts the countdown running. */
 export const sendOralSignal = (room: any, type: string, payload?: Record<string, any>) => {
   try {
     room?.localParticipant?.publishData(
@@ -1175,23 +1175,59 @@ export const sendOralSignal = (room: any, type: string, payload?: Record<string,
   } catch {}
 };
 
+// Two distinct short tones, synthesised with the Web Audio API so there's
+// no sound file to bundle/host — a bright two-note bell for Error, a
+// single flatter buzz for Stop. Safe to call on either side (teacher gets
+// the same confirmation tone their own tap produced; the student's copy
+// plays from OralSignalListener below on receipt).
+export const playOralSignalTone = (kind: "error" | "stop") => {
+  try {
+    const AudioCtx: typeof AudioContext | undefined = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+    const ring = (freq: number, start: number, dur: number, type: OscillatorType, peak: number) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, now + start);
+      gain.gain.exponentialRampToValueAtTime(peak, now + start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now + start);
+      osc.stop(now + start + dur + 0.02);
+    };
+    if (kind === "error") {
+      // Bell ring — two quick bright chimes, like a call bell.
+      ring(1046.5, 0, 0.35, "sine", 0.35);
+      ring(1318.5, 0.12, 0.35, "sine", 0.3);
+    } else {
+      // Stop ring — a single lower, flatter buzz, clearly not the bell.
+      ring(220, 0, 0.5, "square", 0.22);
+    }
+    window.setTimeout(() => { try { ctx.close(); } catch {} }, 900);
+  } catch {}
+};
+
 // Mounted on the student's side only (inside their oral-exam <LiveKitRoom>).
-// Shows a full-screen red flash the instant the teacher's "Error" tap
-// arrives, then clears itself on its own a beat later — the teacher never
-// has to send a second signal to turn it off.
-export const OralErrorFlashListener = () => {
+// Shows a full-screen flash the instant the teacher's Error or Stop tap
+// arrives (with its matching tone), then clears itself on its own a beat
+// later — the teacher never has to send a second signal to turn it off.
+export const OralSignalListener = () => {
   const room = useRoomContext();
-  const [show, setShow] = useState(false);
+  const [signal, setSignal] = useState<"oral_error" | "oral_stop" | null>(null);
   useEffect(() => {
     if (!room) return;
     const timeoutRef = { current: null as number | null };
     const h = (payload: Uint8Array) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload));
-        if (msg.type === "oral_error") {
+        if (msg.type === "oral_error" || msg.type === "oral_stop") {
           if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
-          setShow(true);
-          timeoutRef.current = window.setTimeout(() => setShow(false), 1000);
+          playOralSignalTone(msg.type === "oral_error" ? "error" : "stop");
+          setSignal(msg.type);
+          timeoutRef.current = window.setTimeout(() => setSignal(null), 1000);
         }
       } catch {}
     };
@@ -1202,20 +1238,25 @@ export const OralErrorFlashListener = () => {
     };
   }, [room]);
 
-  if (!show) return null;
+  if (!signal) return null;
+  const isError = signal === "oral_error";
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 2000, pointerEvents: "none",
-      background: "rgba(220,38,38,0.9)", display: "flex", alignItems: "center", justifyContent: "center",
+      background: isError ? "rgba(220,38,38,0.9)" : "rgba(180,83,9,0.92)",
+      display: "flex", alignItems: "center", justifyContent: "center",
       animation: "oral-error-flash-in 0.1s ease-out",
     }}>
       <style>{`@keyframes oral-error-flash-in { from { opacity: 0; } to { opacity: 1; } }`}</style>
       <span style={{ color: "#fff", fontWeight: 900, fontSize: "min(11vw, 60px)", textAlign: "center", padding: "0 24px", textShadow: "0 2px 10px rgba(0,0,0,0.45)", letterSpacing: 0.5 }}>
-        ✕ Correction needed
+        {isError ? "✕ Correction needed" : "■ Stop"}
       </span>
     </div>
   );
 };
+
+// Old name kept working in case anything else still imports it directly.
+export const OralErrorFlashListener = OralSignalListener;
 
 // ── Waiting-room banner (host side) ──────────────────────────────────────
 // A blocked student trying to rejoin no longer gets a flat rejection —
