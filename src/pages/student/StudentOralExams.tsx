@@ -17,10 +17,10 @@ import { useToast } from "@/hooks/use-toast";
 import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { CameraUnmirrorEngine, RoomSettingsModal } from "@/components/classroom/classroomComponents";
+import { CameraUnmirrorEngine, RoomSettingsModal, OralErrorFlashListener } from "@/components/classroom/classroomComponents";
 import {
   Mic, Clock, Loader2, CheckCircle2, Shuffle, Hourglass, CalendarClock,
-  Hash, Minimize2, Maximize2, X, LogOut, Settings,
+  Hash, Minimize2, Maximize2, X, LogOut, Settings, Pause,
 } from "lucide-react";
 
 // Same fix already used in the general live classroom (ClassroomView) for
@@ -53,26 +53,36 @@ const fmtTime = (iso: string) =>
 // Room from the same shared start timestamp + per-stage limit. Per design:
 // it never auto-advances — just flashes red at 0; the teacher moves things
 // along manually.
-const StageCountdown = ({ startedAt, limitSeconds }: { startedAt: string | null | undefined; limitSeconds: number | null | undefined }) => {
+// Mirrors the teacher's Control Room copy of this component (see
+// TeacherOralExams.tsx) — same manual start/stop semantics, computed off
+// the same shared session fields.
+const StageCountdown = ({ startedAt, limitSeconds, elapsedSeconds, running }: {
+  startedAt: string | null | undefined; limitSeconds: number | null | undefined;
+  elapsedSeconds?: number | null; running?: boolean;
+}) => {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!startedAt || !limitSeconds) return;
+    if (!running || !startedAt || !limitSeconds) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [startedAt, limitSeconds]);
-  if (!startedAt || !limitSeconds) return null;
-  const elapsed = Math.floor((now - new Date(startedAt).getTime()) / 1000);
-  const remaining = Math.max(0, limitSeconds - elapsed);
+  }, [running, startedAt, limitSeconds]);
+  if (!limitSeconds) return null;
+  const banked = elapsedSeconds || 0;
+  const elapsed = running && startedAt ? banked + (now - new Date(startedAt).getTime()) / 1000 : banked;
+  const remaining = Math.max(0, Math.ceil(limitSeconds - elapsed));
   const m = Math.floor(remaining / 60), s = remaining % 60;
   const expired = remaining === 0;
+  const notStarted = !running && banked === 0;
+  const stopped = !running && banked > 0 && !expired;
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 900, fontSize: 12,
-      color: expired ? "#fff" : remaining <= 10 ? "#f87171" : "#e5e7eb",
+      color: expired ? "#fff" : notStarted ? "#9ca3af" : stopped ? "#fbbf24" : remaining <= 10 ? "#f87171" : "#e5e7eb",
       background: expired ? "#dc2626" : "transparent",
       padding: expired ? "3px 10px" : 0, borderRadius: 20,
     }}>
-      <Clock size={12} /> {m}:{String(s).padStart(2, "0")}
+      {stopped ? <Pause size={12} /> : <Clock size={12} />} {m}:{String(s).padStart(2, "0")}
+      {notStarted && <span style={{ fontWeight: 700, fontSize: 9, textTransform: "uppercase" }}>· not started</span>}
     </span>
   );
 };
@@ -370,7 +380,7 @@ const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawi
               {(drawnStages.length > 1 || activeStage?.time_limit_seconds) && (
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
                   {drawnStages.length > 1 && <p style={{ fontSize: 10, fontWeight: 800, color: "#9ca3af" }}>Round {roundIdx >= 0 ? roundIdx + 1 : 1} of {drawnStages.length}</p>}
-                  <StageCountdown startedAt={session?.current_stage_started_at} limitSeconds={activeStage?.time_limit_seconds} />
+                  <StageCountdown startedAt={session?.current_stage_started_at} limitSeconds={activeStage?.time_limit_seconds} elapsedSeconds={session?.stage_elapsed_seconds} running={!!session?.stage_timer_running} />
                 </div>
               )}
               {activeStage?.stage_title && (
@@ -409,6 +419,7 @@ const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawi
             <VideoConference />
             <RoomAudioRenderer />
             <OralRoomSettings />
+            <OralErrorFlashListener />
           </LiveKitRoom>
         </div>
 
