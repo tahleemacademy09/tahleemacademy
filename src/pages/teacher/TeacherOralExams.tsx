@@ -21,14 +21,33 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { useAcademicLevels } from "@/hooks/useAcademicLevels";
-import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
+import { LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext } from "@livekit/components-react";
 import "@livekit/components-styles";
+import { CameraUnmirrorEngine, RoomSettingsModal } from "@/components/classroom/classroomComponents";
 import {
   Mic, Plus, Trash2, Clock, Radio, CheckCircle2, XCircle,
   Loader2, ChevronRight, ListChecks, PhoneOff, Shuffle, Send,
   Menu, X, Wand2, ClipboardPaste, Layers, Hash, SkipForward, Settings,
-  Eye, EyeOff, Users, GraduationCap, UserCheck, ShieldCheck,
+  Eye, EyeOff, Users, GraduationCap, UserCheck, ShieldCheck, Star,
 } from "lucide-react";
+
+// Same reused fix as the student side (see StudentOralExams.tsx) — a
+// mirrored raw camera feed is baked into what's published, so a teacher
+// whose own camera has this driver quirk needs the same opt-in fix for
+// students to see them correctly, not just the other way around.
+const OralRoomSettingsButton = () => {
+  const room = useRoomContext();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <CameraUnmirrorEngine />
+      <button onClick={() => setOpen(true)} style={{ position: "absolute", top: 56, right: 14, zIndex: 30, pointerEvents: "auto", background: "rgba(255,255,255,0.16)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", cursor: "pointer", backdropFilter: "blur(6px)" }} title="Settings — camera looks backwards?">
+        <Settings size={15} />
+      </button>
+      {open && <RoomSettingsModal onClose={() => setOpen(false)} room={room} />}
+    </>
+  );
+};
 
 const G = "#064E3B";
 const GM = "#075E54";
@@ -662,7 +681,19 @@ const TeacherOralExams = () => {
         return next;
       });
     });
-  }, [currentSlot?.drawn_set_id, currentSlot?.id, session?.current_stage_id]);
+    // BUG FIX ("doesn't show the question until refresh"): the realtime
+    // subscription below on oral_exam_slots already fires loadExamData() the
+    // instant the student draws their stage question (draw_oral_stage_question
+    // writes it into slots.drawn_question_ids), and that does refresh `slots`
+    // — but `slots` reloading gives `currentSlot` a brand-new object
+    // reference with the SAME primitive drawn_set_id/id/current_stage_id
+    // values, so this effect's dependency array never actually changed and
+    // React never re-ran it. Depending on the drawn_question_ids payload
+    // itself (stringified, since it's a jsonb object) is what makes "the
+    // student just drew their question for this stage" a real dependency
+    // change, so this now refetches the instant that happens instead of
+    // only on the next manual reload.
+  }, [currentSlot?.drawn_set_id, currentSlot?.id, session?.current_stage_id, JSON.stringify(currentSlot?.drawn_question_ids)]);
 
   const submitScore = async () => {
     if (!currentSlot) return;
@@ -706,9 +737,23 @@ const TeacherOralExams = () => {
     return (
       <div style={{ position: "fixed", inset: 0, height: "100dvh", width: "100vw", background: "#0a0a0a", overflow: "hidden", zIndex: 40 }}>
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 20, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: "linear-gradient(rgba(0,0,0,0.65), transparent)", pointerEvents: "none" }}>
-          <button onClick={() => setMenuOpen(true)} style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.16)", border: "none", borderRadius: 20, padding: "8px 14px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", backdropFilter: "blur(6px)" }}>
+          <button onClick={() => setMenuOpen(true)} style={{ pointerEvents: "auto", position: "relative", display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.16)", border: "none", borderRadius: 20, padding: "8px 14px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", backdropFilter: "blur(6px)" }}>
             <Menu size={16} /> Control Room
+            {/* A student waiting to be admitted is easy to miss while the
+                Control Room drawer is closed and the video fills the whole
+                screen — this star badge on the always-visible trigger button
+                makes it obvious without opening the drawer. */}
+            {waitingSlots.length > 0 && (
+              <span style={{
+                position: "absolute", top: -6, right: -6, display: "flex", alignItems: "center", justifyContent: "center",
+                width: 20, height: 20, borderRadius: "50%", background: GOLD, color: "#064E3B",
+                boxShadow: "0 0 0 2px rgba(0,0,0,0.5)", animation: "oral-star-pulse 1.5s infinite",
+              }} title={`${waitingSlots.length} student${waitingSlots.length > 1 ? "s" : ""} waiting to be admitted`}>
+                <Star size={11} fill="#064E3B" />
+              </span>
+            )}
           </button>
+          <style>{`@keyframes oral-star-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.15); } }`}</style>
           {currentSlot && (
             <div style={{ pointerEvents: "auto", display: "flex", alignItems: "center", gap: 6, background: G, color: "#fff", borderRadius: 20, padding: "8px 14px", fontWeight: 800, fontSize: 12, whiteSpace: "nowrap" }}>
               <Hash size={13} /> #{currentSlot.queue_number ?? "—"} · {currentSlot.student_name}
@@ -730,6 +775,7 @@ const TeacherOralExams = () => {
             <LiveKitRoom serverUrl={lkToken.url} token={lkToken.token} connect video={false} audio={false} onDisconnected={() => setJoinedLive(false)} style={{ height: "100%" }}>
               <VideoConference />
               <RoomAudioRenderer />
+              <OralRoomSettingsButton />
             </LiveKitRoom>
           </div>
         )}
