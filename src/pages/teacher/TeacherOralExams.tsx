@@ -23,7 +23,7 @@ import { lockReload, unlockReload } from "@/lib/reloadGuard";
 import { useAcademicLevels } from "@/hooks/useAcademicLevels";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer, useRoomContext } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { CameraUnmirrorEngine, RoomSettingsModal, sendOralSignal } from "@/components/classroom/classroomComponents";
+import { CameraUnmirrorEngine, RoomSettingsModal, sendOralSignal, playOralSignalTone } from "@/components/classroom/classroomComponents";
 import {
   Mic, Plus, Trash2, Clock, Radio, CheckCircle2, XCircle,
   Loader2, ChevronRight, ListChecks, PhoneOff, Shuffle, Send,
@@ -635,19 +635,23 @@ const TeacherOralExams = () => {
     setSession(data);
   };
 
-  const stopStageTimer = async () => {
-    if (!session) return;
-    const { data, error } = await supabase.rpc("stop_oral_stage_timer" as any, { p_session_id: session.id });
-    if (error) return toast({ title: "Could not stop timer", description: error.message, variant: "destructive" });
-    setSession(data);
-  };
-
   // Fires instantly over the live room's data channel (see
-  // OralErrorFlashListener) — nothing written to the database, so there's
-  // no round trip to wait on before the student's screen flashes.
+  // OralSignalListener) — nothing written to the database, so there's no
+  // round trip to wait on before the student's screen flashes. Stop is
+  // deliberately just this too — it does NOT touch the countdown (that's
+  // what startStageTimer above is for); it's purely a "stop what you're
+  // doing" cue for the student, same as Error is a "something's wrong, fix
+  // it" cue. Each plays its own tone.
   const flashError = () => {
     if (!currentSlot) return;
+    playOralSignalTone("error");
     sendOralSignal(liveRoomRef.current, "oral_error");
+  };
+
+  const flashStop = () => {
+    if (!currentSlot) return;
+    playOralSignalTone("stop");
+    sendOralSignal(liveRoomRef.current, "oral_stop");
   };
 
   const setStage = async (stageId: string | null) => {
@@ -735,6 +739,23 @@ const TeacherOralExams = () => {
     // only on the next manual reload.
   }, [currentSlot?.drawn_set_id, currentSlot?.id, session?.current_stage_id, JSON.stringify(currentSlot?.drawn_question_ids)]);
 
+  // BUG FIX ("220% on the grading dashboard"): the input's max={q.points}
+  // is only a soft browser hint, not an enforced limit — a typo (5 instead
+  // of 2) went straight into scores[] with nothing to stop it, which is how
+  // an attempt ended up with earned points greater than the total possible.
+  // Clamping right here, the instant it's typed, means it's simply never
+  // possible to have an out-of-range value in scores[] in the first place —
+  // submitScore()'s own guard below and the server-side check in
+  // submit_oral_score are both just backup, not the primary fix.
+  const setScorePoints = (q: any, raw: string) => {
+    let next = raw;
+    if (raw !== "" && !isNaN(Number(raw))) {
+      const clamped = Math.max(0, Math.min(Number(raw), Number(q.points) || 0));
+      next = String(clamped);
+    }
+    setScores(prev => ({ ...prev, [q.id]: { ...prev[q.id], points: next } }));
+  };
+
   const submitScore = async () => {
     if (!currentSlot) return;
     const unmarked = drawnQuestions.some((q: any) => {
@@ -742,6 +763,8 @@ const TeacherOralExams = () => {
       return v === undefined || v === "" || isNaN(Number(v));
     });
     if (unmarked) return toast({ title: "Award a mark first", description: "Enter points for every question before submitting.", variant: "destructive" });
+    const outOfRange = drawnQuestions.some((q: any) => Number(scores[q.id]?.points) > Number(q.points));
+    if (outOfRange) return toast({ title: "A score is too high", description: "One of the points entered is above that question's max — fix it before submitting.", variant: "destructive" });
     const answers = drawnQuestions.map((q: any) => ({
       question_id: q.id,
       points_awarded: Number(scores[q.id]?.points) || 0,
@@ -913,20 +936,25 @@ const TeacherOralExams = () => {
                               <StageCountdown startedAt={session?.current_stage_started_at} limitSeconds={activeStage?.time_limit_seconds} elapsedSeconds={session?.stage_elapsed_seconds} running={!!session?.stage_timer_running} />
                             </div>
                           )}
-                          {/* Start/Stop the stage's own countdown, and flash an
-                              instant full-screen "Correction needed" alert on
-                              the student's screen — all three work whether or
-                              not this stage even has a time limit set. */}
+                          {/* Start begins the stage's own countdown (via the
+                              RPCs, so it survives a refresh). Stop and Error
+                              are the OTHER kind of button — instant signals
+                              over the live room's data channel with their own
+                              sound, full-screen on the student's side, and
+                              neither one touches the countdown at all. */}
                           <div style={{ display: "flex", gap: 6 }}>
                             {session?.stage_timer_running ? (
-                              <button onClick={stopStageTimer} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, background: "#fff", color: "#b45309", border: "1.5px solid #fcd34d", borderRadius: 8, padding: "7px 8px", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>
-                                <Pause size={12} /> Stop
-                              </button>
+                              <span style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, background: "#f0fdf4", color: G, border: `1.5px solid ${G}`, borderRadius: 8, padding: "7px 8px", fontWeight: 800, fontSize: 11.5 }}>
+                                <Play size={12} /> Running
+                              </span>
                             ) : (
                               <button onClick={startStageTimer} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, background: "#fff", color: G, border: `1.5px solid ${G}`, borderRadius: 8, padding: "7px 8px", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>
-                                <Play size={12} /> {session?.stage_elapsed_seconds ? "Resume" : "Start"}
+                                <Play size={12} /> Start
                               </button>
                             )}
+                            <button onClick={flashStop} title="Flash a full-screen Stop alert on the student's screen — does not pause the timer" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, background: "#fff", color: "#b45309", border: "1.5px solid #fcd34d", borderRadius: 8, padding: "7px 8px", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>
+                              <Square size={12} /> Stop
+                            </button>
                             <button onClick={flashError} title="Flash a full-screen correction alert on the student's screen" style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, background: "#dc2626", color: "#fff", border: "none", borderRadius: 8, padding: "7px 8px", fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>
                               <AlertTriangle size={12} /> Error
                             </button>
@@ -943,7 +971,7 @@ const TeacherOralExams = () => {
                                   <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
                                   {q.question_text_ar && <p dir="rtl" style={{ fontSize: 14, fontFamily: "'Amiri', serif", color: "#374151", marginBottom: 6 }}>{q.question_text_ar}</p>}
                                   <div style={{ display: "flex", gap: 8 }}>
-                                    <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                    <input type="number" placeholder="Points" max={q.points} min={0} value={scores[q.id]?.points || ""} onChange={e => setScorePoints(q, e.target.value)} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
                                     <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
                                   </div>
                                 </div>
@@ -968,7 +996,7 @@ const TeacherOralExams = () => {
                                       <div key={q.id} style={{ marginBottom: 8 }}>
                                         <p style={{ fontSize: 12, fontWeight: 600, marginBottom: 2 }}>{q.question_text} <span style={{ color: "#9ca3af", fontWeight: 400 }}>(max {q.points} pts)</span></p>
                                         <div style={{ display: "flex", gap: 8 }}>
-                                          <input type="number" placeholder="Points" max={q.points} value={scores[q.id]?.points || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], points: e.target.value } })} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
+                                          <input type="number" placeholder="Points" max={q.points} min={0} value={scores[q.id]?.points || ""} onChange={e => setScorePoints(q, e.target.value)} style={{ width: 70, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
                                           <input placeholder="Feedback (optional)" value={scores[q.id]?.feedback || ""} onChange={e => setScores({ ...scores, [q.id]: { ...scores[q.id], feedback: e.target.value } })} style={{ flex: 1, padding: 8, borderRadius: 8, border: "1px solid #e5e7eb", fontSize: 12 }} />
                                         </div>
                                       </div>
