@@ -132,8 +132,13 @@ const ExamResults = () => {
 
   if (!attempt || !exam) return null;
 
-  const totalPts = questions.reduce((s, q) => s + (q.points || 1), 0);
-  const earnedPts = answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0);
+  // Use the teacher-graded, already-scaled score/total that grading actually
+  // wrote to the attempt (e.g. an oral exam scored out of 30 or 70) instead
+  // of re-summing raw question points — those two numbers could disagree,
+  // which is why the score shown here didn't match the percentage next to
+  // it. Only fall back to a raw re-sum if the attempt was never scaled.
+  const totalPts = attempt.total_points != null ? Number(attempt.total_points) : questions.reduce((s, q) => s + (q.points || 1), 0);
+  const earnedPts = attempt.score != null ? Number(attempt.score) : answers.reduce((s, a) => s + (Number(a.points_awarded) || 0), 0);
   const pct = attempt.percentage != null ? Math.round(attempt.percentage) : (totalPts > 0 ? Math.round((earnedPts / totalPts) * 100) : 0);
   const passed = attempt.passed;
   // isGraded = teacher has scored it (graded or released) → internal/status-label use only.

@@ -137,12 +137,34 @@ const StudentOralExams = () => {
 
   const active = mySlots.find(s => ["waiting", "admitted", "in_progress"].includes(s.status));
 
+  const refreshDrawnStages = useCallback(() => {
+    if (!active?.id) return;
+    supabase.rpc("get_my_drawn_oral_stages" as any, { p_slot_id: active.id }).then(({ data }: any) => setDrawnStages(data || []));
+  }, [active?.id]);
+
   // Fetch the drawn question set grouped by stage, and track which stage the
-  // teacher currently has active so we can highlight it.
+  // teacher currently has active so we can highlight it. Re-fetches whenever
+  // the live stage changes — each stage now only has a question once the
+  // student has actually drawn one for it (see onDrawStage below), so the
+  // teacher advancing to a new stage should immediately show "Draw" rather
+  // than a stale question from the previous fetch.
   useEffect(() => {
     if (!active?.drawn_set_id) { setDrawnStages([]); return; }
-    supabase.rpc("get_my_drawn_oral_stages" as any, { p_slot_id: active.id }).then(({ data }: any) => setDrawnStages(data || []));
-  }, [active?.drawn_set_id, active?.id]);
+    refreshDrawnStages();
+  }, [active?.drawn_set_id, active?.id, session?.current_stage_id, refreshDrawnStages]);
+
+  // Draw the ONE question for whatever stage the examiner currently has
+  // live — separate from drawSet above, which only picks the overall
+  // question SET (the alternate version of the exam). Each stage is drawn
+  // on demand, in order, as the teacher advances — never all at once.
+  const [drawingStage, setDrawingStage] = useState(false);
+  const drawStageQuestion = async (slotId: string) => {
+    setDrawingStage(true);
+    const { error } = await supabase.rpc("draw_oral_stage_question" as any, { p_slot_id: slotId });
+    setDrawingStage(false);
+    if (error) return toast({ title: "Could not draw a question", description: error.message, variant: "destructive" });
+    refreshDrawnStages();
+  };
 
   useEffect(() => {
     if (!active?.exam_id) { setSession(null); return; }
@@ -164,17 +186,15 @@ const StudentOralExams = () => {
   }, [active?.exam_id]);
 
   // Lock out the "apply update & reload" flow (see src/lib/reloadGuard.ts)
-  // for as long as the student is actually in the live room. Without this,
-  // minimizing the tab mid-exam and coming back can trigger the pending
-  // service-worker reload the moment the page becomes visible again — which
-  // is exactly what looked like "the oral exam page refreshes when I
-  // minimize and go back". ExamTaking/EntranceExamTaking/LiveClassContext
-  // already do this; the oral exam room never did.
+  // for as long as the student has this page open at all — waiting room,
+  // queue, and the live room alike. Minimizing and coming back was
+  // triggering the pending service-worker reload the moment the page
+  // regained focus, which dropped the student's place in the queue/session
+  // state on every oral exams screen, not just mid-call.
   useEffect(() => {
-    if (!joinedLive) return;
     lockReload("oral-exam");
     return () => unlockReload("oral-exam");
-  }, [joinedLive]);
+  }, []);
 
   if (loading) return <div style={{ padding: 40, textAlign: "center" }}><Loader2 className="animate-spin" style={{ color: G }} /></div>;
 
@@ -189,8 +209,8 @@ const StudentOralExams = () => {
       {active && (
         <ActiveSlotCard
           slot={active} session={session} joinedLive={joinedLive} lkToken={lkToken} drawnStages={drawnStages}
-          drawing={drawing} onJoinWaiting={() => joinWaitingRoom(active.id)} onJoinLive={() => joinLive(active.exams.id)}
-          onDraw={() => drawSet(active.id)} onLeaveLive={() => setJoinedLive(false)}
+          drawing={drawing} drawingStage={drawingStage} onJoinWaiting={() => joinWaitingRoom(active.id)} onJoinLive={() => joinLive(active.exams.id)}
+          onDraw={() => drawSet(active.id)} onDrawStage={() => drawStageQuestion(active.id)} onLeaveLive={() => setJoinedLive(false)}
         />
       )}
 
@@ -293,7 +313,7 @@ const DraggablePip = ({ children }: any) => {
   );
 };
 
-const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawing, onJoinWaiting, onJoinLive, onDraw, onLeaveLive }: any) => {
+const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawing, drawingStage, onJoinWaiting, onJoinLive, onDraw, onDrawStage, onLeaveLive }: any) => {
   const [pipMode, setPipMode] = useState(false);
   const currentStageId = session?.current_stage_id;
 
@@ -340,7 +360,16 @@ const ActiveSlotCard = ({ slot, session, joinedLive, lkToken, drawnStages, drawi
                 </div>
               ))}
               {(activeStage?.questions || []).length === 0 && (
-                <p style={{ fontSize: 12, color: "#9ca3af" }}>Waiting for the examiner to move to this round…</p>
+                currentStageId && activeStage?.stage_id === currentStageId ? (
+                  // The examiner has opened this round — the student draws
+                  // their own question for it now, not before, and not for
+                  // the whole exam up front.
+                  <button onClick={onDrawStage} disabled={drawingStage} style={{ background: GOLD, color: "#fff", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer", width: "100%" }}>
+                    {drawingStage ? <Loader2 size={14} className="animate-spin" /> : <Shuffle size={14} style={{ verticalAlign: -2 }} />} Draw Your Question
+                  </button>
+                ) : (
+                  <p style={{ fontSize: 12, color: "#9ca3af" }}>Waiting for the examiner to move to this round…</p>
+                )
               )}
             </div>
           );
