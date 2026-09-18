@@ -15,7 +15,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { lockReload, unlockReload } from "@/lib/reloadGuard";
-import { notifyOralSlotBooked } from "@/lib/oralExamNotify";
 import { LiveKitRoom, VideoConference, RoomAudioRenderer } from "@livekit/components-react";
 import "@livekit/components-styles";
 import {
@@ -72,7 +71,7 @@ function useCountdown(target: string | null) {
 }
 
 const StudentOralExams = () => {
-  const { user, profile } = useAuth();
+  const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -89,8 +88,8 @@ const StudentOralExams = () => {
   const load = useCallback(async () => {
     if (!user) return;
     const [{ data: mine }, { data: open }] = await Promise.all([
-      supabase.from("oral_exam_slots" as any).select("*, exams(id, title, title_ar, created_by)").eq("student_id", user.id).order("start_at"),
-      supabase.from("oral_exam_slots" as any).select("*, exams(id, title, title_ar, created_by)").eq("status", "open").order("start_at"),
+      supabase.from("oral_exam_slots" as any).select("*, exams(id, title, title_ar)").eq("student_id", user.id).order("start_at"),
+      supabase.from("oral_exam_slots" as any).select("*, exams(id, title, title_ar)").eq("status", "open").order("start_at"),
     ]);
     setMySlots(((mine as any) || []).filter((s: any) => s.status !== "cancelled"));
     setOpenSlots((open as any) || []);
@@ -107,23 +106,14 @@ const StudentOralExams = () => {
     return () => { supabase.removeChannel(channel); clearInterval(interval); };
   }, [user, load]);
 
-  // Self-pick booking of an open slot — notifies the exam's teacher + every
-  // admin so a booking doesn't sit unnoticed (teacher-allocated slots don't
-  // need this: the teacher already knows, they set it up themselves).
+  // book_oral_slot() itself notifies the exam's teacher AND every admin
+  // (SECURITY DEFINER, so it isn't blocked by the notifications RLS that
+  // would otherwise stop a student notifying anyone but an admin) — nothing
+  // extra needed client-side here.
   const bookSlot = async (slotId: string) => {
     const { error } = await supabase.rpc("book_oral_slot" as any, { p_slot_id: slotId });
     if (error) return toast({ title: "Could not book that slot", description: error.message, variant: "destructive" });
     toast({ title: "Slot booked" });
-    const slot = openSlots.find((s: any) => s.id === slotId);
-    if (slot?.exams) {
-      notifyOralSlotBooked({
-        examId: slot.exams.id,
-        examTitle: slot.exams.title,
-        teacherId: slot.exams.created_by,
-        studentName: profile?.full_name,
-        startAt: slot.start_at,
-      });
-    }
     load();
   };
 
