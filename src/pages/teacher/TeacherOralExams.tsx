@@ -15,6 +15,7 @@
 // up in TeacherGrading/GradingPage/StudentExamResults with no extra plumbing.
 // ─────────────────────────────────────────────────────────────────────────
 import { useEffect, useState, useCallback, useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -26,7 +27,7 @@ import {
   Mic, Plus, Trash2, Clock, Radio, CheckCircle2, XCircle,
   Loader2, ChevronRight, ListChecks, PhoneOff, Shuffle, Send,
   Menu, X, Wand2, ClipboardPaste, Layers, Hash, SkipForward, Settings,
-  Eye, EyeOff, Users, GraduationCap, UserCheck,
+  Eye, EyeOff, Users, GraduationCap, UserCheck, ShieldCheck,
 } from "lucide-react";
 
 const G = "#064E3B";
@@ -47,6 +48,11 @@ const TeacherOralExams = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const { data: academicLevels = [] } = useAcademicLevels();
+  const location = useLocation();
+  // Same component serves both routes — /teacher/oral-exams (own exams only)
+  // and /admin/oral-exams (every teacher's oral exams, full control) — same
+  // pattern as ExamEditor sharing /teacher/exams/* and /admin/exams/*.
+  const isAdminContext = location.pathname.startsWith("/admin");
 
   const [tab, setTab] = useState<Tab>("setup");
   const [loading, setLoading] = useState(true);
@@ -54,6 +60,10 @@ const TeacherOralExams = () => {
   const [subjects, setSubjects] = useState<any[]>([]);
   const [students, setStudents] = useState<any[]>([]);
   const [selectedExamId, setSelectedExamId] = useState<string>("");
+  // Creator display names, keyed by user_id — only really needed in admin
+  // context (to show "by <teacher>" on exams that aren't the admin's own),
+  // but harmless to populate either way.
+  const [creatorNames, setCreatorNames] = useState<Record<string, string>>({});
 
   const [slots, setSlots] = useState<any[]>([]);
   const [sets, setSets] = useState<any[]>([]);
@@ -67,35 +77,62 @@ const TeacherOralExams = () => {
 
   const loadExams = useCallback(async () => {
     if (!user) return;
-    // subjects.teacher_id is legacy and barely populated — the real source of
-    // truth for "which subjects does this teacher teach" is subject_timetable,
-    // whose `teacher_ids[]` array also carries co-teachers (see TeacherGrading /
-    // TeacherSubjects for the same pattern). Union both so nothing is missed.
-    const [{ data: owned }, { data: ttSlots }, { data: examsData }] = await Promise.all([
-      supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id),
-      supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids"),
-      supabase.from("exams").select("id, title, title_ar, subject_id, passing_score, exam_mode, type, is_published, oral_assignment_mode, level" as any).eq("exam_mode" as any, "oral").eq("created_by", user.id).order("created_at", { ascending: false }),
-    ]);
 
-    const mySubjectIds = new Set<string>((owned || []).map((s: any) => s.id));
-    (ttSlots || []).forEach((s: any) => {
-      if (s.subject_id && (s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id)))) {
-        mySubjectIds.add(s.subject_id);
+    let subjectsList: any[] = [];
+    let examsData: any[] = [];
+
+    if (isAdminContext) {
+      // Admin sees EVERY oral exam, across every teacher, unfiltered — this
+      // is the whole point of the admin view: oversight + the ability to
+      // step in on any teacher's exam, not just their own.
+      const [{ data: allSubjects }, { data: ex }] = await Promise.all([
+        supabase.from("subjects").select("id, title, title_ar"),
+        supabase.from("exams").select("id, title, title_ar, subject_id, passing_score, exam_mode, type, is_published, oral_assignment_mode, level, created_by" as any).eq("exam_mode" as any, "oral").order("created_at", { ascending: false }),
+      ]);
+      subjectsList = allSubjects || [];
+      examsData = (ex as any) || [];
+    } else {
+      // subjects.teacher_id is legacy and barely populated — the real source of
+      // truth for "which subjects does this teacher teach" is subject_timetable,
+      // whose `teacher_ids[]` array also carries co-teachers (see TeacherGrading /
+      // TeacherSubjects for the same pattern). Union both so nothing is missed.
+      const [{ data: owned }, { data: ttSlots }, { data: ex }] = await Promise.all([
+        supabase.from("subjects").select("id, title, title_ar").eq("teacher_id", user.id),
+        supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids"),
+        supabase.from("exams").select("id, title, title_ar, subject_id, passing_score, exam_mode, type, is_published, oral_assignment_mode, level, created_by" as any).eq("exam_mode" as any, "oral").eq("created_by", user.id).order("created_at", { ascending: false }),
+      ]);
+
+      const mySubjectIds = new Set<string>((owned || []).map((s: any) => s.id));
+      (ttSlots || []).forEach((s: any) => {
+        if (s.subject_id && (s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id)))) {
+          mySubjectIds.add(s.subject_id);
+        }
+      });
+
+      const ownedIds = new Set((owned || []).map((s: any) => s.id));
+      const missingIds = [...mySubjectIds].filter(id => !ownedIds.has(id));
+      let extra: any[] = [];
+      if (missingIds.length > 0) {
+        const { data: extraSubs } = await supabase.from("subjects").select("id, title, title_ar").in("id", missingIds);
+        extra = extraSubs || [];
       }
-    });
-
-    const ownedIds = new Set((owned || []).map((s: any) => s.id));
-    const missingIds = [...mySubjectIds].filter(id => !ownedIds.has(id));
-    let extra: any[] = [];
-    if (missingIds.length > 0) {
-      const { data: extraSubs } = await supabase.from("subjects").select("id, title, title_ar").in("id", missingIds);
-      extra = extraSubs || [];
+      subjectsList = [...(owned || []), ...extra];
+      examsData = (ex as any) || [];
     }
 
-    setSubjects([...(owned || []), ...extra]);
-    setExams((examsData as any) || []);
-    if (!selectedExamId && examsData && examsData.length > 0) setSelectedExamId((examsData as any)[0].id);
-  }, [user, selectedExamId]);
+    setSubjects(subjectsList);
+    setExams(examsData);
+
+    const creatorIds = [...new Set(examsData.map((e: any) => e.created_by).filter(Boolean))];
+    if (creatorIds.length > 0) {
+      const { data: profs } = await supabase.from("profiles").select("user_id, full_name").in("user_id", creatorIds);
+      const byId: Record<string, string> = {};
+      (profs || []).forEach((p: any) => { byId[p.user_id] = p.full_name; });
+      setCreatorNames(byId);
+    }
+
+    if (!selectedExamId && examsData.length > 0) setSelectedExamId(examsData[0].id);
+  }, [user, selectedExamId, isAdminContext]);
 
   const loadStudents = useCallback(async () => {
     const { data: roleRows } = await supabase.from("user_roles").select("user_id").eq("role", "student");
@@ -871,8 +908,8 @@ const TeacherOralExams = () => {
 
   return (
     <div style={{ maxWidth: 880, margin: "0 auto", padding: 16, paddingBottom: 60, position: "relative" }}>
-      <h1 style={{ fontSize: 20, fontWeight: 800, color: G, marginBottom: 4 }}>Oral Exams</h1>
-      <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>Schedule, question sets, and the live viva room.</p>
+      <h1 style={{ fontSize: 20, fontWeight: 800, color: G, marginBottom: 4 }}>{isAdminContext ? "Oral Exams — All Teachers" : "Oral Exams"}</h1>
+      <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 16 }}>{isAdminContext ? "Every teacher's oral exams — schedule, question sets, and the live viva room, all in one place." : "Schedule, question sets, and the live viva room."}</p>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 16, overflowX: "auto" }}>
         {mainNavTabs.length > 1 && mainNavTabs.map(t => (
@@ -904,6 +941,11 @@ const TeacherOralExams = () => {
                       }}>
                         {e.is_published ? <Eye size={10} /> : <EyeOff size={10} />} {e.is_published ? "Published" : "Draft"}
                       </span>
+                      {isAdminContext && (
+                        <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10, fontWeight: 700, color: "#6b46c1", background: "#f5f3ff", borderRadius: 20, padding: "1px 8px" }}>
+                          <UserCheck size={10} /> {creatorNames[e.created_by] || (e.created_by === user?.id ? "You" : "Unknown teacher")}
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: 12, color: "#6b7280" }}>
                       {subjects.find(s => s.id === e.subject_id)?.title || "No subject"}
@@ -982,8 +1024,15 @@ const TeacherOralExams = () => {
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <Mic size={15} color={GOLD} style={{ flexShrink: 0 }} />
                     <h1 style={{ fontSize: 16, fontWeight: 900, color: "#fff", margin: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Edit Oral Exam</h1>
+                    {isAdminContext && (
+                      <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, color: "#064E3B", background: GOLD, borderRadius: 20, padding: "2px 8px", flexShrink: 0, textTransform: "uppercase" }}>
+                        <ShieldCheck size={10} /> Admin
+                      </span>
+                    )}
                   </div>
-                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", margin: "2px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{selectedExam?.title}</p>
+                  <p style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", margin: "2px 0 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {selectedExam?.title}{isAdminContext && selectedExam?.created_by && selectedExam.created_by !== user?.id ? ` · by ${creatorNames[selectedExam.created_by] || "teacher"}` : ""}
+                  </p>
                 </div>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, overflowX: "auto" }}>
