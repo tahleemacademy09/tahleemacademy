@@ -71,6 +71,7 @@ function addManifestQueries(packages, marker) {
   "POST_NOTIFICATIONS",
   "FOREGROUND_SERVICE",
   "FOREGROUND_SERVICE_MICROPHONE",
+  "FOREGROUND_SERVICE_MEDIA_PLAYBACK",
   "WAKE_LOCK",
   "RECORD_AUDIO",
   "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
@@ -82,8 +83,20 @@ addApplicationNode(
 );
 
 addApplicationNode(
-  `<service android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService" android:foregroundServiceType="microphone" />`,
+  `<service android:name="io.capawesome.capacitorjs.plugins.foregroundservice.AndroidForegroundService" android:foregroundServiceType="microphone|mediaPlayback" android:exported="false" />`,
   "AndroidForegroundService",
+);
+
+// FCM defaults for background pushes. Without these, Android shows the
+// launcher icon (a grey square) and files the push under FCM's fallback
+// channel instead of "tahleem_class" (created in src/lib/nativeApp.ts).
+addApplicationNode(
+  `<meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_icon" />`,
+  "default_notification_icon",
+);
+addApplicationNode(
+  `<meta-data android:name="com.google.firebase.messaging.default_notification_channel_id" android:value="tahleem_class" />`,
+  "default_notification_channel_id",
 );
 
 addActivityConfigChanges();
