@@ -56,6 +56,11 @@ async function setupNotificationChannels() {
 
 // ── Push registration & token storage ────────────────────────────────────────
 
+// registerPushToken() runs on every auth event (login, hourly TOKEN_REFRESHED,
+// etc). Listeners must only be attached ONCE, otherwise each auth event stacks
+// another copy — duplicate foreground notifications and duplicate token writes.
+let pushListenersAttached = false;
+
 async function registerPushToken() {
   try {
     await setupNotificationChannels();
@@ -64,7 +69,14 @@ async function registerPushToken() {
       logger.warn("[Native] Push permission denied");
       return;
     }
-    await PushNotifications.register();
+
+    if (pushListenersAttached) {
+      // Listeners already live — just re-register so the current user's token
+      // is (re)saved after a login/logout cycle.
+      await PushNotifications.register();
+      return;
+    }
+    pushListenersAttached = true;
 
     // ── Token received / refreshed ──────────────────────────────────────────
     PushNotifications.addListener("registration", async (token) => {
@@ -136,7 +148,12 @@ async function registerPushToken() {
       if (url) navigateToUrl(url);
     });
 
+    // Register AFTER every listener is attached so the first token event
+    // can never be missed.
+    await PushNotifications.register();
+
   } catch (e) {
+    pushListenersAttached = false;
     logger.warn("[Native] Push setup failed:", e);
   }
 }
