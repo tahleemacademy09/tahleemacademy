@@ -164,8 +164,7 @@ async function registerPushToken() {
       await supabase
         .from("push_subscriptions")
         .delete()
-        .eq("user_id", user.id)
-        .like("endpoint", `native:${platform}:%`);
+        .eq("endpoint", endpoint);
 
       const { error } = await supabase.from("push_subscriptions").insert(row as any);
       if (error) logger.warn("[Native] Token upsert error:", error.message);

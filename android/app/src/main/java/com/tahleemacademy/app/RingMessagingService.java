@@ -47,6 +47,23 @@ public class RingMessagingService extends FirebaseMessagingService {
         PushNotificationsPlugin.onNewToken(token);
     }
 
+    // A direct-into-app deep link via our own custom scheme, handled by
+    // MainActivity's existing appUrlOpen -> navigateToUrl SPA bridge. Never
+    // an http(s) URL here, so Android never routes this to a browser.
+    private PendingIntent buildJoinPendingIntent(String path, int requestCode) {
+        Uri deepLinkUri = Uri.parse("tahleemacademy://ring" + path);
+        Intent joinIntent = new Intent(Intent.ACTION_VIEW, deepLinkUri);
+        joinIntent.setFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK |
+            Intent.FLAG_ACTIVITY_CLEAR_TOP |
+            Intent.FLAG_ACTIVITY_SINGLE_TOP
+        );
+        return PendingIntent.getActivity(
+            this, requestCode, joinIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+    }
+
     private void showRing(Map<String, String> data) {
         String title = data.get("title") != null ? data.get("title") : "Class is live now";
         String message = data.get("message") != null ? data.get("message") : "";
@@ -77,6 +94,10 @@ public class RingMessagingService extends FirebaseMessagingService {
             nm.createNotificationChannel(channel);
         }
 
+        int requestCode = path.hashCode();
+
+        // Full-screen intent: what the OS auto-launches when the phone is
+        // locked/off — shows the incoming-call style screen with Join/Dismiss.
         Intent fullScreenIntent = new Intent(this, IncomingClassRingActivity.class);
         fullScreenIntent.putExtra("title", title);
         fullScreenIntent.putExtra("message", message);
@@ -86,16 +107,15 @@ public class RingMessagingService extends FirebaseMessagingService {
             Intent.FLAG_ACTIVITY_CLEAR_TOP |
             Intent.FLAG_ACTIVITY_SINGLE_TOP
         );
-
-        int requestCode = path.hashCode();
         PendingIntent fullScreenPendingIntent = PendingIntent.getActivity(
             this, requestCode, fullScreenIntent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        // Ring notifications are urgent/singular by nature (an incoming call
-        // shouldn't hide inside a collapsed group) — no setGroup() here,
-        // intentionally, so it always shows on its own.
+        // Plain tap on the notification banner (phone unlocked, full-screen
+        // UI didn't auto-launch): go straight into the class, no extra screen.
+        PendingIntent tapPendingIntent = buildJoinPendingIntent(path, requestCode + 1);
+
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, RING_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_icon)
             .setContentTitle(title)
@@ -103,6 +123,7 @@ public class RingMessagingService extends FirebaseMessagingService {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setContentIntent(tapPendingIntent)
             .setSound(ringUri)
             .setVibrate(vibrationPattern)
             .setAutoCancel(true);
@@ -124,14 +145,8 @@ public class RingMessagingService extends FirebaseMessagingService {
             nm.createNotificationChannel(channel);
         }
 
-        Intent contentIntent = new Intent(this, MainActivity.class);
-        contentIntent.putExtra("path", path);
-        contentIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         int requestCode = (path + "-" + System.currentTimeMillis()).hashCode();
-        PendingIntent contentPendingIntent = PendingIntent.getActivity(
-            this, requestCode, contentIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
-        );
+        PendingIntent contentPendingIntent = buildJoinPendingIntent(path, requestCode);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, GENERAL_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_icon)
@@ -148,9 +163,6 @@ public class RingMessagingService extends FirebaseMessagingService {
         }
     }
 
-    // Builds/updates one collapsing "N new notifications" summary covering
-    // every currently-visible notification in GROUP_KEY, so multiple
-    // arrivals show as a single icon (expandable) instead of one icon each.
     private void updateSummary(NotificationManager nm) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
 
@@ -164,7 +176,7 @@ public class RingMessagingService extends FirebaseMessagingService {
             CharSequence t = sbn.getNotification().extras.getCharSequence(Notification.EXTRA_TITLE);
             if (t != null) lines.add(t.toString());
         }
-        if (count <= 1) return; // a single notification stands fine on its own
+        if (count <= 1) return;
 
         NotificationCompat.InboxStyle inbox = new NotificationCompat.InboxStyle()
             .setBigContentTitle("Tahleem Academy")
