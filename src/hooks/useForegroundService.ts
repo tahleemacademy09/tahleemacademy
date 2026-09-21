@@ -30,7 +30,9 @@ async function prepareForegroundService(): Promise<boolean> {
   if (_prepared) return true;
 
   try {
-    const perm = await ForegroundService.requestPermissions().catch(() => null);
+    const perm = await ForegroundService.requestPermissions().catch((e) => {
+      return null;
+    });
     if (perm && perm.display !== "granted") {
       logger.warn("[ForegroundService] notification permission denied");
       return false;
@@ -41,10 +43,8 @@ async function prepareForegroundService(): Promise<boolean> {
       name: "Live classes",
       description: "Keeps an active Tahleem live class running in the background.",
       importance: Importance.Low,
-    }).catch(() => {});
+    }).catch((e) => { });
 
-    // LocalNotifications is only a fallback UI; the foreground service above is
-    // the actual Android mechanism that keeps the WebView process alive.
     await LocalNotifications.createChannel({
       id: CHANNEL_ID,
       name: "Live classes",
@@ -52,7 +52,7 @@ async function prepareForegroundService(): Promise<boolean> {
       importance: 2,
       visibility: 1,
       vibration: false,
-    }).catch(() => {});
+    }).catch((e) => { });
 
     if (!_tapListener) {
       _tapListener = await ForegroundService.addListener("notificationTapped", () => {
@@ -77,7 +77,7 @@ export async function startForegroundService(cfg: ForegroundServiceConfig): Prom
     title:     cfg.title,
     body:      cfg.body,
     id:        cfg.id ?? 1001,
-    smallIcon: cfg.icon ?? "ic_stat_icon",
+    smallIcon: cfg.icon ?? "ic_launcher",
     notificationChannelId: CHANNEL_ID,
     serviceType: ServiceType.Microphone,
     silent: true,
@@ -85,7 +85,7 @@ export async function startForegroundService(cfg: ForegroundServiceConfig): Prom
   };
 
   if (_running) {
-    await ForegroundService.updateForegroundService(options).catch(() => {});
+    await ForegroundService.updateForegroundService(options).catch((e) => { });
     return;
   }
   try {

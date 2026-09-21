@@ -10,6 +10,7 @@
   • Local notification permissions
   • App URL open → SPA navigation (deep links from notifications)
   • Token refresh: re-upserts when FCM rotates the token
+  • Reply-from-notification for support tickets (RemoteInput action)
 
   KEY FIX: Previously only "pushNotificationActionPerformed" was handled —
   meaning notifications only worked when tapped from the system tray.
@@ -17,6 +18,19 @@
   user sees the alert even while the app is open (foreground delivery).
   Also: "registration" was missing onConflict for user_id so stale tokens
   were accumulating in the DB instead of being replaced.
+
+  REPLY-FROM-NOTIFICATION: support_ticket pushes now arrive as data-only FCM
+  messages (see supabase/functions/send-notification), so Android never
+  auto-displays its own bare notification for them — pushNotificationReceived
+  fires instead (this happens even when the app is backgrounded or fully
+  swiped away, as long as it hasn't been force-stopped) and we build the
+  notification ourselves with a "Reply" action attached. Typing a reply and
+  hitting Send delivers the text via localNotificationActionPerformed, which
+  we insert straight into support_ticket_messages — no need to open the
+  ticket screen. Note: because @capacitor/local-notifications implements this
+  action with an Activity-launching PendingIntent (not a background service),
+  the app will briefly come to the foreground when "Send" is tapped — this is
+  a plugin limitation, not fully invisible like WhatsApp's own native reply.
 */
 import { Capacitor } from "@capacitor/core";
 import { App as CapApp } from "@capacitor/app";
@@ -29,6 +43,7 @@ import { logger } from "@/lib/logger";
 
 export const isNative = () => Capacitor.isNativePlatform();
 const CLASS_CHANNEL_ID = "tahleem_class";
+const SUPPORT_REPLY_ACTION_TYPE = "support_ticket_reply";
 
 async function setupNotificationChannels() {
   if (!isNative() || Capacitor.getPlatform() !== "android") return;
@@ -52,6 +67,55 @@ async function setupNotificationChannels() {
       sound: "adhan.wav",
     }),
   ]);
+}
+
+// ── Reply action type (registered once) ─────────────────────────────────────
+// input: true → Android renders this as a RemoteInput "inline reply" field
+// directly in the notification shade (@capacitor/local-notifications builds
+// the native NotificationCompat.Action + RemoteInput for us).
+async function registerReplyActionType() {
+  if (!isNative() || Capacitor.getPlatform() !== "android") return;
+  try {
+    await LocalNotifications.registerActionTypes({
+      types: [{
+        id: SUPPORT_REPLY_ACTION_TYPE,
+        actions: [{
+          id: "reply",
+          title: "Reply",
+          input: true,
+          inputButtonTitle: "Send",
+          inputPlaceholder: "Type a reply...",
+        }],
+      }],
+    });
+  } catch (e) {
+    logger.warn("[Native] registerActionTypes failed:", e);
+  }
+}
+
+function extractTicketId(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url, window.location.origin);
+    return u.searchParams.get("ticket");
+  } catch {
+    const m = url.match(/[?&]ticket=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+}
+
+async function sendTicketReply(ticketId: string, message: string): Promise<void> {
+  if (!message.trim()) return;
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { error } = await supabase
+      .from("support_ticket_messages" as any)
+      .insert({ ticket_id: ticketId, sender_id: user.id, message: message.trim() });
+    if (error) logger.warn("[Native] Reply-from-notification insert failed:", error.message);
+  } catch (e) {
+    logger.warn("[Native] Reply-from-notification failed:", e);
+  }
 }
 
 // ── Push registration & token storage ────────────────────────────────────────
@@ -115,11 +179,17 @@ async function registerPushToken() {
     // ── Foreground push received ────────────────────────────────────────────
     // FCM/APNs suppress the notification UI when the app is in the foreground.
     // We re-display it as a LocalNotification so the user still sees it.
+    // For support_ticket pushes (sent data-only, see send-notification), this
+    // also fires while backgrounded/killed — see file header — so we attach
+    // the reply action here too.
     PushNotifications.addListener("pushNotificationReceived", async (notification) => {
       const data  = (notification.data as any) ?? {};
       const title = notification.title ?? data.title ?? "Tahleem Academy";
       const body  = notification.body  ?? data.message ?? "";
       const url   = data.url ?? null;
+
+      const isSupportTicket = data.type === "support_ticket";
+      const ticketId = isSupportTicket ? extractTicketId(url) : null;
 
       try {
         await LocalNotifications.schedule({
@@ -127,12 +197,13 @@ async function registerPushToken() {
             id:    Math.floor(Math.random() * 100000),
             title,
             body,
-            extra: { url },
+            extra: { url, ticketId },
             // Use the same sound configured in capacitor.config.ts
             sound: "adhan.wav",
             smallIcon: "ic_stat_icon",
             iconColor: "#D4AF37",
             channelId: CLASS_CHANNEL_ID,
+            ...(ticketId ? { actionTypeId: SUPPORT_REPLY_ACTION_TYPE } : {}),
           }],
         });
       } catch (e) {
@@ -163,14 +234,20 @@ async function registerPushToken() {
 async function setupLocalNotifications() {
   try {
     await setupNotificationChannels();
+    await registerReplyActionType();
     const perm = await LocalNotifications.requestPermissions();
     if (perm.display !== "granted") {
       logger.warn("[Native] Local notification permission denied");
       return;
     }
     LocalNotifications.addListener("localNotificationActionPerformed", (a) => {
-      const url = (a.notification.extra as any)?.url;
-      if (url) navigateToUrl(url);
+      const extra = (a.notification.extra as any) ?? {};
+      // Reply action: post straight to the ticket, no need to open the screen.
+      if (a.actionId === "reply" && (a as any).inputValue && extra.ticketId) {
+        sendTicketReply(extra.ticketId, (a as any).inputValue);
+        return;
+      }
+      if (extra.url) navigateToUrl(extra.url);
     });
   } catch (e) {
     logger.warn("[Native] Local notifications setup failed:", e);

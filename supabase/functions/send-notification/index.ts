@@ -104,15 +104,31 @@ async function sendFCM(
 ): Promise<"ok" | "expired" | "error"> {
   try {
     const accessToken = await getGoogleAccessToken(serviceAccountJson);
-    const body = {
-      message: {
-        token: fcmToken,
-        notification: { title: payload.title, body: payload.message },
-        data: { url: payload.url, type: payload.type },
-        android: { priority: "high", notification: { sound: "default", click_action: "FLUTTER_NOTIFICATION_CLICK", channel_id: "tahleem_default" } },
-        apns: { payload: { aps: { sound: "default", badge: 1 } } },
-      },
-    };
+
+    const isRingType = ["class_ring", "admin_class_ring", "ring"].includes(payload.type);
+
+    const body = isRingType
+      ? {
+          message: {
+            token: fcmToken,
+            data: {
+              url: payload.url,
+              type: payload.type,
+              title: payload.title,
+              message: payload.message,
+            },
+            android: { priority: "high" },
+          },
+        }
+      : {
+          message: {
+            token: fcmToken,
+            notification: { title: payload.title, body: payload.message },
+            data: { url: payload.url, type: payload.type },
+            android: { priority: "high", notification: { sound: "default", click_action: "FLUTTER_NOTIFICATION_CLICK", channel_id: "tahleem_default" } },
+            apns: { payload: { aps: { sound: "default", badge: 1 } } },
+          },
+        };
     const res = await fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },

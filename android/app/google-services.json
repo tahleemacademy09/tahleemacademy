@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "102048619565",
+    "project_id": "tahleem-academy-f8d47",
+    "storage_bucket": "tahleem-academy-f8d47.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:102048619565:android:a2445d61efb8a8e4e06ca4",
+        "android_client_info": {
+          "package_name": "com.tahleemacademy.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDJ4cLo5tAfqLcu1nq8fIKF-toG_eWEcQo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

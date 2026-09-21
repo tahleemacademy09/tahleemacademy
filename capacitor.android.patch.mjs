@@ -124,5 +124,50 @@ addManifestQueries(
   "OEM auto-start/battery settings packages",
 );
 
+
+// ── Class ring: replace push-notifications' default FCM service with ours ──
+if (!xml.includes("xmlns:tools=")) {
+  xml = xml.replace(/<manifest ([^>]*)>/, (m, attrs) => `<manifest ${attrs} xmlns:tools="http://schemas.android.com/tools">`);
+}
+
+addPermission("USE_FULL_SCREEN_INTENT");
+
+addApplicationNode(
+  `<service android:name="com.capacitorjs.plugins.pushnotifications.MessagingService" tools:node="remove" />`,
+  'pushnotifications.MessagingService" tools:node="remove"',
+);
+addApplicationNode(
+  `<service android:name=".RingMessagingService" android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>`,
+  ".RingMessagingService",
+);
+addApplicationNode(
+  `<activity android:name=".IncomingClassRingActivity" android:exported="false" android:launchMode="singleTop" />`,
+  ".IncomingClassRingActivity",
+);
+
+function addMainActivityRingDeepLink() {
+  if (xml.includes('android:scheme="tahleemacademy"')) return;
+  const activityRe = /<activity\b([^>]*android:name="[^"]*\.MainActivity"[^>]*)>/;
+  const match = xml.match(activityRe);
+  if (!match) {
+    console.warn("MainActivity <activity> tag not found — skipping ring deep link patch.");
+    return;
+  }
+  const intentFilter =
+    `
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="tahleemacademy" android:host="ring" />
+        </intent-filter>`;
+  xml = xml.replace(activityRe, `${match[0]}${intentFilter}`);
+}
+addMainActivityRingDeepLink();
+
 fs.writeFileSync(manifestPath, xml);
 console.log("Android foreground service manifest entries are ready.");

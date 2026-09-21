@@ -29,7 +29,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { subject_id, action, room_name } = body;
+    const { subject_id, action, room_name, screen_share } = body;
 
     const LIVEKIT_API_KEY    = Deno.env.get('LIVEKIT_API_KEY');
     const LIVEKIT_API_SECRET = Deno.env.get('LIVEKIT_API_SECRET');
@@ -149,6 +149,24 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'subject_id or room_name required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    // ── Screen-share bot identity ────────────────────────────────────────
+    // A second, publish-only participant joining the SAME room as the
+    // caller's own separate identity — required because a native Android
+    // MediaProjection capture has to connect to LiveKit as its own
+    // participant (it can't share the WebView's existing JS SDK connection).
+    // Only allowed once the caller already resolved a valid room above
+    // (screen_share is only meaningful for the live-class flow, i.e.
+    // subject_id was provided, not the Musabaqah room_name flow).
+    let screenShareIdentity: string | null = null;
+    let screenShareName: string | null = null;
+    if (screen_share) {
+      if (!subject_id) {
+        return new Response(JSON.stringify({ error: 'screen_share requires subject_id' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      screenShareIdentity = `${user.id}::screen`;
+      screenShareName = `${participantName} (Screen)`;
+    }
+
     // ── Build JWT ─────────────────────────────────────────────────────────
     const enc = new TextEncoder();
 
@@ -175,32 +193,50 @@ Deno.serve(async (req) => {
     const exp    = now + 28800; // 8 hours
 
     const header = { alg: 'HS256', typ: 'JWT' };
-    const claims: any = {
-      iss:  LIVEKIT_API_KEY,
-      sub:  user.id,
-      nbf:  now,
-      exp,
-      // FIX: jti must always be globally unique. Using user.id + timestamp +
-      // random suffix ensures no two tokens share the same jti, preventing
-      // potential replay-rejection by the LiveKit server.
-      jti:  `${user.id}-${now}-${Math.random().toString(36).slice(2, 9)}`,
-      name: participantName,
-      video: {
-        roomJoin:       true,
-        room:           finalRoomName,
-        canPublish:     true,
-        canSubscribe:   true,
-        canPublishData: true,
-        // Lets a participant push a fresh metadata JSON (name/avatar_url) for
-        // themselves mid-call — e.g. changing their profile picture — without
-        // needing to reconnect. Everyone else's client already listens for
-        // participantMetadataChanged and re-renders that tile automatically.
-        canUpdateOwnMetadata: true,
-      },
-      metadata: JSON.stringify({ role: roleLabel, user_id: user.id, name: participantName, avatar_url: profile?.avatar_url || null }),
-    };
+    const claims: any = screen_share
+      ? {
+          iss:  LIVEKIT_API_KEY,
+          sub:  screenShareIdentity,
+          nbf:  now,
+          exp,
+          jti:  `${screenShareIdentity}-${now}-${Math.random().toString(36).slice(2, 9)}`,
+          name: screenShareName,
+          video: {
+            roomJoin:       true,
+            room:           finalRoomName,
+            canPublish:     true,
+            canSubscribe:   false,
+            canPublishData: false,
+            canUpdateOwnMetadata: false,
+          },
+          metadata: JSON.stringify({ screen_share_identity: true, owner_user_id: user.id, name: screenShareName }),
+        }
+      : {
+          iss:  LIVEKIT_API_KEY,
+          sub:  user.id,
+          nbf:  now,
+          exp,
+          // FIX: jti must always be globally unique. Using user.id + timestamp +
+          // random suffix ensures no two tokens share the same jti, preventing
+          // potential replay-rejection by the LiveKit server.
+          jti:  `${user.id}-${now}-${Math.random().toString(36).slice(2, 9)}`,
+          name: participantName,
+          video: {
+            roomJoin:       true,
+            room:           finalRoomName,
+            canPublish:     true,
+            canSubscribe:   true,
+            canPublishData: true,
+            // Lets a participant push a fresh metadata JSON (name/avatar_url) for
+            // themselves mid-call — e.g. changing their profile picture — without
+            // needing to reconnect. Everyone else's client already listens for
+            // participantMetadataChanged and re-renders that tile automatically.
+            canUpdateOwnMetadata: true,
+          },
+          metadata: JSON.stringify({ role: roleLabel, user_id: user.id, name: participantName, avatar_url: profile?.avatar_url || null }),
+        };
 
-    if (isPrivileged) {
+    if (!screen_share && isPrivileged) {
       claims.video.roomAdmin  = true;
       claims.video.roomRecord = true;
     }

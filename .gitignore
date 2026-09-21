@@ -33,3 +33,4 @@ pnpm-lock.yaml
 .vite
 .cache
 *.tsbuildinfo
+supabase/.temp/
