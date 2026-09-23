@@ -28,6 +28,7 @@ public class RingMessagingService extends FirebaseMessagingService {
     private static final String GENERAL_CHANNEL_ID = "tahleem_general";
     private static final String GROUP_KEY           = "com.tahleemacademy.app.NOTIFICATIONS";
     private static final int    SUMMARY_ID          = 0;
+    private static final String ACTION_DISMISS_RING = "com.tahleemacademy.app.DISMISS_RING";
 
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
@@ -47,9 +48,6 @@ public class RingMessagingService extends FirebaseMessagingService {
         PushNotificationsPlugin.onNewToken(token);
     }
 
-    // A direct-into-app deep link via our own custom scheme, handled by
-    // MainActivity's existing appUrlOpen -> navigateToUrl SPA bridge. Never
-    // an http(s) URL here, so Android never routes this to a browser.
     private PendingIntent buildJoinPendingIntent(String path, int requestCode) {
         Uri deepLinkUri = Uri.parse("tahleemacademy://ring" + path);
         Intent joinIntent = new Intent(Intent.ACTION_VIEW, deepLinkUri);
@@ -60,6 +58,16 @@ public class RingMessagingService extends FirebaseMessagingService {
         );
         return PendingIntent.getActivity(
             this, requestCode, joinIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+    }
+
+    private PendingIntent buildDismissPendingIntent(int notificationId, int requestCode) {
+        Intent dismissIntent = new Intent(this, DismissRingReceiver.class);
+        dismissIntent.setAction(ACTION_DISMISS_RING);
+        dismissIntent.putExtra("notification_id", notificationId);
+        return PendingIntent.getBroadcast(
+            this, requestCode, dismissIntent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
     }
@@ -96,8 +104,6 @@ public class RingMessagingService extends FirebaseMessagingService {
 
         int requestCode = path.hashCode();
 
-        // Full-screen intent: what the OS auto-launches when the phone is
-        // locked/off — shows the incoming-call style screen with Join/Dismiss.
         Intent fullScreenIntent = new Intent(this, IncomingClassRingActivity.class);
         fullScreenIntent.putExtra("title", title);
         fullScreenIntent.putExtra("message", message);
@@ -112,9 +118,9 @@ public class RingMessagingService extends FirebaseMessagingService {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        // Plain tap on the notification banner (phone unlocked, full-screen
-        // UI didn't auto-launch): go straight into the class, no extra screen.
         PendingIntent tapPendingIntent = buildJoinPendingIntent(path, requestCode + 1);
+        PendingIntent joinActionPendingIntent = buildJoinPendingIntent(path, requestCode + 2);
+        PendingIntent dismissActionPendingIntent = buildDismissPendingIntent(requestCode, requestCode + 3);
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, RING_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_icon)
@@ -126,6 +132,8 @@ public class RingMessagingService extends FirebaseMessagingService {
             .setContentIntent(tapPendingIntent)
             .setSound(ringUri)
             .setVibrate(vibrationPattern)
+            .addAction(0, "\ud83d\udcf9 Join Now", joinActionPendingIntent)
+            .addAction(0, "Dismiss", dismissActionPendingIntent)
             .setAutoCancel(true);
 
         if (nm != null) nm.notify(requestCode, builder.build());

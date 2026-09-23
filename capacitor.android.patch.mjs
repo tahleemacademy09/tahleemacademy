@@ -169,5 +169,7 @@ function addMainActivityRingDeepLink() {
 }
 addMainActivityRingDeepLink();
 
+addApplicationNode(xml, `<receiver android:name=".DismissRingReceiver" android:exported="false" />`, '</application>');
+
 fs.writeFileSync(manifestPath, xml);
 console.log("Android foreground service manifest entries are ready.");

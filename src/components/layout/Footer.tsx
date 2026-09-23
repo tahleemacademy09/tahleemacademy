@@ -93,10 +93,6 @@ const Footer = () => {
                 <MessageCircle className="h-3.5 w-3.5 text-gold/60" />
                 {t("WhatsApp Us", "واتساب")}
               </a>
-              <a href="https://tahleemacademy.lovable.app" className="flex items-center gap-2 hover:text-gold transition-colors">
-                <Globe className="h-3.5 w-3.5 text-gold/60" />
-                tahleemacademy.lovable.app
-              </a>
             </div>
           </div>
         </div>
