@@ -19,7 +19,7 @@ const G    = "#064E3B";
 const GOLD = "#C9A84C";
 
 // FIX: Always use production domain for join_url — window.location.origin can be
-// a Lovable preview URL when testing, which gets saved to the DB permanently.
+// a dev/preview URL when testing, which gets saved to the DB permanently.
 const APP_BASE_URL = "https://tahleemacademy.vercel.app";
 
 const generateRoomCode = () => {

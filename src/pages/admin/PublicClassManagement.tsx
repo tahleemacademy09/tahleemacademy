@@ -23,7 +23,7 @@ const G    = "#064E3B";
 const GOLD = "#C9A84C";
 
 // FIX: Always use production domain — never APP_BASE_URL
-// (may be Lovable preview URL during development).
+// (may be a dev/preview URL during development).
 const APP_BASE_URL = "https://tahleemacademy.vercel.app";
 
 const REMINDER_OPTIONS = [

@@ -3,7 +3,7 @@
   ────────────────────────────────────────────────────────────────────────────
   Rebuilt as the "core" notification composer. Dropped from the previous
   version (AI Compose, Auto Events, Moderation, Reach diagnostics) — all of
-  that was Lovable-AI-specific scope beyond the notification system itself.
+  that was AI-builder-specific scope beyond the notification system itself.
   This is the plain, essential admin tool: write a notification, pick who
   gets it, send it. Everything else can be layered back on top later.
 
