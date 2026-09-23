@@ -1,0 +1,36 @@
+--- a/src/pages/student/StudentExams.tsx
++++ b/src/pages/student/StudentExams.tsx
+@@ -442,6 +442,15 @@
+         .from("exam_assignments").select("exam_id, extended_until, exams(*)")
+         .eq("user_id", user!.id);
+ 
++      // Current academic-year session label (e.g. "2026/2027") — pulled from
++      // academic_years.is_current rather than academy_settings.current_academic_year,
++      // which can go stale when the year advances. Used below to keep exams
++      // from a past session (e.g. last session's Term 3) out of the current
++      // exam list even if they're still assigned/published.
++      const { data: currentYearRow } = await supabase
++        .from("academic_years" as any).select("label").eq("is_current", true).maybeSingle();
++      const currentSessionLabel = (currentYearRow as any)?.label as string | undefined;
++
+       // Subject registration gate: only applies to subjects marked "private"
+       // (invite/registration-only). Subjects with visibility "all" are open
+       // to every student, so an exam tied to one should show up whether or
+@@ -470,6 +479,8 @@
+         .filter((e: any) => {
+           if (!e?.id || seenExamIds.has(e.id)) return false; // de-dupe repeated assignment rows
+           if (!e?.is_published) return false;
++          if (e.is_entrance) return false; // entrance exam is only taken during registration, never a regular exam card
++          if (currentSessionLabel && e.session && e.session !== currentSessionLabel) return false; // exam belongs to a past session (e.g. last session's Term 3) — don't mix with the current session's exams
+           if (e.subject_id && privateSubjectIds.has(e.subject_id) && !registeredSubjectIds.has(e.subject_id)) return false; // private subject, not registered
+           const examLevels = (e.level || "").split(",").map((l: string) => l.trim()).filter(Boolean);
+           if (examLevels.length === 0) { seenExamIds.add(e.id); return true; }          // exam is for all levels
+@@ -512,6 +523,8 @@
+ 
+       const oralList = (oralExamRows || [])
+         .filter((e: any) => {
++          if (e.is_entrance) return false; // entrance exam is only taken during registration, never a regular exam card
++          if (currentSessionLabel && e.session && e.session !== currentSessionLabel) return false; // exam belongs to a past session — don't mix with the current session's exams
+           const mySlots = slotsByExam[e.id] || [];
+           if (mySlots.length > 0) return true; // a slot already exists for me — always show, regardless of mode
+           if (e.oral_assignment_mode === "individual") return false; // no slot has been allocated to me
