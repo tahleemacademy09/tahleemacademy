@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   Send, Loader2, Eye, CheckCircle, XCircle,
-  BookOpen, ClipboardList, Calendar, Users
+  BookOpen, ClipboardList, Calendar, Users, FileText
 } from "lucide-react";
 
 const G = "#064E3B";
@@ -121,6 +121,10 @@ export default function ViewAsStudent() {
             style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.4)", background: "rgba(34,197,94,.3)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
             <Users size={11} /> Login as Student
           </button>
+          <button onClick={() => navigate(`/admin/students/${userId}/report-card`)}
+            style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.4)", background: "rgba(201,168,76,.35)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+            <FileText size={11} /> Report Card
+          </button>
           <button onClick={() => setMsgDialog(true)}
             style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.15)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
             <Send size={11} /> Message Student
@@ -220,6 +224,10 @@ export default function ViewAsStudent() {
             <div style={{ background: "#fff", borderRadius: 16, border: "1px solid #E5E7EB", padding: 16 }}>
               <p style={{ fontWeight: 800, fontSize: 13, color: G, margin: "0 0 12px" }}>⚡ Quick Actions</p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <button onClick={() => navigate(`/admin/students/${userId}/report-card`)}
+                  style={{ padding: "11px 14px", borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#F9FAFB", cursor: "pointer", textAlign: "left", fontSize: 13, fontWeight: 600, color: G }}>
+                  🎓 View / download this student's report card →
+                </button>
                 <button onClick={() => navigate(`/admin/grading`)}
                   style={{ padding: "11px 14px", borderRadius: 11, border: "1.5px solid #E5E7EB", background: "#F9FAFB", cursor: "pointer", textAlign: "left", fontSize: 13, fontWeight: 600, color: G }}>
                   📝 Grade this student's pending exams →

@@ -13,7 +13,7 @@ import {
   Search, User, Users, Eye, Edit2,
   Bell, Trash2, Filter, Plus, X, RefreshCw, AlertTriangle,
   Send, Loader2, Copy, CheckCheck, ShieldCheck, Clock, Activity,
-  BookOpen, Ban, CheckCircle2,
+  BookOpen, Ban, CheckCircle2, FileText,
 } from "lucide-react";
 
 const G      = "#064E3B";
@@ -582,6 +582,7 @@ export default function StudentManagement() {
                 <div style={{ display: "flex", borderTop: "1px solid #F3F4F6" }}>
                   {[
                     { icon: <Eye size={13} color="#6B7280" />, label: "View", onClick: () => navigate(`/admin/students/${u.user_id}/view`), style: {} },
+                    { icon: <FileText size={13} color={G} />, label: "Report Card", onClick: () => navigate(`/admin/students/${u.user_id}/report-card`), style: {} },
                     { icon: <Edit2 size={13} color={G} />, label: "Edit", onClick: () => openEdit(u), style: {} },
                     { icon: <Bell size={13} color="#6B7280" />, label: "Notify", onClick: () => { setNotifTarget([u.user_id]); setNotifDialog(true); }, style: {} },
                   ].map((btn, i) => (
