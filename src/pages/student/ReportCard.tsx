@@ -29,27 +29,48 @@ const levelToArabic = (level?: string | null) => {
   return LEVEL_AR[level.toLowerCase().trim()] || level;
 };
 
-// Simplified Arabic subject names (independent of the specific exam title/level)
-// with a short English gloss shown alongside.
-const SUBJECT_AR: Record<string, { ar: string; en: string }> = {
-  tafsir:  { ar: "التفسير",      en: "Tafsir" },
-  seerah:  { ar: "السيرة",       en: "Seerah" },
-  arabic:  { ar: "اللغة العربية", en: "Arabic Language" },
+// ── Subject naming ───────────────────────────────────────────────
+// The card shows the REAL subject name only — never the exam's own title.
+// Level markers (I, II, (I), Beginner…) and "Exam / Test" wording are stripped,
+// and tests + exams of the same subject are merged into ONE row (30% + 70%).
+const cleanEn = (raw: string) => {
+  let t = (raw || "").trim();
+  t = t.replace(/\s*\(\s*(?:[ivx]+|\d+)\s*\)\s*/gi, " ");                       // (I) (2)
+  t = t.replace(/\s*[—–-]\s*(?:beginner|intermediate|advanced|level\b.*)\s*$/i, ""); // — Beginner
+  t = t.replace(/\b(?:exams?|examination|tests?|quiz|final|mid-?term)\b/gi, " ");     // Exam / Test
+  t = t.replace(/\s+(?:viii|vii|vi|iv|ix|iii|ii|v|x|i|\d)\s*$/i, "");                 // trailing I II III 1
+  return t.replace(/\s{2,}/g, " ").replace(/[\s—–-]+$/, "").trim();
 };
-const getSubjectDisplay = (row: { course: string; title: string; title_ar: string }) => {
-  const key = `${row.course} ${row.title}`.toLowerCase();
-  for (const k of Object.keys(SUBJECT_AR)) if (key.includes(k)) return SUBJECT_AR[k];
-  return { ar: row.title_ar, en: row.title };
+const cleanAr = (raw: string) => {
+  let t = (raw || "").trim();
+  t = t.replace(/\s*\(\s*(?:[ivx]+|[0-9٠-٩]+)\s*\)\s*/gi, " ");
+  t = t.replace(/\s*[—–-]\s*(?:ال)?مستوى.*$/, "");                                   // — المستوى المبتدئ
+  t = t.replace(/^\s*(?:ال)?(?:اختبار|إختبار|امتحان)\s+/, "");                         // اختبار …
+  t = t.replace(/\s+(?:[ivx]+|[0-9٠-٩]+)\s*$/i, "");                                  // trailing I / ١
+  return t.replace(/\s{2,}/g, " ").replace(/[\s—–-]+$/, "").trim();
 };
+// Same subject ⇒ same key, whatever the exam was called
+// ("At-Tajweed" test + "Tajweed Examination" exam ⇒ "tajweed").
+const subjectKey = (en: string) =>
+  cleanEn(en).toLowerCase().replace(/['’ʿʻ`]/g, "")
+    .replace(/^(?:al|at|an|ash|as|ad|ar|az|adh)[-\s]+/, "")
+    .replace(/[^a-z0-9\u0600-\u06FF]+/g, " ").trim()
+    .replace(/(.)\1+/g, "$1");   // "Qur'aan" / "Quran", "Tafseer" / "Tafsir" spelling drift
+// Entrance exam is a registration exam, never part of a term report card.
+const isEntranceExam = (title?: string | null, titleAr?: string | null, flag?: boolean | null) =>
+  !!flag || /entrance/i.test(title || "") || /قبول/.test(titleAr || "");
+
+const getSubjectDisplay = (row: { name_ar: string; name_en: string }) => ({ ar: row.name_ar, en: row.name_en });
 
 interface GradedExam {
   title: string; title_ar: string | null;
   percentage: number; passed: boolean;
-  term: string; session: string; type: string; course_title?: string;
+  term: string; session: string; type: string;
+  subject_title?: string | null; subject_title_ar?: string | null;
 }
 
 interface SubjectRow {
-  title: string; title_ar: string; course: string;
+  name_ar: string; name_en: string;
   test: number; exam: number; total: number;
   grade: ReturnType<typeof getLetterGrade>;
   passed: boolean;
@@ -94,11 +115,16 @@ function generateRemarks(avg: number, passedCount: number, totalCount: number) {
 }
 
 function buildSubjectRows(exams: GradedExam[]): SubjectRow[] {
-  const map = new Map<string, { title: string; title_ar: string; course: string; tests: number[]; exams: number[] }>();
+  const map = new Map<string, { name_en: string; name_ar: string; linked: boolean; tests: number[]; exams: number[] }>();
   exams.forEach(e => {
-    const key = e.title;
-    if (!map.has(key)) map.set(key, { title: e.title, title_ar: e.title_ar || e.title, course: e.course_title || "", tests: [], exams: [] });
+    const linked = !!e.subject_title;
+    const en = cleanEn(e.subject_title || e.title);
+    const ar = cleanAr(e.subject_title_ar || e.title_ar || "") || en;
+    const key = subjectKey(en) || e.title;
+    if (!map.has(key)) map.set(key, { name_en: en, name_ar: ar, linked, tests: [], exams: [] });
     const entry = map.get(key)!;
+    // prefer the name that comes from the real subject record
+    if (linked && !entry.linked) { entry.name_en = en; entry.name_ar = ar; entry.linked = true; }
     if (e.type === "test") entry.tests.push(e.percentage);
     else entry.exams.push(e.percentage);
   });
@@ -106,7 +132,7 @@ function buildSubjectRows(exams: GradedExam[]): SubjectRow[] {
     const testScore = r.tests.length ? Math.round(Math.max(...r.tests) * 0.3) : 0;
     const examScore = r.exams.length ? Math.round(Math.max(...r.exams) * 0.7) : 0;
     const total = testScore + examScore;
-    return { title: r.title, title_ar: r.title_ar, course: r.course, test: testScore, exam: examScore, total, grade: getLetterGrade(total), passed: total >= 50 };
+    return { name_ar: r.name_ar, name_en: r.name_en, test: testScore, exam: examScore, total, grade: getLetterGrade(total), passed: total >= 50 };
   }).sort((a, b) => b.total - a.total);
 }
 
@@ -244,15 +270,17 @@ const ReportCard = () => {
           ? supabase.from("profiles").select("*").eq("user_id", targetId).maybeSingle()
           : Promise.resolve({ data: ownProfile }),
         supabase.from("exam_attempts")
-          .select("score, percentage, passed, exams(title, title_ar, type, term, session, subject_id, subjects(title))")
+          .select("score, percentage, passed, exams(title, title_ar, type, term, session, is_entrance, subject_id, subjects(title, title_ar))")
           .eq("user_id", targetId).eq("status", "released")
           .order("submitted_at", { ascending: true }),
       ]);
       setProfile(pRes.data);
-      const rows = (aRes.data || []).map((a: any) => ({
+      const rows = (aRes.data || [])
+        .filter((a: any) => !isEntranceExam(a.exams?.title, a.exams?.title_ar, a.exams?.is_entrance))
+        .map((a: any) => ({
         title: a.exams?.title || "Exam", title_ar: a.exams?.title_ar,
         percentage: Number(a.percentage) || 0, passed: a.passed,
-        course_title: a.exams?.subjects?.title,
+        subject_title: a.exams?.subjects?.title, subject_title_ar: a.exams?.subjects?.title_ar,
         term: a.exams?.term || "first", session: a.exams?.session || "",
         type: a.exams?.type || "exam",
       }));
