@@ -4,12 +4,12 @@
     - Admin route:    /student/report-card/:userId     (any student's, admin/teacher only)
 */
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
-import { Download, GraduationCap } from "lucide-react";
+import { Download, GraduationCap, ArrowLeft } from "lucide-react";
 import tahleemStamp from "@/assets/tahleem-stamp.png";
 import tahleemHeaderArt from "@/assets/tahleem-header-art.png";
 import { useToast } from "@/hooks/use-toast";
@@ -215,6 +215,8 @@ const ReportCard = () => {
   const { user, profile: ownProfile } = useAuth();
   const { toast } = useToast();
   const { userId } = useParams<{ userId?: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const [profile, setProfile] = useState<any>(null);
   const [exams, setExams]     = useState<GradedExam[]>([]);
@@ -224,6 +226,15 @@ const ReportCard = () => {
 
   const targetId = userId || user?.id;
   const isAdminView = !!userId;
+
+  // Admin opens this from the student list, the student detail page (banner /
+  // Quick Actions) or an impersonation session — go back to wherever they came
+  // from; if the page was opened directly (no in-app history), fall back to the
+  // student's detail page.
+  const goBack = () => {
+    if (location.key !== "default") navigate(-1);
+    else navigate(location.pathname.startsWith("/admin") ? `/admin/students/${userId}/view` : "/student");
+  };
 
   useEffect(() => {
     if (!targetId) return;
@@ -475,6 +486,18 @@ ${pagesHtml}
 
   return (
     <div dir="rtl" style={{ fontFamily: "'Cairo',sans-serif" }}>
+      {/* Admin-only bar — back navigation + whose report card this is */}
+      {isAdminView && (
+        <div dir="ltr" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, padding: "10px 24px", background: "#7c3aed" }}>
+          <button onClick={goBack}
+            style={{ padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,.4)", background: "rgba(255,255,255,.15)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+            <ArrowLeft size={13} /> Back
+          </button>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+            Admin view — report card of: <strong style={{ color: "#e9d5ff" }}>{profile?.full_name || "—"}</strong>
+          </span>
+        </div>
+      )}
       {/* Header bar — title on the left, calligraphy logo (magnified) on the right */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", direction: "ltr", gap: 14, padding: "14px 24px", borderBottom: `2px solid ${G}`, background: "#fdfcf8", overflow: "hidden" }}>
         <div style={{ direction: "rtl", textAlign: "right" }}>
