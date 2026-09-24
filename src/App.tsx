@@ -366,6 +366,7 @@ const App = () => (
                     <Route path="/admin/private-sessions"            element={<StudentsHub />} />
                     <Route path="/admin/students"                    element={<StudentsHub />} />
                     <Route path="/admin/students/:userId/view"       element={<ViewAsStudent />} />
+                    <Route path="/admin/students/:userId/report-card" element={<ReportCard />} />
                     <Route path="/admin/view-as-student/:userId"     element={<ViewAsStudent />} />
                     <Route path="/admin/recordings"                  element={<RecordingManagement />} />
                     <Route path="/admin/live-class-management"       element={<LiveClassManagement />} />
