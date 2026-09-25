@@ -10,6 +10,7 @@ import { Video, Play, Search, Clock, User, CheckCircle, Trash2, Edit, Save, Paus
 import { useState } from "react";
 import { toast } from "@/hooks/use-toast";
 import { useRecordingPlayer } from "@/contexts/RecordingPlayerContext";
+import { useViewingTermId } from "@/hooks/useCurrentTermId";
 
 const G      = "#0f2d1f";
 const GM     = "#1a4731";
@@ -18,9 +19,12 @@ const BORDER = "rgba(15,45,31,0.1)";
 
 const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   const { t }             = useLanguage();
-  const { user, hasRole } = useAuth();
+  const { user, hasRole, profile } = useAuth();
   const qc                = useQueryClient();
   const player            = useRecordingPlayer();
+  // Students see their own viewing term (their TermSwitcher choice, or
+  // whatever's live); staff manage/see the live term.
+  const viewingTermId     = useViewingTermId(profile);
 
   const [search, setSearch]       = useState("");
   const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
@@ -70,11 +74,13 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
   const { isPrivateStudent } = usePrivateStudent();
 
   const { data: recordings, isLoading } = useQuery({
-    queryKey: ["recordings", subjectId],
+    queryKey: ["recordings", subjectId, viewingTermId],
+    enabled: !!viewingTermId,
     queryFn: async () => {
       // Primary query: by subject_id (covers normally-saved recordings)
       const { data: bySubject, error: e1 } = await supabase
         .from("session_recordings").select("*").eq("subject_id", subjectId)
+        .eq("term_id", viewingTermId)
         .order("created_at", { ascending: false });
       if (e1) throw e1;
 
@@ -90,6 +96,7 @@ const SubjectRecordings = ({ subjectId }: { subjectId: string }) => {
           .from("session_recordings").select("*")
           .in("session_id", sessionIds)
           .is("subject_id", null)          // only orphaned rows (subject_id not set)
+          .eq("term_id", viewingTermId)
           .order("created_at", { ascending: false });
         bySession = sr || [];
       }
