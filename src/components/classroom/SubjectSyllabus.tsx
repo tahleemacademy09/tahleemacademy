@@ -11,12 +11,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
 import { Plus, Target, Edit, Trash2, Save, ChevronDown, ChevronUp, BookOpen } from "lucide-react";
+import { useViewingTermId } from "@/hooks/useCurrentTermId";
 
 const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
   const { t } = useLanguage();
   const { hasRole } = useAuth();
   const qc = useQueryClient();
+  const { profile } = useAuth();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
+  // Staff manage/see the live term; students see their own viewing term
+  // (TermSwitcher choice, or whatever's live).
+  const viewingTermId = useViewingTermId(profile);
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [form, setForm] = useState({ week_number: 1, title: "", description: "", objectives: "" });
@@ -25,10 +30,11 @@ const SubjectSyllabus = ({ subjectId }: { subjectId: string }) => {
   const [deleteId, setDeleteId] = useState<string | null>(null);
 
   const { data: syllabus = [], isLoading } = useQuery({
-    queryKey: ["syllabus", subjectId],
+    queryKey: ["syllabus", subjectId, viewingTermId],
+    enabled: !!viewingTermId,
     queryFn: async () => {
       const { data, error } = await supabase.from("subject_syllabus")
-        .select("*").eq("subject_id", subjectId).order("week_number");
+        .select("*").eq("subject_id", subjectId).eq("term_id", viewingTermId).order("week_number");
       if (error) throw error;
       return data as any[];
     },
