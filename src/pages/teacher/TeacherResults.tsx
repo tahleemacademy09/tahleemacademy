@@ -8,6 +8,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { BarChart2 } from "lucide-react";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 
 const TeacherResults = () => {
   const { t } = useLanguage();
@@ -16,6 +17,12 @@ const TeacherResults = () => {
   const [subjects, setSubjects] = useState<any[]>([]);
   const [subjectFilter, setSubjectFilter] = useState("all");
   const [termFilter, setTermFilter] = useState("all");
+
+  // Follow the academy's Current Term setting (Admin Settings > Academy).
+  const { settings: academySettings } = useAcademySettings();
+  useEffect(() => {
+    if (academySettings.current_term) setTermFilter(academySettings.current_term);
+  }, [academySettings.current_term]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

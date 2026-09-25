@@ -3,6 +3,7 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels } from "@/hooks/useAcademicLevels";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Plus, Edit, Trash2, Copy, Search, Send, Eye, EyeOff,
@@ -47,6 +48,12 @@ const TeacherExamsPage = ({ type: fixedType }: TeacherExamsPageProps) => {
 
   const [exams, setExams] = useState<any[]>([]);
   const [termFilter, setTermFilter] = useState("all");
+
+  // Follow the academy's Current Term setting (Admin Settings > Academy).
+  const { settings: academySettings } = useAcademySettings();
+  useEffect(() => {
+    if (academySettings.current_term) setTermFilter(academySettings.current_term);
+  }, [academySettings.current_term]);
   const [statusFilter, setStatusFilter] = useState("all");
   const [levelFilter, setLevelFilter] = useState("all");
   const [search, setSearch] = useState("");

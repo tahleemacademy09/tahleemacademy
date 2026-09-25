@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -65,6 +66,16 @@ function ExamsList({ user, t, type }: { user: any; t: any; type: "exam" | "test"
   const { toast } = useToast();
   const [exams,   setExams]   = useState<any[]>([]);
   const [term,    setTerm]    = useState("all");
+
+  // Follow the academy's Current Term setting for both term pickers on this
+  // hub (overview + exams tab), live.
+  const { settings: academySettings } = useAcademySettings();
+  useEffect(() => {
+    if (academySettings.current_term) {
+      setTerm(academySettings.current_term);
+      setTermFilter(academySettings.current_term);
+    }
+  }, [academySettings.current_term]);
   const [status,  setStatus]  = useState("all");
   const [loading, setLoading] = useState(true);
 
