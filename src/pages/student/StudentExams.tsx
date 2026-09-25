@@ -416,6 +416,10 @@ const StudentExams = () => {
   const [loading,       setLoading]       = useState(true);
   const [tab,           setTab]           = useState<Tab>("available");
   const [termFilter,    setTermFilter]    = useState<TermFilter>("all");
+  // Follow the academy's Current Term setting.
+  useEffect(() => {
+    if (settings.current_term) setTermFilter(settings.current_term as TermFilter);
+  }, [settings.current_term]);
   const [typeFilter,    setTypeFilter]    = useState<TypeFilter>("all");
   // Student's own level — used to filter exams by level
   const [studentLevel,  setStudentLevel]  = useState<string>("");
