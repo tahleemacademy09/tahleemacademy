@@ -457,6 +457,83 @@ export default function AdminSettings() {
   };
 
   /* ── Save notification preferences ──────────────────────────── */
+  /* System-wide notification controls (affects every user, not just this
+     admin) -- master switch + per-category toggle + per-class mute. Reads and
+     writes notification_settings / class_notification_settings, which the
+     gate_notification_on_insert DB trigger enforces on every insert into
+     `notifications`, so a muted category/class is silently skipped for
+     everyone, not just hidden client-side. */
+  const [sysLoaded, setSysLoaded] = useState(false);
+  const [sysAllEnabled, setSysAllEnabled] = useState(true);
+  const [sysCategories, setSysCategories] = useState<Record<string, boolean>>({
+    classes: true, exams_results: true, announcements: true, payments: true,
+    level_session: true, hifdh_review: true, registration: true,
+  });
+  const [sysSaving, setSysSaving] = useState(false);
+  const [classSubjects, setClassSubjects] = useState<{ id: string; title: string; title_ar: string | null }[]>([]);
+  const [classMuted, setClassMuted] = useState<Record<string, boolean>>({}); // subject_id -> muted
+  const [classToggling, setClassToggling] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const [{ data: ns }, { data: subs }, { data: cns }] = await Promise.all([
+        supabase.from("notification_settings" as any).select("*").eq("id", true).maybeSingle(),
+        supabase.from("subjects").select("id, title, title_ar").order("title"),
+        supabase.from("class_notification_settings" as any).select("subject_id, enabled"),
+      ]);
+      if (ns) {
+        setSysAllEnabled((ns as any).all_enabled ?? true);
+        setSysCategories(c => ({ ...c, ...((ns as any).categories || {}) }));
+      }
+      setClassSubjects((subs || []) as any);
+      const muted: Record<string, boolean> = {};
+      ((cns || []) as any[]).forEach(r => { if (r.enabled === false) muted[r.subject_id] = true; });
+      setClassMuted(muted);
+      setSysLoaded(true);
+    })();
+  }, []);
+
+  const saveSystemNotifSettings = async (overrides?: { all_enabled?: boolean; categories?: Record<string, boolean> }) => {
+    if (!user) return false;
+    setSysSaving(true);
+    const payload = {
+      id: true,
+      all_enabled: overrides?.all_enabled ?? sysAllEnabled,
+      categories: overrides?.categories ?? sysCategories,
+      updated_at: new Date().toISOString(),
+      updated_by: user.id,
+    };
+    const { error } = await supabase.from("notification_settings" as any).upsert(payload as any, { onConflict: "id" });
+    setSysSaving(false);
+    if (error) { toast({ title: "Save failed", description: error.message, variant: "destructive" }); return false; }
+    return true;
+  };
+
+  const handleSysMasterToggle = async (v: boolean) => {
+    setSysAllEnabled(v);
+    const ok = await saveSystemNotifSettings({ all_enabled: v });
+    if (ok) toast({ title: v ? "\u2705 All platform notifications turned on" : "Platform notifications turned off for everyone" });
+  };
+
+  const handleSysCategoryToggle = async (key: string, v: boolean) => {
+    const next = { ...sysCategories, [key]: v };
+    setSysCategories(next);
+    await saveSystemNotifSettings({ categories: next });
+  };
+
+  const handleClassMuteToggle = async (subjectId: string, muted: boolean) => {
+    if (!user) return;
+    setClassToggling(subjectId);
+    setClassMuted(m => ({ ...m, [subjectId]: muted }));
+    const { error } = await supabase.from("class_notification_settings" as any)
+      .upsert({ subject_id: subjectId, enabled: !muted, updated_at: new Date().toISOString(), updated_by: user.id } as any, { onConflict: "subject_id" });
+    setClassToggling(null);
+    if (error) {
+      setClassMuted(m => ({ ...m, [subjectId]: !muted })); // revert on failure
+      toast({ title: "Save failed", description: error.message, variant: "destructive" });
+    }
+  };
+
   const saveNotifs = async () => {
     if (!user) return;
     setSaving(true);
@@ -754,6 +831,65 @@ export default function AdminSettings() {
 
         {/* ════════ NOTIFICATIONS TAB ════════ */}
         {tab === "notifications" && <>
+
+          {/* Platform-wide controls -- affects every student & teacher, not
+              just this admin account. Visually distinct (amber/red) from the
+              personal preference card below it. */}
+          <Sec title="Platform-Wide Notification Controls">
+            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 12px", lineHeight: 1.5 }}>
+              These switches control whether notifications go out to students and teachers
+              at all -- separate from your own alert preferences further down this page.
+            </p>
+
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "12px 14px", borderRadius: 12, marginBottom: 12,
+              background: sysAllEnabled ? "#FFFBEB" : "#FEF2F2",
+              border: `1.5px solid ${sysAllEnabled ? "#FDE68A" : "#FECACA"}`,
+            }}>
+              <div>
+                <p style={{ fontWeight: 800, fontSize: 13, color: sysAllEnabled ? "#92400E" : "#991B1B", margin: 0 }}>
+                  All Notifications (Everyone)
+                </p>
+                <p style={{ fontSize: 11, color: sysAllEnabled ? "#B45309" : "#B91C1C", margin: "2px 0 0" }}>
+                  {sysAllEnabled ? "Notifications are going out normally" : "Off -- nobody receives any notification, regardless of category"}
+                </p>
+              </div>
+              <Switch checked={sysAllEnabled} disabled={!sysLoaded || sysSaving} onCheckedChange={handleSysMasterToggle} />
+            </div>
+
+            <div style={{ opacity: sysAllEnabled ? 1 : 0.45, pointerEvents: sysAllEnabled ? "auto" : "none" }}>
+              <Tog label="Class Notifications" sub="Class is live, class starting soon"
+                checked={sysCategories.classes} onChange={v => handleSysCategoryToggle("classes", v)} />
+              <Tog label="Exams & Results" sub="Exam assigned, result released"
+                checked={sysCategories.exams_results} onChange={v => handleSysCategoryToggle("exams_results", v)} />
+              <Tog label="Announcements" sub="Admin announcements & general messages"
+                checked={sysCategories.announcements} onChange={v => handleSysCategoryToggle("announcements", v)} />
+              <Tog label="Payments" sub="Payment confirmations & reminders"
+                checked={sysCategories.payments} onChange={v => handleSysCategoryToggle("payments", v)} />
+              <Tog label="Level & Sessions" sub="Level assigned, session confirmations/reminders"
+                checked={sysCategories.level_session} onChange={v => handleSysCategoryToggle("level_session", v)} />
+              <Tog label="Hifdh Review" sub="Teacher review of Hifdh submissions"
+                checked={sysCategories.hifdh_review} onChange={v => handleSysCategoryToggle("hifdh_review", v)} />
+              <Tog label="Registration" sub="Registration complete confirmations"
+                checked={sysCategories.registration} onChange={v => handleSysCategoryToggle("registration", v)} />
+            </div>
+          </Sec>
+
+          <Sec title="Mute Notifications Per Class">
+            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "0 0 12px", lineHeight: 1.5 }}>
+              Turn off "class is live" / "class starting soon" alerts for one class only,
+              without touching other classes. Requires Class Notifications above to be on.
+            </p>
+            {classSubjects.length === 0 && sysLoaded && (
+              <p style={{ fontSize: 12, color: "#9CA3AF" }}>No classes found.</p>
+            )}
+            {classSubjects.map(cs => (
+              <Tog key={cs.id} label={cs.title} sub={cs.title_ar || undefined}
+                checked={!classMuted[cs.id]}
+                onChange={v => handleClassMuteToggle(cs.id, !v)} />
+            ))}
+          </Sec>
 
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
