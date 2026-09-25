@@ -10,6 +10,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
+import { useCurrentTermId } from "@/hooks/useCurrentTermId";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { toast } from "@/hooks/use-toast";
 import {
@@ -81,8 +82,14 @@ export default function TimetableManagement() {
 
   // ── Data queries ─────────────────────────────────────────────────────────
 
+  // Admin manages the currently-live term's timetable. Past terms' slots
+  // stay in the database (students on an older TermSwitcher view still see
+  // them) but aren't listed here to be edited.
+  const currentTermId = useCurrentTermId();
+
   const { data: slots, isLoading } = useQuery({
-    queryKey: ["timetable-admin"],
+    queryKey: ["timetable-admin", currentTermId],
+    enabled: !!currentTermId,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("subject_timetable")
@@ -91,6 +98,7 @@ export default function TimetableManagement() {
           subjects(id, title, title_ar),
           teacher:profiles!subject_timetable_teacher_id_fkey(user_id, full_name)
         `)
+        .eq("term_id", currentTermId)
         .order("day_of_week")
         .order("start_time");
       if (error) {
@@ -98,6 +106,7 @@ export default function TimetableManagement() {
         const { data: d2 } = await supabase
           .from("subject_timetable")
           .select("*, subjects(id, title, title_ar)")
+          .eq("term_id", currentTermId)
           .order("day_of_week")
           .order("start_time");
         return d2 || [];
