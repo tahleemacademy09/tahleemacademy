@@ -336,6 +336,22 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateS
     return new Set(stored.split(",").map((s: string) => s.trim()).filter(Boolean));
   };
   const [f, setF] = useState({ title: ed?.title || "", title_ar: ed?.title_ar || "", description: ed?.description || "", selectedLevels: parseStoredLevel(ed), is_active: ed?.is_active ?? true, image_url: ed?.image_url || "", teacher_id: ed?.teacher_id || "", visibility: ((ed?.visibility || "all") as "all" | "general" | "private"), unlock_session: ed?.unlock_session != null ? String(ed.unlock_session) : "" });
+  const [selectedTerms, setSelectedTerms] = useState<Set<string>>(new Set());
+  const [termMode, setTermMode] = useState<"all" | "specific">(ed?.term_mode === "specific" ? "specific" : "all");
+  // Which terms exist, and (when editing) which ones this subject is already tagged for.
+  const { data: allTerms = [] } = useQuery({
+    queryKey: ["academic-terms-list"],
+    queryFn: async () => {
+      const { data } = await supabase.from("academic_terms" as any).select("id, term_number, name, name_ar").order("term_number");
+      return (data || []) as any[];
+    },
+  });
+  useEffect(() => {
+    if (!ed?.id) { setSelectedTerms(new Set()); return; }
+    supabase.from("subject_terms" as any).select("term_id").eq("subject_id", ed.id)
+      .then(({ data }) => setSelectedTerms(new Set((data || []).map((r: any) => r.term_id))));
+  }, [ed?.id]);
+  const toggleTerm = (id: string) => setSelectedTerms(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [up, setUp] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
 
@@ -511,7 +527,39 @@ const SubjectModal = React.memo(({ ed, teachers, onClose, onSave, busy, privateS
             )}
           </div>
 
-          <button type="button" onClick={() => onSave({ ...f, level: buildLevelValue(), visibility: f.visibility, unlock_session: f.unlock_session }, privAssigned)} disabled={busy || !f.title || f.selectedLevels.size === 0}
+          {/* Which term(s) this subject belongs to -- "All Terms" (default) keeps
+              it visible everywhere, exactly like before; "Specific Terms" hides
+              it until the admin tags it for the term the student is viewing. */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 12, fontWeight: 800, color: "#374151", display: "block", marginBottom: 6 }}>Term Availability</label>
+            <div style={{ display: "flex", gap: 8, marginBottom: termMode === "specific" ? 8 : 0 }}>
+              {(["all", "specific"] as const).map(m => (
+                <button key={m} type="button" onClick={() => setTermMode(m)}
+                  style={{ flex: 1, padding: "9px 10px", borderRadius: 10, fontSize: 12, fontWeight: 800, cursor: "pointer",
+                    border: `1.5px solid ${termMode === m ? G : "#E5E7EB"}`,
+                    background: termMode === m ? G : "#fff", color: termMode === m ? "#fff" : "#6B7280" }}>
+                  {m === "all" ? "All Terms" : "Specific Terms"}
+                </button>
+              ))}
+            </div>
+            {termMode === "specific" && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {allTerms.length === 0 && <span style={{ fontSize: 11, color: "#9CA3AF" }}>No terms found.</span>}
+                {allTerms.map((tm: any) => {
+                  const on = selectedTerms.has(tm.id);
+                  return (
+                    <button key={tm.id} type="button" onClick={() => toggleTerm(tm.id)}
+                      style={{ padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                        border: `1.5px solid ${on ? GOLD : "#E5E7EB"}`, background: on ? "#FFFBEB" : "#fff", color: on ? "#92400E" : "#6B7280" }}>
+                      {tm.name || `Term ${tm.term_number}`}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <button type="button" onClick={() => onSave({ ...f, level: buildLevelValue(), visibility: f.visibility, unlock_session: f.unlock_session, term_mode: termMode, selectedTerms }, privAssigned)} disabled={busy || !f.title || f.selectedLevels.size === 0}
             style={{ padding: "12px", borderRadius: 12, border: "none", background: busy || !f.title || f.selectedLevels.size === 0 ? "#e5e7eb" : `linear-gradient(135deg,${G},${GM})`, color: busy || !f.title || f.selectedLevels.size === 0 ? "#9ca3af" : "#fff", fontWeight: 800, cursor: busy || !f.title || f.selectedLevels.size === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <Save size={14} /> {busy ? "Saving…" : ed ? "Update Subject" : "Create Subject"}
           </button>
@@ -1146,7 +1194,8 @@ export default function CourseManagement() {
           ? []
           : levelStr.split(",").map((x: string) => x.trim()).filter(Boolean);
 
-      const d: any = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, levels: levelsArray, is_active: p.is_active, image_url: p.image_url || null, teacher_id: p.teacher_id || null, course_id: selCourse?.id || null, visibility: p.visibility || "all", unlock_session: p.unlock_session === "" || p.unlock_session == null ? null : parseInt(p.unlock_session, 10), updated_at: new Date().toISOString() };
+      const d: any = { title: p.title, title_ar: p.title_ar || null, description: p.description || null, level: p.level, levels: levelsArray, is_active: p.is_active, image_url: p.image_url || null, teacher_id: p.teacher_id || null, course_id: selCourse?.id || null, visibility: p.visibility || "all", unlock_session: p.unlock_session === "" || p.unlock_session == null ? null : parseInt(p.unlock_session, 10), updated_at: new Date().toISOString() , term_mode: p.term_mode || "all" };
+      let subjIdAfterInsert: string | null = null;
       if (edSubject) {
         const { error: subjErr } = await supabase.from("subjects").update(d).eq("id", edSubject.id);
         if (subjErr) throw subjErr;
@@ -1154,10 +1203,21 @@ export default function CourseManagement() {
       } else {
         const { data: newSubj, error: subjErr } = await supabase.from("subjects").insert(d).select().single();
         if (subjErr) throw subjErr;
+        subjIdAfterInsert = (newSubj as any)?.id || null;
         // For new subjects, apply any pre-selected private student assignments
         if (assigned && assigned.size > 0 && newSubj) {
           const rows = [...assigned].map(sid => ({ student_id: sid, subject_id: (newSubj as any).id }));
           await supabase.from("private_student_subjects" as any).insert(rows as any);
+        }
+      }
+      // Keep subject_terms in sync with the term tags picked in the modal
+      // (only meaningful when term_mode === "specific"; harmless no-op otherwise).
+      const syncSubjectId = edSubject ? edSubject.id : (subjIdAfterInsert || null);
+      if (syncSubjectId) {
+        await supabase.from("subject_terms" as any).delete().eq("subject_id", syncSubjectId);
+        if (p.term_mode === "specific" && p.selectedTerms && p.selectedTerms.size > 0) {
+          const rows = [...p.selectedTerms].map((term_id: string) => ({ subject_id: syncSubjectId, term_id }));
+          await supabase.from("subject_terms" as any).insert(rows as any);
         }
       }
       qc.invalidateQueries({ queryKey: ["adm-subjects"] }); qc.invalidateQueries({ queryKey: ["adm-all-subjects"] });
