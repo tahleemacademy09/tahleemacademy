@@ -16,6 +16,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { supabase } from "@/integrations/supabase/client";
 import {
   Download, GraduationCap, Search, Edit, Eye,
@@ -73,6 +74,13 @@ const TranscriptManagement = () => {
   const [selectedStudent, setSelectedStudent] = useState<any>(null);
   const [term, setTerm]                     = useState("first");
   const [results, setResults]               = useState<any[]>([]);
+
+  // Follow the academy's Current Term setting so opening a student's
+  // transcript defaults to the term the admin currently has active.
+  const { settings: academySettings } = useAcademySettings();
+  useEffect(() => {
+    if (academySettings.current_term) setTerm(academySettings.current_term);
+  }, [academySettings.current_term]);
   const [editAttempt, setEditAttempt]       = useState<any>(null);
   const [editScore, setEditScore]           = useState("");
   const [editFeedback, setEditFeedback]     = useState("");
