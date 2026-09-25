@@ -16,6 +16,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
+import { useViewingTermId } from "@/hooks/useCurrentTermId";
 import { Video, Calendar, BookOpen, Bell, Users, Lock, UserCheck, LayoutGrid, ClipboardList, MapPin } from "lucide-react";
 
 const G    = "#0f2d1f";
@@ -422,7 +423,7 @@ function PrivateTimetable({ profile, navigate }: any) {
 
   // ── 1. Assigned weekly slots from private_student_timetable ──────────────
   const { data: assignedSlots, isLoading: loadingSlots } = useQuery({
-    queryKey: ["private-assigned-slots", profile?.user_id],
+    queryKey: ["private-assigned-slots", profile?.user_id, viewingTermId],
     queryFn: async () => {
       // Fetch the junction rows for this student
       const { data: rows, error } = await (supabase as any)
@@ -440,6 +441,7 @@ function PrivateTimetable({ profile, navigate }: any) {
         .select("*, subjects(id, title, title_ar)")
         .in("id", slotIds)
         .eq("is_active", true)
+        .eq("term_id", viewingTermId)
         .order("day_of_week")
         .order("start_time");
 
@@ -605,12 +607,13 @@ function GeneralTimetable({ profile, hasRole, t, language, navigate, showBanner 
   }, []);
 
   const { data: allSlots, isLoading } = useQuery({
-    queryKey: ["timetable-student"],
+    queryKey: ["timetable-student", viewingTermId],
+    enabled: !!viewingTermId,
     queryFn: async () => {
       const { data: slots, error } = await supabase
         .from("subject_timetable")
         .select(`*, subjects(id, title, title_ar, image_url)`)
-        .eq("is_active", true).order("day_of_week").order("start_time");
+        .eq("is_active", true).eq("term_id", viewingTermId).order("day_of_week").order("start_time");
       if (error || !slots?.length) return [];
 
       const allTIds = [...new Set(slots.flatMap((s: any) => {
@@ -776,6 +779,7 @@ function GeneralTimetable({ profile, hasRole, t, language, navigate, showBanner 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 export default function StudentTimetable() {
   const { profile, hasRole } = useAuth();
+  const viewingTermId = useViewingTermId(profile);
   const { t, language }      = useLanguage();
   const navigate             = useNavigate();
   const { isPrivateStudent } = usePrivateStudent();
