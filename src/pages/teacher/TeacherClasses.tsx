@@ -90,6 +90,7 @@ async function insertDBNotification(
       // Format: reminder:{sessionId}:{minsAhead}:{subjectId}
       // subjectId lets the notification panel navigate directly without a DB lookup
       link: `reminder:${sessionId}:${minsAhead}${subjectId ? `:${subjectId}` : ""}`,
+      subject_id: subjectId || null,   // lets admins mute this per class
       is_read: false,
     } as any);
   } catch {}
