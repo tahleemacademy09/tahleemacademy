@@ -24,6 +24,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import MaterialsViewer from "./MaterialsViewer";
+import { useCurrentTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
 import {
   FileText, Video, Music, Image as ImageIcon, File as FileIcon,
   Upload, Plus, X, Trash2, Pencil,
@@ -97,6 +98,9 @@ const emptyForm = {
 function MaterialManager({ subjectId }: { subjectId?: string }) {
   const { user } = useAuth();
   const { t } = useLanguage();
+  // Admin/teacher always manage the currently-live academic term -- past
+  // terms' materials stay untouched but aren't shown here to be edited.
+  const currentTermId = useCurrentTermId();
 
   const [materials, setMaterials] = useState<any[]>([]);
   const [loading, setLoading]     = useState(true);
@@ -116,10 +120,12 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
   const load = useCallback(async () => {
     if (!subjectId) { setLoading(false); return; }
     setLoading(true);
+    if (!currentTermId) return; // wait for the live term to resolve
     const [{ data }, { data: subj }] = await Promise.all([
       supabase
         .from("subject_materials").select("*")
         .eq("subject_id", subjectId)
+        .eq("term_id", currentTermId)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: false }),
       supabase.from("subjects").select("materials_locked").eq("id", subjectId).single(),
@@ -127,7 +133,7 @@ function MaterialManager({ subjectId }: { subjectId?: string }) {
     setMaterials(data || []);
     setMaterialsLocked(!!subj?.materials_locked);
     setLoading(false);
-  }, [subjectId]);
+  }, [subjectId, currentTermId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -520,12 +526,17 @@ function IconBtn({ children, onClick, title }: { children: React.ReactNode; onCl
    ═══════════════════════════════════════════════════════════════ */
 function MaterialViewer({ subjectId }: { subjectId?: string }) {
   const { t } = useLanguage();
+  const { profile } = useAuth();
+  // Students see their own viewing term (defaults to whatever's live; can be
+  // switched to a past term via TermSwitcher in Settings). Signed-out/public
+  // visitors have no profile, so they just see the live term.
+  const viewingTermId = useViewingTermId(profile);
   const [materials, setMaterials] = useState<any[]>([]);
   const [loading, setLoading]     = useState(true);
   const [locked, setLocked]       = useState(false);
 
   useEffect(() => {
-    if (!subjectId) { setLoading(false); return; }
+    if (!subjectId || !viewingTermId) { setLoading(false); return; }
     (async () => {
       setLoading(true);
       const { data: subj } = await supabase.from("subjects").select("materials_locked").eq("id", subjectId).single();
@@ -542,12 +553,13 @@ function MaterialViewer({ subjectId }: { subjectId?: string }) {
       const { data } = await supabase
         .from("subject_materials").select("*")
         .eq("subject_id", subjectId)
+        .eq("term_id", viewingTermId)
         .order("sort_order", { ascending: true })
         .order("created_at", { ascending: false });
       setMaterials(data || []);
       setLoading(false);
     })();
-  }, [subjectId]);
+  }, [subjectId, viewingTermId]);
 
   // No level filter — each academic level has its own subject, so every
   // material uploaded to this subject is visible to every enrolled student.
