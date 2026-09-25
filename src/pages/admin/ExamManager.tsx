@@ -14,6 +14,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { publishExam, splitLevels } from "@/lib/examPublish";
 import {
   Plus, Edit, Trash2, Copy, Clock, Search, Send,
@@ -46,6 +47,14 @@ export default function ExamManager() {
   const [loading, setLoading]           = useState(true);
   const [search, setSearch]             = useState("");
   const [termFilter, setTermFilter]     = useState("all");
+
+  // Follow the academy's Current Term setting so this list opens already
+  // filtered to the term the admin currently has active, and re-filters
+  // live if they advance the term while this page is open.
+  const { settings: academySettings } = useAcademySettings();
+  useEffect(() => {
+    if (academySettings.current_term) setTermFilter(academySettings.current_term);
+  }, [academySettings.current_term]);
   const [sessionFilter, setSessionFilter] = useState("all");
   const [typeFilter, setTypeFilter]     = useState("all");
   const [levelFilter, setLevelFilter]   = useState("all");
@@ -425,7 +434,7 @@ export default function ExamManager() {
           </div>
           {[
             { val: sessionFilter, set: setSessionFilter, opts: [["all", "All Sessions"], ...sessionOptions.map(s => [s, s])] },
-            { val: termFilter, set: setTermFilter, opts: [["all", "All Terms"], ["first", "First"], ["second", "Second"], ["final", "Final"]] },
+            { val: termFilter, set: setTermFilter, opts: [["all", "All Terms"], ["first", "First"], ["second", "Second"], ["third", "Third"]] },
             { val: typeFilter, set: setTypeFilter, opts: [["all", "All Types"], ["exam", "Exam"], ["test", "Test"], ["quiz", "Quiz"]] },
             { val: levelFilter, set: setLevelFilter, opts: [["all", "All Levels"], ...academicLevels.map(l => [l.slug, l.name_en])] },
           ].map((f, i) => (
