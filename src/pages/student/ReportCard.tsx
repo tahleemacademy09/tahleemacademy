@@ -5,6 +5,7 @@
 */
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { Button } from "@/components/ui/button";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -249,6 +250,14 @@ const ReportCard = () => {
   const [loading, setLoading] = useState(true);
   const [term, setTerm]       = useState("first");
   const [session, setSession] = useState("");
+
+  // Follow the academy's Current Term setting (Admin Settings > Academy) so
+  // the card opens on the right term by default, and switches live if the
+  // admin advances the term while this page is open.
+  const { settings: academySettings } = useAcademySettings();
+  useEffect(() => {
+    if (academySettings.current_term) setTerm(academySettings.current_term);
+  }, [academySettings.current_term]);
 
   const targetId = userId || user?.id;
   const isAdminView = !!userId;
