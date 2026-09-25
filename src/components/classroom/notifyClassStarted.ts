@@ -64,6 +64,7 @@ export async function notifyClassStarted(
         message: `${who} has joined the class. Tap to enter the classroom.`,
         type: "class_live_now",
         link,
+        subject_id: subjectId,   // lets admins mute this per class
         is_read: false,
       })) as any,
     );
