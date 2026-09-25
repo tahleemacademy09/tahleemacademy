@@ -31,6 +31,7 @@ import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
+import { useViewingTermId } from "@/hooks/useCurrentTermId";
 
 const G    = "#0f2d1f";
 const GM   = "#1a4731";
@@ -140,6 +141,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { t, language }            = useLanguage();
   const { user, profile, hasRole } = useAuth();
+  const viewingTermId = useViewingTermId(profile);
   const navigate                   = useNavigate();
   const qc                         = useQueryClient();
   const isPrivileged               = hasRole("admin") || hasRole("teacher");
@@ -291,14 +293,27 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     },
   });
 
+  // Subjects tagged for a SPECIFIC set of terms (term_mode === "specific")
+  // only show once the admin has tagged them for the term being viewed.
+  // Subjects left on the default "all" mode always show, unaffected.
+  const { data: visibleTermSubjectIds } = useQuery({
+    queryKey: ["subject-terms-visible", viewingTermId],
+    enabled: !!viewingTermId,
+    queryFn: async () => {
+      const { data } = await supabase.from("subject_terms" as any).select("subject_id").eq("term_id", viewingTermId);
+      return new Set((data || []).map((r: any) => r.subject_id));
+    },
+  });
+  const isSubjectInTerm = (s: any) => s.term_mode !== "specific" || visibleTermSubjectIds?.has(s.id);
+
   const courseSubjects = isPrivileged
     ? (allCourseSubjects || [])
-    : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession));
+    : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession) && isSubjectInTerm(s));
   // Optional subjects the student disenrolled from — kept out of the main
   // grid (their lessons/materials/assignments are hidden) but still listed
   // separately with a Re-enroll action.
   const disenrolledCourseSubjects = isPrivileged ? [] : (allCourseSubjects || []).filter(
-    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession)
+    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession) && isSubjectInTerm(s)
   );
 
   const { data: subjectLessons, isLoading: loadLessons } = useQuery({
