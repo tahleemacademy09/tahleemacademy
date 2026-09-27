@@ -304,27 +304,34 @@ export default function AdminSettings() {
   const saveAcademy = async () => {
     if (!user) return;
     setAcSaving(true);
-    await updateMultiple({
-      academy_status:        academy.academy_status,
-      current_term:          academy.current_term,
-      current_academic_year: academy.current_academic_year,
-      holiday_message:       academy.holiday_message        || null,
-      holiday_message_ar:    academy.holiday_message_ar     || null,
-      resume_date:           academy.resume_date            || null,
-      maintenance_bypass_user_ids: academy.maintenance_bypass_user_ids || null,
-    }, user.id);
+    try {
+      await updateMultiple({
+        academy_status:        academy.academy_status,
+        current_term:          academy.current_term,
+        current_academic_year: academy.current_academic_year,
+        holiday_message:       academy.holiday_message        || null,
+        holiday_message_ar:    academy.holiday_message_ar     || null,
+        resume_date:           academy.resume_date            || null,
+        maintenance_bypass_user_ids: academy.maintenance_bypass_user_ids || null,
+      }, user.id);
 
-    const statusChanged = prevAcademyStatus !== null && prevAcademyStatus !== academy.academy_status;
-    if (notifyStudents && statusChanged) {
-      await notifyStatusChange(academy.academy_status);
+      const statusChanged = prevAcademyStatus !== null && prevAcademyStatus !== academy.academy_status;
+      if (notifyStudents && statusChanged) {
+        await notifyStatusChange(academy.academy_status);
+      }
+      setPrevAcademyStatus(academy.academy_status);
+
+      toast({
+        title: "✅ Academy settings saved!",
+        description: notifyStudents && statusChanged ? "Students have been notified." : undefined,
+      });
+    } catch (e: any) {
+      // Previously a failed write here still showed "saved" -- that's exactly
+      // how the Current Term change silently didn't persist last time.
+      toast({ title: "Save failed", description: e.message || "Please try again.", variant: "destructive" });
+    } finally {
+      setAcSaving(false);
     }
-    setPrevAcademyStatus(academy.academy_status);
-
-    setAcSaving(false);
-    toast({
-      title: "✅ Academy settings saved!",
-      description: notifyStudents && statusChanged ? "Students have been notified." : undefined,
-    });
   };
 
   /* ── Advance platform session (gates session-locked subjects) ────── */
