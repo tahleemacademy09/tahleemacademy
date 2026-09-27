@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels, getLevelConfig, getLevelDisplay } from "@/hooks/useAcademicLevels";
+import { useCurrentTermId } from "@/hooks/useCurrentTermId";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -563,9 +564,13 @@ export default function MaterialsManagement() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Fetch ─────────────────────────────────────────────────────────────
+  // Manage the currently-live academic term's materials -- past terms'
+  // materials stay in the database untouched, just not listed here to edit.
+  const currentTermId = useCurrentTermId();
+
   useEffect(() => {
-    if (subjectId) fetchMaterials();
-  }, [subjectId]);
+    if (subjectId && currentTermId) fetchMaterials();
+  }, [subjectId, currentTermId]);
 
   const fetchMaterials = async () => {
     try {
@@ -574,6 +579,7 @@ export default function MaterialsManagement() {
         .from("subject_materials")
         .select("*")
         .eq("subject_id", subjectId)
+        .eq("term_id", currentTermId)
         .order("sort_order", { ascending: true });
       if (error) throw error;
       setMaterials(data || []);

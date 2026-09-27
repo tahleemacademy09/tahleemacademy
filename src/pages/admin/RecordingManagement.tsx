@@ -11,6 +11,7 @@ import {
   Video, Clock, HardDrive, Calendar, Film,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentTermId } from "@/hooks/useCurrentTermId";
 
 /* ── brand tokens — matches LiveClassManagement / AcademicCalendar ── */
 const G    = "#0f2d1f";
@@ -94,6 +95,11 @@ const RecordingManagement = () => {
   const [playingUrl, setPlayingUrl]   = useState<string | null>(null);
   const [playingBusy, setPlayingBusy] = useState<string | null>(null); // recording id
 
+  // Manage the currently-live academic term's recordings -- past terms'
+  // recordings stay in the database (students on an older TermSwitcher view
+  // still see them) but aren't listed here to be edited.
+  const currentTermId = useCurrentTermId();
+
   const fetchData = async () => {
     const [{ data: subs }, { data: recs }] = await Promise.all([
       supabase.from("subjects").select("id, title, title_ar"),
@@ -101,6 +107,7 @@ const RecordingManagement = () => {
       // Also join live_sessions to recover subject info for session-linked recordings.
       supabase.from("session_recordings")
         .select("*, subjects(title, title_ar), live_sessions(subject_id, subjects(title, title_ar))")
+        .eq("term_id", currentTermId)
         .order("created_at", { ascending: false }),
     ]);
     setSubjects(subs || []);
@@ -120,7 +127,7 @@ const RecordingManagement = () => {
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { if (currentTermId) fetchData(); }, [currentTermId]);
 
   const filtered = recordings.filter(r => {
     if (subjectFilter !== "all" && r.subject_id !== subjectFilter) return false;
