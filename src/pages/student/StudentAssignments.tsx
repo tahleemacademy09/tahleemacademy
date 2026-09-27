@@ -429,7 +429,17 @@ export function AssignmentFormModal({
         const { error: upErr } = await supabase.from("subject_assignments").update(payload).eq("id", assignment.id);
         if (upErr) throw upErr;
       } else {
-        const { error: inErr } = await supabase.from("subject_assignments").insert({ ...payload, created_by: userId, status: "open" });
+        // Stamp new assignments with the school's currently-active term so
+        // students viewing a different term don't see them (see the
+        // student list's term_id filter above).
+        const { data: currentTerm } = await supabase
+          .from("academic_terms")
+          .select("id")
+          .eq("is_current", true)
+          .maybeSingle();
+        const { error: inErr } = await supabase
+          .from("subject_assignments")
+          .insert({ ...payload, term_id: currentTerm?.id ?? null, created_by: userId, status: "open" });
         if (inErr) throw inErr;
       }
       onSaved();
@@ -755,11 +765,17 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
 
       if (subjectId) {
         // Scoped to a single subject tab — the common case.
-        const { data: asgn } = await supabase
+        let q = supabase
           .from("subject_assignments")
           .select("*, subjects(id, title, title_ar, level, levels)")
-          .eq("subject_id", subjectId)
-          .order("deadline", { ascending: true });
+          .eq("subject_id", subjectId);
+        // Only show this term's assignments — plus any legacy ones created
+        // before term_id existed (term_id is null), so old data doesn't
+        // just disappear. New assignments are stamped with a term on
+        // creation (see SubjectAssignments.tsx), so once a teacher creates
+        // one in Term 2, students viewing Term 1 stop seeing it.
+        if (activeTermId) q = q.or(`term_id.eq.${activeTermId},term_id.is.null`);
+        const { data: asgn } = await q.order("deadline", { ascending: true });
         list = await applyTermSnapshots(asgn || []);
       } else {
         // Legacy standalone use — every assignment across enrolled subjects.
@@ -785,11 +801,12 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
         const allSubjectIds = [...new Set([...subjectIds, ...ttSubjectIds])];
         if (allSubjectIds.length === 0) { setAssignments([]); setLoading(false); return; }
 
-        const { data: asgn } = await supabase
+        let q2 = supabase
           .from("subject_assignments")
           .select("*, subjects(id, title, title_ar, level, levels)")
-          .in("subject_id", allSubjectIds)
-          .order("deadline", { ascending: true });
+          .in("subject_id", allSubjectIds);
+        if (activeTermId) q2 = q2.or(`term_id.eq.${activeTermId},term_id.is.null`);
+        const { data: asgn } = await q2.order("deadline", { ascending: true });
 
         const withSnapshots = await applyTermSnapshots(asgn || []);
         list = withSnapshots.filter((a: any) => {
