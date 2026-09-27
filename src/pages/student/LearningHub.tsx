@@ -538,19 +538,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                 ))}
               </div>
             )}
-            {disenrolledUrlCourseSubjects.length > 0 && (
-              <button onClick={() => setShowEnrollSettings(true)} style={{
-                marginTop:16, width:"100%", display:"flex", alignItems:"center", justifyContent:"center", gap:6,
-                padding:"10px", borderRadius:12, border:"1.5px dashed #d1d5db", background:"#fff",
-                color:"#6b7280", fontSize:12, fontWeight:700, cursor:"pointer",
-              }}>
-                <Settings style={{ width:13, height:13 }} />
-                {t(
-                  `${disenrolledUrlCourseSubjects.length} subject(s) disenrolled — manage in Subject Registration`,
-                  `${disenrolledUrlCourseSubjects.length} مادة ملغاة التسجيل — إدارتها من تسجيل المواد`
-                )}
-              </button>
-            )}
           </div>
           {enrollmentSettingsModal}
         </div>
@@ -839,24 +826,9 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                   live={isLive(sub.id)}
                   language={language}
                   enrollment={getEnrollment(sub.id)}
-                  onToggleEnrollment={toggleSubjectEnrollment}
-                  toggling={togglingSubjectId === sub.id}
                 />
               ))}
             </div>
-          )}
-          {disenrolledCourseSubjects.length > 0 && (
-            <button onClick={() => setShowEnrollSettings(true)} style={{
-              marginTop:16, width:"100%", display:"flex", alignItems:"center", justifyContent:"center", gap:6,
-              padding:"10px", borderRadius:12, border:"1.5px dashed #d1d5db", background:"#fff",
-              color:"#6b7280", fontSize:12, fontWeight:700, cursor:"pointer",
-            }}>
-              <Settings style={{ width:13, height:13 }} />
-              {t(
-                `${disenrolledCourseSubjects.length} subject(s) disenrolled — manage in Subject Registration`,
-                `${disenrolledCourseSubjects.length} مادة ملغاة التسجيل — إدارتها من تسجيل المواد`
-              )}
-            </button>
           )}
         </div>
         {enrollmentSettingsModal}
