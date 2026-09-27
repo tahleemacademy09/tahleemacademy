@@ -414,8 +414,12 @@ const StudentCourses = () => {
   });
 
   // Fetch subjects
+  // active_term_id is included in the queryKey so switching terms (see
+  // TermSwitcher in Settings) automatically refetches with the right
+  // snapshot — otherwise this list kept showing the previous term's
+  // subject names/levels after a switch, since it never re-ran.
   const { data: allSubjectsRaw, isLoading: loadingSubjects } = useQuery({
-    queryKey: ["subjects-active", studentLevel],
+    queryKey: ["subjects-active", studentLevel, profile?.active_term_id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("subjects")
@@ -423,11 +427,28 @@ const StudentCourses = () => {
         .eq("is_active", true)
         .order("created_at");
       if (error) throw error;
-      return (data || []).filter((s: any) => {
+      const filtered = (data || []).filter((s: any) => {
         const lv: string = s.level || "all";
         if (!lv || lv === "all") return true;
         return lv.split(",").map((l: string) => l.trim()).includes(studentLevel);
       });
+
+      // Overlay the term-scoped snapshot (title/level/levels/delivery_mode/track)
+      // on top of each live row, same as SubjectView does for a single subject —
+      // so this list shows the old naming until the student switches, and the
+      // new naming once they do.
+      if (profile?.active_term_id && filtered.length > 0) {
+        const { data: snaps } = await supabase
+          .from("subject_term_snapshots")
+          .select("subject_id, title, level, levels, delivery_mode, track")
+          .eq("term_id", profile.active_term_id)
+          .in("subject_id", filtered.map((s: any) => s.id));
+        const snapMap: Record<string, any> = {};
+        (snaps || []).forEach((snap: any) => { snapMap[snap.subject_id] = snap; });
+        return filtered.map((s: any) => (snapMap[s.id] ? { ...s, ...snapMap[s.id] } : s));
+      }
+
+      return filtered;
     },
   });
 

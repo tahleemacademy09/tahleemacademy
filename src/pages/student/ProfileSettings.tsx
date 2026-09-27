@@ -842,42 +842,16 @@ export default function ProfileSettings() {
               </StableSelect>
             </PFld>
 
-            {/* Dark Mode — FULLY FUNCTIONAL */}
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "12px 14px", borderRadius: 12, marginTop: 4,
-              background: dark ? "rgba(251,191,36,.08)" : "rgba(6,78,59,.05)",
-              border: `1.5px solid ${dark ? "rgba(251,191,36,.3)" : "rgba(6,78,59,.15)"}`,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ width: 36, height: 36, borderRadius: "50%", background: dark ? "rgba(251,191,36,.15)" : "rgba(6,78,59,.08)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {dark ? <Moon size={17} color="#fbbf24" /> : <Sun size={17} color={G} />}
-                </div>
-                <div>
-                  <p style={{ fontWeight: 700, fontSize: 13, color: T.text3, margin: 0 }}>
-                    {dark ? "Dark Mode" : "Light Mode"}
-                  </p>
-                  <p style={{ fontSize: 11, color: T.text2, margin: 0 }}>
-                    {dark ? "Easy on the eyes at night" : "Bright and clear for daytime use"}
-                  </p>
-                </div>
-              </div>
-              <Switch
-                checked={dark}
-                onCheckedChange={v => {
-                  setDark(v);
-                  setPrefs(p => ({ ...p, dark_mode: v }));
-                }}
-              />
-            </div>
-            <p style={{ fontSize: 10.5, color: T.text2, margin: "6px 2px 0", lineHeight: 1.5 }}>
-              Applies across the whole app, not just this page.
-            </p>
-          </PSec>
-
-          <PSec title="Learning" T={T}>
-            <PTog label="Autoplay Recordings" checked={prefs.autoplay_recordings} onChange={(v: boolean) => setPrefs(p => ({ ...p, autoplay_recordings: v }))}  T={T}/>
-            <PTog label="Show Subtitles" checked={prefs.show_subtitles} onChange={(v: boolean) => setPrefs(p => ({ ...p, show_subtitles: v }))}  T={T}/>
+            <PTog
+              label={dark ? "Dark Mode" : "Light Mode"}
+              sub={dark ? "Easy on the eyes at night" : "Bright and clear for daytime use — applies across the whole app"}
+              checked={dark}
+              onChange={(v: boolean) => {
+                setDark(v);
+                setPrefs(p => ({ ...p, dark_mode: v }));
+              }}
+              T={T}
+            />
             <PFld label="Playback Speed" T={T}>
               <StableSelect style={inp} value={prefs.playback_speed} onChange={v => setPrefs(p => ({ ...p, playback_speed: v }))}>
                 {["0.75x","1x","1.25x","1.5x","2x"].map(s => <option key={s} value={s}>{s}</option>)}
@@ -889,6 +863,11 @@ export default function ProfileSettings() {
                 <option value="list">List</option>
               </StableSelect>
             </PFld>
+          </PSec>
+
+          <PSec title="Learning" T={T}>
+            <PTog label="Autoplay Recordings" checked={prefs.autoplay_recordings} onChange={(v: boolean) => setPrefs(p => ({ ...p, autoplay_recordings: v }))}  T={T}/>
+            <PTog label="Show Subtitles" checked={prefs.show_subtitles} onChange={(v: boolean) => setPrefs(p => ({ ...p, show_subtitles: v }))}  T={T}/>
           </PSec>
           <PSaveBtn fn={savePrefs} saving={saving} />
           <TermSwitcher />
