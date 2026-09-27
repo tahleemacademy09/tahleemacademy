@@ -18,6 +18,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS } from "@/hooks/useHifdhSettings";
+import HifdhLiveClass from "@/components/hifdh/HifdhLiveClass";
 import {
   ArrowLeft, Mic, MicOff, BookOpen, CalendarDays, Clock, Trophy,
   Star, CheckCircle, CheckCircle2, AlertCircle, ChevronDown, ChevronUp,
@@ -176,7 +177,7 @@ interface Question {
   snippet?: boolean;
 }
 type Phase = "intro"|"pre_test_review"|"reading"|"page_result"|"proctor_intro"|"testing"|"test_result"|"complete";
-type MainTab = "today"|"schedule"|"history";
+type MainTab = "today"|"schedule"|"live"|"history";
 
 /* ── Day descriptor ─────────────────────────────────────────────── */
 interface ProgramDay {
@@ -4128,7 +4129,7 @@ export default function HifdhDailyRevisionPage() {
         {/* ── Tabs ─────────────────────────────────────────────── */}
         <div style={{flexShrink:0,background:W,borderBottom:`1px solid ${BRD}`,
           display:"flex",padding:"0 4px"}}>
-          {([["today","Today","📅"],["schedule","Schedule","📋"],["history","History","📊"]] as const).map(([t,label,emoji])=>(
+          {([["today","Today","📅"],["schedule","Schedule","📋"],["live","Live","🔴"],["history","History","📊"]] as const).map(([t,label,emoji])=>(
             <button key={t} onClick={()=>setTab(t)}
               style={{flex:1,padding:"12px 6px",border:"none",cursor:"pointer",background:"transparent",
                 fontFamily:"inherit",fontWeight:tab===t?800:600,fontSize:12,
@@ -4500,6 +4501,13 @@ export default function HifdhDailyRevisionPage() {
                 )}
               </div>
             </>
+          )}
+
+          {/* ════ TAB: LIVE ════ */}
+          {tab==="live"&&userId&&(
+            <div style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,margin:"-14px -14px -32px",background:"#1a1a14"}}>
+              <HifdhLiveClass userId={userId} studentName={studentName} isTeacher={false} />
+            </div>
           )}
 
           {/* ════ TAB: HISTORY ════ */}
