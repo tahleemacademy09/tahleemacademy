@@ -708,7 +708,7 @@ function StudentSubmissionRow({
    STUDENT VIEW — browse + submit, locked once overdue
    ═══════════════════════════════════════════════════════════════ */
 function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { t, language } = useLanguage();
   const navigate = useNavigate();
 
@@ -723,6 +723,28 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
   const [showSubmit, setShowSubmit]     = useState(false);
 
   const embedded = !!subjectId;
+  const activeTermId = profile?.active_term_id;
+
+  // Overlay the term-scoped snapshot (title/level/levels) onto each
+  // assignment's joined subject, same pattern as SubjectView/StudentCourses —
+  // otherwise a subject's name/level here stays whatever it currently is,
+  // even after the student switches to viewing a different term.
+  const applyTermSnapshots = useCallback(async (list: any[]) => {
+    if (!activeTermId || list.length === 0) return list;
+    const ids = [...new Set(list.map((a: any) => a.subjects?.id).filter(Boolean))];
+    if (ids.length === 0) return list;
+    const { data: snaps } = await supabase
+      .from("subject_term_snapshots")
+      .select("subject_id, title, level, levels")
+      .eq("term_id", activeTermId)
+      .in("subject_id", ids);
+    const snapMap: Record<string, any> = {};
+    (snaps || []).forEach((snap: any) => { snapMap[snap.subject_id] = snap; });
+    return list.map((a: any) => {
+      const snap = a.subjects?.id ? snapMap[a.subjects.id] : null;
+      return snap ? { ...a, subjects: { ...a.subjects, ...snap } } : a;
+    });
+  }, [activeTermId]);
 
   /* ── Load data ─────────────────────────────────────────── */
   const load = useCallback(async () => {
@@ -738,7 +760,7 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
           .select("*, subjects(id, title, title_ar, level, levels)")
           .eq("subject_id", subjectId)
           .order("deadline", { ascending: true });
-        list = asgn || [];
+        list = await applyTermSnapshots(asgn || []);
       } else {
         // Legacy standalone use — every assignment across enrolled subjects.
         const { data: profileData } = await supabase
@@ -769,7 +791,8 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
           .in("subject_id", allSubjectIds)
           .order("deadline", { ascending: true });
 
-        list = (asgn || []).filter((a: any) => {
+        const withSnapshots = await applyTermSnapshots(asgn || []);
+        list = withSnapshots.filter((a: any) => {
           const subj = a.subjects;
           if (!subj) return true;
           const subjLevels: string[] = subj.levels || (subj.level ? [subj.level] : []);
@@ -807,7 +830,7 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
       console.error("Failed to load assignments:", err);
     }
     setLoading(false);
-  }, [user, subjectId]);
+  }, [user, subjectId, applyTermSnapshots]);
 
   useEffect(() => { load(); }, [load]);
 

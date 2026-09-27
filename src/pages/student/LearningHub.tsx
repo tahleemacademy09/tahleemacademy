@@ -21,6 +21,7 @@ import {
   BookOpen, Play, Lock, ArrowLeft, CheckCircle, Circle, Clock,
   Video, FileText, ClipboardList, Megaphone, Calendar,
   ChevronRight, LayoutGrid, List, GraduationCap, Layers,
+  Settings, X, XCircle, RotateCcw,
 } from "lucide-react";
 import SubjectRecordings    from "@/components/classroom/SubjectRecordings";
 import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
@@ -249,6 +250,19 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     },
   });
 
+  // ── Subject registration settings modal — one place to enroll/disenroll
+  // from optional subjects across ALL courses, instead of scattering the
+  // action inside each course/subject view.
+  const [showEnrollSettings, setShowEnrollSettings] = useState(false);
+  const { data: allSubjectsAllCourses } = useQuery({
+    queryKey: ["all-subjects-for-enrollment-settings"],
+    enabled: !isPrivileged,
+    queryFn: async () => {
+      const { data } = await supabase.from("subjects").select("*").eq("is_active", true).order("title");
+      return data || [];
+    },
+  });
+
   const getEnrollment = (subjectId: string) => subjectEnrollments?.[subjectId] ?? null;
   // No row → subject isn't level-mapped, so it's unaffected by this system.
   const isSubjectEnrolled = (subjectId: string): boolean => {
@@ -315,6 +329,19 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const disenrolledCourseSubjects = isPrivileged ? [] : (allCourseSubjects || []).filter(
     (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession) && isSubjectInTerm(s)
   );
+
+  // Every subject visible to this student, across every course — grouped by
+  // course_id for the registration Settings modal (compulsory subjects show
+  // as locked, optional ones get an enroll/disenroll toggle).
+  const enrollableSubjects = isPrivileged ? [] : (allSubjectsAllCourses || []).filter(
+    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && subjectSessionUnlocked(s, currentSession) && isSubjectInTerm(s)
+  );
+  const subjectsByCourse: Record<string, any[]> = {};
+  enrollableSubjects.forEach((s: any) => {
+    const cid = s.course_id || "uncategorized";
+    if (!subjectsByCourse[cid]) subjectsByCourse[cid] = [];
+    subjectsByCourse[cid].push(s);
+  });
 
   const { data: subjectLessons, isLoading: loadLessons } = useQuery({
     queryKey: ["subject-lessons", selectedSubject?.id],
@@ -459,6 +486,22 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const completedSet = new Set((myProgress || []).map((p: any) => p.lesson_id));
   const isLive = (sid: string) => liveSessions?.some((s: any) => s.subject_id === sid);
 
+  // Rendered from every return branch below so "manage in Subject
+  // Registration" works no matter which view the student is on.
+  const enrollmentSettingsModal = !isPrivileged ? (
+    <EnrollmentSettingsModal
+      open={showEnrollSettings}
+      onClose={() => setShowEnrollSettings(false)}
+      courses={courses}
+      subjectsByCourse={subjectsByCourse}
+      getEnrollment={getEnrollment}
+      onToggleEnrollment={toggleSubjectEnrollment}
+      togglingSubjectId={togglingSubjectId}
+      language={language}
+      t={t}
+    />
+  ) : null;
+
   // Lessons render as a collapsible accordion now — nothing auto-expands on
   // load. activeLesson only gets set when the student taps a lesson row, or
   // when a Syllabus item is clicked (openLessonFromSyllabus below).
@@ -490,23 +533,26 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                 {urlCourseSubjects.map((sub: any) => (
                   <SubjectCard
                     key={sub.id} subject={sub} onClick={() => setSelectedSubject(sub)} live={isLive(sub.id)} language={language}
-                    enrollment={getEnrollment(sub.id)} onToggleEnrollment={toggleSubjectEnrollment} toggling={togglingSubjectId === sub.id}
+                    enrollment={getEnrollment(sub.id)}
                   />
                 ))}
               </div>
             )}
             {disenrolledUrlCourseSubjects.length > 0 && (
-              <div style={{ marginTop:16, display:"flex", flexDirection:"column", gap:8 }}>
-                <p style={{ fontSize:11, fontWeight:700, color:"#9ca3af", textTransform:"uppercase" as const, letterSpacing:0.5 }}>
-                  {t("Disenrolled (optional)", "ملغى التسجيل (اختياري)")}
-                </p>
-                {disenrolledUrlCourseSubjects.map((sub: any) => (
-                  <DisenrolledSubjectRow key={sub.id} subject={sub} language={language} toggling={togglingSubjectId === sub.id}
-                    onReEnroll={() => toggleSubjectEnrollment(sub.id, true)} />
-                ))}
-              </div>
+              <button onClick={() => setShowEnrollSettings(true)} style={{
+                marginTop:16, width:"100%", display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+                padding:"10px", borderRadius:12, border:"1.5px dashed #d1d5db", background:"#fff",
+                color:"#6b7280", fontSize:12, fontWeight:700, cursor:"pointer",
+              }}>
+                <Settings style={{ width:13, height:13 }} />
+                {t(
+                  `${disenrolledUrlCourseSubjects.length} subject(s) disenrolled — manage in Subject Registration`,
+                  `${disenrolledUrlCourseSubjects.length} مادة ملغاة التسجيل — إدارتها من تسجيل المواد`
+                )}
+              </button>
             )}
           </div>
+          {enrollmentSettingsModal}
         </div>
       );
     }
@@ -530,10 +576,11 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                  "دروسها ومصادرها وواجباتها واختباراتها مخفية حتى تعيد التسجيل.")}
             </p>
             <button
-              onClick={() => toggleSubjectEnrollment(selectedSubject.id, true)}
-              style={{ padding:"10px 20px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer" }}
+              onClick={() => setShowEnrollSettings(true)}
+              style={{ padding:"10px 20px", borderRadius:10, background:G, border:"none", color:"#fff", fontSize:13, fontWeight:700, cursor:"pointer", display:"inline-flex", alignItems:"center", gap:6 }}
             >
-              {t("Re-enroll", "إعادة التسجيل")}
+              <Settings style={{ width:14, height:14 }} />
+              {t("Manage in Subject Registration", "إدارتها من تسجيل المواد")}
             </button>
             <button
               onClick={() => setSelectedSubject(null)}
@@ -542,6 +589,7 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
               {t("Back", "رجوع")}
             </button>
           </div>
+          {enrollmentSettingsModal}
         </div>
       );
     }
@@ -798,17 +846,20 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
             </div>
           )}
           {disenrolledCourseSubjects.length > 0 && (
-            <div style={{ marginTop:16, display:"flex", flexDirection:"column", gap:8 }}>
-              <p style={{ fontSize:11, fontWeight:700, color:"#9ca3af", textTransform:"uppercase" as const, letterSpacing:0.5 }}>
-                {t("Disenrolled (optional)", "ملغى التسجيل (اختياري)")}
-              </p>
-              {disenrolledCourseSubjects.map((sub: any) => (
-                <DisenrolledSubjectRow key={sub.id} subject={sub} language={language} toggling={togglingSubjectId === sub.id}
-                  onReEnroll={() => toggleSubjectEnrollment(sub.id, true)} />
-              ))}
-            </div>
+            <button onClick={() => setShowEnrollSettings(true)} style={{
+              marginTop:16, width:"100%", display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+              padding:"10px", borderRadius:12, border:"1.5px dashed #d1d5db", background:"#fff",
+              color:"#6b7280", fontSize:12, fontWeight:700, cursor:"pointer",
+            }}>
+              <Settings style={{ width:13, height:13 }} />
+              {t(
+                `${disenrolledCourseSubjects.length} subject(s) disenrolled — manage in Subject Registration`,
+                `${disenrolledCourseSubjects.length} مادة ملغاة التسجيل — إدارتها من تسجيل المواد`
+              )}
+            </button>
           )}
         </div>
+        {enrollmentSettingsModal}
       </div>
     );
   }
@@ -870,16 +921,25 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
               )}
             </div>
           </div>
-          <div style={{ display:"flex", background:"rgba(255,255,255,.12)", borderRadius:11, padding:3, gap:2 }}>
-            <button onClick={() => setViewMode("grid")} style={{ width:36, height:36, borderRadius:8, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", background: viewMode==="grid" ? "#fff" : "transparent", color: viewMode==="grid" ? G : "rgba(255,255,255,.6)", transition:"all .15s" }}>
-              <LayoutGrid style={{ width:17, height:17 }} />
-            </button>
-            <button onClick={() => setViewMode("list")} style={{ width:36, height:36, borderRadius:8, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", background: viewMode==="list" ? "#fff" : "transparent", color: viewMode==="list" ? G : "rgba(255,255,255,.6)", transition:"all .15s" }}>
-              <List style={{ width:17, height:17 }} />
-            </button>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            {!isPrivileged && (
+              <button onClick={() => setShowEnrollSettings(true)} title={t("Subject Registration","تسجيل المواد")} style={{ width:36, height:36, borderRadius:11, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", background:"rgba(255,255,255,.12)", color:"rgba(255,255,255,.85)", transition:"all .15s" }}>
+                <Settings style={{ width:17, height:17 }} />
+              </button>
+            )}
+            <div style={{ display:"flex", background:"rgba(255,255,255,.12)", borderRadius:11, padding:3, gap:2 }}>
+              <button onClick={() => setViewMode("grid")} style={{ width:36, height:36, borderRadius:8, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", background: viewMode==="grid" ? "#fff" : "transparent", color: viewMode==="grid" ? G : "rgba(255,255,255,.6)", transition:"all .15s" }}>
+                <LayoutGrid style={{ width:17, height:17 }} />
+              </button>
+              <button onClick={() => setViewMode("list")} style={{ width:36, height:36, borderRadius:8, border:"none", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", background: viewMode==="list" ? "#fff" : "transparent", color: viewMode==="list" ? G : "rgba(255,255,255,.6)", transition:"all .15s" }}>
+                <List style={{ width:17, height:17 }} />
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {enrollmentSettingsModal}
 
       <div style={{ padding:"16px", maxWidth:800, margin:"0 auto" }}>
         {loadCourse && (
@@ -986,45 +1046,10 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   );
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-function DisenrolledSubjectRow({ subject, language, onReEnroll, toggling }: {
-  subject: any; language: string; onReEnroll: () => void; toggling: boolean;
-}) {
-  const name = language === "ar" ? subject.title_ar || subject.title : subject.title;
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-      background: "#fff", border: "1px dashed #e5e7eb", borderRadius: 12, padding: "10px 14px",
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-        <BookOpen style={{ width: 14, height: 14, color: "#9ca3af", flexShrink: 0 }} />
-        <span style={{ fontSize: 12.5, fontWeight: 600, color: "#6b7280", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {name}
-        </span>
-        <span style={{ fontSize: 9, fontWeight: 700, padding: "1px 7px", borderRadius: 20, background: "#F0FDF4", color: "#15803D", border: "1px solid #86EFAC", flexShrink: 0 }}>
-          {language === "ar" ? "اختياري" : "Optional"}
-        </span>
-      </div>
-      <button
-        disabled={toggling}
-        onClick={onReEnroll}
-        style={{
-          flexShrink: 0, padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700,
-          background: "#fff", color: "#15803D", border: "1.5px solid #86EFAC",
-          cursor: toggling ? "not-allowed" : "pointer", opacity: toggling ? 0.6 : 1,
-        }}
-      >
-        {language === "ar" ? "إعادة التسجيل" : "Re-enroll"}
-      </button>
-    </div>
-  );
-}
 
-function SubjectCard({ subject, onClick, live, language, enrollment, onToggleEnrollment, toggling }: {
+function SubjectCard({ subject, onClick, live, language, enrollment }: {
   subject: any; onClick: () => void; live: boolean; language: string;
   enrollment?: { status: "active" | "disenrolled"; is_compulsory: boolean } | null;
-  onToggleEnrollment?: (subjectId: string, makeActive: boolean) => void;
-  toggling?: boolean;
 }) {
   const lc   = levelColor(subject.level);
   const name = language === "ar" ? subject.title_ar || subject.title : subject.title;
@@ -1058,21 +1083,9 @@ function SubjectCard({ subject, onClick, live, language, enrollment, onToggleEnr
             {subject.description}
           </p>
         )}
-        <div style={{ display:"flex", gap:6 }}>
-          <button style={{ flex:1, padding:"7px", borderRadius:9, background:"#0f2d1f", border:"none", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
-            <BookOpen style={{ width:11, height:11 }} />Open Subject
-          </button>
-          {enrollment && !enrollment.is_compulsory && onToggleEnrollment && (
-            <button
-              disabled={toggling}
-              onClick={(e) => { e.stopPropagation(); onToggleEnrollment(subject.id, false); }}
-              title={language === "ar" ? "إلغاء التسجيل من هذه المادة الاختيارية" : "Disenroll from this optional subject"}
-              style={{ padding:"7px 10px", borderRadius:9, background:"#fff", border:"1.5px solid #FCA5A5", color:"#B91C1C", fontSize:11, fontWeight:700, cursor: toggling ? "not-allowed" : "pointer", opacity: toggling ? 0.6 : 1 }}
-            >
-              ✕
-            </button>
-          )}
-        </div>
+        <button style={{ width:"100%", padding:"7px", borderRadius:9, background:"#0f2d1f", border:"none", color:"#fff", fontSize:11, fontWeight:700, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", gap:4 }}>
+          <BookOpen style={{ width:11, height:11 }} />Open Subject
+        </button>
       </div>
     </div>
   );
@@ -1088,6 +1101,124 @@ function LevelLockedCard({ studentLevel, requiredLevel }: { studentLevel: string
       <p style={{ fontSize:13, color:"#9ca3af" }}>
         Your current level is <strong>{lvLabel(studentLevel)}</strong>. Contact your instructor to upgrade your level.
       </p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUBJECT REGISTRATION SETTINGS — the one place students enroll/disenroll
+// from optional subjects, grouped by course. Opened from the gear icon next
+// to the grid/list toggle (and from any "manage in Settings" prompt).
+// ─────────────────────────────────────────────────────────────────────────────
+function EnrollmentSettingsModal({
+  open, onClose, courses, subjectsByCourse, getEnrollment, onToggleEnrollment, togglingSubjectId, language, t,
+}: {
+  open: boolean;
+  onClose: () => void;
+  courses: any[];
+  subjectsByCourse: Record<string, any[]>;
+  getEnrollment: (subjectId: string) => { status: "active" | "disenrolled"; is_compulsory: boolean } | null;
+  onToggleEnrollment: (subjectId: string, makeActive: boolean) => void;
+  togglingSubjectId: string | null;
+  language: string;
+  t: (en: string, ar: string) => string;
+}) {
+  if (!open) return null;
+  const coursesWithSubjects = courses.filter((c: any) => (subjectsByCourse[c.id] || []).length > 0);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position:"fixed", inset:0, background:"rgba(15,45,31,.55)", zIndex:200, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background:"#fff", width:"100%", maxWidth:520, maxHeight:"85vh", overflowY:"auto", borderRadius:"20px 20px 0 0", padding:"18px 16px 28px", fontFamily:"'Cairo',sans-serif" }}
+      >
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
+          <h2 style={{ fontSize:16, fontWeight:800, color:G, margin:0, display:"flex", alignItems:"center", gap:8 }}>
+            <Settings style={{ width:16, height:16 }} />
+            {t("Subject Registration", "تسجيل المواد")}
+          </h2>
+          <button onClick={onClose} style={{ background:"none", border:"none", cursor:"pointer", color:"#9ca3af", padding:4 }}>
+            <X style={{ width:18, height:18 }} />
+          </button>
+        </div>
+        <p style={{ fontSize:12, color:"#9ca3af", margin:"0 0 16px", lineHeight:1.5 }}>
+          {t(
+            "Choose which optional subjects you're enrolled in. Compulsory subjects for your level can't be turned off.",
+            "اختر المواد الاختيارية التي ترغب بالتسجيل فيها. لا يمكن إلغاء المواد الإلزامية لمستواك."
+          )}
+        </p>
+
+        {coursesWithSubjects.length === 0 && (
+          <p style={{ fontSize:13, color:"#9ca3af", textAlign:"center", padding:"30px 0" }}>
+            {t("No subjects available yet.", "لا توجد مواد متاحة بعد.")}
+          </p>
+        )}
+
+        {coursesWithSubjects.map((course: any) => {
+          const subs = subjectsByCourse[course.id] || [];
+          const courseName = language === "ar" ? course.title_ar || course.title : course.title;
+          return (
+            <div key={course.id} style={{ marginBottom:18 }}>
+              <p style={{ fontSize:11, fontWeight:700, color:"#6b7280", textTransform:"uppercase" as const, letterSpacing:.5, margin:"0 0 8px" }}>
+                {courseName}
+              </p>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {subs.map((sub: any) => {
+                  const enrollment = getEnrollment(sub.id);
+                  const name = language === "ar" ? sub.title_ar || sub.title : sub.title;
+                  const isOptional = !!enrollment && !enrollment.is_compulsory;
+                  const isActive = !enrollment || enrollment.status === "active";
+                  const toggling = togglingSubjectId === sub.id;
+                  return (
+                    <div key={sub.id} style={{
+                      display:"flex", alignItems:"center", justifyContent:"space-between", gap:10,
+                      padding:"10px 12px", borderRadius:12, border:"1px solid #e5e7eb",
+                      background: isActive ? "#fff" : "#F9FAFB",
+                    }}>
+                      <div style={{ minWidth:0 }}>
+                        <p style={{ fontSize:13, fontWeight:700, color:"#111827", margin:"0 0 3px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                          {name}
+                        </p>
+                        <span style={{
+                          fontSize:9, fontWeight:700, padding:"1px 7px", borderRadius:20,
+                          background: isOptional ? "#F0FDF4" : "#FEF2F2",
+                          color: isOptional ? "#15803D" : "#B91C1C",
+                          border: `1px solid ${isOptional ? "#86EFAC" : "#FCA5A5"}`,
+                        }}>
+                          {isOptional ? t("Optional", "اختياري") : t("Compulsory", "إلزامي")}
+                        </span>
+                      </div>
+                      {isOptional ? (
+                        <button
+                          disabled={toggling}
+                          onClick={() => onToggleEnrollment(sub.id, !isActive)}
+                          style={{
+                            flexShrink:0, padding:"6px 12px", borderRadius:8, fontSize:11, fontWeight:700,
+                            cursor: toggling ? "not-allowed" : "pointer", background:"#fff",
+                            color: isActive ? "#B91C1C" : "#15803D",
+                            border: `1.5px solid ${isActive ? "#FCA5A5" : "#86EFAC"}`,
+                            opacity: toggling ? 0.6 : 1,
+                            display:"inline-flex", alignItems:"center", gap:4,
+                          }}
+                        >
+                          {isActive
+                            ? (<><XCircle style={{ width:12, height:12 }} />{t("Disenroll", "إلغاء التسجيل")}</>)
+                            : (<><RotateCcw style={{ width:12, height:12 }} />{t("Enroll", "تسجيل")}</>)}
+                        </button>
+                      ) : (
+                        <Lock style={{ width:13, height:13, color:"#d1d5db", flexShrink:0 }} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
