@@ -278,7 +278,7 @@ const App = () => (
                     <Route path="/student/majlis"              element={<Majlis />} />
                     <Route path="/student/live-classes"        element={<LearningHub defaultTab="live" />} />
                     <Route path="/student/revision"            element={<RevisionHub />} />
-                    <Route path="/student/hifdh"               element={<HifdhPage />} />
+                    <Route path="/student/hifdh"               element={<HifdhDailyRevisionPage />} />
                     <Route path="/student/hifdh-daily"         element={<HifdhDailyRevisionPage />} />
                     <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
