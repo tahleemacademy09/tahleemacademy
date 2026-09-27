@@ -105,22 +105,32 @@ export const useAcademySettings = () => {
     () => fetchSettings(),
   );
 
+  // NOTE: these used to swallow errors and always mark the save as
+  // "successful" in local state, even when the database write silently
+  // failed (session hiccup, network blip, etc) -- so the UI would show the
+  // new value while the database quietly kept the old one. Now every write
+  // is checked, and local state only updates -- and the toast only reads
+  // "Saved" -- once every row is confirmed written.
   const updateSetting = async (key: string, value: string | null, updatedBy?: string) => {
-    await supabase
+    const { error } = await supabase
       .from("academy_settings" as any)
       .update({ value, updated_by: updatedBy, updated_at: new Date().toISOString() } as any)
       .eq("key", key);
+    if (error) throw error;
     setSettings((prev) => ({ ...prev, [key]: value } as AcademySettings));
   };
 
   const updateMultiple = async (updates: Record<string, string | null>, updatedBy?: string) => {
-    const promises = Object.entries(updates).map(([key, value]) =>
-      supabase
-        .from("academy_settings" as any)
-        .update({ value, updated_by: updatedBy, updated_at: new Date().toISOString() } as any)
-        .eq("key", key)
+    const results = await Promise.all(
+      Object.entries(updates).map(([key, value]) =>
+        supabase
+          .from("academy_settings" as any)
+          .update({ value, updated_by: updatedBy, updated_at: new Date().toISOString() } as any)
+          .eq("key", key)
+      )
     );
-    await Promise.all(promises);
+    const failed = results.find(r => r.error);
+    if (failed?.error) throw failed.error;
     setSettings((prev) => ({ ...prev, ...updates } as AcademySettings));
   };
 
