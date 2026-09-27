@@ -391,7 +391,18 @@ export function AssignmentFormModal({
         const { error: upErr } = await supabase.from("subject_assignments").update(payload).eq("id", assignment.id);
         if (upErr) throw upErr;
       } else {
-        const { error: inErr } = await supabase.from("subject_assignments").insert({ ...payload, created_by: userId, status: "open" });
+        // Stamp the assignment with whichever academic term is currently
+        // "live" for the school, so it only shows up for students viewing
+        // that term (see StudentAssignments.tsx / StudentDashboard.tsx) —
+        // not every term, forever.
+        const { data: currentTerm } = await supabase
+          .from("academic_terms")
+          .select("id")
+          .eq("is_current", true)
+          .maybeSingle();
+        const { error: inErr } = await supabase
+          .from("subject_assignments")
+          .insert({ ...payload, term_id: currentTerm?.id ?? null, created_by: userId, status: "open" });
         if (inErr) throw inErr;
       }
       onSaved();
