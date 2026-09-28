@@ -108,12 +108,10 @@ function clearPersist() {
   try { localStorage.removeItem(STORAGE_KEY); sessionStorage.removeItem(STORAGE_KEY); } catch {}
 }
 function restore(): LiveClassState | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const p = JSON.parse(raw);
-    if (p?.inCall && p?.activeSubject) return { ...p, autoJoin: true, hasConnected: false };
-  } catch {}
+  // A live class does NOT survive the app being closed: on a cold start we wipe any
+  // saved call so the floating class bubble stays gone until the user joins a class anew.
+  // (Plain backgrounding keeps JS alive, so the in-memory state / bubble is untouched.)
+  clearPersist();
   return null;
 }
 

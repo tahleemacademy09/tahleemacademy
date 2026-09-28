@@ -98,6 +98,7 @@
       ║  kill. It is NOT shown on normal navigation.             ║
       ╚══════════════════════════════════════════════════════════╝
     -->
+    <link rel="preload" as="image" href="/brand-logo.png" />
     <style>
       #ta-splash {
         position: fixed;
@@ -117,6 +118,12 @@
       }
       #ta-splash.ta-gone {
         display: none;
+      }
+      .ta-splash-logo {
+        width: 200px;
+        height: 200px;
+        object-fit: contain;
+        filter: drop-shadow(0 4px 24px rgba(201,168,76,0.25));
       }
       .ta-splash-icon {
         width: 88px;
@@ -177,7 +184,7 @@
                           || window.navigator.standalone === true;
           if ((hasSaved && isReload) || (isStandalone && isReload && !sessionStorage.getItem('ta_launched'))) {
             sessionStorage.setItem('ta_launched', '1');
-            document.write('<div id="ta-splash"><div class="ta-splash-icon">🕌</div><div class="ta-splash-name">Tahleem Academy</div><div class="ta-splash-ar">أكاديمية التعليم</div><div class="ta-splash-bar"><div class="ta-splash-bar-fill"></div></div></div>');
+            document.write('<div id="ta-splash"><img class="ta-splash-logo" src="/brand-logo.png" alt=""><div class="ta-splash-bar"><div class="ta-splash-bar-fill"></div></div></div>');
           }
         } catch(e) {}
       })();
