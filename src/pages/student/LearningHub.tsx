@@ -31,7 +31,6 @@ import SubjectAnnouncements from "@/components/classroom/SubjectAnnouncements";
 import { usePushNotifications } from "@/hooks/usePushNotifications";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { usePrivateStudent } from "@/hooks/usePrivateStudent";
-import { useAcademySettings } from "@/hooks/useAcademySettings";
 import { useViewingTermId } from "@/hooks/useCurrentTermId";
 
 const G    = "#0f2d1f";
@@ -69,15 +68,6 @@ const subjectLevelMatch = (subject: any, studentLevel: string): boolean => {
 const levelMatch = (itemLevel: string | null | undefined, studentLevel: string): boolean => {
   if (!itemLevel || itemLevel === "all") return true;
   return itemLevel === studentLevel;
-};
-
-// Session-gating: a subject with unlock_session set is hidden from students
-// (never from admins/teachers) until academy_settings.current_session
-// reaches that value. NULL/undefined unlock_session = always visible.
-const subjectSessionUnlocked = (subject: any, currentSession: number): boolean => {
-  const gate = subject?.unlock_session;
-  if (gate === null || gate === undefined) return true;
-  return currentSession >= Number(gate);
 };
 
 // Very small markdown-ish renderer for lesson.content: plain paragraphs +
@@ -148,10 +138,6 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   const isPrivileged               = hasRole("admin") || hasRole("teacher");
   const { joinClass }              = useLiveClass();
   const { isPrivateStudent, allowGeneralAccess } = usePrivateStudent();
-  // Session-gating: subjects with unlock_session set stay hidden from
-  // students until academy_settings.current_session catches up.
-  const { settings: academySettings } = useAcademySettings();
-  const currentSession = parseInt(academySettings.current_session || "1", 10) || 1;
 
   // ── Private student: load assigned subjects FIRST (used in filters below) ──
   const [privateSubjectIds, setPrivateSubjectIds] = useState<Set<string> | null>(null);
@@ -322,19 +308,19 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   const courseSubjects = isPrivileged
     ? (allCourseSubjects || [])
-    : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession) && isSubjectInTerm(s));
+    : (allCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id) && isSubjectInTerm(s));
   // Optional subjects the student disenrolled from — kept out of the main
   // grid (their lessons/materials/assignments are hidden) but still listed
   // separately with a Re-enroll action.
   const disenrolledCourseSubjects = isPrivileged ? [] : (allCourseSubjects || []).filter(
-    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession) && isSubjectInTerm(s)
+    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id) && isSubjectInTerm(s)
   );
 
   // Every subject visible to this student, across every course — grouped by
   // course_id for the registration Settings modal (compulsory subjects show
   // as locked, optional ones get an enroll/disenroll toggle).
   const enrollableSubjects = isPrivileged ? [] : (allSubjectsAllCourses || []).filter(
-    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && subjectSessionUnlocked(s, currentSession) && isSubjectInTerm(s)
+    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectInTerm(s)
   );
   const subjectsByCourse: Record<string, any[]> = {};
   enrollableSubjects.forEach((s: any) => {
@@ -457,9 +443,9 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
 
   const urlCourseSubjects = isPrivileged
     ? (allUrlCourseSubjects || [])
-    : (allUrlCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession));
+    : (allUrlCourseSubjects || []).filter((s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && isSubjectEnrolled(s.id));
   const disenrolledUrlCourseSubjects = isPrivileged ? [] : (allUrlCourseSubjects || []).filter(
-    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id) && subjectSessionUnlocked(s, currentSession)
+    (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id)
   );
 
   const markComplete = useMutation({
