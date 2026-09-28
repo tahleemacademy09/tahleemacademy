@@ -13,6 +13,13 @@ const ParticipantDrawer = ({ isMobile, dim = false }: { isMobile: boolean; dim?:
 
   return (
     <>
+      {/* invisible tap-catcher: tapping the screen slides the drawer away */}
+      {open && (
+        <div
+          onClick={e => { e.stopPropagation(); setOpen(false); }}
+          style={{ position: "absolute", inset: 0, zIndex: 56, background: "transparent" }}
+        />
+      )}
       <div
         style={{
           position: "absolute",
@@ -22,11 +29,11 @@ const ParticipantDrawer = ({ isMobile, dim = false }: { isMobile: boolean; dim?:
           width,
           zIndex: 57,
           transform: open ? "translateX(0)" : "translateX(-100%)",
-          transition: "transform .26s cubic-bezier(.2,.8,.2,1)",
-          background: "rgba(20,22,25,.94)",
-          backdropFilter: "blur(14px)",
-          WebkitBackdropFilter: "blur(14px)",
-          borderRight: "1px solid rgba(255,255,255,.08)",
+          transition: "transform .26s cubic-bezier(.2,.8,.2,1), padding .28s ease",
+          background: "rgba(0,0,0,.2)",
+          borderRight: "1px solid rgba(255,255,255,.06)",
+          paddingTop: dim ? "calc(env(safe-area-inset-top, 0px) + 8px)" : "calc(env(safe-area-inset-top, 0px) + 56px)",
+          paddingBottom: dim ? "env(safe-area-inset-bottom, 0px)" : "calc(env(safe-area-inset-bottom, 0px) + 88px)",
           display: "flex",
           flexDirection: "column",
           pointerEvents: open ? "auto" : "none",
@@ -40,6 +47,7 @@ const ParticipantDrawer = ({ isMobile, dim = false }: { isMobile: boolean; dim?:
             letterSpacing: 0.4,
             color: "rgba(255,255,255,.65)",
             fontFamily: "system-ui,sans-serif",
+            textShadow: "0 1px 4px rgba(0,0,0,.8)",
             flexShrink: 0,
           }}
         >
@@ -91,24 +99,21 @@ const ParticipantDrawer = ({ isMobile, dim = false }: { isMobile: boolean; dim?:
           transform: "translateY(-50%)",
           transition: "left .26s cubic-bezier(.2,.8,.2,1), opacity .2s ease",
           zIndex: 58,
-          width: 24,
-          height: 68,
+          width: 20,
+          height: 36,
           padding: 0,
-          border: "1px solid rgba(255,255,255,.12)",
-          borderLeft: "none",
-          borderRadius: "0 14px 14px 0",
-          background: "rgba(32,33,36,.78)",
-          backdropFilter: "blur(10px)",
-          WebkitBackdropFilter: "blur(10px)",
+          border: "none",
+          borderRadius: "0 12px 12px 0",
+          background: "rgba(0,0,0,.28)",
           color: "#fff",
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          opacity: dim && !open ? 0.55 : 1,
+          opacity: dim && !open ? 0.45 : 0.75,
         }}
       >
-        {open ? <ChevronLeft style={{ width: 18, height: 18 }} /> : <ChevronRight style={{ width: 18, height: 18 }} />}
+        {open ? <ChevronLeft style={{ width: 16, height: 16 }} /> : <ChevronRight style={{ width: 16, height: 16 }} />}
       </button>
     </>
   );

@@ -1170,7 +1170,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     </div>
   );
   return(
-    <div data-classroom-root style={{height:"100dvh",display:"flex",flexDirection:"column",background:"#202124",overflow:"hidden"}}>
+    <div data-classroom-root style={{height:"100dvh",display:"flex",flexDirection:"column",background:"#000",overflow:"hidden"}}>
       <style>{CSS}</style>
       {token&&wsUrl&&(
         // key={roomKey} forces a full remount whenever autoReconnect bumps the key,
@@ -1336,10 +1336,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             gap:8,
           }}>
             {/* LEFT — LIVE badge + subject title only (keeps mobile header uncluttered) */}
-            <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0,overflow:"hidden"}}>
-              <div className="gm-badge" style={{background:"rgba(234,67,53,.12)",border:"1px solid rgba(234,67,53,.25)",color:"#fff",flexShrink:0,maxWidth:isMobile?"52vw":"none"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0,overflow:"hidden",maxWidth:"calc(50% - 46px)"}}>
+              <div className="gm-badge" style={{background:"rgba(234,67,53,.12)",border:"1px solid rgba(234,67,53,.25)",color:"#fff",flexShrink:1,minWidth:0,maxWidth:"100%"}}>
                 <span style={{width:7,height:7,borderRadius:"50%",background:"#ea4335",display:"inline-block",flexShrink:0,animation:"pip-pulse 1.8s ease-in-out infinite"}}/>
-                <span style={{fontSize:13,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{subject.title}</span>
+                <span style={{minWidth:0,fontSize:13,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontFamily:"'Google Sans',sans-serif"}}>{subject.title}</span>
               </div>
               {/* Raised-hand count — admin only, compact dot badge */}
               {isPrivileged&&raisedHands.length>0&&(
@@ -1361,13 +1361,16 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               )}
             </div>
 
+            {/* CENTRE — session timer, dead-centre of the bar */}
+            <div style={{position:"absolute",left:"50%",top:"env(safe-area-inset-top, 0px)",height:56,transform:"translateX(-50%)",display:"flex",alignItems:"center",pointerEvents:"none"}}>
+              <div style={{display:"flex",alignItems:"center",gap:5,background:"rgba(0,0,0,.35)",border:"1px solid rgba(255,255,255,.12)",borderRadius:20,padding:"4px 10px",flexShrink:0}}>
+                <Circle style={{width:6,height:6,fill:"#ea4335",color:"#ea4335",animation:"rec-pulse 1.4s ease-in-out infinite",flexShrink:0}}/>
+                <span style={{fontSize:13,fontWeight:500,fontVariantNumeric:"tabular-nums",fontFamily:"'Google Sans',sans-serif",color:"rgba(255,255,255,.9)"}}>{fmtT(duration)}</span>
+              </div>
+            </div>
+
             {/* RIGHT — timer · network(degraded only) · participants · [layout] · [rec admin] */}
             <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-              {/* Duration — compact, no label */}
-              <div style={{display:"flex",alignItems:"center",gap:4,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:20,padding:"3px 7px",flexShrink:0}}>
-                <Circle style={{width:5,height:5,fill:"#ea4335",color:"#ea4335",animation:"rec-pulse 1.4s ease-in-out infinite",flexShrink:0}}/>
-                <span style={{fontSize:11,fontWeight:500,fontVariantNumeric:"tabular-nums",fontFamily:"'Google Sans',sans-serif",color:"rgba(255,255,255,.8)"}}>{fmtT(duration)}</span>
-              </div>
               {/* Network indicator moved to per-participant name pills (ParticipantSignalIcon)
                   so you can see everyone's connection at a glance instead of just your own
                   in the header — removed from here per request. Adaptive video/bitrate
