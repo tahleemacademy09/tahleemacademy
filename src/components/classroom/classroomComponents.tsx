@@ -5979,8 +5979,8 @@ export const DuoPipLayout=({participants,localIdentity}:{participants:any[];loca
   };
   if(!bg||!bubble)return null;
   return(
-    <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a",overflow:"hidden"}}>
-      <div style={{position:"absolute",inset:0}}>
+    <div style={{width:"100%",height:"100%",position:"relative",background:"transparent",overflow:"hidden"}}>
+      <div style={{position:"absolute",inset:0,borderRadius:20,overflow:"hidden"}}>
         <ParticipantTile participant={bg} isLocal={bg.identity===localIdentity} size="large"/>
       </div>
       <div
@@ -6030,16 +6030,16 @@ export const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[
   // Special asymmetric layout only applies to the true 3-person call (first/only page)
   if(isFirstPage&&n===3){
     return(
-      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:2,padding:2,background:"#0a0a0a"}}>
-        <div style={{display:"flex",gap:2,flex:1,minHeight:0}}>
+      <div style={{width:"100%",height:"100%",display:"flex",flexDirection:"column",gap:6,padding:0,background:"transparent"}}>
+        <div style={{display:"flex",gap:6,flex:1,minHeight:0}}>
           {pageParticipants.slice(0,2).map(p=>(
-            <div key={p.identity} style={{flex:1,minWidth:0,borderRadius:isMobile?8:10,overflow:"hidden"}}>
+            <div key={p.identity} style={{flex:1,minWidth:0,borderRadius:isMobile?16:18,overflow:"hidden"}}>
               <ParticipantTile participant={p} isLocal={p.identity===localIdentity} size="normal"/>
             </div>
           ))}
         </div>
         <div style={{display:"flex",flex:1,minHeight:0,justifyContent:"center"}}>
-          <div style={{width:"50%",minWidth:0,borderRadius:isMobile?8:10,overflow:"hidden"}}>
+          <div style={{width:"50%",minWidth:0,borderRadius:isMobile?16:18,overflow:"hidden"}}>
             <ParticipantTile participant={pageParticipants[2]} isLocal={pageParticipants[2].identity===localIdentity} size="normal"/>
           </div>
         </div>
@@ -6052,9 +6052,9 @@ export const PagedGrid=({participants,localIdentity,isMobile}:{participants:any[
 
   return(
     <div style={{width:"100%",height:"100%",position:"relative",overflow:"hidden"}} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      <div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap:2,padding:2,background:"#0a0a0a"}}>
+      <div style={{width:"100%",height:"100%",display:"grid",gridTemplateColumns:`repeat(${cols},1fr)`,gridTemplateRows:`repeat(${rows},1fr)`,gap:6,padding:0,background:"transparent"}}>
         {pageParticipants.map(p=>(
-          <div key={p.identity} style={{width:"100%",height:"100%",minWidth:0,minHeight:0,borderRadius:isMobile?8:10,overflow:"hidden"}}>
+          <div key={p.identity} style={{width:"100%",height:"100%",minWidth:0,minHeight:0,borderRadius:isMobile?16:18,overflow:"hidden"}}>
             <ParticipantTile participant={p} isLocal={p.identity===localIdentity} size="normal"/>
           </div>
         ))}

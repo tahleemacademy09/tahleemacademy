@@ -24,7 +24,7 @@ import { toast } from "@/hooks/use-toast";
 import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff, Hand,
   MessageCircle, MoreHorizontal, Phone, Smile, LogOut,
-  BarChart3, Zap, Settings, X, Check, Volume2, ChevronUp,
+  BarChart3, Zap, Settings, X, Check, Volume2,
   Captions, CaptionsOff, Blend, BarChart2, MessageSquareText,
 } from "lucide-react";
 import {
@@ -720,6 +720,44 @@ const ClassControls = ({
   const btnNeutral = "text-white hover:opacity-80";
   const btnStyle = {background:"rgba(255,255,255,0.12)"} as React.CSSProperties;
   const canShare = typeof navigator !== "undefined" && !!(navigator.mediaDevices as any)?.getDisplayMedia;
+  // Long-press (450ms) on the mic / camera button opens its device menu.
+  // A normal tap still toggles mute / camera exactly as before.
+  const [micMenuOpen, setMicMenuOpen] = useState(false);
+  const [camMenuOpen, setCamMenuOpen] = useState(false);
+  const micLP = useRef<{ timer: any; fired: boolean; x: number; y: number }>({ timer: null, fired: false, x: 0, y: 0 });
+  const camLP = useRef<{ timer: any; fired: boolean; x: number; y: number }>({ timer: null, fired: false, x: 0, y: 0 });
+  const longPressProps = (
+    ref: React.MutableRefObject<{ timer: any; fired: boolean; x: number; y: number }>,
+    onLong: () => void,
+    onTap: () => void,
+  ) => {
+    const cancel = () => { if (ref.current.timer) { clearTimeout(ref.current.timer); ref.current.timer = null; } };
+    return {
+      onPointerDown: (e: React.PointerEvent) => {
+        ref.current.fired = false;
+        ref.current.x = e.clientX; ref.current.y = e.clientY;
+        cancel();
+        ref.current.timer = setTimeout(() => {
+          ref.current.timer = null;
+          ref.current.fired = true;
+          try { (navigator as any).vibrate?.(15); } catch {}
+          onLong();
+        }, 450);
+      },
+      onPointerMove: (e: React.PointerEvent) => {
+        if (ref.current.timer && Math.hypot(e.clientX - ref.current.x, e.clientY - ref.current.y) > 10) cancel();
+      },
+      onPointerUp: cancel,
+      onPointerLeave: cancel,
+      onPointerCancel: cancel,
+      onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+      onClick: () => {
+        if (ref.current.fired) { ref.current.fired = false; return; } // it was a long press, not a tap
+        onTap();
+      },
+    };
+  };
+  const noSelect: React.CSSProperties = { WebkitUserSelect: "none", userSelect: "none", WebkitTouchCallout: "none", touchAction: "manipulation" } as React.CSSProperties;
   const sqBtn = (extra: React.CSSProperties = {}): React.CSSProperties => ({
     width: "100%", height: 46, borderRadius: 14, padding: 0, border: "none", cursor: "pointer",
     color: "#fff", background: "#3c4043", display: "flex", alignItems: "center", justifyContent: "center",
@@ -781,27 +819,20 @@ const ClassControls = ({
 
       {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
       <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
-      <div className="cx-control-bar" style={{display:"block",padding:0,border:"none",background:"#111b21",flexShrink:0,overflow:collapsed?"hidden":"visible",maxHeight:collapsed?0:110,opacity:collapsed?0:1,pointerEvents:collapsed?"none":"auto",transition:"max-height .28s ease, opacity .2s ease",paddingBottom:collapsed?0:"env(safe-area-inset-bottom, 0px)"}}>
+      <div className="cx-control-bar" style={{position:"fixed",bottom:0,left:0,right:0,zIndex:60,display:"block",padding:0,border:"none",background:"linear-gradient(to top, rgba(0,0,0,.85) 0%, rgba(0,0,0,.55) 65%, rgba(0,0,0,0) 100%)",transform:collapsed?"translateY(100%)":"translateY(0)",opacity:collapsed?0:1,pointerEvents:collapsed?"none":"auto",transition:"transform .28s cubic-bezier(.4,0,.2,1), opacity .22s ease",willChange:"transform",paddingBottom:"env(safe-area-inset-bottom, 0px)"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px 12px",width:"100%",maxWidth:560,margin:"0 auto",boxSizing:"border-box"}}>
 
-        {/* Mic — chevron opens the mic/speaker device picker without toggling mute */}
+        {/* Mic — tap toggles mute, long-press opens the mic/speaker device picker */}
         <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
-          <button onClick={toggleMic} style={sqBtn()}>
+          <button
+            {...longPressProps(micLP, () => { refreshDevices(); setMicMenuOpen(true); }, toggleMic)}
+            style={{ ...sqBtn(), ...noSelect }}
+          >
             {micEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" style={{ color: "#f28b82" }} />}
           </button>
-          <DropdownMenu onOpenChange={(open) => { if (open) refreshDevices(); }}>
+          <DropdownMenu open={micMenuOpen} onOpenChange={(open) => { setMicMenuOpen(open); if (open) refreshDevices(); }}>
             <DropdownMenuTrigger asChild>
-              <button
-                onClick={(e) => e.stopPropagation()}
-                title={t("Microphone options", "خيارات الميكروفون")}
-                style={{
-                  position: "absolute", top: -5, right: -5, width: 18, height: 18, padding: 0,
-                  borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "1px solid rgba(255,255,255,.28)",
-                  color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-                }}
-              >
-                <ChevronUp style={{ width: 11, height: 11 }} />
-              </button>
+              <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
               <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Microphone","الميكروفون")}</div>
@@ -835,29 +866,21 @@ const ClassControls = ({
         </div>
 
         {/* Cam — greyed out and locked while admin has forced audio-only mode room-wide.
-            Chevron opens the camera device picker without toggling the camera. */}
+            Tap toggles the camera, long-press opens the camera device picker. */}
         <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
           <button
-            onClick={toggleCam}
-            style={sqBtn(camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : {})}
+            {...(camLocked
+              ? { onClick: toggleCam }
+              : longPressProps(camLP, () => { refreshDevices(); setCamMenuOpen(true); }, toggleCam))}
+            style={{ ...sqBtn(camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : {}), ...noSelect }}
             title={camLocked ? t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم") : undefined}
           >
             {camEnabled && !camLocked ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" style={camLocked ? undefined : { color: "#f28b82" }} />}
           </button>
           {!camLocked && (
-            <DropdownMenu onOpenChange={(open) => { if (open) refreshDevices(); }}>
+            <DropdownMenu open={camMenuOpen} onOpenChange={(open) => { setCamMenuOpen(open); if (open) refreshDevices(); }}>
               <DropdownMenuTrigger asChild>
-                <button
-                  onClick={(e) => e.stopPropagation()}
-                  title={t("Camera options", "خيارات الكاميرا")}
-                  style={{
-                    position: "absolute", top: -5, right: -5, width: 18, height: 18, padding: 0,
-                    borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "1px solid rgba(255,255,255,.28)",
-                    color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-                  }}
-                >
-                  <ChevronUp style={{ width: 11, height: 11 }} />
-                </button>
+                <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
                 <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Camera","الكاميرا")}</div>

@@ -1323,16 +1323,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <ConnectionStateBanner/>
           {/* ══ GOOGLE MEET STYLE TOP BAR ══ */}
           <div style={{
-            height:uiHidden?0:56,
+            position:"fixed",top:0,left:0,right:0,zIndex:60,
+            height:56,boxSizing:"content-box",
+            transform:uiHidden?"translateY(-100%)":"translateY(0)",
             opacity:uiHidden?0:1,
-            overflow:uiHidden?"hidden":"visible",
             pointerEvents:uiHidden?"none":"auto",
-            transition:"height .28s ease, opacity .2s ease",
-            background:"rgba(32,33,36,.97)",
-            backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
+            transition:"transform .28s cubic-bezier(.4,0,.2,1), opacity .22s ease",
+            willChange:"transform",
+            background:"linear-gradient(to bottom, rgba(0,0,0,.78) 0%, rgba(0,0,0,.45) 70%, rgba(0,0,0,0) 100%)",
             display:"flex",alignItems:"center",justifyContent:"space-between",
-            padding:"0 14px 0 16px",flexShrink:0,
-            borderBottom:"1px solid rgba(255,255,255,.05)",gap:8,
+            padding:"env(safe-area-inset-top, 0px) 14px 0 16px",
+            gap:8,
           }}>
             {/* LEFT — LIVE badge + subject title only (keeps mobile header uncluttered) */}
             <div style={{display:"flex",alignItems:"center",gap:6,flex:1,minWidth:0,overflow:"hidden"}}>
@@ -1403,8 +1404,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
             <div style={{flex:1,position:"relative",minWidth:0}}>
               <ClassroomAdminContext.Provider value={{isPrivileged,sessionId}}>
-                <div style={{position:"absolute",inset:0}} onClick={onStageTap}>
-                  <VideoGrid layout={layout} isMobile={isMobile} spotlightId={spotlightId}/>
+                <div style={{position:"absolute",inset:0,padding:isMobile?"64px 8px 96px":"64px 12px 96px",boxSizing:"border-box"}} onClick={onStageTap}>
+                  <div style={{width:"100%",height:"100%",borderRadius:isMobile?20:24,overflow:"hidden",background:"transparent"}}>
+                    <VideoGrid layout={layout} isMobile={isMobile} spotlightId={spotlightId}/>
+                  </div>
                 </div>
                 <ParticipantDrawer isMobile={isMobile} dim={uiHidden}/>
               </ClassroomAdminContext.Provider>
