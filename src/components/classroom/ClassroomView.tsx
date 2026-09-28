@@ -1407,8 +1407,13 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
             <div style={{flex:1,position:"relative",minWidth:0}}>
               <ClassroomAdminContext.Provider value={{isPrivileged,sessionId}}>
-                <div style={{position:"absolute",inset:0,padding:isMobile?"64px 8px 96px":"64px 12px 96px",boxSizing:"border-box"}} onClick={onStageTap}>
-                  <div style={{width:"100%",height:"100%",borderRadius:isMobile?20:24,overflow:"hidden",background:"transparent"}}>
+                {/* Full-bleed stage: the header (top) and control bar (bottom)
+                    are their own `position:fixed` overlays with a
+                    transparent-fading gradient background, designed to float
+                    on top of the video rather than box it in — so the video
+                    itself now runs edge-to-edge with no inset/rounding. */}
+                <div style={{position:"absolute",inset:0}} onClick={onStageTap}>
+                  <div style={{width:"100%",height:"100%",overflow:"hidden",background:"#000"}}>
                     <VideoGrid layout={layout} isMobile={isMobile} spotlightId={spotlightId}/>
                   </div>
                 </div>

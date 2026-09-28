@@ -5690,19 +5690,25 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
       onPointerCancel={canModerate?cancelLongPress:undefined}
       onContextMenu={canModerate?(e:any)=>{e.preventDefault();setTileMenuOpen(true);}:undefined}
     >
-      {/* BUG FIX ("flipped for me now, showing well for others"): once
-          CameraUnmirrorEngine's canvas processor is attached, the LOCAL
-          preview element re-attaches to that SAME corrected/true-orientation
-          stream too (LiveKit's Track Processor API re-attaches every
-          currently-attached <video> element to the processed track
-          automatically) — it is no longer showing the raw, possibly
-          pre-mirrored camera feed by the time this renders. The CSS mirror
-          this tile used to apply on top of that was therefore flipping an
-          already-corrected picture right back to backwards, for the local
-          viewer only. No transform anywhere now — local and remote both
-          render the exact same corrected, true-orientation stream. */}
+      {/* BUG FIX ("camera looks flipped/backwards to me"): a CSS transform on
+          THIS <video> element only changes how the LOCAL viewer's own copy is
+          rendered on screen — it never touches the actual frames that get
+          published/encoded and sent to everyone else (that's a separate
+          pipeline, entirely unaffected by CSS). So mirroring the local self
+          preview here is always safe: it gives the natural "look in a
+          mirror" self-view every other video app shows you, while remote
+          viewers keep receiving and rendering the exact same true-orientation
+          stream either way. The rare, genuine hardware quirk where a
+          camera's raw captured pixels are themselves already flipped (so
+          remote people would see YOU backwards) is a different problem, and
+          is still handled separately by the opt-in CameraUnmirrorEngine
+          canvas processor (Settings → Video → "My Camera Looks Backwards To
+          Others") — that one corrects the actual published pixels. This CSS
+          mirror and that processor don't conflict: the processor fixes what
+          gets sent, this transform only fixes how the local tile displays
+          it. */}
       <video ref={videoRef} autoPlay playsInline muted={isLocal}
-        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none"}}
+        style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
       />
 
       {/* Camera-off profile: full-bleed photo filling all four corners of the tile */}

@@ -206,9 +206,9 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center" }}
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,.72)", display: "flex", alignItems: "center", justifyContent: "center" }}
       onClick={onClose}>
-      <div style={{ background: "#17202a", borderRadius: 20, width: "min(460px,96vw)", maxHeight: "85vh",
+      <div style={{ background: "#0a0a0c", border: "1px solid rgba(255,255,255,.08)", borderRadius: 20, width: "min(460px,96vw)", maxHeight: "85vh",
         display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 24px 64px rgba(0,0,0,.7)" }}
         onClick={e => e.stopPropagation()}>
 
@@ -254,9 +254,8 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
 
               <SectionLabel>{t("Speaker / Headset / Bluetooth", "السماعة / سماعة الرأس / البلوتوث")}</SectionLabel>
               {!(typeof (HTMLMediaElement.prototype as any)?.setSinkId === "function") ? (
-                <p style={{ fontSize: 13, color: "rgba(255,255,255,.4)", lineHeight: 1.6 }}>
-                  {t("This browser can't switch audio output from a webpage — connect or select your Bluetooth device from your phone's own Bluetooth/sound settings instead; it'll be used automatically once connected.",
-                     "لا يمكن لهذا المتصفح تبديل مخرج الصوت من صفحة ويب — قم بتوصيل أو اختيار جهاز البلوتوث من إعدادات البلوتوث/الصوت في هاتفك، وسيُستخدم تلقائيًا بمجرد الاتصال.")}
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,.35)" }}>
+                  {t("Select your Bluetooth device from your phone's settings.", "اختر جهاز البلوتوث من إعدادات هاتفك.")}
                 </p>
               ) : audioOut.length === 0
                 ? <p style={{ fontSize: 13, color: "rgba(255,255,255,.35)" }}>{t("Output switching not supported on this browser", "تغيير مكبر الصوت غير مدعوم في هذا المتصفح")}</p>
@@ -286,10 +285,6 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
                   </button>
                 ))}
               </div>
-              <p style={{ fontSize: 11, color: "rgba(255,255,255,.3)", marginTop: 8, lineHeight: 1.6 }}>
-                {t("Boosts how loud other people sound to you — doesn't change your own mic. Takes effect immediately.",
-                   "يكبّر صوت الآخرين بالنسبة لك فقط — لا يغيّر ميكروفونك. يعمل فوراً.")}
-              </p>
             </>
           )}
 
@@ -315,9 +310,6 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
                   </button>
                 ))}
               </div>
-              <p style={{ fontSize: 11, color: "rgba(255,255,255,.3)", marginTop: 8, lineHeight: 1.6 }}>
-                {t("Low quality reduces data usage on slow connections.","الجودة المنخفضة تقلل استهلاك البيانات على الاتصالات البطيئة.")}
-              </p>
             </>
           )}
 
@@ -834,7 +826,7 @@ const ClassControls = ({
             <DropdownMenuTrigger asChild>
               <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
+            <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#0a0a0c",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,zIndex:9999,maxHeight:320,overflowY:"auto",boxShadow:"0 16px 48px rgba(0,0,0,.55)","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
               <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Microphone","الميكروفون")}</div>
               {audioInDevices.length === 0
                 ? <div style={{padding:"6px 10px 10px",fontSize:12,color:"rgba(255,255,255,.35)"}}>{t("No microphones found","لم يُعثر على ميكروفون")}</div>
@@ -882,7 +874,7 @@ const ClassControls = ({
               <DropdownMenuTrigger asChild>
                 <span aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:12,zIndex:9999,maxHeight:320,overflowY:"auto","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
+              <DropdownMenuContent align="start" className="w-64 p-1" style={{background:"#0a0a0c",border:"1px solid rgba(255,255,255,.08)",borderRadius:14,zIndex:9999,maxHeight:320,overflowY:"auto",boxShadow:"0 16px 48px rgba(0,0,0,.55)","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
                 <div style={{padding:"6px 10px 4px",fontSize:10,fontWeight:700,letterSpacing:1,color:"rgba(255,255,255,.4)",textTransform:"uppercase"}}>{t("Camera","الكاميرا")}</div>
                 {videoInDevices.length === 0
                   ? <div style={{padding:"6px 10px 10px",fontSize:12,color:"rgba(255,255,255,.35)"}}>{t("No cameras found","لم يُعثر على كاميرا")}</div>
@@ -926,82 +918,84 @@ const ClassControls = ({
               <MoreHorizontal className="h-5 w-5" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-64 p-0" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,zIndex:9999,maxHeight:"var(--radix-dropdown-menu-content-available-height)",overflowY:"auto","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
+          <DropdownMenuContent align="end" className="w-64 p-0" style={{background:"#0a0a0c",border:"1px solid rgba(255,255,255,.08)",borderRadius:18,zIndex:9999,maxHeight:"var(--radix-dropdown-menu-content-available-height)",overflowY:"auto",boxShadow:"0 16px 48px rgba(0,0,0,.55)","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
 
             {/* ── Emoji Reactions Row ── */}
-              <div style={{padding:"10px 12px 6px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
-                <p style={{fontSize:10,fontWeight:700,letterSpacing:1.1,color:"rgba(255,255,255,.4)",margin:"0 0 8px",textTransform:"uppercase"}}>😊 Reactions</p>
+              <div style={{padding:"14px 14px 10px"}}>
+                <p style={{fontSize:11,fontWeight:700,letterSpacing:1.2,color:"rgba(255,255,255,.4)",margin:"0 0 10px",textTransform:"uppercase",fontFamily:"'Google Sans',sans-serif"}}>Reactions</p>
                 {/* Reaction row — single line, horizontally scrollable so it never wraps */}
-                <div style={{display:"flex",flexWrap:"nowrap",gap:4,overflowX:"auto",overflowY:"hidden",paddingBottom:2,scrollbarWidth:"none"}}>
+                <div style={{display:"flex",flexWrap:"nowrap",gap:6,overflowX:"auto",overflowY:"hidden",paddingBottom:2,scrollbarWidth:"none"}}>
                   {REACTION_EMOJIS.map(e => (
                     <button
                       key={e}
                       onClick={() => sendReaction(e)}
-                      style={{flexShrink:0,fontSize:20,background:"rgba(255,255,255,.07)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer",transition:"transform .12s, background .1s"}}
-                      onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.25)")}
+                      style={{flexShrink:0,fontSize:21,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.06)",borderRadius:10,padding:"6px 8px",cursor:"pointer",transition:"transform .12s, background .1s"}}
+                      onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.2)")}
                       onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}
                     >{e}</button>
                   ))}
                   {/* Add more toggle */}
                   <button
                     onClick={() => setShowMoreEmojis(v => !v)}
-                    style={{flexShrink:0,fontSize:13,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"4px 8px",cursor:"pointer",color:"rgba(255,255,255,.5)",fontWeight:600}}
-                  >{showMoreEmojis ? "Less ▲" : "+ More"}</button>
+                    style={{flexShrink:0,fontSize:12,background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.1)",borderRadius:10,padding:"6px 10px",cursor:"pointer",color:"rgba(255,255,255,.55)",fontWeight:600,fontFamily:"'Google Sans',sans-serif"}}
+                  >{showMoreEmojis ? "Less" : "More"}</button>
                 </div>
                 {/* Extended emoji grid — also kept to one scrollable line for consistency */}
                 {showMoreEmojis && (
-                  <div style={{display:"flex",flexWrap:"nowrap",gap:4,overflowX:"auto",overflowY:"hidden",marginTop:6,padding:"6px 0",borderTop:"1px solid rgba(255,255,255,.06)",scrollbarWidth:"none"}}>
+                  <div style={{display:"flex",flexWrap:"nowrap",gap:6,overflowX:"auto",overflowY:"hidden",marginTop:8,padding:"8px 0 0",borderTop:"1px solid rgba(255,255,255,.06)",scrollbarWidth:"none"}}>
                     {MORE_EMOJIS.map(e => (
                       <button
                         key={e}
                         onClick={() => sendReaction(e)}
-                        style={{flexShrink:0,fontSize:20,background:"rgba(255,255,255,.05)",border:"none",borderRadius:8,padding:"4px 6px",cursor:"pointer",transition:"transform .12s"}}
-                        onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.25)")}
+                        style={{flexShrink:0,fontSize:21,background:"rgba(255,255,255,.05)",border:"none",borderRadius:10,padding:"6px 8px",cursor:"pointer",transition:"transform .12s"}}
+                        onMouseEnter={ev=>(ev.currentTarget.style.transform="scale(1.2)")}
                         onMouseLeave={ev=>(ev.currentTarget.style.transform="scale(1)")}
                       >{e}</button>
                     ))}
                   </div>
                 )}
               </div>
+              <div style={{height:1,background:"rgba(255,255,255,.06)",margin:"0 14px"}}/>
 
               {/* ── Raise Hand (students only) ── */}
               {!isPrivileged && (
-                <div style={{padding:"8px 12px",borderBottom:"1px solid rgba(255,255,255,.07)"}}>
+                <div style={{padding:"10px 14px"}}>
                   <button
                     onClick={toggleHand}
                     style={{
                       width:"100%",display:"flex",alignItems:"center",gap:10,
-                      background: handRaised ? "rgba(251,191,36,.15)" : "rgba(255,255,255,.05)",
-                      border: handRaised ? "1px solid rgba(251,191,36,.4)" : "1px solid rgba(255,255,255,.1)",
-                      borderRadius:10,padding:"8px 12px",cursor:"pointer",
-                      color: handRaised ? "#fbbf24" : "rgba(255,255,255,.75)",
-                      fontFamily:"system-ui,sans-serif",fontSize:13,fontWeight:handRaised?700:400,
+                      background: handRaised ? "rgba(251,191,36,.14)" : "rgba(255,255,255,.04)",
+                      border: handRaised ? "1px solid rgba(251,191,36,.35)" : "1px solid rgba(255,255,255,.08)",
+                      borderRadius:12,padding:"10px 12px",cursor:"pointer",
+                      color: handRaised ? "#fbbf24" : "rgba(255,255,255,.8)",
+                      fontFamily:"'Google Sans',sans-serif",fontSize:13,fontWeight:handRaised?700:500,
                       transition:"all .15s",
                     }}
                   >
                     <Hand style={{width:16,height:16,flexShrink:0}} />
                     <div style={{flex:1,textAlign:"left"}}>
-                      <div>{handRaised ? "✋ Hand Raised" : "Raise Hand"}</div>
+                      <div>{handRaised ? "Hand Raised" : "Raise Hand"}</div>
                       {handRaised && raisedHandName && (
-                        <div style={{fontSize:10,color:"rgba(251,191,36,.7)",marginTop:2}}>{raisedHandName} is raising their hand</div>
+                        <div style={{fontSize:11,color:"rgba(251,191,36,.7)",marginTop:2,fontWeight:400}}>{raisedHandName} is raising their hand</div>
                       )}
                     </div>
                     {handRaised && <span style={{fontSize:10,background:"rgba(251,191,36,.2)",color:"#fbbf24",borderRadius:6,padding:"2px 6px",fontWeight:700}}>ON</span>}
                   </button>
                 </div>
               )}
+              {!isPrivileged && <div style={{height:1,background:"rgba(255,255,255,.06)",margin:"0 14px"}}/>}
 
               {/* ── Host tools ──
                    Launch Poll and Live Quiz removed from here — decluttered per request.
                    (Polls/Quiz can still be launched from their dedicated panels elsewhere.) */}
               {isPrivileged && (
                 <>
-                  <div style={{padding:"4px 0"}}>
-                    <DropdownMenuItem onClick={muteAllStudents} style={{margin:"0 4px",borderRadius:8}}>
+                  <div style={{padding:"6px 6px"}}>
+                    <DropdownMenuItem onClick={muteAllStudents} style={{margin:"0 4px",borderRadius:10,padding:"9px 10px",fontSize:13,fontFamily:"'Google Sans',sans-serif"}}>
                       <MicOff className="h-4 w-4 mr-2" /> {t("Mute All Students","كتم الجميع")}
                     </DropdownMenuItem>
                   </div>
-                  <DropdownMenuSeparator />
+                  <DropdownMenuSeparator style={{background:"rgba(255,255,255,.06)"}} />
                 </>
               )}
 
@@ -1011,27 +1005,22 @@ const ClassControls = ({
                    Share Screen have been removed entirely (for students AND
                    admin/teacher) to keep this menu short. Settings is the only
                    item left here. */}
-              <div style={{padding:"4px 0"}}>
-                <DropdownMenuItem onClick={() => { setSettingsTab("video"); setShowSettings(true); }} style={{margin:"0 4px",borderRadius:8}}>
+              <div style={{padding:"6px 6px"}}>
+                <DropdownMenuItem onClick={() => { setSettingsTab("video"); setShowSettings(true); }} style={{margin:"0 4px",borderRadius:10,padding:"9px 10px",fontSize:13,fontFamily:"'Google Sans',sans-serif"}}>
                   <Settings className="h-4 w-4 mr-2" /> {t("Settings","الإعدادات")}
                 </DropdownMenuItem>
-                {!canShare && (
-                  <DropdownMenuItem disabled style={{margin:"0 4px",borderRadius:8,opacity:.55}}>
-                    <Monitor className="h-4 w-4 mr-2" /> Share screen (not supported on this device)
-                  </DropdownMenuItem>
-                )}
               </div>
 
               {extraMenuItems && (
                 <>
-                  <DropdownMenuSeparator />
-                  <div style={{padding:"4px 0"}}>{extraMenuItems}</div>
+                  <DropdownMenuSeparator style={{background:"rgba(255,255,255,.06)"}} />
+                  <div style={{padding:"6px 6px"}}>{extraMenuItems}</div>
                 </>
               )}
 
-              <DropdownMenuSeparator />
-              <div style={{padding:"4px 0"}}>
-                <DropdownMenuItem onClick={isPrivileged ? onEndClass : onLeaveClass} style={{margin:"0 4px",borderRadius:8}}>
+              <DropdownMenuSeparator style={{background:"rgba(255,255,255,.06)"}} />
+              <div style={{padding:"6px 6px 8px"}}>
+                <DropdownMenuItem onClick={isPrivileged ? onEndClass : onLeaveClass} style={{margin:"0 4px",borderRadius:10,padding:"9px 10px",fontSize:13,fontFamily:"'Google Sans',sans-serif"}}>
                   <LogOut className="h-4 w-4 mr-2 text-destructive" />
                   <span className="text-destructive">
                     {isPrivileged ? t("End Class for All","إنهاء الحصة للجميع") : t("Leave Class","مغادرة الحصة")}
