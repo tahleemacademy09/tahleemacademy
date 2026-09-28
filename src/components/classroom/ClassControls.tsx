@@ -25,7 +25,7 @@ import {
   Mic, MicOff, Video, VideoOff, Monitor, MonitorOff, Hand,
   MessageCircle, MoreHorizontal, Phone, Smile, LogOut,
   BarChart3, Zap, Settings, X, Check, Volume2, ChevronUp,
-  Captions, CaptionsOff, Blend, BarChart2,
+  Captions, CaptionsOff, Blend, BarChart2, MessageSquareText,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -55,6 +55,7 @@ interface ClassControlsProps {
       (including the admin who set it) can turn their camera back on until
       the admin reverts it from the three-dot menu. */
   camLocked?:            boolean;
+  collapsed?:            boolean;
 }
 
 const REACTION_EMOJIS = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
@@ -350,7 +351,7 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
    ───────────────────────────────────────────────────────────────────────── */
 const ClassControls = ({
   sessionId, onToggleChat, onToggleParticipants, onEndClass, onLeaveClass,
-  chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride, extraMenuItems, camLocked,
+  chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride, extraMenuItems, camLocked, collapsed,
 }: ClassControlsProps) => {
   const room = useRoomContext();
   const { user, hasRole } = useAuth();
@@ -718,6 +719,12 @@ const ClassControls = ({
   const btnOff  = "bg-destructive text-destructive-foreground hover:bg-destructive/90";
   const btnNeutral = "text-white hover:opacity-80";
   const btnStyle = {background:"rgba(255,255,255,0.12)"} as React.CSSProperties;
+  const canShare = typeof navigator !== "undefined" && !!(navigator.mediaDevices as any)?.getDisplayMedia;
+  const sqBtn = (extra: React.CSSProperties = {}): React.CSSProperties => ({
+    width: "100%", height: 46, borderRadius: 14, padding: 0, border: "none", cursor: "pointer",
+    color: "#fff", background: "#3c4043", display: "flex", alignItems: "center", justifyContent: "center",
+    position: "relative", transition: "background .15s ease, transform .1s ease", ...extra,
+  });
 
   return (
     <>
@@ -774,14 +781,14 @@ const ClassControls = ({
 
       {/* ══ MAIN CONTROL BAR ══════════════════════════════════════════════ */}
       <style>{`.lk-control-bar-btn,.lk-button,[class*="btnBase"]{color:#fff!important;} `}</style>
-      <div className="h-16 flex items-center justify-between px-4 md:px-8 lk-control-bar" style={{background:"#111b21",flexShrink:0}}>
+      <div className="cx-control-bar" style={{display:"block",padding:0,border:"none",background:"#111b21",flexShrink:0,overflow:collapsed?"hidden":"visible",maxHeight:collapsed?0:110,opacity:collapsed?0:1,pointerEvents:collapsed?"none":"auto",transition:"max-height .28s ease, opacity .2s ease",paddingBottom:collapsed?0:"env(safe-area-inset-bottom, 0px)"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px 12px",width:"100%",maxWidth:560,margin:"0 auto",boxSizing:"border-box"}}>
 
         {/* Mic — chevron opens the mic/speaker device picker without toggling mute */}
-        <div style={{ position: "relative" }}>
-          <Button size="sm" className={`${btnBase} ${micEnabled ? btnOn : btnOff}`} style={micEnabled ? btnStyle : {}} onClick={toggleMic}>
-            {micEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
-            <span className="hidden sm:inline">{micEnabled ? t("Mic","مايك") : t("Muted","صامت")}</span>
-          </Button>
+        <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
+          <button onClick={toggleMic} style={sqBtn()}>
+            {micEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" style={{ color: "#f28b82" }} />}
+          </button>
           <DropdownMenu onOpenChange={(open) => { if (open) refreshDevices(); }}>
             <DropdownMenuTrigger asChild>
               <button
@@ -829,17 +836,14 @@ const ClassControls = ({
 
         {/* Cam — greyed out and locked while admin has forced audio-only mode room-wide.
             Chevron opens the camera device picker without toggling the camera. */}
-        <div style={{ position: "relative" }}>
-          <Button
-            size="sm"
-            className={`${btnBase} ${camLocked ? "" : camEnabled ? btnOn : btnOff}`}
-            style={camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : (camEnabled ? btnStyle : {})}
+        <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
+          <button
             onClick={toggleCam}
+            style={sqBtn(camLocked ? { background: "rgba(255,255,255,.06)", color: "rgba(255,255,255,.35)", cursor: "not-allowed" } : {})}
             title={camLocked ? t("Camera disabled by teacher", "الكاميرا معطّلة من قبل المعلم") : undefined}
           >
-            {camEnabled && !camLocked ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
-            <span className="hidden sm:inline">{camLocked ? t("Locked","مقفل") : camEnabled ? t("Cam","كام") : t("Off","مغلق")}</span>
-          </Button>
+            {camEnabled && !camLocked ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" style={camLocked ? undefined : { color: "#f28b82" }} />}
+          </button>
           {!camLocked && (
             <DropdownMenu onOpenChange={(open) => { if (open) refreshDevices(); }}>
               <DropdownMenuTrigger asChild>
@@ -872,21 +876,32 @@ const ClassControls = ({
         </div>
 
         {/* Chat */}
-        <Button size="sm" className={`${btnBase} ${btnNeutral} relative`} style={btnStyle} onClick={onToggleChat}>
-          <MessageCircle className="h-4 w-4" />
-          {chatUnread > 0 && (
-            <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground rounded-full h-4 w-4 text-[10px] flex items-center justify-center">
-              {chatUnread}
-            </span>
-          )}
-        </Button>
+        {canShare && (
+          <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
+            <button onClick={toggleScreenShare} title={screenSharing ? "Stop sharing" : "Share screen"}
+              style={sqBtn(screenSharing ? { background: "#8ab4f8", color: "#202124" } : {})}>
+              {screenSharing ? <MonitorOff className="h-5 w-5" /> : <Monitor className="h-5 w-5" />}
+            </button>
+          </div>
+        )}
+
+        <div style={{ position: "relative", flex: "1 1 0", maxWidth: 64, minWidth: 40 }}>
+          <button onClick={onToggleChat} title="Chat" style={sqBtn()}>
+            <MessageSquareText className="h-5 w-5" />
+            {chatUnread > 0 && (
+              <span style={{position:"absolute",top:-6,right:-6,minWidth:18,height:18,padding:"0 5px",borderRadius:9,background:"#ea4335",color:"#fff",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",border:"2px solid #111b21",boxSizing:"content-box"}}>
+                {chatUnread > 99 ? "99+" : chatUnread}
+              </span>
+            )}
+          </button>
+        </div>
 
         {/* More menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button size="sm" className={`${btnBase} ${btnNeutral}`} style={btnStyle}>
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
+            <button title="More" style={sqBtn({width:"auto",flex:"1 1 0",maxWidth:64,minWidth:40})}>
+              <MoreHorizontal className="h-5 w-5" />
+            </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-64 p-0" style={{background:"#1e2535",border:"1px solid rgba(255,255,255,.1)",borderRadius:16,zIndex:9999,maxHeight:"var(--radix-dropdown-menu-content-available-height)",overflowY:"auto","--popover-foreground":"0 0% 92%"} as React.CSSProperties}>
 
@@ -977,6 +992,11 @@ const ClassControls = ({
                 <DropdownMenuItem onClick={() => { setSettingsTab("video"); setShowSettings(true); }} style={{margin:"0 4px",borderRadius:8}}>
                   <Settings className="h-4 w-4 mr-2" /> {t("Settings","الإعدادات")}
                 </DropdownMenuItem>
+                {!canShare && (
+                  <DropdownMenuItem disabled style={{margin:"0 4px",borderRadius:8,opacity:.55}}>
+                    <Monitor className="h-4 w-4 mr-2" /> Share screen (not supported on this device)
+                  </DropdownMenuItem>
+                )}
               </div>
 
               {extraMenuItems && (
@@ -1000,12 +1020,11 @@ const ClassControls = ({
           </DropdownMenu>
 
           {/* End / Leave button */}
-          <Button size="sm"
-            className="rounded-full h-10 px-4 text-xs bg-destructive text-destructive-foreground hover:bg-destructive/90 gap-1.5"
-            onClick={isPrivileged ? onEndClass : onLeaveClass}>
-            <Phone className="h-4 w-4 rotate-[135deg]" />
-            <span className="hidden sm:inline">{isPrivileged ? t("End","إنهاء") : t("Leave","مغادرة")}</span>
-        </Button>
+          <button onClick={isPrivileged ? onEndClass : onLeaveClass} title={isPrivileged ? "End class for all" : "Leave class"}
+            style={sqBtn({background:"#d93025",flex:"1.35 1 0",maxWidth:96,minWidth:52,width:"auto"})}>
+            <Phone className="h-5 w-5 rotate-[135deg]" />
+          </button>
+      </div>
       </div>
     </>
   );

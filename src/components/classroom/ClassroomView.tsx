@@ -49,6 +49,8 @@ import ClassPolls        from "./ClassPolls";
 import ClassEndScreen    from "./ClassEndScreen";
 import AttendanceQuickReview from "./AttendanceQuickReview";
 import ClassControls     from "./ClassControls";
+import ParticipantDrawer from "./ParticipantDrawer";
+import { PrivateChatListener, ChatPopupLayer, chatStore, usePrivateChat } from "./privateChatStore";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import LiveQuizOverlay   from "./LiveQuizOverlay";
 import PDFViewer, { prewarmPDF } from "./PDFViewer";
@@ -294,6 +296,18 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     };
   },[]);
   const[chatOpen,setChatOpen]=useState(false);const[partOpen,setPartOpen]=useState(false);const[chatUnread,setChatUnread]=useState(0);
+  const[uiHidden,setUiHidden]=useState(false);
+  const privChat=usePrivateChat();
+  const privateUnread=Object.values(privChat.threads).reduce((n,th)=>n+th.unread,0);
+  useEffect(()=>()=>{chatStore.reset();},[]);
+  const onStageTap=(e:any)=>{
+    if(e?.target?.closest?.("button,a,input,textarea,select,[data-tile-control]"))return;
+    setUiHidden(v=>!v);
+  };
+  const openChatFrom=(peer?:{id:string;name:string})=>{
+    setChatOpen(true);setSideTab("chat");setChatUnread(0);
+    if(peer)chatStore.requestOpen(peer);
+  };
   useEffect(()=>{
     if(!sessionId||phase!=="live")return;
     const ch=supabase.channel(`chat-unread-${sessionId}`)
@@ -1276,6 +1290,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             <StartAudio label="🔊 Tap to enable classroom audio"/>
           </div>
           <RoomToContextBridge />
+          <PrivateChatListener/>
+          <ChatPopupLayer sessionId={sessionId||""} onOpen={openChatFrom}/>
           <MediaAutoPublish lobbyMic={lobbyMic} lobbyCam={lobbyCam} isFirstJoin={isFirstJoinPropRef.current}/>
           <MicKeepAliveFromContext />
           <WbSyncBridge wbOpen={wbOpen} isTeacher={isPrivileged}/>
@@ -1307,7 +1323,11 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <ConnectionStateBanner/>
           {/* ══ GOOGLE MEET STYLE TOP BAR ══ */}
           <div style={{
-            height:56,
+            height:uiHidden?0:56,
+            opacity:uiHidden?0:1,
+            overflow:uiHidden?"hidden":"visible",
+            pointerEvents:uiHidden?"none":"auto",
+            transition:"height .28s ease, opacity .2s ease",
             background:"rgba(32,33,36,.97)",
             backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
             display:"flex",alignItems:"center",justifyContent:"space-between",
@@ -1383,7 +1403,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
           <div style={{flex:1,display:"flex",minHeight:0,overflow:"hidden"}}>
             <div style={{flex:1,position:"relative",minWidth:0}}>
               <ClassroomAdminContext.Provider value={{isPrivileged,sessionId}}>
-                <VideoGrid layout={layout} isMobile={isMobile} spotlightId={spotlightId}/>
+                <div style={{position:"absolute",inset:0}} onClick={onStageTap}>
+                  <VideoGrid layout={layout} isMobile={isMobile} spotlightId={spotlightId}/>
+                </div>
+                <ParticipantDrawer isMobile={isMobile} dim={uiHidden}/>
               </ClassroomAdminContext.Provider>
               <FloatingEmojiLayer emojis={floatingEmojis}/>
               <RaisedHandsOverlay hands={raisedHands}/>
@@ -1576,7 +1599,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                     <X style={{width:16,height:16}}/>
                   </button>
                 </div>
-                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
+                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel enablePrivate sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
               </div>
             )}
           </div>
@@ -1599,7 +1622,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             onToggleParticipants={()=>{setPartOpen(v=>!v);setPartPanelOpen(v=>!v);}}
             onEndClass={()=>setShowEnd(true)}
             onLeaveClass={()=>setShowLeaveConfirm(true)}
-            chatUnread={chatUnread}
+            chatUnread={chatUnread+privateUnread}
+            collapsed={uiHidden}
             onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
             onLaunchQuiz={()=>setQuizOpen(true)}
             camLocked={forcedAudioOnly}
@@ -1646,7 +1670,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               </>
             }
           />
-          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
+          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel enablePrivate sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           {/* FIX BUG 2: LiveQuizOverlay now controlled by quizOpen state — was permanently disabled with hardcoded isOpen={false} */}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>

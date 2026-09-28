@@ -5705,36 +5705,21 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none"}}
       />
 
-      {/* Camera-off avatar — WhatsApp dark grey background + large silhouette */}
+      {/* Camera-off profile: full-bleed photo filling all four corners of the tile */}
       {!hasVideo&&(
-        <div style={{
-          position:"absolute",inset:0,
-          display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-          background: pip ? "#1a1a2e" : "#131313",
-          gap: pip ? 4 : 8,
-        }}>
-          {/* Avatar circle — WhatsApp style solid circle */}
-          <div style={{
-            width: pip ? 52 : size==="small" ? 64 : 96,
-            height: pip ? 52 : size==="small" ? 64 : 96,
-            borderRadius:"50%",
-            background:"#2a3942",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            border: "3px solid #3a4a52",
-            flexShrink:0,
-            overflow:"hidden",
-          }}>
-            {avatarUrl&&!avatarImgError ? (
-              <img src={avatarUrl} alt="" onError={()=>setAvatarImgError(true)}
-                style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-            ) : (
-              <svg viewBox="0 0 200 220" style={{width:avatarW,height:avatarW}} fill="none">
+        <div style={{position:"absolute",inset:0,background:"#131313",overflow:"hidden"}}>
+          {avatarUrl&&!avatarImgError ? (
+            <img src={avatarUrl} alt="" onError={()=>setAvatarImgError(true)}
+              style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+          ) : (
+            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(160deg,#1f2c34 0%,#111b21 100%)"}}>
+              <svg viewBox="0 0 200 220" style={{width:avatarW,height:avatarW,maxWidth:220,maxHeight:240}} fill="none">
                 <circle cx="100" cy="72" r="52" fill="#8696a0"/>
                 <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#8696a0"/>
               </svg>
-            )}
-          </div>
-          {/* Name shown in the bottom pill (below) — no duplicate here */}
+            </div>
+          )}
+          <div style={{position:"absolute",left:0,right:0,bottom:0,height:"38%",background:"linear-gradient(to top,rgba(0,0,0,.6),rgba(0,0,0,0))",pointerEvents:"none"}}/>
         </div>
       )}
 
@@ -5842,6 +5827,49 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   );
 };
 
+export const ScreenShareTile=({participant,isLocal}:{participant:any;isLocal:boolean})=>{
+  const videoRef=useRef<HTMLVideoElement>(null);
+  const name=participant.name||participant.identity||"User";
+  useEffect(()=>{
+    const el=videoRef.current;
+    if(isLocal||!el)return;
+    let attached:any=null;
+    const bind=()=>{
+      const pub=participant.getTrackPublication?.(Track.Source.ScreenShare);
+      const track=pub?.videoTrack||pub?.track||null;
+      if(track===attached)return;
+      if(attached){try{attached.detach(el);}catch{}attached=null;}
+      if(track){try{track.attach(el);attached=track;el.play().catch(()=>{});}catch{}}
+    };
+    bind();
+    const evs=["trackSubscribed","trackUnsubscribed","trackPublished","trackUnpublished","trackMuted","trackUnmuted"];
+    evs.forEach(ev=>participant.on?.(ev,bind));
+    const poll=setInterval(bind,1500);
+    return()=>{
+      clearInterval(poll);
+      evs.forEach(ev=>participant.off?.(ev,bind));
+      if(attached){try{attached.detach(el);}catch{}}
+    };
+  },[participant,isLocal]);
+  return(
+    <div style={{position:"relative",width:"100%",height:"100%",background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      {isLocal?(
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:14,padding:24,textAlign:"center"}}>
+          <div style={{width:72,height:72,borderRadius:22,background:"rgba(138,180,248,.14)",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <Monitor style={{width:34,height:34,color:"#8ab4f8"}}/>
+          </div>
+          <p style={{margin:0,fontSize:16,fontWeight:600,color:"#e8eaed",fontFamily:"system-ui,sans-serif"}}>{"You're presenting your screen"}</p>
+        </div>
+      ):(
+        <video ref={videoRef} autoPlay playsInline muted style={{width:"100%",height:"100%",objectFit:"contain",background:"#000"}}/>
+      )}
+      <div style={{position:"absolute",bottom:14,left:"50%",transform:"translateX(-50%)",maxWidth:"86%",padding:"9px 20px",borderRadius:12,background:"rgba(60,64,67,.92)",color:"#fff",fontSize:14,fontWeight:500,fontFamily:"system-ui,sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",pointerEvents:"none"}}>
+        {isLocal?"You're presenting":`${name}'s screen`}
+      </div>
+    </div>
+  );
+};
+
 /* ══ VIDEO GRID — uniform grid, everyone the same size ══
    No self PiP bubble — the local participant is just another tile.
    Column count is capped at 3 and grows in rows as people join:
@@ -5866,11 +5894,13 @@ export const VideoGrid=({layout="grid",isMobile=false,spotlightId=null}:{layout?
   });
   if(screensharer){
     const others=orderedAll.filter(p=>p.identity!==screensharer.identity);
+    const showStrip=!isMobile&&others.length>0;
     return(
-      <div style={{width:"100%",height:"100%",position:"relative"}}>
-        <ParticipantTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity} size="large"/>
-        {/* Strip of other participants at bottom */}
-        {others.length>0&&(
+      <div style={{width:"100%",height:"100%",position:"relative",background:"#000"}}>
+        <div style={{position:"absolute",inset:0,bottom:showStrip?100:0}}>
+          <ScreenShareTile participant={screensharer} isLocal={screensharer.identity===localParticipant?.identity}/>
+        </div>
+        {showStrip&&(
           <div style={{position:"absolute",bottom:0,left:0,right:0,height:100,display:"flex",gap:4,padding:"4px 8px",background:"rgba(0,0,0,.4)",overflowX:"auto"}}>
             {others.map(p=>(<div key={p.identity} style={{width:72,flexShrink:0,height:92,borderRadius:10,overflow:"hidden"}}><ParticipantTile participant={p} isLocal={p.identity===localParticipant?.identity} size="small"/></div>))}
           </div>
@@ -5950,7 +5980,7 @@ export const DuoPipLayout=({participants,localIdentity}:{participants:any[];loca
   if(!bg||!bubble)return null;
   return(
     <div style={{width:"100%",height:"100%",position:"relative",background:"#0a0a0a",overflow:"hidden"}}>
-      <div style={{position:"absolute",inset:0,cursor:"pointer"}} onClick={swap}>
+      <div style={{position:"absolute",inset:0}}>
         <ParticipantTile participant={bg} isLocal={bg.identity===localIdentity} size="large"/>
       </div>
       <div

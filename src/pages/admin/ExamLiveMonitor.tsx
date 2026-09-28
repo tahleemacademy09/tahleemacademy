@@ -1122,7 +1122,7 @@ export default function ExamLiveMonitor() {
               onKeyDown={(e) => { if (e.key === "ArrowLeft") goPrev(); if (e.key === "ArrowRight") goNext(); if (e.key === "Escape") setPreview(null); }}
               tabIndex={-1}
               ref={(el) => el?.focus()}
-              style={{ position: "fixed", inset: 0, width: "100vw", height: "100dvh", background: "rgba(0,0,0,.9)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+              style={{ position: "fixed", inset: 0, width: "100vw", height: "100dvh", background: "rgba(0,0,0,.9)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, pointerEvents: "auto" }}
             >
               <button onClick={(e) => { e.stopPropagation(); setPreview(null); }} style={{ position: "absolute", top: 16, right: 16, background: "rgba(255,255,255,.15)", border: "none", borderRadius: 10, padding: 8, cursor: "pointer", zIndex: 1 }}>
                 <X size={18} color="#fff" />

@@ -6,19 +6,23 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { Pin, Trash2, Smile, Send, Paperclip, Mic, Square, Image as ImageIcon, X } from "lucide-react";
+import { Pin, Trash2, Smile, Send, Paperclip, Mic, Square, Image as ImageIcon, X, Lock, Plus } from "lucide-react";
+import { useMaybeRoomContext } from "@livekit/components-react";
+import { toast } from "@/hooks/use-toast";
+import { usePrivateChat, chatStore, sendPrivateMessage, PrivatePicker } from "./privateChatStore";
 
 interface ClassChatPanelProps {
   sessionId: string;
   sessionStartedAt?: string;
   guestName?: string;
   onEditName?: () => void;
+  enablePrivate?: boolean;
 }
 
 const EMOJI_LIST = ["👏", "🤲", "❤️", "😂", "🌟", "👍", "🙏", "🔥"];
 const UPLOAD_BUCKET = "chat-attachments";
 
-const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: ClassChatPanelProps) => {
+const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName, enablePrivate }: ClassChatPanelProps) => {
   const { user, hasRole } = useAuth();
   const { t } = useLanguage();
   const isPrivileged = hasRole("admin") || hasRole("teacher");
@@ -38,6 +42,33 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
   const fileRef     = useRef<HTMLInputElement>(null);
   const fetchingIds   = useRef(new Set<string>());
   const optimisticIds = useRef(new Set<string>());
+  const room = useMaybeRoomContext();
+  const priv = usePrivateChat();
+  const [target, setTarget] = useState<{ id: string; name: string } | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const inPrivate = !!enablePrivate && !!target;
+  const privThread = target ? priv.threads[target.id] : undefined;
+
+  useEffect(() => {
+    if (!enablePrivate) return;
+    chatStore.setChatVisible(true);
+    return () => {
+      chatStore.setChatVisible(false);
+      chatStore.setActivePeer(null);
+    };
+  }, [enablePrivate]);
+
+  useEffect(() => {
+    if (enablePrivate) chatStore.setActivePeer(target?.id || null);
+  }, [enablePrivate, target?.id]);
+
+  useEffect(() => {
+    if (enablePrivate && priv.requested) {
+      setTarget(priv.requested);
+      setPickerOpen(false);
+      chatStore.requestOpen(null);
+    }
+  }, [enablePrivate, priv.requested]);
 
   /* ── profile cache ── */
   const loadProfiles = async (userIds: string[]) => {
@@ -89,7 +120,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
     return () => { supabase.removeChannel(ch); };
   }, [sessionId, sessionStartedAt]);
 
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length, target?.id, privThread?.messages.length]);
 
   /* ── send text — optimistic UI so messages appear instantly ── */
   const sendMessage = async (text?: string, type = "text", attachmentUrl?: string, attachmentName?: string) => {
@@ -137,6 +168,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
 
   /* ── image paste ── */
   const handlePaste = async (e: React.ClipboardEvent) => {
+    if (inPrivate) return;
     const file = Array.from(e.clipboardData.items)
       .find(i => i.type.startsWith("image/"))?.getAsFile();
     if (file) { e.preventDefault(); await uploadFile(file); }
@@ -214,10 +246,33 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
     system: "rgba(255,255,255,.12)", teal: "#0a7c68", gold: "#c9a84c",
   };
 
+  const submit = async (text?: string) => {
+    if (inPrivate && target) {
+      const msg = (text || input).trim();
+      if (!msg) return;
+      if (!text) setInput("");
+      setShowEmoji(false);
+      const ok = await sendPrivateMessage(room, target.id, target.name, msg);
+      if (!ok) {
+        if (!text) setInput(msg);
+        toast({ title: `${target.name} isn't in the class right now`, variant: "destructive" });
+      }
+      return;
+    }
+    return sendMessage(text);
+  };
+
+  const chip = (active: boolean): React.CSSProperties => ({
+    flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 12px",
+    borderRadius: 14, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600,
+    background: active ? "#0a7c68" : "rgba(255,255,255,.07)",
+    color: active ? "#fff" : "rgba(255,255,255,.7)",
+  });
+
   const fmt = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: T.bg, fontFamily: "system-ui,sans-serif" }}>
+    <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", background: T.bg, fontFamily: "system-ui,sans-serif" }}>
 
       {/* Lightbox */}
       {lightbox && (
@@ -235,8 +290,33 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
         </div>
       )}
 
+      {enablePrivate && (
+        <div style={{ display: "flex", gap: 6, padding: "8px 10px", overflowX: "auto", borderBottom: `1px solid ${T.border}`, flexShrink: 0, scrollbarWidth: "none", alignItems: "center" }}>
+          <button onClick={() => setTarget(null)} style={chip(!target)}>{t("Everyone", "الجميع")}</button>
+          {(() => {
+            const entries = Object.entries(priv.threads).map(([id, th]) => ({ id, name: th.peerName, unread: th.unread }));
+            if (target && !priv.threads[target.id]) entries.push({ id: target.id, name: target.name, unread: 0 });
+            return entries.map(e => (
+              <button key={e.id} onClick={() => setTarget({ id: e.id, name: e.name })} style={chip(target?.id === e.id)}>
+                <Lock style={{ width: 10, height: 10 }} />
+                <span style={{ maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</span>
+                {e.unread > 0 && (
+                  <span style={{ minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: "#ea4335", color: "#fff", fontSize: 10, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{e.unread}</span>
+                )}
+              </button>
+            ));
+          })()}
+          <button onClick={() => setPickerOpen(true)} style={{ ...chip(false), background: "transparent", border: "1px dashed rgba(255,255,255,.28)" }}>
+            <Plus style={{ width: 12, height: 12 }} /> {t("Private", "خاص")}
+          </button>
+        </div>
+      )}
+      {enablePrivate && pickerOpen && (
+        <PrivatePicker onClose={() => setPickerOpen(false)} onPick={p => { setTarget(p); setPickerOpen(false); }} />
+      )}
+
       {/* Pinned */}
-      {messages.filter(m => m.is_pinned).map(m => (
+      {!inPrivate && messages.filter(m => m.is_pinned).map(m => (
         <div key={`pin-${m.id}`} style={{ background: "rgba(201,168,76,.12)", borderBottom: `1px solid ${T.border}`, padding: "6px 12px", display: "flex", alignItems: "center", gap: 6 }}>
           <Pin style={{ width: 10, height: 10, color: T.gold, flexShrink: 0 }} />
           <p style={{ fontSize: 11, color: T.gold, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", margin: 0 }}>{m.message}</p>
@@ -245,7 +325,23 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
 
       {/* Messages */}
       <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-        {messages.map(m => {
+        {inPrivate && target ? (
+          <>
+            <div style={{ textAlign: "center", margin: "2px 0 6px" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: "#e6c877", background: "rgba(201,168,76,.12)", border: "1px solid rgba(201,168,76,.22)", padding: "3px 10px", borderRadius: 20 }}>
+                <Lock style={{ width: 10, height: 10 }} /> Only you and {target.name} can see this
+              </span>
+            </div>
+            {(privThread?.messages || []).map(pm => (
+              <div key={pm.id} style={{ display: "flex", justifyContent: pm.mine ? "flex-end" : "flex-start" }}>
+                <div style={{ maxWidth: "80%", padding: "8px 12px", borderRadius: pm.mine ? "14px 14px 4px 14px" : "14px 14px 14px 4px", background: pm.mine ? T.mine : T.theirs }}>
+                  <p style={{ fontSize: 13, color: T.text, margin: 0, wordBreak: "break-word", lineHeight: 1.45 }}>{pm.text}</p>
+                  <span style={{ fontSize: 9, color: T.muted, display: "block", marginTop: 4 }}>{new Date(pm.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                </div>
+              </div>
+            ))}
+          </>
+        ) : messages.map(m => {
           const isMe    = m.sender_id === user?.id;
           const prof    = profiles[m.sender_id];
           const name    = isMe ? (guestName || t("You", "أنت")) : (prof?.name || "Student");
@@ -344,7 +440,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
       {showEmoji && (
         <div style={{ borderTop: `1px solid ${T.border}`, padding: "8px 12px", display: "flex", gap: 8, justifyContent: "center", background: T.surface }}>
           {EMOJI_LIST.map(e => (
-            <button key={e} onClick={() => sendMessage(e)} style={{ fontSize: 22, background: "none", border: "none", cursor: "pointer" }}>{e}</button>
+            <button key={e} onClick={() => submit(e)} style={{ fontSize: 22, background: "none", border: "none", cursor: "pointer" }}>{e}</button>
           ))}
         </div>
       )}
@@ -373,6 +469,7 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
             <Smile style={{ width: 15, height: 15 }} />
           </button>
 
+          {!inPrivate && (<>
           <button onClick={() => fileRef.current?.click()} disabled={uploading} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,.08)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, flexShrink: 0 }}>
             <Paperclip style={{ width: 15, height: 15 }} />
           </button>
@@ -380,17 +477,18 @@ const ClassChatPanel = ({ sessionId, sessionStartedAt, guestName, onEditName }: 
           <button onClick={startRecording} disabled={uploading} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,.08)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: T.muted, flexShrink: 0 }}>
             <Mic style={{ width: 15, height: 15 }} />
           </button>
+          </>)}
 
           <input
             value={input}
             onChange={e => setInput(e.target.value)}
             onPaste={handlePaste}
-            placeholder={uploading ? "Uploading…" : t("Message the class...", "أرسل رسالة...")}
+            placeholder={inPrivate ? `Private message to ${target?.name}...` : uploading ? "Uploading…" : t("Message the class...", "أرسل رسالة...")}
             style={{ flex: 1, background: "rgba(255,255,255,.06)", border: `1px solid ${T.border}`, borderRadius: 20, padding: "7px 14px", fontSize: 13, color: T.text, outline: "none", fontFamily: "inherit" }}
-            onKeyDown={e => e.key === "Enter" && sendMessage()}
+            onKeyDown={e => e.key === "Enter" && submit()}
           />
 
-          <button onClick={() => sendMessage()} disabled={!input.trim() || uploading} style={{ width: 32, height: 32, borderRadius: "50%", background: input.trim() ? "#0a7c68" : "rgba(255,255,255,.06)", border: "none", cursor: input.trim() ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", flexShrink: 0 }}>
+          <button onClick={() => submit()} disabled={!input.trim() || uploading} style={{ width: 32, height: 32, borderRadius: "50%", background: input.trim() ? "#0a7c68" : "rgba(255,255,255,.06)", border: "none", cursor: input.trim() ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", flexShrink: 0 }}>
             <Send style={{ width: 14, height: 14 }} />
           </button>
         </div>
