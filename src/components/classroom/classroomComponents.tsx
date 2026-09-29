@@ -5477,6 +5477,19 @@ export const ParticipantSignalIcon=({participant}:{participant:any})=>{
 // with a Provider — e.g. if ParticipantTile is ever reused somewhere else.
 export const ClassroomAdminContext = createContext<{isPrivileged:boolean;sessionId:string|null}>({isPrivileged:false,sessionId:null});
 
+// ── Camera-off avatar: initial letter + deterministic color ─────────────
+// Same idea as the little colored-circle avatars in Meet/Zoom/Teams: pick
+// one letter and one color, both derived from the person's name so the same
+// person always gets the same avatar across renders/devices, with no photo
+// lookup needed as a fallback.
+const AVATAR_PALETTE = ["#F2765A","#5B8DEF","#4CAF7D","#C77DFF","#FF9F5A","#4FC3D9","#E85D9E","#8E9AAF"];
+const getAvatarInitial = (name: string) => (name?.trim()?.[0] || "?").toUpperCase();
+const getAvatarColor = (name: string) => {
+  let hash = 0;
+  for (let i = 0; i < (name || "").length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
+};
+
 export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{participant:any;isLocal:boolean;size?:"normal"|"large"|"small";pip?:boolean})=>{
   const videoRef=useRef<HTMLVideoElement>(null);
   const[hasVideo,setHasVideo]=useState(false);
@@ -5663,8 +5676,11 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
   const[avatarImgError,setAvatarImgError]=useState(false);
   useEffect(()=>{setAvatarImgError(false);},[avatarUrl]);
 
-  // WhatsApp-style avatar sizes
-  const avatarW = pip ? "55%" : size==="small" ? "60%" : "52%";
+  // Camera-off avatar circle: sized to sit well short of the tile's edges
+  // (like the reference "centered circle on black" layout) rather than the
+  // old full-bleed photo/silhouette that filled every corner of the tile.
+  const avatarD = pip ? 46 : size==="small" ? 92 : 168; // circle diameter, px
+  const avatarFont = pip ? 18 : size==="small" ? 34 : 60; // initial-letter size, px
 
   return(
     <div
@@ -5711,21 +5727,26 @@ export const ParticipantTile=({participant,isLocal,size="normal",pip=false}:{par
         style={{width:"100%",height:"100%",objectFit:"cover",display:hasVideo?"block":"none",transform:isLocal?"scaleX(-1)":"none"}}
       />
 
-      {/* Camera-off profile: full-bleed photo filling all four corners of the tile */}
+      {/* Camera-off placeholder: plain black background with one small
+          centered circle avatar (real photo if we have one, otherwise a
+          colored initial), matching the reference layout instead of the old
+          full-bleed photo/silhouette that filled the whole tile. */}
       {!hasVideo&&(
-        <div style={{position:"absolute",inset:0,background:"#131313",overflow:"hidden"}}>
+        <div style={{position:"absolute",inset:0,background:"#000",display:"flex",alignItems:"center",justifyContent:"center"}}>
           {avatarUrl&&!avatarImgError ? (
             <img src={avatarUrl} alt="" onError={()=>setAvatarImgError(true)}
-              style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}}/>
+              style={{width:avatarD,height:avatarD,borderRadius:"50%",objectFit:"cover",flexShrink:0}}/>
           ) : (
-            <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"linear-gradient(160deg,#1f2c34 0%,#111b21 100%)"}}>
-              <svg viewBox="0 0 200 220" style={{width:avatarW,height:avatarW,maxWidth:220,maxHeight:240}} fill="none">
-                <circle cx="100" cy="72" r="52" fill="#8696a0"/>
-                <path d="M0 220 C0 148 36 128 100 128 C164 128 200 148 200 220Z" fill="#8696a0"/>
-              </svg>
+            <div style={{
+              width:avatarD,height:avatarD,borderRadius:"50%",flexShrink:0,
+              display:"flex",alignItems:"center",justifyContent:"center",
+              background:getAvatarColor(name),
+            }}>
+              <span style={{fontSize:avatarFont,fontWeight:600,color:"#fff",fontFamily:"'Google Sans',sans-serif",lineHeight:1}}>
+                {getAvatarInitial(name)}
+              </span>
             </div>
           )}
-          <div style={{position:"absolute",left:0,right:0,bottom:0,height:"38%",background:"linear-gradient(to top,rgba(0,0,0,.6),rgba(0,0,0,0))",pointerEvents:"none"}}/>
         </div>
       )}
 

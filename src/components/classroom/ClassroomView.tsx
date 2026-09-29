@@ -22,6 +22,8 @@ import { Track, RoomEvent, ConnectionState, ConnectionQuality, RemoteTrackPublic
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { Capacitor } from "@capacitor/core";
+import { StatusBar } from "@capacitor/status-bar";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { getSignedUrl } from "../../integrations/supabase/storageClient";
 import { playJoinSound, playLeaveSound, playRecordingStartSound, playRecordingStopSound } from "@/lib/soundUtils";
@@ -249,6 +251,30 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // Feature 7: Screen wake lock — keep screen on during class so Android doesn't kill audio
   // (Separate from GlobalClassroomOverlay's wake lock — that one only activates after minimize)
   useScreenWakeLock(phase === "live");
+
+  // ── Full-screen while in a live class ─────────────────────────────────
+  // Web: requests the browser's real Fullscreen API (hides the address bar/
+  // browser chrome) the moment the call goes live, and exits it again the
+  // moment it doesn't (ended/left/minimized) — never left engaged behind.
+  // Capacitor native app: there's no page chrome to hide, but the OS status
+  // bar still floats over the top of the WebView, so it's hidden the same
+  // way for the same "edge-to-edge" effect, and restored on the way out.
+  useEffect(()=>{
+    const isLive = phase === "live";
+    if (Capacitor.isNativePlatform()) {
+      (isLive ? StatusBar.hide() : StatusBar.show()).catch(()=>{});
+    } else if (typeof document !== "undefined") {
+      if (isLive && !document.fullscreenElement) {
+        document.documentElement.requestFullscreen?.().catch(()=>{});
+      } else if (!isLive && document.fullscreenElement) {
+        document.exitFullscreen?.().catch(()=>{});
+      }
+    }
+    return ()=>{
+      if (Capacitor.isNativePlatform()) StatusBar.show().catch(()=>{});
+      else if (document.fullscreenElement) document.exitFullscreen?.().catch(()=>{});
+    };
+  },[phase]);
 
   const[sessionId,setSessionId]=useState<string|null>(null);const[sessionInfo,setSessionInfo]=useState<any>(null);
   const[showAttendanceReview,setShowAttendanceReview]=useState(false);
@@ -925,7 +951,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       if(e?.name==="NotAllowedError"||e?.name==="PermissionDeniedError"){
         toast({title:"Screen share permission denied",description:"Allow screen capture in your browser settings",variant:"destructive"});
       }else if(e?.name==="NotSupportedError"||e?.message?.includes("not supported")||e?.message?.includes("getDisplayMedia")){
-        toast({title:"Screen share not supported",description:"Screen sharing requires Chrome on desktop. On mobile, use the desktop site or a laptop.",variant:"destructive"});
+        toast({title:"Screen share not supported",description:"Screen sharing isn't available on this device yet.",variant:"destructive"});
       }else{
         toast({title:"Screen share failed",description:e?.message||"Could not start screen share",variant:"destructive"});
       }

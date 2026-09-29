@@ -16,6 +16,7 @@ import { Track, createLocalScreenTracks, RoomEvent } from "livekit-client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
+import { Capacitor } from "@capacitor/core";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { queueMediaOp } from "./classroomComponents";
 import { playJoinSound, playLeaveSound } from "@/lib/soundUtils";
@@ -711,7 +712,13 @@ const ClassControls = ({
   const btnOff  = "bg-destructive text-destructive-foreground hover:bg-destructive/90";
   const btnNeutral = "text-white hover:opacity-80";
   const btnStyle = {background:"rgba(255,255,255,0.12)"} as React.CSSProperties;
-  const canShare = typeof navigator !== "undefined" && !!(navigator.mediaDevices as any)?.getDisplayMedia;
+  // Screen share button: show it when the browser exposes getDisplayMedia
+  // directly, OR when running inside the Capacitor native app — the native
+  // Android/iOS shell can broker screen capture (MediaProjection / ReplayKit)
+  // even on WebViews that don't expose the web API by default, so it isn't
+  // gated on that check there.
+  const canShare = (typeof navigator !== "undefined" && !!(navigator.mediaDevices as any)?.getDisplayMedia)
+    || Capacitor.isNativePlatform();
   // Long-press (450ms) on the mic / camera button opens its device menu.
   // A normal tap still toggles mute / camera exactly as before.
   const [micMenuOpen, setMicMenuOpen] = useState(false);
