@@ -189,7 +189,13 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
   const isMajlis = location.pathname === "/student/majlis";
 
   const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
-  const groupActive = (paths: string[]) => paths.some(p => location.pathname.startsWith(p));
+  // The Hifdh hub owns four routes; keep its sidebar entry highlighted on all of them.
+  const HIFDH_HUB_PATHS = ["/admin/hifdh-program","/admin/hifdh-tracker","/admin/recitation-review","/admin/recitation-test-settings"];
+  const pathMatches = (p: string) =>
+    p === "/admin/hifdh-program"
+      ? HIFDH_HUB_PATHS.some(h => location.pathname.startsWith(h))
+      : location.pathname.startsWith(p);
+  const groupActive = (paths: string[]) => paths.some(pathMatches);
 
   // ── Student nav ──────────────────────────────────────────────
   type NavItem =
@@ -259,6 +265,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
       { to:"/admin/material-manager", icon:FolderOpen,  label:t("Materials","المواد التعليمية") },
       { to:"/admin/level-subject-mapping", icon:BookMarked,  label:t("Level–Subject Map","ربط المستويات") },
       { to:"/admin/calendar",         icon:Calendar,    label:t("Academic Calendar","التقويم الأكاديمي") },
+      { to:"/admin/hifdh-program",    icon:BookMarked,  label:t("Hifdh","الحفظ") },
     ]},
 
     // 4 ── Classes ──────────────────────────────────────────────
@@ -538,7 +545,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 {isOpen && (
                   <div className="ms-5 mt-0.5 mb-1 space-y-0.5 border-l border-sidebar-border/40 ps-3">
                     {item.children.map((child: any) => {
-                      const ca = location.pathname.startsWith(child.to);
+                      const ca = pathMatches(child.to);
                       const cBadge = child.badge ?? unreadCountFor(child.to);
                       return (                        <Link key={child.to} to={child.to} onClick={onNavigate}
                           className={cn(
