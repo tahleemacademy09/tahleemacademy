@@ -210,7 +210,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     ]},
     { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murāja'ah","المراجعة"), children:[
       { to:"/student/revision", icon:BookMarked, label:t("At-Tadārus","التدارس") },
-      { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
     ]},
     { type:"link", to:"/student/hifdh-program", icon:BookMarked, label:t("Hifdh Program","برنامج الحفظ") },
     { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
