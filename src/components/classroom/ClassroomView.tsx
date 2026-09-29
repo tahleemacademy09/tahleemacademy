@@ -147,6 +147,7 @@ import {
   ClassroomAdminContext,
   JoinRequestBanner,
   CameraUnmirrorEngine,
+  CameraEndedWatchdog,
 } from "./classroomComponents";
 
 export * from "./classroomComponents";
@@ -1288,7 +1289,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // "ideal" (not exact) lets the browser choose the closest
               // native mode instead of aggressively cropping every device
               // the same way.
-              aspectRatio:16/9,
+              aspectRatio:{ideal:16/9},
             } as any,
           }} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           {/* FIX ("waveform shows but no voice is heard", and vice versa): this used to be
@@ -1403,6 +1404,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                   engine is kept alive headlessly since it doesn't just feed this badge. */}
               <NetworkAdaptiveEngine/>
               <CameraUnmirrorEngine/>
+              <CameraEndedWatchdog/>
               {/* Participant count */}
               <ParticipantCountBadge participantCountRef={participantCountRef} onOpen={()=>{setPartOpen(v=>!v);setPartPanelOpen(v=>!v);}}/>
               {/* Student "Record" control — moved here (beside the participant

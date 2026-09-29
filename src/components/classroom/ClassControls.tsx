@@ -538,16 +538,23 @@ const ClassControls = ({
     };
   }, [room, setCtxMicEnabled, setCtxCamEnabled]);
 
-  // ── Join / leave sound — heard by everyone already in the room ────────
+  // ── Join / leave sound + toast — heard/seen by everyone already in the room ──
   // Fires on every OTHER participant's own Room instance whenever someone
-  // else connects/disconnects, so each person's browser plays the chime
-  // locally the moment anyone joins or leaves — no server broadcast needed.
-  // (The local participant's own join/leave chime, for themselves, is
-  // played separately in ClassroomView right when THEY connect/disconnect.)
+  // else connects/disconnects, so each person's browser plays the chime and
+  // shows a toast with that person's name locally — no server broadcast
+  // needed. (The local participant's own join/leave chime, for themselves,
+  // is played separately in ClassroomView right when THEY connect/disconnect —
+  // and doesn't get a toast, since you already know you joined/left.)
   useEffect(() => {
     if (!room) return;
-    const onJoin = () => { try { playJoinSound(); } catch {} };
-    const onLeave = () => { try { playLeaveSound(); } catch {} };
+    const onJoin = (p: any) => {
+      try { playJoinSound(); } catch {}
+      toast({ title: `👋 ${p?.name || p?.identity || "Someone"} joined` });
+    };
+    const onLeave = (p: any) => {
+      try { playLeaveSound(); } catch {}
+      toast({ title: `${p?.name || p?.identity || "Someone"} left` });
+    };
     room.on(RoomEvent.ParticipantConnected, onJoin);
     room.on(RoomEvent.ParticipantDisconnected, onLeave);
     return () => {

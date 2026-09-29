@@ -1123,7 +1123,57 @@ export const CameraUnmirrorEngine = () => {
   return null;
 };
 
-export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) => {
+// ══════════════════════════════════════════════════════════════════════
+// CAMERA-ENDED WATCHDOG ("camera turns off when I rotate my phone")
+// On some Android devices, rotating the phone while the front camera is
+// live makes the OS/browser end and recreate the capture pipeline for the
+// new orientation. WebRTC surfaces that as the local camera's underlying
+// MediaStreamTrack firing its native "ended" event — which LiveKit treats
+// exactly like the person turning their camera off, so the picture just
+// disappears with nothing shown. This watchdog listens for that specific
+// "ended" event on the local camera track and — ONLY when the camera
+// wasn't deliberately turned off (isCameraEnabled is still true) — quietly
+// re-requests it, so a rotation looks like nothing happened instead of
+// silently ending the video. A real user toggle-off disables the
+// publication first, so isCameraEnabled is already false by the time
+// "ended" fires for that case — this re-enable never fights it.
+// ══════════════════════════════════════════════════════════════════════
+export const CameraEndedWatchdog = () => {
+  const room = useRoomContext();
+  const attachedTrackId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!room) return;
+
+    const onEnded = () => {
+      const lp = room.localParticipant;
+      if (lp?.isCameraEnabled) {
+        queueMediaOp(room, () => lp.setCameraEnabled(true)).catch(() => {});
+      }
+    };
+
+    const attach = (track: any) => {
+      const mst: MediaStreamTrack | undefined = track?.mediaStreamTrack;
+      if (!mst || attachedTrackId.current === mst.id) return;
+      attachedTrackId.current = mst.id;
+      mst.addEventListener("ended", onEnded);
+    };
+
+    const onPublished = (publication: any) => {
+      if (publication?.source === Track.Source.Camera && publication.track) attach(publication.track);
+    };
+
+    // Cover a camera that was already on before this component mounted
+    // (e.g. lobby → live transition) — same pattern as CameraUnmirrorEngine above.
+    const existing = room.localParticipant?.getTrackPublication?.(Track.Source.Camera);
+    if (existing?.track) attach(existing.track);
+
+    room.on(RoomEvent.LocalTrackPublished, onPublished);
+    return () => { room.off(RoomEvent.LocalTrackPublished, onPublished); };
+  }, [room]);
+
+  return null;
+};
   const room = useRoomContext();
   useEffect(() => {
     if (isPrivileged) return;

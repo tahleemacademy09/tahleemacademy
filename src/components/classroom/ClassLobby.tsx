@@ -336,7 +336,7 @@ const ClassLobby = ({ subject, session, onStartClass, onJoinClass, onBack, isLiv
           {isPrivileged ? t("START LIVE CLASS", "\u0627\u0628\u062F\u0623 \u0627\u0644\u062F\u0631\u0633 \u0627\u0644\u0645\u0628\u0627\u0634\u0631") : isLive ? t("JOIN CLASS", "\u0627\u0646\u0636\u0645 \u0644\u0644\u0641\u0635\u0644") : t("JOIN EARLY", "\u0627\u0646\u0636\u0645 \u0645\u0628\u0643\u0631\u0627")}
         </button>
         <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,.3)", fontSize: 13, padding: "2px 0" }}>
-          \u2190 {t("Back", "\u0631\u062C\u0648\u0639")}
+          ← {t("Back", "رجوع")}
         </button>
       </div>
     </div>
