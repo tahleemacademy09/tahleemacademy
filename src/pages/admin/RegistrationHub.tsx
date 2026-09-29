@@ -9,6 +9,7 @@
 //   • Student Registration(manage in-progress registrations)    — was /admin/student-registration
 //   • Registration Settings (toggle fees, flow & rules)          — was /admin/registration-settings
 //   • Subject Registration  (open/close the subject portal)      — was /admin/subject-registration
+//   • Recitation Settings   (new-student recitation test)        — was /admin/recitation-test-settings
 //
 // Each original route still exists in App.tsx and renders this same hub —
 // they just now open the right tab instead of a standalone page, so none of
@@ -16,7 +17,7 @@
 // break.
 // ─────────────────────────────────────────────────────────────────────────
 import { lazy, Suspense } from "react";
-import { Loader2, GraduationCap, ClipboardList, UserCheck, Settings, Layers } from "lucide-react";
+import { Loader2, GraduationCap, ClipboardList, UserCheck, Settings, Layers, Mic } from "lucide-react";
 import TabbedHub, { HubTab } from "@/components/admin/TabbedHub";
 import { useLanguage } from "@/contexts/LanguageContext";
 
@@ -27,6 +28,7 @@ const TasjeelAdmin = lazy(() => import("./TasjeelAdmin"));
 const StudentRegistration = lazy(() => import("./StudentRegistration"));
 const RegistrationSettings = lazy(() => import("./RegistrationSettings"));
 const SubjectRegistrationSettings = lazy(() => import("./SubjectRegistrationSettings"));
+const RecitationTestAdmin = lazy(() => import("./RecitationTestAdmin"));
 
 const HubLoading = () => (
   <div className="flex items-center justify-center min-h-[40vh]">
@@ -59,6 +61,12 @@ const RegistrationSettingsTab = () => (
 const SubjectRegistrationTab = () => (
   <Suspense fallback={<HubLoading />}>
     <SubjectRegistrationSettings />
+  </Suspense>
+);
+
+const RecitationSettingsTab = () => (
+  <Suspense fallback={<HubLoading />}>
+    <RecitationTestAdmin />
   </Suspense>
 );
 
@@ -100,6 +108,13 @@ export default function RegistrationHub() {
       label: t("Subject Registration", "تسجيل المواد"),
       icon: Layers,
       component: SubjectRegistrationTab,
+    },
+    {
+      key: "recitation",
+      path: "/admin/recitation-test-settings",
+      label: t("Recitation Settings", "إعدادات التلاوة"),
+      icon: Mic,
+      component: RecitationSettingsTab,
     },
   ];
 

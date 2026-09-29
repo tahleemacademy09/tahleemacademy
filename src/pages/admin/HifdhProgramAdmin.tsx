@@ -6,7 +6,9 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Users, Layers, Wallet, Settings as Cog, Plus, Trash2, RotateCcw, ChevronLeft, ChevronRight } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import { useHifdhSettings, DEFAULT_HIFDH_SETTINGS, HifdhSettings } from "@/hooks/useHifdhSettings";
+import { Loader2, Users, Layers, Wallet, Settings as Cog, Plus, Trash2, RotateCcw, ChevronLeft, ChevronRight, Send } from "lucide-react";
 
 const hpDb = supabase as any;
 
@@ -71,8 +73,44 @@ const HpSelect = (p: React.SelectHTMLAttributes<HTMLSelectElement>) => (
   <select {...p} style={{ border: `1px solid ${HP_LINE}`, borderRadius: 10, padding: "8px 10px", fontSize: 13, background: "#fff", maxWidth: "100%", ...(p.style || {}) }} />
 );
 
+const HpToggle = ({ on, onChange, label, hint }: { on: boolean; onChange: (v: boolean) => void; label: string; hint?: string }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 0" }}>
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: HP_INK }}>{label}</div>
+      {hint && <div style={{ fontSize: 11, color: HP_MUTED, marginTop: 2 }}>{hint}</div>}
+    </div>
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)}
+      style={{ flexShrink: 0, width: 44, height: 26, borderRadius: 99, border: "none", cursor: "pointer", position: "relative", background: on ? HP_GREEN : "#cbd5d0", transition: "background .15s" }}>
+      <span style={{ position: "absolute", top: 3, left: on ? 21 : 3, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left .15s", boxShadow: "0 1px 2px rgba(0,0,0,.25)" }} />
+    </button>
+  </div>
+);
+const HpSection = ({ n, title, hint, children }: { n: number; title: string; hint?: string; children: React.ReactNode }) => (
+  <HpCard>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: hint ? 2 : 8 }}>
+      <span style={{ width: 24, height: 24, borderRadius: "50%", background: HP_GREEN, color: "#fff", fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{n}</span>
+      <div style={{ fontWeight: 800, color: HP_INK, fontSize: 14 }}>{title}</div>
+    </div>
+    {hint && <div style={{ fontSize: 11, color: HP_MUTED, margin: "0 0 8px 34px" }}>{hint}</div>}
+    {children}
+  </HpCard>
+);
+const HpRow = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "9px 0", borderTop: `1px solid ${HP_LINE}` }}>
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: HP_INK }}>{label}</div>
+      {hint && <div style={{ fontSize: 11, color: HP_MUTED, marginTop: 2 }}>{hint}</div>}
+    </div>
+    <div style={{ flexShrink: 0 }}>{children}</div>
+  </div>
+);
+
 export default function HifdhProgramAdmin() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const { settings: acadSettings, loading: acadLoading, save: saveAcad } = useHifdhSettings();
+  const [hd, setHd] = useState<HifdhSettings>(DEFAULT_HIFDH_SETTINGS);
+  useEffect(() => { if (!acadLoading) setHd(acadSettings); }, [acadLoading, acadSettings]);
   const [tab, setTab] = useState<HpTab>("students");
   const [week, setWeek] = useState(hpMonday());
   const [term, setTerm] = useState(() => localStorage.getItem("hifdh_term") || `${new Date().getFullYear()}-T1`);
@@ -229,6 +267,30 @@ export default function HifdhProgramAdmin() {
     </div>
   );
 
+  /* ───────── Weekly portions → student home ───────── */
+  // The student's "This Week's Memorization" card reads hifdh_memorization_tasks
+  // for the current week. Rows are created here (or by the ustadh when marking a
+  // read-along), so this fills in a portion per session for every active student.
+  const insertPortions = async () => {
+    const memDays: number[] = settings?.memorization_days || [];
+    const slots = Math.min(2, Math.max(1, memDays.length || 2));
+    const active = program.filter((p) => p.status === "active");
+    if (active.length === 0) { toast({ title: "No active students enrolled", variant: "destructive" }); return null; }
+    const rows: any[] = [];
+    active.forEach((p) => {
+      const daily = Number(levels.find((l) => l.id === p.level_id)?.daily_pages ?? 0.5);
+      const n = Math.max(1, Math.ceil((daily * 7) / slots));
+      for (let s = 1; s <= slots; s++) {
+        const from = Math.min(604, (p.current_page || 1) + (s - 1) * n);
+        rows.push({ student_id: p.student_id, week_start: week, slot: s, page_from: from, page_to: Math.min(604, from + n - 1), status: "pending" });
+      }
+    });
+    const r = await hpDb.from("hifdh_memorization_tasks").upsert(rows, { onConflict: "student_id,week_start,slot", ignoreDuplicates: true });
+    if (!r.error) toast({ title: `Portions published for ${active.length} student(s)`, description: "Existing portions were left as they were." });
+    return r;
+  };
+  const publishPortions = () => run(insertPortions);
+
   /* ───────── Groups ───────── */
   const membersOf = (gid: string) => members.filter((m) => m.group_id === gid);
 
@@ -238,13 +300,24 @@ export default function HifdhProgramAdmin() {
         <div style={{ fontSize: 13, color: HP_MUTED, marginBottom: 10 }}>
           Students who are close in their hifdh are grouped automatically. You can move anyone or change a group's ustadh.
         </div>
-        <HpBtn disabled={busy} onClick={() => run(async () => {
-          const r = await hpDb.rpc("hifdh_build_read_groups", { p_week_start: week });
-          if (!r.error) toast({ title: r.data ? `${r.data} group(s) created` : "Everyone is already in a group" });
-          return r;
-        })}>
-          <Layers size={14} /> Auto-group this week
-        </HpBtn>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <HpBtn disabled={busy} onClick={() => run(async () => {
+            const r = await hpDb.rpc("hifdh_build_read_groups", { p_week_start: week });
+            if (!r.error) {
+              toast({ title: r.data ? `${r.data} group(s) created` : "Everyone is already in a group" });
+              if (hd.auto_assign_portions) await insertPortions();
+            }
+            return r;
+          })}>
+            <Layers size={14} /> Auto-group this week
+          </HpBtn>
+          <HpBtn kind="ghost" disabled={busy} onClick={publishPortions}>
+            <Send size={14} /> Publish portions to students
+          </HpBtn>
+        </div>
+        <div style={{ fontSize: 11, color: HP_MUTED, marginTop: 8 }}>
+          Publishing puts each active student's pages for the week on their Hifdh home. Portions the ustadh already set are never overwritten.
+        </div>
       </HpCard>
 
       {groups.length === 0 && <HpCard><div style={{ color: HP_MUTED, fontSize: 13 }}>No groups for this week yet.</div></HpCard>}
@@ -352,18 +425,29 @@ export default function HifdhProgramAdmin() {
 
   /* ───────── Settings & levels ───────── */
   const setS = (patch: any) => setSettings((s: any) => ({ ...s, ...patch }));
+  const setH = (patch: Partial<HifdhSettings>) => setHd((h) => ({ ...h, ...patch }));
   const toggleDay = (key: "memorization_days" | "review_days", d: number) => {
     const cur: number[] = settings[key] || [];
     setS({ [key]: cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d].sort() });
   };
   const saveSettings = () =>
-    run(() => hpDb.from("hifdh_settings").update({
-      memorization_days: settings.memorization_days, review_days: settings.review_days,
-      fine_amount: Number(settings.fine_amount) || 0, streak_limit: Number(settings.streak_limit) || 3,
-      revision_mode: settings.revision_mode, group_max_size: Number(settings.group_max_size) || 6,
-      readalong_subject_id: settings.readalong_subject_id || null,
-      updated_at: new Date().toISOString(),
-    }).eq("id", true), "Settings saved");
+    run(async () => {
+      const r = await hpDb.from("hifdh_settings").update({
+        memorization_days: settings.memorization_days, review_days: settings.review_days,
+        fine_amount: Number(settings.fine_amount) || 0, streak_limit: Number(settings.streak_limit) || 3,
+        revision_mode: settings.revision_mode, group_max_size: Number(settings.group_max_size) || 6,
+        readalong_subject_id: settings.readalong_subject_id || null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", true);
+      if (r.error) return r;
+      await saveAcad({
+        auto_assign_portions: hd.auto_assign_portions,
+        proctoring_enabled: hd.proctoring_enabled,
+        violation_limit: Number(hd.violation_limit) || 5,
+        pass_mark: Math.min(100, Math.max(0, Number(hd.pass_mark) || 0)),
+      }, user?.id);
+      return r;
+    }, "Settings saved");
 
   const DayChips = ({ k }: { k: "memorization_days" | "review_days" }) => (
     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -379,34 +463,81 @@ export default function HifdhProgramAdmin() {
     </div>
   );
 
-  const Label = ({ t }: { t: string }) => <div style={{ fontSize: 12, fontWeight: 700, color: HP_MUTED, margin: "12px 0 6px" }}>{t}</div>;
+  const Seg = ({ value, options, onChange }: { value: string; options: { v: string; l: string }[]; onChange: (v: string) => void }) => (
+    <div style={{ display: "inline-flex", background: HP_BG, border: `1px solid ${HP_LINE}`, borderRadius: 10, padding: 3 }}>
+      {options.map((o) => (
+        <button key={o.v} onClick={() => onChange(o.v)} style={{
+          border: "none", cursor: "pointer", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 700,
+          background: value === o.v ? HP_GREEN : "transparent", color: value === o.v ? "#fff" : HP_MUTED,
+        }}>{o.l}</button>
+      ))}
+    </div>
+  );
+  const Num = ({ value, onChange, suffix }: { value: any; onChange: (v: string) => void; suffix?: string }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <HpInput type="number" value={value} onChange={(e) => onChange(e.target.value)} style={{ width: 84, textAlign: "center" }} />
+      {suffix && <span style={{ fontSize: 12, color: HP_MUTED }}>{suffix}</span>}
+    </div>
+  );
 
   const SettingsTab = settings ? (
     <div style={{ display: "grid", gap: 10 }}>
-      <HpCard>
-        <Label t="Memorization days (new portions + read-along)" />
+      <HpSection n={1} title="Weekly schedule" hint="Which days the programme runs each week.">
+        <div style={{ fontSize: 12, fontWeight: 700, color: HP_MUTED, margin: "6px 0" }}>Memorization days (new portions + read-along)</div>
         <DayChips k="memorization_days" />
-        <Label t="Ustadh review days (weekly grading window)" />
+        <div style={{ fontSize: 12, fontWeight: 700, color: HP_MUTED, margin: "14px 0 6px" }}>Ustadh review days (weekly grading window)</div>
         <DayChips k="review_days" />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          <div><Label t="Fine amount (₦)" /><HpInput type="number" value={settings.fine_amount} onChange={(e) => setS({ fine_amount: e.target.value })} /></div>
-          <div><Label t="Suspend after N misses" /><HpInput type="number" value={settings.streak_limit} onChange={(e) => setS({ streak_limit: e.target.value })} /></div>
-          <div><Label t="Max students per group" /><HpInput type="number" value={settings.group_max_size} onChange={(e) => setS({ group_max_size: e.target.value })} /></div>
-          <div>
-            <Label t="Revision portions set by" />
-            <HpSelect style={{ width: "100%" }} value={settings.revision_mode} onChange={(e) => setS({ revision_mode: e.target.value })}>
-              <option value="auto">Automatic</option>
-              <option value="ustadh">Ustadh</option>
-            </HpSelect>
-          </div>
+      </HpSection>
+
+      <HpSection n={2} title="Weekly memorization" hint="How this week's portions reach the student.">
+        <HpToggle on={hd.auto_assign_portions} onChange={(v) => setH({ auto_assign_portions: v })}
+          label="Publish portions automatically"
+          hint="When you auto-group a week, every active student's pages appear on their Hifdh home straight away." />
+        <div style={{ borderTop: `1px solid ${HP_LINE}`, paddingTop: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: HP_INK, marginBottom: 6 }}>Read-along class subject</div>
+          <HpSelect style={{ width: "100%" }} value={settings.readalong_subject_id || ""} onChange={(e) => setS({ readalong_subject_id: e.target.value || null })}>
+            <option value="">— choose the Hifdh subject —</option>
+            {subjects.map((sb) => <option key={sb.id} value={sb.id}>{sb.title}</option>)}
+          </HpSelect>
         </div>
-        <Label t="Subject used for read-along live classes" />
-        <HpSelect style={{ width: "100%" }} value={settings.readalong_subject_id || ""} onChange={(e) => setS({ readalong_subject_id: e.target.value || null })}>
-          <option value="">— choose the Hifdh subject —</option>
-          {subjects.map((sb) => <option key={sb.id} value={sb.id}>{sb.title}</option>)}
-        </HpSelect>
-        <div style={{ marginTop: 14 }}><HpBtn disabled={busy} onClick={saveSettings}>Save settings</HpBtn></div>
-      </HpCard>
+      </HpSection>
+
+      <HpSection n={3} title="Read-along groups">
+        <HpRow label="Max students per group" hint="Auto-grouping starts a new group after this many.">
+          <Num value={settings.group_max_size} onChange={(v) => setS({ group_max_size: v })} />
+        </HpRow>
+      </HpSection>
+
+      <HpSection n={4} title="Daily revision" hint="Applies to the student's daily revision recitation.">
+        <HpRow label="Revision portions set by">
+          <Seg value={settings.revision_mode} onChange={(v) => setS({ revision_mode: v })}
+            options={[{ v: "auto", l: "Automatic" }, { v: "ustadh", l: "Ustadh" }]} />
+        </HpRow>
+        <HpRow label="Pass mark" hint="Score needed for a recitation to count as passed.">
+          <Num value={hd.pass_mark} onChange={(v) => setH({ pass_mark: v as any })} suffix="%" />
+        </HpRow>
+        <div style={{ borderTop: `1px solid ${HP_LINE}` }}>
+          <HpToggle on={hd.proctoring_enabled} onChange={(v) => setH({ proctoring_enabled: v })}
+            label="Proctoring"
+            hint="Tab-switch detection and copy/paste/right-click blocking during revision and the test phase." />
+        </div>
+        {hd.proctoring_enabled && (
+          <HpRow label="Violations before auto-submit">
+            <Num value={hd.violation_limit} onChange={(v) => setH({ violation_limit: v as any })} />
+          </HpRow>
+        )}
+      </HpSection>
+
+      <HpSection n={5} title="Fines & suspension" hint="Applied when the week is closed. Set the fine to 0 for no fines.">
+        <HpRow label="Fine per missed week">
+          <Num value={settings.fine_amount} onChange={(v) => setS({ fine_amount: v })} suffix="₦" />
+        </HpRow>
+        <HpRow label="Suspend after" hint="Consecutive missed weeks.">
+          <Num value={settings.streak_limit} onChange={(v) => setS({ streak_limit: v })} suffix="misses" />
+        </HpRow>
+      </HpSection>
+
+      <div><HpBtn disabled={busy} onClick={saveSettings}>Save settings</HpBtn></div>
 
       <HpCard>
         <div style={{ fontWeight: 800, color: HP_INK, marginBottom: 8 }}>Hifdh levels</div>
@@ -438,7 +569,6 @@ export default function HifdhProgramAdmin() {
     <div style={{ background: HP_BG, minHeight: "100%", padding: 14, maxWidth: 720, margin: "0 auto" }}>
       <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 20, fontWeight: 800, color: HP_GREEN }}>Hifdh Program</div>
-        <div style={{ fontSize: 12, color: HP_MUTED }}>Enrolment, read-along groups, fines and settings</div>
       </div>
 
       {(tab === "groups" || tab === "fines") && (

@@ -5,13 +5,15 @@
 //   o Hifdh Program        -- was /admin/hifdh-program
 //   o Daily Tracker        -- was /admin/hifdh-tracker
 //   o Recitation Review    -- was /admin/recitation-review
-//   o Recitation Settings  -- was /admin/recitation-test-settings
 //
-// Each original route still exists in App.tsx and renders this hub with the
-// matching tab open, so existing links and bookmarks keep working.
+// (Recitation Settings belongs to new-student registration, so it now lives
+// in the Registration hub, not here.)
+//
+// The tabs render as one row of coloured icons. Each original route still
+// exists in App.tsx and opens this hub on the matching tab.
 // -------------------------------------------------------------------------
 import { lazy, Suspense } from "react";
-import { Loader2, BookOpen, ClipboardCheck, Mic, Settings } from "lucide-react";
+import { Loader2, BookOpen, ClipboardCheck, Mic } from "lucide-react";
 import TabbedHub, { HubTab } from "@/components/admin/TabbedHub";
 import { useLanguage } from "@/contexts/LanguageContext";
 
@@ -20,7 +22,6 @@ const G = "#064E3B";
 const HifdhProgramAdmin = lazy(() => import("./HifdhProgramAdmin"));
 const HifdhRevisionTracker = lazy(() => import("./HifdhRevisionTracker"));
 const HifdhAdminReview = lazy(() => import("./HifdhAdminReview"));
-const RecitationTestAdmin = lazy(() => import("./RecitationTestAdmin"));
 
 const HubLoading = () => (
   <div className="flex items-center justify-center min-h-[40vh]">
@@ -44,30 +45,21 @@ const ReviewTab = () => (
     <HifdhAdminReview />
   </Suspense>
 );
-const SettingsTab = () => (
-  <Suspense fallback={<HubLoading />}>
-    <RecitationTestAdmin />
-  </Suspense>
-);
 
 export default function HifdhHub() {
   const { t } = useLanguage();
 
   const tabs: HubTab[] = [
-    { key: "program", path: "/admin/hifdh-program", label: t("Hifdh Program", "برنامج الحفظ"), icon: BookOpen, component: ProgramTab },
-    { key: "tracker", path: "/admin/hifdh-tracker", label: t("Daily Tracker", "المتابعة اليومية"), icon: ClipboardCheck, component: TrackerTab },
-    { key: "review", path: "/admin/recitation-review", label: t("Recitation Review", "مراجعة التلاوة"), icon: Mic, component: ReviewTab },
-    { key: "settings", path: "/admin/recitation-test-settings", label: t("Recitation Settings", "إعدادات التلاوة"), icon: Settings, component: SettingsTab },
+    { key: "program", path: "/admin/hifdh-program", label: t("Hifdh Program", "برنامج الحفظ"), icon: BookOpen, color: "#059669", component: ProgramTab },
+    { key: "tracker", path: "/admin/hifdh-tracker", label: t("Daily Tracker", "المتابعة اليومية"), icon: ClipboardCheck, color: "#2563EB", component: TrackerTab },
+    { key: "review", path: "/admin/recitation-review", label: t("Recitation Review", "مراجعة التلاوة"), icon: Mic, color: "#7C3AED", component: ReviewTab },
   ];
 
   return (
     <TabbedHub
       title={t("Hifdh", "الحفظ")}
-      subtitle={t(
-        "Program, daily tracker, recitation review and recitation settings in one place.",
-        "البرنامج والمتابعة اليومية ومراجعة التلاوة وإعداداتها في مكان واحد.",
-      )}
       tabs={tabs}
+      iconOnly
     />
   );
 }
