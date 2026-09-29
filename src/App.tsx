@@ -128,7 +128,6 @@ const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"
 const HifdhRevisionTracker  = lazy(() => import("./pages/admin/HifdhRevisionTracker"));
 const HifdhProgramAdmin      = lazy(() => import("./pages/admin/HifdhProgramAdmin"));
 const HifdhHub               = lazy(() => import("./pages/admin/HifdhHub"));
-const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
 const QuranRecitationAdmin  = lazy(() => import("./pages/admin/QuranRecitationAdmin"));
 const LetterAudioRecorder   = lazy(() => import("./pages/admin/LetterAudioRecorder"));
 const AdminRecitationSession = lazy(() => import("./pages/admin/RecitationSession"));
@@ -382,7 +381,7 @@ const App = () => (
                     <Route path="/admin/recitation-review"           element={<HifdhHub />} />
                     <Route path="/admin/hifdh-tracker"               element={<HifdhHub />} />
                     <Route path="/admin/hifdh-program"               element={<HifdhHub />} />
-                    <Route path="/admin/recitation-test-settings"    element={<HifdhHub />} />
+                    <Route path="/admin/recitation-test-settings"    element={<RegistrationHub />} />
                     <Route path="/admin/quran-recitations"           element={<QuranRecitationAdmin />} />
                     <Route path="/admin/letter-audio"                element={<LetterAudioRecorder />} />
                     {/* Registration hub — New Registrations / Pipeline Tracker /
