@@ -21,6 +21,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { useCurrentTermId, useViewingTermId } from "@/hooks/useCurrentTermId";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { uploadStorageFile, getSignedUrl } from "@/integrations/supabase/storageClient";
 import {
@@ -123,6 +124,7 @@ export default function SubjectAssignments({ subjectId }: { subjectId?: string }
    ═══════════════════════════════════════════════════════════════ */
 function AssignmentManager({ subjectId }: { subjectId?: string }) {
   const { user } = useAuth();
+  const liveTermId = useCurrentTermId(); // staff manage the live term only (plus legacy rows with no term)
   const { t, language } = useLanguage();
 
   const [assignments, setAssignments] = useState<any[]>([]);
@@ -139,11 +141,12 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
     if (!subjectId) { setLoading(false); return; }
     setLoading(true);
     try {
-      const { data: asgn } = await supabase
+      let aq = supabase
         .from("subject_assignments")
         .select("*")
-        .eq("subject_id", subjectId)
-        .order("deadline", { ascending: false });
+        .eq("subject_id", subjectId);
+      if (liveTermId) aq = aq.or(`term_id.eq.${liveTermId},term_id.is.null`);
+      const { data: asgn } = await aq.order("deadline", { ascending: false });
       setAssignments(asgn || []);
 
       const roster = await fetchSubjectRoster(subjectId);
@@ -167,9 +170,15 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
       console.error("Failed to load assignments:", err);
     }
     setLoading(false);
-  }, [subjectId]);
+  }, [subjectId, liveTermId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Draft tasks are hidden from students until published here.
+  const setStatus = async (id: string, status: "draft" | "open") => {
+    await supabase.from("subject_assignments").update({ status }).eq("id", id);
+    await load();
+  };
 
   const confirmDelete = async () => {
     if (!deleting) return;
@@ -262,7 +271,12 @@ function AssignmentManager({ subjectId }: { subjectId?: string }) {
                         </span>
                       </div>
                     </div>
-                    <div style={{ display: "flex", gap: 4, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                    <div style={{ display: "flex", gap: 4, flexShrink: 0, alignItems: "center" }} onClick={e => e.stopPropagation()}>
+                      <button onClick={() => setStatus(a.id, a.status === "draft" ? "open" : "draft")} className="asm-btn"
+                        title={a.status === "draft" ? t("Hidden from students. Tap to publish.", "مخفي عن الطلاب. اضغط للنشر.") : t("Visible to students. Tap to hide.", "ظاهر للطلاب. اضغط للإخفاء.")}
+                        style={{ height: 32, padding: "0 10px", borderRadius: 9, border: `1px solid ${BORDER}`, background: a.status === "draft" ? "#fef3c7" : "#dcfce7", color: a.status === "draft" ? "#92400e" : "#276749", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+                        {a.status === "draft" ? t("Draft · Publish", "مسودة · نشر") : t("Published", "منشور")}
+                      </button>
                       <button onClick={() => { setEditing(a); setShowForm(true); }} className="asm-icon-btn"
                         style={{ width: 32, height: 32, borderRadius: 9, border: `1px solid ${BORDER}`, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <Pencil style={{ width: 14, height: 14, color: TMID }} />
@@ -683,7 +697,8 @@ function StudentSubmissionRow({
    STUDENT VIEW — browse + submit, locked once overdue
    ═══════════════════════════════════════════════════════════════ */
 function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth() as any;
+  const termFilterId = useViewingTermId(profile);
   const { t, language } = useLanguage();
   const navigate = useNavigate();
 
@@ -708,11 +723,13 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
 
       if (subjectId) {
         // Scoped to a single subject tab — the common case.
-        const { data: asgn } = await supabase
+        let sq = supabase
           .from("subject_assignments")
           .select("*, subjects(id, title, title_ar, level, levels)")
           .eq("subject_id", subjectId)
-          .order("deadline", { ascending: true });
+          .neq("status", "draft");
+        if (termFilterId) sq = sq.or(`term_id.eq.${termFilterId},term_id.is.null`);
+        const { data: asgn } = await sq.order("deadline", { ascending: true });
         list = asgn || [];
       } else {
         // Legacy standalone use — every assignment across enrolled subjects.
@@ -741,11 +758,13 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
         const allSubjectIds = [...new Set([...subjectIds, ...ttSubjectIds])];
         if (allSubjectIds.length === 0) { setAssignments([]); setLoading(false); return; }
 
-        const { data: asgn } = await supabase
+        let aq2 = supabase
           .from("subject_assignments")
           .select("*, subjects(id, title, title_ar, level, levels)")
           .in("subject_id", allSubjectIds)
-          .order("deadline", { ascending: true });
+          .neq("status", "draft");
+        if (termFilterId) aq2 = aq2.or(`term_id.eq.${termFilterId},term_id.is.null`);
+        const { data: asgn } = await aq2.order("deadline", { ascending: true });
 
         list = (asgn || []).filter((a: any) => {
           const subj = a.subjects;
@@ -785,7 +804,7 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
       console.error("Failed to load assignments:", err);
     }
     setLoading(false);
-  }, [user, subjectId]);
+  }, [user, subjectId, termFilterId]);
 
   useEffect(() => { load(); }, [load]);
 
