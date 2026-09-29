@@ -15,12 +15,16 @@ export interface HifdhSettings {
   // across the daily revision recitation AND the Hifdh questions/test phase,
   // not just the proctored quiz section. Admin-controlled on/off switch.
   proctoring_enabled: boolean;
+  // When on, building the week's read-along groups also publishes each
+  // student's weekly memorization portions so they show on the student home.
+  auto_assign_portions: boolean;
 }
 
 export const DEFAULT_HIFDH_SETTINGS: HifdhSettings = {
   violation_limit: 5,
   pass_mark: 55,
   proctoring_enabled: false,
+  auto_assign_portions: true,
 };
 
 export const useHifdhSettings = () => {
@@ -51,6 +55,9 @@ export const useHifdhSettings = () => {
         proctoring_enabled: map.proctoring_enabled !== undefined
           ? map.proctoring_enabled === "true"
           : prev.proctoring_enabled,
+        auto_assign_portions: map.auto_assign_portions !== undefined
+          ? map.auto_assign_portions === "true"
+          : prev.auto_assign_portions,
       }));
     }
     setLoading(false);
