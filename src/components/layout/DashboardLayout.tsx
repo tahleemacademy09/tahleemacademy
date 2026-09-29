@@ -155,7 +155,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     "/student/assignments",
     "/student/revision",
     "/student/hifdh",
-    "/student/hifdh-program",
     "/student/majlis",
     "/live-quiz",
     "/student/live-classes",
@@ -172,7 +171,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     "/student/assignments",
     "/student/revision",
     "/student/hifdh",
-    "/student/hifdh-program",
     "/student/majlis",
     "/live-quiz",
     "/student/live-classes",
@@ -212,9 +210,9 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     ]},
     { type:"group", key:"revision", icon:RefreshCw, label:t("Al-Murāja'ah","المراجعة"), children:[
       { to:"/student/revision", icon:BookMarked, label:t("At-Tadārus","التدارس") },
-      { to:"/student/hifdh-program", icon:BookMarked, label:t("Hifdh Program","برنامج الحفظ") },
       { to:"/student/hifdh",    icon:Headphones, label:t("Al-Ḥifẓ","الحفظ") },
     ]},
+    { type:"link", to:"/student/hifdh-program", icon:BookMarked, label:t("Hifdh Program","برنامج الحفظ") },
     { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
       ...(isExamsModuleEnabled ? [{ to:"/student/exams", icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") }] : []),
       ...(subjectRegistrationOpen ? [{ to:"/student/exams/register", icon:UserPlus,      label:t("Register for Exams","التسجيل للاختبارات") }] : []),
