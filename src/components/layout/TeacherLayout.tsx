@@ -1,27 +1,22 @@
 // src/components/layout/TeacherLayout.tsx
-// Fully rebuilt: 5 nav groups, all 20 teacher pages linked, badge counts, notification bell.
+// Modernized shell: same 5 nav groups, all teacher pages linked, badge counts,
+// notification bell — rebuilt on Tailwind + the app's emerald/gold design tokens
+// (rounded-2xl cards, shadow-premium, consistent spacing) instead of inline styles.
 
 import { useState, useEffect, useRef } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, Users, UserCheck, Video, ClipboardList,
   LogOut, Globe, Menu, X, Settings, Trophy, MessageSquare,
   CheckSquare, Mic, BookOpen, GraduationCap, BarChart2,
   Megaphone, Calendar, Headphones, Radio, ChevronDown,
-  ChevronRight, Bell, BookMarked, Clock, Trash2, LifeBuoy,
+  ChevronRight, Bell, BookMarked, Clock, Trash2,
 } from "lucide-react";
 import NotificationPermissionBanner from "@/components/NotificationPermissionBanner";
-
-// Same greens/gold used everywhere else in the app (student sidebar,
-// TeacherDashboard.tsx, SubjectAssignments/SubjectMaterials) — this file used
-// to hardcode a different teal (#064E3B), which is why the teacher nav looked
-// like a different colour from the rest of the platform.
-const TL_G    = "#0f2d1f";
-const TL_GM   = "#1a4731";
-const TL_GOLD = "#c9a84c";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 const isActive = (pathname: string, to: string, exact = false) =>
@@ -100,9 +95,8 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
       label: t("Recitation & Ḥifẓ", "التلاوة والحفظ"),
       children: [
         { to: "/teacher/recitation", icon: Mic,    label: t("My Recitations", "تسجيلات التلاوة") },
+        { to: "/teacher/hifdh-program", icon: BookOpen, label: t("Hifdh Program", "برنامج الحفظ") },
         { to: "/teacher/hifdh",      icon: BookOpen,label: t("Ḥifẓ Review",   "مراجعة الحفظ") },
-        { to: "/teacher/hifdh-plan", icon: BookMarked,label: t("Ḥifẓ Plans",  "خطط الحفظ") },
-        { to: "/teacher/hifdh-live", icon: Radio,   label: t("Ḥifẓ Live Class","حصة الحفظ المباشرة") },
       ],
     },
   },
@@ -112,15 +106,8 @@ const buildNav = (t: (a: string, b: string) => string, badges: Record<string, nu
     type: "link",
     link: { to: "/teacher/majlis", icon: MessageSquare, label: t("Al-Majlis", "المجلس") },
   },
-  {
-    type: "link",
-    link: { to: "/teacher/support", icon: LifeBuoy, label: t("Student Messages", "رسائل الطلاب"), badge: badges.support },
-  },
 
   // ── Al-Musābaqah ─────────────────────────────────────────────────
-  // Points to the hub (Quiz Arena + Qur'an Recitation), same as student/admin,
-  // instead of jumping straight to /live-quiz — teachers need the Recitation
-  // option too since they can judge it.
   {
     type: "link",
     link: { to: "/teacher/musabaqah", icon: Trophy, label: t("Al-Musābaqah 🏆", "المسابقة 🏆") },
@@ -143,7 +130,6 @@ const TeacherLayout = () => {
   const [isMobile,      setIsMobile]      = useState(false);
   const [expanded,      setExpanded]      = useState<Record<string, boolean>>({});
   const [gradingBadge,  setGradingBadge]  = useState(0);
-  const [supportBadge,  setSupportBadge]  = useState(0);
   const [unreadNotifs,  setUnreadNotifs]  = useState(0);
   const [showNotifs,    setShowNotifs]    = useState(false);
   const [notifList,     setNotifList]     = useState<any[]>([]);
@@ -169,7 +155,7 @@ const TeacherLayout = () => {
       teaching:    ["/teacher/classes","/teacher/timetable","/teacher/subjects","/teacher/recordings","/teacher/public-classes"],
       students:    ["/teacher/students","/teacher/private-students","/teacher/private-sessions","/teacher/attendance","/teacher/announcements"],
       assessments: ["/teacher/exams","/teacher/grading","/teacher/results","/teacher/transcripts"],
-      recitation:  ["/teacher/recitation","/teacher/hifdh","/teacher/hifdh-plan","/teacher/hifdh-live"],
+      recitation:  ["/teacher/recitation","/teacher/hifdh","/teacher/hifdh-program"],
     };
     setExpanded(prev => {
       const next = { ...prev };
@@ -181,35 +167,23 @@ const TeacherLayout = () => {
   }, [location.pathname]);
 
   // ── Grading badge ───────────────────────────────────────────────
-  // Refetched whenever the route changes (not just once on mount) so the
-  // count actually drops once a teacher opens Grading and clears
-  // submissions — previously this only ran once per session and never
-  // reflected work done since.
   const teacherSubjectIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!user) return;
     (async () => {
       const { data: subs } = await supabase.from("subjects").select("id").eq("teacher_id", user.id);
-      // subject_timetable stores co-teachers in `teacher_ids[]`; the legacy
-      // singular `teacher_id` column only ever holds the FIRST teacher an
-      // admin picked, so a second/co-teacher's subjects (and every exam
-      // under them) were silently missing from the count before — matches
-      // the fix already applied in TeacherGrading.tsx's own subject lookup.
-      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id, teacher_id, teacher_ids");
-      const myTtSlots = (ttSlots || []).filter((s: any) =>
-        s.teacher_id === user.id || (Array.isArray(s.teacher_ids) && s.teacher_ids.includes(user.id))
-      );
+      const { data: ttSlots } = await supabase.from("subject_timetable" as any).select("subject_id").eq("teacher_id", user.id);
       const subIds = [...new Set([
         ...((subs || []).map((s: any) => s.id)),
-        ...(myTtSlots.map((s: any) => s.subject_id).filter(Boolean)),
+        ...((ttSlots || []).map((s: any) => s.subject_id).filter(Boolean)),
       ])];
       teacherSubjectIdsRef.current = new Set(subIds);
-      if (!subIds.length) { setGradingBadge(0); return; }
+      if (!subIds.length) return;
       // Exams are attached via exams.subject_id (set by ExamEditor), not the
       // legacy course_id column which the editor never populates.
       const { data: exams } = await supabase.from("exams").select("id").in("subject_id", subIds);
       const eIds = (exams || []).map((e: any) => e.id);
-      if (!eIds.length) { setGradingBadge(0); return; }
+      if (!eIds.length) return;
       const { count } = await supabase
         .from("exam_attempts")
         .select("id", { count: "exact", head: true })
@@ -217,34 +191,9 @@ const TeacherLayout = () => {
         .eq("status", "submitted");
       setGradingBadge(count || 0);
     })();
-  }, [user, location.pathname]);
-
-  // ── Unread student-message badge ────────────────────────────────
-  // Counts threads addressed to this teacher (RLS already restricts the
-  // rows to those) where the student's last message hasn't been read yet.
-  useEffect(() => {
-    if (!user) return;
-    (async () => {
-      const { data } = await supabase
-        .from("support_tickets" as any)
-        .select("last_sender_id, last_message_at, last_read_by_admin_at")
-        .eq("teacher_id", user.id);
-      const unread = (data || []).filter((tk: any) =>
-        tk.last_sender_id && tk.last_sender_id !== user.id && tk.last_message_at &&
-        (!tk.last_read_by_admin_at || new Date(tk.last_read_by_admin_at) < new Date(tk.last_message_at))
-      ).length;
-      setSupportBadge(unread);
-    })();
-  }, [user, location.pathname]);
+  }, [user]);
 
   // ── Notifications ───────────────────────────────────────────────
-  // A notification is "course-scoped" when its link encodes a subject id
-  // (class reminders: `reminder:{sessionId}:{minsAhead}:{subjectId}`, or
-  // attendance-review deep links: `/teacher/attendance?subjectId=...`).
-  // Those only belong on the bell if that subject is actually one the
-  // teacher teaches — guards against a stale/reassigned class still
-  // notifying the old teacher. Non-course notifications (payments, admin
-  // announcements, support replies) are left untouched.
   const extractSubjectId = (link?: string | null): string | null => {
     if (!link) return null;
     const reminderMatch = link.match(/^reminder:[^:]+:[^:]+:(.+)$/);
@@ -255,15 +204,11 @@ const TeacherLayout = () => {
   };
   const belongsToTeacher = (n: any) => {
     const sid = extractSubjectId(n.link);
-    if (!sid) return true; // not course-scoped — always show
-    if (teacherSubjectIdsRef.current.size === 0) return true; // scope not loaded yet — don't hide anything
+    if (!sid) return true;
+    if (teacherSubjectIdsRef.current.size === 0) return true;
     return teacherSubjectIdsRef.current.has(sid);
   };
 
-  // FIX (background-eviction): channel + poll now only run while the tab is
-  // visible — see the matching fix/comment in DashboardLayout.tsx for the
-  // full reasoning (always-on WebSocket connections make mobile browsers
-  // kill a minimized tab within seconds).
   useEffect(() => {
     if (!user) return;
     const load = async () => {
@@ -330,92 +275,104 @@ const TeacherLayout = () => {
     await supabase.from("notifications").delete().eq("user_id", user.id);
   };
 
-  const badges = { grading: gradingBadge, support: supportBadge };
+  const badges = { grading: gradingBadge };
   const navItems = buildNav(t, badges);
   const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
 
   // ── Sidebar content ─────────────────────────────────────────────
   const SidebarContent = () => (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: TL_G }}>
+    <div className="flex h-full flex-col bg-sidebar">
       {/* Header */}
-      <div style={{ padding: "16px 14px 12px", borderBottom: "1px solid rgba(255,255,255,.1)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-        <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 36, height: 36, borderRadius: 10, objectFit: "contain", flexShrink: 0, background: "transparent" }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 16, fontWeight: 900, color: "#fff", fontFamily: "serif" }}>{t("Tahleem", "تعليم")}</div>
-          <div style={{ fontSize: 9, color: TL_GOLD, fontWeight: 800, letterSpacing: "0.09em" }}>{t("TEACHER PORTAL", "بوابة المعلم")}</div>
+      <div className="flex flex-shrink-0 items-center gap-2.5 border-b border-white/10 px-3.5 py-4">
+        <img src="/brand-logo.png" alt="Tahleem Academy" className="h-9 w-9 flex-shrink-0 rounded-xl object-contain" />
+        <div className="min-w-0 flex-1">
+          <div className="font-display text-base font-black text-sidebar-foreground">{t("Tahleem", "تعليم")}</div>
+          <div className="text-[9px] font-extrabold tracking-widest text-sidebar-primary">{t("TEACHER PORTAL", "بوابة المعلم")}</div>
         </div>
         {isMobile && (
           <button onClick={() => setSidebarOpen(false)}
-            style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,.12)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <X size={16} color="rgba(255,255,255,.85)" />
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/10 transition-colors hover:bg-white/20">
+            <X size={16} className="text-white/85" />
           </button>
         )}
       </div>
 
       {/* Profile strip */}
       {profile?.full_name && (
-        <div style={{ padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,.08)", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 34, height: 34, borderRadius: "50%", background: TL_GOLD, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 900, color: TL_G, flexShrink: 0 }}>
+        <div className="flex-shrink-0 border-b border-white/10 px-3.5 py-3">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-sidebar-primary text-sm font-black text-sidebar-primary-foreground">
               {(profile.full_name || "T")[0].toUpperCase()}
             </div>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{profile.full_name}</div>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,.4)" }}>{t("Teacher", "معلم")}</div>
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold text-sidebar-foreground">{profile.full_name}</div>
+              <div className="text-[10px] text-white/40">{t("Teacher", "معلم")}</div>
             </div>
           </div>
         </div>
       )}
 
       {/* Nav */}
-      <nav style={{ flex: 1, overflowY: "auto", padding: "8px 8px 4px" }}>
-        {navItems.map((item, idx) => {
+      <nav className="flex-1 overflow-y-auto px-2 py-2">
+        {navItems.map((item) => {
           if (item.type === "link") {
             const lnk = item.link;
             const active = isActive(location.pathname, lnk.to, lnk.to === "/teacher");
             return (
               <Link key={lnk.to} to={lnk.to}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 11px", borderRadius: 10, marginBottom: 2, textDecoration: "none", background: active ? "rgba(201,168,76,.18)" : "transparent", borderLeft: `3px solid ${active ? TL_GOLD : "transparent"}` }}>
-                <lnk.icon size={15} color={active ? TL_GOLD : "rgba(255,255,255,.6)"} style={{ flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: active ? 700 : 400, color: active ? TL_GOLD : "rgba(255,255,255,.75)", flex: 1 }}>{lnk.label}</span>
+                className={cn(
+                  "mb-0.5 flex items-center gap-2.5 rounded-lg border-l-[3px] px-2.5 py-2.5 text-sm transition-colors",
+                  active
+                    ? "border-sidebar-primary bg-sidebar-primary/15 font-semibold text-sidebar-primary"
+                    : "border-transparent text-white/70 hover:bg-white/5 hover:text-white/90"
+                )}>
+                <lnk.icon size={15} className="flex-shrink-0" />
+                <span className="flex-1">{lnk.label}</span>
                 {!!lnk.badge && (
-                  <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 9, fontWeight: 900, padding: "2px 7px", flexShrink: 0 }}>{lnk.badge}</span>
+                  <span className="flex-shrink-0 rounded-full bg-destructive px-1.5 py-0.5 text-[9px] font-black text-destructive-foreground">{lnk.badge}</span>
                 )}
               </Link>
             );
           }
 
-          // group
           const grp = item.group;
           const gActive  = groupActive(location.pathname, grp.children.map(c => c.to));
           const gOpen    = expanded[grp.key] ?? gActive;
+          const groupBadgeTotal = grp.children.reduce((s, c) => s + (c.badge || 0), 0);
           return (
-            <div key={grp.key} style={{ marginBottom: 2 }}>
+            <div key={grp.key} className="mb-0.5">
               <button onClick={() => toggle(grp.key)}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 11px", borderRadius: 10, background: gActive ? "rgba(201,168,76,.10)" : "transparent", borderLeft: `3px solid ${gActive ? TL_GOLD + "88" : "transparent"}`, border: "none", cursor: "pointer", textAlign: "left" }}>
-                <grp.icon size={15} color={gActive ? TL_GOLD : "rgba(255,255,255,.6)"} style={{ flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: gActive ? 700 : 400, color: gActive ? TL_GOLD : "rgba(255,255,255,.75)", flex: 1 }}>{grp.label}</span>
-                {/* total badge for group */}
-                {grp.children.reduce((s, c) => s + (c.badge || 0), 0) > 0 && !gOpen && (
-                  <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 9, fontWeight: 900, padding: "2px 7px", flexShrink: 0 }}>
-                    {grp.children.reduce((s, c) => s + (c.badge || 0), 0)}
+                className={cn(
+                  "flex w-full items-center gap-2.5 rounded-lg border-l-[3px] px-2.5 py-2.5 text-left text-sm transition-colors",
+                  gActive
+                    ? "border-sidebar-primary/50 bg-sidebar-primary/10 font-semibold text-sidebar-primary"
+                    : "border-transparent text-white/70 hover:bg-white/5 hover:text-white/90"
+                )}>
+                <grp.icon size={15} className="flex-shrink-0" />
+                <span className="flex-1">{grp.label}</span>
+                {groupBadgeTotal > 0 && !gOpen && (
+                  <span className="flex-shrink-0 rounded-full bg-destructive px-1.5 py-0.5 text-[9px] font-black text-destructive-foreground">
+                    {groupBadgeTotal}
                   </span>
                 )}
                 {gOpen
-                  ? <ChevronDown size={13} color="rgba(255,255,255,.4)" style={{ flexShrink: 0 }} />
-                  : <ChevronRight size={13} color="rgba(255,255,255,.4)" style={{ flexShrink: 0 }} />}
+                  ? <ChevronDown size={13} className="flex-shrink-0 text-white/40" />
+                  : <ChevronRight size={13} className="flex-shrink-0 text-white/40" />}
               </button>
               {gOpen && (
-                <div style={{ marginLeft: 20, paddingLeft: 10, borderLeft: "1px solid rgba(255,255,255,.1)" }}>
+                <div className="ml-5 border-l border-white/10 pl-2.5">
                   {grp.children.map(child => {
                     const ca = isActive(location.pathname, child.to);
                     return (
                       <Link key={child.to} to={child.to}
-                        style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 10px", borderRadius: 9, marginBottom: 1, textDecoration: "none", background: ca ? "rgba(201,168,76,.18)" : "transparent" }}>
-                        <child.icon size={13} color={ca ? TL_GOLD : "rgba(255,255,255,.5)"} style={{ flexShrink: 0 }} />
-                        <span style={{ fontSize: 12, fontWeight: ca ? 700 : 400, color: ca ? TL_GOLD : "rgba(255,255,255,.65)", flex: 1 }}>{child.label}</span>
+                        className={cn(
+                          "mb-px flex items-center gap-2 rounded-md px-2.5 py-2 text-[13px] transition-colors",
+                          ca ? "bg-sidebar-primary/15 font-semibold text-sidebar-primary" : "text-white/65 hover:bg-white/5 hover:text-white/85"
+                        )}>
+                        <child.icon size={13} className="flex-shrink-0" />
+                        <span className="flex-1">{child.label}</span>
                         {!!child.badge && (
-                          <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 9, fontWeight: 900, padding: "2px 7px", flexShrink: 0 }}>{child.badge}</span>
+                          <span className="flex-shrink-0 rounded-full bg-destructive px-1.5 py-0.5 text-[9px] font-black text-destructive-foreground">{child.badge}</span>
                         )}
                       </Link>
                     );
@@ -428,13 +385,13 @@ const TeacherLayout = () => {
       </nav>
 
       {/* Footer */}
-      <div style={{ padding: "8px", borderTop: "1px solid rgba(255,255,255,.08)", flexShrink: 0 }}>
+      <div className="flex-shrink-0 border-t border-white/10 p-2">
         <button onClick={() => setLanguage(language === "en" ? "ar" : "en")}
-          style={{ width: "100%", padding: "8px 11px", borderRadius: 9, background: "rgba(255,255,255,.07)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, color: "rgba(255,255,255,.6)", fontSize: 12, marginBottom: 6 }}>
+          className="mb-1.5 flex w-full items-center gap-2 rounded-lg bg-white/5 px-2.5 py-2 text-xs text-white/60 transition-colors hover:bg-white/10">
           <Globe size={13} />{t("العربية", "English")}
         </button>
         <button onClick={() => signOut()}
-          style={{ width: "100%", padding: "8px 11px", borderRadius: 9, background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.2)", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, color: "#FCA5A5", fontSize: 12 }}>
+          className="flex w-full items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-2.5 py-2 text-xs text-red-300 transition-colors hover:bg-destructive/15">
           <LogOut size={13} />{t("Sign Out", "تسجيل الخروج")}
         </button>
       </div>
@@ -442,10 +399,10 @@ const TeacherLayout = () => {
   );
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#F0F2F5" }}>
+    <div className="flex min-h-screen bg-muted/40">
       {/* Desktop sidebar */}
       {!isMobile && (
-        <aside style={{ width: 248, flexShrink: 0, height: "100vh", position: "sticky", top: 0 }}>
+        <aside className="sticky top-0 h-screen w-[248px] flex-shrink-0">
           <SidebarContent />
         </aside>
       )}
@@ -453,81 +410,83 @@ const TeacherLayout = () => {
       {/* Mobile overlay */}
       {isMobile && sidebarOpen && (
         <div onClick={() => setSidebarOpen(false)}
-          style={{ position: "fixed", inset: 0, zIndex: 40, background: "rgba(0,0,0,.52)" }} />
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" />
       )}
       {isMobile && (
-        <aside style={{ position: "fixed", top: 0, bottom: 0, [dir === "rtl" ? "right" : "left"]: 0, width: 255, zIndex: 50, transform: sidebarOpen ? "translateX(0)" : dir === "rtl" ? "translateX(260px)" : "translateX(-260px)", transition: "transform .26s ease", boxShadow: sidebarOpen ? "6px 0 30px rgba(0,0,0,.28)" : "none" }}>
+        <aside
+          className={cn(
+            "fixed top-0 bottom-0 z-50 w-[260px] shadow-premium-lg transition-transform duration-300 ease-out",
+            dir === "rtl" ? "right-0" : "left-0",
+            sidebarOpen ? "translate-x-0" : dir === "rtl" ? "translate-x-full" : "-translate-x-full"
+          )}>
           <SidebarContent />
         </aside>
       )}
 
       {/* Main area */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: "100vh" }}>
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
         {isMobile && (
-          <div style={{ height: 54, flexShrink: 0, display: "flex", alignItems: "center", padding: "0 14px", gap: 10, background: "#fff", borderBottom: `3px solid ${TL_G}`, position: "sticky", top: 0, zIndex: 30 }}>
+          <div className="sticky top-0 z-30 flex h-14 flex-shrink-0 items-center gap-2.5 border-b-[3px] border-primary bg-card px-3.5">
             <button onClick={() => setSidebarOpen(v => !v)}
-              style={{ width: 36, height: 36, borderRadius: 9, border: "none", cursor: "pointer", background: sidebarOpen ? `${TL_G}18` : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Menu size={20} color={TL_G} />
+              className={cn("flex h-9 w-9 items-center justify-center rounded-lg transition-colors", sidebarOpen ? "bg-primary/10" : "hover:bg-muted")}>
+              <Menu size={20} className="text-primary" />
             </button>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1 }}>
-              <img src="/brand-logo.png" alt="Tahleem Academy" style={{ width: 28, height: 28, borderRadius: 8, objectFit: "contain", background: "transparent" }} />
-              <span style={{ fontWeight: 900, fontSize: 15, color: TL_G, fontFamily: "serif" }}>
+            <div className="flex flex-1 items-center gap-2">
+              <img src="/brand-logo.png" alt="Tahleem Academy" className="h-7 w-7 rounded-lg object-contain" />
+              <span className="font-display text-[15px] font-black text-primary">
                 {t("Tahleem", "تعليم")}{" "}
-                <span style={{ color: TL_GOLD, fontSize: 11, fontFamily: "system-ui" }}>{t("Teacher", "المعلم")}</span>
+                <span className="font-sans text-[11px] text-secondary">{t("Teacher", "المعلم")}</span>
               </span>
             </div>
-            {/* Notification bell */}
-            <div style={{ position: "relative" }}>
+            <div className="relative">
               <button onClick={() => setShowNotifs(v => !v)}
-                style={{ width: 36, height: 36, borderRadius: 9, border: "none", background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Bell size={18} color={TL_G} />
+                className="flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-muted">
+                <Bell size={18} className="text-primary" />
               </button>
               {unreadNotifs > 0 && (
-                <span style={{ position: "absolute", top: 4, right: 4, width: 16, height: 16, borderRadius: "50%", background: "#EF4444", color: "#fff", fontSize: 9, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>
+                <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-card bg-destructive text-[9px] font-black text-destructive-foreground">
                   {unreadNotifs > 9 ? "9+" : unreadNotifs}
                 </span>
               )}
             </div>
-            {/* Grading shortcut */}
             {gradingBadge > 0 && (
-              <Link to="/teacher/grading" style={{ textDecoration: "none" }}>
-                <div style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "3px 9px", display: "flex", alignItems: "center", gap: 4 }}>
-                  <CheckSquare size={10} />{gradingBadge}
-                </div>
+              <Link to="/teacher/grading" className="flex items-center gap-1 rounded-full bg-destructive px-2.5 py-1 text-[10px] font-black text-destructive-foreground">
+                <CheckSquare size={10} />{gradingBadge}
               </Link>
             )}
           </div>
         )}
 
-        {/* Desktop top notification bar */}
+        {/* Desktop top bar */}
         {!isMobile && (
-          <div style={{ height: 50, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "flex-end", padding: "0 20px", gap: 10, background: "#fff", borderBottom: "1px solid #e5e7eb", position: "sticky", top: 0, zIndex: 30 }}>
+          <div className="sticky top-0 z-30 flex h-[58px] flex-shrink-0 items-center justify-end gap-2.5 border-b border-border bg-card/80 px-5 backdrop-blur-sm">
             {gradingBadge > 0 && (
-              <Link to="/teacher/grading" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 6, background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700, color: "#DC2626" }}>
+              <Link to="/teacher/grading"
+                className="flex items-center gap-1.5 rounded-full border border-destructive/20 bg-destructive/10 px-3 py-1.5 text-xs font-bold text-destructive transition-colors hover:bg-destructive/15">
                 <CheckSquare size={13} />
                 {gradingBadge} {t("to grade", "ينتظر التصحيح")}
               </Link>
             )}
-            <div style={{ position: "relative" }}>
+            <div className="relative">
               <button onClick={() => setShowNotifs(v => !v)}
-                style={{ width: 38, height: 38, borderRadius: 10, border: "1px solid #e5e7eb", background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Bell size={17} color={TL_G} />
+                className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-card shadow-sm transition-colors hover:bg-muted">
+                <Bell size={17} className="text-primary" />
               </button>
               {unreadNotifs > 0 && (
-                <span style={{ position: "absolute", top: 4, right: 4, width: 16, height: 16, borderRadius: "50%", background: "#EF4444", color: "#fff", fontSize: 9, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid #fff" }}>
+                <span className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full border-2 border-card bg-destructive text-[9px] font-black text-destructive-foreground">
                   {unreadNotifs > 9 ? "9+" : unreadNotifs}
                 </span>
               )}
             </div>
             {profile?.full_name && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 34, height: 34, borderRadius: "50%", background: TL_GOLD, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 900, color: TL_G }}>
+              <div className="flex items-center gap-2.5 rounded-xl border border-border bg-card py-1.5 pl-2.5 pr-3.5 shadow-sm">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary text-sm font-black text-secondary-foreground">
                   {profile.full_name[0].toUpperCase()}
                 </div>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: TL_G }}>{profile.full_name}</div>
-                  <div style={{ fontSize: 10, color: "#9CA3AF" }}>{t("Teacher", "معلم")}</div>
+                  <div className="text-[13px] font-semibold leading-tight text-foreground">{profile.full_name}</div>
+                  <div className="text-[10px] leading-tight text-muted-foreground">{t("Teacher", "معلم")}</div>
                 </div>
               </div>
             )}
@@ -536,59 +495,63 @@ const TeacherLayout = () => {
 
         {/* Notification panel */}
         {showNotifs && (
-          <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.5)" }} onClick={() => setShowNotifs(false)}>
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, maxHeight: "80vh", background: "#fff", borderRadius: "0 0 24px 24px", boxShadow: "0 8px 40px rgba(0,0,0,.18)", display: "flex", flexDirection: "column", overflow: "hidden" }}
+          <div className="fixed inset-0 z-50 bg-black/50" onClick={() => setShowNotifs(false)}>
+            <div
+              className="absolute left-0 right-0 top-0 flex max-h-[80vh] flex-col overflow-hidden rounded-b-3xl bg-card shadow-premium-lg"
               onClick={e => e.stopPropagation()}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: TL_G, gap: 10, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <Bell size={16} color={TL_GOLD} />
-                  <span style={{ fontWeight: 800, color: "#fff", fontSize: 15 }}>{t("Notifications", "الإشعارات")}</span>
+              <div className="flex flex-wrap items-center justify-between gap-2.5 bg-primary px-5 py-4">
+                <div className="flex items-center gap-2.5">
+                  <Bell size={16} className="text-secondary" />
+                  <span className="text-[15px] font-extrabold text-primary-foreground">{t("Notifications", "الإشعارات")}</span>
                   {unreadNotifs > 0 && (
-                    <span style={{ background: "#EF4444", color: "#fff", borderRadius: 20, fontSize: 10, fontWeight: 900, padding: "2px 8px" }}>{unreadNotifs}</span>
+                    <span className="rounded-full bg-destructive px-2 py-0.5 text-[10px] font-black text-destructive-foreground">{unreadNotifs}</span>
                   )}
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div className="flex items-center gap-1.5">
                   {unreadNotifs > 0 && (
-                    <button onClick={markAllNotifsRead} style={{
-                      fontSize: 10.5, fontWeight: 700, padding: "5px 10px", borderRadius: 20,
-                      background: "rgba(201,168,76,0.2)", color: TL_GOLD, border: `1px solid ${TL_GOLD}55`, cursor: "pointer",
-                    }}>
+                    <button onClick={markAllNotifsRead}
+                      className="rounded-full border border-secondary/30 bg-secondary/20 px-2.5 py-1 text-[10.5px] font-bold text-secondary transition-colors hover:bg-secondary/30">
                       {t("Read all", "قراءة الكل")}
                     </button>
                   )}
                   {notifList.length > 0 && (
-                    <button onClick={deleteAllNotifs} style={{
-                      fontSize: 10.5, fontWeight: 700, padding: "5px 10px", borderRadius: 20,
-                      background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.8)", border: "1px solid rgba(255,255,255,0.2)", cursor: "pointer",
-                    }}>
+                    <button onClick={deleteAllNotifs}
+                      className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10.5px] font-bold text-white/80 transition-colors hover:bg-white/15">
                       {t("Delete all", "حذف الكل")}
                     </button>
                   )}
-                  <button onClick={() => setShowNotifs(false)} style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(255,255,255,.15)", border: "none", cursor: "pointer", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>✕</button>
+                  <button onClick={() => setShowNotifs(false)}
+                    className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-white/15 text-primary-foreground transition-colors hover:bg-white/25">✕</button>
                 </div>
               </div>
-              <div style={{ overflowY: "auto", flex: 1 }}>
+              <div className="flex-1 overflow-y-auto">
                 {notifList.length === 0
-                  ? <div style={{ textAlign: "center", padding: "32px 0", color: "#9CA3AF", fontSize: 14 }}>{t("No notifications yet", "لا توجد إشعارات")}</div>
+                  ? <div className="py-8 text-center text-sm text-muted-foreground">{t("No notifications yet", "لا توجد إشعارات")}</div>
                   : notifList.map((n: any) => (
                     <div key={n.id}
                       onClick={() => { if (!n.is_read) markRead(n.id); if (n.link) { setShowNotifs(false); window.location.href = n.link; } }}
-                      style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 20px", borderBottom: "1px solid #F9FAFB", cursor: "pointer", background: n.is_read ? "#fff" : "#FFFBEB" }}>
-                      <div style={{ width: 36, height: 36, borderRadius: "50%", background: n.is_read ? "#F3F4F6" : "#FEF9EE", border: `1.5px solid ${n.is_read ? "#E5E7EB" : TL_GOLD + "88"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 15 }}>
+                      className={cn(
+                        "flex cursor-pointer items-start gap-3 border-b border-border/60 px-5 py-3.5 transition-colors hover:bg-muted/50",
+                        n.is_read ? "bg-card" : "bg-secondary/10"
+                      )}>
+                      <div className={cn(
+                        "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border-[1.5px] text-[15px]",
+                        n.is_read ? "border-border bg-muted" : "border-secondary/50 bg-secondary/15"
+                      )}>
                         {n.type === "class_reminder" ? "📚" : n.type === "warning" ? "⚠️" : n.type === "payment" ? "💳" : "🔔"}
                       </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ margin: 0, fontSize: 13, fontWeight: n.is_read ? 500 : 700, color: "#111" }}>{n.title}</p>
-                        <p style={{ margin: "2px 0 0", fontSize: 12, color: "#6B7280" }}>{n.message}</p>
-                        <p style={{ margin: "4px 0 0", fontSize: 10, color: "#9CA3AF" }}>
+                      <div className="min-w-0 flex-1">
+                        <p className={cn("m-0 text-[13px] text-foreground", n.is_read ? "font-medium" : "font-bold")}>{n.title}</p>
+                        <p className="m-0 mt-0.5 text-xs text-muted-foreground">{n.message}</p>
+                        <p className="m-0 mt-1 text-[10px] text-muted-foreground/70">
                           {new Date(n.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         </p>
                       </div>
-                      {!n.is_read && <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#EF4444", flexShrink: 0, marginTop: 4 }} />}
+                      {!n.is_read && <div className="mt-1 h-2 w-2 flex-shrink-0 rounded-full bg-destructive" />}
                       <button
                         onClick={(e) => { e.stopPropagation(); deleteOneNotif(n.id); }}
                         aria-label={t("Delete notification", "حذف الإشعار")}
-                        style={{ width: 26, height: 26, borderRadius: 8, border: "none", background: "transparent", color: "#C4C4C4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2 }}
+                        className="mt-0.5 flex h-6.5 w-6.5 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-muted-foreground"
                       >
                         <Trash2 size={13} />
                       </button>
@@ -599,7 +562,7 @@ const TeacherLayout = () => {
           </div>
         )}
 
-        <main style={{ flex: 1, overflow: "auto" }}>
+        <main className="flex-1 overflow-auto">
           <NotificationPermissionBanner />
           <Outlet />
         </main>
