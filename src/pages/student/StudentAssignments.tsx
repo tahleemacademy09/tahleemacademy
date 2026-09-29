@@ -20,6 +20,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useViewingTermId } from "@/hooks/useCurrentTermId";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { uploadStorageFile, getSignedUrl } from "@/integrations/supabase/storageClient";
@@ -734,6 +735,10 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
 
   const embedded = !!subjectId;
   const activeTermId = profile?.active_term_id;
+  // Term used for FILTERING: the student's chosen term, else the live term
+  // (previously no filter applied when active_term_id was empty, so every
+  // term's tasks showed at once).
+  const termFilterId = useViewingTermId(profile);
 
   // Overlay the term-scoped snapshot (title/level/levels) onto each
   // assignment's joined subject, same pattern as SubjectView/StudentCourses —
@@ -774,7 +779,8 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
         // just disappear. New assignments are stamped with a term on
         // creation (see SubjectAssignments.tsx), so once a teacher creates
         // one in Term 2, students viewing Term 1 stop seeing it.
-        if (activeTermId) q = q.or(`term_id.eq.${activeTermId},term_id.is.null`);
+        q = q.neq("status", "draft"); // drafts stay hidden until a teacher opens them
+        if (termFilterId) q = q.or(`term_id.eq.${termFilterId},term_id.is.null`);
         const { data: asgn } = await q.order("deadline", { ascending: true });
         list = await applyTermSnapshots(asgn || []);
       } else {
@@ -805,7 +811,8 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
           .from("subject_assignments")
           .select("*, subjects(id, title, title_ar, level, levels)")
           .in("subject_id", allSubjectIds);
-        if (activeTermId) q2 = q2.or(`term_id.eq.${activeTermId},term_id.is.null`);
+        q2 = q2.neq("status", "draft");
+        if (termFilterId) q2 = q2.or(`term_id.eq.${termFilterId},term_id.is.null`);
         const { data: asgn } = await q2.order("deadline", { ascending: true });
 
         const withSnapshots = await applyTermSnapshots(asgn || []);
@@ -847,7 +854,7 @@ function StudentAssignmentList({ subjectId }: { subjectId?: string }) {
       console.error("Failed to load assignments:", err);
     }
     setLoading(false);
-  }, [user, subjectId, applyTermSnapshots]);
+  }, [user, subjectId, applyTermSnapshots, termFilterId]);
 
   useEffect(() => { load(); }, [load]);
 

@@ -330,12 +330,14 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
   });
 
   const { data: subjectLessons, isLoading: loadLessons } = useQuery({
-    queryKey: ["subject-lessons", selectedSubject?.id],
-    enabled: !!selectedSubject,
+    queryKey: ["subject-lessons", selectedSubject?.id, viewingTermId],
+    enabled: !!selectedSubject && !!viewingTermId,
     queryFn: async () => {
+      // Only this term's lessons (plus legacy lessons with no term yet).
       const { data } = await supabase
         .from("lessons")
         .select("*")
+        .or(`term_id.eq.${viewingTermId},term_id.is.null`)
         // FIX: lessons are keyed by subject_id (matches admin CourseManagement's
         // saveLesson, which writes subject_id). This previously queried
         // course_id === subject.id, which never matched anything lessons were

@@ -82,7 +82,12 @@ const AssignmentPreview = ({ userId, t, language, navigate }: { userId: string; 
       // Get student level first
       const { data: profileData } = await supabase.from("profiles").select("level, active_term_id").eq("user_id", userId).single();
       const studentLevel: string | null = (profileData as any)?.level || null;
-      const activeTermId: string | null = (profileData as any)?.active_term_id || null;
+      let activeTermId: string | null = (profileData as any)?.active_term_id || null;
+      if (!activeTermId) {
+        // No term chosen -> follow the live term (else every term's tasks showed).
+        const { data: ct } = await supabase.from("academic_terms").select("id").eq("is_current", true).maybeSingle();
+        activeTermId = (ct as any)?.id || null;
+      }
 
       // NOTE: enrollments.course_id (not subject_id) is the real column —
       // every other query against this table filters/selects by course_id.
@@ -99,7 +104,7 @@ const AssignmentPreview = ({ userId, t, language, navigate }: { userId: string; 
       // Only this term's assignments (plus legacy ones with no term_id yet) —
       // otherwise a switch to a new term kept showing the previous term's
       // assignments here, same bug as the subjects list used to have.
-      let asgnQ = supabase.from("subject_assignments").select("*, subjects(id,title,title_ar,level,levels)").in("subject_id", ids);
+      let asgnQ = supabase.from("subject_assignments").select("*, subjects(id,title,title_ar,level,levels)").in("subject_id", ids).neq("status", "draft");
       if (activeTermId) asgnQ = asgnQ.or(`term_id.eq.${activeTermId},term_id.is.null`);
       const { data: asgn } = await asgnQ.order("deadline",{ascending:true}).limit(10);
       const list = (asgn || []).filter((a:any) => {
@@ -318,7 +323,7 @@ const StudentDashboard = () => {
           supabase.from("exam_attempts").select("exam_id, status, percentage").eq("user_id", uid),
           supabase.from("subjects").select("*").eq("is_active", true).limit(4),
           supabase.from("exams").select("id, title, title_ar, start_date, end_date, time_limit_minutes").eq("is_published", true),
-          supabase.from("subject_assignments").select("id, title, deadline, subject_id, term_id, subjects(title, title_ar, level, levels)"),
+          supabase.from("subject_assignments").select("id, title, deadline, subject_id, term_id, subjects(title, title_ar, level, levels)").neq("status", "draft"),
           supabase.from("subject_timetable" as any).select("*, subjects(id, title, title_ar, levels, level, visibility)").eq("day_of_week", new Date().getDay()).eq("is_active", true).order("start_time"),
           (supabase as any).from("private_student_subjects").select("subject_id").eq("student_id", uid),
           supabase.from("profiles").select("level, student_type, assigned_teacher_id, active_term_id").eq("user_id", uid).maybeSingle(),
@@ -338,7 +343,11 @@ const StudentDashboard = () => {
       setAllExamsForCalendar(calendarExamsRes.data || []);
       const studentProfileData = studentProfileRes?.data ?? null;
       const studentLevelForCalendar = (studentProfileData as any)?.level || (displayProfile as any)?.level || null;
-      const activeTermIdForCalendar = (studentProfileData as any)?.active_term_id || null;
+      let activeTermIdForCalendar: string | null = (studentProfileData as any)?.active_term_id || null;
+      if (!activeTermIdForCalendar) {
+        const { data: ctc } = await supabase.from("academic_terms").select("id").eq("is_current", true).maybeSingle();
+        activeTermIdForCalendar = (ctc as any)?.id || null;
+      }
       const filteredSubjAsgn = (subAssignmentsRes.data || []).filter((a: any) => {
         // Same term_id.eq/null rule as the Assignments preview widget and
         // the Assignments page — legacy (term_id-less) rows still show
