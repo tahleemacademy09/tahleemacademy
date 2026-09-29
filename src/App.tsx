@@ -72,6 +72,7 @@ const EntranceResults     = lazy(() => import("./pages/student/EntranceResults")
 const RevisionHub         = lazy(() => import("./pages/student/RevisionHub"));
 const QuranPage               = lazy(() => import("./pages/student/QuranPage"));
 const HifdhPage              = lazy(() => import("./pages/student/HifdhPage"));
+const HifdhProgramHome        = lazy(() => import("./pages/student/HifdhProgramHome"));
 const HifdhDailyRevisionPage = lazy(() => import("./pages/student/HifdhDailyRevisionPage"));
 const RevisionRoom           = lazy(() => import("./pages/student/RevisionRoom"));
 const RecordingPlayer     = lazy(() => import("./pages/student/RecordingPlayer"));
@@ -125,6 +126,7 @@ const PaymentSettings       = lazy(() => import("./pages/admin/PaymentSettings.t
 const PublicClassManagement = lazy(() => import("./pages/admin/PublicClassManagement"));
 const HifdhAdminReview      = lazy(() => import("./pages/admin/HifdhAdminReview"));
 const HifdhRevisionTracker  = lazy(() => import("./pages/admin/HifdhRevisionTracker"));
+const HifdhProgramAdmin      = lazy(() => import("./pages/admin/HifdhProgramAdmin"));
 const RecitationTestAdmin   = lazy(() => import("./pages/admin/RecitationTestAdmin"));
 const QuranRecitationAdmin  = lazy(() => import("./pages/admin/QuranRecitationAdmin"));
 const LetterAudioRecorder   = lazy(() => import("./pages/admin/LetterAudioRecorder"));
@@ -167,6 +169,7 @@ const TeacherGrading         = lazy(() => import("./pages/teacher/TeacherGrading
 const TeacherTimetable       = lazy(() => import("./pages/teacher/TeacherTimetable"));
 const TeacherPublicClasses   = lazy(() => import("./pages/teacher/TeacherPublicClasses"));
 const TeacherHifdhReview     = lazy(() => import("./pages/teacher/TeacherHifdhReview"));
+const TeacherHifdhProgram    = lazy(() => import("./pages/teacher/TeacherHifdhProgram"));
 const TeacherHifdhLive       = lazy(() => import("./pages/teacher/TeacherHifdhLive"));
 const TeacherHifdhPlanBuilder = lazy(() => import("./pages/teacher/TeacherHifdhPlanBuilder"));
 const TeacherMajlis          = lazy(() => import("./pages/teacher/TeacherMajlis"));
@@ -280,6 +283,7 @@ const App = () => (
                     <Route path="/student/revision"            element={<RevisionHub />} />
                     <Route path="/student/hifdh"               element={<HifdhDailyRevisionPage />} />
                     <Route path="/student/hifdh-daily"         element={<HifdhDailyRevisionPage />} />
+                    <Route path="/student/hifdh-program"       element={<HifdhProgramHome />} />
                     <Route path="/student/revision/:subjectId" element={<RevisionRoom />} />
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
                     <Route path="/student/live-now"            element={<LiveNow />} />
@@ -331,6 +335,7 @@ const App = () => (
                     <Route path="/teacher/transcripts"      element={<TeacherTranscript />} />
                     <Route path="/teacher/recitation"       element={<TeacherRecitation />} />
                     <Route path="/teacher/hifdh"            element={<TeacherHifdhReview />} />
+                    <Route path="/teacher/hifdh-program"    element={<TeacherHifdhProgram />} />
                     <Route path="/teacher/hifdh-live"       element={<TeacherHifdhLive />} />
                     <Route path="/teacher/hifdh-plan"       element={<TeacherHifdhPlanBuilder />} />
                     <Route path="/teacher/hifdh-tracker"    element={<HifdhRevisionTracker />} />
@@ -375,6 +380,7 @@ const App = () => (
                     <Route path="/admin/entrance-exam"               element={<EntranceExamAdmin />} />
                     <Route path="/admin/recitation-review"           element={<HifdhAdminReview />} />
                     <Route path="/admin/hifdh-tracker"               element={<HifdhRevisionTracker />} />
+                    <Route path="/admin/hifdh-program"               element={<HifdhProgramAdmin />} />
                     <Route path="/admin/recitation-test-settings"    element={<RecitationTestAdmin />} />
                     <Route path="/admin/quran-recitations"           element={<QuranRecitationAdmin />} />
                     <Route path="/admin/letter-audio"                element={<LetterAudioRecorder />} />
