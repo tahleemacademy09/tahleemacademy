@@ -190,7 +190,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
 
   const toggle = (key: string) => setExpanded(p => ({ ...p, [key]: !p[key] }));
   // The Hifdh hub owns four routes; keep its sidebar entry highlighted on all of them.
-  const HIFDH_HUB_PATHS = ["/admin/hifdh-program","/admin/hifdh-tracker","/admin/recitation-review","/admin/recitation-test-settings"];
+  const HIFDH_HUB_PATHS = ["/admin/hifdh-program","/admin/hifdh-tracker","/admin/recitation-review"];
   const pathMatches = (p: string) =>
     p === "/admin/hifdh-program"
       ? HIFDH_HUB_PATHS.some(h => location.pathname.startsWith(h))
@@ -289,7 +289,6 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     // 6 ── Recitation & Ḥifẓ ────────────────────────────────────
     { type:"group", key:"recit", icon:Mic, label:t("Recitation & Ḥifẓ","التلاوة والحفظ"), children:[
       { to:"/admin/recitation-review",        icon:Mic,      label:t("Recitation Review","مراجعة التلاوة") },
-      { to:"/admin/recitation-test-settings", icon:Settings, label:t("Recitation Settings","إعدادات التلاوة") },
       { to:"/admin/quran-recitations",        icon:BookText, label:t("Qur'an Recitations","تسجيلات القرآن") },
       { to:"/admin/letter-audio",             icon:Sparkles, label:t("Letter Audio Library","مكتبة صوت الحروف") },
     ]},
