@@ -23,6 +23,8 @@ export interface HubTab {
   path: string;
   label: string;
   icon?: LucideIcon;
+  /** Accent colour, used by the icon-only row (iconOnly). */
+  color?: string;
   /** Optional pending-count badge, e.g. pendingRegistrations. */
   badge?: number;
   /** Component to render for this tab — should be a stable reference. */
@@ -33,9 +35,11 @@ interface TabbedHubProps {
   title: string;
   subtitle?: string;
   tabs: HubTab[];
+  /** Render the tabs as one row of coloured icons (no text labels). */
+  iconOnly?: boolean;
 }
 
-export default function TabbedHub({ title, subtitle, tabs }: TabbedHubProps) {
+export default function TabbedHub({ title, subtitle, tabs, iconOnly = false }: TabbedHubProps) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -61,26 +65,59 @@ export default function TabbedHub({ title, subtitle, tabs }: TabbedHubProps) {
 
       <Tabs value={activeTab} onValueChange={handleChange} className="w-full">
         <div className="px-4 sm:px-6">
-          <TabsList className="flex flex-wrap h-auto gap-1 w-full sm:w-auto justify-start bg-gray-100 p-1">
-            {tabs.map((tab) => (
-              <TabsTrigger
-                key={tab.key}
-                value={tab.key}
-                className="flex items-center gap-1.5 whitespace-nowrap"
-              >
-                {tab.icon && <tab.icon className="w-4 h-4" />}
-                {tab.label}
-                {!!tab.badge && (
-                  <span
-                    className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-bold"
-                    style={{ background: "#DC2626" }}
+          {iconOnly ? (
+            <TabsList className="flex flex-nowrap h-auto gap-2 w-full justify-start bg-transparent p-0 overflow-x-auto">
+              {tabs.map((tab) => {
+                const c = tab.color || G;
+                const on = tab.key === activeTab;
+                return (
+                  <TabsTrigger
+                    key={tab.key}
+                    value={tab.key}
+                    aria-label={tab.label}
+                    title={tab.label}
+                    className="relative flex items-center justify-center w-12 h-12 p-0 rounded-xl border shadow-none transition-all data-[state=active]:shadow-none"
+                    style={{
+                      background: on ? c : c + "1a",
+                      borderColor: on ? c : c + "33",
+                      color: on ? "#fff" : c,
+                    }}
                   >
-                    {tab.badge}
-                  </span>
-                )}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+                    {tab.icon && <tab.icon className="w-6 h-6" />}
+                    {!!tab.badge && (
+                      <span
+                        className="absolute -top-1 -right-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-bold"
+                        style={{ background: "#DC2626" }}
+                      >
+                        {tab.badge}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          ) : (
+            <TabsList className="flex flex-wrap h-auto gap-1 w-full sm:w-auto justify-start bg-gray-100 p-1">
+              {tabs.map((tab) => (
+                <TabsTrigger
+                  key={tab.key}
+                  value={tab.key}
+                  className="flex items-center gap-1.5 whitespace-nowrap"
+                >
+                  {tab.icon && <tab.icon className="w-4 h-4" />}
+                  {tab.label}
+                  {!!tab.badge && (
+                    <span
+                      className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-white text-[10px] font-bold"
+                      style={{ background: "#DC2626" }}
+                    >
+                      {tab.badge}
+                    </span>
+                  )}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          )}
         </div>
 
         {tabs.map((tab) => (
