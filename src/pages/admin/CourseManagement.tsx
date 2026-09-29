@@ -12,6 +12,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useCurrentTermId } from "@/hooks/useCurrentTermId";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useAuth } from "@/contexts/AuthContext";
 import { useAcademicLevels, getLevelConfig } from "@/hooks/useAcademicLevels";
@@ -1126,12 +1127,14 @@ export default function CourseManagement() {
   const { data: subjects = [], isLoading: sLoad } = useQuery({ queryKey: ["adm-subjects", selCourse?.id], enabled: !!selCourse?.id, queryFn: async () => { let q = supabase.from("subjects").select("*").order("title"); if (selCourse) q = q.eq("course_id", selCourse.id); const { data } = await q; return data || []; } });
   const { data: allSubjects = [] } = useQuery({ queryKey: ["adm-all-subjects"], queryFn: async () => { const { data } = await supabase.from("subjects").select("id,title,level,course_id").order("title"); return data || []; } });
   
+  const liveTermIdForLessons = useCurrentTermId();
   // 🔧 FIX #1: lessons query uses "subject_id" instead of "course_id"
   const { data: lessons = [], isLoading: lLoad } = useQuery({
-    queryKey: ["adm-lessons", selSubject?.id],
-    enabled: !!selSubject,
+    queryKey: ["adm-lessons", selSubject?.id, liveTermIdForLessons],
+    enabled: !!selSubject && !!liveTermIdForLessons,
     queryFn: async () => {
-      const { data } = await supabase.from("lessons").select("*").eq("subject_id", selSubject?.id || "").order("sort_order");
+      // Staff manage the live term's lessons (plus legacy lessons with no term).
+      const { data } = await supabase.from("lessons").select("*").eq("subject_id", selSubject?.id || "").or(`term_id.eq.${liveTermIdForLessons},term_id.is.null`).order("sort_order");
       return data || [];
     }
   });
