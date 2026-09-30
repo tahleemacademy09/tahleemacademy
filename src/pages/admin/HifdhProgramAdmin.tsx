@@ -242,6 +242,10 @@ export default function HifdhProgramAdmin() {
                 const v = Math.min(604, Math.max(1, Number(e.target.value) || 1));
                 if (v !== p.current_page) patchProgram(p.id, { current_page: v });
               }} />
+            <HpSelect style={{ width: "100%", marginTop: 6 }} value={p.current_half ?? 0} onChange={(e) => patchProgram(p.id, { current_half: Number(e.target.value) })}>
+              <option value={0}>Starts at the top of the page</option>
+              <option value={1}>Starts at the 2nd half</option>
+            </HpSelect>
           </HpCard>
         ))}
       </div>
@@ -437,13 +441,13 @@ export default function HifdhProgramAdmin() {
         {levels.map((l) => (
           <div key={l.id} style={{ display: "grid", gridTemplateColumns: "1fr 90px 36px", gap: 8, marginBottom: 8, alignItems: "center" }}>
             <HpInput defaultValue={l.name} onBlur={(e) => e.target.value !== l.name && run(() => hpDb.from("hifdh_levels").update({ name: e.target.value }).eq("id", l.id))} />
-            <HpInput type="number" step="0.25" defaultValue={l.daily_pages} title="Pages per day"
+            <HpInput type="number" step="0.5" min="0.5" defaultValue={l.daily_pages} title="Pages per memorization day"
               onBlur={(e) => Number(e.target.value) !== Number(l.daily_pages) && run(() => hpDb.from("hifdh_levels").update({ daily_pages: Number(e.target.value) || 0.5 }).eq("id", l.id))} />
             <button aria-label="Delete level" onClick={() => window.confirm(`Delete "${l.name}"?`) && run(() => hpDb.from("hifdh_levels").delete().eq("id", l.id))}
               style={{ border: "none", background: "none", cursor: "pointer", color: HP_RED }}><Trash2 size={16} /></button>
           </div>
         ))}
-        <div style={{ fontSize: 11, color: HP_MUTED, marginBottom: 8 }}>Name · pages per day</div>
+        <div style={{ fontSize: 11, color: HP_MUTED, marginBottom: 8 }}>Name · pages per memorization day (0.5 = half a page)</div>
         <HpBtn small kind="ghost" onClick={() => run(() => hpDb.from("hifdh_levels").insert({ name: `Level ${levels.length + 1}`, daily_pages: 0.5, sort_order: levels.length }))}>
           <Plus size={12} /> Add level
         </HpBtn>
