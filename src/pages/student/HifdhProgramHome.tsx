@@ -424,6 +424,7 @@ export default function HifdhProgramHome() {
                 padding: "6px 12px 6px 8px", fontSize: 12, fontWeight: 700, color: HH_INK, cursor: "pointer",
               }}><ChevronDown size={16} /> Details</button>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button onClick={() => { setQSize(26); try { localStorage.setItem("hifdh_qsize", "26"); } catch { /* ignore */ } }} aria-label="Fit page" style={{ height: 34, padding: "0 10px", borderRadius: 10, border: `1px solid ${HH_LINE}`, background: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>Fit</button>
                 <button onClick={() => bump(-2)} aria-label="Smaller text" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${HH_LINE}`, background: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>A−</button>
                 <button onClick={() => bump(2)} aria-label="Larger text" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${HH_LINE}`, background: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>A+</button>
               </div>
@@ -433,8 +434,15 @@ export default function HifdhProgramHome() {
                 <HhPageChips pages={pages} active={cur} onPick={pick} />
               </div>
             )}
-            <div style={{ flex: 1, overflowY: "auto", padding: "6px 6px 16px" }}>
-              <MushafPageView page={cur} fontSize={qSize} halves={hpSegmentFor(cur, portion)} />
+            <div style={{ flex: 1, overflowY: "auto", padding: "6px 6px 10px", display: "flex", flexDirection: "column" }}>
+              <div style={{ margin: "auto 0", width: "100%" }}>
+                <MushafPageView
+                  page={cur}
+                  fontSize={qSize}
+                  halves={hpSegmentFor(cur, portion)}
+                  fitHeight={64 + (pages.length > 1 ? 64 : 0) + (isMem && activeTask?.status === "read_cleared" ? 84 : 0) + 24}
+                />
+              </div>
             </div>
             {isMem && activeTask?.status === "read_cleared" && (
               <div style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", background: "#fff", borderTop: `1px solid ${HH_LINE}` }}>
