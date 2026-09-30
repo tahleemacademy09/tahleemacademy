@@ -2,7 +2,7 @@
 // Read-only Quran page in the same parchment/mushaf style as the Daily Hifdh Revision screen.
 // Usage: <MushafPageView page={50} />
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { SURAHS } from "@/components/hifdh/surahData";
 
@@ -177,55 +177,111 @@ function MushafTextPage({ page, fontSize = 26, halves }: { page: number; fontSiz
 /* ─────────────────────────────────────────────────────────────────────────────
    Real printed Madinah Mushaf page (Hafs, KFGQPC layout) as vector SVG.
    Source: quran-ws/quran-svg (github.com/quran-ws/quran-svg), served from cdn.quran.ws.
-   If the image can't load (offline / CDN down) we fall back to the text renderer above.
+   The SVG is loaded inline (inside a shadow root so its CSS can't leak) and cropped to its real
+   ink area, so the page always fills the width. If that fails we use a plain <img>, and if the
+   image fails too, the text renderer above.
    ───────────────────────────────────────────────────────────────────────────── */
 const MV_CDN = "https://cdn.quran.ws/svg/pages/v1.1.1/hafs-kfqc";
 
+const mvClean = (raw: string): string | null => {
+  try {
+    const doc = new DOMParser().parseFromString(raw, "image/svg+xml");
+    const svg = doc.documentElement;
+    if (!svg || svg.nodeName.toLowerCase() !== "svg" || doc.querySelector("parsererror")) return null;
+    svg.querySelectorAll("script,foreignObject").forEach((n) => n.remove());
+    svg.querySelectorAll("*").forEach((el) => {
+      Array.from(el.attributes).forEach((a) => {
+        const n = a.name.toLowerCase();
+        const v = a.value.trim().toLowerCase();
+        if (n.startsWith("on") || ((n === "href" || n === "xlink:href") && v.startsWith("javascript:"))) el.removeAttribute(a.name);
+      });
+    });
+    return new XMLSerializer().serializeToString(svg);
+  } catch { return null; }
+};
+
 export default function MushafPageView({ page, fontSize = 26, halves }: { page: number; fontSize?: number; halves?: [number, number] }) {
   const safe = Math.min(604, Math.max(1, Math.round(Number(page) || 1)));
-  const [state, setState] = useState<"loading" | "ok" | "failed">("loading");
-  const [tries, setTries] = useState(0);
+  const src = `${MV_CDN}/${String(safe).padStart(3, "0")}.svg`;
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [mode, setMode] = useState<"loading" | "inline" | "img" | "text">("loading");
+  const [imgReady, setImgReady] = useState(false);
 
-  useEffect(() => { setState("loading"); }, [safe, tries]);
+  useEffect(() => {
+    let alive = true;
+    setMode("loading");
+    setImgReady(false);
+    fetch(src)
+      .then((r) => { if (!r.ok) throw new Error("http"); return r.text(); })
+      .then((raw) => {
+        if (!alive) return;
+        const clean = mvClean(raw);
+        const host = hostRef.current;
+        if (!clean || !host) { setMode("img"); return; }
+        const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
+        root.innerHTML = clean;
+        const svg = root.querySelector("svg") as SVGSVGElement | null;
+        if (!svg) { setMode("img"); return; }
+        svg.removeAttribute("width");
+        svg.removeAttribute("height");
+        svg.style.width = "100%";
+        svg.style.height = "auto";
+        svg.style.display = "block";
+        requestAnimationFrame(() => {
+          if (!alive) return;
+          try {
+            const b = svg.getBBox(); // crop to the real ink so the page fills the width
+            if (b.width > 10 && b.height > 10) {
+              const pad = Math.max(b.width, b.height) * 0.012;
+              svg.setAttribute("viewBox", `${b.x - pad} ${b.y - pad} ${b.width + 2 * pad} ${b.height + 2 * pad}`);
+            }
+          } catch { /* keep the artwork's own viewBox */ }
+          setMode("inline");
+        });
+      })
+      .catch(() => { if (alive) setMode("img"); });
+    return () => { alive = false; };
+  }, [src]);
 
-  if (state === "failed") {
-    return <MushafTextPage page={safe} fontSize={fontSize} halves={halves} />;
-  }
+  if (mode === "text") return <MushafTextPage page={safe} fontSize={fontSize} halves={halves} />;
 
   const partial = !!halves && !(halves[0] === 0 && halves[1] === 1);
   const dimTop = partial && halves![0] === 1;      // portion is the 2nd half → fade the top
   const dimBottom = partial && halves![1] === 0;   // portion is the 1st half → fade the bottom
-  const zoom = Math.min(1.8, Math.max(0.8, fontSize / 26)); // A− / A+ zooms the page
-  const src = `${MV_CDN}/${String(safe).padStart(3, "0")}.svg`;
+  const zoom = Math.min(1.8, Math.max(0.8, fontSize / 26)); // A− / A+ zooms the page (26 = fit to width)
+  const shown = mode === "inline" || (mode === "img" && imgReady);
+  const fade = "rgba(253,248,238,.86)";
 
   return (
     <div style={{ margin: "8px 0 12px" }}>
       <div style={{ overflowX: zoom > 1 ? "auto" : "visible", borderRadius: 6, boxShadow: "0 4px 24px rgba(0,0,0,.14)", background: "#fffdf6" }}>
-        <div style={{ position: "relative", width: `${zoom * 100}%`, minHeight: state === "loading" ? 420 : undefined }}>
-          {state === "loading" && (
+        <div style={{ position: "relative", width: `${zoom * 100}%`, minHeight: shown ? undefined : 420 }}>
+          {!shown && (
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Loader2 className="animate-spin" color={MV_GOLD} size={28} />
             </div>
           )}
-          <img
-            key={`${safe}-${tries}`}
-            src={src}
-            alt={`Madinah Mushaf page ${safe}`}
-            draggable={false}
-            onLoad={() => setState("ok")}
-            onError={() => setState("failed")}
-            style={{ display: state === "ok" ? "block" : "none", width: "100%", height: "auto", userSelect: "none", WebkitUserSelect: "none" }}
-          />
-          {state === "ok" && dimTop && (
-            <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: "50%", background: "rgba(253,248,238,.86)", pointerEvents: "none" }} />
+
+          {/* inline SVG lives in a shadow root inside this host */}
+          <div ref={hostRef} style={mode === "inline" ? { display: "block" } : { visibility: "hidden", position: "absolute", left: 0, top: 0, width: "100%", height: 0, overflow: "hidden" }} />
+
+          {mode === "img" && (
+            <img
+              key={src}
+              src={src}
+              alt={`Madinah Mushaf page ${safe}`}
+              draggable={false}
+              onLoad={() => setImgReady(true)}
+              onError={() => setMode("text")}
+              style={{ display: imgReady ? "block" : "none", width: "100%", height: "auto", userSelect: "none", WebkitUserSelect: "none" }}
+            />
           )}
-          {state === "ok" && dimBottom && (
-            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "50%", background: "rgba(253,248,238,.86)", pointerEvents: "none" }} />
-          )}
-          {state === "ok" && partial && (
+
+          {shown && dimTop && <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: "50%", background: fade, pointerEvents: "none" }} />}
+          {shown && dimBottom && <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "50%", background: fade, pointerEvents: "none" }} />}
+          {shown && partial && (
             <div style={{
-              position: "absolute", left: "50%", transform: "translateX(-50%)", top: dimTop ? "calc(50% + 6px)" : undefined, bottom: dimBottom ? undefined : undefined,
-              ...(dimBottom ? { top: 8 } : {}),
+              position: "absolute", left: "50%", transform: "translateX(-50%)", ...(dimTop ? { top: "calc(50% + 6px)" } : { top: 8 }),
               padding: "4px 11px", borderRadius: 999, background: "rgba(253,248,238,.96)", border: `1px solid ${MV_GOLD}99`, color: "#78350F",
               fontSize: 11, fontWeight: 800, boxShadow: "0 2px 8px rgba(0,0,0,.12)", pointerEvents: "none", whiteSpace: "nowrap",
             }}>
