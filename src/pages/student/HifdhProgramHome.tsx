@@ -434,7 +434,7 @@ export default function HifdhProgramHome() {
               </div>
             )}
             <div style={{ flex: 1, overflowY: "auto", padding: "6px 6px 16px" }}>
-              <MushafPageView page={cur} fontSize={qSize + 2} halves={hpSegmentFor(cur, portion)} />
+              <MushafPageView page={cur} fontSize={qSize} halves={hpSegmentFor(cur, portion)} />
             </div>
             {isMem && activeTask?.status === "read_cleared" && (
               <div style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", background: "#fff", borderTop: `1px solid ${HH_LINE}` }}>
