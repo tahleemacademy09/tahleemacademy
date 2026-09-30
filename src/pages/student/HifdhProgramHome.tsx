@@ -116,6 +116,14 @@ export default function HifdhProgramHome() {
   const [selPage, setSelPage] = useState<number | null>(null);
   const [raPage, setRaPage] = useState<number | null>(null);
   const [focus, setFocus] = useState<null | "memorize" | "readalong">(null);
+  const [qSize, setQSize] = useState<number>(() => {
+    try { return Number(localStorage.getItem("hifdh_qsize")) || 26; } catch { return 26; }
+  });
+  const bump = (d: number) => setQSize((v) => {
+    const n = Math.min(40, Math.max(20, v + d));
+    try { localStorage.setItem("hifdh_qsize", String(n)); } catch { /* ignore */ }
+    return n;
+  });
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -312,7 +320,7 @@ export default function HifdhProgramHome() {
                     <HhFocusBtn onClick={() => setFocus("memorize")} />
                   </div>
                   {activePages.length > 1 && <HhPageChips pages={activePages} active={shownPage!} onPick={setSelPage} />}
-                  {shownPage && <MushafPageView page={shownPage} halves={hpSegmentFor(shownPage, activeTask)} />}
+                  {shownPage && <MushafPageView page={shownPage} fontSize={qSize} halves={hpSegmentFor(shownPage, activeTask)} />}
                   {activeTask.status === "read_cleared" && (
                     <div style={{ padding: "6px 4px 2px" }}>
                       <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>I've memorized this — submit</HhBtn>
@@ -370,7 +378,7 @@ export default function HifdhProgramHome() {
                     <HhFocusBtn onClick={() => setFocus("readalong")} />
                   </div>
                   {raPages.length > 1 && <HhPageChips pages={raPages} active={raShown!} onPick={setRaPage} />}
-                  {raShown && <MushafPageView page={raShown} halves={hpSegmentFor(raShown, member)} />}
+                  {raShown && <MushafPageView page={raShown} fontSize={qSize} halves={hpSegmentFor(raShown, member)} />}
                 </div>
               )}
             </>
@@ -415,7 +423,10 @@ export default function HifdhProgramHome() {
                 display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${HH_LINE}`, background: "#fff", borderRadius: 99,
                 padding: "6px 12px 6px 8px", fontSize: 12, fontWeight: 700, color: HH_INK, cursor: "pointer",
               }}><ChevronDown size={16} /> Details</button>
-              <div style={{ fontSize: 13, fontWeight: 800, color: HH_INK, textAlign: "right" }}>{hpPortionLabel(portion)}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button onClick={() => bump(-2)} aria-label="Smaller text" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${HH_LINE}`, background: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer" }}>A−</button>
+                <button onClick={() => bump(2)} aria-label="Larger text" style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${HH_LINE}`, background: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>A+</button>
+              </div>
             </div>
             {pages.length > 1 && (
               <div style={{ background: "#fff", padding: "6px 12px 0", borderBottom: `1px solid ${HH_LINE}` }}>
@@ -423,7 +434,7 @@ export default function HifdhProgramHome() {
               </div>
             )}
             <div style={{ flex: 1, overflowY: "auto", padding: "6px 6px 16px" }}>
-              <MushafPageView page={cur} fontSize={24} halves={hpSegmentFor(cur, portion)} />
+              <MushafPageView page={cur} fontSize={qSize + 2} halves={hpSegmentFor(cur, portion)} />
             </div>
             {isMem && activeTask?.status === "read_cleared" && (
               <div style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", background: "#fff", borderTop: `1px solid ${HH_LINE}` }}>
