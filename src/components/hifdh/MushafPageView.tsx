@@ -200,12 +200,61 @@ const mvClean = (raw: string): string | null => {
   } catch { return null; }
 };
 
-export default function MushafPageView({ page, fontSize = 26, halves }: { page: number; fontSize?: number; halves?: [number, number] }) {
+type MvBox = { x: number; y: number; w: number; h: number };
+
+/** Render the SVG to a small canvas and find the true extent of the dark ink (ignores hidden/blank parts). */
+const mvMeasureInk = (svgText: string, vb: MvBox): Promise<MvBox | null> =>
+  new Promise((resolve) => {
+    let url = "";
+    const done = (v: MvBox | null) => { if (url) URL.revokeObjectURL(url); resolve(v); };
+    try {
+      url = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const W = 700;
+          const H = Math.max(1, Math.round((W * vb.h) / vb.w));
+          const c = document.createElement("canvas");
+          c.width = W; c.height = H;
+          const ctx = c.getContext("2d", { willReadFrequently: true } as any) as CanvasRenderingContext2D;
+          ctx.drawImage(img, 0, 0, W, H);
+          const d = ctx.getImageData(0, 0, W, H).data;
+          let minX = W, minY = H, maxX = -1, maxY = -1;
+          for (let y = 0; y < H; y++) {
+            for (let x = 0; x < W; x++) {
+              const i = (y * W + x) * 4;
+              if (d[i + 3] > 80 && (d[i] + d[i + 1] + d[i + 2]) / 3 < 150) {
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+              }
+            }
+          }
+          if (maxX < 0) return done(null);
+          done({
+            x: vb.x + (minX / W) * vb.w, y: vb.y + (minY / H) * vb.h,
+            w: ((maxX - minX + 1) / W) * vb.w, h: ((maxY - minY + 1) / H) * vb.h,
+          });
+        } catch { done(null); }
+      };
+      img.onerror = () => done(null);
+      img.src = url;
+    } catch { done(null); }
+  });
+
+/** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight }: { page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number }) {
   const safe = Math.min(604, Math.max(1, Math.round(Number(page) || 1)));
   const src = `${MV_CDN}/${String(safe).padStart(3, "0")}.svg`;
   const hostRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<"loading" | "inline" | "img" | "text">("loading");
   const [imgReady, setImgReady] = useState(false);
+  const [aspect, setAspect] = useState<number | null>(null);
+  const [winH, setWinH] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 800));
+  useEffect(() => {
+    const on = () => setWinH(window.innerHeight);
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -222,22 +271,35 @@ export default function MushafPageView({ page, fontSize = 26, halves }: { page: 
         root.innerHTML = clean;
         const svg = root.querySelector("svg") as SVGSVGElement | null;
         if (!svg) { setMode("img"); return; }
+        // page box in user units (viewBox, or width/height when there is none)
+        const vbl = svg.viewBox && svg.viewBox.baseVal;
+        const ow = parseFloat(svg.getAttribute("width") || "");
+        const oh = parseFloat(svg.getAttribute("height") || "");
+        const vb: MvBox | null =
+          vbl && vbl.width > 0 ? { x: vbl.x, y: vbl.y, w: vbl.width, h: vbl.height }
+          : ow > 0 && oh > 0 ? { x: 0, y: 0, w: ow, h: oh } : null;
         svg.removeAttribute("width");
         svg.removeAttribute("height");
         svg.style.width = "100%";
         svg.style.height = "auto";
         svg.style.display = "block";
-        requestAnimationFrame(() => {
+        if (vb) svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+
+        const apply = (b: MvBox) => {
+          const pad = Math.max(b.w, b.h) * 0.012;
+          svg.setAttribute("viewBox", `${b.x - pad} ${b.y - pad} ${b.w + 2 * pad} ${b.h + 2 * pad}`);
+          setAspect((b.w + 2 * pad) / (b.h + 2 * pad));
+        };
+        (async () => {
+          let box: MvBox | null = vb ? await mvMeasureInk(clean, vb) : null; // real dark-ink extent
           if (!alive) return;
-          try {
-            const b = svg.getBBox(); // crop to the real ink so the page fills the width
-            if (b.width > 10 && b.height > 10) {
-              const pad = Math.max(b.width, b.height) * 0.012;
-              svg.setAttribute("viewBox", `${b.x - pad} ${b.y - pad} ${b.width + 2 * pad} ${b.height + 2 * pad}`);
-            }
-          } catch { /* keep the artwork's own viewBox */ }
+          if (!box) {
+            try { const b = svg.getBBox(); if (b.width > 10 && b.height > 10) box = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch { /* ignore */ }
+          }
+          if (box) apply(box);
+          else if (vb) setAspect(vb.w / vb.h);
           setMode("inline");
-        });
+        })();
       })
       .catch(() => { if (alive) setMode("img"); });
     return () => { alive = false; };
@@ -250,10 +312,11 @@ export default function MushafPageView({ page, fontSize = 26, halves }: { page: 
   const dimBottom = partial && halves![1] === 0;   // portion is the 1st half → fade the bottom
   const zoom = Math.min(1.8, Math.max(0.8, fontSize / 26)); // A− / A+ zooms the page (26 = fit to width)
   const shown = mode === "inline" || (mode === "img" && imgReady);
+  const fitW = fitHeight && aspect && zoom <= 1 ? Math.floor(Math.max(200, winH - fitHeight) * aspect * zoom) : undefined;
   const fade = "rgba(253,248,238,.86)";
 
   return (
-    <div style={{ margin: "8px 0 12px" }}>
+    <div style={{ margin: "8px auto 12px", width: "100%", maxWidth: fitW }}>
       <div style={{ overflowX: zoom > 1 ? "auto" : "visible", borderRadius: 6, boxShadow: "0 4px 24px rgba(0,0,0,.14)", background: "#fffdf6" }}>
         <div style={{ position: "relative", width: `${zoom * 100}%`, minHeight: shown ? undefined : 420 }}>
           {!shown && (
