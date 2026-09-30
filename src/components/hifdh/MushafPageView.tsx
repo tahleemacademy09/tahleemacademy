@@ -8,10 +8,12 @@ import { SURAHS } from "@/components/hifdh/surahData";
 
 const MV_GOLD = "#C9A84C";
 
+interface MvWord { t: string; line: number; }
 interface MvAyah {
   numberInSurah: number;
   text: string;
   surahNum: number;
+  words: MvWord[];
 }
 
 // Simple in-memory cache so flipping between pages is instant.
@@ -26,11 +28,22 @@ async function mvFetchPage(page: number): Promise<MvAyah[]> {
       const j = await r.json();
       const verses: any[] = j?.verses ?? [];
       if (verses.length) {
-        return verses.map((v) => ({
-          numberInSurah: v.verse_number ?? 0,
-          surahNum: v.chapter_id ?? Number(String(v.verse_key || "0:0").split(":")[0]),
-          text: v.text_uthmani ?? (v.words || []).filter((w: any) => w.char_type_name !== "end").map((w: any) => w.text_uthmani ?? w.text).join(" "),
-        }));
+        return verses.map((v) => {
+          const apiWords: any[] = (v.words || []).filter((w: any) => w.char_type_name !== "end");
+          const text: string = v.text_uthmani ?? apiWords.map((w: any) => w.text_uthmani ?? w.text).join(" ");
+          const split = text.split(/\s+/).filter(Boolean);
+          let prev = 0;
+          const words = split.map((t, i) => {
+            const ln = apiWords[i]?.line_number ?? prev;
+            prev = ln;
+            return { t, line: ln };
+          });
+          return {
+            numberInSurah: v.verse_number ?? 0,
+            surahNum: v.chapter_id ?? Number(String(v.verse_key || "0:0").split(":")[0]),
+            text, words,
+          };
+        });
       }
     }
   } catch { /* fall through to fallback */ }
@@ -39,6 +52,7 @@ async function mvFetchPage(page: number): Promise<MvAyah[]> {
   const j = await r.json();
   return (j?.data?.ayahs ?? []).map((a: any) => ({
     numberInSurah: a.numberInSurah, text: a.text, surahNum: a.surah?.number ?? 0,
+    words: String(a.text).split(/\s+/).filter(Boolean).map((t: string) => ({ t, line: 0 })),
   }));
 }
 const mvLoad = (page: number) => {
@@ -51,7 +65,8 @@ const mvLoad = (page: number) => {
 
 const mvSurah = (n: number) => SURAHS.find((s: any) => s.num === n || s.id === n);
 
-export default function MushafPageView({ page, fontSize = 22 }: { page: number; fontSize?: number }) {
+/** halves = [startHalf, endHalf] (0 = first half, 1 = second half). Words outside are dimmed. */
+export default function MushafPageView({ page, fontSize = 22, halves }: { page: number; fontSize?: number; halves?: [number, number] }) {
   const [ayahs, setAyahs] = useState<MvAyah[] | null>(null);
 
   useEffect(() => {
@@ -68,22 +83,36 @@ export default function MushafPageView({ page, fontSize = 22 }: { page: number; 
     return <div style={{ padding: 24, textAlign: "center", color: "#9CA3AF", fontSize: 13 }}>Could not load this page — check your internet connection.</div>;
   }
 
+  // ── which half does each word belong to? (by real mushaf line when known, otherwise by word count)
+  const flat = ayahs.flatMap((a) => a.words);
+  const maxLine = Math.max(0, ...flat.map((w) => w.line));
+  const splitLine = Math.ceil(maxLine / 2);
+  const halfOfWord = (w: MvWord, idx: number) =>
+    maxLine > 0 ? (w.line <= splitLine ? 0 : 1) : (idx < flat.length / 2 ? 0 : 1);
+  const partial = !!halves && !(halves[0] === 0 && halves[1] === 1);
+  const inPortion = (h: number) => !partial || (h >= halves![0] && h <= halves![1]);
+  let running = 0;
+
   const first = mvSurah(ayahs[0].surahNum) as any;
   const last = mvSurah(ayahs[ayahs.length - 1].surahNum) as any;
 
   const renderAyah = (a: MvAyah, i: number) => {
-    const words = a.text.split(/\s+/).filter(Boolean);
+    let lastHalf = 0;
     return (
       <React.Fragment key={i}>
-        {words.map((w, wi) => (
-          <React.Fragment key={wi}>
-            <span style={{ display: "inline-block", margin: "0 1px", color: "#1a0a00" }}>{w}</span>{" "}
-          </React.Fragment>
-        ))}
+        {a.words.map((w, wi) => {
+          const h = halfOfWord(w, running++);
+          lastHalf = h;
+          return (
+            <React.Fragment key={wi}>
+              <span style={{ display: "inline-block", margin: "0 1px", color: "#1a0a00", opacity: inPortion(h) ? 1 : 0.2, transition: "opacity .2s" }}>{w.t}</span>{" "}
+            </React.Fragment>
+          );
+        })}
         <span style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%",
           border: `1.5px solid ${MV_GOLD}`, background: "#fffdf6", fontSize: 10, color: MV_GOLD, fontFamily: "'Amiri',serif",
-          margin: "0 4px", verticalAlign: "middle", lineHeight: 1,
+          margin: "0 4px", verticalAlign: "middle", lineHeight: 1, opacity: inPortion(lastHalf) ? 1 : 0.2,
         }}>{a.numberInSurah}</span>{" "}
       </React.Fragment>
     );
@@ -125,6 +154,11 @@ export default function MushafPageView({ page, fontSize = 22 }: { page: number; 
         </div>
       )}
 
+      {partial && (
+        <div style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: "#78350F", background: "#fbf3da", padding: "4px 0", fontFamily: "'Cairo',sans-serif" }}>
+          Your portion: {halves![0] === halves![1] ? (halves![0] === 0 ? "first half of the page" : "second half of the page") : "whole page"}
+        </div>
+      )}
       <div style={{ height: 1, background: `linear-gradient(to right,transparent,${MV_GOLD}88,transparent)`, margin: "0 14px" }} />
 
       <div style={{ padding: "14px 16px 10px" }}>
