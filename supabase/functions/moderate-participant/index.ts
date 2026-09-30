@@ -1,1 +1,335 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Not authenticated' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Invalid token' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    const body = await req.json();
+    const { subject_id, action, room_name, screen_share } = body;
+
+    const LIVEKIT_API_KEY    = Deno.env.get('LIVEKIT_API_KEY');
+    const LIVEKIT_API_SECRET = Deno.env.get('LIVEKIT_API_SECRET');
+    const LIVEKIT_URL        = Deno.env.get('LIVEKIT_URL');
+
+    if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) {
+      return new Response(JSON.stringify({ error: 'LiveKit not configured' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ── PERF FIX ("takes ~16s before my details show up"): these three lookups
+    // (my roles, my profile, the subject) don't depend on each other at all, but
+    // were being awaited one after another — three full network round trips to
+    // Postgres, stacked, before the token was ever returned. The client doesn't
+    // show ANYTHING (video, name, avatar) until this function responds, because
+    // ClassroomView.connect() only flips to the "live" phase after it has the
+    // token. Cold Deno-edge + Postgres round trips are commonly 1-5s+ each on a
+    // slower connection, so three in a row easily adds up to the 16s being seen.
+    // Running them together with Promise.all cuts that to the cost of the single
+    // slowest query instead of the sum of all three.
+    const serviceClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const [{ data: roles }, { data: profile }, subjectResult] = await Promise.all([
+      serviceClient.from('user_roles').select('role').eq('user_id', user.id),
+      serviceClient.from('profiles').select('full_name, avatar_url').eq('user_id', user.id).single(),
+      subject_id
+        ? serviceClient.from('subjects').select('*').eq('id', subject_id).single()
+        : Promise.resolve({ data: null, error: null } as any),
+    ]);
+    const userRoles    = roles?.map((r: any) => r.role) || [];
+    const isPrivileged = userRoles.includes('admin') || userRoles.includes('teacher');
+    const participantName = profile?.full_name || user.email || 'Anonymous';
+
+    let finalRoomName: string;
+    let roleLabel: string;
+    // Class Settings (Waiting Room / Mute on entry / Chat / Hand raising) —
+    // echoed back on a successful token response so the client can actually
+    // honor them (previously written by the lobby and never read anywhere).
+    // Defaults here match this table's own column defaults, so a session
+    // nobody has configured behaves exactly as it always has.
+    let sessionSettings = { mute_on_entry: false, chat_enabled: true, hand_raise_enabled: true };
+
+    // ── MODE A: Musabaqah room (room_name provided directly) ──────────────
+    if (room_name) {
+      finalRoomName = room_name;
+      roleLabel     = isPrivileged ? 'judge' : 'participant';
+
+    // ── MODE B: Live class (subject_id — existing behaviour) ──────────────
+    } else if (subject_id) {
+      const { data: subject, error: subjectError } = subjectResult;
+
+      if (subjectError || !subject) {
+        return new Response(JSON.stringify({ error: 'Subject not found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (!subject.is_active && !isPrivileged) {
+        return new Response(JSON.stringify({ error: 'Subject is not active' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      finalRoomName = subject.livekit_room_name || `subject-${subject.id}`;
+      roleLabel     = isPrivileged ? 'teacher' : 'student';
+
+      // ── Resolve the current session row for this subject (live, else the
+      // nearest still-scheduled one) — mirrors the exact same "live, else
+      // nearest scheduled" lookup the client's own background bookkeeping
+      // uses once connected, just run here BEFORE a token is handed out, so
+      // its Class Settings can actually be enforced/read below. ─────────────
+      let sessionRow: any = null;
+      {
+        const { data: liveRows } = await serviceClient.from('live_sessions').select('*')
+          .eq('subject_id', subject_id).in('status', ['live', 'active'])
+          .order('actual_start_time', { ascending: false }).limit(1);
+        sessionRow = liveRows?.[0] || null;
+        if (!sessionRow) {
+          const { data: scheduledRows } = await serviceClient.from('live_sessions').select('*')
+            .eq('subject_id', subject_id).eq('status', 'scheduled')
+            .order('scheduled_at', { ascending: true }).limit(1);
+          sessionRow = scheduledRows?.[0] || null;
+        }
+      }
+      if (sessionRow) {
+        sessionSettings = {
+          mute_on_entry:      !!sessionRow.class_settings?.mute_on_entry,
+          chat_enabled:       sessionRow.chat_enabled ?? true,
+          hand_raise_enabled: sessionRow.hand_raise_enabled ?? true,
+        };
+      }
+
+      // ── Enforce Waiting Room / bans before handing out a token ───────────
+      // Never gates an admin/teacher — only ever applies to the students the
+      // host's own settings are meant to govern.
+      if (!isPrivileged && sessionRow) {
+        const { data: existingPart } = await serviceClient.from('class_participants')
+          .select('id, is_banned, join_request_status')
+          .eq('session_id', sessionRow.id).eq('student_id', user.id).maybeSingle();
+
+        const pendingResponse = (message: string) => new Response(JSON.stringify({
+          pending: true, session_id: sessionRow.id, message,
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+        if (existingPart?.is_banned) {
+          // Covers three cases with the same one flag: still waiting on a
+          // fresh Waiting Room request, a request the host already denied,
+          // or an outright ban by an admin/teacher — the message is the only
+          // thing that differs, the client just needs to know to keep them
+          // off the call either way.
+          return pendingResponse(
+            existingPart.join_request_status === 'denied'
+              ? 'The host declined your request to join.'
+              : 'Waiting for the host to let you in...'
+          );
+        }
+        if (!existingPart && sessionRow.waiting_room_enabled) {
+          await serviceClient.from('class_participants').insert({
+            session_id: sessionRow.id, student_id: user.id,
+            is_banned: true, join_request_status: 'pending', join_requested_at: new Date().toISOString(),
+          });
+          return pendingResponse('Waiting for the host to let you in...');
+        }
+      }
+
+      // Handle start_session action
+      //
+      // FIX: this used to ONLY check for a row already marked "live" — if none
+      // existed it always INSERTed a brand-new live_sessions row, even when a
+      // "scheduled" placeholder for this exact class already existed (created
+      // ahead of time via the admin's Schedule form, or by the recurring
+      // timetable). That left two disconnected rows behind: the original
+      // "scheduled" row (which some views later flip to "completed"/"done"
+      // purely because its time passed, without it ever actually being used)
+      // and a brand-new row that the real attendance_logs/manual_attendance
+      // rows for the class actually pointed to. Whoever opened the OLD
+      // scheduled row afterwards to check attendance saw "No students found"
+      // even though people genuinely attended — their data was just sitting
+      // under the other, hidden row.
+      //
+      // Now: reuse the nearest not-yet-started scheduled session for this
+      // subject (if one exists) by flipping IT to live, so the row the admin
+      // already sees in their Sessions list is the same row attendance gets
+      // recorded against. Only create a new row if no scheduled placeholder
+      // exists at all. Also set actual_start_time here (previously only set
+      // by the client-side "instant class" path) so every code path that
+      // creates/starts a session sorts consistently by the same column.
+      if (action === 'start_session' && isPrivileged) {
+        const { data: existingLive } = await serviceClient
+          .from('live_sessions').select('id')
+          .eq('subject_id', subject_id).eq('status', 'live').maybeSingle();
+
+        if (!existingLive) {
+          const nowIso = new Date().toISOString();
+          const { data: existingScheduled } = await serviceClient
+            .from('live_sessions').select('id')
+            .eq('subject_id', subject_id).eq('status', 'scheduled')
+            .order('scheduled_at', { ascending: true })
+            .limit(1).maybeSingle();
+
+          if (existingScheduled) {
+            await serviceClient.from('live_sessions')
+              .update({ status: 'live', started_at: nowIso, actual_start_time: nowIso })
+              .eq('id', existingScheduled.id);
+          } else {
+            await serviceClient.from('live_sessions').insert({
+              subject_id,
+              host_id:           user.id,
+              status:            'live',
+              started_at:        nowIso,
+              actual_start_time: nowIso,
+            });
+          }
+        }
+      }
+
+      // Log activity — fire-and-forget. This is pure bookkeeping and was
+      // previously `await`ed, adding a 4th sequential round trip before the
+      // token (and therefore the student's video/name/avatar) could appear.
+      serviceClient.from('activity_logs').insert({
+        user_id:     user.id,
+        action:      action === 'start_session' ? 'start_live_class' : 'join_live_class',
+        entity_type: 'subject',
+        entity_id:   subject_id,
+        metadata:    { room: finalRoomName, role: roleLabel },
+      }).then(({ error }) => { if (error) console.warn('[livekit-token] activity log failed:', error); });
+
+    } else {
+      return new Response(JSON.stringify({ error: 'subject_id or room_name required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ── Screen-share bot identity ────────────────────────────────────────
+    // A second, publish-only participant joining the SAME room as the
+    // caller's own separate identity — required because a native Android
+    // MediaProjection capture has to connect to LiveKit as its own
+    // participant (it can't share the WebView's existing JS SDK connection).
+    // Only allowed once the caller already resolved a valid room above
+    // (screen_share is only meaningful for the live-class flow, i.e.
+    // subject_id was provided, not the Musabaqah room_name flow).
+    let screenShareIdentity: string | null = null;
+    let screenShareName: string | null = null;
+    if (screen_share) {
+      if (!subject_id) {
+        return new Response(JSON.stringify({ error: 'screen_share requires subject_id' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      screenShareIdentity = `${user.id}::screen`;
+      screenShareName = `${participantName} (Screen)`;
+    }
+
+    // ── Build JWT ─────────────────────────────────────────────────────────
+    const enc = new TextEncoder();
+
+    // FIX: b64url for binary (signature) — unchanged
+    const b64url = (buf: ArrayBuffer) => {
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      for (const b of bytes) binary += String.fromCharCode(b);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+
+    // FIX: b64urlStr now uses TextEncoder so Arabic/Unicode names are handled
+    // correctly. The old btoa(str) would throw a DOMException for any character
+    // outside Latin-1 (e.g. Arabic full_name values), silently returning a 500
+    // and leaving the client stuck in the "Reconnecting..." loop.
+    const b64urlStr = (str: string) => {
+      const bytes = enc.encode(str);           // UTF-8 encode
+      let binary = '';
+      for (const b of bytes) binary += String.fromCharCode(b);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+
+    const now    = Math.floor(Date.now() / 1000);
+    const exp    = now + 28800; // 8 hours
+
+    const header = { alg: 'HS256', typ: 'JWT' };
+    const claims: any = screen_share
+      ? {
+          iss:  LIVEKIT_API_KEY,
+          sub:  screenShareIdentity,
+          nbf:  now,
+          exp,
+          jti:  `${screenShareIdentity}-${now}-${Math.random().toString(36).slice(2, 9)}`,
+          name: screenShareName,
+          video: {
+            roomJoin:       true,
+            room:           finalRoomName,
+            canPublish:     true,
+            canSubscribe:   false,
+            canPublishData: false,
+            canUpdateOwnMetadata: false,
+          },
+          metadata: JSON.stringify({ screen_share_identity: true, owner_user_id: user.id, name: screenShareName }),
+        }
+      : {
+          iss:  LIVEKIT_API_KEY,
+          sub:  user.id,
+          nbf:  now,
+          exp,
+          // FIX: jti must always be globally unique. Using user.id + timestamp +
+          // random suffix ensures no two tokens share the same jti, preventing
+          // potential replay-rejection by the LiveKit server.
+          jti:  `${user.id}-${now}-${Math.random().toString(36).slice(2, 9)}`,
+          name: participantName,
+          video: {
+            roomJoin:       true,
+            room:           finalRoomName,
+            canPublish:     true,
+            canSubscribe:   true,
+            canPublishData: true,
+            // Lets a participant push a fresh metadata JSON (name/avatar_url) for
+            // themselves mid-call — e.g. changing their profile picture — without
+            // needing to reconnect. Everyone else's client already listens for
+            // participantMetadataChanged and re-renders that tile automatically.
+            canUpdateOwnMetadata: true,
+          },
+          metadata: JSON.stringify({ role: roleLabel, user_id: user.id, name: participantName, avatar_url: profile?.avatar_url || null }),
+        };
+
+    if (!screen_share && isPrivileged) {
+      claims.video.roomAdmin  = true;
+      claims.video.roomRecord = true;
+    }
+
+    const headerB64 = b64urlStr(JSON.stringify(header));
+    const claimsB64 = b64urlStr(JSON.stringify(claims));
+    const sigInput  = `${headerB64}.${claimsB64}`;
+
+    const key = await crypto.subtle.importKey(
+      'raw', enc.encode(LIVEKIT_API_SECRET),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+    );
+    const sig   = await crypto.subtle.sign('HMAC', key, enc.encode(sigInput));
+    const token = `${sigInput}.${b64url(sig)}`;
+
+    return new Response(JSON.stringify({
+      token,
+      url:              LIVEKIT_URL,
+      room:             finalRoomName,
+      role:             roleLabel,
+      participant_name: participantName,
+      mute_on_entry:      sessionSettings.mute_on_entry,
+      chat_enabled:       sessionSettings.chat_enabled,
+      hand_raise_enabled: sessionSettings.hand_raise_enabled,
+    }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return new Response(JSON.stringify({ error: message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+  }
+});
