@@ -10,7 +10,7 @@
         • Fallback: old `level` TEXT === student's level or 'all'/null
     - Admins/teachers bypass all filters and see everything.
 */
-import { useState, useEffect, type CSSProperties, type ReactNode } from "react";
+import { useState, useEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -21,7 +21,7 @@ import {
   BookOpen, Play, Lock, ArrowLeft, CheckCircle, Circle, Clock,
   Video, FileText, ClipboardList, Megaphone, Calendar,
   ChevronRight, LayoutGrid, List, GraduationCap, Layers,
-  Settings, X, XCircle, RotateCcw,
+  Settings, X, XCircle, RotateCcw, Pencil, Check,
 } from "lucide-react";
 import SubjectRecordings    from "@/components/classroom/SubjectRecordings";
 import SubjectMaterials     from "@/components/classroom/SubjectMaterials";
@@ -450,6 +450,60 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
     (s: any) => subjectLevelMatch(s, studentLevel) && isSubjectVisible(s.id) && !isSubjectEnrolled(s.id)
   );
 
+  // ── In-place lesson editing (admin/teacher only) ──────────────────────────
+  // Lessons are rendered from lessons.interactive_html inside an iframe. The
+  // pencil turns the text blocks inside that iframe editable; Save writes the
+  // cleaned HTML back to the same column (RLS already allows admin + teacher).
+  const lessonFrameRef = useRef<HTMLIFrameElement>(null);
+  const [editingLesson, setEditingLesson] = useState(false);
+  const [savingLesson,  setSavingLesson]  = useState(false);
+  const [frameKey,      setFrameKey]      = useState(0);
+  const EDITABLE_SELECTOR = "h2, p, li, .e";
+
+  useEffect(() => { setEditingLesson(false); }, [activeLesson]);
+
+  const startLessonEdit = () => {
+    const doc = lessonFrameRef.current?.contentDocument;
+    if (!doc) return;
+    doc.body.querySelectorAll<HTMLElement>(EDITABLE_SELECTOR).forEach((el) => {
+      el.setAttribute("contenteditable", "true");
+      el.style.outline = "1px dashed #c9a84c";
+      el.style.outlineOffset = "2px";
+    });
+    setEditingLesson(true);
+  };
+
+  const cancelLessonEdit = () => {
+    setEditingLesson(false);
+    setFrameKey((k) => k + 1); // reload the iframe from the saved HTML
+  };
+
+  const saveLessonEdit = async (lessonId: string) => {
+    const doc = lessonFrameRef.current?.contentDocument;
+    if (!doc) return;
+    setSavingLesson(true);
+    doc.body.querySelectorAll<HTMLElement>("[contenteditable]").forEach((el) => {
+      el.removeAttribute("contenteditable");
+      el.style.outline = "";
+      el.style.outlineOffset = "";
+      if (!el.getAttribute("style")) el.removeAttribute("style");
+    });
+    const html = "<!DOCTYPE html>" + doc.documentElement.outerHTML;
+    const { error, count } = await supabase
+      .from("lessons")
+      .update({ interactive_html: html }, { count: "exact" })
+      .eq("id", lessonId);
+    setSavingLesson(false);
+    if (error || !count) {
+      toast({ title: t("Couldn't save changes", "تعذر حفظ التغييرات"), variant: "destructive" });
+      startLessonEdit();
+      return;
+    }
+    toast({ title: t("Lesson updated ✅", "تم تحديث الدرس ✅") });
+    setEditingLesson(false);
+    qc.invalidateQueries({ queryKey: ["subject-lessons"] });
+  };
+
   const markComplete = useMutation({
     mutationFn: async (lessonId: string) => {
       const { error } = await supabase
@@ -615,16 +669,38 @@ const LearningHub = ({ defaultTab = "courses" }: Props) => {
                   </div>
                 )}
               </div>
-              {done.has(activeL.id) && (
+              {done.has(activeL.id) && !editingLesson && (
                 <span style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, fontWeight:700, color:"#86efac", flexShrink:0 }}>
                   <CheckCircle style={{ width:14, height:14 }} />{t("Done","مكتمل")}
                 </span>
+              )}
+              {/* Edit controls — admin/teacher only, and only for static lesson pages (no <script>) */}
+              {isPrivileged && activeL.interactive_html && !/<script/i.test(activeL.interactive_html) && (
+                editingLesson ? (
+                  <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                    <button onClick={() => saveLessonEdit(activeL.id)} disabled={savingLesson} aria-label={t("Save","حفظ")}
+                      style={{ display:"flex", alignItems:"center", gap:5, color:G, background:GOLD, border:"none", borderRadius:20, padding:"7px 12px", cursor:"pointer", fontSize:12, fontWeight:700 }}>
+                      <Check style={{ width:13, height:13 }} />{savingLesson ? "…" : t("Save","حفظ")}
+                    </button>
+                    <button onClick={cancelLessonEdit} disabled={savingLesson} aria-label={t("Cancel","إلغاء")}
+                      style={{ display:"flex", alignItems:"center", color:"#fff", background:"rgba(255,255,255,.14)", border:"none", borderRadius:20, padding:"7px 10px", cursor:"pointer" }}>
+                      <X style={{ width:14, height:14 }} />
+                    </button>
+                  </div>
+                ) : (
+                  <button onClick={startLessonEdit} aria-label={t("Edit lesson","تعديل الدرس")}
+                    style={{ display:"flex", alignItems:"center", color:"#fff", background:"rgba(255,255,255,.14)", border:"none", borderRadius:20, padding:"8px 10px", cursor:"pointer", flexShrink:0 }}>
+                    <Pencil style={{ width:14, height:14 }} />
+                  </button>
+                )
               )}
             </div>
 
             <div style={{ flex:1, overflowY:"auto", background:"#fbfdfc" }}>
               {activeL.interactive_html ? (
                 <iframe
+                  key={`${activeL.id}-${frameKey}`}
+                  ref={lessonFrameRef}
                   srcDoc={activeL.interactive_html}
                   // allow-same-origin is required for the mic (speech recognition) to
                   // get a real, non-opaque origin — without it, getUserMedia is denied
