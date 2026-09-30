@@ -10,6 +10,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
+import { SURAHS } from "@/components/hifdh/surahData";
+import { hpUnit, hpFromUnit, hpUnitsFor, hpUnitsOf, hpPortionFromUnits, hpPortionLabel, HP_AMOUNTS } from "@/lib/hifdhPortion";
 import { Loader2, Video, Check, RotateCcw, ChevronLeft, ChevronRight, BookOpen, ClipboardCheck } from "lucide-react";
 
 const tpDb = supabase as any;
@@ -95,7 +97,7 @@ export default function TeacherHifdhProgram() {
   const [reviews, setReviews] = useState<Record<string, any>>({});
   const [logs, setLogs] = useState<Record<string, { days: number; avg: number | null }>>({});
   const [names, setNames] = useState<Record<string, string>>({});
-  const [edit, setEdit] = useState<Record<string, { from: number; to: number }>>({});
+  const [edit, setEdit] = useState<Record<string, { start: number; units: number }>>({});
   const [when, setWhen] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
 
@@ -163,19 +165,27 @@ export default function TeacherHifdhProgram() {
 
   const taskFor = (sid: string, s: number) => tasks.find((t) => t.student_id === sid && t.slot === s);
 
-  // Suggested portion for a student in the chosen session slot.
-  const suggest = (sid: string, s: number) => {
+  // Suggested portion for a student in the chosen session: one memorization day = the level's daily pages
+  // (½ page → half a page, 1 page → one page …), starting right after where the student is.
+  const suggest = (sid: string, s: number): { start: number; units: number } => {
     const existing = taskFor(sid, s);
-    if (existing) return { from: existing.page_from, to: existing.page_to };
+    if (existing) {
+      const u = hpUnitsOf(existing);
+      return { start: u.start, units: u.end - u.start + 1 };
+    }
     const prog = program[sid];
-    const daily = Number(levels[prog?.level_id]?.daily_pages ?? 0.5);
-    const n = Math.max(1, Math.ceil((daily * 7) / 2));
+    const units = hpUnitsFor(levels[prog?.level_id]?.daily_pages ?? 0.5);
+    const base = hpUnit(prog?.current_page ?? 1, prog?.current_half ?? 0);
     const first = taskFor(sid, 1);
-    const start = s === 2 && first ? first.page_to + 1 : (prog?.current_page ?? 1) + (s === 2 ? n : 0);
-    const from = Math.min(604, start);
-    return { from, to: Math.min(604, from + n - 1) };
+    const start = s === 2 ? (first ? hpUnitsOf(first).end + 1 : base + units) : base;
+    return { start, units };
   };
   const rangeOf = (sid: string) => edit[`${sid}:${slot}`] || suggest(sid, slot);
+  const surahTag = (page: number) => {
+    let hit: any = SURAHS[0];
+    for (const sr of SURAHS as any[]) { if (sr.page <= page) hit = sr; else break; }
+    return hit.arabicName || hit.nameAr;
+  };
 
   const guard = async (fn: () => Promise<any>, okMsg?: string) => {
     setBusy(true);
@@ -216,8 +226,7 @@ export default function TeacherHifdhProgram() {
   };
 
   const mark = (m: any, result: "passed" | "repeat") => {
-    const r = rangeOf(m.student_id);
-    if (!r.from || !r.to || r.to < r.from) return toast({ title: "Check the page range", variant: "destructive" });
+    const r = hpPortionFromUnits(rangeOf(m.student_id).start, rangeOf(m.student_id).units);
     const existing = taskFor(m.student_id, slot);
     if (existing && ["submitted", "passed"].includes(existing.status)) {
       return toast({ title: "Already submitted", description: "This portion has already been memorized and submitted.", variant: "destructive" });
@@ -225,13 +234,13 @@ export default function TeacherHifdhProgram() {
     const cleared = result === "passed";
     guard(async () => {
       const up = await tpDb.from("hifdh_memorization_tasks").upsert({
-        student_id: m.student_id, week_start: week, slot, page_from: r.from, page_to: r.to,
+        student_id: m.student_id, week_start: week, slot, ...r,
         status: cleared ? "read_cleared" : "pending",
         read_cleared_at: cleared ? new Date().toISOString() : null, read_cleared_by: cleared ? user!.id : null,
       }, { onConflict: "student_id,week_start,slot" });
       if (up.error) return up;
       return tpDb.from("hifdh_read_group_members").update({
-        read_status: result, marked_by: user!.id, marked_at: new Date().toISOString(), page_from: r.from, page_to: r.to,
+        read_status: result, marked_by: user!.id, marked_at: new Date().toISOString(), ...r,
       }).eq("id", m.id);
     });
   };
@@ -302,13 +311,36 @@ export default function TeacherHifdhProgram() {
                       <div style={{ fontWeight: 700, fontSize: 14, color: TP_INK }}>{nameOf(m.student_id)}</div>
                       <TpPill text={lb.text} color={lb.color} />
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "8px 0", fontSize: 12, color: TP_MUTED }}>
-                      Pages
-                      <TpNum value={r.from} disabled={!!locked} min={1} max={604}
-                        onChange={(e) => setEdit({ ...edit, [`${m.student_id}:${slot}`]: { ...r, from: Number(e.target.value) } })} />
-                      to
-                      <TpNum value={r.to} disabled={!!locked} min={1} max={604}
-                        onChange={(e) => setEdit({ ...edit, [`${m.student_id}:${slot}`]: { ...r, to: Number(e.target.value) } })} />
+                    <div style={{ margin: "8px 0", fontSize: 12, color: TP_MUTED }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                        <div>
+                          <div style={{ marginBottom: 3 }}>Starts at page</div>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <TpNum value={hpFromUnit(r.start).page} disabled={!!locked} min={1} max={604}
+                              onChange={(e) => setEdit({ ...edit, [`${m.student_id}:${slot}`]: { ...r, start: hpUnit(Math.min(604, Math.max(1, Number(e.target.value) || 1)), hpFromUnit(r.start).half) } })} />
+                            <select disabled={!!locked} value={hpFromUnit(r.start).half}
+                              onChange={(e) => setEdit({ ...edit, [`${m.student_id}:${slot}`]: { ...r, start: hpUnit(hpFromUnit(r.start).page, Number(e.target.value)) } })}
+                              style={{ border: `1px solid ${TP_LINE}`, borderRadius: 8, fontSize: 12, padding: "6px 4px", background: "#fff", flex: 1, minWidth: 0 }}>
+                              <option value={0}>1st half</option>
+                              <option value={1}>2nd half</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{ marginBottom: 3 }}>Amount</div>
+                          <select disabled={!!locked} value={r.units}
+                            onChange={(e) => setEdit({ ...edit, [`${m.student_id}:${slot}`]: { ...r, units: Number(e.target.value) } })}
+                            style={{ border: `1px solid ${TP_LINE}`, borderRadius: 8, fontSize: 12, padding: "7px 4px", background: "#fff", width: "100%" }}>
+                            {(HP_AMOUNTS.some((a) => a.units === r.units) ? HP_AMOUNTS : [...HP_AMOUNTS, { units: r.units, label: `${r.units / 2} pages` }]).map((a) => (
+                              <option key={a.units} value={a.units}>{a.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 8, color: TP_INK, fontWeight: 700, fontSize: 13 }}>
+                        {hpPortionLabel(hpPortionFromUnits(r.start, r.units))}
+                        <span style={{ fontFamily: "'Amiri Quran','Amiri',serif", fontSize: 15, fontWeight: 400, color: TP_MUTED }}> · {surahTag(hpFromUnit(r.start).page)}</span>
+                      </div>
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
                       <TpBtn small color={TP_OK} disabled={busy || !!locked} onClick={() => mark(m, "passed")}><Check size={14} /> Read correctly</TpBtn>
@@ -360,7 +392,7 @@ export default function TeacherHifdhProgram() {
               <TpPill text={`Revision: ${lg?.days ?? 0} day${(lg?.days ?? 0) === 1 ? "" : "s"}${lg?.avg != null ? ` · avg ${lg.avg}%` : ""}`} color={TP_GREEN} />
               {tk.map((t) => (
                 <TpPill key={t.id} color={TP_TASK[t.status]?.color || TP_MUTED}
-                  text={`S${t.slot} p${t.page_from}${t.page_to !== t.page_from ? `–${t.page_to}` : ""} · ${TP_TASK[t.status]?.text || t.status}`} />
+                  text={`S${t.slot} · ${hpPortionLabel(t)} · ${TP_TASK[t.status]?.text || t.status}`} />
               ))}
               {tk.length === 0 && <TpPill text="No memorization portions" color={TP_MUTED} />}
             </div>
