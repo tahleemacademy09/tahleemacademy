@@ -202,11 +202,11 @@ const mvClean = (raw: string): string | null => {
 
 type MvBox = { x: number; y: number; w: number; h: number };
 
-/** Render the SVG to a small canvas and find the true extent of the dark ink (ignores hidden/blank parts). */
-const mvMeasureInk = (svgText: string, vb: MvBox): Promise<MvBox | null> =>
+/** Render the SVG to a small canvas: find the true extent of the dark ink and sample the page's own background colour. */
+const mvMeasureInk = (svgText: string, vb: MvBox): Promise<{ box: MvBox | null; bg: string | null }> =>
   new Promise((resolve) => {
     let url = "";
-    const done = (v: MvBox | null) => { if (url) URL.revokeObjectURL(url); resolve(v); };
+    const done = (box: MvBox | null, bg: string | null) => { if (url) URL.revokeObjectURL(url); resolve({ box, bg }); };
     try {
       url = URL.createObjectURL(new Blob([svgText], { type: "image/svg+xml" }));
       const img = new Image();
@@ -218,37 +218,46 @@ const mvMeasureInk = (svgText: string, vb: MvBox): Promise<MvBox | null> =>
           c.width = W; c.height = H;
           const ctx = c.getContext("2d", { willReadFrequently: true } as any) as CanvasRenderingContext2D;
           ctx.drawImage(img, 0, 0, W, H);
+          const px = ctx.getImageData(3, 3, 1, 1).data;
+          const bg = px[3] > 200 ? `rgb(${px[0]},${px[1]},${px[2]})` : null;
           const d = ctx.getImageData(0, 0, W, H).data;
           let minX = W, minY = H, maxX = -1, maxY = -1;
           for (let y = 0; y < H; y++) {
             for (let x = 0; x < W; x++) {
-              const i = (y * W + x) * 4;
-              if (d[i + 3] > 80 && (d[i] + d[i + 1] + d[i + 2]) / 3 < 150) {
+              const k = (y * W + x) * 4;
+              if (d[k + 3] > 80 && (d[k] + d[k + 1] + d[k + 2]) / 3 < 150) {
                 if (x < minX) minX = x; if (x > maxX) maxX = x;
                 if (y < minY) minY = y; if (y > maxY) maxY = y;
               }
             }
           }
-          if (maxX < 0) return done(null);
+          if (maxX < 0) return done(null, bg);
           done({
             x: vb.x + (minX / W) * vb.w, y: vb.y + (minY / H) * vb.h,
             w: ((maxX - minX + 1) / W) * vb.w, h: ((maxY - minY + 1) / H) * vb.h,
-          });
-        } catch { done(null); }
+          }, bg);
+        } catch { done(null, null); }
       };
-      img.onerror = () => done(null);
+      img.onerror = () => done(null, null);
       img.src = url;
-    } catch { done(null); }
+    } catch { done(null, null); }
   });
 
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
-export default function MushafPageView({ page, fontSize = 26, halves, fitHeight }: { page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number }) {
+export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, onBackground }: {
+  page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
+  /** no card, shadow or rounded corners — the page blends into whatever is behind it */
+  seamless?: boolean;
+  /** called with the page's own background colour so the surrounding screen can use the same one */
+  onBackground?: (css: string) => void;
+}) {
   const safe = Math.min(604, Math.max(1, Math.round(Number(page) || 1)));
   const src = `${MV_CDN}/${String(safe).padStart(3, "0")}.svg`;
   const hostRef = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<"loading" | "inline" | "img" | "text">("loading");
   const [imgReady, setImgReady] = useState(false);
   const [aspect, setAspect] = useState<number | null>(null);
+  const [bg, setBg] = useState("#fffdf6");
   const [winH, setWinH] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 800));
   useEffect(() => {
     const on = () => setWinH(window.innerHeight);
@@ -291,8 +300,10 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight 
           setAspect((b.w + 2 * pad) / (b.h + 2 * pad));
         };
         (async () => {
-          let box: MvBox | null = vb ? await mvMeasureInk(clean, vb) : null; // real dark-ink extent
+          const m = vb ? await mvMeasureInk(clean, vb) : { box: null, bg: null }; // real dark-ink extent + page colour
+          let box: MvBox | null = m.box;
           if (!alive) return;
+          if (m.bg) { setBg(m.bg); onBackground?.(m.bg); }
           if (!box) {
             try { const b = svg.getBBox(); if (b.width > 10 && b.height > 10) box = { x: b.x, y: b.y, w: b.width, h: b.height }; } catch { /* ignore */ }
           }
@@ -313,11 +324,11 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight 
   const zoom = Math.min(1.8, Math.max(0.8, fontSize / 26)); // A− / A+ zooms the page (26 = fit to width)
   const shown = mode === "inline" || (mode === "img" && imgReady);
   const fitW = fitHeight && aspect && zoom <= 1 ? Math.floor(Math.max(200, winH - fitHeight) * aspect * zoom) : undefined;
-  const fade = "rgba(253,248,238,.86)";
+  const fade = bg.startsWith("rgb(") ? bg.replace("rgb(", "rgba(").replace(")", ",.88)") : "rgba(253,248,238,.88)";
 
   return (
-    <div style={{ margin: "8px auto 12px", width: "100%", maxWidth: fitW }}>
-      <div style={{ overflowX: zoom > 1 ? "auto" : "visible", borderRadius: 6, boxShadow: "0 4px 24px rgba(0,0,0,.14)", background: "#fffdf6" }}>
+    <div style={{ margin: seamless ? "0 auto" : "8px auto 12px", width: "100%", maxWidth: fitW }}>
+      <div style={{ overflowX: zoom > 1 ? "auto" : "visible", borderRadius: seamless ? 0 : 6, boxShadow: seamless ? "none" : "0 4px 24px rgba(0,0,0,.14)", background: bg }}>
         <div style={{ position: "relative", width: `${zoom * 100}%`, minHeight: shown ? undefined : 420 }}>
           {!shown && (
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
