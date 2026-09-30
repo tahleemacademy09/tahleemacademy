@@ -11,7 +11,7 @@ import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import MushafPageView from "@/components/hifdh/MushafPageView";
 import { hpPortionLabel, hpPagesOf, hpSegmentFor } from "@/lib/hifdhPortion";
-import { Loader2, BookOpen, Repeat, Video, CheckCircle2, Clock, AlertTriangle, Lock, Flame, BarChart3, Layers } from "lucide-react";
+import { Loader2, BookOpen, Repeat, Video, CheckCircle2, Clock, AlertTriangle, Lock, Flame, BarChart3, Layers, ChevronUp, ChevronDown } from "lucide-react";
 
 const hhDb = supabase as any;
 
@@ -68,6 +68,13 @@ const HhStat = ({ icon, value, label }: { icon: React.ReactNode; value: React.Re
   </div>
 );
 
+const HhFocusBtn = ({ onClick }: { onClick: () => void }) => (
+  <button onClick={onClick} aria-label="Focus on the page" style={{
+    display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${HH_LINE}`, background: "#fff", borderRadius: 99,
+    padding: "5px 10px 5px 8px", fontSize: 12, fontWeight: 700, color: HH_INK, cursor: "pointer",
+  }}><ChevronUp size={16} /> Focus</button>
+);
+
 /** Page chips side by side, like the D1…D7 circles on the revision screen */
 const HhPageChips = ({ pages, active, onPick }: { pages: number[]; active: number; onPick: (p: number) => void }) => (
   <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "4px 2px 10px" }}>
@@ -108,6 +115,7 @@ export default function HifdhProgramHome() {
   const [selSlot, setSelSlot] = useState<number>(1);
   const [selPage, setSelPage] = useState<number | null>(null);
   const [raPage, setRaPage] = useState<number | null>(null);
+  const [focus, setFocus] = useState<null | "memorize" | "readalong">(null);
 
   const load = useCallback(async () => {
     if (!user?.id) return;
@@ -299,6 +307,10 @@ export default function HifdhProgramHome() {
                 </div>
               ) : (
                 <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: "12px 10px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 4px 8px" }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: HH_MUTED }}>{hpPortionLabel(activeTask)}</span>
+                    <HhFocusBtn onClick={() => setFocus("memorize")} />
+                  </div>
                   {activePages.length > 1 && <HhPageChips pages={activePages} active={shownPage!} onPick={setSelPage} />}
                   {shownPage && <MushafPageView page={shownPage} halves={hpSegmentFor(shownPage, activeTask)} />}
                   {activeTask.status === "read_cleared" && (
@@ -353,7 +365,10 @@ export default function HifdhProgramHome() {
 
               {raPages.length > 0 && (
                 <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: "12px 10px" }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: HH_MUTED, padding: "0 4px 8px" }}>Portion for the read-along · {hpPortionLabel(member)}</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 4px 8px" }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: HH_MUTED }}>Read-along · {hpPortionLabel(member)}</span>
+                    <HhFocusBtn onClick={() => setFocus("readalong")} />
+                  </div>
                   {raPages.length > 1 && <HhPageChips pages={raPages} active={raShown!} onPick={setRaPage} />}
                   {raShown && <MushafPageView page={raShown} halves={hpSegmentFor(raShown, member)} />}
                 </div>
@@ -381,6 +396,43 @@ export default function HifdhProgramHome() {
           )}
         </div>
       </div>
+
+      {/* Focus mode — only the Quran page, full screen */}
+      {focus && (() => {
+        const isMem = focus === "memorize";
+        const portion = isMem ? activeTask : member;
+        const pages = isMem ? activePages : raPages;
+        const cur = isMem ? shownPage : raShown;
+        const pick = isMem ? setSelPage : setRaPage;
+        if (!portion || !cur) return null;
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 250, background: HH_BG, display: "flex", flexDirection: "column" }}>
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "#fff", borderBottom: `1px solid ${HH_LINE}`,
+              padding: "10px 12px", paddingTop: "calc(10px + env(safe-area-inset-top, 0px))",
+            }}>
+              <button onClick={() => setFocus(null)} aria-label="Show details" style={{
+                display: "inline-flex", alignItems: "center", gap: 4, border: `1px solid ${HH_LINE}`, background: "#fff", borderRadius: 99,
+                padding: "6px 12px 6px 8px", fontSize: 12, fontWeight: 700, color: HH_INK, cursor: "pointer",
+              }}><ChevronDown size={16} /> Details</button>
+              <div style={{ fontSize: 13, fontWeight: 800, color: HH_INK, textAlign: "right" }}>{hpPortionLabel(portion)}</div>
+            </div>
+            {pages.length > 1 && (
+              <div style={{ background: "#fff", padding: "6px 12px 0", borderBottom: `1px solid ${HH_LINE}` }}>
+                <HhPageChips pages={pages} active={cur} onPick={pick} />
+              </div>
+            )}
+            <div style={{ flex: 1, overflowY: "auto", padding: "6px 6px 16px" }}>
+              <MushafPageView page={cur} fontSize={24} halves={hpSegmentFor(cur, portion)} />
+            </div>
+            {isMem && activeTask?.status === "read_cleared" && (
+              <div style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", background: "#fff", borderTop: `1px solid ${HH_LINE}` }}>
+                <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>I've memorized this — submit</HhBtn>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
