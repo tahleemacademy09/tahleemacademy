@@ -116,6 +116,7 @@ export default function HifdhProgramHome() {
   const [selPage, setSelPage] = useState<number | null>(null);
   const [raPage, setRaPage] = useState<number | null>(null);
   const [focus, setFocus] = useState<null | "memorize" | "readalong">(null);
+  const [pageBg, setPageBg] = useState("#fffdf6");
   const [qSize, setQSize] = useState<number>(() => {
     try { return Number(localStorage.getItem("hifdh_qsize")) || 26; } catch { return 26; }
   });
@@ -414,9 +415,9 @@ export default function HifdhProgramHome() {
         const pick = isMem ? setSelPage : setRaPage;
         if (!portion || !cur) return null;
         return (
-          <div style={{ position: "fixed", inset: 0, zIndex: 250, background: HH_BG, display: "flex", flexDirection: "column" }}>
+          <div style={{ position: "fixed", inset: 0, zIndex: 250, background: pageBg, display: "flex", flexDirection: "column" }}>
             <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: "#fff", borderBottom: `1px solid ${HH_LINE}`,
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, background: pageBg, borderBottom: "1px solid rgba(0,0,0,.06)",
               padding: "10px 12px", paddingTop: "calc(10px + env(safe-area-inset-top, 0px))",
             }}>
               <button onClick={() => setFocus(null)} aria-label="Show details" style={{
@@ -430,7 +431,7 @@ export default function HifdhProgramHome() {
               </div>
             </div>
             {pages.length > 1 && (
-              <div style={{ background: "#fff", padding: "6px 12px 0", borderBottom: `1px solid ${HH_LINE}` }}>
+              <div style={{ background: pageBg, padding: "6px 12px 0", borderBottom: "1px solid rgba(0,0,0,.06)" }}>
                 <HhPageChips pages={pages} active={cur} onPick={pick} />
               </div>
             )}
@@ -441,11 +442,13 @@ export default function HifdhProgramHome() {
                   fontSize={qSize}
                   halves={hpSegmentFor(cur, portion)}
                   fitHeight={64 + (pages.length > 1 ? 64 : 0) + (isMem && activeTask?.status === "read_cleared" ? 84 : 0) + 24}
+                  seamless
+                  onBackground={setPageBg}
                 />
               </div>
             </div>
             {isMem && activeTask?.status === "read_cleared" && (
-              <div style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", background: "#fff", borderTop: `1px solid ${HH_LINE}` }}>
+              <div style={{ padding: 12, paddingBottom: "calc(12px + env(safe-area-inset-bottom, 0px))", background: pageBg, borderTop: "1px solid rgba(0,0,0,.06)" }}>
                 <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>I've memorized this — submit</HhBtn>
               </div>
             )}
