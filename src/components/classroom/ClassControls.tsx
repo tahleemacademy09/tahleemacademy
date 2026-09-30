@@ -57,6 +57,10 @@ interface ClassControlsProps {
       the admin reverts it from the three-dot menu. */
   camLocked?:            boolean;
   collapsed?:            boolean;
+  /** "Hand raising" Class Setting from the lobby — when explicitly false for a
+      non-privileged participant, the Raise Hand control is hidden. Defaults to
+      true so every existing caller that doesn't pass it keeps working as-is. */
+  handRaiseEnabled?:     boolean;
 }
 
 const REACTION_EMOJIS = ["👏", "🤲", "❤️", "😂", "🌟", "👍"];
@@ -345,6 +349,7 @@ const SettingsModal = ({ onClose, room, initialTab }: { onClose: () => void; roo
 const ClassControls = ({
   sessionId, onToggleChat, onToggleParticipants, onEndClass, onLeaveClass,
   chatUnread, onLaunchPoll, onLaunchQuiz, isHostOverride, extraMenuItems, camLocked, collapsed,
+  handRaiseEnabled = true,
 }: ClassControlsProps) => {
   const room = useRoomContext();
   const { user, hasRole } = useAuth();
@@ -538,23 +543,16 @@ const ClassControls = ({
     };
   }, [room, setCtxMicEnabled, setCtxCamEnabled]);
 
-  // ── Join / leave sound + toast — heard/seen by everyone already in the room ──
+  // ── Join / leave sound — heard by everyone already in the room ────────
   // Fires on every OTHER participant's own Room instance whenever someone
-  // else connects/disconnects, so each person's browser plays the chime and
-  // shows a toast with that person's name locally — no server broadcast
-  // needed. (The local participant's own join/leave chime, for themselves,
-  // is played separately in ClassroomView right when THEY connect/disconnect —
-  // and doesn't get a toast, since you already know you joined/left.)
+  // else connects/disconnects, so each person's browser plays the chime
+  // locally the moment anyone joins or leaves — no server broadcast needed.
+  // (The local participant's own join/leave chime, for themselves, is
+  // played separately in ClassroomView right when THEY connect/disconnect.)
   useEffect(() => {
     if (!room) return;
-    const onJoin = (p: any) => {
-      try { playJoinSound(); } catch {}
-      toast({ title: `👋 ${p?.name || p?.identity || "Someone"} joined` });
-    };
-    const onLeave = (p: any) => {
-      try { playLeaveSound(); } catch {}
-      toast({ title: `${p?.name || p?.identity || "Someone"} left` });
-    };
+    const onJoin = () => { try { playJoinSound(); } catch {} };
+    const onLeave = () => { try { playLeaveSound(); } catch {} };
     room.on(RoomEvent.ParticipantConnected, onJoin);
     room.on(RoomEvent.ParticipantDisconnected, onLeave);
     return () => {
@@ -971,8 +969,9 @@ const ClassControls = ({
               </div>
               <div style={{height:1,background:"rgba(255,255,255,.06)",margin:"0 14px"}}/>
 
-              {/* ── Raise Hand (students only) ── */}
-              {!isPrivileged && (
+              {/* ── Raise Hand (students only, and only when the host's "Hand
+                   raising" Class Setting is on) ── */}
+              {!isPrivileged && handRaiseEnabled && (
                 <div style={{padding:"10px 14px"}}>
                   <button
                     onClick={toggleHand}
@@ -997,7 +996,7 @@ const ClassControls = ({
                   </button>
                 </div>
               )}
-              {!isPrivileged && <div style={{height:1,background:"rgba(255,255,255,.06)",margin:"0 14px"}}/>}
+              {!isPrivileged && handRaiseEnabled && <div style={{height:1,background:"rgba(255,255,255,.06)",margin:"0 14px"}}/>}
 
               {/* ── Host tools ──
                    Launch Poll and Live Quiz removed from here — decluttered per request.

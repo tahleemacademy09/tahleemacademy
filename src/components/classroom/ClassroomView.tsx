@@ -147,7 +147,6 @@ import {
   ClassroomAdminContext,
   JoinRequestBanner,
   CameraUnmirrorEngine,
-  CameraEndedWatchdog,
 } from "./classroomComponents";
 
 export * from "./classroomComponents";
@@ -232,6 +231,16 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   /* ── lobby media choices ── */
   const[lobbyMic,setLobbyMic]=useState(false); // OFF by default — user must explicitly enable
   const[lobbyCam,setLobbyCam]=useState(false); // OFF by default — user must explicitly enable
+  // ── Class Settings from the lobby (Waiting Room / Mute on entry / Chat /
+  // Hand raising) — these used to be written to live_sessions and never read
+  // back anywhere, so every toggle was purely decorative. livekit-token now
+  // enforces Waiting Room itself (returns {pending:true} instead of a token)
+  // and echoes the rest back on every successful token response; this holds
+  // that echoed copy so the rest of the UI (chat tabs, hand-raise button,
+  // initial mic state below) can actually honor it. Defaults match the
+  // column defaults everyone had before this was wired up, so nothing
+  // changes for a session whose settings we haven't heard back for yet.
+  const[sessionSettings,setSessionSettings]=useState({mute_on_entry:false,chat_enabled:true,hand_raise_enabled:true});
   // FIX ("lobby mic/cam choice doesn't reflect in class"): MediaAutoPublish used to decide
   // whether this was a first-join (apply lobby choice) vs a reconnect (apply last-known toggle
   // state) by reading `hasConnected` from LiveClassContext. But connect() below calls
@@ -349,6 +358,14 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[sessionId,phase,user?.id]);
   const[sideTab,setSideTab]=useState<"chat"|"polls">("chat");const[showEnd,setShowEnd]=useState(false);
+  // "Enable chat" Class Setting: only gates non-privileged participants — an
+  // admin/teacher can always chat with their own class regardless of the
+  // toggle they set for students. If a student is sitting on the Chat tab
+  // when this turns out to be off (or the host flips it off mid-class, once
+  // sessionSettings updates), bump them to Polls instead of leaving a
+  // disabled tab open.
+  const chatAllowed=isPrivileged||sessionSettings.chat_enabled;
+  useEffect(()=>{if(!chatAllowed&&sideTab==="chat")setSideTab("polls");},[chatAllowed,sideTab]);
   // FIX ("student can exit with a single accidental tap"): the Leave button
   // (both the phone-icon button and its dropdown twin) called leaveSession()
   // directly with zero confirmation — one mis-tap dropped a student straight
@@ -546,10 +563,10 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
   const[summaryOpen,setSummaryOpen]=useState(false);
   const[sessionSummary,setSessionSummary]=useState<any>(null);
   // FIX BUG 6: prefetch includes a fetchedAt timestamp so stale tokens can be detected
-  const prefetch=useRef<{token:string;url:string;fetchedAt:number}|null>(null);
+  const prefetch=useRef<{token:string;url:string;fetchedAt:number;mute_on_entry?:boolean;chat_enabled?:boolean;hand_raise_enabled?:boolean}|null>(null);
   useEffect(()=>{
     // Initial prefetch
-    const doFetch=()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now()};}).catch(()=>{});};
+    const doFetch=()=>{supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}}).then(({data})=>{if(data?.token&&data?.url)prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now(),mute_on_entry:data.mute_on_entry,chat_enabled:data.chat_enabled,hand_raise_enabled:data.hand_raise_enabled};}).catch(()=>{});};
     doFetch();
     // Feature 8: Re-fetch every 2.5 min so lobby users never have a stale token
     const iv=setInterval(()=>{if(phase==="lobby")doFetch();},2.5*60_000);
@@ -638,15 +655,25 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
       const isFresh=prefetch.current&&(Date.now()-prefetch.current.fetchedAt)<3*60_000;
       let tk=isFresh?prefetch.current!.token:null;
       let url=isFresh?prefetch.current!.url:null;
+      // Class Settings echoed back alongside the token — see the prefetch/livekit-token
+      // comments above for why these two are the only places this ever gets set.
+      let newSettings={mute_on_entry:false,chat_enabled:true,hand_raise_enabled:true};
+      if(isFresh)newSettings={
+        mute_on_entry:!!prefetch.current!.mute_on_entry,
+        chat_enabled:prefetch.current!.chat_enabled??true,
+        hand_raise_enabled:prefetch.current!.hand_raise_enabled??true,
+      };
       prefetch.current=null; // always clear after reading so Try Again fetches a new token
       if(!tk||!url){
         const{data,error:e}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action}});
         if(e)throw e;
-        // WAITING-ROOM FLOW: a host removed-and-blocked this student earlier.
-        // Instead of a hard error, livekit-token now returns {pending:true}
-        // and records the request server-side so the host's Participants
-        // panel can show an Admit/Deny prompt. Show a "waiting for host"
-        // screen here and poll class_participants until it changes.
+        // WAITING-ROOM FLOW: either the host has Waiting Room enabled for this
+        // class and this is this student's first join attempt, or an admin/
+        // teacher removed-and-blocked this student earlier. Either way,
+        // livekit-token returns {pending:true} and records the request
+        // server-side so the host's JoinRequestBanner can show an Admit/Deny
+        // prompt. Show a "waiting for host" screen here and poll
+        // class_participants until it changes.
         if(data?.pending){
           setLoading(false);
           setWaitingDenied(false);
@@ -657,8 +684,20 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         }
         if(data?.error)throw new Error(data.error);
         tk=data.token;url=data.url;
+        newSettings={
+          mute_on_entry:!!data.mute_on_entry,
+          chat_enabled:data.chat_enabled??true,
+          hand_raise_enabled:data.hand_raise_enabled??true,
+        };
       }
       setToken(tk!);setWsUrl(url!);
+      setSessionSettings(newSettings);
+      // "Mute on entry": force the initial mic publish off for a non-privileged
+      // joiner, regardless of what they picked in the lobby — same pattern as
+      // camLocked's forced-audio-only further down, just applied once up front
+      // instead of broadcast live. An admin/teacher is never muted by their
+      // own class's setting.
+      if(newSettings.mute_on_entry&&!isPrivileged)setLobbyMic(false);
 
       // FIX ("takes a while before showing my full details"): flip to the live
       // phase — which is what actually tells <LiveKitRoom> to connect — the
@@ -797,10 +836,21 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
     await new Promise(r=>setTimeout(r,backoffMs));
     try{
       const{data}=await supabase.functions.invoke("livekit-token",{body:{subject_id:subject.id,action:isPrivileged?"start_session":"join"}});
-      // Banned from this specific session by an admin/teacher — don't burn
-      // through the retry budget, the answer won't change until they're
-      // unbanned. Drop straight to the lobby with the real reason instead of
-      // a generic "connection lost" after ~90s of pointless retries.
+      // Banned from this specific session by an admin/teacher (or Waiting Room
+      // caught them again after a drop) — don't burn through the retry budget,
+      // the answer won't change until the host responds. Drop straight to the
+      // waiting screen instead of a generic "connection lost" after ~90s of
+      // pointless retries.
+      if(data?.pending){
+        isReconnectingRef.current=false;
+        setReconnecting(false);
+        setWaitingDenied(false);
+        setWaitingMessage(data.message||"Waiting for the host to respond...");
+        waitingSessionIdRef.current=data.session_id||null;
+        setPhase("waiting");
+        setHasConnected(false);
+        return;
+      }
       if(data?.error&&/removed from this class/i.test(data.error)){
         isReconnectingRef.current=false;
         setReconnecting(false);
@@ -810,7 +860,8 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         return;
       }
       if(data?.token&&data?.url){
-        prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now()};
+        prefetch.current={token:data.token,url:data.url,fetchedAt:Date.now(),mute_on_entry:data.mute_on_entry,chat_enabled:data.chat_enabled,hand_raise_enabled:data.hand_raise_enabled};
+        setSessionSettings({mute_on_entry:!!data.mute_on_entry,chat_enabled:data.chat_enabled??true,hand_raise_enabled:data.hand_raise_enabled??true});
         autoReconnectCountRef.current+=1;  // ref — won't trigger useCallback recreation
         setToken(data.token);
         setWsUrl(data.url);
@@ -994,12 +1045,17 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
         connect("join");
       }else if(data.join_request_status==="denied"){
         setWaitingDenied(true);
-        setWaitingMessage("The host declined your request to rejoin.");
+        setWaitingMessage("The host declined your request to join.");
       }
     };
     const ch=supabase.channel(`join-request-${sid}-${user.id}`)
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"class_participants",filter:`session_id=eq.${sid}`},check)
       .subscribe();
+    // Run once immediately too — the row may already reflect admit/deny from
+    // before this screen even mounted (e.g. a previously-denied request, or
+    // an admit that landed while we were still fetching the token), instead
+    // of only finding out on the next realtime event or the 5s backstop poll.
+    check();
     // Realtime can occasionally miss an event on a flaky connection — a slow
     // poll as a backstop costs nothing while just sitting on a waiting screen.
     const iv=setInterval(check,5000);
@@ -1289,7 +1345,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               // "ideal" (not exact) lets the browser choose the closest
               // native mode instead of aggressively cropping every device
               // the same way.
-              aspectRatio:{ideal:16/9},
+              aspectRatio:16/9,
             } as any,
           }} style={{flex:1,display:"flex",flexDirection:"column",minHeight:0,position:"relative"}} data-lk-theme="default">
           {/* FIX ("waveform shows but no voice is heard", and vice versa): this used to be
@@ -1404,7 +1460,6 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                   engine is kept alive headlessly since it doesn't just feed this badge. */}
               <NetworkAdaptiveEngine/>
               <CameraUnmirrorEngine/>
-              <CameraEndedWatchdog/>
               {/* Participant count */}
               <ParticipantCountBadge participantCountRef={participantCountRef} onOpen={()=>{setPartOpen(v=>!v);setPartPanelOpen(v=>!v);}}/>
               {/* Student "Record" control — moved here (beside the participant
@@ -1625,7 +1680,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             {chatOpen&&!isMobile&&(
               <div className="gm-sidebar">
                 <div style={{display:"flex",borderBottom:"1px solid rgba(255,255,255,.07)",flexShrink:0,background:"rgba(32,33,36,.97)"}}>
-                  {[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(
+                  {[["chat","💬","Chat"],["polls","📊","Polls"]].filter(([k])=>k!=="chat"||chatAllowed).map(([k,ic,lb])=>(
                     <button key={k} onClick={()=>{setSideTab(k as any);if(k==="chat")setChatUnread(0);}} style={{
                       flex:1,padding:"14px 4px",background:"none",border:"none",
                       color:sideTab===k?"#8ab4f8":"rgba(255,255,255,.45)",
@@ -1638,7 +1693,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
                     <X style={{width:16,height:16}}/>
                   </button>
                 </div>
-                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"?<ClassChatPanel enablePrivate sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
+                <div style={{flex:1,overflow:"hidden"}}>{sideTab==="chat"&&chatAllowed?<ClassChatPanel enablePrivate sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div>
               </div>
             )}
           </div>
@@ -1666,6 +1721,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
             onLaunchPoll={()=>{setChatOpen(true);setSideTab("polls");}}
             onLaunchQuiz={()=>setQuizOpen(true)}
             camLocked={forcedAudioOnly}
+            handRaiseEnabled={sessionSettings.hand_raise_enabled}
             extraMenuItems={
               <>
                 <DropdownMenuItem onClick={()=>setWbOpen(v=>!v)} style={{margin:"0 4px",borderRadius:8}}>
@@ -1709,7 +1765,7 @@ const ClassroomView=({subject,onLeave,onMinimize,autoJoin=false}:ClassroomViewPr
               </>
             }
           />
-          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"?<ClassChatPanel enablePrivate sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
+          {isMobile&&chatOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setChatOpen(false)}><div style={{position:"absolute",bottom:0,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"82vh",display:"flex",flexDirection:"column",animation:"slide-up .22s ease",paddingBottom:"env(safe-area-inset-bottom,0px)"}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",alignItems:"center",padding:"12px 16px 0",flexShrink:0}}><div style={{flex:1,display:"flex"}}>{[["chat","💬","Chat"],["polls","📊","Polls"]].filter(([k])=>k!=="chat"||chatAllowed).map(([k,ic,lb])=>(<button key={k} onClick={()=>setSideTab(k as any)} style={{flex:1,padding:"10px 6px",background:"none",border:"none",color:sideTab===k?"#fff":"rgba(255,255,255,.35)",fontSize:13,fontWeight:sideTab===k?700:400,borderBottom:sideTab===k?`2px solid ${TEAL}`:"2px solid transparent",cursor:"pointer"}}>{ic} {lb}</button>))}</div><button onClick={()=>setChatOpen(false)} style={{width:32,height:32,borderRadius:"50%",background:"rgba(255,255,255,.1)",border:"none",color:"#fff",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><X style={{width:14,height:14}}/></button></div><div style={{flex:1,overflow:"hidden",minHeight:340}}>{sideTab==="chat"&&chatAllowed?<ClassChatPanel enablePrivate sessionId={sessionId||""} sessionStartedAt={sessionInfo?.started_at??sessionInfo?.actual_start_time}/>:<ClassPolls sessionId={sessionId||""}/>}</div></div></div>)}
           {isMobile&&partOpen&&(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:50}} onClick={()=>setPartOpen(false)}><div style={{position:"absolute",bottom:BAR_H,left:0,right:0,background:"#13181f",borderRadius:"22px 22px 0 0",maxHeight:"65vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}><div style={{width:40,height:4,borderRadius:2,background:"rgba(255,255,255,.18)",margin:"12px auto 6px"}}/><ClassParticipants sessionId={sessionId||""}/></div></div>)}
           {/* FIX BUG 2: LiveQuizOverlay now controlled by quizOpen state — was permanently disabled with hardcoded isOpen={false} */}
           <LiveQuizOverlay sessionId={sessionId||""} isOpen={quizOpen} onClose={()=>setQuizOpen(false)}/>

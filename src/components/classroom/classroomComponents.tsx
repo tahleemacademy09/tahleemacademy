@@ -1123,57 +1123,7 @@ export const CameraUnmirrorEngine = () => {
   return null;
 };
 
-// ══════════════════════════════════════════════════════════════════════
-// CAMERA-ENDED WATCHDOG ("camera turns off when I rotate my phone")
-// On some Android devices, rotating the phone while the front camera is
-// live makes the OS/browser end and recreate the capture pipeline for the
-// new orientation. WebRTC surfaces that as the local camera's underlying
-// MediaStreamTrack firing its native "ended" event — which LiveKit treats
-// exactly like the person turning their camera off, so the picture just
-// disappears with nothing shown. This watchdog listens for that specific
-// "ended" event on the local camera track and — ONLY when the camera
-// wasn't deliberately turned off (isCameraEnabled is still true) — quietly
-// re-requests it, so a rotation looks like nothing happened instead of
-// silently ending the video. A real user toggle-off disables the
-// publication first, so isCameraEnabled is already false by the time
-// "ended" fires for that case — this re-enable never fights it.
-// ══════════════════════════════════════════════════════════════════════
-export const CameraEndedWatchdog = () => {
-  const room = useRoomContext();
-  const attachedTrackId = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!room) return;
-
-    const onEnded = () => {
-      const lp = room.localParticipant;
-      if (lp?.isCameraEnabled) {
-        queueMediaOp(room, () => lp.setCameraEnabled(true)).catch(() => {});
-      }
-    };
-
-    const attach = (track: any) => {
-      const mst: MediaStreamTrack | undefined = track?.mediaStreamTrack;
-      if (!mst || attachedTrackId.current === mst.id) return;
-      attachedTrackId.current = mst.id;
-      mst.addEventListener("ended", onEnded);
-    };
-
-    const onPublished = (publication: any) => {
-      if (publication?.source === Track.Source.Camera && publication.track) attach(publication.track);
-    };
-
-    // Cover a camera that was already on before this component mounted
-    // (e.g. lobby → live transition) — same pattern as CameraUnmirrorEngine above.
-    const existing = room.localParticipant?.getTrackPublication?.(Track.Source.Camera);
-    if (existing?.track) attach(existing.track);
-
-    room.on(RoomEvent.LocalTrackPublished, onPublished);
-    return () => { room.off(RoomEvent.LocalTrackPublished, onPublished); };
-  }, [room]);
-
-  return null;
-};
+export const AdminMuteListener = ({ isPrivileged }: { isPrivileged: boolean }) => {
   const room = useRoomContext();
   useEffect(() => {
     if (isPrivileged) return;
@@ -1309,12 +1259,13 @@ export const OralSignalListener = () => {
 export const OralErrorFlashListener = OralSignalListener;
 
 // ── Waiting-room banner (host side) ──────────────────────────────────────
-// A blocked student trying to rejoin no longer gets a flat rejection —
-// livekit-token now flags their class_participants row (join_request_status
-// ='pending') instead. This banner realtime-subscribes to that same table
-// for THIS session, and shows a prompt for every pending request so the
-// host doesn't have to go digging in the Participants panel to notice
-// someone is trying to get back in.
+// Two different situations land here with the same one flag: a student
+// hitting a class with Waiting Room turned on for the first time, or a
+// blocked student trying to rejoin. Either way livekit-token flags their
+// class_participants row (join_request_status='pending') instead of a flat
+// rejection. This banner realtime-subscribes to that same table for THIS
+// session, and shows a prompt for every pending request so the host doesn't
+// have to go digging in the Participants panel to notice someone's waiting.
 export const JoinRequestBanner=({sessionId,isPrivileged}:{sessionId:string|null;isPrivileged:boolean})=>{
   const[requests,setRequests]=useState<any[]>([]);
   const[busyId,setBusyId]=useState<string|null>(null);
@@ -1365,7 +1316,7 @@ export const JoinRequestBanner=({sessionId,isPrivileged}:{sessionId:string|null;
         }}>
           <UserCheck style={{width:16,height:16,color:"#facc15",flexShrink:0}}/>
           <span style={{color:"#fff",fontSize:13,fontFamily:"system-ui,sans-serif",whiteSpace:"nowrap"}}>
-            <b>{row.profiles?.full_name||"A student"}</b> wants to rejoin the call
+            <b>{row.profiles?.full_name||"A student"}</b> wants to join the call
           </span>
           <Button size="sm" disabled={busyId===row.id} onClick={()=>respond(row,"admit")} style={{height:28,padding:"0 10px"}}>Admit</Button>
           <Button size="sm" variant="outline" disabled={busyId===row.id} onClick={()=>respond(row,"deny")} style={{height:28,padding:"0 10px"}}>Deny</Button>
