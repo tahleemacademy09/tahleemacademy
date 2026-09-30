@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useLiveClass } from "@/contexts/LiveClassContext";
 import { useToast } from "@/hooks/use-toast";
 import MushafPageView from "@/components/hifdh/MushafPageView";
+import { hpPortionLabel, hpPagesOf, hpSegmentFor } from "@/lib/hifdhPortion";
 import { Loader2, BookOpen, Repeat, Video, CheckCircle2, Clock, AlertTriangle, Lock, Flame, BarChart3, Layers } from "lucide-react";
 
 const hhDb = supabase as any;
@@ -38,7 +39,6 @@ const hhNextWeek = (iso: string) => {
 };
 const hhWhen = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" }) : null;
-const hhRange = (from: number, to: number) => Array.from({ length: Math.max(0, to - from + 1) }, (_, i) => from + i).slice(0, 14);
 
 const HH_TASK_LABEL: Record<string, { text: string; color: string }> = {
   pending: { text: "Waiting for read-along", color: HH_MUTED },
@@ -152,7 +152,7 @@ export default function HifdhProgramHome() {
 
   const taskOf = (s: number) => tasks.find((t) => t.slot === s);
   const activeTask = taskOf(selSlot);
-  const activePages = useMemo(() => (activeTask ? hhRange(activeTask.page_from, activeTask.page_to) : []), [activeTask]);
+  const activePages = useMemo(() => (activeTask ? hpPagesOf(activeTask) : []), [activeTask]);
   const shownPage = selPage && activePages.includes(selPage) ? selPage : activePages[0];
 
   // when tasks arrive, default to the first session that has work to do
@@ -163,7 +163,7 @@ export default function HifdhProgramHome() {
     setSelPage(null);
   }, [tasks.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const raPages = useMemo(() => (member?.page_from && member?.page_to ? hhRange(member.page_from, member.page_to) : []), [member]);
+  const raPages = useMemo(() => (member?.page_from && member?.page_to ? hpPagesOf(member) : []), [member]);
   const raShown = raPage && raPages.includes(raPage) ? raPage : raPages[0];
 
   const submitTask = async (id: string) => {
@@ -284,8 +284,8 @@ export default function HifdhProgramHome() {
                       border: `2px solid ${on && t ? HH_GOLD : HH_LINE}`, opacity: t ? 1 : 0.6,
                     }}>
                       <div style={{ fontSize: 10, fontWeight: 800, color: HH_MUTED, letterSpacing: 0.6 }}>SESSION {s}</div>
-                      <div style={{ fontSize: 17, fontWeight: 800, color: HH_INK, margin: "4px 0 8px" }}>
-                        {t ? (t.page_from === t.page_to ? `Page ${t.page_from}` : `Pages ${t.page_from}–${t.page_to}`) : "—"}
+                      <div style={{ fontSize: 15, fontWeight: 800, color: HH_INK, margin: "4px 0 8px", minHeight: 38 }}>
+                        {t ? hpPortionLabel(t) : "—"}
                       </div>
                       {lb ? <HhPill text={lb.text} color={lb.color} /> : <HhPill text="Not assigned yet" color={HH_MUTED} />}
                     </button>
@@ -300,7 +300,7 @@ export default function HifdhProgramHome() {
               ) : (
                 <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: "12px 10px" }}>
                   {activePages.length > 1 && <HhPageChips pages={activePages} active={shownPage!} onPick={setSelPage} />}
-                  {shownPage && <MushafPageView page={shownPage} />}
+                  {shownPage && <MushafPageView page={shownPage} halves={hpSegmentFor(shownPage, activeTask)} />}
                   {activeTask.status === "read_cleared" && (
                     <div style={{ padding: "6px 4px 2px" }}>
                       <HhBtn gold disabled={busy} onClick={() => submitTask(activeTask.id)}>I've memorized this — submit</HhBtn>
@@ -353,9 +353,9 @@ export default function HifdhProgramHome() {
 
               {raPages.length > 0 && (
                 <div style={{ background: "#fff", border: `1px solid ${HH_LINE}`, borderRadius: 16, padding: "12px 10px" }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: HH_MUTED, padding: "0 4px 8px" }}>Portion for the read-along</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: HH_MUTED, padding: "0 4px 8px" }}>Portion for the read-along · {hpPortionLabel(member)}</div>
                   {raPages.length > 1 && <HhPageChips pages={raPages} active={raShown!} onPick={setRaPage} />}
-                  {raShown && <MushafPageView page={raShown} />}
+                  {raShown && <MushafPageView page={raShown} halves={hpSegmentFor(raShown, member)} />}
                 </div>
               )}
             </>
