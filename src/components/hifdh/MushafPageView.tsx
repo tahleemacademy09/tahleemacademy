@@ -66,7 +66,7 @@ const mvLoad = (page: number) => {
 const mvSurah = (n: number) => SURAHS.find((s: any) => s.num === n || s.id === n);
 
 /** halves = [startHalf, endHalf] (0 = first half, 1 = second half). Words outside are dimmed. */
-export default function MushafPageView({ page, fontSize = 26, halves }: { page: number; fontSize?: number; halves?: [number, number] }) {
+function MushafTextPage({ page, fontSize = 26, halves }: { page: number; fontSize?: number; halves?: [number, number] }) {
   const [ayahs, setAyahs] = useState<MvAyah[] | null>(null);
 
   useEffect(() => {
@@ -169,6 +169,71 @@ export default function MushafPageView({ page, fontSize = 26, halves }: { page: 
 
       <div style={{ height: 1, background: `linear-gradient(to right,transparent,${MV_GOLD}88,transparent)`, margin: "0 14px" }} />
       <div style={{ padding: "5px 0", textAlign: "center", color: `${MV_GOLD}99`, fontSize: 12, letterSpacing: 6 }}>❦</div>
+    </div>
+  );
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Real printed Madinah Mushaf page (Hafs, KFGQPC layout) as vector SVG.
+   Source: quran-ws/quran-svg (github.com/quran-ws/quran-svg), served from cdn.quran.ws.
+   If the image can't load (offline / CDN down) we fall back to the text renderer above.
+   ───────────────────────────────────────────────────────────────────────────── */
+const MV_CDN = "https://cdn.quran.ws/svg/pages/v1.1.1/hafs-kfqc";
+
+export default function MushafPageView({ page, fontSize = 26, halves }: { page: number; fontSize?: number; halves?: [number, number] }) {
+  const safe = Math.min(604, Math.max(1, Math.round(Number(page) || 1)));
+  const [state, setState] = useState<"loading" | "ok" | "failed">("loading");
+  const [tries, setTries] = useState(0);
+
+  useEffect(() => { setState("loading"); }, [safe, tries]);
+
+  if (state === "failed") {
+    return <MushafTextPage page={safe} fontSize={fontSize} halves={halves} />;
+  }
+
+  const partial = !!halves && !(halves[0] === 0 && halves[1] === 1);
+  const dimTop = partial && halves![0] === 1;      // portion is the 2nd half → fade the top
+  const dimBottom = partial && halves![1] === 0;   // portion is the 1st half → fade the bottom
+  const zoom = Math.min(1.8, Math.max(0.8, fontSize / 26)); // A− / A+ zooms the page
+  const src = `${MV_CDN}/${String(safe).padStart(3, "0")}.svg`;
+
+  return (
+    <div style={{ margin: "8px 0 12px" }}>
+      <div style={{ overflowX: zoom > 1 ? "auto" : "visible", borderRadius: 6, boxShadow: "0 4px 24px rgba(0,0,0,.14)", background: "#fffdf6" }}>
+        <div style={{ position: "relative", width: `${zoom * 100}%`, minHeight: state === "loading" ? 420 : undefined }}>
+          {state === "loading" && (
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Loader2 className="animate-spin" color={MV_GOLD} size={28} />
+            </div>
+          )}
+          <img
+            key={`${safe}-${tries}`}
+            src={src}
+            alt={`Madinah Mushaf page ${safe}`}
+            draggable={false}
+            onLoad={() => setState("ok")}
+            onError={() => setState("failed")}
+            style={{ display: state === "ok" ? "block" : "none", width: "100%", height: "auto", userSelect: "none", WebkitUserSelect: "none" }}
+          />
+          {state === "ok" && dimTop && (
+            <div style={{ position: "absolute", left: 0, right: 0, top: 0, height: "50%", background: "rgba(253,248,238,.86)", pointerEvents: "none" }} />
+          )}
+          {state === "ok" && dimBottom && (
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: "50%", background: "rgba(253,248,238,.86)", pointerEvents: "none" }} />
+          )}
+          {state === "ok" && partial && (
+            <div style={{
+              position: "absolute", left: "50%", transform: "translateX(-50%)", top: dimTop ? "calc(50% + 6px)" : undefined, bottom: dimBottom ? undefined : undefined,
+              ...(dimBottom ? { top: 8 } : {}),
+              padding: "4px 11px", borderRadius: 999, background: "rgba(253,248,238,.96)", border: `1px solid ${MV_GOLD}99`, color: "#78350F",
+              fontSize: 11, fontWeight: 800, boxShadow: "0 2px 8px rgba(0,0,0,.12)", pointerEvents: "none", whiteSpace: "nowrap",
+            }}>
+              {halves![0] === halves![1] ? (halves![0] === 0 ? "Your portion: top half" : "Your portion: bottom half") : "Your portion"}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
