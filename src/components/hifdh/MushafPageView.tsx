@@ -66,7 +66,7 @@ const mvLoad = (page: number) => {
 const mvSurah = (n: number) => SURAHS.find((s: any) => s.num === n || s.id === n);
 
 /** halves = [startHalf, endHalf] (0 = first half, 1 = second half). Words outside are dimmed. */
-export default function MushafPageView({ page, fontSize = 22, halves }: { page: number; fontSize?: number; halves?: [number, number] }) {
+export default function MushafPageView({ page, fontSize = 26, halves }: { page: number; fontSize?: number; halves?: [number, number] }) {
   const [ayahs, setAyahs] = useState<MvAyah[] | null>(null);
 
   useEffect(() => {
@@ -105,14 +105,14 @@ export default function MushafPageView({ page, fontSize = 22, halves }: { page: 
           lastHalf = h;
           return (
             <React.Fragment key={wi}>
-              <span style={{ display: "inline-block", margin: "0 1px", color: "#1a0a00", opacity: inPortion(h) ? 1 : 0.2, transition: "opacity .2s" }}>{w.t}</span>{" "}
+              <span style={{ display: "inline-block", margin: "0 1px", color: "#000", opacity: inPortion(h) ? 1 : 0.2, transition: "opacity .2s" }}>{w.t}</span>{" "}
             </React.Fragment>
           );
         })}
         <span style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: "50%",
           border: `1.5px solid ${MV_GOLD}`, background: "#fffdf6", fontSize: 10, color: MV_GOLD, fontFamily: "'Amiri',serif",
-          margin: "0 4px", verticalAlign: "middle", lineHeight: 1, opacity: inPortion(lastHalf) ? 1 : 0.2,
+          margin: "0 4px", verticalAlign: "middle", lineHeight: 1, opacity: inPortion(lastHalf) ? 1 : 0.2, WebkitTextStroke: "0",
         }}>{a.numberInSurah}</span>{" "}
       </React.Fragment>
     );
@@ -162,7 +162,7 @@ export default function MushafPageView({ page, fontSize = 22, halves }: { page: 
       <div style={{ height: 1, background: `linear-gradient(to right,transparent,${MV_GOLD}88,transparent)`, margin: "0 14px" }} />
 
       <div style={{ padding: "14px 16px 10px" }}>
-        <div style={{ direction: "rtl", textAlign: "justify", lineHeight: 3.2, fontSize, letterSpacing: 0.5, wordBreak: "normal", overflowWrap: "normal" }}>
+        <div style={{ direction: "rtl", textAlign: "justify", lineHeight: 2.6, fontSize, letterSpacing: 0, wordBreak: "normal", overflowWrap: "normal", color: "#000", WebkitTextStroke: "0.6px #000", textRendering: "optimizeLegibility" as any }}>
           {ayahs.map(renderAyah)}
         </div>
       </div>
