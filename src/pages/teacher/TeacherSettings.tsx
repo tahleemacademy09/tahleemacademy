@@ -18,6 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { storageSupabase } from "../../integrations/supabase/storageClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAcademySettings } from "@/hooks/useAcademySettings";
+import PushBlockedHelp from "@/components/settings/PushBlockedHelp";
 import { enablePushNotifications, hardResetPushNotifications } from "@/components/NotificationPermissionBanner";
 import { applyDark, isDarkModeEnabled, DM_KEY } from "@/lib/theme";
 import {
@@ -525,7 +526,7 @@ export default function TeacherSettings() {
         toast({ title: "✅ Push notifications enabled!" });
       } else if (result === "denied") {
         setPushBlocked(true);
-        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+        toast({ title: "Notifications blocked", description: "Follow the 3 steps shown on this page — it will switch on automatically once you allow it.", variant: "destructive" });
       }
     } else {
       try {
@@ -556,7 +557,7 @@ export default function TeacherSettings() {
       if (result === "denied") {
         setPushBlocked(true);
         setMasterToggling(false);
-        toast({ title: "Notifications blocked", description: "Allow notifications in your browser site settings, then try again.", variant: "destructive" });
+        toast({ title: "Notifications blocked", description: "Follow the 3 steps shown on this page — it will switch on automatically once you allow it.", variant: "destructive" });
         return;
       }
       const next = {
@@ -887,16 +888,12 @@ export default function TeacherSettings() {
             <Switch checked={allNotifsOn} disabled={masterToggling} onCheckedChange={handleMasterToggle} />
           </div>
 
-          {pushBlocked && (
-            <div style={{ background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 12, padding: "12px 14px", marginBottom: 12, display: "flex", gap: 10 }}>
-              <span style={{ fontSize: 20, flexShrink: 0 }}>🔕</span>
-              <div>
-                <p style={{ fontWeight: 700, fontSize: 13, color: "#991B1B", margin: "0 0 3px" }}>Notifications blocked</p>
-                <p style={{ fontSize: 12, color: "#B91C1C", margin: 0, lineHeight: 1.5 }}>
-                  Browser → Site Settings → Notifications → <strong>allow</strong> for <em>tahleemacademy.vercel.app</em>, then refresh.
-                </p>
-              </div>
-            </div>
+          {pushBlocked && user && (
+            <PushBlockedHelp userId={user.id} onEnabled={() => {
+              setNotifs(n => ({ ...n, push_notifications: true }));
+              setPushBlocked(false);
+              toast({ title: "✅ Push notifications enabled!" });
+            }} />
           )}
 
           <Sec title="Channels">
@@ -907,7 +904,7 @@ export default function TeacherSettings() {
                   {typeof Notification === "undefined"
                     ? "Not supported on this browser"
                     : Notification.permission === "denied"
-                    ? "Blocked — allow in browser site settings to enable"
+                    ? "Blocked — follow the steps above to allow"
                     : notifs.push_notifications
                     ? "On — alerts arrive even when the app is closed"
                     : "Off — tap to receive student and class alerts on this device"}
@@ -915,7 +912,6 @@ export default function TeacherSettings() {
               </div>
               <Switch
                 checked={notifs.push_notifications}
-                disabled={typeof Notification !== "undefined" && Notification.permission === "denied"}
                 onCheckedChange={handlePushToggle}
               />
             </div>
