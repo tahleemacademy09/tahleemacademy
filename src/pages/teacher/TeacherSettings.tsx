@@ -152,9 +152,6 @@ export default function TeacherSettings() {
   const [changingPw,      setChangingPw]      = useState(false);
   const [pw,              setPw]              = useState({ new: "", confirm: "" });
   const [pushBlocked,     setPushBlocked]     = useState(false);
-  const [tgChatId,        setTgChatId]        = useState<string | null>(null);
-  const [tgCode,          setTgCode]          = useState<string | null>(null);
-  const [tgPolling,       setTgPolling]       = useState(false);
 
   // ── Payment state ────────────────────────────────────────────────────────
   const [teacherPayments,  setTeacherPayments]  = useState<any[]>([]);
@@ -176,7 +173,7 @@ export default function TeacherSettings() {
 
   const [form, setForm] = useState({
     full_name: "", full_name_ar: "", phone: "", whatsapp: "",
-    bio: "", gender: "", nationality: "", country: "", city: "",
+    bio: "", gender: "", country: "", city: "",
     avatar_url: "", date_of_birth: "",
   });
 
@@ -196,10 +193,7 @@ export default function TeacherSettings() {
 
   const [notifs, setNotifs] = useState({
     push_notifications:         false,
-    email_notifications:        true,
-    whatsapp_notifications:     false,
     class_reminder:             true,
-    announcement_notifications: true,
     new_recording_alert:        false,
     new_student_assignment:     true,
     exam_submission_alert:      true,
@@ -235,7 +229,6 @@ export default function TeacherSettings() {
         whatsapp:      (p as any).whatsapp      || "",
         bio:           (p as any).bio           || "",
         gender:        (p as any).gender        || "",
-        nationality:   (p as any).nationality   || "",
         country:       (p as any).country       || "",
         city:          (p as any).city          || "",
         avatar_url:    (p as any).avatar_url    || "",
@@ -268,10 +261,7 @@ export default function TeacherSettings() {
           push_notifications:         (typeof Notification !== "undefined" && Notification.permission === "granted")
                                         ? (d.push_notifications ?? n.push_notifications)
                                         : false,
-          email_notifications:        d.email_notifications        ?? n.email_notifications,
-          whatsapp_notifications:     d.whatsapp_notifications     ?? n.whatsapp_notifications,
           class_reminder:             d.class_reminder             ?? n.class_reminder,
-          announcement_notifications: d.announcement_notifications ?? n.announcement_notifications,
           new_recording_alert:        d.new_recording_alert        ?? n.new_recording_alert,
           new_student_assignment:     d.new_student_assignment     ?? n.new_student_assignment,
           exam_submission_alert:      d.exam_submission_alert      ?? n.exam_submission_alert,
@@ -293,10 +283,6 @@ export default function TeacherSettings() {
           applyDark(d.dark_mode);
         }
       }
-
-      const { data: tg } = await supabase.from("profiles")
-        .select("telegram_chat_id, telegram_link_code").eq("user_id", user.id).maybeSingle();
-      if (tg) { setTgChatId((tg as any).telegram_chat_id ?? null); setTgCode((tg as any).telegram_link_code ?? null); }
 
       // Load bank details
       const { data: bank } = await (supabase as any).from("teacher_bank_accounts")
@@ -324,20 +310,6 @@ export default function TeacherSettings() {
   useEffect(() => {
     if (tab === "payments" && bankList.length === 0) loadBankList();
   }, [tab]);
-
-  useEffect(() => {
-    if (!tgPolling || !user || tgChatId) return;
-    const t = setInterval(async () => {
-      const { data } = await supabase.from("profiles")
-        .select("telegram_chat_id").eq("user_id", user.id).maybeSingle();
-      if ((data as any)?.telegram_chat_id) {
-        setTgChatId((data as any).telegram_chat_id);
-        setTgCode(null); setTgPolling(false);
-        toast({ title: "✅ Telegram linked!" });
-      }
-    }, 4000);
-    return () => clearInterval(t);
-  }, [tgPolling, user, tgChatId, toast]);
 
   // ── Payment loaders ──────────────────────────────────────────────────────
   const loadTeacherPayments = async () => {
@@ -508,7 +480,7 @@ export default function TeacherSettings() {
       full_name: form.full_name||null, full_name_ar: form.full_name_ar||null,
       phone: form.phone||null, whatsapp: form.whatsapp||null,
       bio: form.bio||null, gender: form.gender||null,
-      nationality: form.nationality||null, country: form.country||null,
+      country: form.country||null,
       city: form.city||null, date_of_birth: form.date_of_birth||null,
       user_id: user.id, updated_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
@@ -588,8 +560,8 @@ export default function TeacherSettings() {
         return;
       }
       const next = {
-        push_notifications: result === "granted", email_notifications: true, whatsapp_notifications: true,
-        class_reminder: true, announcement_notifications: true, new_recording_alert: true,
+        push_notifications: result === "granted",
+        class_reminder: true, new_recording_alert: true,
         new_student_assignment: true, exam_submission_alert: true, student_message_alert: true,
         session_booking_alert: true, grading_reminder: true,
       };
@@ -607,8 +579,8 @@ export default function TeacherSettings() {
         await (supabase as any).from("push_subscriptions").delete().eq("user_id", user.id);
       } catch {}
       const next = {
-        push_notifications: false, email_notifications: false, whatsapp_notifications: false,
-        class_reminder: false, announcement_notifications: false, new_recording_alert: false,
+        push_notifications: false,
+        class_reminder: false, new_recording_alert: false,
         new_student_assignment: false, exam_submission_alert: false, student_message_alert: false,
         session_booking_alert: false, grading_reminder: false,
       };
@@ -678,19 +650,6 @@ export default function TeacherSettings() {
     await refreshProfile();
     setAvatarUploading(false);
     toast({ title: "✅ Photo updated!" });
-  };
-
-  const generateTgCode = async () => {
-    if (!user) return;
-    const code = `${user.id.slice(0, 6)}-${Math.random().toString(36).slice(2, 8)}`;
-    await supabase.from("profiles").update({ telegram_link_code: code }).eq("user_id", user.id);
-    setTgCode(code); setTgPolling(true);
-  };
-  const unlinkTelegram = async () => {
-    if (!user) return;
-    await supabase.from("profiles").update({ telegram_chat_id: null, telegram_link_code: null } as any).eq("user_id", user.id);
-    setTgChatId(null); setTgCode(null); setTgPolling(false);
-    toast({ title: "✅ Telegram unlinked" });
   };
 
   const deleteAccount = async () => {
@@ -788,20 +747,18 @@ export default function TeacherSettings() {
               <Fld label="Phone"><input style={inp} type="tel" placeholder="+234 800 000 0000" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} /></Fld>
               <Fld label="WhatsApp"><input style={inp} type="tel" placeholder="+234 800 000 0000" value={form.whatsapp} onChange={e => setForm(f => ({ ...f, whatsapp: e.target.value }))} /></Fld>
             </div>
-            <p style={{ fontSize: 11, color: "#9CA3AF", margin: "-6px 0 10px" }}>📱 Include country code — used for class reminders via WhatsApp</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Fld label="Gender">
                 <select style={inp} value={form.gender} onChange={e => setForm(f => ({ ...f, gender: e.target.value }))}>
-                  <option value="">Prefer not to say</option>
+                  <option value="" disabled>Select gender</option>
                   <option value="male">Male / ذكر</option>
                   <option value="female">Female / أنثى</option>
                 </select>
               </Fld>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
               <Fld label="Country"><input style={inp} value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} /></Fld>
               <Fld label="City"><input style={inp} value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} /></Fld>
-              <Fld label="Nationality"><input style={inp} value={form.nationality} onChange={e => setForm(f => ({ ...f, nationality: e.target.value }))} /></Fld>
             </div>
           </Sec>
           <Sec title="Short Bio">
@@ -942,28 +899,6 @@ export default function TeacherSettings() {
             </div>
           )}
 
-          {/* Telegram */}
-          <div style={{ background: tgChatId ? "#ECFDF5" : "#EFF6FF", border: `1px solid ${tgChatId ? "#86EFAC" : "#BFDBFE"}`, borderRadius: 12, padding: 14, marginBottom: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-              <span style={{ fontSize: 22 }}>✈️</span>
-              <div style={{ flex: 1 }}>
-                <p style={{ fontWeight: 700, fontSize: 14, color: G, margin: 0 }}>Telegram Notifications</p>
-                <p style={{ fontSize: 11, color: "#475569", margin: "2px 0 0" }}>
-                  {tgChatId ? "Linked — receiving alerts on Telegram." : "Get all alerts on Telegram, even when offline."}
-                </p>
-              </div>
-              {tgChatId && <button onClick={unlinkTelegram} style={{ padding: "6px 12px", border: "1px solid #DC2626", color: "#DC2626", background: "#fff", borderRadius: 8, fontWeight: 600, fontSize: 12, cursor: "pointer" }}>Unlink</button>}
-            </div>
-            {!tgChatId && !tgCode && <button onClick={generateTgCode} style={{ padding: "9px 16px", border: "none", background: G, color: "#fff", borderRadius: 9, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Link Telegram</button>}
-            {!tgChatId && tgCode && (
-              <div style={{ fontSize: 12, color: "#1E3A8A", lineHeight: 1.6 }}>
-                <p style={{ margin: "0 0 6px" }}>1. Open <a href={`https://t.me/Tahleembot?start=${tgCode}`} target="_blank" rel="noreferrer" style={{ color: G, fontWeight: 700 }}>@Tahleembot</a> on Telegram.</p>
-                <p style={{ margin: "0 0 6px" }}>2. Tap <strong>Start</strong> (or send <code>/start {tgCode}</code>).</p>
-                <p style={{ margin: 0, color: "#64748B" }}>Waiting… <Loader2 size={12} style={{ display: "inline", animation: "spin 1s linear infinite" }} /></p>
-              </div>
-            )}
-          </div>
-
           <Sec title="Channels">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F9FAFB" }}>
               <div>
@@ -984,13 +919,6 @@ export default function TeacherSettings() {
                 onCheckedChange={handlePushToggle}
               />
             </div>
-            <Tog label="Email Notifications" sub="Academy updates and messages"
-              checked={notifs.email_notifications} onChange={v => setNotifs(n => ({ ...n, email_notifications: v }))} />
-            <Tog label="WhatsApp Notifications"
-              sub={form.whatsapp || form.phone ? `Will message: ${form.whatsapp || form.phone}` : "Add a number in the Profile tab first"}
-              checked={notifs.whatsapp_notifications} onChange={v => setNotifs(n => ({ ...n, whatsapp_notifications: v }))} />
-            <Tog label="Announcements" sub="Academy-wide messages from admin"
-              checked={notifs.announcement_notifications} onChange={v => setNotifs(n => ({ ...n, announcement_notifications: v }))} />
           </Sec>
           <Sec title="Teaching Alerts">
             <Tog label="Session Booking Requests" sub="When a student books a session with you"
