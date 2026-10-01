@@ -215,6 +215,8 @@ export default function QuranPage() {
 
   const verseRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const pageBoxRef = useRef<HTMLDivElement | null>(null);
+  // Height of the reading area — the printed page is stretched/fitted to fill exactly this (full-screen mushaf look)
+  const [pageBoxH, setPageBoxH] = useState(0);
   const scaleWrapperRef = useRef<HTMLDivElement | null>(null);
   const touchStartX = useRef<number | null>(null);
   const touchStartY = useRef<number | null>(null);
@@ -488,6 +490,16 @@ export default function QuranPage() {
     ro.observe(wrapper);
     return () => { ro.disconnect(); };
   }, [qcfLines, pageFontSize, linesReady, showTranslation, currentPage, selected != null]);
+
+  useLayoutEffect(() => {
+    const el = pageBoxRef.current;
+    if (!el) return;
+    const upd = () => setPageBoxH(el.clientHeight);
+    upd();
+    const ro = new ResizeObserver(upd);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [loading]);
 
   const isBookmarked = useCallback((surah: number, ayah: number) =>
     bookmarks.some(b => b.surah_number === surah && b.ayah_number === ayah), [bookmarks]);
@@ -804,7 +816,7 @@ export default function QuranPage() {
           // scrollbar/movement) but means the rare page that doesn't fit
           // is still fully reachable by scrolling, instead of losing lines.
           overflowY: "auto", overflowX: "hidden",
-          padding: selected != null ? "8px 8px 64px" : "8px 8px 10px",
+          padding: selected != null ? "0 0 64px" : "0",
           position: "relative",
           touchAction: "pan-y", display: "flex", justifyContent: "center", alignItems: "flex-start",
           cursor: "grab",
@@ -832,6 +844,9 @@ export default function QuranPage() {
             {!printedFail && (
               <MushafPageView
                 page={currentPage}
+                seamless
+                pureWhite
+                availableHeight={pageBoxH || undefined}
                 highlight={engine.currentSurah != null && engine.currentAyah != null ? { surah: engine.currentSurah, ayah: engine.currentAyah } : null}
                 selected={selected}
                 onAyahClick={handleVerseTap}
@@ -1216,8 +1231,8 @@ export default function QuranPage() {
            clipping bugs above, past) the edge of the screen. ── */
         .quran-page-frame {
           position: relative;
-          margin: 0 auto 2px;
-          padding: 10px 18px 10px;
+          margin: 0 auto;
+          padding: 0;
         }
       `}</style>
     </div>
