@@ -18,7 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { SURAHS, RECITERS, DEFAULT_RECITER } from "@/components/hifdh/surahData";
 import { getPageText, getAyahPage, getFullQuranText, searchQuranText, QuranVerse, prefetchPage, getPageGlyphLines, prefetchPageGlyphLines, QcfLine } from "@/lib/quranTextApi";
 import { loadQcfPageFont, qcfPageFontFamily, isQcfPageFontLoaded, ensureUthmanicHafsFontLoaded } from "@/lib/qcfFontLoader";
-import MushafPageView from "@/components/hifdh/MushafPageView";
+import MushafPageView, { mvWarmPages, mvSurahStartPages } from "@/components/hifdh/MushafPageView";
 import { listRecitationsForSurah, CustomRecitation } from "@/lib/quranRecitations";
 import { buildAyahSegments, CUSTOM_RECITER_PREFIX } from "@/lib/quranPlaybackSource";
 import { useQuranAudioEngine, AyahSegment } from "@/hooks/useQuranAudioEngine";
@@ -254,6 +254,9 @@ export default function QuranPage() {
   // Unicode font rather than a page's QCF glyph font — load it once, up
   // front, regardless of which page is open.
   useEffect(() => { ensureUthmanicHafsFontLoaded().catch(() => {}); }, []);
+  // Keep the first page of every surah (and the pages around the current one) saved on the device,
+  // so opening any surah shows the page immediately with no loading.
+  useEffect(() => { mvWarmPages([currentPage, currentPage + 1, currentPage - 1, ...mvSurahStartPages()]); }, [currentPage]);
 
   const distinctSurahsOnPage = useMemo(
     () => Array.from(new Set(verses.map(v => v.surah))).sort((a, b) => a - b),
