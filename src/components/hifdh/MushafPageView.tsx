@@ -5,6 +5,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { SURAHS } from "@/components/hifdh/surahData";
+import { supabase } from "@/integrations/supabase/client";
 
 const MV_GOLD = "#C9A84C";
 
@@ -256,6 +257,59 @@ const mvMeasureInk = (svgText: string, vb: MvBox): Promise<{ box: MvBox | null; 
     } catch { done(null, null); }
   });
 
+
+/* ── Pages come from OUR Cloudflare R2 bucket (edge function `mushaf-page`), not browser storage.
+   Only a small in-memory cache of recent pages is kept, and the neighbouring pages are fetched ahead of
+   time so swiping stays instant. If the function is unreachable we fall back to the public CDN. ─────── */
+const mvSrc = (page: number) => `${MV_CDN}/${String(Math.min(604, Math.max(1, Math.round(page)))).padStart(3, "0")}.svg`;
+const mvPageOf = (src: string) => parseInt((src.match(/(\d{3})\.svg$/) || [])[1] || "1", 10);
+
+async function mvFetchSvg(src: string): Promise<string> {
+  try {
+    const { data, error } = await supabase.functions.invoke("mushaf-page", { body: { page: mvPageOf(src) } });
+    if (!error && data) {
+      const txt = typeof data === "string" ? data : data instanceof Blob ? await data.text() : "";
+      if (txt.includes("<svg")) return txt;
+    }
+  } catch { /* fall through to CDN */ }
+  const r = await fetch(src);
+  if (!r.ok) throw new Error("http");
+  return r.text();
+}
+
+type MvPrep = { clean: string; box: MvBox | null; bg: string | null };
+const MV_PREP = new Map<string, Promise<MvPrep>>();
+/** fetch (cache → network) + sanitise + measure ink, once per page; keeps only the ~16 most recent pages in memory */
+function mvPrep(src: string): Promise<MvPrep> {
+  const hit = MV_PREP.get(src);
+  if (hit) { MV_PREP.delete(src); MV_PREP.set(src, hit); return hit; }
+  const p = mvFetchSvg(src).then(async (raw) => {
+    const clean = mvClean(raw);
+    if (!clean) throw new Error("svg");
+    const el = new DOMParser().parseFromString(clean, "image/svg+xml").documentElement;
+    const nums = (el.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+    const ow = parseFloat(el.getAttribute("width") || "");
+    const oh = parseFloat(el.getAttribute("height") || "");
+    const vb: MvBox | null = nums.length === 4 && nums[2] > 0 && nums.every((n) => !isNaN(n))
+      ? { x: nums[0], y: nums[1], w: nums[2], h: nums[3] }
+      : ow > 0 && oh > 0 ? { x: 0, y: 0, w: ow, h: oh } : null;
+    const m = vb ? await mvMeasureInk(clean, vb) : { box: null, bg: null };
+    return { clean, box: m.box, bg: m.bg } as MvPrep;
+  });
+  p.catch(() => { if (MV_PREP.get(src) === p) MV_PREP.delete(src); });
+  MV_PREP.set(src, p);
+  while (MV_PREP.size > 16) MV_PREP.delete(MV_PREP.keys().next().value as string);
+  return p;
+}
+/** warm the pages around `page` so the next swipe is instant */
+function mvPrefetchAround(page: number): () => void {
+  const timers = [1, 2, 3, -1, -2].map((d, i) => {
+    const n = page + d;
+    return n < 1 || n > 604 ? 0 : window.setTimeout(() => { mvPrep(mvSrc(n)).catch(() => {}); }, 250 * (i + 1));
+  });
+  return () => timers.forEach((t) => t && clearTimeout(t));
+}
+
 /** fitHeight: pixels of screen NOT available to the page (bars, buttons). When set, the whole page is fitted to the screen height. */
 export default function MushafPageView({ page, fontSize = 26, halves, fitHeight, seamless, pureWhite, availableHeight, maxStretch = 1.2, onBackground, highlight, selected, onAyahClick, onUnavailable }: {
   page: number; fontSize?: number; halves?: [number, number]; fitHeight?: number;
@@ -299,11 +353,10 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
     let alive = true;
     setMode("loading");
     setImgReady(false);
-    fetch(src)
-      .then((r) => { if (!r.ok) throw new Error("http"); return r.text(); })
-      .then((raw) => {
+    mvPrep(src)
+      .then((prep) => {
         if (!alive) return;
-        const clean = mvClean(raw);
+        const clean = prep.clean;
         const host = hostRef.current;
         if (!clean || !host) { setMode("img"); return; }
         const root = host.shadowRoot ?? host.attachShadow({ mode: "open" });
@@ -354,7 +407,7 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
           setAspect((b.w + 2 * pad) / (b.h + 2 * pad));
         };
         (async () => {
-          const m = vb ? await mvMeasureInk(clean, vb) : { box: null, bg: null }; // real dark-ink extent + page colour
+          const m = { box: prep.box, bg: prep.bg }; // real dark-ink extent + page colour (measured once, cached)
           let box: MvBox | null = m.box;
           if (!alive) return;
           if (pureWhite) { setBg("#ffffff"); onBackground?.("#ffffff"); }
@@ -370,6 +423,9 @@ export default function MushafPageView({ page, fontSize = 26, halves, fitHeight,
       .catch(() => { if (alive) { setMode("img"); unavailRef.current?.(); } });
     return () => { alive = false; };
   }, [src, pureWhite]);
+
+  // once this page is up, quietly fetch its neighbours
+  useEffect(() => mvPrefetchAround(safe), [safe]);
 
   // track the width the page can use (parent box)
   useEffect(() => {
