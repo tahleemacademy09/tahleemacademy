@@ -15,7 +15,7 @@ import { useAcademySettings } from "@/hooks/useAcademySettings";
 import {
   BookOpen, LayoutDashboard, ClipboardList, Users, LogOut, Globe,UserPlus,
   CheckSquare, BarChart, UserCircle, Library, GraduationCap, MessageCircle,
-  Menu, Video, Mic, Layers, FileText, UserCheck, BookMarked, Settings,
+  Menu, Video, Mic, Layers, UserCheck, BookMarked, Settings,
   CreditCard, Calendar, ChevronDown, ChevronRight, Wallet, Bell,
   BookOpenCheck, RefreshCw, Headphones, Trophy, X, Lock, Clock, FolderOpen,
   Activity, BookText, LifeBuoy, Eye, Sparkles,
@@ -219,9 +219,10 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
     { type:"group", key:"exams", icon:ClipboardList, label:t("Al-Ikhtibārāt","الاختبارات"), children:[
       ...(isExamsModuleEnabled ? [{ to:"/student/exams", icon:ClipboardList, label:t("Ikhtibārātī","اختباراتي") }] : []),
       ...(subjectRegistrationOpen ? [{ to:"/student/exams/register", icon:UserPlus,      label:t("Register for Exams","التسجيل للاختبارات") }] : []),
-      { to:"/student/transcripts",    icon:GraduationCap, label:t("As-Sijill","السجل الأكاديمي") },
-      { to:"/student/report-card",    icon:FileText,      label:t("Report Card","كشف الدرجات") },
-      { to:"/student/attendance",     icon:CheckSquare,   label:t("Al-Ḥuḍūr (Attendance)","الحضور والغياب") },
+      // One entry for transcript + report card + attendance (ProgressHub tabs).
+      // `match` keeps it highlighted on all three tab routes.
+      { to:"/student/transcripts",    icon:GraduationCap, label:t("Taqaddumī","تقدّمي"),
+        match:["/student/transcripts","/student/report-card","/student/attendance"] },
     ]},
     { type:"link", to:"/student/majlis",     icon:MessageCircle, label:t("Al-Majlis","المجلس") },
     { type:"link", to:"/student/support",    icon:LifeBuoy,      label:t("Al-Musā'adah","المساعدة") },
@@ -513,7 +514,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 </Link>
               );
             }
-            const isActive = groupActive(item.children.map((c: any) => c.to));
+            const isActive = groupActive(item.children.flatMap((c: any) => c.match ?? [c.to]));
             const isOpen   = expanded[item.key] ?? isActive; // auto-expand if a child is active
             const groupLocked = levelPending && item.children.every((c: any) => LOCKED_ROUTES.has(c.to));
             const groupUnreadCount = item.children.reduce((sum: number, c: any) => sum + (c.badge ?? unreadCountFor(c.to)), 0);
@@ -538,7 +539,7 @@ const DashboardLayout = ({ role }: DashboardLayoutProps) => {
                 {isOpen && (
                   <div className="ms-5 mt-0.5 mb-1 space-y-0.5 border-l border-sidebar-border/40 ps-3">
                     {item.children.map((child: any) => {
-                      const ca = pathMatches(child.to);
+                      const ca = child.match ? child.match.some(pathMatches) : pathMatches(child.to);
                       const cBadge = child.badge ?? unreadCountFor(child.to);
                       return (                        <Link key={child.to} to={child.to} onClick={onNavigate}
                           className={cn(

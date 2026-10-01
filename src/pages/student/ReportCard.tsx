@@ -536,13 +536,13 @@ ${pagesHtml}
         </div>
       )}
       {/* Header bar — title on the left, calligraphy logo (magnified) on the right */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", direction: "ltr", gap: 14, padding: "14px 24px", borderBottom: `2px solid ${G}`, background: "#fdfcf8", overflow: "hidden" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", direction: "ltr", gap: 10, padding: "12px clamp(12px, 4vw, 24px)", borderBottom: `2px solid ${G}`, background: "#fdfcf8", overflow: "hidden" }}>
         <div style={{ direction: "rtl", textAlign: "right" }}>
-          <div style={{ fontFamily: "'Aref Ruqaa',serif", fontWeight: 700, fontSize: 26, color: G, whiteSpace: "nowrap" }}>كشف الدرجات الفصلي</div>
-          <div style={{ fontWeight: 700, fontSize: 12, color: "#8a7434", letterSpacing: 2, textTransform: "uppercase", marginTop: 3, whiteSpace: "nowrap" }}>Term Report Card</div>
+          <div style={{ fontFamily: "'Aref Ruqaa',serif", fontWeight: 700, fontSize: "clamp(19px, 5.6vw, 26px)", color: G, whiteSpace: "nowrap" }}>كشف الدرجات الفصلي</div>
+          <div style={{ fontWeight: 700, fontSize: 12, color: "#8a7434", letterSpacing: 1, textTransform: "uppercase", marginTop: 3, whiteSpace: "nowrap" }}>Term Report Card</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
-          <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: 88, width: "auto", flexShrink: 0 }} />
+          <img src={tahleemHeaderArt} alt="Tahleem Academy" style={{ height: "clamp(52px, 16vw, 88px)", width: "auto", flexShrink: 0 }} />
           <div style={{ fontWeight: 700, fontSize: 11, color: "#8a7434", letterSpacing: 1.5, whiteSpace: "nowrap" }}>TAHLEEM ACADEMY</div>
         </div>
       </div>
@@ -550,7 +550,7 @@ ${pagesHtml}
       <div className="container mx-auto px-4 py-6 max-w-4xl">
       {/* Header */}
       <div className="mb-4 flex flex-wrap items-center justify-end gap-3">
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 w-full sm:w-auto">
           <Button onClick={() => downloadPDF("current")} className="gap-2" style={{ background: G }}>
             <Download className="h-4 w-4" />تحميل الفترة الحالية
           </Button>
@@ -581,7 +581,7 @@ ${pagesHtml}
       )}
 
       {/* Term selector */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
         {TERMS.map(tm => (
           <button key={tm.key} onClick={() => setTerm(tm.key)}
             style={{
@@ -615,7 +615,15 @@ ${pagesHtml}
               المواد الدراسية
             </div>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <style>{`
+                @media (max-width: 640px) {
+                  .rc-table th, .rc-table td { padding: 8px 4px !important; }
+                  .rc-table th:first-child, .rc-table td:first-child { display: none; }
+                  .rc-table td:nth-child(2) > div { flex-wrap: wrap; gap: 2px 8px !important; }
+                  .rc-table th { font-size: 10px !important; }
+                }
+              `}</style>
+              <table className="rc-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: G }}>
                     {["#", "المادة", "اختبار (30)", "امتحان (70)", "المجموع", "الدرجة", "النتيجة"].map(h => (

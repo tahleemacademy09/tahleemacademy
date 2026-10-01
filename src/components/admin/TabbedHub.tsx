@@ -41,9 +41,15 @@ interface TabbedHubProps {
   hifdh?: boolean;
   /** Arabic line shown under the title in the hifdh variant. */
   subtitleAr?: string;
+  /**
+   * Mobile-first segmented tab bar: equal-width tabs (icon over label on
+   * phones, icon beside label on larger screens) pinned to the top of the
+   * scroll area so the student can switch tabs from anywhere on the page.
+   */
+  segmented?: boolean;
 }
 
-export default function TabbedHub({ title, subtitle, tabs, iconOnly = false, hifdh = false, subtitleAr }: TabbedHubProps) {
+export default function TabbedHub({ title, subtitle, tabs, iconOnly = false, hifdh = false, subtitleAr, segmented = false }: TabbedHubProps) {
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -57,6 +63,68 @@ export default function TabbedHub({ title, subtitle, tabs, iconOnly = false, hif
       navigate(tab.path, { replace: false });
     }
   };
+
+  if (segmented) {
+    const DEEP = "#0f2d1f", GOLD = "#c9a84c";
+    return (
+      <div className="w-full">
+        <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-2">
+          <h1 className="text-xl sm:text-3xl font-bold leading-tight" style={{ color: DEEP }}>
+            {title}
+          </h1>
+          {subtitle && <p className="text-xs sm:text-sm text-gray-600 mt-0.5">{subtitle}</p>}
+        </div>
+
+        <Tabs value={activeTab} onValueChange={handleChange} className="w-full">
+          <div
+            className="sticky top-0 z-20 px-3 sm:px-6 py-2 bg-background/95 backdrop-blur border-b"
+            style={{ borderColor: "rgba(15,45,31,.08)" }}
+          >
+            <TabsList
+              className="grid w-full h-auto gap-1 p-1 rounded-2xl sm:max-w-xl"
+              style={{
+                gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))`,
+                background: "#f3efe4",
+                border: "1px solid rgba(15,45,31,.08)",
+              }}
+            >
+              {tabs.map((tab) => {
+                const on = tab.key === activeTab;
+                return (
+                  <TabsTrigger
+                    key={tab.key}
+                    value={tab.key}
+                    className="flex flex-col sm:flex-row items-center justify-center gap-0.5 sm:gap-2 rounded-xl px-1 py-2 min-h-[54px] sm:min-h-[44px] text-[11px] sm:text-sm leading-tight shadow-none data-[state=active]:shadow-none"
+                    style={{
+                      background: on ? DEEP : "transparent",
+                      color: on ? "#fff" : "#5b6b61",
+                      fontWeight: on ? 800 : 600,
+                    }}
+                  >
+                    {tab.icon && (
+                      <tab.icon className="w-[18px] h-[18px] shrink-0" style={{ color: on ? GOLD : undefined }} />
+                    )}
+                    <span className="truncate max-w-full">{tab.label}</span>
+                    {!!tab.badge && (
+                      <span className="inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full text-white text-[10px] font-bold" style={{ background: "#DC2626" }}>
+                        {tab.badge}
+                      </span>
+                    )}
+                  </TabsTrigger>
+                );
+              })}
+            </TabsList>
+          </div>
+
+          {tabs.map((tab) => (
+            <TabsContent key={tab.key} value={tab.key} className="mt-0 focus-visible:outline-none focus-visible:ring-0">
+              <tab.component />
+            </TabsContent>
+          ))}
+        </Tabs>
+      </div>
+    );
+  }
 
   if (hifdh) {
     const G0 = "#061409", G1 = "#0f2d1f", G2 = "#1a3d27", GOLD = "#c9a84c";

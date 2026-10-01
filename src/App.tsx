@@ -58,7 +58,6 @@ const ExamTaking          = lazy(() => import("./pages/student/ExamTaking"));
 const ProfileSettings     = lazy(() => import("./pages/student/ProfileSettings"));
 const ExamResults         = lazy(() => import("./pages/student/ExamResults"));
 const PreExamVerification = lazy(() => import("./pages/student/PreExamVerification"));
-const Transcripts         = lazy(() => import("./pages/student/Transcripts"));
 const ReportCard          = lazy(() => import("./pages/student/ReportCard"));
 const Majlis              = lazy(() => import("./pages/student/Majlis"));
 const RecitationTest      = lazy(() => import("./pages/student/RecitationTest"));
@@ -82,7 +81,7 @@ const RecitationSession    = lazy(() => import("./pages/student/RecitationSessio
 const StudentTimetable     = lazy(() => import("./pages/student/StudentTimetable"));
 const LiveNow              = lazy(() => import("./pages/student/LiveNow"));
 const StudentAssignments   = lazy(() => import("./pages/student/StudentAssignments"));
-const StudentAttendance    = lazy(() => import("./pages/student/StudentAttendance"));
+const ProgressHub          = lazy(() => import("./pages/student/ProgressHub"));
 const StudentSupport       = lazy(() => import("./pages/student/StudentSupport"));
 const AdhkaarPage          = lazy(() => import("./pages/student/AdhkaarPage"));
 
@@ -274,8 +273,8 @@ const App = () => (
                     <Route path="/student/oral-exams"          element={<StudentOralExams />} />
                     <Route path="/student/exams/register"      element={<ExamRegistration />} />
                     <Route path="/student/register-subjects"   element={<SubjectRegistration />} />
-                    <Route path="/student/transcripts"         element={<Transcripts />} />
-                    <Route path="/student/report-card"         element={<ReportCard />} />
+                    <Route path="/student/transcripts"         element={<ProgressHub />} />
+                    <Route path="/student/report-card"         element={<ProgressHub />} />
                     <Route path="/student/report-card/:userId" element={<ReportCard />} />
                     <Route path="/student/majlis"              element={<Majlis />} />
                     <Route path="/student/live-classes"        element={<LearningHub defaultTab="live" />} />
@@ -287,7 +286,7 @@ const App = () => (
                     <Route path="/student/timetable"           element={<StudentTimetable />} />
                     <Route path="/student/live-now"            element={<LiveNow />} />
                     <Route path="/student/assignments"         element={<StudentAssignments />} />
-                    <Route path="/student/attendance"          element={<StudentAttendance />} />
+                    <Route path="/student/attendance"          element={<ProgressHub />} />
                     <Route path="/student/support"             element={<StudentSupport />} />
                     <Route path="/student/profile"             element={<ProfileSettings />} />
                     <Route path="/student/enrollment-payment"  element={<EnrollmentPayment />} />
