@@ -14,6 +14,7 @@ import {
   Save, Mic, Square, AlertTriangle, Sparkles, BookOpenText, ShieldCheck,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { supabase } from "@/integrations/supabase/client";
 import { SURAHS } from "@/components/hifdh/surahData";
 import { getSurahText, QuranVerse } from "@/lib/quranTextApi";
 import {
@@ -34,6 +35,22 @@ type DetectionMethod = "verse-text" | "pause" | null;
 
 export default function QuranRecitationAdmin() {
   const { user } = useAuth();
+  // Copy the printed Mushaf (604 pages) into our Cloudflare R2 bucket via the `mushaf-page` edge function
+  const [r2Done, setR2Done] = useState(0);
+  const [r2Busy, setR2Busy] = useState(false);
+  const [r2Msg, setR2Msg] = useState("");
+  const saveMushafToCloudflare = async () => {
+    setR2Busy(true); setR2Msg(""); setR2Done(0);
+    let failed = 0;
+    for (let from = 1; from <= 604; from += 40) {
+      const to = Math.min(604, from + 39);
+      const { data, error } = await supabase.functions.invoke("mushaf-page", { body: { action: "prime", from, to } });
+      failed += error || !data ? to - from + 1 : (data.failed?.length ?? 0);
+      setR2Done(to);
+    }
+    setR2Busy(false);
+    setR2Msg(failed ? `${failed} pages failed — press again to retry them.` : "All 604 pages are saved in Cloudflare.");
+  };
   const [surahQuery, setSurahQuery] = useState("");
   const [surahNumber, setSurahNumber] = useState(1);
   const surah = SURAHS.find(s => s.num === surahNumber)!;
@@ -394,6 +411,20 @@ export default function QuranRecitationAdmin() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* ── Mushaf pages → Cloudflare R2 ── */}
+      <div style={{ ...cardStyle(), display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: Q_GREEN }}>Mushaf pages in Cloudflare</div>
+          <div style={{ fontSize: 12.5, color: Q_MUTED, marginTop: 2 }}>
+            {r2Busy ? `Saving… ${r2Done}/604` : (r2Msg || "Copies all 604 printed pages into your R2 bucket so students read them from your own storage. Safe to run again — saved pages are skipped.")}
+          </div>
+        </div>
+        <button onClick={saveMushafToCloudflare} disabled={r2Busy} style={{
+          padding: "9px 18px", borderRadius: 10, border: "none", background: Q_GREEN, color: "#fff", fontSize: 13, fontWeight: 700,
+          cursor: r2Busy ? "default" : "pointer", opacity: r2Busy ? 0.6 : 1, whiteSpace: "nowrap",
+        }}>Save all pages</button>
       </div>
 
       {/* ── Surah picker ── */}
